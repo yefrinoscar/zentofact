@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.tsbuildinfo
+
+# Secrets / env
+.env
+
+# Local runtime data
+storage/
+storage.backup-*/
+*.db
+*.db-wal
+*.db-shm
+
+# Bundled browser binaries (regenerated via prepare-* scripts)
+packages/desktop/vendor/
+
+# Generated / debug artifacts
+packages/desktop/data/
+packages/scraper/data/
+scripts/output/
+
+# macOS
+.DS_Store

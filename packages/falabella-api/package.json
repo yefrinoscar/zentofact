@@ -1,0 +1,21 @@
+{
+  "name": "@boletas/falabella-api",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "get-orders": "node ./dist/cli/get-orders.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

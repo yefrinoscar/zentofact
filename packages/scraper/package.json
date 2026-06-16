@@ -1,0 +1,17 @@
+{
+  "name": "@boletas/scraper",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@boletas/core": "*",
+    "playwright": "^1.52.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    --background: 220 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 222 47% 12%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 220 14% 95%;
+    --secondary-foreground: 222 47% 16%;
+
+    --muted: 220 17% 93%;
+    --muted-foreground: 215 16% 42%;
+
+    --accent: 220 16% 91%;
+    --accent-foreground: 222 47% 14%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 13% 86%;
+    --input: 220 13% 86%;
+    --ring: 215 20% 65%;
+
+    --sidebar: 220 20% 97%;
+    --sidebar-foreground: 222 35% 16%;
+    --sidebar-primary: 222 47% 12%;
+    --sidebar-primary-foreground: 210 40% 98%;
+    --sidebar-accent: 220 17% 90%;
+    --sidebar-accent-foreground: 222 47% 16%;
+    --sidebar-border: 220 14% 84%;
+    --sidebar-ring: 215 20% 65%;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 10%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222 47% 12%;
+
+    --secondary: 217 26% 19%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 217 26% 19%;
+    --muted-foreground: 215 20% 69%;
+
+    --accent: 217 26% 24%;
+    --accent-foreground: 210 40% 96%;
+
+    --destructive: 0 63% 42%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 25% 22%;
+    --input: 217 25% 22%;
+    --ring: 215 20% 65%;
+
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 210 40% 98%;
+    --sidebar-primary-foreground: 222 47% 12%;
+    --sidebar-accent: 217 26% 20%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217 25% 22%;
+    --sidebar-ring: 215 20% 65%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Avenir Next', Avenir, 'Nunito Sans', 'Helvetica Neue', sans-serif;
+    background-image: radial-gradient(circle at 8% 4%, hsl(var(--muted)) 0%, transparent 30%),
+      radial-gradient(circle at 92% 0%, hsl(var(--muted) / 0.5) 0%, transparent 32%);
+  }
+}

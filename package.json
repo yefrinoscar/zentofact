@@ -1,0 +1,26 @@
+{
+  "name": "boletas-sunat",
+  "private": true,
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "vp run -r dev",
+    "build": "vp run -r build",
+    "core": "vp run --filter @boletas/core",
+    "desktop": "vp run --filter @boletas/desktop",
+    "package": "vp run --filter @boletas/desktop package",
+    "package:dmg": "vp run --filter @boletas/desktop package:mac",
+    "db:push:neon": "node scripts/push-schema-neon.mjs",
+    "check:net": "node scripts/check-connectivity.mjs",
+    "r2:backfill": "node scripts/upload-archives-to-r2.mjs",
+    "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
+    "audit:falabella-igv": "node scripts/audit-falabella-igv.js",
+    "pdf:falabella-corrected": "node scripts/generate-corrected-falabella-pdfs.js",
+    "credit-notes:batch": "./node_modules/.bin/electron scripts/send-credit-notes-batch.js"
+  },
+  "devDependencies": {
+    "pg": "^8.21.0"
+  }
+}

@@ -1,0 +1,15 @@
+# Cloudflare Worker que actúa de proxy hacia el bucket R2 "zunat".
+# Sirve para subir/leer XML/CDR cuando la red bloquea el endpoint S3 de R2
+# (*.r2.cloudflarestorage.com), porque *.workers.dev sí es alcanzable.
+name = "boletas-r2-proxy"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# El binding interno a R2 NO usa el endpoint S3 bloqueado: el Worker accede a R2
+# dentro de la red de Cloudflare.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "zunat"
+
+# El secreto de autenticación se setea aparte (no se commitea):
+#   wrangler secret put PROXY_SECRET
