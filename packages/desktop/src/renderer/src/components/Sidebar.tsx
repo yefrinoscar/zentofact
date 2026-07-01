@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Home,
   FileMinus2,
   ShoppingBag,
   ClipboardList,
@@ -17,7 +16,6 @@ import falabellaIcon from '../assets/falabella.png';
 const navItems = [
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon, label: 'Falabella' },
   { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito' },
-  { to: '/', icon: Home, label: 'Dashboard' },
   { to: '/summaries', icon: ClipboardList, label: 'Resúmenes' },
   { to: '/settings', icon: Settings, label: 'Ajustes' },
 ];

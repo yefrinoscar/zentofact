@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { HashRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Pause, Play } from 'lucide-react';
 import Sidebar from './components/Sidebar';
-import Dashboard from './routes/Dashboard';
 import Companies from './routes/Companies';
 import Workflow from './routes/Workflow';
 import CreditNotes from './routes/CreditNotes';
@@ -227,7 +226,7 @@ function AppLayout() {
         <main className="flex-1 overflow-auto p-6 lg:p-8">
           <div className="mx-auto w-full max-w-7xl">
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/companies" element={<Companies />} />
               <Route path="/workflow" element={<Workflow />} />
               <Route path="/credit-notes" element={<CreditNotes />} />
