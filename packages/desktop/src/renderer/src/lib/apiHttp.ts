@@ -61,15 +61,15 @@ const apiHttp = {
   validateVentas: (ventas: any) => req('/workflow/validate-ventas', { method: 'POST', body: JSON.stringify(ventas) }),
   processWorkflow: (config: any, ventas: any) => req('/workflow/process', { method: 'POST', body: JSON.stringify({ config, ventas }) }),
 
-  // Falabella — PENDIENTE: la lógica vive en desktop/main; hay que moverla a @boletas/core y exponerla.
-  falabellaApiGetOrders: nope('falabellaApiGetOrders'),
-  falabellaApiMonthSummary: nope('falabellaApiMonthSummary'),
-  falabellaApiGetOrderItems: nope('falabellaApiGetOrderItems'),
-  falabellaApiBuildBoletaVenta: nope('falabellaApiBuildBoletaVenta'),
-  falabellaApiResolveOrderIds: nope('falabellaApiResolveOrderIds'),
-  falabellaApiResolveDocument: nope('falabellaApiResolveDocument'),
-  falabellaApiUploadInvoicePdf: nope('falabellaApiUploadInvoicePdf'),
-  falabellaApiUploadBoletaPdf: nope('falabellaApiUploadBoletaPdf'),
+  // Falabella (lógica compartida en @boletas/core, expuesta por el server)
+  falabellaApiGetOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ filters: JSON.stringify(filters) })}`),
+  falabellaApiMonthSummary: (companyId: number, month: string) => req(`/falabella/${companyId}/month-summary${qs({ month })}`),
+  falabellaApiGetOrderItems: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${orderId}/items`),
+  falabellaApiBuildBoletaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-boleta-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
+  falabellaApiResolveOrderIds: (payload: any) => req(`/falabella/${payload.companyId}/resolve-order-ids`, { method: 'POST', body: JSON.stringify({ entries: payload.entries }) }),
+  falabellaApiResolveDocument: (companyId: number, orderNumber: string) => req(`/falabella/${companyId}/resolve-document${qs({ orderNumber })}`),
+  falabellaApiUploadInvoicePdf: (payload: any) => req('/falabella/upload-invoice-pdf', { method: 'POST', body: JSON.stringify(payload) }),
+  falabellaApiUploadBoletaPdf: (payload: any) => req('/falabella/upload-boleta-pdf', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Solo desktop (FS / diálogos / scraper): no aplican en web.
   onProgress: () => {},

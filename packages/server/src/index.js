@@ -80,6 +80,34 @@ app.post('/credit-notes/batch', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 
+// ── Falabella (lógica compartida en core) ──
+app.get('/falabella/:companyId/orders', async (c) => {
+  try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetOrders({ companyId: Number(c.req.param('companyId')), filters })); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/falabella/:companyId/orders/:orderId/items', async (c) => {
+  try { return ok(c, await core.falabellaGetOrderItems({ companyId: Number(c.req.param('companyId')), orderId: c.req.param('orderId') })); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/build-boleta-venta', async (c) => {
+  try { const { order } = await c.req.json(); return ok(c, await core.falabellaBuildBoletaVenta({ companyId: Number(c.req.param('companyId')), order })); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/resolve-order-ids', async (c) => {
+  try { const { entries } = await c.req.json(); return ok(c, await core.falabellaResolveOrderIds({ companyId: Number(c.req.param('companyId')), entries })); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/falabella/:companyId/resolve-document', async (c) => {
+  try { return ok(c, await core.falabellaResolveDocument({ companyId: Number(c.req.param('companyId')), orderNumber: c.req.query('orderNumber') || '' })); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/falabella/:companyId/month-summary', async (c) => {
+  try { return ok(c, await core.falabellaMonthSummary({ companyId: Number(c.req.param('companyId')), month: c.req.query('month') || '' })); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/upload-invoice-pdf', async (c) => { try { return ok(c, await core.falabellaUploadInvoicePdf(await c.req.json())); } catch (e) { return fail(c, e); } });
+app.post('/falabella/upload-boleta-pdf', async (c) => { try { return ok(c, await core.falabellaUploadBoletaPdf(await c.req.json())); } catch (e) { return fail(c, e); } });
+
 // ── Workflow (emisión en lote) ──
 app.post('/workflow/validate-config', async (c) => { try { return ok(c, { errors: core.validateConfig(await c.req.json()) }); } catch (e) { return fail(c, e, 400); } });
 app.post('/workflow/validate-ventas', async (c) => { try { return ok(c, { errors: core.validateVentas(await c.req.json()) }); } catch (e) { return fail(c, e, 400); } });

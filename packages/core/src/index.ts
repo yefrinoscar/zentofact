@@ -92,6 +92,10 @@ export { recordFacturaUpload } from './services/factura.service';
 export { createCreditNoteFromBoleta, sendCreditNoteToSunat, createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, listCreditNotesByAffectedBoletaIds, generatePreviewCreditNoteHtml } from './services/credit-note.service';
 export type { CreateCreditNoteFromBoletaOptions } from './services/credit-note.service';
 export { getCorrelatives, getCorrelativeBySerie } from './services/correlative-query.service';
+export {
+  falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaResolveOrderIds,
+  falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
+} from './services/falabella.service';
 
 // ── Utilitarios ──
 
