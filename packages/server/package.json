@@ -6,12 +6,16 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node src/index.js"
+    "dev": "node src/index.js",
+    "auth:migrate": "node src/migrate-auth.js",
+    "auth:seed-admin": "node src/seed-admin.js"
   },
   "dependencies": {
     "@boletas/core": "*",
     "@hono/node-server": "^1.13.7",
+    "better-auth": "^1.6.23",
+    "dotenv": "^16.4.5",
     "hono": "^4.6.14",
-    "dotenv": "^16.4.5"
+    "pg": "^8.13.0"
   }
 }

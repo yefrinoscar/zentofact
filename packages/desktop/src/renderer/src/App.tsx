@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Pause, Play } from 'lucide-react';
 import Sidebar from './components/Sidebar';
+import AuthGate from './components/AuthGate';
 import Companies from './routes/Companies';
 import Workflow from './routes/Workflow';
 import CreditNotes from './routes/CreditNotes';
@@ -244,7 +245,9 @@ function AppLayout() {
 export default function App() {
   return (
     <HashRouter>
-      <AppLayout />
+      <AuthGate>
+        <AppLayout />
+      </AuthGate>
     </HashRouter>
   );
 }

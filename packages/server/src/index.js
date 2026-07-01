@@ -13,9 +13,16 @@ const { serve } = await import('@hono/node-server');
 const { Hono } = await import('hono');
 const { cors } = await import('hono/cors');
 const core = await import('@boletas/core');
+const { auth, requireAuth } = await import('./auth.js');
 
 const app = new Hono();
-app.use('*', cors());
+// CORS con credenciales (cookies de sesión) para el front web.
+app.use('*', cors({ origin: (process.env.WEB_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',').map((s) => s.trim()), credentials: true }));
+
+// Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
+app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+// Guard: de aquí en adelante todo exige sesión, salvo /health.
+app.use('*', requireAuth(['/health']));
 
 const ok = (c, data, status = 200) => c.json(data, status);
 const fail = (c, e, status = 500) => c.json({ error: String((e && e.message) || e) }, status);
