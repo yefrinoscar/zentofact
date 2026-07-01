@@ -1,8 +1,13 @@
 import { ipcMain } from 'electron';
 import { homedir } from 'os';
 import { isAbsolute, join } from 'path';
-import { generateAcceptedBoletaPdf, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@boletas/core';
+import { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generateAcceptedBoletaPdf, generateAcceptedBoletaPreviewHtml, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@boletas/core';
 import type { BoletaFilter, FacturaFilter, CreditNoteFilter, DailySummaryFilter } from '@boletas/core';
+
+interface CreditNoteOptions {
+  codMotivo?: string;
+  desMotivo?: string;
+}
 
 function normalizeOutputDir(outputDir?: string) {
   const fallbackDir = join(homedir(), 'boletas-emitidas');
@@ -43,8 +48,22 @@ export function registerBoletaHandlers() {
     return generatePreviewBoletaHtmlForVenta(companyId, venta, 'A4');
   });
 
+  ipcMain.handle('boletas:preview-accepted-html', async (_e, id: number) => {
+    return generateAcceptedBoletaPreviewHtml(id, 'A4');
+  });
+
   ipcMain.handle('credit-notes:preview-html', async (_e, id: number) => {
     return generatePreviewCreditNoteHtml(id, 'A4');
+  });
+
+  // Anular UNA boleta con nota de crédito (1 × 1).
+  ipcMain.handle('credit-notes:create-and-send', async (_e, boletaId: number, options?: CreditNoteOptions) => {
+    return createAndSendCreditNoteFromBoleta(boletaId, options ?? {});
+  });
+
+  // Anular VARIAS boletas en grupo (reutiliza el flujo 1 × 1 por cada una).
+  ipcMain.handle('credit-notes:create-and-send-batch', async (_e, boletaIds: number[], options?: CreditNoteOptions) => {
+    return createAndSendCreditNotesFromBoletas(boletaIds, options ?? {});
   });
 
   ipcMain.handle('daily-summaries:generate-pdfs', async (_e, id: number, outputDir?: string) => {

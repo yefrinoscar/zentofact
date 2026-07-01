@@ -160,6 +160,7 @@ export async function processWorkflow(
         unidad: d.unidad,
         cantidad: d.cantidad,
         mto_valor_unitario: d.mtoValorUnitario,
+        ...(d.mtoBruto != null ? { mto_bruto: d.mtoBruto } : {}),
         porcentaje_igv: d.porcentajeIgv,
         tip_afe_igv: d.tipAfeIgv,
       }));

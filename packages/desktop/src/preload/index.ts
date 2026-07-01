@@ -32,7 +32,9 @@ const api = {
   getActiveCompanyId: () => ipcRenderer.invoke('company:get-active'),
   setActiveCompanyId: (id: number | null) => ipcRenderer.invoke('company:set-active', id),
   falabellaApiGetOrders: (companyId: number, filters: any) => ipcRenderer.invoke('falabella-api:get-orders', { companyId, filters }),
+  falabellaApiMonthSummary: (companyId: number, month: string) => ipcRenderer.invoke('falabella-api:month-summary', { companyId, month }),
   falabellaApiGetOrderItems: (companyId: number, orderId: string | number) => ipcRenderer.invoke('falabella-api:get-order-items', { companyId, orderId }),
+  falabellaApiBuildBoletaVenta: (companyId: number, order: any) => ipcRenderer.invoke('falabella-api:build-boleta-venta', { companyId, order }),
   falabellaApiResolveOrderIds: (payload: any) => ipcRenderer.invoke('falabella-api:resolve-order-ids', payload),
   falabellaApiResolveDocument: (companyId: number, orderNumber: string) => ipcRenderer.invoke('falabella-api:resolve-document', { companyId, orderNumber }),
   falabellaApiUploadInvoicePdf: (payload: any) => ipcRenderer.invoke('falabella-api:upload-invoice-pdf', payload),
@@ -49,7 +51,12 @@ const api = {
   listCreditNotes: (filter: any) => ipcRenderer.invoke('credit-notes:list', filter),
   generateBoletaPdf: (id: number, outputDir?: string) => ipcRenderer.invoke('boletas:generate-pdf', id, outputDir),
   previewBoletaHtml: (companyId: number, venta: any) => ipcRenderer.invoke('boletas:preview-html', companyId, venta),
+  previewAcceptedBoletaHtml: (id: number) => ipcRenderer.invoke('boletas:preview-accepted-html', id),
   previewCreditNoteHtml: (id: number) => ipcRenderer.invoke('credit-notes:preview-html', id),
+  createAndSendCreditNote: (boletaId: number, options?: { codMotivo?: string; desMotivo?: string; modoProduccion?: boolean }) =>
+    ipcRenderer.invoke('credit-notes:create-and-send', boletaId, options),
+  createAndSendCreditNotesBatch: (boletaIds: number[], options?: { codMotivo?: string; desMotivo?: string; modoProduccion?: boolean }) =>
+    ipcRenderer.invoke('credit-notes:create-and-send-batch', boletaIds, options),
   listDailySummaries: (filter: any) => ipcRenderer.invoke('daily-summaries:list', filter),
   refreshDailySummaryStatus: (id: number) => ipcRenderer.invoke('daily-summaries:refresh-status', id),
   generateDailySummaryPdfs: (id: number, outputDir?: string) => ipcRenderer.invoke('daily-summaries:generate-pdfs', id, outputDir),

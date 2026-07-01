@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 interface AppState {
   activeCompanyId: number | null;
@@ -7,9 +8,20 @@ interface AppState {
   toggleSidebar: () => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  activeCompanyId: null,
-  setActiveCompanyId: (id) => set({ activeCompanyId: id }),
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-}));
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      activeCompanyId: null,
+      setActiveCompanyId: (id) => set({ activeCompanyId: id }),
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+    }),
+    {
+      name: 'boletas.app',
+      partialize: (state) => ({
+        activeCompanyId: state.activeCompanyId,
+        sidebarCollapsed: state.sidebarCollapsed,
+      }),
+    },
+  ),
+);

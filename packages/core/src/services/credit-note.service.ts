@@ -14,6 +14,7 @@ export interface CreateCreditNoteFromBoletaOptions {
   desMotivo?: string;
   usuarioCreacion?: string;
   fechaEmision?: string;
+  modoProduccion?: boolean;
 }
 
 export async function createCreditNoteFromBoleta(
@@ -89,7 +90,10 @@ export async function createCreditNoteFromBoleta(
   return result[0].id;
 }
 
-export async function sendCreditNoteToSunat(creditNoteId: number) {
+export async function sendCreditNoteToSunat(
+  creditNoteId: number,
+  options: { modoProduccion?: boolean } = {},
+) {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, creditNoteId)).limit(1))[0];
   if (!note) throw new Error('Nota de crédito no encontrada');
   if (note.estadoSunat === 'ACEPTADO') throw new Error('La nota de crédito ya fue aceptada por SUNAT');
@@ -108,7 +112,7 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
     claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '',
     certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: Boolean(company.modoProduccion),
+    modoProduccion: options.modoProduccion ?? Boolean(company.modoProduccion),
   };
 
   const detalles = ((note.detalles as any[]) || []).map((d: any) => ({
@@ -117,8 +121,8 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
     unidad: d.unidad,
     cantidad: Number(d.cantidad),
     mtoValorUnitario: Number(d.mto_valor_unitario || d.mtoValorUnitario || 0),
-    porcentajeIgv: Number(d.porcentaje_igv || d.porcentajeIgv || 0),
     tipAfeIgv: d.tip_afe_igv || d.tipAfeIgv || '10',
+    porcentajeIgv: normalizeIgvPercentage(d.porcentaje_igv ?? d.porcentajeIgv, d.tip_afe_igv || d.tipAfeIgv || '10'),
     mtoValorGratuito: Number(d.mto_valor_gratuito || d.mtoValorGratuito || 0),
     isc: Number(d.isc || 0),
     icbper: Number(d.icbper || 0),
@@ -162,14 +166,11 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
   const xml = sunatService.buildCreditNoteXml(noteData);
   const result = await sunatService.sendDocument(xml, `${company.ruc}-07-${note.serie}-${note.correlativo}`);
 
-  if (result.xml) {
-    const xmlPath = await saveCreditNoteXml({ serie: note.serie, correlativo: note.correlativo, fechaEmision: note.fechaEmision }, result.xml);
-    await db.update(creditNotes).set({ xmlPath, updatedAt: Math.floor(Date.now() / 1000) }).where(eq(creditNotes.id, creditNoteId));
-  }
-
   if (result.success && result.xml) {
+    const xmlPath = await saveCreditNoteXml({ serie: note.serie, correlativo: note.correlativo, fechaEmision: note.fechaEmision }, result.xml);
     const updates: Record<string, unknown> = {
       estadoSunat: 'ACEPTADO',
+      xmlPath,
       respuestaSunat: JSON.stringify(result.cdrResponse || { status: 'accepted' }),
       codigoHash: sunatService.getHashFromXml(result.xml) || null,
       updatedAt: Math.floor(Date.now() / 1000),
@@ -178,56 +179,86 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
       updates.cdrPath = await saveCreditNoteCdr({ serie: note.serie, correlativo: note.correlativo, fechaEmision: note.fechaEmision }, result.cdrZip);
     }
     await db.update(creditNotes).set(updates).where(eq(creditNotes.id, creditNoteId));
-    await db.update(boletas).set({
-      estadoSunat: note.codMotivo === '01' ? 'ANULADO' : 'ACEPTADO',
-      updatedAt: Math.floor(Date.now() / 1000),
-    }).where(eq(boletas.id, note.affectedBoletaId));
+    if (note.affectedBoletaId) {
+      await db.update(boletas).set({
+        estadoSunat: note.codMotivo === '01' ? 'ANULADO' : 'ACEPTADO',
+        updatedAt: Math.floor(Date.now() / 1000),
+      }).where(eq(boletas.id, note.affectedBoletaId));
+    }
     return { success: true, id: creditNoteId, numeroCompleto: note.numeroCompleto };
   }
 
+  // SUNAT la rechazó (o falló el envío): NO dejar nada registrado para que la
+  // boleta afectada siga anulable. El correlativo NO se libera: si SUNAT llegó
+  // a recibir el documento, reutilizar el mismo número puede provocar el error
+  // "El comprobante fue informado anteriormente".
   const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  await db.update(creditNotes).set({
-    estadoSunat: 'RECHAZADO',
-    respuestaSunat: JSON.stringify(errorData),
-    updatedAt: Math.floor(Date.now() / 1000),
-  }).where(eq(creditNotes.id, creditNoteId));
+  await db.delete(creditNotes).where(eq(creditNotes.id, creditNoteId));
 
   return { success: false, id: creditNoteId, numeroCompleto: note.numeroCompleto, error: errorData };
 }
 
+/**
+ * Anula una boleta emitiendo y enviando UNA nota de crédito (flujo 1 × 1).
+ * Crea el documento 07, lo firma y lo envía a SUNAT vía sendBill, devolviendo
+ * su CDR de inmediato. Es la unidad reutilizada por el envío en grupo.
+ */
 export async function createAndSendCreditNoteFromBoleta(
   boletaId: number,
   options: CreateCreditNoteFromBoletaOptions = {},
-) {
+): Promise<CreditNoteSendOutcome> {
   const creditNoteId = await createCreditNoteFromBoleta(boletaId, options);
-  return sendCreditNoteToSunat(creditNoteId);
+  const result = await sendCreditNoteToSunat(creditNoteId, options);
+  return { boletaId, creditNoteId, ...result };
 }
 
+export interface CreditNoteSendOutcome {
+  boletaId: number;
+  creditNoteId?: number;
+  success: boolean;
+  numeroCompleto?: string;
+  error?: { code: string; message: string };
+}
+
+export interface CreditNoteBatchResult {
+  success: boolean;
+  total: number;
+  accepted: number;
+  rejected: number;
+  results: CreditNoteSendOutcome[];
+}
+
+/**
+ * Anula varias boletas en lote reutilizando el flujo 1 × 1
+ * (`createAndSendCreditNoteFromBoleta`). Cada boleta genera su propia nota de
+ * crédito individual; el "grupo" es operativo (un disparo procesa N), no un solo
+ * documento. Un fallo en una boleta no detiene al resto.
+ */
 export async function createAndSendCreditNotesFromBoletas(
   boletaIds: number[],
   options: CreateCreditNoteFromBoletaOptions = {},
-) {
+): Promise<CreditNoteBatchResult> {
   const uniqueIds = Array.from(new Set(boletaIds));
-  const createdIds: number[] = [];
-  const results = [];
+  const results: CreditNoteSendOutcome[] = [];
 
   for (const boletaId of uniqueIds) {
     try {
-      const creditNoteId = await createCreditNoteFromBoleta(boletaId, options);
-      createdIds.push(creditNoteId);
-      results.push(await sendCreditNoteToSunat(creditNoteId));
+      results.push(await createAndSendCreditNoteFromBoleta(boletaId, options));
     } catch (error: any) {
       results.push({
-        success: false,
         boletaId,
+        success: false,
         error: { code: 'CREATE_ERROR', message: error?.message || 'Error al crear nota de crédito' },
       });
     }
   }
 
+  const accepted = results.filter(result => result.success).length;
   return {
     success: results.every(result => result.success),
-    createdIds,
+    total: results.length,
+    accepted,
+    rejected: results.length - accepted,
     results,
   };
 }
@@ -244,6 +275,9 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
   const companyData = (await db.select().from(companies).where(eq(companies.id, note.companyId)).limit(1))[0];
   const branchData = (await db.select().from(branches).where(eq(branches.id, note.branchId)).limit(1))[0];
   const clientData = (await db.select().from(clients).where(eq(clients.id, note.clientId)).limit(1))[0];
+  if (!note.affectedBoletaId) {
+    throw new Error('Esta nota de crédito no tiene boleta afectada para previsualizar');
+  }
   const affectedBoleta = (await db.select().from(boletas).where(eq(boletas.id, note.affectedBoletaId)).limit(1))[0];
   if (!companyData || !branchData || !clientData || !affectedBoleta) {
     throw new Error('Datos incompletos para previsualizar la nota de crédito');
@@ -313,12 +347,40 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
 
 function resolveCreditNoteSerie(rawSeries: unknown, affectedSerie: string): string {
   const series = normalizeSeries(rawSeries);
-  const preferredPrefix = String(affectedSerie || '').startsWith('F') ? 'F' : 'B';
-  const preferred = series.find(serie => serie.startsWith(preferredPrefix));
+  const normalizedAffectedSerie = String(affectedSerie || '').trim().toUpperCase();
+  const fallbackSerie = inferCreditNoteSerieFromAffectedSerie(normalizedAffectedSerie);
+
+  const exactSerie = series.find(serie => serie.toUpperCase() === fallbackSerie);
+  if (exactSerie) return exactSerie;
+
+  const preferredPrefix = fallbackSerie?.startsWith('F') ? 'F' : 'B';
+  const preferred = series.find(serie => serie.toUpperCase().startsWith(preferredPrefix));
   if (preferred) return preferred;
   if (series.length > 0) return series[0];
-  if (affectedSerie && /^[BF]/i.test(affectedSerie)) return affectedSerie;
+  if (fallbackSerie) return fallbackSerie;
   throw new Error('La sucursal no tiene serie de nota de crédito configurada y no se pudo inferir una serie válida');
+}
+
+function inferCreditNoteSerieFromAffectedSerie(affectedSerie: string): string | null {
+  if (/^[BF]/.test(affectedSerie)) return affectedSerie;
+
+  const marketplaceMatch = affectedSerie.match(/^E([BF])(\d{2})$/);
+  if (marketplaceMatch) {
+    return `${marketplaceMatch[1]}${marketplaceMatch[2].padStart(3, '0')}`;
+  }
+
+  if (affectedSerie.startsWith('EB')) return 'B001';
+  if (affectedSerie.startsWith('EF')) return 'F001';
+  return null;
+}
+
+function normalizeIgvPercentage(value: unknown, tipAfeIgv: string): number {
+  if (tipAfeIgv === '10') return 18;
+
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return 0;
+  if (numeric > 0 && numeric < 1) return numeric * 100;
+  return numeric;
 }
 
 function normalizeSeries(rawSeries: unknown): string[] {

@@ -5,7 +5,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './routes/Dashboard';
 import Companies from './routes/Companies';
 import Workflow from './routes/Workflow';
-import History from './routes/History';
+import CreditNotes from './routes/CreditNotes';
 import DailySummaries from './routes/DailySummaries';
 import Settings from './routes/Settings';
 import FalabellaApi from './routes/FalabellaApi';
@@ -25,9 +25,9 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Nueva Emisión',
     subtitle: 'Flujo guiado para procesar boletas electrónicas en lote.',
   },
-  '/history': {
-    title: 'Historial',
-    subtitle: 'Consulta boletas, facturas registradas y notas de crédito.',
+  '/credit-notes': {
+    title: 'Notas de Crédito',
+    subtitle: 'Anula boletas por mes y empresa emitiendo notas de crédito, individuales o en grupo.',
   },
   '/falabella-api': {
     title: 'Falabella API',
@@ -62,6 +62,8 @@ function AppLayout() {
   });
 
   useEffect(() => {
+    if (activeCompanyId) return;
+
     let mounted = true;
 
     api.getActiveCompanyId().then((id: number | null) => {
@@ -72,7 +74,7 @@ function AppLayout() {
     return () => {
       mounted = false;
     };
-  }, [setActiveCompanyId]);
+  }, [activeCompanyId, setActiveCompanyId]);
 
   useEffect(() => {
     let mounted = true;
@@ -154,7 +156,7 @@ function AppLayout() {
         <header className="border-b border-border/80 bg-background/90 px-6 py-4 backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-6">
             <div>
-              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Boletas SUNAT</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">ZENTOFACTO</p>
               <h1 className="text-xl font-semibold text-foreground">{currentRoute.title}</h1>
               <p className="text-sm text-muted-foreground">{currentRoute.subtitle}</p>
             </div>
@@ -228,7 +230,7 @@ function AppLayout() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/companies" element={<Companies />} />
               <Route path="/workflow" element={<Workflow />} />
-              <Route path="/history" element={<History />} />
+              <Route path="/credit-notes" element={<CreditNotes />} />
               <Route path="/falabella-api" element={<FalabellaApi />} />
               <Route path="/summaries" element={<DailySummaries />} />
               <Route path="/settings" element={<Settings />} />

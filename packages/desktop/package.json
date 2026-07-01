@@ -9,8 +9,10 @@
     "generate-icons": "node scripts/generate-icons.js",
     "prepare-puppeteer-browser": "node scripts/prepare-puppeteer-browser.js",
     "prepare-playwright-browsers": "node scripts/prepare-playwright-browsers.js",
-    "package": "npm run generate-icons && npm run prepare-playwright-browsers && npm run prepare-puppeteer-browser && electron-builder --mac --win --linux",
-    "package:mac": "npm run generate-icons && npm run prepare-playwright-browsers && npm run prepare-puppeteer-browser && electron-builder --mac dmg"
+    "build:deps": "npm run build -w @boletas/core && npm run build -w @boletas/falabella-api && npm run build -w @boletas/scraper",
+    "package": "npm run generate-icons && npm run build:deps && electron-vite build && electron-builder --mac --win --linux",
+    "package:mac": "npm run dmg",
+    "dmg": "npm run generate-icons && npm run build:deps && electron-vite build && electron-builder --mac dmg"
   },
   "dependencies": {
     "@boletas/core": "*",
@@ -46,7 +48,7 @@
   },
   "build": {
     "appId": "com.boletas.sunat",
-    "productName": "Boletas SUNAT",
+    "productName": "ZENTOFACTO",
     "icon": "resources/icon.png",
     "files": [
       "out/**/*"
@@ -63,14 +65,6 @@
       {
         "from": "storage",
         "to": "storage-seed"
-      },
-      {
-        "from": "vendor/ms-playwright",
-        "to": "playwright-browsers"
-      },
-      {
-        "from": "vendor/puppeteer",
-        "to": "puppeteer-browser"
       }
     ],
     "mac": {

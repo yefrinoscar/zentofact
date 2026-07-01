@@ -71,6 +71,7 @@ export interface FalabellaOrderRecord {
   Remarks?: string;
   DeliveryInfo?: string;
   Price?: string | number;
+  GrandTotal?: string | number;
   GiftOption?: string | number | boolean;
   GiftMessage?: string;
   CreatedAt?: string;

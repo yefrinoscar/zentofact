@@ -30,6 +30,7 @@ export function mapOrder(raw: RawFalabellaOrder): VentaItem | null {
         unidad: 'NIU',
         cantidad: 1,
         mtoValorUnitario: base,
+        mtoBruto: total,
         porcentajeIgv: 18,
         tipAfeIgv: '10',
       }];
@@ -79,6 +80,8 @@ function buildDetallesFromItems(raw: RawFalabellaOrder) {
       cantidad: item.quantity,
       // Falabella entrega precio con IGV incluido; SUNAT/core requieren valor unitario sin IGV.
       mtoValorUnitario: roundValue(lineBase / item.quantity, 8),
+      // Bruto de la línea (con IGV): el IGV se deriva de aquí para que el total cuadre exacto.
+      mtoBruto: grossLineTotal,
       porcentajeIgv: 18,
       tipAfeIgv: '10',
     };

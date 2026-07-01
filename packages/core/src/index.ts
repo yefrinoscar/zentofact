@@ -41,6 +41,7 @@ export interface VentaItem {
     unidad: string;
     cantidad: number;
     mtoValorUnitario: number;
+    mtoBruto?: number;
     porcentajeIgv: number;
     tipAfeIgv: string;
     codigoProductoSunat?: string;
@@ -86,7 +87,7 @@ export { listCreditNotes } from './services/credit-note-query.service';
 export type { CreditNoteFilter } from './services/credit-note-query.service';
 export { listDailySummaries, refreshDailySummaryStatus } from './services/daily-summary-query.service';
 export type { DailySummaryFilter } from './services/daily-summary-query.service';
-export { createBoleta, sendBoletaToSunat, sendBoletasAsDailySummary, generateAcceptedBoletaPdf, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, sendBoletasAsVoidedDailySummary, sendBoletasAsVoidedDailySummaries } from './services/boleta.service';
+export { createBoleta, sendBoletaToSunat, sendBoletasAsDailySummary, generateAcceptedBoletaPdf, generateAcceptedBoletaPdfBase64, generateAcceptedBoletaPreviewHtml, markBoletaFalabellaPdfUpload, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, sendBoletasAsVoidedDailySummary, sendBoletasAsVoidedDailySummaries } from './services/boleta.service';
 export { recordFacturaUpload } from './services/factura.service';
 export { createCreditNoteFromBoleta, sendCreditNoteToSunat, createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, listCreditNotesByAffectedBoletaIds, generatePreviewCreditNoteHtml } from './services/credit-note.service';
 export type { CreateCreditNoteFromBoletaOptions } from './services/credit-note.service';
@@ -134,6 +135,7 @@ export function sanitizeVentaItem(v: VentaItem): VentaItem {
       unidad: d.unidad,
       cantidad: d.cantidad,
       mtoValorUnitario: d.mtoValorUnitario,
+      ...(d.mtoBruto != null ? { mtoBruto: d.mtoBruto } : {}),
       porcentajeIgv: d.porcentajeIgv,
       tipAfeIgv: d.tipAfeIgv,
       ...(d.codigoProductoSunat ? { codigoProductoSunat: d.codigoProductoSunat } : {}),

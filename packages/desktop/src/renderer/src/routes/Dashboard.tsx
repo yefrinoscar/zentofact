@@ -92,9 +92,6 @@ export default function Dashboard() {
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h3 className="text-base font-semibold text-foreground">Boletas Recientes</h3>
-          <Link to="/history" className="text-sm font-medium text-primary hover:underline">
-            Ver historial
-          </Link>
         </div>
         {loading ? (
           <Loading label="Cargando boletas recientes..." />

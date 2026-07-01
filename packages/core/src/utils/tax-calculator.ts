@@ -5,6 +5,10 @@ export interface DetalleItem {
   cantidad: number;
   mto_valor_unitario: number;
   mto_valor_gratuito?: number;
+  // Bruto de la línea (con IGV) tal como vino del origen (ej. precio Falabella).
+  // Si está presente, el IGV se deriva como (bruto − base) para que el total cuadre
+  // exacto con el bruto, en vez de recalcular round(base × %) que desfasa 1-2 céntimos.
+  mto_bruto?: number;
   porcentaje_igv: number;
   porcentaje_ivap?: number;
   tip_afe_igv: string;
@@ -59,7 +63,12 @@ export function calculateTotals(detalles: DetalleItem[]): TaxTotals {
         mtoOperGratuitas += itemValorGratuito;
         mtoIgvGratuitas += Math.round(itemValorGratuito * d.porcentaje_igv) / 100;
       }
-      mtoIgv += Math.round(itemValorVenta * d.porcentaje_igv) / 100;
+      // Si la línea trae su bruto (con IGV), el IGV es el resto (bruto − base) para cuadrar exacto.
+      // Si no, se recalcula desde la base como antes.
+      const brutoLinea = Number(d.mto_bruto ?? 0);
+      mtoIgv += brutoLinea > 0
+        ? Math.round((brutoLinea - itemValorVenta) * 100) / 100
+        : Math.round(itemValorVenta * d.porcentaje_igv) / 100;
     }
     // IVAP (17)
     else if (tip === '17') {

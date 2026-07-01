@@ -9,7 +9,7 @@ export const creditNotes = pgTable('credit_notes', {
   companyId: integer('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   branchId: integer('branch_id').notNull().references(() => branches.id, { onDelete: 'cascade' }),
   clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
-  affectedBoletaId: integer('affected_boleta_id').notNull().references(() => boletas.id, { onDelete: 'cascade' }),
+  affectedBoletaId: integer('affected_boleta_id').references(() => boletas.id, { onDelete: 'cascade' }),
 
   tipoDocumento: text('tipo_documento').default('07'),
   serie: text('serie').notNull(),

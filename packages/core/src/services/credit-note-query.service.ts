@@ -57,6 +57,7 @@ export async function listCreditNotes(filter: CreditNoteFilter) {
     moneda: creditNotes.moneda,
     mtoImpVenta: creditNotes.mtoImpVenta,
     detalles: creditNotes.detalles,
+    datosAdicionales: creditNotes.datosAdicionales,
     xmlPath: creditNotes.xmlPath,
     cdrPath: creditNotes.cdrPath,
     pdfPath: creditNotes.pdfPath,
@@ -68,11 +69,13 @@ export async function listCreditNotes(filter: CreditNoteFilter) {
     clientRazonSocial: clients.razonSocial,
     clientNumeroDocumento: clients.numeroDocumento,
     affectedBoletaNumeroCompleto: boletas.numeroCompleto,
+    affectedBoletaFechaEmision: boletas.fechaEmision,
+    affectedBoletaMtoImpVenta: boletas.mtoImpVenta,
     affectedBoletaEstadoSunat: boletas.estadoSunat,
     affectedOrderNumber: boletas.orderNumber,
   }).from(creditNotes)
     .innerJoin(clients, eq(clients.id, creditNotes.clientId))
-    .innerJoin(boletas, eq(boletas.id, creditNotes.affectedBoletaId))
+    .leftJoin(boletas, eq(boletas.id, creditNotes.affectedBoletaId))
     .where(and(...conditions))
     .orderBy(desc(creditNotes.createdAt));
 

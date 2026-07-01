@@ -341,7 +341,7 @@ export default function Workflow() {
   const [omittedFacturaOrders, setOmittedFacturaOrders] = useState<any[]>([]);
 
   const [homeDir, setHomeDir] = useState('');
-  const [modoProduccion, setModoProduccion] = useState(false);
+  const [modoProduccion, setModoProduccion] = useState(true);
 
   // Shared ventas data
   const [rawOrdersData, setRawOrdersData] = useState<any[]>([]);
@@ -376,6 +376,7 @@ export default function Workflow() {
   const sourceOrdersData = rawOrdersData.length > 0
     ? rawOrdersData
     : pendingVentasData.filter((row: any) => row && typeof row === 'object' && 'orderNumber' in row && !('client' in row));
+  const canConvertExtractedOrders = rawOrdersData.length > 0 || pendingVentasData.length > 0 || !!scrapingState?.exportedCount;
   const sourceTotalPages = Math.max(1, Math.ceil(sourceOrdersData.length / SOURCE_PAGE_SIZE));
   const paginatedSourceOrders = sourceOrdersData.slice(
     (sourcePage - 1) * SOURCE_PAGE_SIZE,
@@ -660,14 +661,55 @@ export default function Workflow() {
       return;
     }
 
-    if (result.ventas?.length) {
-      setRawOrdersData(result.rawOrders || []);
-      setPendingVentasData([]);
+    if (result.ventas?.length || result.rawOrders?.length) {
+      const hasRawOrders = Array.isArray(result.rawOrders) && result.rawOrders.length > 0;
+      const sourceOrders = hasRawOrders ? result.rawOrders : (result.ventas || []);
+      const { facturaOrders, boletaOrders } = hasRawOrders
+        ? splitRawOrdersByInvoiceType(sourceOrders)
+        : { facturaOrders: [], boletaOrders: sourceOrders };
+      const { filtered: newBoletaOrders, omitted: alreadyRegisteredOrders } = await filterAlreadyRegisteredBoletas(boletaOrders);
+      const nextState = {
+        ...result.state,
+        exportedCount: newBoletaOrders.length,
+      };
+      const alreadyRegisteredText = alreadyRegisteredOrders
+        .map((order: any) => order.orderNumber)
+        .filter(Boolean)
+        .join(', ');
+
+      setRawOrdersData(hasRawOrders ? newBoletaOrders : []);
+      setPendingVentasData(hasRawOrders ? [] : newBoletaOrders);
       setVentasData([]);
-      setOmittedFacturaOrders([]);
-      setScrapingState(result.state);
+      setOmittedFacturaOrders(facturaOrders);
+      setScrapingState(nextState);
       setVentasErrors([]);
-      setScrapingLog(prev => [...prev, `✅ ${(result.rawOrders?.length || result.ventas.length)} órdenes sin documento en ${elapsed}s. Convierte en el Paso 2.`]);
+      setScrapingError('');
+
+      if (newBoletaOrders.length > 0) {
+        setScrapingLog(prev => [
+          ...prev,
+          `✅ Falabella encontró ${sourceOrders.length} órdenes sin documento en ${elapsed}s.`,
+          facturaOrders.length > 0
+            ? `ℹ️ ${facturaOrders.length} son FACTURA y no se emitirán como boleta.`
+            : 'ℹ️ No hay FACTURAS en esta extracción.',
+          alreadyRegisteredOrders.length > 0
+            ? `⚠️ ${alreadyRegisteredOrders.length} boletas ya existen en nuestro sistema y no avanzan: ${alreadyRegisteredText}.`
+            : '✅ Ninguna boleta estaba registrada previamente.',
+          `➡️ Se emitirán ${newBoletaOrders.length} boletas nuevas. Continúa con el Paso 2.`,
+        ]);
+      } else {
+        setScrapingLog(prev => [
+          ...prev,
+          `✅ Falabella encontró ${sourceOrders.length} órdenes sin documento en ${elapsed}s.`,
+          facturaOrders.length > 0
+            ? `ℹ️ ${facturaOrders.length} son FACTURA y no se emitirán como boleta.`
+            : 'ℹ️ No hay FACTURAS en esta extracción.',
+          alreadyRegisteredOrders.length > 0
+            ? `⚠️ ${alreadyRegisteredOrders.length} boletas ya existen en nuestro sistema: ${alreadyRegisteredText}.`
+            : '⚠️ No hay boletas nuevas para emitir.',
+          '⛔ No hay boletas nuevas. El Paso 2 queda bloqueado.',
+        ]);
+      }
       playWorkflowTone('success');
     } else {
       setScrapingState(result.state);
@@ -731,6 +773,30 @@ export default function Workflow() {
     window.dispatchEvent(new CustomEvent('workflow:running-state', { detail: { running: scrapingRunning } }));
   }, [scrapingRunning]);
 
+  const filterAlreadyRegisteredBoletas = async (ventas: any[]) => {
+    if (!company?.id || ventas.length === 0) return { filtered: ventas, omitted: [] as any[] };
+
+    const checked = await Promise.all(ventas.map(async (venta) => {
+      const orderNumber = String(venta?.orderNumber || '').trim();
+      if (!orderNumber) return { venta, existing: null };
+
+      const result = await api.listBoletas({
+        companyId: company.id,
+        orderNumber,
+        limit: 10,
+      });
+      const existing = (result.boletas || []).find((boleta: any) => (
+        String(boleta.orderNumber || '').trim() === orderNumber
+      )) || null;
+
+      return { venta, existing };
+    }));
+
+    const omitted = checked.filter(row => row.existing).map(row => row.venta);
+    const filtered = checked.filter(row => !row.existing).map(row => row.venta);
+    return { filtered, omitted };
+  };
+
   const runConvertir = async () => {
     setPhase('convertir');
     setConvertRunning(true);
@@ -763,7 +829,7 @@ export default function Workflow() {
         const res = await api.scraperConvertOrders(boletaOrders);
         if (res.ventas?.length) {
           const normalizedVentas = normalizeVentasForSunat(res.ventas);
-          setConvertLog(prev => [...prev, `✅ ${res.orderCount} ventas convertidas desde JSON raw.`]);
+          setConvertLog(prev => [...prev, `✅ ${normalizedVentas.length} ventas convertidas desde JSON raw.`]);
           setRawOrdersData([]);
           setPendingVentasData([]);
           setVentasData(normalizedVentas);
@@ -840,11 +906,25 @@ export default function Workflow() {
 
   const startEmitir = async () => {
     if (!company || !ventasData.length) return;
+    const { filtered, omitted } = await filterAlreadyRegisteredBoletas(ventasData);
+    if (omitted.length > 0) {
+      setVentasData(filtered);
+    }
+    if (filtered.length === 0) {
+      setWorkflowError(`Todas las órdenes ya tienen boleta registrada: ${omitted.map((venta: any) => venta.orderNumber).join(', ')}.`);
+      setLog([`⚠️ ${omitted.length} órdenes omitidas porque ya existen en el sistema.`]);
+      setResults([]);
+      return;
+    }
+
     setProcessing(true);
-    setLog([]);
+    setLog(omitted.length > 0
+      ? [`⚠️ ${omitted.length} órdenes se registraron antes de emitir y fueron omitidas: ${omitted.map((venta: any) => venta.orderNumber).join(', ')}.`]
+      : []
+    );
     setWorkflowError('');
     setResults([]);
-    setProgress({ current: 0, total: ventasData.length, status: 'Iniciando...' });
+    setProgress({ current: 0, total: filtered.length, status: 'Iniciando...' });
 
     emitStepStartRef.current = {};
     emitActiveStepRef.current = null;
@@ -907,7 +987,7 @@ export default function Workflow() {
       outputDir: emitOutputDir,
     };
 
-    const result = await api.processWorkflow(config, ventasData);
+    const result = await api.processWorkflow(config, filtered);
     setProcessing(false);
 
     if (result.success) {
@@ -946,7 +1026,7 @@ export default function Workflow() {
 
   const canOpenPhase = (key: Phase) => {
     if (key === 'scraping') return true;
-    if (key === 'convertir') return !!scrapingState?.exportedCount || phase === 'convertir' || ventasData.length > 0;
+    if (key === 'convertir') return canConvertExtractedOrders || phase === 'convertir' || ventasData.length > 0;
     if (key === 'emitir') return ventasData.length > 0 || phase === 'emitir' || phase === 'resultados';
     return false;
   };
@@ -960,7 +1040,7 @@ export default function Workflow() {
 
   const getFlowWarning = (key: Phase) => {
     if (key === 'scraping' && !canScrape) return 'Falta configurar credenciales de Falabella Seller.';
-    if (key === 'convertir' && !scrapingState?.exportedCount && phase !== 'convertir' && ventasData.length === 0) {
+    if (key === 'convertir' && !canConvertExtractedOrders && phase !== 'convertir' && ventasData.length === 0) {
       return 'Completa Paso 1 para convertir.';
     }
     if (key === 'emitir' && ventasData.length === 0 && phase !== 'emitir' && phase !== 'resultados') {
@@ -1635,14 +1715,22 @@ export default function Workflow() {
                   <ArrowLeftRight className="h-5 w-5 text-primary" />
                   <h2 className="text-lg font-semibold">Paso 2: Preparar para SUNAT</h2>
                 </div>
-                <button onClick={runConvertir}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+                <button
+                  onClick={runConvertir}
+                  disabled={!canConvertExtractedOrders}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   <ArrowLeftRight className="h-4 w-4" /> Convertir para SUNAT
                 </button>
               </div>
+              {!canConvertExtractedOrders && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  No hay boletas nuevas para convertir. Revisa el resumen del Paso 1.
+                </div>
+              )}
               <div className="rounded-lg border border-border bg-background p-4 text-sm space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Órdenes extraídas:</span>
+                  <span className="text-muted-foreground">Boletas nuevas para emitir:</span>
                   <span className="font-medium">{scrapingState?.exportedCount || 0}</span>
                 </div>
                 <div className="flex justify-between">
@@ -1653,7 +1741,7 @@ export default function Workflow() {
                   <p>• DNI → tipoDocumento "1", RUC → "6", CE → "4"</p>
                   <p>• IGV: 18% (gravado), unidad: NIU, moneda: PEN</p>
                   <p>• SKU → código, nombre → descripción, precio → mtoValorUnitario</p>
-                  <p>• FACTURA se muestra en la lista, pero no pasa a boleta al convertir</p>
+                  <p>• FACTURA y boletas ya registradas se bloquean desde el Paso 1</p>
                 </div>
               </div>
 

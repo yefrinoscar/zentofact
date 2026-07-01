@@ -14,6 +14,9 @@ export interface ScraperConfig {
   username: string;
   password: string;
   headless?: boolean;
+  /** Canal de navegador del sistema (p.ej. 'msedge' o 'chrome'). Si se define,
+   * Playwright usa ese navegador instalado en vez de descargar Chromium. */
+  channel?: string;
   slowMo?: number;
   authStatePath?: string;
   outputDir: string;

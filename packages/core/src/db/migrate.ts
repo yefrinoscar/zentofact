@@ -195,7 +195,7 @@ const DDL = `
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    affected_boleta_id INTEGER NOT NULL REFERENCES boletas(id) ON DELETE CASCADE,
+    affected_boleta_id INTEGER REFERENCES boletas(id) ON DELETE CASCADE,
     tipo_documento TEXT DEFAULT '07',
     serie TEXT NOT NULL,
     correlativo TEXT NOT NULL,
@@ -242,6 +242,8 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_credit_notes_company_branch ON credit_notes(company_id, branch_id);
   CREATE INDEX IF NOT EXISTS idx_credit_notes_fecha_emision ON credit_notes(fecha_emision);
   CREATE INDEX IF NOT EXISTS idx_credit_notes_estado_sunat ON credit_notes(estado_sunat);
+
+  ALTER TABLE credit_notes ALTER COLUMN affected_boleta_id DROP NOT NULL;
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

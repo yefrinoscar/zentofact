@@ -413,6 +413,18 @@ export class SunatService {
         : undefined;
 
       const cdrResponse = cdrZip ? this.parseCdrResponse(cdrZip) : null;
+      if (cdrResponse?.code && cdrResponse.code !== '0') {
+        return {
+          success: false,
+          xml: signedXml,
+          cdrZip,
+          cdrResponse,
+          error: {
+            code: cdrResponse.code,
+            message: `[Paso 3/3 - Enviar a SUNAT] ${cdrResponse.description || 'SUNAT rechazó el documento'}`,
+          },
+        };
+      }
 
       return { success: true, xml: signedXml, cdrZip, cdrResponse };
     } catch (error: any) {

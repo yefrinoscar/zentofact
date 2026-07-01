@@ -11,10 +11,7 @@ const AUTH_TEXT_PATTERN = /forgot password|olvid[eé] mi contraseña|correo elec
 export async function createBrowser(
   config: ScraperConfig,
 ): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
-  const browser = await chromium.launch({
-    headless: config.headless ?? true,
-    slowMo: config.slowMo ?? 0,
-  });
+  const browser = await launchBrowser(config);
 
   let storageState: any = undefined;
   if (config.authStatePath && existsSync(config.authStatePath)) {
@@ -31,6 +28,40 @@ export async function createBrowser(
   await attachModalDismissal(page);
 
   return { browser, context, page };
+}
+
+/**
+ * Lanza el navegador usando el primero que esté disponible: el canal preferido
+ * (env/config), luego Chrome y Edge del sistema, y por último el Chromium
+ * empaquetado de Playwright. Esto evita depender del binario headless-shell, que
+ * en equipos con MDM corporativo se queda bloqueado al validarse.
+ */
+async function launchBrowser(config: ScraperConfig): Promise<Browser> {
+  const preferred = process.env.SCRAPER_BROWSER_CHANNEL || config.channel || undefined;
+  // undefined = Chromium empaquetado por Playwright (fallback final).
+  const candidates: Array<string | undefined> = [preferred, 'chrome', 'msedge', undefined];
+  const tried = new Set<string>();
+
+  let lastError: unknown;
+  for (const channel of candidates) {
+    const key = channel ?? '__bundled__';
+    if (tried.has(key)) continue;
+    tried.add(key);
+    try {
+      return await chromium.launch({
+        headless: config.headless ?? true,
+        channel: channel || undefined,
+        slowMo: config.slowMo ?? 0,
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message.split('\n')[0] : String(lastError);
+  throw new Error(
+    `No se pudo abrir ningún navegador (Chrome, Edge ni Chromium). Instala Google Chrome o Microsoft Edge. Detalle: ${detail}`,
+  );
 }
 
 export async function ensureAuthenticated(

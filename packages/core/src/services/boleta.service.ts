@@ -679,6 +679,145 @@ export async function generateAcceptedBoletaPdf(id: number, outputDir: string, p
   return { pdfPath: outPath, internalPdfPath: pdfPath };
 }
 
+export async function generateAcceptedBoletaPdfBase64(id: number, pdfFormat: PdfFormat = 'A4') {
+  const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+  if (!boleta) throw new Error('Boleta no encontrada');
+  if (boleta.estadoSunat !== 'ACEPTADO') throw new Error('Solo se puede generar PDF de boletas aceptadas');
+
+  const companyData = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
+  const branchData = (await db.select().from(branches).where(eq(branches.id, boleta.branchId)).limit(1))[0];
+  const clientData = (await db.select().from(clients).where(eq(clients.id, boleta.clientId)).limit(1))[0];
+  if (!companyData || !branchData || !clientData) throw new Error('Datos incompletos para generar PDF');
+
+  const pdfBuffer = await generateBoletaPdf({
+    company: {
+      ruc: companyData.ruc,
+      razonSocial: companyData.razonSocial,
+      nombreComercial: companyData.nombreComercial || undefined,
+      direccion: companyData.direccion || '',
+      ubigeo: companyData.ubigeo || '',
+    },
+    branch: {
+      codigo: branchData.codigo,
+      nombre: branchData.nombre,
+      direccion: branchData.direccion || '',
+    },
+    client: {
+      tipoDocumento: clientData.tipoDocumento,
+      numeroDocumento: clientData.numeroDocumento,
+      razonSocial: clientData.razonSocial,
+      direccion: clientData.direccion || undefined,
+    },
+    serie: boleta.serie,
+    correlativo: boleta.correlativo,
+    numeroCompleto: boleta.numeroCompleto,
+    fechaEmision: boleta.fechaEmision,
+    moneda: boleta.moneda || 'PEN',
+    detalles: (boleta.detalles as any[]) || [],
+    mtoOperGravadas: String(boleta.mtoOperGravadas || '0'),
+    mtoOperExoneradas: String(boleta.mtoOperExoneradas || '0'),
+    mtoOperInafectas: String(boleta.mtoOperInafectas || '0'),
+    mtoOperGratuitas: String(boleta.mtoOperGratuitas || '0'),
+    mtoIgv: String(boleta.mtoIgv || '0'),
+    mtoIgvGratuitas: String(boleta.mtoIgvGratuitas || '0'),
+    mtoIsc: String(boleta.mtoIsc || '0'),
+    mtoIcbper: String(boleta.mtoIcbper || '0'),
+    totalImpuestos: String(boleta.totalImpuestos || '0'),
+    subTotal: String(boleta.subTotal || '0'),
+    mtoImpVenta: String(boleta.mtoImpVenta || '0'),
+    codigoHash: boleta.codigoHash || undefined,
+    logoPath: companyData.logoPath || undefined,
+  }, pdfFormat);
+
+  return pdfBuffer.toString('base64');
+}
+
+export async function generateAcceptedBoletaPreviewHtml(id: number, pdfFormat: PdfFormat = 'A4') {
+  const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+  if (!boleta) throw new Error('Boleta no encontrada');
+
+  const companyData = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
+  const branchData = (await db.select().from(branches).where(eq(branches.id, boleta.branchId)).limit(1))[0];
+  const clientData = (await db.select().from(clients).where(eq(clients.id, boleta.clientId)).limit(1))[0];
+  if (!companyData || !branchData || !clientData) throw new Error('Datos incompletos para previsualizar la boleta');
+
+  const html = await generateBoletaPreviewHtml({
+    company: {
+      ruc: companyData.ruc,
+      razonSocial: companyData.razonSocial,
+      nombreComercial: companyData.nombreComercial || undefined,
+      direccion: companyData.direccion || '',
+      ubigeo: companyData.ubigeo || '',
+    },
+    branch: {
+      codigo: branchData.codigo,
+      nombre: branchData.nombre,
+      direccion: branchData.direccion || '',
+    },
+    client: {
+      tipoDocumento: clientData.tipoDocumento,
+      numeroDocumento: clientData.numeroDocumento,
+      razonSocial: clientData.razonSocial,
+      direccion: clientData.direccion || undefined,
+    },
+    serie: boleta.serie,
+    correlativo: boleta.correlativo,
+    numeroCompleto: boleta.numeroCompleto,
+    fechaEmision: boleta.fechaEmision,
+    moneda: boleta.moneda || 'PEN',
+    detalles: (boleta.detalles as any[]) || [],
+    mtoOperGravadas: String(boleta.mtoOperGravadas || '0'),
+    mtoOperExoneradas: String(boleta.mtoOperExoneradas || '0'),
+    mtoOperInafectas: String(boleta.mtoOperInafectas || '0'),
+    mtoOperGratuitas: String(boleta.mtoOperGratuitas || '0'),
+    mtoIgv: String(boleta.mtoIgv || '0'),
+    mtoIgvGratuitas: String(boleta.mtoIgvGratuitas || '0'),
+    mtoIsc: String(boleta.mtoIsc || '0'),
+    mtoIcbper: String(boleta.mtoIcbper || '0'),
+    totalImpuestos: String(boleta.totalImpuestos || '0'),
+    subTotal: String(boleta.subTotal || '0'),
+    mtoImpVenta: String(boleta.mtoImpVenta || '0'),
+    codigoHash: boleta.codigoHash || undefined,
+    logoPath: companyData.logoPath || undefined,
+  }, pdfFormat);
+
+  return {
+    html,
+    numeroCompleto: boleta.numeroCompleto,
+    fechaEmision: boleta.fechaEmision,
+    total: boleta.mtoImpVenta,
+    client: {
+      razonSocial: clientData.razonSocial,
+      numeroDocumento: clientData.numeroDocumento,
+    },
+  };
+}
+
+export async function markBoletaFalabellaPdfUpload(id: number, response: unknown) {
+  const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+  if (!boleta) throw new Error('Boleta no encontrada');
+
+  const current = boleta.datosAdicionales && typeof boleta.datosAdicionales === 'object' && !Array.isArray(boleta.datosAdicionales)
+    ? boleta.datosAdicionales as Record<string, unknown>
+    : {};
+  const falabellaPdfUpload = {
+    uploadedAt: new Date().toISOString(),
+    response,
+  };
+
+  await db.update(boletas)
+    .set({
+      datosAdicionales: {
+        ...current,
+        falabellaPdfUpload,
+      },
+      updatedAt: now(),
+    })
+    .where(eq(boletas.id, id));
+
+  return falabellaPdfUpload;
+}
+
 export async function generatePreviewBoletaHtmlForVenta(
   companyId: number,
   venta: {
@@ -868,6 +1007,17 @@ async function buildDailySummaryXml(
     const customer = line.ele('cac:AccountingCustomerParty');
     customer.ele('cbc:CustomerAssignedAccountID').txt(clientRecord.numeroDocumento).up();
     customer.ele('cbc:AdditionalAccountID').txt(clientRecord.tipoDocumento).up();
+    const customerName = String(clientRecord.razonSocial || '').trim();
+    if (customerName && customerName !== '-') {
+      customer
+        .ele('cac:Party')
+        .ele('cac:PartyLegalEntity')
+        .ele('cbc:RegistrationName')
+        .txt(customerName)
+        .up()
+        .up()
+        .up();
+    }
     customer.up();
 
     line.ele('cac:Status').ele('cbc:ConditionCode').txt(conditionCode).up().up();

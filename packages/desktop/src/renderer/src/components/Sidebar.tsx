@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Home,
-  Building2,
-  PlusCircle,
-  History,
+  FileMinus2,
   ShoppingBag,
   ClipboardList,
   Settings,
@@ -14,13 +12,12 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import api from '../lib/api';
+import falabellaIcon from '../assets/falabella.png';
 
 const navItems = [
+  { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon, label: 'Falabella' },
+  { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito' },
   { to: '/', icon: Home, label: 'Dashboard' },
-  { to: '/companies', icon: Building2, label: 'Empresas' },
-  { to: '/workflow', icon: PlusCircle, label: 'Nueva Emisión' },
-  { to: '/history', icon: History, label: 'Historial' },
-  { to: '/falabella-api', icon: ShoppingBag, label: 'Falabella API' },
   { to: '/summaries', icon: ClipboardList, label: 'Resúmenes' },
   { to: '/settings', icon: Settings, label: 'Ajustes' },
 ];
@@ -78,10 +75,7 @@ export default function Sidebar() {
       <div className="border-b border-sidebar-border px-4 py-4">
         <div className="flex items-center justify-between gap-2">
           {!collapsed && (
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Sistema</p>
-              <h2 className="text-sm font-semibold tracking-wide">BOLETAS SUNAT</h2>
-            </div>
+            <h2 className="text-base font-semibold tracking-wide">ZENTOFACTO</h2>
           )}
 
           <button
@@ -94,7 +88,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 p-3">
-        {navItems.map(({ to, icon: Icon, label }) => {
+        {navItems.map(({ to, icon: Icon, img, label }) => {
           const active = pathname === to;
           const isWorkflow = to === '/workflow';
           const disabled = isWorkflow && !workflowEnabled;
@@ -105,10 +99,14 @@ export default function Sidebar() {
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
           } ${disabled ? 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground' : ''}`;
 
+          const iconNode = img
+            ? <img src={img} alt="" className="h-4 w-4 shrink-0 rounded-[3px]" />
+            : <Icon className="h-4 w-4 shrink-0" />;
+
           if (disabled) {
             return (
               <div key={to} title={workflowHint} className={itemClass}>
-                <Icon className="h-4 w-4 shrink-0" />
+                {iconNode}
                 {!collapsed && <span>{label}</span>}
               </div>
             );
@@ -116,7 +114,7 @@ export default function Sidebar() {
 
           return (
             <Link key={to} to={to} className={itemClass}>
-              <Icon className="h-4 w-4 shrink-0" />
+              {iconNode}
               {!collapsed && <span>{label}</span>}
             </Link>
           );

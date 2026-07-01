@@ -26,3 +26,6 @@ scripts/output/
 
 # macOS
 .DS_Store
+
+# Reportes generados (contienen datos de clientes)
+reports/

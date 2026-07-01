@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { boletas, clients, creditNotes } from '../db/schema';
+import { boletas, clients, creditNotes, dailySummaries } from '../db/schema';
 import { eq, and, gte, lte, desc, like, or } from 'drizzle-orm';
 
 export interface BoletaFilter {
@@ -7,6 +7,9 @@ export interface BoletaFilter {
   branchId?: number;
   fechaDesde?: string;
   fechaHasta?: string;
+  summaryFechaDesde?: string;
+  summaryFechaHasta?: string;
+  matchFechaEmisionOrSummary?: boolean;
   estado?: string;
   orderNumber?: string;
   limit?: number;
@@ -19,11 +22,35 @@ export async function listBoletas(filter: BoletaFilter) {
   if (filter.branchId) {
     conditions.push(eq(boletas.branchId, filter.branchId));
   }
-  if (filter.fechaDesde) {
-    conditions.push(gte(boletas.fechaEmision, filter.fechaDesde));
-  }
-  if (filter.fechaHasta) {
-    conditions.push(lte(boletas.fechaEmision, filter.fechaHasta));
+  if (filter.matchFechaEmisionOrSummary && (filter.fechaDesde || filter.fechaHasta || filter.summaryFechaDesde || filter.summaryFechaHasta)) {
+    const emissionConditions = [];
+    const summaryConditions = [];
+    if (filter.fechaDesde) emissionConditions.push(gte(boletas.fechaEmision, filter.fechaDesde));
+    if (filter.fechaHasta) emissionConditions.push(lte(boletas.fechaEmision, filter.fechaHasta));
+    if (filter.summaryFechaDesde) summaryConditions.push(gte(dailySummaries.fechaResumen, filter.summaryFechaDesde));
+    if (filter.summaryFechaHasta) summaryConditions.push(lte(dailySummaries.fechaResumen, filter.summaryFechaHasta));
+    const emissionClause = emissionConditions.length ? and(...emissionConditions) : undefined;
+    const summaryClause = summaryConditions.length ? and(...summaryConditions) : undefined;
+    if (emissionClause && summaryClause) {
+      conditions.push(or(emissionClause, summaryClause)!);
+    } else if (emissionClause) {
+      conditions.push(emissionClause);
+    } else if (summaryClause) {
+      conditions.push(summaryClause);
+    }
+  } else {
+    if (filter.fechaDesde) {
+      conditions.push(gte(boletas.fechaEmision, filter.fechaDesde));
+    }
+    if (filter.fechaHasta) {
+      conditions.push(lte(boletas.fechaEmision, filter.fechaHasta));
+    }
+    if (filter.summaryFechaDesde) {
+      conditions.push(gte(dailySummaries.fechaResumen, filter.summaryFechaDesde));
+    }
+    if (filter.summaryFechaHasta) {
+      conditions.push(lte(dailySummaries.fechaResumen, filter.summaryFechaHasta));
+    }
   }
   if (filter.estado) {
     conditions.push(eq(boletas.estadoSunat, filter.estado));
@@ -83,12 +110,18 @@ export async function listBoletas(filter: BoletaFilter) {
     updatedAt: boletas.updatedAt,
     clientRazonSocial: clients.razonSocial,
     clientNumeroDocumento: clients.numeroDocumento,
+    summaryId: dailySummaries.id,
+    summaryNumeroCompleto: dailySummaries.numeroCompleto,
+    summaryFechaResumen: dailySummaries.fechaResumen,
+    summaryTicket: dailySummaries.ticket,
+    summaryEstado: dailySummaries.estado,
     creditNoteId: creditNotes.id,
     creditNoteNumeroCompleto: creditNotes.numeroCompleto,
     creditNoteEstadoSunat: creditNotes.estadoSunat,
     creditNoteFechaEmision: creditNotes.fechaEmision,
   }).from(boletas)
     .innerJoin(clients, eq(clients.id, boletas.clientId))
+    .leftJoin(dailySummaries, eq(dailySummaries.id, boletas.dailySummaryId))
     .leftJoin(creditNotes, eq(creditNotes.affectedBoletaId, boletas.id))
     .where(and(...conditions))
     .orderBy(desc(boletas.createdAt));

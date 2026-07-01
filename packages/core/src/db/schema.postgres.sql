@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS credit_notes (
   company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
   client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-  affected_boleta_id INTEGER NOT NULL REFERENCES boletas(id) ON DELETE CASCADE,
+  affected_boleta_id INTEGER REFERENCES boletas(id) ON DELETE CASCADE,
   tipo_documento TEXT DEFAULT '07',
   serie TEXT NOT NULL,
   correlativo TEXT NOT NULL,
