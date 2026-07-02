@@ -36,7 +36,7 @@ export default defineConfig({
     ),
   },
   preview: {
-    allowedHosts: ['zentofact-web-production.up.railway.app'],
+    allowedHosts: true,
   },
   build: { outDir: path.resolve(__dirname, 'dist'), emptyOutDir: true },
 });
