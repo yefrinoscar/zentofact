@@ -5,6 +5,8 @@ import { Pool } from 'pg';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
+const baseURL = process.env.AUTH_BASE_URL || railwayOrigin || `http://localhost:${process.env.PORT || 3010}`;
+const usesHttps = baseURL.startsWith('https://');
 const trustedOrigins = Array.from(new Set([
   ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
   railwayOrigin,
@@ -15,13 +17,18 @@ const trustedOrigins = Array.from(new Set([
 
 export const auth = betterAuth({
   database: pool,
-  baseURL: process.env.AUTH_BASE_URL || railwayOrigin || `http://localhost:${process.env.PORT || 3010}`,
+  baseURL,
   secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-me',
   emailAndPassword: {
     enabled: true,
     // Registro deshabilitado por defecto: los usuarios se crean desde el server (admin/seed),
     // no cualquiera se registra. Se puede habilitar si se quiere autoservicio.
     disableSignUp: process.env.AUTH_ALLOW_SIGNUP !== 'true',
+  },
+  advanced: {
+    defaultCookieAttributes: usesHttps
+      ? { sameSite: 'none', secure: true }
+      : { sameSite: 'lax', secure: false },
   },
   trustedOrigins,
 });

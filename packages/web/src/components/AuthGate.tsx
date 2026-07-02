@@ -9,7 +9,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 function WebAuthGate({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session, isPending, refetch } = authClient.useSession();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -29,9 +29,15 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const { error } = await authClient.signIn.email({ email, password });
+    const { data, error } = await authClient.signIn.email({
+      email,
+      password,
+      callbackURL: window.location.href,
+    });
     setLoading(false);
     if (error) setError(error.message || 'Credenciales inválidas.');
+    else if (data?.url) window.location.href = data.url;
+    else await refetch();
   };
 
   return (
