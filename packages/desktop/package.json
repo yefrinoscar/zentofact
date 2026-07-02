@@ -51,7 +51,7 @@
   },
   "build": {
     "appId": "com.zentofact.app",
-    "productName": "ZENTOFACTO",
+    "productName": "ZentoFact",
     "icon": "resources/icon.png",
     "files": [
       "out/**/*"

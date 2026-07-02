@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   FileMinus2,
@@ -6,132 +6,174 @@ import {
   ClipboardList,
   Settings,
   ChevronLeft,
-  AlertCircle,
-  CheckCircle2,
+  MoreVertical,
+  LogOut,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
-import api from '../lib/api';
+import { authClient } from '../lib/authClient';
 import falabellaIcon from '../assets/falabella.png';
 
 const navItems = [
-  { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon, label: 'Falabella' },
-  { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito' },
-  { to: '/summaries', icon: ClipboardList, label: 'Resúmenes' },
-  { to: '/settings', icon: Settings, label: 'Ajustes' },
+  { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string | null, label: 'Falabella' },
+  { to: '/credit-notes', icon: FileMinus2, img: null, label: 'Notas de crédito' },
+  { to: '/summaries', icon: ClipboardList, img: null, label: 'Resúmenes' },
+  { to: '/settings', icon: Settings, img: null, label: 'Ajustes' },
 ];
 
 export default function Sidebar() {
   const { pathname } = useLocation();
-  const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggle = useAppStore((s) => s.toggleSidebar);
-  const [companyCount, setCompanyCount] = useState<number | null>(null);
-  const [companyLoadFailed, setCompanyLoadFailed] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    setCompanyCount(null);
-    api.listCompanies()
-      .then((list: any[]) => {
-        if (mounted) {
-          setCompanyCount(Array.isArray(list) ? list.length : 0);
-          setCompanyLoadFailed(false);
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setCompanyCount(null);
-          setCompanyLoadFailed(true);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [pathname]);
-
-  const workflowEnabled = useMemo(
-    () => (companyCount ?? 0) > 0 && !!activeCompanyId,
-    [companyCount, activeCompanyId],
-  );
-
-  const workflowHint =
-    companyLoadFailed
-      ? 'No se pudieron cargar las empresas.'
-      : companyCount === null
-      ? 'Cargando empresas...'
-      : companyCount === 0
-      ? 'Primero crea una empresa en Empresas.'
-      : 'Selecciona una empresa en Empresas para habilitar emisión.';
 
   return (
     <aside
-      className={`flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-200 ${
-        collapsed ? 'w-[74px]' : 'w-72'
+      className={`flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ${
+        collapsed ? 'w-[76px]' : 'w-64'
       }`}
     >
-      <div className="border-b border-sidebar-border px-4 py-4">
-        <div className="flex items-center justify-between gap-2">
-          {!collapsed && (
-            <h2 className="text-base font-semibold tracking-wide">ZENTOFACTO</h2>
-          )}
-
+      {/* Marca — h-20 para cuadrar con el header del contenido */}
+      <div className="flex h-20 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
+        {collapsed ? (
+          // Colapsado: solo el logo Z (clic para expandir)
           <button
             onClick={toggle}
-            className="rounded-md border border-sidebar-border p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            aria-label="Expandir menú"
+            title="Expandir menú"
+            className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary text-base font-black tracking-tighter text-sidebar-primary-foreground shadow-sm transition-transform hover:scale-105"
           >
-            <ChevronLeft className={`h-4 w-4 transition-transform ${collapsed ? 'rotate-180' : ''}`} />
+            Z
           </button>
-        </div>
+        ) : (
+          <>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sidebar-primary text-sm font-black tracking-tighter text-sidebar-primary-foreground shadow-sm">
+                Z
+              </span>
+              <span className="truncate text-[15px] font-semibold tracking-tight">ZentoFact</span>
+            </div>
+            <button
+              onClick={toggle}
+              aria-label="Colapsar menú"
+              className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          </>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-1 p-3">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        {!collapsed && (
+          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            Menú
+          </p>
+        )}
         {navItems.map(({ to, icon: Icon, img, label }) => {
           const active = pathname === to;
-          const isWorkflow = to === '/workflow';
-          const disabled = isWorkflow && !workflowEnabled;
-
-          const itemClass = `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
-            active
-              ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-          } ${disabled ? 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground' : ''}`;
-
           const iconNode = img
-            ? <img src={img} alt="" className="h-4 w-4 shrink-0 rounded-[3px]" />
-            : <Icon className="h-4 w-4 shrink-0" />;
-
-          if (disabled) {
-            return (
-              <div key={to} title={workflowHint} className={itemClass}>
-                {iconNode}
-                {!collapsed && <span>{label}</span>}
-              </div>
-            );
-          }
+            ? <img src={img} alt="" className="h-[18px] w-[18px] shrink-0 rounded-[4px]" />
+            : <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? '' : 'text-muted-foreground group-hover:text-sidebar-accent-foreground'}`} />;
 
           return (
-            <Link key={to} to={to} className={itemClass}>
+            <Link
+              key={to}
+              to={to}
+              title={collapsed ? label : undefined}
+              className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                collapsed ? 'justify-center' : ''
+              } ${
+                active
+                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
+                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+              }`}
+            >
+              {active && !collapsed && (
+                <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />
+              )}
               {iconNode}
-              {!collapsed && <span>{label}</span>}
+              {!collapsed && <span className="truncate">{label}</span>}
             </Link>
           );
         })}
       </nav>
 
-      {!collapsed && (
-        <div className="space-y-2 border-t border-sidebar-border p-4 text-xs">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            {workflowEnabled ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-            ) : (
-              <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
-            )}
-            <span>{workflowEnabled ? 'Workflow habilitado' : 'Workflow bloqueado'}</span>
-          </div>
-          {!workflowEnabled && <p className="text-muted-foreground">{workflowHint}</p>}
+      <UserFooter collapsed={collapsed} />
+    </aside>
+  );
+}
+
+function UserFooter({ collapsed }: { collapsed: boolean }) {
+  const { data: session } = authClient.useSession();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const email = session?.user?.email || '';
+  const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
+  const initial = (name || email || 'Z').trim().charAt(0).toUpperCase();
+
+  const logout = async () => {
+    setSigningOut(true);
+    try {
+      await authClient.signOut();
+    } finally {
+      window.location.reload();
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative border-t border-sidebar-border p-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-center gap-2.5 rounded-xl p-1.5 text-left transition-colors hover:bg-sidebar-accent ${
+          collapsed ? 'justify-center' : ''
+        }`}
+      >
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+          {initial}
+        </span>
+        {!collapsed && (
+          <>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-sidebar-foreground">{name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{email}</span>
+            </span>
+            <MoreVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </>
+        )}
+      </button>
+
+      {open && (
+        <div
+          className={`absolute bottom-[calc(100%-0.25rem)] z-50 min-w-[190px] overflow-hidden rounded-xl border border-border bg-card p-1 shadow-lg ${
+            collapsed ? 'left-3' : 'left-3 right-3'
+          }`}
+        >
+          {!collapsed && (
+            <div className="border-b border-border px-3 py-2">
+              <p className="truncate text-sm font-medium text-foreground">{name}</p>
+              <p className="truncate text-xs text-muted-foreground">{email}</p>
+            </div>
+          )}
+          <button
+            onClick={logout}
+            disabled={signingOut}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
+          >
+            <LogOut className="h-4 w-4" />
+            {signingOut ? 'Saliendo…' : 'Cerrar sesión'}
+          </button>
         </div>
       )}
-    </aside>
+    </div>
   );
 }

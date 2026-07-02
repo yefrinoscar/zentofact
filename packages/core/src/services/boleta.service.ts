@@ -41,6 +41,8 @@ export interface CreateBoletaInput {
   leyendas?: Array<{ code: string; value: string }>;
   datos_adicionales?: any[];
   usuario_creacion?: string;
+  // false en beta: se asigna el correlativo pero NO se avanza el contador (la boleta beta se limpia después).
+  persistCorrelative?: boolean;
 }
 
 function now(): number {
@@ -118,7 +120,7 @@ export async function createBoleta(input: CreateBoletaInput) {
 
   if (!clientRecord) throw new Error('Error al crear/encontrar cliente');
 
-  const correlativo = await getNextCorrelative(input.branch_id, '03', input.serie);
+  const correlativo = await getNextCorrelative(input.branch_id, '03', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
   const totals = calculateTotals(input.detalles);
   const ts = now();

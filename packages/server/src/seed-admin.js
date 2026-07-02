@@ -6,8 +6,8 @@ config({ path: resolve(__dirname, '../../../.env') });
 process.env.AUTH_ALLOW_SIGNUP = 'true'; // permitir el alta solo para este seed
 
 const { auth } = await import('./auth.js');
-const email = process.env.ADMIN_EMAIL || 'admin@zentofacto.com';
-const password = process.env.ADMIN_PASSWORD || 'Zentofacto2026!';
+const email = process.env.ADMIN_EMAIL || 'admin@zentofact.com';
+const password = process.env.ADMIN_PASSWORD || 'ZentoFact2026!';
 try {
   const res = await auth.api.signUpEmail({ body: { email, password, name: 'Admin' } });
   console.log('Admin creado:', email, '(id:', res?.user?.id, ')');

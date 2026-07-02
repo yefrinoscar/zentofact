@@ -49,6 +49,7 @@ const apiHttp = {
   listCreditNotes: (filter: any) => req(`/credit-notes${qs(filter)}`),
   listDailySummaries: (filter: any) => req(`/daily-summaries${qs(filter)}`),
   refreshDailySummaryStatus: (id: number) => req(`/daily-summaries/${id}/refresh`, { method: 'POST' }),
+  refreshBoletaStatus: (id: number) => req(`/boletas/${id}/refresh-status`, { method: 'POST' }),
 
   // PDFs (base64) y previews (HTML)
   generateBoletaPdf: (id: number) => req(`/boletas/${id}/pdf`),

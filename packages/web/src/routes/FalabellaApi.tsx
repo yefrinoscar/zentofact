@@ -13,12 +13,86 @@ import {
   FileText,
   FilePlus2,
   Loader2,
+  RefreshCw,
   Send,
   Upload,
   X,
+  XCircle,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import api from '../lib/api';
+
+// Tooltip estilo shadcn (sin dependencia): burbuja oscura al hover con flecha.
+function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactNode }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+      onFocus={() => setShow(true)}
+      onBlur={() => setShow(false)}
+    >
+      {children}
+      {show && (
+        <span
+          role="tooltip"
+          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background shadow-md"
+        >
+          {content}
+          <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 bg-foreground" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+// Celda de estado del documento local: ícono por estado + tooltip shadcn.
+// El refresh solo aparece si NO está aceptado (ya aceptado = estado final).
+function DocumentStatusCell({ label, status, boletaId }: { label: string; status: string; boletaId?: number }) {
+  const [current, setCurrent] = useState(status);
+  const [refreshing, setRefreshing] = useState(false);
+  const s = String(current || '').toUpperCase();
+  const accepted = s === 'ACEPTADO';
+
+  const refresh = async () => {
+    if (!boletaId) return;
+    setRefreshing(true);
+    try {
+      const r: any = await api.refreshBoletaStatus(boletaId);
+      if (r?.estadoSunat) setCurrent(r.estadoSunat);
+    } catch { /* noop */ }
+    setRefreshing(false);
+  };
+
+  const view = accepted
+    ? { Icon: CheckCircle2, color: 'text-emerald-600', title: 'Aceptado por SUNAT' }
+    : s === 'RECHAZADO'
+    ? { Icon: XCircle, color: 'text-red-600', title: 'Rechazado por SUNAT' }
+    : { Icon: AlertCircle, color: 'text-amber-500', title: `${current || 'Enviado'} · pendiente de confirmación en SUNAT` };
+  const Icon = view.Icon;
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono text-xs">{label}</span>
+      <Tooltip content={view.title}>
+        <span className={`inline-flex ${view.color}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </Tooltip>
+      {!accepted && boletaId != null && (
+        <Tooltip content="Actualizar estado en SUNAT">
+          <button
+            type="button" onClick={refresh} disabled={refreshing}
+            className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
 
 type Company = {
   id: number;
@@ -892,7 +966,7 @@ export default function FalabellaApi() {
     return meta[selectedFlowFilter];
   }, [selectedFlowFilter]);
 
-  const showDocumentLocalColumn = selectedFlowFilter !== 'ready_to_invoice';
+  const showDocumentLocalColumn = selectedFlowFilter !== 'ready_to_invoice' && selectedFlowFilter !== 'not_ready';
   const showSelectionColumn = selectedFlowFilter === 'ready_to_invoice' || (selectedFlowFilter === 'has_document' && documentSelectionMode);
   const flowTableColumnCount = (showSelectionColumn ? 1 : 0) + 6 + (showDocumentLocalColumn ? 1 : 0);
 
@@ -1963,7 +2037,7 @@ export default function FalabellaApi() {
                       <th className="p-3 font-medium">Creada</th>
                       <th className="p-3 font-medium">Estado</th>
                       <th className="p-3 font-medium">Comprobante</th>
-                      {showDocumentLocalColumn && <th className="p-3 font-medium">Documento local</th>}
+                      {showDocumentLocalColumn && <th className="p-3 font-medium">N° de boleta</th>}
                       <th className="p-3 font-medium">Siguiente paso</th>
                       <th className="p-3 text-right font-medium">Total</th>
                     </tr>
@@ -2058,11 +2132,11 @@ export default function FalabellaApi() {
                           </td>
                           {showDocumentLocalColumn && (
                             <td className="p-3 align-middle">
-                              <div className="font-mono text-xs">{row.documentLabel}</div>
-                              {row.documentStatus && <div className="text-xs text-muted-foreground">{row.documentStatus}</div>}
-                              {row.documentUploadedAt && (
-                                <div className="mt-1 text-xs font-medium text-emerald-700">Subida a Falabella</div>
-                              )}
+                              <DocumentStatusCell
+                                label={row.documentLabel}
+                                status={row.documentStatus}
+                                boletaId={row.documentSource === 'local_boleta' ? row.documentId : undefined}
+                              />
                             </td>
                           )}
                           <td className="p-3 align-middle">
@@ -2078,14 +2152,30 @@ export default function FalabellaApi() {
                                 Emitir
                               </button>
                             ) : row.bucket === 'has_document' && row.invoiceKind === 'BOLETA' ? (
-                              <button
-                                type="button"
-                                onClick={() => void openUploadModal(row.order, true)}
-                                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100"
-                              >
-                                <Upload className="h-3.5 w-3.5" />
-                                {row.documentUploadedAt ? 'Volver a subir' : 'Subir boleta'}
-                              </button>
+                              row.documentUploadedAt ? (
+                                <Tooltip content="Ya lo subiste a Falabella">
+                                  <button
+                                    type="button"
+                                    onClick={() => void openUploadModal(row.order, true)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Volver a subir
+                                  </button>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip content={String(row.documentStatus || '').toUpperCase() === 'ACEPTADO' ? 'Subir la boleta a Falabella' : 'La boleta debe estar ACEPTADA por SUNAT para subirla'}>
+                                  <button
+                                    type="button"
+                                    disabled={String(row.documentStatus || '').toUpperCase() !== 'ACEPTADO'}
+                                    onClick={() => void openUploadModal(row.order, true)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Subir documento
+                                  </button>
+                                </Tooltip>
+                              )
                             ) : (
                               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
                                 {row.bucket === 'has_document' && <CheckCircle2 className="h-3.5 w-3.5" />}

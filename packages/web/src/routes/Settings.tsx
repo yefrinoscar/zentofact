@@ -59,7 +59,7 @@ export default function Settings() {
 
       <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
         <h3 className="font-semibold text-foreground">Acerca de</h3>
-        <p className="mt-2 text-sm text-muted-foreground">ZENTOFACTO v1.0.0</p>
+        <p className="mt-2 text-sm text-muted-foreground">ZentoFact v1.0.0</p>
         <p className="text-sm text-muted-foreground">Generación de boletas electrónicas peruanas</p>
       </div>
     </div>

@@ -10,6 +10,7 @@ export async function getNextCorrelative(
   branchId: number,
   tipoDocumento: string,
   serie: string,
+  persist: boolean = true,
 ): Promise<string> {
   const client = await pool.connect();
   try {
@@ -106,15 +107,18 @@ export async function getNextCorrelative(
     ) + 1;
     const now = Math.floor(Date.now() / 1000);
 
-    await client.query(
-      `update correlatives
-          set correlativo_actual = $1,
-              updated_at = $2
-        where branch_id = any($3::int[])
-          and tipo_documento = $4
-          and serie = $5`,
-      [next, now, branchIds, tipoDocumento, serie],
-    );
+    // En beta (persist=false) NO se avanza el contador: es solo prueba, la boleta se limpia luego.
+    if (persist) {
+      await client.query(
+        `update correlatives
+            set correlativo_actual = $1,
+                updated_at = $2
+          where branch_id = any($3::int[])
+            and tipo_documento = $4
+            and serie = $5`,
+        [next, now, branchIds, tipoDocumento, serie],
+      );
+    }
 
     await client.query('commit');
     return String(next).padStart(6, '0');

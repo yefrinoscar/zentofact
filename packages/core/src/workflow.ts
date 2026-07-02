@@ -1,7 +1,7 @@
 import { db } from './db';
 import { boletas, branches, companies, dailySummaries } from './db/schema';
 import { eq, and } from 'drizzle-orm';
-import { createBoleta, sendBoletasAsDailySummary } from './services/boleta.service';
+import { createBoleta, sendBoletasAsDailySummary, sendBoletaToSunat } from './services/boleta.service';
 import type { DetalleItem } from './utils/tax-calculator';
 import type { CoreConfig, VentaItem, WorkflowResult, WorkflowProgress } from './index';
 
@@ -82,6 +82,9 @@ export async function processWorkflow(
   const { companyId, branchId } = await ensureSetup(config);
   const serie = config.serieBoleta || 'B001';
   const isProduction = config.modoProduccion ?? false;
+  // Emisión de UNA sola boleta => envío INDIVIDUAL a SUNAT (así el nombre del cliente queda en el
+  // registro; el resumen diario lo muestra como "-"). En lote se usa el resumen diario.
+  const isIndividual = ventas.length === 1;
 
   const results: WorkflowResult['boletas'] = [];
   let exitosas = 0;
@@ -172,7 +175,7 @@ export async function processWorkflow(
         serie: ventaSerie,
         fecha_emision: venta.fechaEmision,
         moneda: venta.moneda || 'PEN',
-        metodo_envio: 'resumen_diario',
+        metodo_envio: isIndividual ? 'individual' : 'resumen_diario',
         client: {
           tipo_documento: venta.client.tipoDocumento,
           numero_documento: venta.client.numeroDocumento,
@@ -180,6 +183,8 @@ export async function processWorkflow(
           direccion: venta.client.direccion,
         },
         detalles,
+        // Beta: no avanzar el contador de correlativo (solo prueba).
+        persistCorrelative: isProduction,
       });
 
       pendingBoletaIds.push(boleta.id);
@@ -200,6 +205,30 @@ export async function processWorkflow(
 
   if (pendingBoletaIds.length > 0) {
     const boletaIds = Array.from(new Set(pendingBoletaIds));
+
+    if (isIndividual && boletaIds.length === 1) {
+    // Envío INDIVIDUAL a SUNAT: la boleta se acepta al instante con su CDR y el nombre del cliente queda registrado.
+    const id = boletaIds[0];
+    onProgress?.(total, total, 'Enviando boleta a SUNAT (individual)...');
+    let sendError = '';
+    try {
+      const r = await sendBoletaToSunat(id);
+      if (!r.success) sendError = r.message || 'Rechazado por SUNAT';
+    } catch (e: any) {
+      sendError = e?.message || 'Error al enviar a SUNAT';
+    }
+    const b = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+    const estado = String(b?.estadoSunat || '').toUpperCase();
+    if (estado === 'ACEPTADO') exitosas++; else rechazadas++;
+    results.push({
+      numeroCompleto: b?.numeroCompleto || '',
+      estadoSunat: (estado || 'RECHAZADO') as any,
+      pdfPath: '',
+      xmlPath: b?.xmlPath || '',
+      orderNumber: b?.orderNumber || undefined,
+      error: estado === 'ACEPTADO' ? undefined : (sendError || 'Rechazado por SUNAT'),
+    });
+    } else {
     const progressScope = summaryReferenceDate || 'Resumen diario';
 
     onProgress?.(total, total, `[${progressScope}] Enviando resumen diario a SUNAT...`);
@@ -272,6 +301,7 @@ export async function processWorkflow(
           summaryResponse: summaryMessage,
         });
       }
+    }
     }
   }
 

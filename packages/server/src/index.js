@@ -1,4 +1,4 @@
-// ZENTOFACTO API — capa HTTP delgada que expone @zentofact/core.
+// ZentoFact API — capa HTTP delgada que expone @zentofact/core.
 // El core no sabe que lo llama HTTP; aquí solo mapeamos rutas -> funciones del core.
 // Omitido en web (queda en desktop): paths/FS, diálogos nativos, scraper Falabella.
 import { config } from 'dotenv';
@@ -46,7 +46,7 @@ const fail = (c, e, status = 500) => {
   return c.json({ error: String((e && e.message) || e) }, status);
 };
 
-app.get('/health', (c) => ok(c, { ok: true, service: 'zentofacto-api', ts: new Date().toISOString() }));
+app.get('/health', (c) => ok(c, { ok: true, service: 'zentofact-api', ts: new Date().toISOString() }));
 
 // ── Empresas ──
 app.get('/companies', async (c) => { try { return ok(c, await core.listCompanies()); } catch (e) { return fail(c, e); } });
@@ -80,6 +80,7 @@ app.get('/facturas', async (c) => { try { return ok(c, await core.listFacturas(p
 app.get('/credit-notes', async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.get('/daily-summaries', async (c) => { try { return ok(c, await core.listDailySummaries(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.post('/daily-summaries/:id/refresh', async (c) => { try { return ok(c, await core.refreshDailySummaryStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/boletas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 
 // ── Correlativos ──
 app.get('/branches/:id/correlatives', async (c) => { try { return ok(c, await core.getCorrelatives(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
@@ -178,5 +179,5 @@ if (serveWeb) {
 
 const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`ZENTOFACTO en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
+  console.log(`ZentoFact en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
 });

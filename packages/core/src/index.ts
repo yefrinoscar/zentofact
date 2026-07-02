@@ -85,7 +85,7 @@ export { listFacturas } from './services/factura-query.service';
 export type { FacturaFilter } from './services/factura-query.service';
 export { listCreditNotes } from './services/credit-note-query.service';
 export type { CreditNoteFilter } from './services/credit-note-query.service';
-export { listDailySummaries, refreshDailySummaryStatus } from './services/daily-summary-query.service';
+export { listDailySummaries, refreshDailySummaryStatus, refreshBoletaStatus } from './services/daily-summary-query.service';
 export type { DailySummaryFilter } from './services/daily-summary-query.service';
 export { createBoleta, sendBoletaToSunat, sendBoletasAsDailySummary, generateAcceptedBoletaPdf, generateAcceptedBoletaPdfBase64, generateAcceptedBoletaPreviewHtml, markBoletaFalabellaPdfUpload, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, sendBoletasAsVoidedDailySummary, sendBoletasAsVoidedDailySummaries } from './services/boleta.service';
 export { recordFacturaUpload } from './services/factura.service';

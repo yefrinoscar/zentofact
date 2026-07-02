@@ -1,4 +1,4 @@
-# ZENTOFACTO — Monorepo
+# ZentoFact — Monorepo
 
 Emite documentos electronicos peruanos con SUNAT y cruza ordenes de Falabella desde una web desacoplada.
 

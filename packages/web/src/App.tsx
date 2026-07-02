@@ -153,11 +153,11 @@ function AppLayout() {
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-border/80 bg-background/90 px-6 py-4 backdrop-blur">
-          <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-6">
-            <div>
-              <h1 className="text-xl font-semibold text-foreground">{currentRoute.title}</h1>
-              <p className="text-sm text-muted-foreground">{currentRoute.subtitle}</p>
+        <header className="flex h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-6">
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-semibold text-foreground">{currentRoute.title}</h1>
+              <p className="truncate text-sm text-muted-foreground">{currentRoute.subtitle}</p>
             </div>
 
             {pathname === '/workflow' && headerCompanies.length > 0 ? (
