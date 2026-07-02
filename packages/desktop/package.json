@@ -12,7 +12,8 @@
     "build:deps": "npm run build -w @boletas/core && npm run build -w @boletas/falabella-api && npm run build -w @boletas/scraper",
     "package": "npm run generate-icons && npm run build:deps && electron-vite build && electron-builder --mac --win --linux",
     "package:mac": "npm run dmg",
-    "dmg": "npm run generate-icons && npm run build:deps && electron-vite build && electron-builder --mac dmg"
+    "dmg": "npm run generate-icons && npm run build:deps && electron-vite build && electron-builder --mac dmg",
+    "build:web": "vite build --config vite.web.config.ts"
   },
   "dependencies": {
     "@boletas/core": "*",

@@ -29,3 +29,6 @@ scripts/output/
 
 # Reportes generados (contienen datos de clientes)
 reports/
+
+# Build web del front (se genera con build:web)
+packages/desktop/web-dist/

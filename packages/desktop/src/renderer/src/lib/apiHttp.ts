@@ -1,6 +1,7 @@
 // Implementación HTTP de la misma superficie `api` que usa el renderer.
 // Se usa cuando la UI corre en web (no hay window.electronAPI); apunta al backend @boletas/server.
-const BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
+// Vacío = mismo origen (el front se sirve desde el propio server). En dev se puede fijar VITE_API_URL.
+const BASE = (import.meta as any).env?.VITE_API_URL || '';
 
 async function req(path: string, init?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {

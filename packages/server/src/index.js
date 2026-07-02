@@ -21,8 +21,8 @@ app.use('*', cors({ origin: (process.env.WEB_ORIGINS || 'http://localhost:5173,h
 
 // Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
-// Guard: de aquí en adelante todo exige sesión, salvo /health.
-app.use('*', requireAuth(['/health']));
+// Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
+app.use('*', requireAuth());
 
 const ok = (c, data, status = 200) => c.json(data, status);
 const fail = (c, e, status = 500) => c.json({ error: String((e && e.message) || e) }, status);
@@ -123,7 +123,15 @@ app.post('/workflow/process', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 
+// ── Front web estático (mismo origen que el API) ──
+const { serveStatic } = await import('@hono/node-server/serve-static');
+const WEB_ROOT = process.env.WEB_ROOT || './packages/desktop/web-dist';
+app.use('/assets/*', serveStatic({ root: WEB_ROOT }));
+app.get('*', serveStatic({ root: WEB_ROOT }));
+// Fallback al index para rutas que no son archivo (la UI usa HashRouter, pero por si acaso).
+app.get('*', serveStatic({ path: `${WEB_ROOT}/index.html` }));
+
 const port = Number(process.env.PORT || 3001);
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`ZENTOFACTO API escuchando en http://localhost:${info.port}`);
+  console.log(`ZENTOFACTO en http://localhost:${info.port} (API + front)`);
 });
