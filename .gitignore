@@ -31,4 +31,5 @@ scripts/output/
 reports/
 
 # Build web del front (se genera con build:web)
+packages/web/dist/
 packages/desktop/web-dist/

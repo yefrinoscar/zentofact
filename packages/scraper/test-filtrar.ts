@@ -10,7 +10,7 @@ async function main() {
     password: 'Atencioncita123@xx?',
     headless: false,
     outputDir: './data',
-    authStatePath: join(process.env.HOME!, '.boletas-sunat', 'falabella-session.json'),
+    authStatePath: join(process.env.HOME!, '.zentofact', 'falabella-session.json'),
   };
 
   const profile = getProfile();

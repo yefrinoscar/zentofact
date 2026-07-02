@@ -30,7 +30,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Anula boletas por mes y empresa emitiendo notas de crédito, individuales o en grupo.',
   },
   '/falabella-api': {
-    title: 'Falabella API',
+    title: 'Gestor de Sellers',
     subtitle: 'Consulta órdenes por empresa usando las credenciales Seller API guardadas.',
   },
   '/summaries': {
@@ -156,7 +156,6 @@ function AppLayout() {
         <header className="border-b border-border/80 bg-background/90 px-6 py-4 backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl items-start justify-between gap-6">
             <div>
-              <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">ZENTOFACTO</p>
               <h1 className="text-xl font-semibold text-foreground">{currentRoute.title}</h1>
               <p className="text-sm text-muted-foreground">{currentRoute.subtitle}</p>
             </div>
@@ -216,11 +215,7 @@ function AppLayout() {
                   {workflowRunning ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 </button>
               </div>
-            ) : (
-              <div className="max-w-[460px] truncate pt-2 text-xs text-muted-foreground">
-                {activeCompanyLabel}
-              </div>
-            )}
+            ) : null}
           </div>
         </header>
 

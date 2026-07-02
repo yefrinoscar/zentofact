@@ -1,6 +1,6 @@
 const Database = require('better-sqlite3');
 
-const DB_PATH = '/Users/ylaurach/Library/Application Support/@boletas/desktop/storage/boletas.db';
+const DB_PATH = '/Users/ylaurach/Library/Application Support/@zentofact/desktop/storage/boletas.db';
 const BILL_CONSULT_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService';
 
 function escapeXml(value) {

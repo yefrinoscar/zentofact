@@ -1,4 +1,4 @@
-// ZENTOFACTO API — capa HTTP delgada que expone @boletas/core.
+// ZENTOFACTO API — capa HTTP delgada que expone @zentofact/core.
 // El core no sabe que lo llama HTTP; aquí solo mapeamos rutas -> funciones del core.
 // Omitido en web (queda en desktop): paths/FS, diálogos nativos, scraper Falabella.
 import { config } from 'dotenv';
@@ -12,12 +12,28 @@ config({ path: resolve(__dirname, '../../../.env') });
 const { serve } = await import('@hono/node-server');
 const { Hono } = await import('hono');
 const { cors } = await import('hono/cors');
-const core = await import('@boletas/core');
+const { stream } = await import('hono/streaming');
+const core = await import('@zentofact/core');
 const { auth, requireAuth } = await import('./auth.js');
 
 const app = new Hono();
 // CORS con credenciales (cookies de sesión) para el front web.
-app.use('*', cors({ origin: (process.env.WEB_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',').map((s) => s.trim()), credentials: true }));
+const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
+const webOrigins = Array.from(new Set([
+  ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  railwayOrigin,
+  'http://localhost:3011',
+  'http://127.0.0.1:3011',
+  'http://localhost:3000',
+].filter(Boolean)));
+app.use('*', cors({ origin: webOrigins, credentials: true }));
+
+// Log de todas las requests (para diagnóstico).
+app.use('*', async (c, next) => {
+  const t = Date.now();
+  await next();
+  console.log(`[REQ] ${c.req.method} ${c.req.path} → ${c.res.status} (${Date.now() - t}ms)`);
+});
 
 // Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
@@ -25,7 +41,10 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 app.use('*', requireAuth());
 
 const ok = (c, data, status = 200) => c.json(data, status);
-const fail = (c, e, status = 500) => c.json({ error: String((e && e.message) || e) }, status);
+const fail = (c, e, status = 500) => {
+  console.error('[API ERROR]', c.req.method, c.req.path, '→', (e && e.stack) || e);
+  return c.json({ error: String((e && e.message) || e) }, status);
+};
 
 app.get('/health', (c) => ok(c, { ok: true, service: 'zentofacto-api', ts: new Date().toISOString() }));
 
@@ -70,10 +89,11 @@ app.get('/boletas/:id/pdf', async (c) => {
   try { const b64 = await core.generateAcceptedBoletaPdfBase64(Number(c.req.param('id'))); return ok(c, { base64: b64 }); }
   catch (e) { return fail(c, e); }
 });
-app.get('/boletas/:id/preview', async (c) => { try { return c.html(await core.generateAcceptedBoletaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
-app.get('/credit-notes/:id/preview', async (c) => { try { return c.html(await core.generatePreviewCreditNoteHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+// Los generadores del core devuelven un objeto { html, numeroCompleto, ... } → JSON, no c.html.
+app.get('/boletas/:id/preview', async (c) => { try { return ok(c, await core.generateAcceptedBoletaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.get('/credit-notes/:id/preview', async (c) => { try { return ok(c, await core.generatePreviewCreditNoteHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/boletas/preview', async (c) => {
-  try { const { companyId, venta } = await c.req.json(); return c.html(await core.generatePreviewBoletaHtmlForVenta(companyId, venta)); }
+  try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewBoletaHtmlForVenta(companyId, venta)); }
   catch (e) { return fail(c, e); }
 });
 
@@ -118,20 +138,45 @@ app.post('/falabella/upload-boleta-pdf', async (c) => { try { return ok(c, await
 // ── Workflow (emisión en lote) ──
 app.post('/workflow/validate-config', async (c) => { try { return ok(c, { errors: core.validateConfig(await c.req.json()) }); } catch (e) { return fail(c, e, 400); } });
 app.post('/workflow/validate-ventas', async (c) => { try { return ok(c, { errors: core.validateVentas(await c.req.json()) }); } catch (e) { return fail(c, e, 400); } });
+// Streaming NDJSON: cada línea es un evento {type:'progress'|'result'|'error'}.
+// El front (apiHttp) lee el stream y dispara onProgress con cada 'progress'.
 app.post('/workflow/process', async (c) => {
-  try { const { config: cfg, ventas } = await c.req.json(); return ok(c, await core.processWorkflow(cfg, ventas)); }
-  catch (e) { return fail(c, e, 400); }
+  const { config: cfg, ventas } = await c.req.json();
+  console.log('[WORKFLOW] companyId=%s ventas=%s cert=%s claveSol=%s modoProd=%s',
+    cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', cfg?.certificadoBase64 ? 'sí' : 'NO', cfg?.claveSol ? 'sí' : 'NO', cfg?.modoProduccion);
+  c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
+  c.header('Cache-Control', 'no-cache, no-transform');
+  c.header('X-Accel-Buffering', 'no'); // evita buffering de proxies (Railway/nginx)
+  return stream(c, async (s) => {
+    const write = (obj) => s.write(JSON.stringify(obj) + '\n');
+    const onProgress = (current, total, status) => {
+      try { write({ type: 'progress', current, total, status }); } catch {}
+    };
+    try {
+      const result = await core.processWorkflow(cfg, ventas, onProgress);
+      console.log('[WORKFLOW RESULT]', JSON.stringify({ success: result?.success, error: result?.error, exitosas: result?.exitosas, rechazadas: result?.rechazadas, boletas: (result?.boletas || []).map((b) => ({ estado: b.estadoSunat, msg: b.mensajeSunat || b.error })) }).slice(0, 800));
+      await write({ type: 'result', result });
+    } catch (e) {
+      console.error('[API ERROR] POST /workflow/process →', (e && e.stack) || e);
+      await write({ type: 'error', error: String((e && e.message) || e) });
+    }
+  });
 });
 
-// ── Front web estático (mismo origen que el API) ──
-const { serveStatic } = await import('@hono/node-server/serve-static');
-const WEB_ROOT = process.env.WEB_ROOT || './packages/desktop/web-dist';
-app.use('/assets/*', serveStatic({ root: WEB_ROOT }));
-app.get('*', serveStatic({ root: WEB_ROOT }));
-// Fallback al index para rutas que no son archivo (la UI usa HashRouter, pero por si acaso).
-app.get('*', serveStatic({ path: `${WEB_ROOT}/index.html` }));
+const serveWeb = process.env.SERVE_WEB === 'true';
 
-const port = Number(process.env.PORT || 3001);
+// ── Front web estático (opt-in) ──
+// En desarrollo el front corre separado con Vite (3011) y usa proxy al API (3010).
+// Para un deploy monolítico se puede activar SERVE_WEB=true.
+if (serveWeb) {
+  const { serveStatic } = await import('@hono/node-server/serve-static');
+  const WEB_ROOT = process.env.WEB_ROOT || './packages/web/dist';
+  app.use('/assets/*', serveStatic({ root: WEB_ROOT }));
+  app.get('*', serveStatic({ root: WEB_ROOT }));
+  app.get('*', serveStatic({ path: `${WEB_ROOT}/index.html` }));
+}
+
+const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`ZENTOFACTO en http://localhost:${info.port} (API + front)`);
+  console.log(`ZENTOFACTO en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
 });

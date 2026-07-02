@@ -1,17 +1,25 @@
 {
-  "name": "boletas-sunat",
+  "name": "zentofact",
   "private": true,
   "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev": "vp run -r dev",
+    "dev": "npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core && sh -c 'trap \"kill 0\" INT TERM EXIT; npm run dev -w @zentofact/falabella-api & npm run dev -w @zentofact/core & PORT=3010 npm run dev -w @zentofact/server & VITE_API_TARGET=http://localhost:3010 npm run dev -w @zentofact/web & wait'",
+    "dev:all": "vp run -r dev",
+    "dev:api": "npm run dev -w @zentofact/server",
+    "dev:web": "npm run dev -w @zentofact/web",
+    "build:web": "npm run build -w @zentofact/web",
     "build": "vp run -r build",
-    "core": "vp run --filter @boletas/core",
-    "desktop": "vp run --filter @boletas/desktop",
-    "package": "vp run --filter @boletas/desktop package",
-    "package:dmg": "vp run --filter @boletas/desktop package:mac",
+    "core": "vp run --filter @zentofact/core",
+    "web": "vp run --filter @zentofact/web",
+    "desktop": "vp run --filter @zentofact/desktop",
+    "package": "vp run --filter @zentofact/desktop package",
+    "package:dmg": "vp run --filter @zentofact/desktop package:mac",
     "db:push:neon": "node scripts/push-schema-neon.mjs",
     "check:net": "node scripts/check-connectivity.mjs",
     "r2:backfill": "node scripts/upload-archives-to-r2.mjs",

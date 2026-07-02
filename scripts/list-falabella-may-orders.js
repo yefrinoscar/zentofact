@@ -9,7 +9,7 @@ const {
 
 const DB_PATH = process.env.BOLETAS_DB_PATH || path.join(
   process.env.HOME,
-  'Library/Application Support/@boletas/desktop/storage/boletas.db',
+  'Library/Application Support/@zentofact/desktop/storage/boletas.db',
 );
 const PERIOD_LABEL = process.env.FALABELLA_PERIOD_LABEL || 'mayo-2026';
 const FROM_DATE = process.env.FALABELLA_FROM || '2026-05-01';

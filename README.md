@@ -1,16 +1,18 @@
-# Boletas SUNAT — Monorepo
+# ZENTOFACTO — Monorepo
 
-Genera boletas electronicas peruanas con SUNAT desde un JSON de ventas.
+Emite documentos electronicos peruanos con SUNAT y cruza ordenes de Falabella desde una web desacoplada.
 
 ## Estructura
 
 ```
-boletas-sunat/
+zentofact/
 ├── packages/
-│   ├── core/         ← @boletas/core — logica SUNAT, PDF, BD
-│   ├── falabella-api/← @boletas/falabella-api — cliente oficial Seller API
-│   ├── scraper/      ← @boletas/scraper — extrae ventas (placeholder)
-│   └── desktop/      ← @boletas/desktop — Electron app 4 pantallas
+│   ├── core/         ← @zentofact/core — logica SUNAT, PDF, BD
+│   ├── falabella-api/← @zentofact/falabella-api — cliente oficial Seller API
+│   ├── scraper/      ← @zentofact/scraper — extrae ventas (placeholder)
+│   ├── server/       ← @zentofact/server — API HTTP
+│   ├── web/          ← @zentofact/web — frontend React web
+│   └── desktop/      ← @zentofact/desktop — shell Electron que monta @zentofact/web
 └── package.json
 ```
 
@@ -37,7 +39,10 @@ cd packages/scraper && npx tsc --noEmit
 # Falabella API
 cd packages/falabella-api && npx tsc --noEmit
 
-# Desktop
+# Web
+cd packages/web && npm run build
+
+# Electron
 cd packages/desktop && npx tsc --noEmit
 ```
 
@@ -48,10 +53,33 @@ cd packages/desktop
 npm run dev
 ```
 
-## API — @boletas/core
+## Ejecutar (web desacoplado)
+
+En desarrollo, el API y el frontend corren separados:
+
+```bash
+# Terminal 1: API HTTP
+npm run dev:api
+
+# Terminal 2: frontend web con HMR
+npm run dev:web
+```
+
+- API: `http://localhost:3010`
+- Web: `http://localhost:3011`
+
+El servidor API no sirve el frontend por defecto. Para un despliegue monolitico
+con assets estaticos, primero genera el build web y luego activa `SERVE_WEB=true`:
+
+```bash
+npm run build:web
+SERVE_WEB=true npm run dev:api
+```
+
+## API — @zentofact/core
 
 ```typescript
-import { processWorkflow, validateConfig } from '@boletas/core';
+import { processWorkflow, validateConfig } from '@zentofact/core';
 
 const config = {
   ruc: '20123456789',
@@ -99,7 +127,7 @@ const result = await processWorkflow(config, ventas, (current, total, status) =>
 // }
 ```
 
-## Desktop — pantallas
+## Electron — pantallas
 
 1. **Configuracion** — RUC, certificado .pfx, credenciales SOL, carpeta salida
 2. **Datos** — cargar JSON de ventas, vista previa
@@ -140,6 +168,6 @@ export FALABELLA_API_USER_ID="tu-user-id"
 export FALABELLA_API_KEY="tu-api-key"
 export FALABELLA_API_VERSION="1.0"
 
-npm run --workspace @boletas/falabella-api build
-npm run --workspace @boletas/falabella-api get-orders -- --updated-after 2026-05-01T00:00:00+00:00 --limit 10
+npm run --workspace @zentofact/falabella-api build
+npm run --workspace @zentofact/falabella-api get-orders -- --updated-after 2026-05-01T00:00:00+00:00 --limit 10
 ```

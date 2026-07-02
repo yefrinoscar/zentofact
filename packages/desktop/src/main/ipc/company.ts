@@ -4,8 +4,8 @@ import path from 'path';
 import {
   listCompanies, getCompany, getCompanyByRuc,
   createCompany, updateCompany, deleteCompany, testSunatConnection,
-} from '@boletas/core';
-import type { CreateCompanyInput, UpdateCompanyInput } from '@boletas/core';
+} from '@zentofact/core';
+import type { CreateCompanyInput, UpdateCompanyInput } from '@zentofact/core';
 
 function getConfigPath() {
   const userData = app.getPath('userData');

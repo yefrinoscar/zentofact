@@ -6,12 +6,13 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/renderer/src/*"]
+      "@/*": ["../web/src/*"],
+      "@zentofact/web": ["../web/src/main.tsx"]
     }
   },
   "include": [
     "src/main/**/*",
     "src/preload/**/*",
-    "src/renderer/src/**/*"
+    "src/renderer/**/*"
   ]
 }

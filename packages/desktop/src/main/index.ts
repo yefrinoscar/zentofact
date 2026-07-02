@@ -3,7 +3,7 @@ import { join, resolve } from 'path';
 import dotenv from 'dotenv';
 import { prepareDesktopStorage } from './bootstrap';
 
-// @boletas/core throws at import time if DATABASE_URL_POSTGRES is missing, so the
+// @zentofact/core throws at import time if DATABASE_URL_POSTGRES is missing, so the
 // .env must be loaded here (before any core import) for the app to even start.
 // In dev the main process runs with cwd = packages/desktop, so core's own
 // dotenv.config() can't find the monorepo-root .env. In a packaged build there is

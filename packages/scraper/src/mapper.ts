@@ -1,4 +1,4 @@
-import type { VentaItem } from '@boletas/core';
+import type { VentaItem } from '@zentofact/core';
 import type { RawFalabellaOrder } from './types';
 import { splitIgv, parseUserDate } from './utils';
 

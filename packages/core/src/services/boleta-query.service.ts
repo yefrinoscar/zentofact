@@ -126,8 +126,24 @@ export async function listBoletas(filter: BoletaFilter) {
     .where(and(...conditions))
     .orderBy(desc(boletas.createdAt));
 
-  const total = all.length;
-  const paged = all.slice(offset, offset + limit);
+  const normalized = all.map(normalizeBoletaQueryRow);
+  const total = normalized.length;
+  const paged = normalized.slice(offset, offset + limit);
 
   return { boletas: paged, total };
+}
+
+function normalizeBoletaQueryRow(row: any) {
+  if (isAcceptedByStoredSunatResponse(row)) {
+    return { ...row, estadoSunat: 'ACEPTADO' };
+  }
+  return row;
+}
+
+function isAcceptedByStoredSunatResponse(row: any) {
+  if (String(row.estadoSunat || '').toUpperCase() === 'ACEPTADO') return false;
+  const response = String(row.respuestaSunat || '');
+  if (!response) return false;
+  if (response.includes('"code":"0"') || response.includes('"code": "0"')) return true;
+  return /ha sido aceptad[oa]/i.test(response) && Boolean(row.cdrPath);
 }

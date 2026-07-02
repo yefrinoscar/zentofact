@@ -2,7 +2,7 @@
 // PDFs are intentionally skipped (they stay local / are regenerated on demand).
 //
 // Usage (after creating the R2 bucket + token):
-//   R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=boletas-sunat \
+//   R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=zentofact \
 //   node scripts/upload-archives-to-r2.mjs
 //   (optional) STORAGE_PATH=packages/desktop/storage
 import 'dotenv/config';

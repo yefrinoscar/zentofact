@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import { homedir } from 'os';
 import { isAbsolute, join } from 'path';
-import { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generateAcceptedBoletaPdf, generateAcceptedBoletaPreviewHtml, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@boletas/core';
-import type { BoletaFilter, FacturaFilter, CreditNoteFilter, DailySummaryFilter } from '@boletas/core';
+import { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generateAcceptedBoletaPdf, generateAcceptedBoletaPreviewHtml, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@zentofact/core';
+import type { BoletaFilter, FacturaFilter, CreditNoteFilter, DailySummaryFilter } from '@zentofact/core';
 
 interface CreditNoteOptions {
   codMotivo?: string;

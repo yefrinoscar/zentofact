@@ -4,10 +4,18 @@ import { betterAuth } from 'better-auth';
 import { Pool } from 'pg';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
+const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
+const trustedOrigins = Array.from(new Set([
+  ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  railwayOrigin,
+  'http://localhost:3011',
+  'http://127.0.0.1:3011',
+  'http://localhost:3000',
+].filter(Boolean)));
 
 export const auth = betterAuth({
   database: pool,
-  baseURL: process.env.AUTH_BASE_URL || `http://localhost:${process.env.PORT || 3001}`,
+  baseURL: process.env.AUTH_BASE_URL || railwayOrigin || `http://localhost:${process.env.PORT || 3010}`,
   secret: process.env.BETTER_AUTH_SECRET || 'dev-secret-change-me',
   emailAndPassword: {
     enabled: true,
@@ -15,7 +23,7 @@ export const auth = betterAuth({
     // no cualquiera se registra. Se puede habilitar si se quiere autoservicio.
     disableSignUp: process.env.AUTH_ALLOW_SIGNUP !== 'true',
   },
-  trustedOrigins: (process.env.WEB_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',').map((s) => s.trim()).filter(Boolean),
+  trustedOrigins,
 });
 
 // Prefijos del API que exigen sesión. Todo lo demás (login, estáticos del front) es público.

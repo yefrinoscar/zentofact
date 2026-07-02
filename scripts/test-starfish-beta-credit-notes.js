@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
 const { SunatService } = require('../packages/core/dist/services/sunat.service.js');
 
-const DB_PATH = '/Users/ylaurach/Library/Application Support/@boletas/desktop/storage/boletas.db';
+const DB_PATH = '/Users/ylaurach/Library/Application Support/@zentofact/desktop/storage/boletas.db';
 
 const docs = [
   { affected: 'EB01-577', doc: '45933036', name: 'YULIZA MARLENE BARRERA VIDAL', total: 262.80 },

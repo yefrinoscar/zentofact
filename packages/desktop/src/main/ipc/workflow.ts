@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import os from 'os';
 import path from 'path';
-import { processWorkflow, validateConfig, validateVentas, sanitizeVentaItem } from '@boletas/core';
-import type { CoreConfig, VentaItem } from '@boletas/core';
+import { processWorkflow, validateConfig, validateVentas, sanitizeVentaItem } from '@zentofact/core';
+import type { CoreConfig, VentaItem } from '@zentofact/core';
 
 function normalizeOutputDir(outputDir: string | undefined) {
   const fallbackDir = path.join(os.homedir(), 'boletas-emitidas');

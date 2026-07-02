@@ -1,4 +1,4 @@
--- Postgres (Neon) structure for boletas-sunat.
+-- Postgres (Neon) structure for zentofact.
 -- Faithful translation of the Drizzle/SQLite schema in packages/core/src/db/schema/.
 -- Structure only, no data. PDF/XML/CDR files stay local and are referenced by *_path columns.
 --

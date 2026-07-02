@@ -2,13 +2,13 @@ import { ipcMain } from 'electron';
 import { readFileSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { FalabellaWorkflow, mapOrders } from '@boletas/scraper';
-import type { ScraperConfig, FalabellaExtract } from '@boletas/scraper';
+import { FalabellaWorkflow, mapOrders } from '@zentofact/scraper';
+import type { ScraperConfig, FalabellaExtract } from '@zentofact/scraper';
 
 let workflow: FalabellaWorkflow | null = null;
 
 function normalizeScraperPath(targetPath: string | undefined, fallbackName: string) {
-  const baseDir = path.join(os.homedir(), '.boletas-sunat');
+  const baseDir = path.join(os.homedir(), '.zentofact');
 
   if (!targetPath?.trim()) {
     return path.join(baseDir, fallbackName);

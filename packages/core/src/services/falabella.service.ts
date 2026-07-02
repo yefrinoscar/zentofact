@@ -1,9 +1,9 @@
 // Servicio Falabella compartido (extraído de desktop/main/ipc/falabella-api.ts).
-// Orquesta el cliente Falabella (@boletas/falabella-api) + queries/servicios del core.
+// Orquesta el cliente Falabella (@zentofact/falabella-api) + queries/servicios del core.
 // Sin Electron: lo usan tanto el desktop (IPC) como el server (HTTP).
 import { readFileSync } from 'fs';
-import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters } from '@boletas/falabella-api';
-import type { GetOrdersV2Filters } from '@boletas/falabella-api';
+import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters } from '@zentofact/falabella-api';
+import type { GetOrdersV2Filters } from '@zentofact/falabella-api';
 import type { VentaItem } from '../index';
 import { getCompany } from './company.service';
 import { listBoletas } from './boleta-query.service';
@@ -231,11 +231,19 @@ export async function falabellaMonthSummary(payload: { companyId: number; month:
   }
 
   const sys = await listBoletas({ companyId: payload.companyId, fechaDesde: `${payload.month}-01`, fechaHasta: monthEnd, limit: 5000 });
+  const boletaOrderNumbers = Array.from(ordersByNumber.entries())
+    .filter(([, order]) => dateOf(order).startsWith(payload.month) && !isFactura(order.InvoiceRequired))
+    .map(([orderNumber]) => orderNumber);
+  const boletasByOrderEntries = await Promise.all(boletaOrderNumbers.map(async (orderNumber) => {
+    const result = await listBoletas({ companyId: payload.companyId, orderNumber, limit: 20 });
+    const exact = (result.boletas || []).find((boleta: any) => String(boleta.orderNumber || '').trim() === orderNumber) || null;
+    return [orderNumber, exact] as [string, any | null];
+  }));
 
-  let ventasBoletaMes = 0, ventasBoletaTotal = 0, emitidas = 0, registradasPendientes = 0, registradasPendientesTotal = 0;
+  let ventasBoletaMes = 0, ventasBoletaTotal = 0, emitidas = 0, emitidasTotal = 0, registradasPendientes = 0, registradasPendientesTotal = 0;
   let pendientes = 0, pendientesTotal = 0, porEmitir = 0, porEmitirTotal = 0, pendientesFalabella = 0, pendientesFalabellaTotal = 0, ventasFacturaMes = 0;
   const rows: any[] = [];
-  const sysByOrder = new Map(sys.boletas.map((b: any) => [String(b.orderNumber || '').trim(), b] as [string, any]).filter(([orderNumber]) => Boolean(orderNumber)));
+  const sysByOrder = new Map(boletasByOrderEntries.filter(([, boleta]) => Boolean(boleta)));
   for (const [num, order] of ordersByNumber) {
     if (!dateOf(order).startsWith(payload.month)) continue;
     if (isFactura(order.InvoiceRequired)) { ventasFacturaMes++; continue; }
@@ -246,7 +254,7 @@ export async function falabellaMonthSummary(payload: { companyId: number; month:
     const shouldHaveBoleta = !isPendingOrder(order);
     const bucket = hasAcceptedBoleta ? 'con_boleta' : hasBoleta ? 'registrada_pendiente' : shouldHaveBoleta ? 'por_emitir' : 'pendiente_falabella';
     ventasBoletaMes++; ventasBoletaTotal += price;
-    if (hasAcceptedBoleta) { emitidas++; }
+    if (hasAcceptedBoleta) { emitidas++; emitidasTotal += price; }
     else if (hasBoleta) { registradasPendientes++; registradasPendientesTotal += price; }
     else { pendientes++; pendientesTotal += price; if (shouldHaveBoleta) { porEmitir++; porEmitirTotal += price; } else { pendientesFalabella++; pendientesFalabellaTotal += price; } }
     rows.push({ orderNumber: num, orderId: String(order.OrderId || ''), createdAt: String(order.CreatedAt || ''), updatedAt: String(order.UpdatedAt || ''), status: statusText(order.Statuses), price, hasBoleta, hasAcceptedBoleta, shouldHaveBoleta, bucket, boletaNumero: boleta?.numeroCompleto, boletaFecha: boleta?.fechaEmision, boletaEstado: boleta?.estadoSunat });
@@ -267,7 +275,7 @@ export async function falabellaMonthSummary(payload: { companyId: number; month:
 
   return {
     month: payload.month,
-    falabella: { ventasBoletaMes, ventasBoletaTotal, emitidas, registradasPendientes, registradasPendientesTotal, pendientes, pendientesTotal, porEmitir, porEmitirTotal, pendientesFalabella, pendientesFalabellaTotal, ventasFacturaMes, rows, pendientesSample: rows.filter((row) => !row.hasBoleta).slice(0, 50) },
+    falabella: { ventasBoletaMes, ventasBoletaTotal, emitidas, emitidasTotal, registradasPendientes, registradasPendientesTotal, pendientes, pendientesTotal, porEmitir, porEmitirTotal, pendientesFalabella, pendientesFalabellaTotal, ventasFacturaMes, rows, pendientesSample: rows.filter((row) => !row.hasBoleta).slice(0, 50) },
     sistema: { total: sys.boletas.length, boletasDelMes, boletasDelMesTotal, boletasMesAnterior, boletasMesAnteriorTotal, boletasSinOrden, boletasSinOrdenTotal, boletasDetalle },
   };
 }

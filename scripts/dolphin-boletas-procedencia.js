@@ -10,7 +10,7 @@ const OUT_DIR = path.resolve('reports/dolphin-mayo-2026');
 
 const CSVS = {
   ABRIL: ['/Users/ylaurach/Library/CloudStorage/OneDrive2-Personal/zentoo/SELLERS/DOLPHIN/ABRIL/LE206126005632026060014040001EXP2.csv'],
-  MAYO: ['/private/tmp/claude-501/-Users-ylaurach-Documents-repos-p-boletas-sunat/663d2872-311e-4885-a7f7-94aa1b9b17c7/scratchpad/dolphin/LE206126005632026060014040001EXP2.csv'],
+  MAYO: ['/private/tmp/claude-501/-Users-ylaurach-Documents-repos-p-zentofact/663d2872-311e-4885-a7f7-94aa1b9b17c7/scratchpad/dolphin/LE206126005632026060014040001EXP2.csv'],
   JUNIO: [
     '/Users/ylaurach/Library/CloudStorage/OneDrive2-Personal/zentoo/SELLERS/DOLPHIN/JUNIO/21:06:2026/LE206126005632026060014040001EXP2.csv',
     '/Users/ylaurach/Library/CloudStorage/OneDrive2-Personal/zentoo/SELLERS/DOLPHIN/JUNIO/23:06:2006/LE206126005632026060014040001EXP2.csv',

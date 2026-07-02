@@ -1,7 +1,7 @@
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VentaItem } from '@boletas/core';
+import type { VentaItem } from '@zentofact/core';
 import type {
   ScraperConfig,
   SiteProfile,

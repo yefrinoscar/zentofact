@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
-import { listBranches, createBranch, updateBranch } from '@boletas/core';
-import type { CreateBranchInput, UpdateBranchInput } from '@boletas/core';
+import { listBranches, createBranch, updateBranch } from '@zentofact/core';
+import type { CreateBranchInput, UpdateBranchInput } from '@zentofact/core';
 
 export function registerBranchHandlers() {
   ipcMain.handle('branch:list', async (_e, companyId: number) => {

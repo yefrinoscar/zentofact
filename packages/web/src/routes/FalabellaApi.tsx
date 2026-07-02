@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertCircle,
@@ -687,7 +688,9 @@ export default function FalabellaApi() {
   const [selectedReadyOrders, setSelectedReadyOrders] = useState<Set<string>>(() => new Set());
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
-  const [falabellaProductionMode, setFalabellaProductionMode] = useState(false);
+  // Recuerda la elección Beta/Producción entre sesiones (default: lo último elegido).
+  const [falabellaProductionMode, setFalabellaProductionMode] = useState(() => localStorage.getItem('falabella.productionMode') === 'true');
+  useEffect(() => { localStorage.setItem('falabella.productionMode', String(falabellaProductionMode)); }, [falabellaProductionMode]);
   const [invoiceFlow, setInvoiceFlow] = useState<InvoiceFlowState>({
     loading: false,
     error: '',
@@ -697,6 +700,22 @@ export default function FalabellaApi() {
   });
 
   const autoLoadKeyRef = useRef('');
+
+  useEffect(() => {
+    const className = 'app-modal-open';
+    if (uploadModal.open) {
+      document.documentElement.classList.add(className);
+      document.body.classList.add(className);
+    } else {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    }
+
+    return () => {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+    };
+  }, [uploadModal.open]);
 
   useEffect(() => {
     api.listCompanies().then((list: Company[]) => {
@@ -2050,7 +2069,8 @@ export default function FalabellaApi() {
                             {row.bucket === 'ready_to_invoice' ? (
                               <button
                                 type="button"
-                                disabled={row.invoiceKind !== 'BOLETA'}
+                                disabled={row.invoiceKind !== 'BOLETA' || selectedReadyOrders.size > 0}
+                                title={selectedReadyOrders.size > 0 ? 'Hay boletas seleccionadas: usa "Emitir seleccionados"' : undefined}
                                 onClick={() => void openEmitBoletaModal([row])}
                                 className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
                               >
@@ -2633,8 +2653,10 @@ export default function FalabellaApi() {
         </div>
       )}
 
-      {uploadModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+      {uploadModal.open && createPortal((
+        <>
+          <div className="app-modal-backdrop" aria-hidden="true" />
+          <div className="app-modal-layer">
           <div className="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
@@ -3029,8 +3051,9 @@ export default function FalabellaApi() {
               )}
             </div>
           </div>
-        </div>
-      )}
+          </div>
+        </>
+      ), document.body)}
     </div>
   );
 }

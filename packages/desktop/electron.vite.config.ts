@@ -1,5 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
 export default defineConfig({
@@ -7,7 +8,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        external: ['pg', '@boletas/core', '@boletas/scraper', 'puppeteer'],
+        external: ['pg', '@zentofact/core', '@zentofact/scraper', 'puppeteer'],
       },
     },
   },
@@ -15,10 +16,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
   },
   renderer: {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, 'src/renderer/src'),
+        '@': path.resolve(__dirname, '../web/src'),
       },
     },
   },

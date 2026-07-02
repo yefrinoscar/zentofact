@@ -599,7 +599,7 @@ export default function Workflow() {
     const startTime = Date.now();
     setScrapingStartTime(startTime);
     setScrapingElapsed('');
-    const scraperBaseDir = homeDir ? `${homeDir}/.boletas-sunat` : '.boletas-sunat';
+    const scraperBaseDir = homeDir ? `${homeDir}/.zentofact` : '.zentofact';
     const scraperOutputDir = `${scraperBaseDir}/data`;
     const authStatePath = `${scraperBaseDir}/falabella-session-company-${company.id}.json`;
 

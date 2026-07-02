@@ -636,6 +636,9 @@ export default function CreditNotes() {
   const falabellaStats = falabellaMonth?.falabella || {};
   const hasFalabellaRows = falabellaRows.length > 0;
   const falabellaAccepted = falabellaStats.emitidas ?? falabellaRows.filter((row: any) => row.hasAcceptedBoleta).length;
+  const falabellaAcceptedTotal = falabellaStats.emitidasTotal ?? falabellaRows
+    .filter((row: any) => row.hasAcceptedBoleta)
+    .reduce((sum: number, row: any) => sum + (Number(row.price) || 0), 0);
   const falabellaRegisteredPending = falabellaStats.registradasPendientes ?? falabellaRows.filter((row: any) => row.hasBoleta && !row.hasAcceptedBoleta).length;
   const falabellaRegisteredPendingTotal = falabellaStats.registradasPendientesTotal ?? falabellaRows
     .filter((row: any) => row.hasBoleta && !row.hasAcceptedBoleta)
@@ -797,10 +800,8 @@ export default function CreditNotes() {
                 {(() => {
                   const totalOrdenes = Number(falabellaMonth.falabella.ventasBoletaMes) || 0;
                   const totalMonto = Number(falabellaMonth.falabella.ventasBoletaTotal) || 0;
-                  // "Con boleta" usa el mismo monto que el card "De este mes" (boletas reales del sistema),
-                  // para que ambos cuadren exacto y no haya diferencia de centavos.
-                  const conBoletaCount = boletasEsteMesCount;
-                  const conBoletaTotal = boletasEsteMesTotal;
+                  const conBoletaCount = falabellaAceptadasDelMes;
+                  const conBoletaTotal = round2(Number(falabellaAcceptedTotal || 0));
                   const faltaCount = Math.max(0, totalOrdenes - conBoletaCount);
                   const faltaTotal = Math.max(0, round2(totalMonto - conBoletaTotal));
                   const pendCount = falabellaPendientes + falabellaRegisteredPending;

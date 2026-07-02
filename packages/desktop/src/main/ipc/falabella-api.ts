@@ -2,9 +2,9 @@ import { ipcMain } from 'electron';
 import {
   falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaResolveOrderIds,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
-} from '@boletas/core';
+} from '@zentofact/core';
 
-// Handlers delgados: toda la lógica vive en @boletas/core (compartida con el server web).
+// Handlers delgados: toda la lógica vive en @zentofact/core (compartida con el server web).
 export function registerFalabellaApiHandlers() {
   ipcMain.handle('falabella-api:get-orders', (_e, payload) => falabellaGetOrders(payload));
   ipcMain.handle('falabella-api:get-order-items', (_e, payload) => falabellaGetOrderItems(payload));

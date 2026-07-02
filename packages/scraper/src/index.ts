@@ -1,6 +1,6 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VentaItem } from '@boletas/core';
+import type { VentaItem } from '@zentofact/core';
 import type { ScraperConfig, SiteProfile, FalabellaExtract, RawFalabellaOrder, ScrapeError } from './types';
 import { ensureDir } from './utils';
 import { createBrowser, ensureAuthenticated, saveAuthState } from './browser';

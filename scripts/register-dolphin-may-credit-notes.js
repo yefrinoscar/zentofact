@@ -9,7 +9,7 @@ const PERIOD = '202605';
 const COMPANY_ID = 2;
 const BRANCH_ID = 2;
 const CSV_FILE = process.env.DOLPHIN_CSV
-  || '/private/tmp/claude-501/-Users-ylaurach-Documents-repos-p-boletas-sunat/663d2872-311e-4885-a7f7-94aa1b9b17c7/scratchpad/dolphin/LE206126005632026060014040001EXP2.csv';
+  || '/private/tmp/claude-501/-Users-ylaurach-Documents-repos-p-zentofact/663d2872-311e-4885-a7f7-94aa1b9b17c7/scratchpad/dolphin/LE206126005632026060014040001EXP2.csv';
 const OUT_DIR = path.resolve('reports/dolphin-mayo-2026');
 
 function parseCsv(text) {
