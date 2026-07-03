@@ -61,10 +61,12 @@ const apiHttp = {
   // Boletas (emitir individual)
   createBoleta: (input: any) => req('/boletas', { method: 'POST', body: JSON.stringify({ input }) }),
   sendBoletaToSunat: (id: number) => req(`/boletas/${id}/send`, { method: 'POST' }),
+  reEmitBoleta: (id: number) => req(`/boletas/${id}/reemit`, { method: 'POST' }),
 
   // Facturas (emitir individual)
   createFactura: (input: any) => req('/facturas', { method: 'POST', body: JSON.stringify({ input }) }),
   sendFacturaToSunat: (id: number) => req(`/facturas/${id}/send`, { method: 'POST' }),
+  reEmitFactura: (id: number) => req(`/facturas/${id}/reemit`, { method: 'POST' }),
 
   // PDFs (base64) y previews (HTML)
   generateBoletaPdf: (id: number) => req(`/boletas/${id}/pdf`),

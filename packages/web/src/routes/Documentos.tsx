@@ -136,12 +136,13 @@ export default function Documentos() {
   const retry = async (d: Doc) => {
     setRetryingId(d.id); setRetryMsg('');
     try {
-      const res: any = await (kind === 'facturas' ? api.sendFacturaToSunat(d.id) : api.sendBoletaToSunat(d.id));
+      // reEmit: si el número quedó quemado (rechazo definitivo), toma el siguiente disponible.
+      const res: any = await (kind === 'facturas' ? api.reEmitFactura(d.id) : api.reEmitBoleta(d.id));
       // El backend devuelve { success:false, message } cuando SUNAT rechaza (sin lanzar). Mostrarlo.
       if (res && res.success === false) {
         setRetryMsg(`${d.numeroCompleto}: ${res.message || res.error || 'SUNAT rechazó el comprobante.'}`);
       } else {
-        setRetryMsg(`${d.numeroCompleto}: aceptada por SUNAT ✓`);
+        setRetryMsg(`${d.numeroCompleto}: reemitida y aceptada por SUNAT ✓ (puede haber tomado un nuevo número)`);
       }
       await load();
     } catch (e: any) {

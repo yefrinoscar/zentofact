@@ -275,6 +275,41 @@ export async function sendFacturaToSunat(id: number) {
   return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
 }
 
+// Un rechazo "transitorio" (documento aún en proceso en SUNAT) NO quema el número:
+// se puede reintentar con el MISMO correlativo. Un rechazo definitivo sí lo quema.
+export function isTransientSunatRejection(respuestaSunat: string | null | undefined): boolean {
+  if (!respuestaSunat) return false;
+  let code = '', message = '';
+  try { const p = JSON.parse(respuestaSunat); code = String(p.code || ''); message = String(p.message || ''); }
+  catch { message = String(respuestaSunat); }
+  const t = `${code} ${message}`.toLowerCase();
+  return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
+}
+
+// Re-emite una factura RECHAZADA. Si el rechazo fue definitivo, SUNAT ya registró
+// ese número como rechazado/anulado ("ya está informado") y NO se puede reutilizar:
+// se le asigna el SIGUIENTE correlativo disponible antes de reenviar. Si el rechazo
+// es transitorio (documento en proceso), se reintenta con el mismo número.
+export async function reEmitFactura(id: number) {
+  const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
+  if (!factura) throw new Error('Factura no encontrada');
+  if (factura.estadoSunat === 'ACEPTADO') throw new Error('La factura ya fue aceptada por SUNAT');
+
+  const wasBurned = factura.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(factura.respuestaSunat);
+  if (wasBurned) {
+    const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
+    const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
+    await db.update(facturas).set({
+      correlativo: nextCorrelativo,
+      numeroCompleto,
+      estadoSunat: 'PENDIENTE',
+      respuestaSunat: null,
+      updatedAt: Math.floor(Date.now() / 1000),
+    }).where(eq(facturas.id, id));
+  }
+  return sendFacturaToSunat(id);
+}
+
 // Re-valida el estado SUNAT de una factura leyendo el CDR/respuesta ya guardada.
 // Útil para registros "reconstruidos" que quedaron en REGISTRADO pese a tener CDR aceptado.
 export async function refreshFacturaStatus(id: number) {

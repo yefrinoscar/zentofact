@@ -117,12 +117,20 @@ app.post('/facturas/:id/send', async (c) => {
   try { return ok(c, await core.sendFacturaToSunat(Number(c.req.param('id')))); }
   catch (e) { return fail(c, e, 400); }
 });
+app.post('/facturas/:id/reemit', async (c) => {
+  try { return ok(c, await core.reEmitFactura(Number(c.req.param('id')))); }
+  catch (e) { return fail(c, e, 400); }
+});
 app.post('/boletas', async (c) => {
   try { const { input } = await c.req.json(); return ok(c, await core.createBoleta(input), 201); }
   catch (e) { return fail(c, e, 400); }
 });
 app.post('/boletas/:id/send', async (c) => {
   try { return ok(c, await core.sendBoletaToSunat(Number(c.req.param('id')))); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/boletas/:id/reemit', async (c) => {
+  try { return ok(c, await core.reEmitBoleta(Number(c.req.param('id')))); }
   catch (e) { return fail(c, e, 400); }
 });
 app.get('/facturas/:id/pdf', async (c) => {

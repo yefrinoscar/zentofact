@@ -214,6 +214,38 @@ export async function sendBoletaToSunat(id: number) {
   return { success: false, message: `Error al enviar a SUNAT: ${errorData.message}`, error_code: errorData.code };
 }
 
+// Un rechazo "transitorio" (documento aún en proceso en SUNAT) NO quema el número.
+export function isTransientSunatRejection(respuestaSunat: string | null | undefined): boolean {
+  if (!respuestaSunat) return false;
+  let code = '', message = '';
+  try { const p = JSON.parse(respuestaSunat); code = String(p.code || ''); message = String(p.message || ''); }
+  catch { message = String(respuestaSunat); }
+  const t = `${code} ${message}`.toLowerCase();
+  return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
+}
+
+// Re-emite una boleta RECHAZADA. Si el rechazo fue definitivo, SUNAT ya registró
+// ese número: se le asigna el SIGUIENTE correlativo disponible antes de reenviar.
+export async function reEmitBoleta(id: number) {
+  const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+  if (!boleta) throw new Error('Boleta no encontrada');
+  if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
+
+  const wasBurned = boleta.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(boleta.respuestaSunat);
+  if (wasBurned) {
+    const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
+    const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
+    await db.update(boletas).set({
+      correlativo: nextCorrelativo,
+      numeroCompleto,
+      estadoSunat: 'PENDIENTE',
+      respuestaSunat: null,
+      updatedAt: Math.floor(Date.now() / 1000),
+    }).where(eq(boletas.id, id));
+  }
+  return sendBoletaToSunat(id);
+}
+
 export async function sendBoletasAsDailySummary(
   companyId: number,
   branchId: number,
