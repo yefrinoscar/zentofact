@@ -45,7 +45,7 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const error = getFalabellaError(response.data);
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const orderItems = extractOrderItems(response.data);
-  return { ok: response.ok, status: response.status, url: response.url, orderItems, orderItemIds: orderItems.map((item: any) => String(item.OrderItemId)) };
+  return { ok: response.ok, status: response.status, url: response.url, orderItems, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
 }
 
 export async function falabellaBuildBoletaVenta(payload: { companyId: number; order: any }) {
@@ -86,7 +86,7 @@ export async function falabellaBuildBoletaVenta(payload: { companyId: number; or
   return {
     ok: true,
     orderItems,
-    orderItemIds: orderItems.map((item: any) => String(item.OrderItemId || item.OrderItemID || item.Id || item.id || '')).filter(Boolean),
+    orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)),
     warnings,
     venta,
   };
@@ -132,7 +132,7 @@ export async function falabellaBuildFacturaVenta(payload: { companyId: number; o
   return {
     ok: true,
     orderItems,
-    orderItemIds: orderItems.map((item: any) => String(item.OrderItemId || item.OrderItemID || item.Id || item.id || '')).filter(Boolean),
+    orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)),
     warnings,
     venta,
   };
@@ -228,7 +228,7 @@ export async function falabellaUploadBoletaPdf(payload: {
   if (itemsError) return { ok: itemsResponse.ok, status: itemsResponse.status, orderId: (order as any).OrderId, error: itemsError };
 
   const orderItems = extractOrderItems(itemsResponse.data);
-  const orderItemIds = orderItems.map((item: any) => String(item.OrderItemId)).filter(Boolean);
+  const orderItemIds = normalizeOrderItemIds(orderItems.map(getOrderItemId));
   if (!orderItemIds.length) return { ok: false, orderId: (order as any).OrderId, error: 'Falabella no devolvió OrderItemIds para esta orden.' };
 
   const upload = await uploadInvoicePdfForCompany(company, {
@@ -352,6 +352,45 @@ function extractOrderItems(document: any): any[] {
   return [];
 }
 
+function normalizeOrderItemIds(values: unknown): string[] {
+  const raw = Array.isArray(values) ? values : values == null ? [] : [values];
+  return Array.from(new Set(raw.map((value) => String(value ?? '').trim()).filter(Boolean)));
+}
+
+function getOrderItemId(item: any): string {
+  return String(item?.OrderItemId ?? item?.OrderItemID ?? item?.orderItemId ?? item?.id ?? item?.Id ?? '').trim();
+}
+
+function normalizeInvoiceDate(value: unknown): string {
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : String(value || '').trim();
+}
+
+function normalizePdfBase64(value: string): string {
+  return String(value || '')
+    .replace(/^data:application\/pdf;base64,/i, '')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+function isPdfBase64(value: string): boolean {
+  try {
+    return Buffer.from(value.slice(0, 16), 'base64').subarray(0, 4).toString('utf8') === '%PDF';
+  } catch {
+    return false;
+  }
+}
+
+function falabellaErrorText(error: any): string {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  return String(error?.Head?.ErrorMessage || error?.Head?.ErrorCode || error?.message || error?.Message || error?.ErrorMessage || '');
+}
+
+function isInvalidRequestFormat(error: any, rawText: string): boolean {
+  return /invalid request format/i.test(`${falabellaErrorText(error)} ${rawText || ''}`);
+}
+
 function parseMoneyForBoletaBuilder(value: unknown): number {
   if (value && typeof value === 'object') {
     const amount = (value as any).amount ?? (value as any).Amount ?? (value as any).value ?? (value as any).Value;
@@ -457,6 +496,59 @@ function buildVentaDetallesFromOrderItems(orderItems: any[], total: number, orde
   });
 }
 
+async function fetchFalabellaInvoicePdf(
+  authParameters: Record<string, string>,
+  signature: string,
+  body: {
+    orderItemIds: string[];
+    invoiceNumber: string;
+    invoiceDate: string;
+    invoiceType: string;
+    operatorCode: string;
+    invoiceDocumentFormat: string;
+    invoiceDocument: string;
+  },
+  mode: 'json' | 'form',
+) {
+  const headers: Record<string, string> = {
+    UserID: authParameters.UserID,
+    Version: authParameters.Version,
+    Timestamp: authParameters.Timestamp,
+    Signature: signature,
+    Action: authParameters.Action,
+    Format: authParameters.Format,
+    Service: authParameters.Service,
+  };
+
+  let requestBody: string;
+  if (mode === 'form') {
+    const form = new URLSearchParams();
+    for (const orderItemId of body.orderItemIds) form.append('orderItemIds[]', orderItemId);
+    form.set('invoiceNumber', body.invoiceNumber);
+    form.set('invoiceDate', body.invoiceDate);
+    form.set('invoiceType', body.invoiceType);
+    form.set('operatorCode', body.operatorCode);
+    form.set('invoiceDocumentFormat', body.invoiceDocumentFormat);
+    form.set('invoiceDocument', body.invoiceDocument);
+    headers['content-type'] = 'application/x-www-form-urlencoded';
+    requestBody = form.toString();
+  } else {
+    headers['content-type'] = 'application/json';
+    requestBody = JSON.stringify(body);
+  }
+
+  const response = await fetch('https://sellercenter-api.falabella.com/v1/marketplace-sellers/invoice/pdf', {
+    method: 'POST',
+    headers,
+    body: requestBody,
+  });
+  const rawText = await response.text();
+  let data: any = rawText;
+  try { data = JSON.parse(rawText); } catch {}
+  const error = getFalabellaError(data);
+  return { response, rawText, data, error };
+}
+
 async function uploadInvoicePdfForCompany(company: any, payload: {
   companyId: number; orderNumber: string; orderItemIds: string[]; invoiceNumber: string; invoiceDate: string;
   invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_factura' | 'local_credit_note' | 'manual'; boletaId?: number; facturaId?: number; pdfPath?: string; pdfBase64?: string;
@@ -465,25 +557,44 @@ async function uploadInvoicePdfForCompany(company: any, payload: {
   if (!pdfBase64 && payload.source === 'local_boleta' && payload.boletaId) pdfBase64 = await generateAcceptedBoletaPdfBase64(payload.boletaId, 'A4');
   if (!pdfBase64 && payload.source === 'local_factura' && payload.facturaId) pdfBase64 = await generateAcceptedFacturaPdfBase64(payload.facturaId, 'A4');
   if (!pdfBase64 && payload.pdfPath) pdfBase64 = readFileSync(payload.pdfPath, { encoding: 'base64' });
+  pdfBase64 = normalizePdfBase64(pdfBase64);
   if (!pdfBase64) return { error: 'No se encontró un PDF para subir. Selecciona un archivo PDF o usa un documento local aceptado.' };
+  if (!isPdfBase64(pdfBase64)) return { ok: false, error: 'El archivo generado/seleccionado no parece ser un PDF válido.' };
+
+  const orderItemIds = normalizeOrderItemIds(payload.orderItemIds);
+  if (!orderItemIds.length) return { ok: false, error: 'La orden no tiene OrderItemIds válidos para subir el PDF a Falabella.' };
+
+  const invoiceNumber = String(payload.invoiceNumber || '').trim();
+  const invoiceDate = normalizeInvoiceDate(payload.invoiceDate);
+  if (!invoiceNumber) return { ok: false, error: 'Falta el número del documento para subir el PDF a Falabella.' };
+  if (!invoiceDate) return { ok: false, error: 'Falta la fecha del documento para subir el PDF a Falabella.' };
 
   const timestamp = buildIsoUtcTimestamp();
   const authParameters = { Action: 'SetInvoicePDF', Format: 'JSON', Service: 'Invoice', Timestamp: timestamp, UserID: company.falabellaApiUserId, Version: process.env.FALABELLA_API_VERSION || '1.0' };
   const signature = signParameters(authParameters, company.falabellaApiKey);
-  const response = await fetch('https://sellercenter-api.falabella.com/v1/marketplace-sellers/invoice/pdf', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', UserID: authParameters.UserID, Version: authParameters.Version, Timestamp: authParameters.Timestamp, Signature: signature, Action: authParameters.Action, Format: authParameters.Format, Service: authParameters.Service },
-    body: JSON.stringify({ orderItemIds: payload.orderItemIds, invoiceNumber: payload.invoiceNumber, invoiceDate: payload.invoiceDate, invoiceType: payload.invoiceType, operatorCode: 'FAPE', invoiceDocumentFormat: 'pdf', invoiceDocument: pdfBase64 }),
-  });
-  const rawText = await response.text();
-  let data: any = rawText;
-  try { data = JSON.parse(rawText); } catch {}
-  const error = getFalabellaError(data);
-  const result = { ok: response.ok, status: response.status, error, data, rawText };
+  const requestBody = {
+    orderItemIds,
+    invoiceNumber,
+    invoiceDate,
+    invoiceType: payload.invoiceType,
+    operatorCode: 'FAPE',
+    invoiceDocumentFormat: 'pdf',
+    invoiceDocument: pdfBase64,
+  };
+
+  let uploadResponse = await fetchFalabellaInvoicePdf(authParameters, signature, requestBody, 'json');
+  let transport: 'json' | 'form' = 'json';
+  if (isInvalidRequestFormat(uploadResponse.error, uploadResponse.rawText)) {
+    uploadResponse = await fetchFalabellaInvoicePdf(authParameters, signature, requestBody, 'form');
+    transport = 'form';
+  }
+
+  const { response, rawText, data, error } = uploadResponse;
+  const result = { ok: response.ok, status: response.status, error, data, rawText, transport };
   if (response.ok && !error && payload.invoiceType === 'FACTURA') {
-    const pdfBuffer = pdfBase64 ? Buffer.from(pdfBase64, 'base64') : payload.pdfPath ? readFileSync(payload.pdfPath) : null;
+    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
     if (pdfBuffer) {
-      await recordFacturaUpload({ companyId: payload.companyId, orderNumber: payload.orderNumber, numeroCompleto: payload.invoiceNumber, fechaEmision: payload.invoiceDate, pdfBuffer, source: payload.source || 'manual', orderItemIds: payload.orderItemIds, respuestaFalabella: data });
+      await recordFacturaUpload({ companyId: payload.companyId, orderNumber: payload.orderNumber, numeroCompleto: invoiceNumber, fechaEmision: invoiceDate, pdfBuffer, source: payload.source || 'manual', orderItemIds, respuestaFalabella: data });
     }
   }
   return result;
