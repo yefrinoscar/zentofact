@@ -65,6 +65,7 @@ export async function listFacturas(filter: FacturaFilter) {
     cdrPath: facturas.cdrPath,
     pdfPath: facturas.pdfPath,
     estadoSunat: facturas.estadoSunat,
+    respuestaSunat: facturas.respuestaSunat,
     codigoHash: facturas.codigoHash,
     detalles: facturas.detalles,
     fuente: facturas.fuente,

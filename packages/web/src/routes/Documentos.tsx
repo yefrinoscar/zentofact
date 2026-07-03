@@ -12,8 +12,17 @@ type DayWindow = 7 | 15 | 30;
 type Doc = {
   id: number; numeroCompleto: string; fechaEmision: string; orderNumber?: string | null;
   clientRazonSocial?: string; clientNumeroDocumento?: string; mtoImpVenta?: string;
-  estadoSunat?: string; estado?: string;
+  estadoSunat?: string; estado?: string; respuestaSunat?: string;
 };
+
+// Extrae el motivo legible del rechazo de SUNAT (respuestaSunat guardado como JSON).
+function sunatReason(d: Doc): string {
+  const raw = d.respuestaSunat;
+  if (!raw) return '';
+  let msg = raw;
+  try { const p = JSON.parse(raw); msg = p.message || p.error || raw; } catch { /* texto plano */ }
+  return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
+}
 
 function EstadoIcon({ value }: { value?: string }) {
   const v = String(value || '').toUpperCase();
@@ -127,7 +136,13 @@ export default function Documentos() {
   const retry = async (d: Doc) => {
     setRetryingId(d.id); setRetryMsg('');
     try {
-      await (kind === 'facturas' ? api.sendFacturaToSunat(d.id) : api.sendBoletaToSunat(d.id));
+      const res: any = await (kind === 'facturas' ? api.sendFacturaToSunat(d.id) : api.sendBoletaToSunat(d.id));
+      // El backend devuelve { success:false, message } cuando SUNAT rechaza (sin lanzar). Mostrarlo.
+      if (res && res.success === false) {
+        setRetryMsg(`${d.numeroCompleto}: ${res.message || res.error || 'SUNAT rechazó el comprobante.'}`);
+      } else {
+        setRetryMsg(`${d.numeroCompleto}: aceptada por SUNAT ✓`);
+      }
       await load();
     } catch (e: any) {
       setRetryMsg(`${d.numeroCompleto}: ${e?.message || 'No se pudo reintentar.'}`);
@@ -210,8 +225,8 @@ export default function Documentos() {
       </div>
 
       {retryMsg && (
-        <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {retryMsg}
+        <div className={cn('flex items-start gap-2 rounded-lg px-3 py-2 text-sm', retryMsg.includes('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
+          {retryMsg.includes('✓') ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />} {retryMsg}
         </div>
       )}
 
@@ -252,15 +267,24 @@ export default function Documentos() {
                 {filtered.map((d) => {
                   const est = String(d.estadoSunat || d.estado || '').toUpperCase();
                   return (
-                    <tr key={d.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
-                      <td className="px-5 py-2.5 font-mono text-xs text-foreground">{d.numeroCompleto || '—'}</td>
+                    <tr key={d.id} className="border-b border-border/50 last:border-0 align-top hover:bg-accent/30">
+                      <td className="px-5 py-2.5 text-xs text-foreground">
+                        <div className="font-mono">{d.numeroCompleto || '—'}</div>
+                        {est === 'RECHAZADO' && sunatReason(d) && (
+                          <div className="mt-1 max-w-[320px] whitespace-normal leading-tight text-[11px] text-red-600">{sunatReason(d)}</div>
+                        )}
+                      </td>
                       <td className="px-5 py-2.5 text-muted-foreground">{d.fechaEmision || '—'}</td>
                       <td className="px-5 py-2.5">
                         <div className="text-foreground">{d.clientRazonSocial || '—'}</div>
                         <div className="text-xs text-muted-foreground">{d.clientNumeroDocumento || '—'}</div>
                       </td>
                       <td className="px-5 py-2.5 text-right font-medium text-foreground">{money(d.mtoImpVenta)}</td>
-                      <td className="px-5 py-2.5 text-center"><span className="inline-flex justify-center"><EstadoIcon value={est} /></span></td>
+                      <td className="px-5 py-2.5 text-center">
+                        {retryingId === d.id
+                          ? <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Procesando</span>
+                          : <span className="inline-flex justify-center"><EstadoIcon value={est} /></span>}
+                      </td>
                       <td className="px-5 py-2.5">
                         {est === 'ACEPTADO' ? (
                           <div className="flex items-center justify-end gap-1.5">
