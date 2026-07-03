@@ -146,6 +146,7 @@ const apiHttp = {
   autoEmitSetCron: (cfg: { enabled?: boolean; intervalMinutes?: number; windowDays?: number }) => req('/auto-emit/cron', { method: 'POST', body: JSON.stringify(cfg) }),
   autoEmitSetDryRun: (dryRun: boolean) => req('/auto-emit/dry-run', { method: 'POST', body: JSON.stringify({ dryRun }) }),
   autoEmitRetryJob: (id: number) => req(`/auto-emit/jobs/${id}/retry`, { method: 'POST' }),
+  autoEmitOrderPreview: (id: number) => req(`/auto-emit/jobs/${id}/order-preview`),
   autoEmitGetWebhooks: (companyId: number, ids?: string[]) => req(`/auto-emit/webhooks/${companyId}${qs({ ids: ids?.join(',') })}`),
   autoEmitCreateWebhook: (companyId: number, events: string[], callbackUrl?: string) => req(`/auto-emit/webhooks/${companyId}`, { method: 'POST', body: JSON.stringify({ events, callbackUrl }) }),
   autoEmitDeleteWebhook: (companyId: number, webhookId: string) => req(`/auto-emit/webhooks/${companyId}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' }),

@@ -248,6 +248,7 @@ app.post('/auto-emit/pause', async (c) => { try { const { paused } = await c.req
 app.post('/auto-emit/cron', async (c) => { try { return ok(c, await autoEmit.setCron(await c.req.json())); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/dry-run', async (c) => { try { const { dryRun } = await c.req.json(); return ok(c, await autoEmit.setDryRun(dryRun)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await autoEmit.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
+app.get('/auto-emit/jobs/:id/order-preview', async (c) => { try { return ok(c, await autoEmit.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.get('/auto-emit/jobs', async (c) => { try { return ok(c, await autoEmit.recentJobs(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
 app.get('/auto-emit/events', async (c) => { try { return ok(c, await autoEmit.recentEvents(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
 app.post('/auto-emit/run', async (c) => { try { const n = await autoEmit.processQueue(Number(c.req.query('limit') || 5)); return ok(c, { processed: n }); } catch (e) { return fail(c, e); } });

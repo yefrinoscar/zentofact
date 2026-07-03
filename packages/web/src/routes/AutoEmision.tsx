@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   RefreshCw, Copy, Check, AlertTriangle, CheckCircle2, XCircle, Clock, Loader2,
   Radio, ChevronDown, Settings as SettingsIcon, Search, Building2, Pause, Play, RotateCcw,
@@ -22,6 +23,25 @@ type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; attempts: number; result: string | null;
   last_error: string | null; boleta_numero: string | null; updated_at: string;
+};
+type OrderPreview = {
+  error?: string;
+  source?: string;
+  order?: {
+    orderNumber?: string;
+    customer?: string;
+    status?: string;
+    total?: string | number | null;
+    createdAt?: string;
+    updatedAt?: string;
+    paymentMethod?: string;
+    itemsCount?: string | number;
+    invoiceRequired?: boolean;
+  };
+  document?: {
+    boleta?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
+    factura?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
+  } | null;
 };
 type Evt = { id: number; company: string; company_id?: number; order_number: string | null; event: string; processed: boolean; received_at: string };
 type FalabellaWebhook = {
@@ -84,6 +104,126 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
+function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
+  const order = preview?.order;
+  const document = preview?.document?.boleta || preview?.document?.factura || null;
+  return (
+    <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+      {loading ? (
+        <div className="space-y-2">
+          <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+          <div className="h-3 w-full animate-pulse rounded bg-muted" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+        </div>
+      ) : preview?.error ? (
+        <div className="flex gap-2 text-xs text-red-600">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{preview.error}</span>
+        </div>
+      ) : order ? (
+        <div className="space-y-3">
+          <div>
+            <p className="font-mono text-sm font-semibold text-foreground">{order.orderNumber || '-'}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customer || 'Cliente no informado'}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <span className="text-muted-foreground">Estado</span>
+            <span className="truncate text-right font-medium text-foreground" title={order.status}>{order.status || '-'}</span>
+            <span className="text-muted-foreground">Total</span>
+            <span className="text-right font-medium text-foreground">{money(order.total)}</span>
+            <span className="text-muted-foreground">Items</span>
+            <span className="text-right text-foreground">{order.itemsCount || '-'}</span>
+            <span className="text-muted-foreground">Creada</span>
+            <span className="text-right text-foreground">{formatDateTime(order.createdAt)}</span>
+            <span className="text-muted-foreground">Factura</span>
+            <span className={cn('text-right font-medium', order.invoiceRequired ? 'text-amber-700' : 'text-emerald-700')}>
+              {order.invoiceRequired ? 'Requerida' : 'No requerida'}
+            </span>
+          </div>
+          {document && (
+            <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs">
+              <p className="font-medium text-foreground">{document.numeroCompleto}</p>
+              <p className="mt-0.5 text-muted-foreground">{document.estadoSunat || 'Documento local'}{document.total ? ` · ${money(document.total)}` : ''}</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <span className="text-xs text-muted-foreground">Pasa el cursor para cargar la orden.</span>
+      )}
+    </div>
+  );
+}
+
+function SearchableOrderNumber({ job }: { job: Job }) {
+  const orderId = String(job.order_id || '').trim();
+  const orderNumber = String(job.order_number || '').trim();
+  const orderNumberIsFallbackId = !!orderId && orderId === orderNumber;
+  const [open, setOpen] = useState(false);
+  const [preview, setPreview] = useState<OrderPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const timerRef = useRef<number | null>(null);
+
+  const show = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPosition({
+        top: Math.min(rect.bottom + 10, window.innerHeight - 260),
+        left: Math.min(rect.left, window.innerWidth - 340),
+      });
+    }
+    setOpen(true);
+    if (preview || loading) return;
+    timerRef.current = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const response = await api.autoEmitOrderPreview(job.id);
+        setPreview(response?.error ? { error: response.error } : response);
+      } catch (error: any) {
+        setPreview({ error: error?.message || 'No se pudo cargar la orden.' });
+      } finally {
+        setLoading(false);
+      }
+    }, 180);
+  };
+
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setOpen(false);
+  };
+
+  if (orderNumberIsFallbackId) {
+    return <span className="text-xs text-muted-foreground">Resolviendo orden</span>;
+  }
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className="rounded px-1 py-0.5 font-mono text-xs text-foreground underline decoration-border underline-offset-4 transition hover:bg-accent hover:decoration-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
+      >
+        {orderNumber || <span className="font-sans text-muted-foreground">Sin orden</span>}
+      </button>
+      {open && createPortal(
+        <div
+          className="fixed z-[1000]"
+          style={{ top: position.top, left: Math.max(12, position.left) }}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={hide}
+        >
+          <OrderPreviewCard preview={preview} loading={loading} />
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 function shortName(nombre: string) {
   return nombre.replace(/\s*(E\.?\s?I\.?\s?R\.?\s?L\.?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?C\.?|S\.?\s?A\.?)\.?\s*$/i, '').trim() || nombre;
 }
@@ -111,6 +251,19 @@ function timeAgo(iso: string) {
   if (s < 3600) return `hace ${Math.floor(s / 60)}m`;
   if (s < 86400) return `hace ${Math.floor(s / 3600)}h`;
   return new Date(iso).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.replace('T', ' ').slice(0, 16);
+  return date.toLocaleString('es-PE', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function money(value?: string | number | null) {
+  const parsed = Number(String(value ?? '').replace(/,/g, ''));
+  if (!Number.isFinite(parsed)) return '-';
+  return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(parsed);
 }
 
 const FILTERS = [
@@ -465,7 +618,7 @@ export default function AutoEmision() {
                     return (
                       <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
                         <td className="px-5 py-2.5 text-foreground">{j.company}</td>
-                        <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground">{j.order_number}</td>
+                        <td className="px-5 py-2.5"><SearchableOrderNumber job={j} /></td>
                         <td className="px-5 py-2.5"><StatusBadge status={j.status} /></td>
                         <td className="px-5 py-2.5"><SourceBadge source={j.source} /></td>
                         <td className="px-5 py-2.5 text-xs">

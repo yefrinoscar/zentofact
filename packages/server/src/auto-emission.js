@@ -25,6 +25,10 @@ const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de
 const log = (...a) => console.log('[auto-emit]', ...a);
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
 const today = () => new Date().toISOString().slice(0, 10);
+const dateOnly = (value) => {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? today() : d.toISOString().slice(0, 10);
+};
 
 // Extrae identificadores de la orden del payload del webhook (defensivo: nombres variables).
 function extractOrder(payload) {
@@ -235,9 +239,14 @@ async function isCompanyEnabled(companyId) {
 // Últimos jobs y eventos (para el panel).
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
-    `select j.id, j.company_id, c.nombre as company, j.order_number, j.order_id, j.status, j.source,
+    `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
             j.attempts, j.result, j.last_error, j.boleta_numero, j.created_at, j.updated_at
      from emission_jobs j left join companies c on c.id=j.company_id
+     left join lateral (
+       select order_number from boletas
+       where company_id=j.company_id and numero_completo=j.boleta_numero
+       order by id desc limit 1
+     ) b on true
      order by j.updated_at desc limit $1`, [Math.min(limit, 200)]);
   return r.rows;
 }
@@ -257,6 +266,82 @@ async function fetchOrderById(client, orderId) {
   const body = r?.data?.SuccessResponse?.Body?.Orders?.Order ?? r?.data?.SuccessResponse?.Body?.Order;
   const ord = Array.isArray(body) ? body[0] : body;
   return ord && typeof ord === 'object' ? ord : null;
+}
+
+async function saveResolvedOrderNumber(job, orderNumber) {
+  const resolved = String(orderNumber || '').trim();
+  if (!resolved || resolved === String(job.order_number || '').trim()) return;
+  await pool.query(
+    `update emission_jobs j
+     set order_number=$2, updated_at=now()
+     where j.id=$1
+       and not exists (
+         select 1 from emission_jobs other
+         where other.company_id=j.company_id and other.order_number=$2 and other.id<>j.id
+       )`,
+    [job.id, resolved],
+  ).catch((e) => log(`no se pudo actualizar OrderNumber real para job ${job.id}:`, e.message));
+}
+
+function previewOrder(order) {
+  const statuses = order?.Statuses?.Status ?? order?.Statuses ?? order?.status;
+  const statusText = Array.isArray(statuses)
+    ? statuses.map((entry) => (typeof entry === 'object' && entry ? (entry.Status || entry.Name || '') : entry)).filter(Boolean).join(', ')
+    : (typeof statuses === 'object' && statuses ? (statuses.Status || statuses.Name || JSON.stringify(statuses)) : String(statuses || ''));
+  return {
+    orderId: String(order?.OrderId || ''),
+    orderNumber: String(order?.OrderNumber || ''),
+    customer: [order?.CustomerFirstName, order?.CustomerLastName].map((part) => String(part || '').trim()).filter(Boolean).join(' '),
+    status: statusText || '-',
+    total: order?.GrandTotal ?? order?.Price ?? null,
+    createdAt: order?.CreatedAt || '',
+    updatedAt: order?.UpdatedAt || '',
+    paymentMethod: order?.PaymentMethod || '',
+    itemsCount: order?.ItemsCount ?? '',
+    invoiceRequired: invoiceRequired(order),
+  };
+}
+
+async function fetchOrderForJob(company, job) {
+  const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
+  const byId = await fetchOrderById(client, job.order_id);
+  if (byId) return byId;
+
+  const dates = Array.from(new Set([dateOnly(job.created_at), dateOnly(job.updated_at), today()]));
+  for (const date of dates) {
+    const found = await client.findOrderByOrderNumber(job.order_number, date);
+    if (found?.raw) return found.raw;
+  }
+  return null;
+}
+
+export async function jobOrderPreview(id) {
+  const job = (await pool.query('select * from emission_jobs where id=$1', [id])).rows[0];
+  if (!job) return { error: 'No se encontró la emisión.' };
+  const company = await getCompany(job.company_id);
+  if (!company || !company.falabellaApiUserId?.trim() || !company.falabellaApiKey?.trim()) return { error: 'Empresa sin credenciales Falabella.' };
+  const order = await fetchOrderForJob(company, job);
+  if (!order) return { error: 'No se encontró la orden en Falabella.' };
+  const orderNumber = String(order.OrderNumber || job.order_number || '').trim();
+  await saveResolvedOrderNumber(job, orderNumber);
+  const document = orderNumber ? await falabellaResolveDocument({ companyId: job.company_id, orderNumber }).catch(() => null) : null;
+  return {
+    jobId: job.id,
+    source: job.source,
+    order: previewOrder(order),
+    document: document ? {
+      boleta: document.boleta ? {
+        numeroCompleto: document.boleta.numeroCompleto,
+        estadoSunat: document.boleta.estadoSunat,
+        total: document.boleta.total,
+      } : null,
+      factura: document.factura ? {
+        numeroCompleto: document.factura.numeroCompleto,
+        estadoSunat: document.factura.estadoSunat || document.factura.estado,
+        total: document.factura.total,
+      } : null,
+    } : null,
+  };
 }
 
 // ── Cola ──
@@ -310,6 +395,7 @@ async function processJob(job) {
   }
   // El número real (por si encolamos con el OrderId como clave).
   const orderNumber = String(order.OrderNumber || job.order_number).trim();
+  await saveResolvedOrderNumber(job, orderNumber);
 
   // 2) Condiciones (mismas que el Gestor de Sellers).
   if (invoiceRequired(order)) return { status: 'skipped', result: 'requiere factura, no boleta' };
