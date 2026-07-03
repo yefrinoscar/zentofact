@@ -29,6 +29,7 @@ const DRY_RUN = process.env.AUTO_EMIT_DRY_RUN === 'true';
 const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de seguridad; on por defecto
 const DEV_FAST_CRON = !process.env.RAILWAY_PUBLIC_DOMAIN && process.env.NODE_ENV !== 'production';
 const MIN_ORDER_DATE = new Date('2026-07-01T00:00:00+00:00');
+const JOB_TIMEOUT_MS = Math.max(60_000, Number(process.env.AUTO_EMIT_JOB_TIMEOUT_MS || 3 * 60_000));
 
 const log = (...a) => console.log('[auto-emit]', ...a);
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
@@ -37,6 +38,23 @@ const dateOnly = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? today() : d.toISOString().slice(0, 10);
 };
+const timeoutLabel = () => `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`;
+
+class JobTimeoutError extends Error {
+  constructor(step) {
+    super(`timeout ${timeoutLabel()} en etapa: ${step || 'sin etapa registrada'}`);
+    this.name = 'JobTimeoutError';
+    this.step = step || null;
+  }
+}
+
+function withJobTimeout(promise, getStep) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new JobTimeoutError(getStep())), JOB_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 // Extrae identificadores de la orden del payload del webhook (defensivo: nombres variables).
 function extractOrder(payload) {
@@ -143,12 +161,14 @@ export async function ensureTables() {
       last_error text,
       result text,
       boleta_numero text,
+      current_step text,
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       unique (company_id, order_number)
     );
     alter table emission_jobs add column if not exists order_id text;
+    alter table emission_jobs add column if not exists current_step text;
     create table if not exists auto_emission_config (
       company_id integer primary key,
       enabled boolean not null default false,
@@ -233,7 +253,7 @@ export async function setPaused(paused) {
 // Reintentar un job (fallido/omitido) → vuelve a pending, reinicia intentos.
 export async function retryJob(id) {
   const r = await pool.query(
-    `update emission_jobs set status='pending', attempts=0, last_error=null, updated_at=now()
+    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, updated_at=now()
      where id=$1 returning id, company_id, order_number, status`, [id]);
   return r.rows[0] || null;
 }
@@ -299,7 +319,7 @@ async function isCompanyEnabled(companyId) {
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
     `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
-            j.attempts, j.result, j.last_error, j.boleta_numero, j.created_at, j.updated_at
+            j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.created_at, j.updated_at
      from emission_jobs j left join companies c on c.id=j.company_id
      left join lateral (
        select order_number from boletas
@@ -439,7 +459,8 @@ export async function handleWebhook(companyId, payload) {
 }
 
 // ── Worker ──
-async function processJob(job) {
+async function processJob(job, setStep = async () => {}) {
+  await setStep('validando empresa');
   if (!(await isCompanyEnabled(job.company_id))) {
     return { status: 'skipped', result: 'empresa no activa para emisión automática' };
   }
@@ -450,6 +471,7 @@ async function processJob(job) {
 
   // 1) Traer la orden de Falabella (estado autoritativo).
   //    Si el webhook nos dio OrderId → GetOrder puntual (1 llamada). Si no, fallback: escaneo por fecha.
+  await setStep('consultando orden en Falabella');
   const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
   let order = await fetchOrderById(client, job.order_id);
   if (!order) {
@@ -475,6 +497,7 @@ async function processJob(job) {
 
   // 3) ¿ya tiene documento? Solo cuenta como emitido si está ACEPTADO por SUNAT.
   //    Si existe pero está RECHAZADO/sin aceptar → falla visible (no se oculta como "Emitida").
+  await setStep('revisando documento existente');
   const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
   const existingDoc = requiresInvoice ? doc?.factura : doc?.boleta;
   if (existingDoc) {
@@ -489,16 +512,20 @@ async function processJob(job) {
   if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };
 
   if (requiresInvoice) {
+    await setStep('construyendo factura');
     const built = await falabellaBuildFacturaVenta({ companyId: job.company_id, order });
     if (built.error) throw new Error(`build-factura: ${built.error}`);
+    await setStep('creando factura');
     const branch = await getOrCreateMainBranch(company);
     const created = await createFactura(toFacturaInput({ company, branch, venta: built.venta, orderNumber }));
+    await setStep('enviando factura a SUNAT');
     const sent = await sendFacturaToSunat(created.id);
     if (!sent?.success) throw new Error(sent?.message || 'SUNAT no aceptó la factura');
     log(`orden ${orderNumber} -> factura ${created.numeroCompleto} ACEPTADA`);
 
     let uploadNote = '';
     try {
+      await setStep('subiendo factura a Falabella');
       const up = await falabellaUploadInvoicePdf({
         companyId: job.company_id,
         facturaId: created.id,
@@ -519,8 +546,10 @@ async function processJob(job) {
   }
 
   // 4) Construir venta + emitir INDIVIDUAL (producción).
+  await setStep('construyendo boleta');
   const built = await falabellaBuildBoletaVenta({ companyId: job.company_id, order });
   if (built.error) throw new Error(`build-venta: ${built.error}`);
+  await setStep('emitiendo boleta en SUNAT');
   const result = await processWorkflow(buildConfig(company), [built.venta]);
   const b = result?.boletas?.[0];
   if (!b || String(b.estadoSunat).toUpperCase() !== 'ACEPTADO') {
@@ -531,6 +560,7 @@ async function processJob(job) {
   // 5) Subir la boleta a Falabella (necesita Chromium para el PDF; ver nota de deploy).
   let uploadNote = '';
   try {
+    await setStep('subiendo boleta a Falabella');
     const emitted = (await pool.query(
       `select id, numero_completo, fecha_emision from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' order by id desc limit 1`,
       [job.company_id, orderNumber],
@@ -559,9 +589,18 @@ export async function processQueue(limit = 3) {
   const client = await pool.connect();
   let jobs = [];
   try {
+    await client.query(
+      `update emission_jobs
+       set status='failed',
+           last_error='timeout ${timeoutLabel()} en etapa: ' || coalesce(current_step, 'sin etapa registrada'),
+           updated_at=now()
+       where status='processing'
+         and updated_at < now() - ($1::int * interval '1 millisecond')`,
+      [JOB_TIMEOUT_MS],
+    );
     // Toma jobs sin pisarse entre instancias.
     const res = await client.query(
-      `update emission_jobs set status='processing', attempts=attempts+1, updated_at=now()
+      `update emission_jobs set status='processing', attempts=attempts+1, current_step='iniciando', updated_at=now()
        where id in (
          select id from emission_jobs where status='pending' order by created_at asc limit $1 for update skip locked
        ) returning *`,
@@ -573,21 +612,27 @@ export async function processQueue(limit = 3) {
   }
 
   for (const job of jobs) {
+    let currentStep = job.current_step || 'iniciando';
+    const setStep = async (step) => {
+      currentStep = step;
+      await pool.query('update emission_jobs set current_step=$2, updated_at=now() where id=$1 and status=\'processing\'', [job.id, step]);
+    };
     try {
-      const r = await processJob(job);
+      const r = await withJobTimeout(processJob(job, setStep), () => currentStep);
       if (r.retry) {
         const failed = job.attempts >= 6;
-        await pool.query(`update emission_jobs set status=$2, last_error=$3, updated_at=now() where id=$1`,
+        await pool.query(`update emission_jobs set status=$2, last_error=$3, current_step=null, updated_at=now() where id=$1`,
           [job.id, failed ? 'failed' : 'pending', r.error || 'retry']);
       } else {
-        await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, updated_at=now() where id=$1`,
+        await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, current_step=null, updated_at=now() where id=$1`,
           [job.id, r.status, r.result || null, r.boletaNumero || null]);
       }
     } catch (e) {
-      const failed = job.attempts >= 6;
+      const isTimeout = e instanceof JobTimeoutError;
+      const failed = isTimeout || job.attempts >= 6;
       log(`ERROR orden ${job.order_number}:`, e.message);
-      await pool.query(`update emission_jobs set status=$2, last_error=$3, updated_at=now() where id=$1`,
-        [job.id, failed ? 'failed' : 'pending', String(e.message || e)]);
+      await pool.query(`update emission_jobs set status=$2, last_error=$3, current_step=$4, updated_at=now() where id=$1`,
+        [job.id, failed ? 'failed' : 'pending', String(e.message || e), isTimeout ? currentStep : null]);
     }
   }
   return jobs.length;

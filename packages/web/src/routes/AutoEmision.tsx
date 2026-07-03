@@ -22,7 +22,7 @@ type Config = {
 type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; attempts: number; result: string | null;
-  last_error: string | null; boleta_numero: string | null; updated_at: string;
+  last_error: string | null; boleta_numero: string | null; current_step?: string | null; updated_at: string;
 };
 type OrderPreview = {
   error?: string;
@@ -643,7 +643,7 @@ export default function AutoEmision() {
                         <td className="px-5 py-2.5 text-xs">
                           {j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
                           <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={j.last_error || undefined}>
-                            {j.last_error || j.result || <span className="opacity-50">—</span>}
+                            {j.last_error || j.result || (j.current_step ? `Etapa: ${j.current_step}` : <span className="opacity-50">—</span>)}
                           </span>
                           {j.attempts > 1 && <span className="ml-1 text-muted-foreground opacity-60">(intento {j.attempts})</span>}
                           {(failed || j.status === 'skipped') && (
