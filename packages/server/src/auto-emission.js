@@ -583,15 +583,18 @@ export async function reconcile() {
   const createdAfter = rawAfter.toISOString().slice(0, 10) + 'T00:00:00+00:00';
   for (const company of companies) {
     try {
-      // Dedup en memoria: 2 queries por empresa (no 3 por orden).
+      // Dedup en memoria: 3 queries por empresa.
       //  - órdenes que ya tienen boleta
+      //  - órdenes que ya tienen factura
       //  - órdenes que ya están en la cola (cualquier estado) → no re-encolar, mata el bucle
-      const [withBoleta, inQueue] = await Promise.all([
+      const [withBoleta, withFactura, inQueue] = await Promise.all([
         pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+        pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
         pool.query('select order_number from emission_jobs where company_id=$1', [company.id]),
       ]);
       const known = new Set([
         ...withBoleta.rows.map((r) => String(r.order_number)),
+        ...withFactura.rows.map((r) => String(r.order_number)),
         ...inQueue.rows.map((r) => String(r.order_number)),
       ]);
 
@@ -603,7 +606,6 @@ export async function reconcile() {
         for (const order of orders) {
           const on = String(order?.OrderNumber || '').trim();
           if (!on || known.has(on)) continue; // ya tiene boleta o ya está en la cola
-          if (invoiceRequired(order)) continue;
           const status = norm(statusOfOrder(order));
           if (!READY_STATUSES.some((s) => status.includes(s))) continue;
           await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null);
