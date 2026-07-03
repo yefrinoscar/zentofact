@@ -286,6 +286,9 @@ if (serveWeb) {
 
 const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {
+  const sunatForced = String(process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
+  const sunatEnv = sunatForced.startsWith('prod') ? 'PRODUCCIÓN (real)' : sunatForced === 'beta' ? 'BETA (pruebas)' : 'según empresa (modoProduccion)';
   console.log(`ZentoFact en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
+  console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
 });

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  FileText,
   FileMinus2,
   ShoppingBag,
   ClipboardList,
@@ -10,13 +9,14 @@ import {
   MoreVertical,
   LogOut,
   Zap,
+  ReceiptText,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
 import falabellaIcon from '../assets/falabella.png';
 
 const navItems = [
-  { to: '/individual-invoice', icon: FileText, img: null, label: 'Emisión individual' },
+  { to: '/documentos', icon: ReceiptText, img: null, label: 'Documentos' },
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string | null, label: 'Falabella' },
   { to: '/auto-emision', icon: Zap, img: null, label: 'Automatización' },
   { to: '/credit-notes', icon: FileMinus2, img: null, label: 'Notas de crédito' },

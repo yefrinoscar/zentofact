@@ -70,6 +70,7 @@ const apiHttp = {
   generateBoletaPdf: (id: number) => req(`/boletas/${id}/pdf`),
   generateFacturaPdf: (id: number) => req(`/facturas/${id}/pdf`),
   previewAcceptedBoletaHtml: (id: number) => req(`/boletas/${id}/preview`),
+  previewAcceptedFacturaHtml: (id: number) => req(`/facturas/${id}/preview`),
   previewCreditNoteHtml: (id: number) => req(`/credit-notes/${id}/preview`),
   previewBoletaHtml: (companyId: number, venta: any) => req('/boletas/preview', { method: 'POST', body: JSON.stringify({ companyId, venta }) }),
   previewFacturaHtml: (companyId: number, venta: any) => req('/facturas/preview', { method: 'POST', body: JSON.stringify({ companyId, venta }) }),

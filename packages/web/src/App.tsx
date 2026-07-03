@@ -11,6 +11,7 @@ import Settings from './routes/Settings';
 import FalabellaApi from './routes/FalabellaApi';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
+import Documentos from './routes/Documentos';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
 
@@ -39,9 +40,13 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Automatización',
     subtitle: 'Boletas en piloto automático desde las órdenes de Falabella.',
   },
-  '/individual-invoice': {
-    title: 'Emisión Individual',
-    subtitle: 'Crea y emite boletas o facturas de forma manual e individual.',
+  '/documentos': {
+    title: 'Documentos',
+    subtitle: 'Boletas y facturas emitidas a SUNAT. Filtra, descarga su PDF o emite una nueva.',
+  },
+  '/documentos/nuevo': {
+    title: 'Nuevo documento',
+    subtitle: 'Crea y emite una boleta o factura a SUNAT.',
   },
   '/summaries': {
     title: 'Resúmenes Diarios',
@@ -238,7 +243,9 @@ function AppLayout() {
               <Route path="/credit-notes" element={<CreditNotes />} />
               <Route path="/falabella-api" element={<FalabellaApi />} />
               <Route path="/auto-emision" element={<AutoEmision />} />
-              <Route path="/individual-invoice" element={<IndividualInvoice />} />
+              <Route path="/documentos" element={<Documentos />} />
+              <Route path="/documentos/nuevo" element={<IndividualInvoice />} />
+              <Route path="/individual-invoice" element={<Navigate to="/documentos/nuevo" replace />} />
               <Route path="/summaries" element={<DailySummaries />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
