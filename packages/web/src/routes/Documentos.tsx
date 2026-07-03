@@ -6,6 +6,7 @@ import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/tooltip';
 
 type Kind = 'boletas' | 'facturas';
 type DayWindow = 7 | 15 | 30;
@@ -24,14 +25,24 @@ function sunatReason(d: Doc): string {
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
 
-function EstadoIcon({ value }: { value?: string }) {
-  const v = String(value || '').toUpperCase();
+function EstadoIcon({ d }: { d: Doc }) {
+  const v = String(d.estadoSunat || d.estado || '').toUpperCase();
   const { Icon, color } = v === 'ACEPTADO'
     ? { Icon: CheckCircle2, color: 'text-emerald-600' }
     : v === 'RECHAZADO'
     ? { Icon: XCircle, color: 'text-red-600' }
+    : v === 'REEMPLAZADO'
+    ? { Icon: XCircle, color: 'text-muted-foreground' }
     : { Icon: AlertCircle, color: 'text-amber-500' };
-  return <span title={v || '—'} className={cn('inline-flex', color)}><Icon className="h-[18px] w-[18px]" /></span>;
+  const reason = sunatReason(d);
+  const icon = <span className={cn('inline-flex', color)}><Icon className="h-[18px] w-[18px]" /></span>;
+  if (!reason) return <span title={v || '—'}>{icon}</span>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild><button type="button" className="inline-flex cursor-help">{icon}</button></TooltipTrigger>
+      <TooltipContent>{v === 'REEMPLAZADO' && <span className="font-medium">Reemplazada. </span>}{reason}</TooltipContent>
+    </Tooltip>
+  );
 }
 const money = (v: any) => `S/ ${(parseFloat(v || '0') || 0).toFixed(2)}`;
 const DAY_WINDOWS: DayWindow[] = [7, 15, 30];
@@ -161,6 +172,7 @@ export default function Documentos() {
   };
 
   return (
+   <TooltipProvider delayDuration={150}>
     <div className="space-y-5">
       {/* Barra: empresa + tipo de documento */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -269,12 +281,7 @@ export default function Documentos() {
                   const est = String(d.estadoSunat || d.estado || '').toUpperCase();
                   return (
                     <tr key={d.id} className="border-b border-border/50 last:border-0 align-top hover:bg-accent/30">
-                      <td className="px-5 py-2.5 text-xs text-foreground">
-                        <div className="font-mono">{d.numeroCompleto || '—'}</div>
-                        {est === 'RECHAZADO' && sunatReason(d) && (
-                          <div className="mt-1 max-w-[320px] whitespace-normal leading-tight text-[11px] text-red-600">{sunatReason(d)}</div>
-                        )}
-                      </td>
+                      <td className="px-5 py-2.5 font-mono text-xs text-foreground">{d.numeroCompleto || '—'}</td>
                       <td className="px-5 py-2.5 text-muted-foreground">{d.fechaEmision || '—'}</td>
                       <td className="px-5 py-2.5">
                         <div className="text-foreground">{d.clientRazonSocial || '—'}</div>
@@ -284,7 +291,7 @@ export default function Documentos() {
                       <td className="px-5 py-2.5 text-center">
                         {retryingId === d.id
                           ? <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Procesando</span>
-                          : <span className="inline-flex justify-center"><EstadoIcon value={est} /></span>}
+                          : <span className="inline-flex justify-center"><EstadoIcon d={d} /></span>}
                       </td>
                       <td className="px-5 py-2.5">
                         {est === 'ACEPTADO' ? (
@@ -323,5 +330,6 @@ export default function Documentos() {
         </DialogContent>
       </Dialog>
     </div>
+   </TooltipProvider>
   );
 }

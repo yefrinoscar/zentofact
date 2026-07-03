@@ -305,8 +305,9 @@ export async function reEmitFactura(id: number) {
   const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
   const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
 
-  // La rechazada se mantiene como evidencia del hueco, pero libera la orden.
-  await db.update(facturas).set({ orderNumber: null, updatedAt: now }).where(eq(facturas.id, id));
+  // La rechazada se mantiene como evidencia del hueco (conserva el motivo), pero libera
+  // la orden y pasa a REEMPLAZADO para que no vuelva a ofrecer reintento.
+  await db.update(facturas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(facturas.id, id));
 
   // Nuevo registro = copia de la rechazada con nuevo número y la orden; estado limpio.
   const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = factura as any;

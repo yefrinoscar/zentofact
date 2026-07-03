@@ -239,7 +239,7 @@ export async function reEmitBoleta(id: number) {
   const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
   const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
 
-  await db.update(boletas).set({ orderNumber: null, updatedAt: now }).where(eq(boletas.id, id));
+  await db.update(boletas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(boletas.id, id));
 
   const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = boleta as any;
   const inserted = await db.insert(boletas).values({
