@@ -397,7 +397,12 @@ export async function enqueue(companyId, orderNumber, source = 'webhook', orderI
     `insert into emission_jobs (company_id, order_number, order_id, status, source, created_at, updated_at)
      values ($1, $2, $3, 'pending', $4, now(), now())
      on conflict (company_id, order_number) do update
-       set status = case when emission_jobs.status in ('failed','skipped') then 'pending' else emission_jobs.status end,
+       set status = case
+             when emission_jobs.status in ('failed') then 'pending'
+             when emission_jobs.status = 'skipped' and emission_jobs.result like 'orden de % anterior a la fecha%' then 'skipped'
+             when emission_jobs.status = 'skipped' then 'pending'
+             else emission_jobs.status
+           end,
            order_id = coalesce(excluded.order_id, emission_jobs.order_id),
            updated_at = now()`,
     [companyId, orderNumber, orderId || null, source],
