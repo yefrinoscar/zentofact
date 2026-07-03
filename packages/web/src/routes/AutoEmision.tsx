@@ -118,6 +118,8 @@ export default function AutoEmision() {
   const [webhookSaving, setWebhookSaving] = useState(false);
   const [webhookError, setWebhookError] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(DEFAULT_WEBHOOK_EVENTS);
+  const [webhookIdQuery, setWebhookIdQuery] = useState('');
+  const [callbackUrl, setCallbackUrl] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
 
@@ -185,12 +187,18 @@ export default function AutoEmision() {
   const selectedWebhookCompanyId = webhookCompanyId || webhookCompanies[0]?.id || null;
   const selectedWebhookCompany = webhookCompanies.find((company) => company.id === selectedWebhookCompanyId) || null;
 
-  const loadWebhooks = useCallback(async (companyId = selectedWebhookCompanyId) => {
+  const defaultCallbackUrl = selectedWebhookCompanyId
+    ? `${config?.webhookBase || ''}/${selectedWebhookCompanyId}${config?.webhookSecretSet ? '?secret=***' : ''}`
+    : '';
+  const customCallbackUrl = callbackUrl.trim();
+  const previewCallbackUrl = customCallbackUrl || defaultCallbackUrl;
+
+  const loadWebhooks = useCallback(async (companyId = selectedWebhookCompanyId, ids?: string[]) => {
     if (!companyId) return;
     setWebhooksLoading(true);
     setWebhookError('');
     try {
-      const response = await api.autoEmitGetWebhooks(companyId);
+      const response = await api.autoEmitGetWebhooks(companyId, ids);
       if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella devolvió un error.');
       setWebhooks(response?.webhooks || []);
     } catch (error: any) {
@@ -216,10 +224,17 @@ export default function AutoEmision() {
 
   const createWebhook = async () => {
     if (!selectedWebhookCompanyId || !selectedEvents.length) return;
+    if (!customCallbackUrl && !config?.webhookSecretSet) {
+      setWebhookError('Falta el secreto del webhook o una URL callback personalizada.');
+      return;
+    }
+    if (/localhost|127\.0\.0\.1/i.test(previewCallbackUrl) && !window.confirm(
+      'La URL callback es local. Falabella no podrá llamarla desde internet. ¿Crear de todas formas para prueba?'
+    )) return;
     setWebhookSaving(true);
     setWebhookError('');
     try {
-      const response = await api.autoEmitCreateWebhook(selectedWebhookCompanyId, selectedEvents);
+      const response = await api.autoEmitCreateWebhook(selectedWebhookCompanyId, selectedEvents, customCallbackUrl || undefined);
       if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella rechazó la creación del webhook.');
       await loadWebhooks(selectedWebhookCompanyId);
     } catch (error: any) {
@@ -227,6 +242,14 @@ export default function AutoEmision() {
     } finally {
       setWebhookSaving(false);
     }
+  };
+
+  const consultWebhooks = () => {
+    const ids = webhookIdQuery
+      .split(/[,\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    void loadWebhooks(selectedWebhookCompanyId || undefined, ids.length ? ids : undefined);
   };
 
   const deleteWebhook = async (webhookId: string) => {
@@ -451,9 +474,9 @@ export default function AutoEmision() {
 
       {/* Configuración (modal con tabs) */}
       <Dialog open={configOpen} onOpenChange={setConfigOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[88vh] max-w-5xl overflow-hidden">
           <DialogHeader><DialogTitle>Configuración</DialogTitle></DialogHeader>
-          <div className="p-5">
+          <div className="max-h-[calc(88vh-66px)] overflow-auto p-5">
             <Tabs defaultValue="cron">
               <TabsList className="mb-4">
                 <TabsTrigger value="cron">Revisión automática</TabsTrigger>
@@ -515,18 +538,10 @@ export default function AutoEmision() {
                       <p className="text-sm font-medium text-foreground">Gestor de webhooks en Falabella</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">Crea, consulta y elimina los webhooks registrados en Seller Center.</p>
                     </div>
-                    <button
-                      onClick={() => loadWebhooks(selectedWebhookCompanyId || undefined)}
-                      disabled={!selectedWebhookCompanyId || webhooksLoading}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <RefreshCw className={cn('h-3.5 w-3.5', webhooksLoading && 'animate-spin')} />
-                      Consultar
-                    </button>
                   </div>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
-                    <div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_auto] lg:items-end">
+                    <div className="min-w-0">
                       <p className="mb-1.5 text-xs font-medium text-muted-foreground">Empresa</p>
                       <Select
                         value={selectedWebhookCompanyId ? String(selectedWebhookCompanyId) : ''}
@@ -543,11 +558,20 @@ export default function AutoEmision() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <label className="mt-3 block">
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Consultar por ID</span>
+                        <input
+                          value={webhookIdQuery}
+                          onChange={(event) => setWebhookIdQuery(event.target.value)}
+                          placeholder="Opcional, separados por coma"
+                          className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                        />
+                      </label>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <p className="mb-1.5 text-xs font-medium text-muted-foreground">Eventos</p>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                         {WEBHOOK_EVENTS.map((event) => {
                           const checked = selectedEvents.includes(event.value);
                           return (
@@ -556,7 +580,7 @@ export default function AutoEmision() {
                               type="button"
                               onClick={() => toggleWebhookEvent(event.value)}
                               className={cn(
-                                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition',
+                                'inline-flex min-h-9 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs font-medium transition',
                                 checked ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
                               )}
                             >
@@ -568,23 +592,35 @@ export default function AutoEmision() {
                           );
                         })}
                       </div>
+                      <label className="mt-3 block">
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Callback personalizado</span>
+                        <input
+                          value={callbackUrl}
+                          onChange={(event) => setCallbackUrl(event.target.value)}
+                          placeholder={defaultCallbackUrl || 'Se genera con el secreto local'}
+                          className="h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                        />
+                      </label>
                     </div>
-                  </div>
 
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0 text-xs text-muted-foreground">
-                      {selectedWebhookCompany
-                        ? <>Callback: <span className="font-mono">{config.webhookBase}/{selectedWebhookCompany.id}?secret=***</span></>
-                        : 'Configura credenciales Falabella en una empresa para crear webhooks.'}
+                    <div className="flex gap-2 lg:flex-col">
+                      <button
+                        onClick={consultWebhooks}
+                        disabled={!selectedWebhookCompanyId || webhooksLoading}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RefreshCw className={cn('h-3.5 w-3.5', webhooksLoading && 'animate-spin')} />
+                        Consultar
+                      </button>
+                      <button
+                        onClick={createWebhook}
+                        disabled={!selectedWebhookCompanyId || !selectedEvents.length || webhookSaving || (!config.webhookSecretSet && !customCallbackUrl)}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {webhookSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        Crear
+                      </button>
                     </div>
-                    <button
-                      onClick={createWebhook}
-                      disabled={!selectedWebhookCompanyId || !selectedEvents.length || webhookSaving || !config.webhookSecretSet}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {webhookSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                      Crear webhook
-                    </button>
                   </div>
 
                   {webhookError && (
@@ -604,13 +640,13 @@ export default function AutoEmision() {
                     ) : (
                       <div className="max-h-56 overflow-auto divide-y divide-border">
                         {webhooks.map((webhook) => (
-                          <div key={webhook.webhookId || webhook.callbackUrl} className="grid gap-2 px-3 py-3 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
+                          <div key={webhook.webhookId || webhook.callbackUrl} className="grid gap-3 px-3 py-3 text-xs md:grid-cols-[160px_minmax(0,1fr)_auto] md:items-start">
                             <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-mono font-semibold text-foreground">{webhook.webhookId || 'sin ID'}</span>
-                                {webhook.webhookSource && <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{webhook.webhookSource}</span>}
-                              </div>
-                              <p className="mt-1 truncate font-mono text-muted-foreground" title={webhook.callbackUrl}>{webhook.callbackUrl || '-'}</p>
+                              <span className="block font-mono font-semibold text-foreground">{webhook.webhookId || 'sin ID'}</span>
+                              {webhook.webhookSource && <span className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{webhook.webhookSource}</span>}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate font-mono text-muted-foreground" title={webhook.callbackUrl}>{webhook.callbackUrl || '-'}</p>
                               <div className="mt-2 flex flex-wrap gap-1">
                                 {webhook.events.length ? webhook.events.map((event) => (
                                   <span key={event} className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">{event}</span>
