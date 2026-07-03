@@ -224,26 +224,41 @@ export function isTransientSunatRejection(respuestaSunat: string | null | undefi
   return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
 }
 
-// Re-emite una boleta RECHAZADA. Si el rechazo fue definitivo, SUNAT ya registró
-// ese número: se le asigna el SIGUIENTE correlativo disponible antes de reenviar.
+// Re-emite una boleta RECHAZADA. Transitorio → reintenta el mismo número. Definitivo →
+// mantiene la rechazada como evidencia (sin la orden) y crea una NUEVA con el siguiente
+// correlativo disponible, que se lleva la orden, y esa se emite.
 export async function reEmitBoleta(id: number) {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
   if (boleta.estadoSunat === 'ACEPTADO') throw new Error('La boleta ya fue aceptada por SUNAT');
 
-  const wasBurned = boleta.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(boleta.respuestaSunat);
-  if (wasBurned) {
-    const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
-    const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
-    await db.update(boletas).set({
-      correlativo: nextCorrelativo,
-      numeroCompleto,
-      estadoSunat: 'PENDIENTE',
-      respuestaSunat: null,
-      updatedAt: Math.floor(Date.now() / 1000),
-    }).where(eq(boletas.id, id));
-  }
-  return sendBoletaToSunat(id);
+  const burned = boleta.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(boleta.respuestaSunat);
+  if (!burned) return sendBoletaToSunat(id);
+
+  const now = Math.floor(Date.now() / 1000);
+  const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
+  const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
+
+  await db.update(boletas).set({ orderNumber: null, updatedAt: now }).where(eq(boletas.id, id));
+
+  const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = boleta as any;
+  const inserted = await db.insert(boletas).values({
+    ...rest,
+    correlativo: nextCorrelativo,
+    numeroCompleto,
+    orderNumber: boleta.orderNumber,
+    dailySummaryId: null,
+    estadoSunat: 'PENDIENTE',
+    respuestaSunat: null,
+    xmlPath: null,
+    cdrPath: null,
+    pdfPath: null,
+    codigoHash: null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning({ id: boletas.id });
+
+  return sendBoletaToSunat(inserted[0].id);
 }
 
 export async function sendBoletasAsDailySummary(

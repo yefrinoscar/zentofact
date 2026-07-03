@@ -286,28 +286,47 @@ export function isTransientSunatRejection(respuestaSunat: string | null | undefi
   return /en proceso|vuelva a intentar|int[eé]ntelo|time ?out|0140/.test(t);
 }
 
-// Re-emite una factura RECHAZADA. Si el rechazo fue definitivo, SUNAT ya registró
-// ese número como rechazado/anulado ("ya está informado") y NO se puede reutilizar:
-// se le asigna el SIGUIENTE correlativo disponible antes de reenviar. Si el rechazo
-// es transitorio (documento en proceso), se reintenta con el mismo número.
+// Re-emite una factura RECHAZADA.
+// - Rechazo transitorio (documento en proceso): el número NO está quemado → se reintenta
+//   el MISMO registro con el mismo número.
+// - Rechazo definitivo: SUNAT ya registró ese número como rechazado/anulado ("ya está
+//   informado") y NO se puede reutilizar. Se CONSERVA el registro rechazado como
+//   evidencia del hueco (pero se le quita la orden) y se crea un registro NUEVO con el
+//   siguiente correlativo disponible, que se lleva la orden, y ese es el que se emite.
 export async function reEmitFactura(id: number) {
   const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.estadoSunat === 'ACEPTADO') throw new Error('La factura ya fue aceptada por SUNAT');
 
-  const wasBurned = factura.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(factura.respuestaSunat);
-  if (wasBurned) {
-    const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
-    const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
-    await db.update(facturas).set({
-      correlativo: nextCorrelativo,
-      numeroCompleto,
-      estadoSunat: 'PENDIENTE',
-      respuestaSunat: null,
-      updatedAt: Math.floor(Date.now() / 1000),
-    }).where(eq(facturas.id, id));
-  }
-  return sendFacturaToSunat(id);
+  const burned = factura.estadoSunat === 'RECHAZADO' && !isTransientSunatRejection(factura.respuestaSunat);
+  if (!burned) return sendFacturaToSunat(id);
+
+  const now = Math.floor(Date.now() / 1000);
+  const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
+  const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
+
+  // La rechazada se mantiene como evidencia del hueco, pero libera la orden.
+  await db.update(facturas).set({ orderNumber: null, updatedAt: now }).where(eq(facturas.id, id));
+
+  // Nuevo registro = copia de la rechazada con nuevo número y la orden; estado limpio.
+  const { id: _oldId, createdAt: _c, updatedAt: _u, ...rest } = factura as any;
+  const inserted = await db.insert(facturas).values({
+    ...rest,
+    correlativo: nextCorrelativo,
+    numeroCompleto,
+    orderNumber: factura.orderNumber,
+    estadoSunat: 'PENDIENTE',
+    respuestaSunat: null,
+    xmlPath: null,
+    cdrPath: null,
+    pdfPath: null,
+    codigoHash: null,
+    respuestaFalabella: null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning({ id: facturas.id });
+
+  return sendFacturaToSunat(inserted[0].id);
 }
 
 // Re-valida el estado SUNAT de una factura leyendo el CDR/respuesta ya guardada.
