@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertCircle,
@@ -785,6 +786,7 @@ function createEmptyEmitBoletaState(): EmitBoletaModalState {
 }
 
 export default function FalabellaApi() {
+  const navigate = useNavigate();
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 
@@ -1437,6 +1439,7 @@ export default function FalabellaApi() {
         if (result.success) {
           setSelectedReadyOrders(new Set());
           await loadInvoiceFlowPrototype();
+          navigate('/documentos?tab=facturas&days=7');
         }
       } else {
         api.onProgress((data: any) => {

@@ -84,7 +84,9 @@ function buildConfig(company) {
 
 async function getOrCreateMainBranch(company) {
   const existing = await listBranches(company.id);
-  if (existing[0]) return existing[0];
+  // SUNAT valida el establecimiento anexo: el principal '0000' siempre está declarado.
+  const zero = existing.find((b) => b.codigo === '0000');
+  if (zero) return zero;
   return createBranch({
     companyId: company.id,
     codigo: '0000',
@@ -460,10 +462,18 @@ async function processJob(job) {
   const ready = READY_STATUSES.some((s) => status.includes(s));
   if (!ready) return { status: 'skipped', result: `estado "${status}" aún no habilita comprobante` };
 
-  // 3) ¿ya tiene documento?
+  // 3) ¿ya tiene documento? Solo cuenta como emitido si está ACEPTADO por SUNAT.
+  //    Si existe pero está RECHAZADO/sin aceptar → falla visible (no se oculta como "Emitida").
   const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
-  if (requiresInvoice && doc?.factura) return { status: 'done', result: `ya tenía factura ${doc.factura.numeroCompleto}`, boletaNumero: doc.factura.numeroCompleto };
-  if (!requiresInvoice && doc?.boleta) return { status: 'done', result: `ya tenía boleta ${doc.boleta.numeroCompleto}`, boletaNumero: doc.boleta.numeroCompleto };
+  const existingDoc = requiresInvoice ? doc?.factura : doc?.boleta;
+  if (existingDoc) {
+    const est = String(existingDoc.estadoSunat || existingDoc.estado || '').toUpperCase();
+    const tipo = requiresInvoice ? 'factura' : 'boleta';
+    if (est === 'ACEPTADO') {
+      return { status: 'done', result: `ya tenía ${tipo} ${existingDoc.numeroCompleto}`, boletaNumero: existingDoc.numeroCompleto };
+    }
+    return { status: 'failed', result: `${tipo} ${existingDoc.numeroCompleto} existe pero está ${est || 'SIN ACEPTAR'} en SUNAT — revisar (no se re-emite para evitar duplicados)`, boletaNumero: existingDoc.numeroCompleto };
+  }
 
   if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };
 

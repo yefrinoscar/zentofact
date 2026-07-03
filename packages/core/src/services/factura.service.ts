@@ -522,7 +522,7 @@ export async function generatePreviewFacturaHtmlForVenta(
 
   const availableBranches = await db.select().from(branches)
     .where(and(eq(branches.companyId, companyId), eq(branches.activo, true)));
-  const branchData = availableBranches.find(branch => branch.codigo === '0001') || availableBranches[0];
+  const branchData = availableBranches.find(branch => branch.codigo === '0000') || availableBranches[0];
   if (!branchData) throw new Error('La empresa no tiene una sucursal activa para previsualizar.');
 
   const serie = venta.serie || 'F001';

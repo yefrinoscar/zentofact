@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Download, Loader2, RefreshCw, FileText, CheckCircle2, XCircle, AlertCircle, Eye } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Search, Download, Loader2, RefreshCw, FileText, CheckCircle2, XCircle, AlertCircle, Eye, RotateCcw } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
-import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
 type Kind = 'boletas' | 'facturas';
+type DayWindow = 7 | 15 | 30;
 type Doc = {
   id: number; numeroCompleto: string; fechaEmision: string; orderNumber?: string | null;
   clientRazonSocial?: string; clientNumeroDocumento?: string; mtoImpVenta?: string;
@@ -25,15 +25,31 @@ function EstadoIcon({ value }: { value?: string }) {
   return <span title={v || '—'} className={cn('inline-flex', color)}><Icon className="h-[18px] w-[18px]" /></span>;
 }
 const money = (v: any) => `S/ ${(parseFloat(v || '0') || 0).toFixed(2)}`;
+const DAY_WINDOWS: DayWindow[] = [7, 15, 30];
+
+function parseKind(value: string | null): Kind {
+  return value === 'facturas' ? 'facturas' : 'boletas';
+}
+
+function parseDays(value: string | null): DayWindow {
+  const parsed = Number(value);
+  return DAY_WINDOWS.includes(parsed as DayWindow) ? parsed as DayWindow : 7;
+}
+
+function dateValue(value?: string) {
+  const time = new Date(String(value || '')).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
 
 export default function Documentos() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const activeId = useAppStore((s) => s.activeCompanyId);
   const setActiveId = useAppStore((s) => s.setActiveCompanyId);
 
   const [companies, setCompanies] = useState<any[]>([]);
-  const [kind, setKind] = useState<Kind>('boletas');
-  const [estado, setEstado] = useState<string>('all');
+  const [kind, setKind] = useState<Kind>(() => parseKind(searchParams.get('tab')));
+  const [dayWindow, setDayWindow] = useState<DayWindow>(() => parseDays(searchParams.get('days')));
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,8 +57,35 @@ export default function Documentos() {
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [retryMsg, setRetryMsg] = useState('');
 
   useEffect(() => { api.listCompanies().then((c: any[]) => setCompanies(Array.isArray(c) ? c : [])).catch(() => {}); }, []);
+
+  useEffect(() => {
+    const nextKind = parseKind(searchParams.get('tab'));
+    const nextDays = parseDays(searchParams.get('days'));
+    setKind(nextKind);
+    setDayWindow(nextDays);
+  }, [searchParams]);
+
+  const updateKind = (nextKind: Kind) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('tab', nextKind);
+      next.set('days', String(dayWindow));
+      return next;
+    });
+  };
+
+  const updateDays = (nextDays: DayWindow) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('tab', kind);
+      next.set('days', String(nextDays));
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     if (!activeId) { setRows([]); return; }
@@ -60,15 +103,14 @@ export default function Documentos() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const from = Date.now() - dayWindow * 24 * 60 * 60 * 1000;
     return rows.filter((d) => {
-      // Esta lista es solo de documentos SIN orden de Falabella (los emitidos manualmente).
-      if (d.orderNumber && String(d.orderNumber).trim()) return false;
-      const est = String(d.estadoSunat || d.estado || '').toUpperCase();
-      if (estado !== 'all' && est !== estado) return false;
+      const emittedAt = dateValue(d.fechaEmision);
+      if (emittedAt && emittedAt < from) return false;
       if (!q) return true;
-      return [d.numeroCompleto, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
+      return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
     });
-  }, [rows, search, estado]);
+  }, [rows, search, dayWindow]);
 
   const downloadPdf = async (d: Doc) => {
     setDownloadingId(d.id);
@@ -79,6 +121,17 @@ export default function Documentos() {
       link.href = `data:application/pdf;base64,${res.base64}`; link.download = `${d.numeroCompleto}.pdf`; link.click();
     } catch { /* noop */ }
     finally { setDownloadingId(null); }
+  };
+
+  // Reintenta la emisión a SUNAT de una RECHAZADA (mismo registro/número; el backend reconstruye el XML).
+  const retry = async (d: Doc) => {
+    setRetryingId(d.id); setRetryMsg('');
+    try {
+      await (kind === 'facturas' ? api.sendFacturaToSunat(d.id) : api.sendBoletaToSunat(d.id));
+      await load();
+    } catch (e: any) {
+      setRetryMsg(`${d.numeroCompleto}: ${e?.message || 'No se pudo reintentar.'}`);
+    } finally { setRetryingId(null); }
   };
 
   const openPreview = async (d: Doc) => {
@@ -93,12 +146,15 @@ export default function Documentos() {
 
   return (
     <div className="space-y-5">
-      {/* Barra: empresa + acciones */}
+      {/* Barra: empresa + tipo de documento */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Select value={activeId ? String(activeId) : ''} onValueChange={(v) => { const id = Number(v); setActiveId(id); api.setActiveCompanyId(id); }}>
-          <SelectTrigger className="h-10 w-[min(360px,60vw)]"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
-          <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre || c.razonSocial} — {c.ruc}</SelectItem>)}</SelectContent>
-        </Select>
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <Select value={activeId ? String(activeId) : ''} onValueChange={(v) => { const id = Number(v); setActiveId(id); api.setActiveCompanyId(id); }}>
+            <SelectTrigger className="h-11 w-[min(390px,72vw)]"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
+            <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre || c.razonSocial} — {c.ruc}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+
         <button onClick={() => navigate('/documentos/nuevo')} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
           <Plus className="h-4 w-4" /> Nuevo documento
         </button>
@@ -106,38 +162,65 @@ export default function Documentos() {
 
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-3">
-        <Tabs value={kind} onValueChange={(v) => setKind(v as Kind)}>
-          <TabsList>
-            <TabsTrigger value="boletas">Boletas</TabsTrigger>
-            <TabsTrigger value="facturas">Facturas</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <div className="relative">
+        <div className="relative w-[300px] max-w-full">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por número, cliente…" className="h-9 w-64 rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition focus:border-ring" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por número, orden, cliente…" className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition focus:border-ring" />
         </div>
-        <Select value={estado} onValueChange={setEstado}>
-          <SelectTrigger className="h-9 w-[180px] whitespace-nowrap"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los estados</SelectItem>
-            <SelectItem value="ACEPTADO">Aceptado</SelectItem>
-            <SelectItem value="RECHAZADO">Rechazado</SelectItem>
-            <SelectItem value="ANULADO">Anulado</SelectItem>
-            <SelectItem value="PENDIENTE">Pendiente</SelectItem>
-            <SelectItem value="REGISTRADO">Registrado</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="relative grid h-10 w-[222px] grid-cols-2 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground">
+          <span
+            className={cn(
+              'absolute bottom-1 left-1 top-1 w-[calc(50%_-_4px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out',
+              kind === 'facturas' ? 'translate-x-full' : 'translate-x-0',
+            )}
+          />
+          <button
+            type="button"
+            onClick={() => updateKind('boletas')}
+            className={cn('relative z-10 rounded-lg transition-colors', kind === 'boletas' ? 'text-foreground' : 'hover:text-foreground')}
+          >
+            Boletas
+          </button>
+          <button
+            type="button"
+            onClick={() => updateKind('facturas')}
+            className={cn('relative z-10 rounded-lg transition-colors', kind === 'facturas' ? 'text-foreground' : 'hover:text-foreground')}
+          >
+            Facturas
+          </button>
+        </div>
+        <div className="relative grid h-10 w-[222px] grid-cols-3 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground">
+          <span
+            className="absolute bottom-1 left-1 top-1 w-[calc(33.333333%_-_2.666667px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out"
+            style={{ transform: `translateX(${DAY_WINDOWS.indexOf(dayWindow) * 100}%)` }}
+          />
+          {DAY_WINDOWS.map((days) => (
+            <button
+              key={days}
+              type="button"
+              onClick={() => updateDays(days)}
+              className={cn('relative z-10 rounded-lg transition-colors', dayWindow === days ? 'text-foreground' : 'hover:text-foreground')}
+            >
+              {days} días
+            </button>
+          ))}
+        </div>
         <button onClick={load} disabled={loading} className="ml-auto rounded-md p-2 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-50" title="Refrescar">
           <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
         </button>
       </div>
+
+      {retryMsg && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {retryMsg}
+        </div>
+      )}
 
       {/* Lista */}
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         {!activeId ? (
           <p className="p-12 text-center text-sm text-muted-foreground">Selecciona una empresa para ver sus documentos.</p>
         ) : loading && rows.length === 0 ? (
-          <p className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando…</p>
+          <p className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando {kind === 'boletas' ? 'boletas' : 'facturas'}…</p>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-3 p-12 text-center">
             <FileText className="h-8 w-8 text-muted-foreground/50" />
@@ -145,7 +228,15 @@ export default function Documentos() {
             <button onClick={() => navigate('/documentos/nuevo')} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:opacity-80"><Plus className="h-4 w-4" /> Emitir una</button>
           </div>
         ) : (
-          <div className="max-h-[calc(100vh-16rem)] overflow-auto">
+          <div className="relative max-h-[calc(100vh-16rem)] overflow-auto">
+            {loading && (
+              <div className="absolute inset-0 z-20 grid place-items-center bg-card/70 backdrop-blur-[1px]">
+                <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Actualizando…
+                </div>
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                 <tr className="border-b border-border">
@@ -178,6 +269,12 @@ export default function Documentos() {
                             </button>
                             <button onClick={() => downloadPdf(d)} disabled={downloadingId === d.id} title="Descargar PDF" className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40">
                               {downloadingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} PDF
+                            </button>
+                          </div>
+                        ) : est === 'RECHAZADO' ? (
+                          <div className="flex justify-end">
+                            <button onClick={() => retry(d)} disabled={retryingId === d.id} title="Reintentar emisión a SUNAT (mismo número)" className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-40">
+                              {retryingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Reintentar
                             </button>
                           </div>
                         ) : <span className="block text-right text-xs text-muted-foreground">—</span>}

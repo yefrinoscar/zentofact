@@ -113,7 +113,10 @@ export default function IndividualInvoice() {
     if (!companyId) { setBranches([]); setBranchId(''); setCorrelatives([]); return; }
     api.listBranches(Number(companyId)).then((list: any[]) => {
       const active = Array.isArray(list) ? list : [];
-      setBranches(active); setBranchId(active[0]?.id ?? '');
+      setBranches(active);
+      // SUNAT valida el establecimiento anexo: usar el principal '0000' (siempre declarado).
+      const main = active.find((b: any) => b.codigo === '0000') || active[0];
+      setBranchId(main?.id ?? '');
     }).catch(() => setBranches([]));
   }, [companyId]);
 

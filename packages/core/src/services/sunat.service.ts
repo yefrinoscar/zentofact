@@ -574,6 +574,7 @@ export class SunatService {
 
   private async sendBillSoap(fileName: string, contentFile: string): Promise<{ applicationResponse?: string }> {
     const soapEnvelope = this.buildSendBillEnvelope(fileName, contentFile);
+    console.log('[SUNAT] sendBill →', this.endpoint, this.endpoint.includes('e-beta') ? '(BETA)' : '(PRODUCCIÓN)');
     const response = await fetch(this.endpoint, {
       method: 'POST',
       headers: {
