@@ -30,7 +30,7 @@ type ClientDocType = '0' | '1' | '6';
 interface Item {
   id: string;
   descripcion: string;
-  cantidad: number;
+  cantidad: string;
   precioTotal: string;
 }
 
@@ -90,7 +90,7 @@ function formatLocalDate(date: Date = new Date()): string {
 }
 
 function emptyItem(): Item {
-  return { id: crypto.randomUUID(), descripcion: '', cantidad: 1, precioTotal: '' };
+  return { id: crypto.randomUUID(), descripcion: '', cantidad: '', precioTotal: '' };
 }
 
 function padCorrelative(value: number): string {
@@ -159,7 +159,7 @@ export default function IndividualInvoice() {
   const [branchId, setBranchId] = useState<number | ''>('');
   const [fechaEmision, setFechaEmision] = useState(formatLocalDate());
 
-  const [clientTipo, setClientTipo] = useState<ClientDocType>('0');
+  const [clientTipo, setClientTipo] = useState<ClientDocType>(docType === '03' ? '1' : '6');
   const [clientNumero, setClientNumero] = useState('');
   const [clientNombre, setClientNombre] = useState('');
 
@@ -179,6 +179,10 @@ export default function IndividualInvoice() {
       .catch((e: any) => setLoadError(e?.message || 'No se pudieron cargar las empresas.'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    setClientTipo(docType === '03' ? '1' : '6');
+  }, [docType]);
 
   useEffect(() => {
     if (!companyId) {
@@ -224,7 +228,7 @@ export default function IndividualInvoice() {
   }, [correlatives, docType, serie]);
 
   const parsedItems = useMemo(
-    () => items.map((item) => ({ ...item, precioNum: Number(item.precioTotal) || 0 })),
+    () => items.map((item) => ({ ...item, precioNum: Number(item.precioTotal) || 0, cantidadNum: Number(item.cantidad) || 0 })),
     [items]
   );
 
@@ -256,7 +260,8 @@ export default function IndividualInvoice() {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (!item.descripcion.trim()) return `Item ${i + 1}: ingresa una descripción.`;
-      if (item.cantidad <= 0) return `Item ${i + 1}: la cantidad debe ser mayor a 0.`;
+      const cantidad = Number(item.cantidad);
+      if (Number.isNaN(cantidad) || cantidad <= 0) return `Item ${i + 1}: la cantidad debe ser mayor a 0.`;
       const precio = Number(item.precioTotal);
       if (Number.isNaN(precio) || precio <= 0) return `Item ${i + 1}: el monto debe ser mayor a 0.`;
     }
@@ -285,8 +290,8 @@ export default function IndividualInvoice() {
           codigo: '0001',
           descripcion: item.descripcion,
           unidad: 'NIU',
-          cantidad: item.cantidad,
-          mto_valor_unitario: round(base / item.cantidad),
+          cantidad: item.cantidadNum,
+          mto_valor_unitario: round(base / item.cantidadNum),
           mto_bruto: item.precioNum,
           porcentaje_igv: IGV_RATE,
           tip_afe_igv: '10',
@@ -312,8 +317,8 @@ export default function IndividualInvoice() {
           codigo: '0001',
           descripcion: item.descripcion,
           unidad: 'NIU',
-          cantidad: item.cantidad,
-          mtoValorUnitario: round(base / item.cantidad),
+          cantidad: item.cantidadNum,
+          mtoValorUnitario: round(base / item.cantidadNum),
           mtoBruto: item.precioNum,
           porcentajeIgv: IGV_RATE,
           tipAfeIgv: '10',
@@ -443,7 +448,7 @@ export default function IndividualInvoice() {
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Empresa</label>
+                <label className="text-sm font-medium leading-none">Empresa</label>
                 <select
                   value={companyId}
                   onChange={(e) => {
@@ -463,17 +468,9 @@ export default function IndividualInvoice() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium leading-none">Fecha</label>
-                  <DatePicker value={fechaEmision} onChange={setFechaEmision} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium leading-none">Sucursal</label>
-                  <div className="flex h-10 items-center rounded-md border border-input bg-muted/30 px-3 text-sm text-muted-foreground">
-                    {selectedBranch?.nombre || '—'}
-                  </div>
-                </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">Fecha</label>
+                <DatePicker value={fechaEmision} onChange={setFechaEmision} />
               </div>
             </div>
 

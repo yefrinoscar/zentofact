@@ -9,6 +9,7 @@
 # UI/UX
 See [ui/ux/taste.md](ui/ux/taste.md)
 - In the individual emission form, when the user switches company, also update the correlative to match the selected company's correlatives — do not keep stale correlative data from the previous company. Confidence: 0.70
+- For the individual emission form, auto-default client document type to RUC ("6") for both boletas and facturas — do not let the user manually toggle between document types. Remove the client document type dropdown. Confidence: 0.70
 - In the individual emission form, auto-select the first branch by default and hide the branch selector from the UI — the user should not need to manually pick a branch. Confidence: 0.70
 - Use shadcn/ui components by default (Select, DatePicker with Range Calendar, etc.) — prefer shadcn over custom or alternative UI components. Confidence: 0.75
 - For the individual emission form, use a step-by-step stepper/wizard pattern instead of a flat grid layout — show one section at a time with click-to-progress progression. Confidence: 0.70
@@ -16,6 +17,7 @@ See [ui/ux/taste.md](ui/ux/taste.md)
 - When the user provides a total/con-IGV price per item, auto-calculate the base (sin IGV) and IGV automatically — do not ask the user to enter IGV or base prices manually. IGV is always 18% unless specified otherwise. Confidence: 0.75
 - Do not ask the user to enter the correlative (it's auto-generated from the database correlatives table). The form only needs: company, branch, serie, client data, and items with total prices. Confidence: 0.70
 - Display errors in red text with precise indication of where the error occurred (which step, which element, what operation was being attempted). Confidence: 0.80
+- For number inputs in forms (quantity, amount), do not use `min` attribute values that prevent clearing the field — prefer allowing empty/zero values so users can freely type and edit. Confidence: 0.70
 - Don't ship broken or blank UI sections/screens — either fix them to work properly or remove them from the UI entirely. Confidence: 0.70
 - After scraper extraction completes, surface the export/download button in the workflow execution/results area (not in the preflight section). Make it clearly visible as a call-to-action. Confidence: 0.75
 # Architecture
@@ -32,6 +34,9 @@ See [falabella-api/taste.md](falabella-api/taste.md)
 # Desktop App
 - Place beta/production mode toggle in the header, well-organized. Confidence: 0.70
 - Place output directory configuration in Settings/Ajustes, not inside workflow steps (e.g., not in Paso 3: Emitir). Confidence: 0.75
+
+# Development Badge
+- Do not use "Beta" tags inside form UIs — instead, add a "Desarrollo" (Development) badge in the sidebar above the user info to indicate the app is in development mode. Confidence: 0.70
 
 # Scraper
 See [scraper/taste.md](scraper/taste.md)

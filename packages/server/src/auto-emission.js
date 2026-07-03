@@ -104,10 +104,41 @@ export async function ensureTables() {
     create table if not exists auto_emission_state (
       id integer primary key default 1,
       paused boolean not null default false,
+      cron_enabled boolean not null default true,
+      cron_interval_minutes integer not null default 60,
+      cron_window_days integer not null default 3,
       updated_at timestamptz not null default now()
     );
+    alter table auto_emission_state add column if not exists cron_enabled boolean not null default true;
+    alter table auto_emission_state add column if not exists cron_interval_minutes integer not null default 60;
+    alter table auto_emission_state add column if not exists cron_window_days integer not null default 3;
     insert into auto_emission_state (id, paused) values (1, false) on conflict (id) do nothing;
   `);
+}
+
+// ── Config del cron (red de seguridad): encender/apagar + frecuencia + ventana ──
+export async function getCron() {
+  const r = await pool.query('select cron_enabled, cron_interval_minutes, cron_window_days from auto_emission_state where id=1');
+  const row = r.rows[0] || {};
+  return {
+    enabled: row.cron_enabled !== false,
+    intervalMinutes: Number(row.cron_interval_minutes) || 60,
+    windowDays: Number(row.cron_window_days) || 3,
+  };
+}
+export async function setCron({ enabled, intervalMinutes, windowDays }) {
+  const cur = await getCron();
+  const next = {
+    enabled: enabled === undefined ? cur.enabled : !!enabled,
+    intervalMinutes: intervalMinutes === undefined ? cur.intervalMinutes : Math.max(5, Math.min(1440, Number(intervalMinutes) || cur.intervalMinutes)),
+    windowDays: windowDays === undefined ? cur.windowDays : Math.max(1, Math.min(60, Number(windowDays) || cur.windowDays)),
+  };
+  await pool.query(
+    `update auto_emission_state set cron_enabled=$1, cron_interval_minutes=$2, cron_window_days=$3, updated_at=now() where id=1`,
+    [next.enabled, next.intervalMinutes, next.windowDays],
+  );
+  log(`cron: ${next.enabled ? 'ON' : 'OFF'} cada ${next.intervalMinutes}min, ventana ${next.windowDays}d`);
+  return next;
 }
 
 // ── Pausa global de la cola (runtime, sin reiniciar) ──
@@ -139,6 +170,7 @@ export async function getConfig() {
   const rows = (await pool.query('select company_id, enabled from auto_emission_config')).rows;
   const map = new Map(rows.map((r) => [r.company_id, r.enabled]));
   const paused = await getPaused();
+  const cron = await getCron();
   // Conteo por estado (resumen del panel).
   const stats = Object.fromEntries((await pool.query(
     'select status, count(*)::int as n from emission_jobs group by status')).rows.map((r) => [r.status, r.n]));
@@ -147,6 +179,7 @@ export async function getConfig() {
     dryRun: DRY_RUN,
     reconcileEnabled: RECONCILE_ENABLED,
     paused,
+    cron,
     stats,
     companies: companies.map((c) => ({
       id: c.id,
@@ -341,37 +374,50 @@ export async function processQueue(limit = 3) {
 // ── Reconciliación (red de seguridad): barre órdenes listas sin boleta y las encola ──
 // Solo empresas ACTIVAS en la config (auto_emission_config.enabled = true).
 export async function reconcile() {
+  const cron = await getCron();
+  if (!cron.enabled) return;
   const enabledRows = (await pool.query('select company_id from auto_emission_config where enabled=true')).rows;
   const enabledIds = new Set(enabledRows.map((r) => r.company_id));
   const companies = (await listCompanies()).filter(
     (c) => enabledIds.has(c.id) && c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim(),
   );
   if (!companies.length) return;
-  const createdAfter = new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString().slice(0, 10) + 'T00:00:00+00:00';
+  const { normalizeGetOrdersResult } = await import('@zentofact/falabella-api');
+  const createdAfter = new Date(Date.now() - cron.windowDays * 24 * 3600 * 1000).toISOString().slice(0, 10) + 'T00:00:00+00:00';
   for (const company of companies) {
     try {
+      // Dedup en memoria: 2 queries por empresa (no 3 por orden).
+      //  - órdenes que ya tienen boleta
+      //  - órdenes que ya están en la cola (cualquier estado) → no re-encolar, mata el bucle
+      const [withBoleta, inQueue] = await Promise.all([
+        pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+        pool.query('select order_number from emission_jobs where company_id=$1', [company.id]),
+      ]);
+      const known = new Set([
+        ...withBoleta.rows.map((r) => String(r.order_number)),
+        ...inQueue.rows.map((r) => String(r.order_number)),
+      ]);
+
       const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
       let enqueued = 0;
-      for (let offset = 0; offset < 1000; offset += 100) {
+      for (let offset = 0; offset < cron.windowDays * 300 + 100; offset += 100) {
         const resp = await client.getOrdersV2({ createdAfter, limit: 100, offset });
-        const { normalizeGetOrdersResult } = await import('@zentofact/falabella-api');
         const orders = normalizeGetOrdersResult(resp.data).orders || [];
         for (const order of orders) {
           const on = String(order?.OrderNumber || '').trim();
-          if (!on) continue;
+          if (!on || known.has(on)) continue; // ya tiene boleta o ya está en la cola
           if (invoiceRequired(order)) continue;
           const status = norm(statusOfOrder(order));
           if (!READY_STATUSES.some((s) => status.includes(s))) continue;
-          const doc = await falabellaResolveDocument({ companyId: company.id, orderNumber: on });
-          if (doc?.boleta) continue;
           await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null);
+          known.add(on);
           enqueued++;
         }
         if (orders.length < 100) break;
       }
-      if (enqueued) log(`reconcile ${company.nombre}: ${enqueued} órdenes encoladas`);
+      if (enqueued) log(`cron ${company.nombre}: ${enqueued} órdenes nuevas encoladas`);
     } catch (e) {
-      log(`reconcile ${company.nombre} error:`, e.message);
+      log(`cron ${company.nombre} error:`, e.message);
     }
   }
 }
@@ -379,11 +425,24 @@ export async function reconcile() {
 // ── Arranque de los loops ──
 export function startAutoEmission() {
   if (!AUTO_ENABLED) { log('deshabilitado (AUTO_EMIT_ENABLED != true)'); return; }
-  log(`activo${DRY_RUN ? ' (DRY_RUN)' : ''}. worker cada 20s${RECONCILE_ENABLED ? ', reconcile cada 15min' : ', reconcile OFF'}.`);
+  log(`activo${DRY_RUN ? ' (DRY_RUN)' : ''}. worker cada 20s. cron leído de la config.`);
   setInterval(() => { processQueue().catch((e) => log('worker error:', e.message)); }, 20_000);
-  if (RECONCILE_ENABLED) {
-    setInterval(() => { reconcile().catch((e) => log('reconcile error:', e.message)); }, 15 * 60_000);
-    // Reconcile inicial (backfill) a los 10s de arrancar.
-    setTimeout(() => { reconcile().catch(() => {}); }, 10_000);
-  }
+  if (!RECONCILE_ENABLED) { log('cron deshabilitado por env (AUTO_EMIT_RECONCILE=false)'); return; }
+
+  // Cron auto-reprogramable: lee frecuencia de la config cada vez (encender/apagar/frecuencia en caliente).
+  let lastRun = 0;
+  const tick = async () => {
+    let delayMs = 60_000;
+    try {
+      const cron = await getCron();
+      if (cron.enabled && Date.now() - lastRun >= cron.intervalMinutes * 60_000) {
+        lastRun = Date.now();
+        await reconcile();
+      }
+      delayMs = 60_000; // revisa la config cada minuto; corre según intervalMinutes
+    } catch (e) { log('cron tick error:', e.message); }
+    setTimeout(tick, delayMs);
+  };
+  // Primer barrido a los 10s de arrancar (respeta cron.enabled dentro de reconcile).
+  setTimeout(() => { lastRun = Date.now(); reconcile().catch(() => {}); setTimeout(tick, 60_000); }, 10_000);
 }

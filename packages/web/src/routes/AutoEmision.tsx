@@ -7,9 +7,10 @@ import {
 import api from '../lib/api';
 
 type CompanyCfg = { id: number; nombre: string; ruc: string; hasFalabella: boolean; enabled: boolean };
+type CronCfg = { enabled: boolean; intervalMinutes: number; windowDays: number };
 type Config = {
   globalEnabled: boolean; dryRun: boolean; reconcileEnabled: boolean;
-  paused: boolean; stats: Record<string, number>;
+  paused: boolean; stats: Record<string, number>; cron: CronCfg;
   companies: CompanyCfg[]; webhookBase: string; webhookSecretSet: boolean;
 };
 type Job = {
@@ -138,6 +139,14 @@ export default function AutoEmision() {
     const next = !config.paused;
     setConfig((prev) => (prev ? { ...prev, paused: next } : prev));
     try { await api.autoEmitSetPaused(next); } catch { setConfig((prev) => (prev ? { ...prev, paused: !next } : prev)); }
+  };
+
+  // Config del cron (optimista).
+  const setCron = async (patch: Partial<CronCfg>) => {
+    if (!config) return;
+    const next = { ...config.cron, ...patch };
+    setConfig((prev) => (prev ? { ...prev, cron: next } : prev));
+    try { await api.autoEmitSetCron(patch); } catch { setConfig((prev) => (prev ? { ...prev, cron: config.cron } : prev)); }
   };
 
   // Reintenta un job fallido/omitido (optimista → pending).
@@ -288,7 +297,7 @@ export default function AutoEmision() {
               {config.globalEnabled ? <Zap className="h-3.5 w-3.5" /> : <ZapOff className="h-3.5 w-3.5" />}
               {config.globalEnabled ? 'Servidor activo' : 'Servidor apagado (falta AUTO_EMIT_ENABLED=true)'}
             </span>
-            {config.globalEnabled && <span className="text-xs text-muted-foreground">worker cada 20s · red de seguridad {config.reconcileEnabled ? 'ON' : 'OFF'}</span>}
+            {config.globalEnabled && <span className="text-xs text-muted-foreground">worker cada 20s</span>}
             <button
               onClick={runNow}
               disabled={running}
@@ -298,6 +307,53 @@ export default function AutoEmision() {
               {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               Revisar cola ahora
             </button>
+          </div>
+
+          {/* Cron (red de seguridad): encender/apagar + cada cuánto */}
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-foreground">Cron de seguridad</p>
+                <p className="text-[11px] text-muted-foreground">Barre Falabella y encola órdenes listas sin boleta que el webhook no haya atrapado.</p>
+              </div>
+              {/* switch on/off */}
+              <button
+                role="switch"
+                aria-checked={config.cron.enabled}
+                onClick={() => setCron({ enabled: !config.cron.enabled })}
+                className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors ${config.cron.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+              >
+                <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${config.cron.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+            {config.cron.enabled && (
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  Cada
+                  <select
+                    value={config.cron.intervalMinutes}
+                    onChange={(e) => setCron({ intervalMinutes: Number(e.target.value) })}
+                    className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-ring"
+                  >
+                    {[15, 30, 60, 120, 240, 360, 720].map((m) => (
+                      <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60} h`}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  Ventana
+                  <select
+                    value={config.cron.windowDays}
+                    onChange={(e) => setCron({ windowDays: Number(e.target.value) })}
+                    className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-ring"
+                  >
+                    {[1, 2, 3, 5, 7, 15, 30].map((d) => (
+                      <option key={d} value={d}>{d} día{d > 1 ? 's' : ''}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* Webhook */}
