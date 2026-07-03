@@ -5,10 +5,16 @@ import { Pool } from 'pg';
 import {
   getCompany,
   listCompanies,
+  listBranches,
+  createBranch,
   processWorkflow,
   falabellaBuildBoletaVenta,
+  falabellaBuildFacturaVenta,
   falabellaResolveDocument,
+  falabellaUploadInvoicePdf,
   falabellaUploadBoletaPdf,
+  createFactura,
+  sendFacturaToSunat,
 } from '@zentofact/core';
 import { FalabellaApiClient } from '@zentofact/falabella-api';
 
@@ -21,6 +27,7 @@ const READY_STATUSES = ['ready_to_ship', 'shipped', 'delivered'];
 const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED !== 'false';
 const DRY_RUN = process.env.AUTO_EMIT_DRY_RUN === 'true';
 const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de seguridad; on por defecto
+const DEV_FAST_CRON = !process.env.RAILWAY_PUBLIC_DOMAIN && process.env.NODE_ENV !== 'production';
 
 const log = (...a) => console.log('[auto-emit]', ...a);
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
@@ -71,6 +78,43 @@ function buildConfig(company) {
     modoProduccion: true, // el automático SIEMPRE es producción real
     serieBoleta: 'B001',
     outputDir: process.env.STORAGE_PATH || 'storage',
+  };
+}
+
+async function getOrCreateMainBranch(company) {
+  const existing = await listBranches(company.id);
+  if (existing[0]) return existing[0];
+  return createBranch({
+    companyId: company.id,
+    codigo: '0000',
+    nombre: 'Principal',
+    direccion: company.direccion || '',
+    ubigeo: company.ubigeo || '',
+  });
+}
+
+function toFacturaInput({ company, branch, venta, orderNumber }) {
+  return {
+    company_id: company.id,
+    branch_id: branch.id,
+    order_number: orderNumber,
+    serie: venta.serie || 'F001',
+    fecha_emision: venta.fechaEmision || today(),
+    moneda: venta.moneda || 'PEN',
+    tipo_operacion: '0101',
+    ubl_version: '2.1',
+    metodo_envio: 'individual',
+    client: {
+      tipo_documento: venta.client.tipoDocumento,
+      numero_documento: venta.client.numeroDocumento,
+      razon_social: venta.client.razonSocial,
+      direccion: venta.client.direccion || '',
+    },
+    detalles: venta.detalles,
+    datos_adicionales: [
+      { source: 'falabella-api', orderNumber, emission: 'auto' },
+    ],
+    usuario_creacion: 'auto-emission',
   };
 }
 
@@ -154,16 +198,17 @@ export async function getCron() {
 }
 export async function setCron({ enabled, intervalMinutes, windowDays }) {
   const cur = await getCron();
+  const minInterval = DEV_FAST_CRON ? (10 / 60) : 5;
   const next = {
     enabled: enabled === undefined ? cur.enabled : !!enabled,
-    intervalMinutes: intervalMinutes === undefined ? cur.intervalMinutes : Math.max(5, Math.min(1440, Number(intervalMinutes) || cur.intervalMinutes)),
+    intervalMinutes: intervalMinutes === undefined ? cur.intervalMinutes : Math.max(minInterval, Math.min(1440, Number(intervalMinutes) || cur.intervalMinutes)),
     windowDays: windowDays === undefined ? cur.windowDays : Math.max(1, Math.min(60, Number(windowDays) || cur.windowDays)),
   };
   await pool.query(
     `update auto_emission_state set cron_enabled=$1, cron_interval_minutes=$2, cron_window_days=$3, updated_at=now() where id=1`,
     [next.enabled, next.intervalMinutes, next.windowDays],
   );
-  log(`cron: ${next.enabled ? 'ON' : 'OFF'} cada ${next.intervalMinutes}min, ventana ${next.windowDays}d`);
+  log(`cron: ${next.enabled ? 'ON' : 'OFF'} cada ${next.intervalMinutes < 1 ? `${Math.round(next.intervalMinutes * 60)}s` : `${next.intervalMinutes}min`}, ventana ${next.windowDays}d`);
   return next;
 }
 
@@ -398,16 +443,47 @@ async function processJob(job) {
   await saveResolvedOrderNumber(job, orderNumber);
 
   // 2) Condiciones (mismas que el Gestor de Sellers).
-  if (invoiceRequired(order)) return { status: 'skipped', result: 'requiere factura, no boleta' };
+  const requiresInvoice = invoiceRequired(order);
   const status = norm(statusOfOrder(order));
   const ready = READY_STATUSES.some((s) => status.includes(s));
-  if (!ready) return { status: 'skipped', result: `estado "${status}" aún no habilita boleta` };
+  if (!ready) return { status: 'skipped', result: `estado "${status}" aún no habilita comprobante` };
 
-  // 3) ¿ya tiene boleta?
+  // 3) ¿ya tiene documento?
   const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
-  if (doc?.boleta) return { status: 'done', result: `ya tenía boleta ${doc.boleta.numeroCompleto}`, boletaNumero: doc.boleta.numeroCompleto };
+  if (requiresInvoice && doc?.factura) return { status: 'done', result: `ya tenía factura ${doc.factura.numeroCompleto}`, boletaNumero: doc.factura.numeroCompleto };
+  if (!requiresInvoice && doc?.boleta) return { status: 'done', result: `ya tenía boleta ${doc.boleta.numeroCompleto}`, boletaNumero: doc.boleta.numeroCompleto };
 
   if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };
+
+  if (requiresInvoice) {
+    const built = await falabellaBuildFacturaVenta({ companyId: job.company_id, order });
+    if (built.error) throw new Error(`build-factura: ${built.error}`);
+    const branch = await getOrCreateMainBranch(company);
+    const created = await createFactura(toFacturaInput({ company, branch, venta: built.venta, orderNumber }));
+    const sent = await sendFacturaToSunat(created.id);
+    if (!sent?.success) throw new Error(sent?.message || 'SUNAT no aceptó la factura');
+    log(`orden ${orderNumber} -> factura ${created.numeroCompleto} ACEPTADA`);
+
+    let uploadNote = '';
+    try {
+      const up = await falabellaUploadInvoicePdf({
+        companyId: job.company_id,
+        facturaId: created.id,
+        orderNumber,
+        orderItemIds: built.orderItemIds || [],
+        invoiceNumber: created.numeroCompleto,
+        invoiceDate: created.fechaEmision,
+        invoiceType: 'FACTURA',
+        source: 'local_factura',
+      });
+      uploadNote = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || 'ver logs'})`;
+      log(`orden ${orderNumber} factura subida a Falabella:`, uploadNote);
+    } catch (e) {
+      uploadNote = ` (subida falló: ${e.message})`;
+    }
+
+    return { status: 'done', result: `factura ${created.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: created.numeroCompleto };
+  }
 
   // 4) Construir venta + emitir INDIVIDUAL (producción).
   const built = await falabellaBuildBoletaVenta({ companyId: job.company_id, order });
@@ -552,7 +628,7 @@ export function startAutoEmission() {
         lastRun = Date.now();
         await reconcile();
       }
-      delayMs = 60_000; // revisa la config cada minuto; corre según intervalMinutes
+      delayMs = Math.max(10_000, Math.min(60_000, cron.intervalMinutes * 60_000)); // en dev permite 10s; en prod sigue revisando como máximo cada minuto
     } catch (e) { log('cron tick error:', e.message); }
     setTimeout(tick, delayMs);
   };

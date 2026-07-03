@@ -270,6 +270,7 @@ const FILTERS = [
   ['all', 'Todas'], ['done', 'Emitidas'], ['pending', 'En cola'],
   ['processing', 'Procesando'], ['failed', 'Fallidas'], ['skipped', 'Omitidas'],
 ] as const;
+const DEV_CRON_INTERVAL_SECONDS = 10 / 60;
 
 export default function AutoEmision() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -292,6 +293,7 @@ export default function AutoEmision() {
   const [callbackUrl, setCallbackUrl] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
+  const showDevCronInterval = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -340,7 +342,7 @@ export default function AutoEmision() {
   const setDryRun = async (dryRun: boolean) => {
     if (!config || dryRun === config.dryRun) return;
     if (!dryRun && !window.confirm(
-      `¿Activar EMISIÓN real?\n\nCada orden que cumpla condiciones se emitirá como boleta REAL a ${sunatLabel(config.sunatEnv)} y se subirá a Falabella. Cada boleta es irreversible.\n\n¿Continuar?`
+      `¿Activar EMISIÓN real?\n\nCada orden que cumpla condiciones se emitirá como comprobante REAL a ${sunatLabel(config.sunatEnv)} y se subirá a Falabella. Cada comprobante es irreversible.\n\n¿Continuar?`
     )) return;
     setConfig((prev) => (prev ? { ...prev, dryRun } : prev));
     try { await api.autoEmitSetDryRun(dryRun); } catch { setConfig((prev) => (prev ? { ...prev, dryRun: !dryRun } : prev)); }
@@ -565,7 +567,7 @@ export default function AutoEmision() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Emisiones automáticas</h2>
-            <p className="text-xs text-muted-foreground">Boletas de las órdenes que llegan de Falabella.</p>
+            <p className="text-xs text-muted-foreground">Boletas y facturas de las órdenes que llegan de Falabella.</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se actualiza sola cada 3s">
@@ -660,7 +662,7 @@ export default function AutoEmision() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Red de seguridad</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Revisa Falabella cada cierto tiempo y encola las órdenes listas sin boleta que el webhook no haya atrapado.</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Revisa Falabella cada cierto tiempo y encola las órdenes listas que el webhook no haya atrapado.</p>
                   </div>
                   <Switch checked={config.cron.enabled} onCheckedChange={(v) => setCron({ enabled: v })} />
                 </div>
@@ -670,8 +672,8 @@ export default function AutoEmision() {
                     <Select value={String(config.cron.intervalMinutes)} onValueChange={(v) => setCron({ intervalMinutes: Number(v) })}>
                       <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {[15, 30, 60, 120, 240, 360, 720].map((m) => (
-                          <SelectItem key={m} value={String(m)}>cada {m < 60 ? `${m} min` : `${m / 60} h`}</SelectItem>
+                        {(showDevCronInterval ? [DEV_CRON_INTERVAL_SECONDS, 15, 30, 60, 120, 240, 360, 720] : [15, 30, 60, 120, 240, 360, 720]).map((m) => (
+                          <SelectItem key={m} value={String(m)}>cada {m < 1 ? `${Math.round(m * 60)}s` : m < 60 ? `${m} min` : `${m / 60} h`}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

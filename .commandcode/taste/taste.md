@@ -124,6 +124,10 @@ See [strong-soap-/-sunat/taste.md](strong-soap-/-sunat/taste.md)
 
 # File Storage
 - Store XML firmados and CDRs (constancias de recepción) in Cloudflare R2, not local filesystem. PDFs stay local. Daily summaries (resúmenes diarios) also go to R2. Confidence: 0.70
+- Do not persist any generated documents (XML, PDF, CDR) to local filesystem. All documents go to database or R2. PDFs should be regenerated on-demand when the user wants to upload them, not stored locally. Confidence: 0.65
+
+# Webhooks
+- When creating webhooks, auto-generate the secret instead of asking the user to provide one. The system should generate a secure random secret and display it to the user after creation. Confidence: 0.60
 
 # File Management
 - Never upload .DS_Store, thumbs.db, or other OS-generated files to R2 or any storage. Only upload the intended document files (XML, CDR, PDF). Confidence: 0.65
