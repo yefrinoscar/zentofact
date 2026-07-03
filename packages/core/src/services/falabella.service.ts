@@ -523,7 +523,7 @@ async function fetchFalabellaInvoicePdf(
   let requestBody: string;
   if (mode === 'form') {
     const form = new URLSearchParams();
-    for (const orderItemId of body.orderItemIds) form.append('orderItemIds[]', orderItemId);
+    for (const orderItemId of body.orderItemIds) form.append('orderItemIds', orderItemId);
     form.set('invoiceNumber', body.invoiceNumber);
     form.set('invoiceDate', body.invoiceDate);
     form.set('invoiceType', body.invoiceType);
