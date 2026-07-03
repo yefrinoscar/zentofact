@@ -78,6 +78,7 @@ See [strong-soap-/-sunat/taste.md](strong-soap-/-sunat/taste.md)
 
 # Communication
 - When asked about a feature or component, provide context first (what it is, its purpose, where it fits in the app) before diving into technical details or bug fixes. Confidence: 0.80
+- When proposing a SQL cleanup/migration query, execute it directly instead of just providing the SQL text for the user to run manually. Confidence: 0.65
 
 # React
 - Use React Flow for wizard/step-flow visualizations showing the emission process steps (crear boleta, enviar a SUNAT, generar PDF, etc.) for the current boleta being processed — NOT a grid of all boletas. Confidence: 0.75

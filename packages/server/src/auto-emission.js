@@ -28,7 +28,7 @@ const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED !== 'false';
 const DRY_RUN = process.env.AUTO_EMIT_DRY_RUN === 'true';
 const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de seguridad; on por defecto
 const DEV_FAST_CRON = !process.env.RAILWAY_PUBLIC_DOMAIN && process.env.NODE_ENV !== 'production';
-const MIN_ORDER_DATE = new Date('2025-07-01T00:00:00+00:00');
+const MIN_ORDER_DATE = new Date('2026-07-01T00:00:00+00:00');
 
 const log = (...a) => console.log('[auto-emit]', ...a);
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
@@ -448,10 +448,10 @@ async function processJob(job) {
   const orderNumber = String(order.OrderNumber || job.order_number).trim();
   await saveResolvedOrderNumber(job, orderNumber);
 
-  // 1.5) Omitir órdenes anteriores a la fecha mínima (julio 2025).
+  // 1.5) Omitir órdenes anteriores a la fecha mínima (julio 2026).
   const orderDate = order.CreatedAt ? new Date(order.CreatedAt) : null;
   if (orderDate && orderDate < MIN_ORDER_DATE) {
-    return { status: 'skipped', result: `orden de ${orderDate.toISOString().slice(0, 10)} anterior a la fecha mínima (julio 2025), se omite` };
+    return { status: 'skipped', result: `orden de ${orderDate.toISOString().slice(0, 10)} anterior a la fecha mínima (julio 2026), se omite` };
   }
 
   // 2) Condiciones (mismas que el Gestor de Sellers).
