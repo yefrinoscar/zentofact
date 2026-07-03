@@ -67,6 +67,23 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function SourceBadge({ source }: { source: string }) {
+  const fromWebhook = source === 'webhook';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        fromWebhook
+          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+      title={fromWebhook ? 'Encolado por callback de Falabella' : 'Encontrado por revisión automática'}
+    >
+      {fromWebhook ? 'Webhook' : 'Cron'}
+    </span>
+  );
+}
+
 function shortName(nombre: string) {
   return nombre.replace(/\s*(E\.?\s?I\.?\s?R\.?\s?L\.?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?C\.?|S\.?\s?A\.?)\.?\s*$/i, '').trim() || nombre;
 }
@@ -437,6 +454,7 @@ export default function AutoEmision() {
                     <th className="px-5 py-2.5 font-medium">Empresa</th>
                     <th className="px-5 py-2.5 font-medium">Orden</th>
                     <th className="px-5 py-2.5 font-medium">Estado</th>
+                    <th className="px-5 py-2.5 font-medium">Origen</th>
                     <th className="px-5 py-2.5 font-medium">Detalle</th>
                     <th className="px-5 py-2.5 font-medium">Cuándo</th>
                   </tr>
@@ -449,6 +467,7 @@ export default function AutoEmision() {
                         <td className="px-5 py-2.5 text-foreground">{j.company}</td>
                         <td className="px-5 py-2.5 font-mono text-xs text-muted-foreground">{j.order_number}</td>
                         <td className="px-5 py-2.5"><StatusBadge status={j.status} /></td>
+                        <td className="px-5 py-2.5"><SourceBadge source={j.source} /></td>
                         <td className="px-5 py-2.5 text-xs">
                           {j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
                           <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={j.last_error || undefined}>
