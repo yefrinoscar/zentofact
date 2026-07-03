@@ -16,7 +16,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 
 // Estados de Falabella que habilitan la boleta (idéntico al Gestor de Sellers).
 const READY_STATUSES = ['ready_to_ship', 'shipped', 'delivered'];
-const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED === 'true';
+// El motor corre por defecto; solo se apaga si AUTO_EMIT_ENABLED=false (kill-switch de deploy).
+// El control fino vive en la BD (pausar cola, cron on/off, simular/emitir).
+const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED !== 'false';
 const DRY_RUN = process.env.AUTO_EMIT_DRY_RUN === 'true';
 const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de seguridad; on por defecto
 
@@ -112,8 +114,28 @@ export async function ensureTables() {
     alter table auto_emission_state add column if not exists cron_enabled boolean not null default true;
     alter table auto_emission_state add column if not exists cron_interval_minutes integer not null default 60;
     alter table auto_emission_state add column if not exists cron_window_days integer not null default 3;
-    insert into auto_emission_state (id, paused) values (1, false) on conflict (id) do nothing;
+    alter table auto_emission_state add column if not exists dry_run boolean not null default true;
   `);
+  // Semilla por ambiente: al crear el estado por primera vez, usa la env AUTO_EMIT_DRY_RUN de ESE ambiente.
+  await pool.query(
+    `insert into auto_emission_state (id, paused, dry_run) values (1, false, $1) on conflict (id) do nothing`,
+    [DRY_RUN],
+  );
+}
+
+// ── Modo del automático: simular vs emitir (runtime, por ambiente vía su propia BD) ──
+export async function getDryRun() {
+  const r = await pool.query('select dry_run from auto_emission_state where id=1');
+  return r.rows[0]?.dry_run !== false;
+}
+export async function setDryRun(dryRun) {
+  await pool.query(
+    `insert into auto_emission_state (id, dry_run, updated_at) values (1, $1, now())
+     on conflict (id) do update set dry_run=excluded.dry_run, updated_at=now()`,
+    [!!dryRun],
+  );
+  log(dryRun ? 'MODO SIMULACIÓN (no emite)' : 'MODO EMISIÓN (emite de verdad)');
+  return { dryRun: !!dryRun };
 }
 
 // ── Config del cron (red de seguridad): encender/apagar + frecuencia + ventana ──
@@ -171,12 +193,17 @@ export async function getConfig() {
   const map = new Map(rows.map((r) => [r.company_id, r.enabled]));
   const paused = await getPaused();
   const cron = await getCron();
+  const dryRun = await getDryRun();
+  // A qué SUNAT emite realmente (lo decide el ambiente): local=beta, Railway=producción.
+  const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
+  const sunatEnv = forced.startsWith('prod') ? 'produccion' : forced === 'beta' ? 'beta' : 'segun-empresa';
   // Conteo por estado (resumen del panel).
   const stats = Object.fromEntries((await pool.query(
     'select status, count(*)::int as n from emission_jobs group by status')).rows.map((r) => [r.status, r.n]));
   return {
     globalEnabled: AUTO_ENABLED,
-    dryRun: DRY_RUN,
+    dryRun,
+    sunatEnv,
     reconcileEnabled: RECONCILE_ENABLED,
     paused,
     cron,
@@ -294,7 +321,7 @@ async function processJob(job) {
   const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
   if (doc?.boleta) return { status: 'done', result: `ya tenía boleta ${doc.boleta.numeroCompleto}`, boletaNumero: doc.boleta.numeroCompleto };
 
-  if (DRY_RUN) return { status: 'skipped', result: 'DRY_RUN: cumpliría condiciones, no se emitió' };
+  if (await getDryRun()) return { status: 'skipped', result: 'Simulación: cumpliría condiciones, no se emitió' };
 
   // 4) Construir venta + emitir INDIVIDUAL (producción).
   const built = await falabellaBuildBoletaVenta({ companyId: job.company_id, order });
@@ -424,8 +451,8 @@ export async function reconcile() {
 
 // ── Arranque de los loops ──
 export function startAutoEmission() {
-  if (!AUTO_ENABLED) { log('deshabilitado (AUTO_EMIT_ENABLED != true)'); return; }
-  log(`activo${DRY_RUN ? ' (DRY_RUN)' : ''}. worker cada 20s. cron leído de la config.`);
+  if (!AUTO_ENABLED) { log('apagado por kill-switch (AUTO_EMIT_ENABLED=false)'); return; }
+  log('activo. worker cada 20s. modo (simular/emitir) y cron se leen de la config.');
   setInterval(() => { processQueue().catch((e) => log('worker error:', e.message)); }, 20_000);
   if (!RECONCILE_ENABLED) { log('cron deshabilitado por env (AUTO_EMIT_RECONCILE=false)'); return; }
 

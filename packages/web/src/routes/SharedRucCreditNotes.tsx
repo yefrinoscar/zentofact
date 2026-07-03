@@ -341,7 +341,6 @@ export default function SharedRucCreditNotes({
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
-  const [modoProduccion, setModoProduccion] = useState(false);
   const [infoTab, setInfoTab] = useState<InfoTab>('anuladas');
   const [filter, setFilter] = useState<GroupFilter>('todos');
   const [mode, setMode] = useState<PickMode>('cantidad');
@@ -643,7 +642,7 @@ export default function SharedRucCreditNotes({
   const runAnular = async () => {
     if (!selectedBoletas.length || processing) return;
     const confirmed = window.confirm(
-      `Se emitirán ${selectedBoletas.length} nota(s) de crédito para Limbo/Higher en ${modoProduccion ? 'PRODUCCIÓN' : 'BETA'} por ${money(selectedTotal)}. ¿Continuar?`,
+      `Se emitirán ${selectedBoletas.length} nota(s) de crédito para Limbo/Higher por ${money(selectedTotal)}. ¿Continuar?`,
     );
     if (!confirmed) return;
 
@@ -664,7 +663,7 @@ export default function SharedRucCreditNotes({
       setResults(null);
       setProgressRows(initialRows);
       setProgressOpen(true);
-      setProgressMessage(`Preparando ${initialRows.length} nota(s) en ${modoProduccion ? 'Producción' : 'Beta'}...`);
+      setProgressMessage(`Preparando ${initialRows.length} nota(s)...`);
 
       const outcomes: any[] = [];
       for (let index = 0; index < selectedBoletas.length; index++) {
@@ -672,7 +671,7 @@ export default function SharedRucCreditNotes({
         setProgressMessage(`Anulando ${row._companyName} · ${row.numeroCompleto} (${index + 1}/${selectedBoletas.length})...`);
         markRow(row.id, { status: 'processing', message: 'Creando y enviando nota de crédito...' });
         try {
-          const outcome = await api.createAndSendCreditNote(row.id, { modoProduccion });
+          const outcome = await api.createAndSendCreditNote(row.id);
           outcomes.push(outcome);
           if (outcome?.success) {
             markRow(row.id, {
@@ -730,21 +729,6 @@ export default function SharedRucCreditNotes({
           </select>
         </div>
         <MonthPicker value={month} onChange={onMonthChange} />
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm">
-          <span className="text-xs font-medium text-muted-foreground">SUNAT:</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={modoProduccion}
-            onClick={() => setModoProduccion((value) => !value)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${modoProduccion ? 'bg-emerald-600' : 'bg-muted'}`}
-          >
-            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition ${modoProduccion ? 'translate-x-4' : 'translate-x-0.5'}`} />
-          </button>
-          <span className={`text-sm font-medium ${modoProduccion ? 'text-emerald-600' : 'text-amber-600'}`}>
-            {modoProduccion ? 'Producción' : 'Beta'}
-          </span>
-        </div>
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -1309,7 +1293,6 @@ export default function SharedRucCreditNotes({
               <div>
                 <h3 className="text-base font-semibold">Anulación Limbo/Higher</h3>
                 <p className="mt-1 text-sm text-muted-foreground">{progressMessage || 'Procesando notas de crédito...'}</p>
-                <p className="mt-1 text-xs font-medium text-muted-foreground">Ambiente SUNAT: {modoProduccion ? 'Producción' : 'Beta'}</p>
               </div>
               <button
                 type="button"

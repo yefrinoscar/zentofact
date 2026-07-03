@@ -253,7 +253,6 @@ export default function CreditNotes() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<SendOutcome[] | null>(null);
-  const [modoProduccion, setModoProduccion] = useState(false);
   const [progressOpen, setProgressOpen] = useState(false);
   const [progressRows, setProgressRows] = useState<CreditNoteProgressRow[]>([]);
   const [progressMessage, setProgressMessage] = useState('');
@@ -552,7 +551,7 @@ export default function CreditNotes() {
       return s + amountOf(b);
     }, 0);
     const confirmed = window.confirm(
-      `Se emitirán y enviarán a SUNAT ${selectedForRun.length} nota(s) de crédito en ${modoProduccion ? 'PRODUCCIÓN' : 'BETA'} por un total de ${money(total)}, ` +
+      `Se emitirán y enviarán a SUNAT ${selectedForRun.length} nota(s) de crédito por un total de ${money(total)}, ` +
         `anulando esas boletas. Esta acción es irreversible. ¿Continuar?`,
     );
     if (!confirmed) return;
@@ -574,9 +573,8 @@ export default function CreditNotes() {
       setError('');
       setResults(null);
       setProgressRows(initialRows);
-      setProgressMessage(`Preparando ${initialRows.length} nota(s) de crédito en ${modoProduccion ? 'Producción' : 'Beta'}...`);
+      setProgressMessage(`Preparando ${initialRows.length} nota(s) de crédito...`);
       setProgressOpen(true);
-      const options = { modoProduccion };
       const outcomes: SendOutcome[] = [];
 
       for (let index = 0; index < selectedForRun.length; index++) {
@@ -584,7 +582,7 @@ export default function CreditNotes() {
         setProgressMessage(`Anulando ${b.numeroCompleto} (${index + 1}/${selectedForRun.length})...`);
         markRow(b.id, { status: 'processing', message: 'Creando y enviando nota de crédito...' });
         try {
-          const outcome = await api.createAndSendCreditNote(b.id, options);
+          const outcome = await api.createAndSendCreditNote(b.id);
           outcomes.push(outcome);
           if (outcome?.success) {
             markRow(b.id, {
@@ -714,29 +712,6 @@ export default function CreditNotes() {
 
         <MonthPicker value={month} onChange={setMonth} />
 
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm">
-          <span className="text-xs font-medium text-muted-foreground">SUNAT:</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={modoProduccion}
-            onClick={() => setModoProduccion((value) => !value)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${
-              modoProduccion ? 'bg-emerald-600' : 'bg-muted'
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition ${
-                modoProduccion ? 'translate-x-4' : 'translate-x-0.5'
-              }`}
-            />
-          </button>
-          {modoProduccion ? (
-            <span className="text-sm font-medium text-emerald-600">Producción</span>
-          ) : (
-            <span className="text-sm font-medium text-amber-600">Beta</span>
-          )}
-        </div>
       </div>
 
       {!activeId ? (
@@ -1477,9 +1452,6 @@ export default function CreditNotes() {
                 <h3 className="text-base font-semibold">Anulación de boletas</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {progressMessage || 'Preparando notas de crédito...'}
-                </p>
-                <p className="mt-1 text-xs font-medium text-muted-foreground">
-                  Ambiente SUNAT: {modoProduccion ? 'Producción' : 'Beta'}
                 </p>
               </div>
               <button

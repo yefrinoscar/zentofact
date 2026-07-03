@@ -341,7 +341,6 @@ export default function Workflow() {
   const [omittedFacturaOrders, setOmittedFacturaOrders] = useState<any[]>([]);
 
   const [homeDir, setHomeDir] = useState('');
-  const [modoProduccion, setModoProduccion] = useState(true);
 
   // Shared ventas data
   const [rawOrdersData, setRawOrdersData] = useState<any[]>([]);
@@ -983,7 +982,6 @@ export default function Workflow() {
       usuarioSol: company.usuarioSol || '', claveSol: company.claveSol || '',
       certificadoBase64: company.certificado || '',
       certificadoPassword: company.certificadoPassword || '',
-      modoProduccion,
       outputDir: emitOutputDir,
     };
 
@@ -1327,20 +1325,6 @@ export default function Workflow() {
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-foreground">Flujo de emisión</p>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">SUNAT:</span>
-              <button role="switch" aria-checked={modoProduccion} onClick={() => setModoProduccion(!modoProduccion)}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition ${
-                  modoProduccion ? 'bg-emerald-600' : 'bg-muted'
-                }`}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                  modoProduccion ? 'translate-x-4' : 'translate-x-0'
-                }`} />
-              </button>
-              <span className="text-xs font-medium">
-                {modoProduccion ? <span className="text-emerald-600">Producción</span> : <span className="text-amber-600">Beta</span>}
-              </span>
-            </div>
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Navegador:</span>
               <button role="switch" aria-checked={headless} onClick={() => setHeadless(!headless)}

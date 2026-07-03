@@ -6,8 +6,10 @@ import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const appRoot = resolve(__dirname, '../../..');
 // Carga el .env de la raíz ANTES de importar el core (core/db lee la conexión al importarse).
-config({ path: resolve(__dirname, '../../../.env') });
+config({ path: resolve(appRoot, '.env') });
+process.env.PUPPETEER_CACHE_DIR ||= resolve(appRoot, '.cache', 'puppeteer');
 
 const { serve } = await import('@hono/node-server');
 const { Hono } = await import('hono');
@@ -20,6 +22,14 @@ const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 
 const app = new Hono();
+
+function resolveSunatProductionMode(fallback) {
+  const forced = String(process.env.SUNAT_FORCE_ENV || process.env.VITE_SUNAT_ENV || '').trim().toLowerCase();
+  if (forced.startsWith('prod')) return true;
+  if (['beta', 'dev', 'development', 'local'].includes(forced)) return false;
+  return fallback;
+}
+
 // CORS con credenciales (cookies de sesión) para el front web.
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
 const webOrigins = Array.from(new Set([
@@ -194,7 +204,11 @@ app.post('/workflow/validate-ventas', async (c) => { try { return ok(c, { errors
 // Streaming NDJSON: cada línea es un evento {type:'progress'|'result'|'error'}.
 // El front (apiHttp) lee el stream y dispara onProgress con cada 'progress'.
 app.post('/workflow/process', async (c) => {
-  const { config: cfg, ventas } = await c.req.json();
+  const { config: rawCfg, ventas } = await c.req.json();
+  const cfg = {
+    ...rawCfg,
+    modoProduccion: resolveSunatProductionMode(rawCfg?.modoProduccion),
+  };
   console.log('[WORKFLOW] companyId=%s ventas=%s cert=%s claveSol=%s modoProd=%s',
     cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', cfg?.certificadoBase64 ? 'sí' : 'NO', cfg?.claveSol ? 'sí' : 'NO', cfg?.modoProduccion);
   c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -232,6 +246,7 @@ app.post('/auto-emit/config/:companyId', async (c) => {
 });
 app.post('/auto-emit/pause', async (c) => { try { const { paused } = await c.req.json(); return ok(c, await autoEmit.setPaused(paused)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/cron', async (c) => { try { return ok(c, await autoEmit.setCron(await c.req.json())); } catch (e) { return fail(c, e, 400); } });
+app.post('/auto-emit/dry-run', async (c) => { try { const { dryRun } = await c.req.json(); return ok(c, await autoEmit.setDryRun(dryRun)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await autoEmit.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
 app.get('/auto-emit/jobs', async (c) => { try { return ok(c, await autoEmit.recentJobs(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
 app.get('/auto-emit/events', async (c) => { try { return ok(c, await autoEmit.recentEvents(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });

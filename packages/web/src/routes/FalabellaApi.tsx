@@ -799,9 +799,7 @@ export default function FalabellaApi() {
   const [selectedReadyOrders, setSelectedReadyOrders] = useState<Set<string>>(() => new Set());
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
-  // Recuerda la elección Beta/Producción entre sesiones (default: lo último elegido).
-  const [falabellaProductionMode, setFalabellaProductionMode] = useState(() => localStorage.getItem('falabella.productionMode') === 'true');
-  useEffect(() => { localStorage.setItem('falabella.productionMode', String(falabellaProductionMode)); }, [falabellaProductionMode]);
+  const falabellaProductionMode = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase().startsWith('prod');
   const [invoiceFlow, setInvoiceFlow] = useState<InvoiceFlowState>({
     loading: false,
     error: '',
@@ -1472,7 +1470,6 @@ export default function FalabellaApi() {
           claveSol: selectedCompany.claveSol || '',
           certificadoBase64: selectedCompany.certificado || '',
           certificadoPassword: selectedCompany.certificadoPassword || '',
-          modoProduccion: falabellaProductionMode,
           outputDir,
         }, emitBoletaModal.ventas);
 
@@ -2003,20 +2000,6 @@ export default function FalabellaApi() {
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Mes</label>
                 <MonthPicker value={flowMonth} onChange={setFlowMonth} />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Ambiente</label>
-                <button
-                  type="button"
-                  onClick={() => setFalabellaProductionMode((value) => !value)}
-                  className="inline-flex h-[46px] items-center gap-2 rounded-xl border border-input bg-background px-3 text-sm transition hover:border-ring"
-                >
-                  <span className={!falabellaProductionMode ? 'font-semibold text-foreground' : 'text-muted-foreground'}>Beta</span>
-                  <span className={`relative h-6 w-11 rounded-full transition ${falabellaProductionMode ? 'bg-primary' : 'bg-muted'}`}>
-                    <span className={`absolute top-1 h-4 w-4 rounded-full bg-background shadow transition ${falabellaProductionMode ? 'left-6' : 'left-1'}`} />
-                  </span>
-                  <span className={falabellaProductionMode ? 'font-semibold text-foreground' : 'text-muted-foreground'}>Producción</span>
-                </button>
               </div>
             </div>
           </div>
