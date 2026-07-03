@@ -68,6 +68,7 @@ async function registerHandlers() {
     { registerCompanyHandlers },
     { registerBranchHandlers },
     { registerBoletaHandlers },
+    { registerFacturaHandlers },
     { registerCorrelativeHandlers },
     { registerScraperHandlers },
     { registerFalabellaApiHandlers },
@@ -77,6 +78,7 @@ async function registerHandlers() {
     import('./ipc/company'),
     import('./ipc/branch'),
     import('./ipc/boletas'),
+    import('./ipc/facturas'),
     import('./ipc/correlatives'),
     import('./ipc/scraper'),
     import('./ipc/falabella-api'),
@@ -87,6 +89,7 @@ async function registerHandlers() {
   registerCompanyHandlers();
   registerBranchHandlers();
   registerBoletaHandlers();
+  registerFacturaHandlers();
   registerCorrelativeHandlers();
   registerScraperHandlers();
   registerFalabellaApiHandlers();

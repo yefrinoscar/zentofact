@@ -160,6 +160,8 @@ export async function sendBoletaToSunat(id: number) {
 
   const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
+  const branch = (await db.select().from(branches).where(eq(branches.id, boleta.branchId)).limit(1))[0];
+  if (!branch) throw new Error('Sucursal no encontrada');
   const clientRecord = (await db.select().from(clients).where(eq(clients.id, boleta.clientId)).limit(1))[0];
   if (!clientRecord) throw new Error('Cliente no encontrado');
 
@@ -169,6 +171,7 @@ export async function sendBoletaToSunat(id: number) {
     usuarioSol: company.usuarioSol || 'MODDATOS', claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '', certificadoPassword: company.certificadoPassword || '',
     modoProduccion: Boolean(company.modoProduccion),
+    codigoLocal: branch.codigo || '0000',
   };
 
   const detalles = (boleta.detalles as any[]) || [];

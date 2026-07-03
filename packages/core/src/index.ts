@@ -75,6 +75,8 @@ export type WorkflowProgress = (current: number, total: number, status: string) 
 // ── API pública ──
 
 export { processWorkflow };
+export { pool } from './db';
+export { runMigrations } from './db/migrate';
 export { listCompanies, getCompany, getCompanyByRuc, createCompany, updateCompany, deleteCompany, testSunatConnection } from './services/company.service';
 export type { CreateCompanyInput, UpdateCompanyInput, TestSunatConnectionResult, SunatEnvironment } from './services/company.service';
 export { listBranches, getBranch, createBranch, updateBranch } from './services/branch.service';
@@ -88,12 +90,22 @@ export type { CreditNoteFilter } from './services/credit-note-query.service';
 export { listDailySummaries, refreshDailySummaryStatus, refreshBoletaStatus } from './services/daily-summary-query.service';
 export type { DailySummaryFilter } from './services/daily-summary-query.service';
 export { createBoleta, sendBoletaToSunat, sendBoletasAsDailySummary, generateAcceptedBoletaPdf, generateAcceptedBoletaPdfBase64, generateAcceptedBoletaPreviewHtml, markBoletaFalabellaPdfUpload, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, sendBoletasAsVoidedDailySummary, sendBoletasAsVoidedDailySummaries } from './services/boleta.service';
-export { recordFacturaUpload } from './services/factura.service';
+export {
+  recordFacturaUpload,
+  refreshFacturaStatus,
+  createFactura,
+  sendFacturaToSunat,
+  generateAcceptedFacturaPdf,
+  generateAcceptedFacturaPdfBase64,
+  generateAcceptedFacturaPreviewHtml,
+  generatePreviewFacturaHtmlForVenta,
+} from './services/factura.service';
+export type { CreateFacturaInput } from './services/factura.service';
 export { createCreditNoteFromBoleta, sendCreditNoteToSunat, createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, listCreditNotesByAffectedBoletaIds, generatePreviewCreditNoteHtml } from './services/credit-note.service';
 export type { CreateCreditNoteFromBoletaOptions } from './services/credit-note.service';
 export { getCorrelatives, getCorrelativeBySerie } from './services/correlative-query.service';
 export {
-  falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaResolveOrderIds,
+  falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
 } from './services/falabella.service';
 

@@ -49,17 +49,20 @@ function Tooltip({ content, children }: { content: React.ReactNode; children: Re
 
 // Celda de estado del documento local: ícono por estado + tooltip shadcn.
 // El refresh solo aparece si NO está aceptado (ya aceptado = estado final).
-function DocumentStatusCell({ label, status, boletaId }: { label: string; status: string; boletaId?: number }) {
+function DocumentStatusCell({ label, status, boletaId, facturaId }: { label: string; status: string; boletaId?: number; facturaId?: number }) {
   const [current, setCurrent] = useState(status);
   const [refreshing, setRefreshing] = useState(false);
   const s = String(current || '').toUpperCase();
   const accepted = s === 'ACEPTADO';
+  const canRefresh = boletaId != null || facturaId != null;
 
   const refresh = async () => {
-    if (!boletaId) return;
+    if (!canRefresh) return;
     setRefreshing(true);
     try {
-      const r: any = await api.refreshBoletaStatus(boletaId);
+      const r: any = boletaId != null
+        ? await api.refreshBoletaStatus(boletaId)
+        : await api.refreshFacturaStatus(facturaId as number);
       if (r?.estadoSunat) setCurrent(r.estadoSunat);
     } catch { /* noop */ }
     setRefreshing(false);
@@ -80,7 +83,7 @@ function DocumentStatusCell({ label, status, boletaId }: { label: string; status
           <Icon className="h-4 w-4" />
         </span>
       </Tooltip>
-      {!accepted && boletaId != null && (
+      {!accepted && canRefresh && (
         <Tooltip content="Actualizar estado en SUNAT">
           <button
             type="button" onClick={refresh} disabled={refreshing}
@@ -143,7 +146,7 @@ function readCachedActiveCompanyId(): number | null {
 }
 
 type InvoiceKind = 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO';
-type DocumentSource = 'local_boleta' | 'local_credit_note' | 'manual';
+type DocumentSource = 'local_boleta' | 'local_factura' | 'local_credit_note' | 'manual';
 type PdfMode = 'auto' | 'local_file' | 'selected_file';
 
 type FalabellaOrderPayload = {
@@ -169,6 +172,7 @@ type ResolvedDocumentOption = {
   kind: InvoiceKind;
   source: DocumentSource;
   boletaId?: number;
+  facturaId?: number;
   creditNoteId?: number;
   invoiceNumber: string;
   invoiceDate: string;
@@ -192,6 +196,20 @@ type ResolvedDocumentResponse = {
     clienteDocumento?: string;
     codigoHash?: string;
     xmlPath?: string;
+  } | null;
+  factura?: {
+    id: number;
+    numeroCompleto: string;
+    fechaEmision: string;
+    pdfPath: string;
+    estado?: string;
+    estadoSunat?: string;
+    total?: string;
+    cliente?: string;
+    clienteDocumento?: string;
+    codigoHash?: string;
+    xmlPath?: string;
+    falabellaPdfUploadedAt?: string;
   } | null;
   creditNote?: {
     id: number;
@@ -245,6 +263,7 @@ type UploadModalState = {
   selectedKind: InvoiceKind;
   source: DocumentSource;
   boletaId?: number;
+  facturaId?: number;
   invoiceNumber: string;
   invoiceDate: string;
   invoiceType: InvoiceKind;
@@ -517,6 +536,23 @@ function falabellaErrorMessage(value: unknown, fallback: string) {
   return fallback;
 }
 
+function facturaErrorMessage(value: any, fallback: string) {
+  if (!value) return fallback;
+  const parts = [
+    value.message,
+    value.error_code ? `Código: ${value.error_code}` : '',
+    value.error?.message,
+    value.error?.description,
+    typeof value.error === 'string' ? value.error : '',
+  ].filter(Boolean).map(String);
+  if (parts.length) return parts.join(' · ');
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
 function formatDateOnly(value?: string) {
   if (!value) return '-';
   const date = new Date(value);
@@ -537,6 +573,7 @@ function documentKindLabel(kind: InvoiceKind) {
 function resolvePdfMode(option?: ResolvedDocumentOption | null): PdfMode {
   if (!option) return 'selected_file';
   if (option.source === 'local_boleta' && option.boletaId) return 'auto';
+  if (option.source === 'local_factura' && option.facturaId) return 'auto';
   if (option.pdfPath) return 'local_file';
   return 'selected_file';
 }
@@ -758,7 +795,7 @@ export default function FalabellaApi() {
   const [emitBoletaModal, setEmitBoletaModal] = useState<EmitBoletaModalState>(createEmptyEmitBoletaState);
   const [emitCloseCountdown, setEmitCloseCountdown] = useState(0);
   const [flowMonth, setFlowMonth] = useState(currentMonth);
-  const [selectedFlowFilter, setSelectedFlowFilter] = useState<InvoiceFlowFilter>('not_ready');
+  const [selectedFlowFilter, setSelectedFlowFilter] = useState<InvoiceFlowFilter>('ready_to_invoice');
   const [selectedReadyOrders, setSelectedReadyOrders] = useState<Set<string>>(() => new Set());
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
@@ -1081,12 +1118,12 @@ export default function FalabellaApi() {
     if (!selectedCompanyId || !selectedCompany) return;
     setEmitCloseCountdown(0);
 
-    const boletaRows = rows.filter((row) => row.invoiceKind === 'BOLETA' && row.bucket === 'ready_to_invoice');
-    if (!boletaRows.length) {
+    const readyRows = rows.filter((row) => row.bucket === 'ready_to_invoice');
+    if (!readyRows.length) {
       setEmitBoletaModal({
         ...createEmptyEmitBoletaState(),
         open: true,
-        error: 'No hay boletas listas para emitir en la selección.',
+        error: 'No hay documentos listos para emitir en la selección.',
       });
       return;
     }
@@ -1095,14 +1132,17 @@ export default function FalabellaApi() {
       ...createEmptyEmitBoletaState(),
       open: true,
       loading: true,
-      rows: boletaRows,
+      rows: readyRows,
     });
 
     try {
-      const prepared = await Promise.all(boletaRows.map(async (row) => {
-        const response = await api.falabellaApiBuildBoletaVenta(selectedCompanyId, row.order);
+      const prepared = await Promise.all(readyRows.map(async (row) => {
+        const buildFn = row.invoiceKind === 'FACTURA'
+          ? api.falabellaApiBuildFacturaVenta
+          : api.falabellaApiBuildBoletaVenta;
+        const response = await buildFn(selectedCompanyId, row.order);
         if (response?.error) {
-          throw new Error(`${row.orderNumber}: ${falabellaErrorMessage(response.error, 'No se pudo preparar la boleta.')}`);
+          throw new Error(`${row.orderNumber}: ${falabellaErrorMessage(response.error, 'No se pudo preparar la emisión.')}`);
         }
         return {
           row,
@@ -1121,7 +1161,7 @@ export default function FalabellaApi() {
       setEmitBoletaModal((current) => ({
         ...current,
         loading: false,
-        rows: boletaRows,
+        rows: readyRows,
         ventas,
         warningsByOrder,
         expandedOrders: ventas.length === 1 && ventas[0]?.orderNumber
@@ -1256,7 +1296,10 @@ export default function FalabellaApi() {
     }));
 
     try {
-      const preview = await api.previewBoletaHtml(selectedCompany.id, venta);
+      const hasFacturaRow = emitBoletaModal.rows.some((r) => r.orderNumber === orderNumber && r.invoiceKind === 'FACTURA');
+      const preview = hasFacturaRow
+        ? await api.previewFacturaHtml(selectedCompany.id, venta)
+        : await api.previewBoletaHtml(selectedCompany.id, venta);
       setEmitBoletaModal((current) => ({
         ...current,
         previewLoadingOrder: '',
@@ -1285,58 +1328,172 @@ export default function FalabellaApi() {
     }));
 
     try {
-      api.onProgress((data: any) => {
-        const progressCurrent = Number(data?.current || 0);
-        const progressTotal = Number(data?.total || 0);
-        const status = typeof data?.status === 'string'
-          ? data.status
-          : data?.status == null
-            ? ''
-            : JSON.stringify(data.status);
-        setEmitBoletaModal((state) => {
-          if (!state.open) return state;
-          return {
+      const isFacturaEmission = emitBoletaModal.rows.some((r) => r.invoiceKind === 'FACTURA');
+
+      if (isFacturaEmission) {
+        const facturaResults: any[] = [];
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (let i = 0; i < emitBoletaModal.ventas.length; i++) {
+          const venta = emitBoletaModal.ventas[i];
+          const orderNumber = String(venta?.orderNumber || '');
+
+          setEmitBoletaModal((state) => ({
             ...state,
-            progress: { current: progressCurrent, total: progressTotal, status },
-            log: status ? [...state.log, status].slice(-80) : state.log,
-          };
+            progress: { current: i, total: emitBoletaModal.ventas.length, status: `Creando factura ${orderNumber}...` },
+            log: [...state.log, `Creando factura ${orderNumber}...`].slice(-80),
+          }));
+
+          try {
+            const branches = await api.listBranches(selectedCompany.id);
+            const branchId = branches.find((b: any) => b.codigo === '0000')?.id || branches.find((b: any) => b.codigo === '0001')?.id || branches[0]?.id;
+            if (!branchId) throw new Error('La empresa no tiene sucursales activas.');
+
+            const created = await api.createFactura({
+              company_id: selectedCompany.id,
+              branch_id: branchId,
+              serie: falabellaProductionMode ? (venta.serie || 'F001') : 'F999',
+              fecha_emision: venta.fechaEmision,
+              moneda: venta.moneda || 'PEN',
+              metodo_envio: 'individual',
+              client: {
+                tipo_documento: venta.client.tipoDocumento,
+                numero_documento: venta.client.numeroDocumento,
+                razon_social: venta.client.razonSocial,
+                direccion: venta.client.direccion || undefined,
+              },
+              detalles: venta.detalles,
+              order_number: orderNumber || undefined,
+              persistCorrelative: falabellaProductionMode,
+              datos_adicionales: [
+                {
+                  source: 'falabella-api',
+                  environment: falabellaProductionMode ? 'produccion' : 'beta',
+                  orderNumber,
+                },
+              ],
+            });
+
+            const facturaId = created?.id;
+            if (!facturaId) throw new Error('No se obtuvo ID de factura');
+
+            setEmitBoletaModal((state) => ({
+              ...state,
+              progress: { current: i, total: emitBoletaModal.ventas.length, status: `Enviando factura ${created.numeroCompleto} a SUNAT...` },
+              log: [...state.log, `Enviando factura ${created.numeroCompleto} a SUNAT...`].slice(-80),
+            }));
+
+            const sendResult = await api.sendFacturaToSunat(facturaId);
+            const accepted = String(sendResult?.success || '').toLowerCase() === 'true' || sendResult?.success === true;
+            const errorMessage = accepted ? '' : facturaErrorMessage(sendResult, 'Error al enviar a SUNAT');
+
+            facturaResults.push({
+              numeroCompleto: created.numeroCompleto,
+              estadoSunat: accepted ? 'ACEPTADO' : 'RECHAZADO',
+              orderNumber,
+              error: accepted ? undefined : errorMessage,
+            });
+
+            if (accepted) {
+              successCount++;
+            } else {
+              errorCount++;
+              setEmitBoletaModal((state) => ({
+                ...state,
+                log: [...state.log, `Error ${created.numeroCompleto}: ${errorMessage}`].slice(-80),
+              }));
+            }
+          } catch (itemError: any) {
+            errorCount++;
+            const errorMessage = facturaErrorMessage(itemError, 'Error en la emisión');
+            facturaResults.push({
+              numeroCompleto: venta.numeroCompleto || orderNumber,
+              estadoSunat: 'ERROR',
+              orderNumber,
+              error: errorMessage,
+            });
+
+            setEmitBoletaModal((state) => ({
+              ...state,
+              log: [...state.log, `Error: ${errorMessage}`].slice(-80),
+            }));
+          }
+        }
+
+        const result = {
+          success: errorCount === 0,
+          total: emitBoletaModal.ventas.length,
+          exitosas: successCount,
+          rechazadas: errorCount,
+          boletas: facturaResults,
+        };
+
+        setEmitBoletaModal((current) => ({
+          ...current,
+          processing: false,
+          result,
+          error: result.success ? '' : `${errorCount} de ${emitBoletaModal.ventas.length} facturas tuvieron errores.`,
+        }));
+
+        if (result.success) {
+          setSelectedReadyOrders(new Set());
+          await loadInvoiceFlowPrototype();
+        }
+      } else {
+        api.onProgress((data: any) => {
+          const progressCurrent = Number(data?.current || 0);
+          const progressTotal = Number(data?.total || 0);
+          const status = typeof data?.status === 'string'
+            ? data.status
+            : data?.status == null
+              ? ''
+              : JSON.stringify(data.status);
+          setEmitBoletaModal((state) => {
+            if (!state.open) return state;
+            return {
+              ...state,
+              progress: { current: progressCurrent, total: progressTotal, status },
+              log: status ? [...state.log, status].slice(-80) : state.log,
+            };
+          });
         });
-      });
 
-      const homeDir = await api.getHomeDir();
-      const savedOutputDir = localStorage.getItem('boletas.outputDir');
-      const outputDir = savedOutputDir || (homeDir ? `${homeDir}/boletas-emitidas` : 'boletas-emitidas');
-      const result = await api.processWorkflow({
-        companyId: selectedCompany.id,
-        ruc: selectedCompany.ruc,
-        razonSocial: selectedCompany.razonSocial,
-        direccion: selectedCompany.direccion || '',
-        ubigeo: selectedCompany.ubigeo || '',
-        usuarioSol: selectedCompany.usuarioSol || '',
-        claveSol: selectedCompany.claveSol || '',
-        certificadoBase64: selectedCompany.certificado || '',
-        certificadoPassword: selectedCompany.certificadoPassword || '',
-        modoProduccion: falabellaProductionMode,
-        outputDir,
-      }, emitBoletaModal.ventas);
+        const homeDir = await api.getHomeDir();
+        const savedOutputDir = localStorage.getItem('boletas.outputDir');
+        const outputDir = savedOutputDir || (homeDir ? `${homeDir}/boletas-emitidas` : 'boletas-emitidas');
+        const result = await api.processWorkflow({
+          companyId: selectedCompany.id,
+          ruc: selectedCompany.ruc,
+          razonSocial: selectedCompany.razonSocial,
+          direccion: selectedCompany.direccion || '',
+          ubigeo: selectedCompany.ubigeo || '',
+          usuarioSol: selectedCompany.usuarioSol || '',
+          claveSol: selectedCompany.claveSol || '',
+          certificadoBase64: selectedCompany.certificado || '',
+          certificadoPassword: selectedCompany.certificadoPassword || '',
+          modoProduccion: falabellaProductionMode,
+          outputDir,
+        }, emitBoletaModal.ventas);
 
-      const success = Boolean(result?.success);
-      const resultError = typeof result?.error === 'string'
-        ? result.error
-        : result?.error
-          ? JSON.stringify(result.error)
-          : '';
+        const success = Boolean(result?.success);
+        const resultError = typeof result?.error === 'string'
+          ? result.error
+          : result?.error
+            ? JSON.stringify(result.error)
+            : '';
 
-      setEmitBoletaModal((current) => ({
-        ...current,
-        processing: false,
-        result,
-        error: success ? '' : resultError || 'No se pudo emitir.',
-      }));
+        setEmitBoletaModal((current) => ({
+          ...current,
+          processing: false,
+          result,
+          error: success ? '' : resultError || 'No se pudo emitir.',
+        }));
 
-      if (success) {
-        setSelectedReadyOrders(new Set());
-        await loadInvoiceFlowPrototype();
+        if (success) {
+          setSelectedReadyOrders(new Set());
+          await loadInvoiceFlowPrototype();
+        }
       }
     } catch (nextError: any) {
       const message = typeof nextError?.message === 'string'
@@ -1464,7 +1621,7 @@ export default function FalabellaApi() {
           || resolved?.boleta?.numeroCompleto
           || resolved?.creditNote?.numeroCompleto
           || '-';
-        const documentStatus = existingOption?.estadoSunat || resolved?.boleta?.estadoSunat || resolved?.creditNote?.estadoSunat || '';
+        const documentStatus = existingOption?.estadoSunat || resolved?.boleta?.estadoSunat || resolved?.factura?.estadoSunat || resolved?.creditNote?.estadoSunat || '';
         let bucket: InvoiceFlowBucket;
         let actionLabel: string;
 
@@ -1473,7 +1630,7 @@ export default function FalabellaApi() {
           actionLabel = 'Ya tiene documento';
         } else if (readyByStatus) {
           bucket = 'ready_to_invoice';
-          actionLabel = invoiceKind === 'FACTURA' ? 'Emisión deshabilitada' : 'Emitir';
+          actionLabel = 'Emitir';
         } else if (statusKey.includes('pending')) {
           bucket = 'not_ready';
           actionLabel = 'Esperar a que esté lista';
@@ -1499,7 +1656,7 @@ export default function FalabellaApi() {
           documentStatus,
           documentKind: existingOption?.kind,
           documentSource: existingOption?.source,
-          documentId: existingOption?.boletaId || existingOption?.creditNoteId,
+          documentId: existingOption?.boletaId || existingOption?.facturaId || existingOption?.creditNoteId,
           documentDate: existingOption?.invoiceDate,
           documentPdfPath: existingOption?.pdfPath || '',
           documentUploadedAt: existingOption?.falabellaPdfUploadedAt || '',
@@ -1624,6 +1781,7 @@ export default function FalabellaApi() {
         selectedKind: lockedBoleta ? 'BOLETA' : option?.kind || selectedKind,
         source: lockedBoleta ? 'local_boleta' : option?.source || 'manual',
         boletaId: option?.boletaId,
+        facturaId: option?.facturaId,
         invoiceNumber: option?.invoiceNumber || '',
         invoiceDate: normalizeInvoiceDate(option?.invoiceDate),
         invoiceType: lockedBoleta ? 'BOLETA' : option?.invoiceType || selectedKind,
@@ -1747,6 +1905,7 @@ export default function FalabellaApi() {
             invoiceType: uploadModal.invoiceType,
             source: uploadModal.pdfMode === 'selected_file' ? 'manual' : uploadModal.source,
             boletaId: uploadModal.pdfMode === 'auto' ? uploadModal.boletaId : undefined,
+            facturaId: uploadModal.pdfMode === 'auto' ? uploadModal.facturaId : undefined,
             pdfPath: uploadModal.pdfMode === 'local_file' ? uploadModal.pdfPath : uploadModal.pdfMode === 'selected_file' ? uploadModal.pdfPath : undefined,
             pdfBase64: uploadModal.pdfMode === 'selected_file' ? uploadModal.pdfBase64 : undefined,
           });
@@ -1789,7 +1948,13 @@ export default function FalabellaApi() {
     [uploadModal.resolved, uploadModal.selectedKind],
   );
 
-  const canUseAutoPdf = selectedDocumentOption?.source === 'local_boleta' && !!selectedDocumentOption.boletaId;
+  const canUseAutoPdf = (selectedDocumentOption?.source === 'local_boleta' && !!selectedDocumentOption.boletaId)
+    || (selectedDocumentOption?.source === 'local_factura' && !!selectedDocumentOption.facturaId);
+
+  // Pantalla limpia (misma que boleta) también para facturas locales aceptadas (auto-PDF).
+  const showCleanUpload = uploadModal.lockedBoleta || (uploadModal.source === 'local_factura' && uploadModal.pdfMode === 'auto');
+  const cleanDocTipo = uploadModal.lockedBoleta ? 'Boleta' : 'Factura';
+  const cleanDoc = uploadModal.lockedBoleta ? uploadModal.resolved?.boleta : uploadModal.resolved?.factura;
   const canUseLocalFile = !!selectedDocumentOption?.pdfPath;
 
   return (
@@ -2135,7 +2300,8 @@ export default function FalabellaApi() {
                               <DocumentStatusCell
                                 label={row.documentLabel}
                                 status={row.documentStatus}
-                                boletaId={row.documentSource === 'local_boleta' ? row.documentId : undefined}
+                                boletaId={row.documentKind === 'BOLETA' ? row.documentId : undefined}
+                                facturaId={row.documentKind === 'FACTURA' ? row.documentId : undefined}
                               />
                             </td>
                           )}
@@ -2143,8 +2309,8 @@ export default function FalabellaApi() {
                             {row.bucket === 'ready_to_invoice' ? (
                               <button
                                 type="button"
-                                disabled={row.invoiceKind !== 'BOLETA' || selectedReadyOrders.size > 0}
-                                title={selectedReadyOrders.size > 0 ? 'Hay boletas seleccionadas: usa "Emitir seleccionados"' : undefined}
+                                disabled={row.invoiceKind === 'BOLETA' && selectedReadyOrders.size > 0}
+                                title={row.invoiceKind === 'FACTURA' ? 'Emitir factura electrónica' : selectedReadyOrders.size > 0 ? 'Hay boletas seleccionadas: usa "Emitir seleccionados"' : undefined}
                                 onClick={() => void openEmitBoletaModal([row])}
                                 className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
                               >
@@ -2176,9 +2342,34 @@ export default function FalabellaApi() {
                                   </button>
                                 </Tooltip>
                               )
+                            ) : row.bucket === 'has_document' ? (
+                              // Facturas / notas de crédito con documento: también permiten (re)subir el PDF a Falabella.
+                              row.documentUploadedAt ? (
+                                <Tooltip content="Ya lo subiste a Falabella. Puedes volver a subirlo para reemplazarlo.">
+                                  <button
+                                    type="button"
+                                    onClick={() => void openUploadModal(row.order, false)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Volver a subir
+                                  </button>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip content={String(row.documentStatus || '').toUpperCase() === 'ACEPTADO' ? 'Subir el documento a Falabella' : 'El documento debe estar ACEPTADO por SUNAT para subirlo'}>
+                                  <button
+                                    type="button"
+                                    disabled={String(row.documentStatus || '').toUpperCase() !== 'ACEPTADO'}
+                                    onClick={() => void openUploadModal(row.order, false)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Subir documento
+                                  </button>
+                                </Tooltip>
+                              )
                             ) : (
                               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
-                                {row.bucket === 'has_document' && <CheckCircle2 className="h-3.5 w-3.5" />}
                                 {row.actionLabel}
                               </span>
                             )}
@@ -2251,14 +2442,18 @@ export default function FalabellaApi() {
 
                   {emitBoletaModal.ventas.length > 0 && (() => {
                     const single = emitBoletaModal.ventas.length === 1;
+                    const kindForVenta = (venta: any) => (
+                      emitBoletaModal.rows.find((row) => row.orderNumber === String(venta?.orderNumber || ''))?.invoiceKind || 'BOLETA'
+                    );
+                    const labelForVenta = (venta: any) => documentKindLabel(kindForVenta(venta));
                     const renderItems = (venta: any) => (
                       <div className="rounded-xl border border-border bg-background">
                         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
                           <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Items de la boleta</p>
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Items de {labelForVenta(venta).toLowerCase()}</p>
                             <p className="mt-1 text-xs text-muted-foreground">{venta.detalles?.length || 0} producto(s) enviados a SUNAT</p>
                           </div>
-                          <span className="rounded-md bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">Boleta</span>
+                          <span className="rounded-md bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">{labelForVenta(venta)}</span>
                         </div>
                         <div className="grid grid-cols-[130px_minmax(240px,1fr)_70px_115px_115px] gap-3 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                           <div>Código</div>
@@ -2288,6 +2483,7 @@ export default function FalabellaApi() {
                       const venta = emitBoletaModal.ventas[0];
                       const orderNumber = String(venta.orderNumber || '');
                       const orderWarnings = emitBoletaModal.warningsByOrder[orderNumber] || [];
+                      const documentLabel = labelForVenta(venta);
                       return (
                         <div className="space-y-4">
                           <div className="overflow-hidden rounded-xl border border-border bg-background">
@@ -2308,8 +2504,13 @@ export default function FalabellaApi() {
                                 </p>
                                 <div className="mt-1 flex flex-wrap items-center gap-2">
                                   <span className="font-mono text-xs text-muted-foreground">{venta.client?.numeroDocumento || '-'}</span>
-                                  <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">Boleta</span>
+                                  <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{documentLabel}</span>
                                 </div>
+                                {kindForVenta(venta) === 'FACTURA' && venta.client?.direccion && (
+                                  <p className="mt-1 truncate text-xs text-muted-foreground" title={venta.client.direccion}>
+                                    {venta.client.direccion}
+                                  </p>
+                                )}
                               </div>
                               <div className="text-center">
                                 <button
@@ -2368,6 +2569,7 @@ export default function FalabellaApi() {
                             const orderNumber = String(venta.orderNumber || '');
                             const orderWarnings = emitBoletaModal.warningsByOrder[orderNumber] || [];
                             const expanded = !!emitBoletaModal.expandedOrders[orderNumber];
+                            const documentLabel = labelForVenta(venta);
                             const toggleExpanded = () => setEmitBoletaModal((current) => ({
                               ...current,
                               expandedOrders: {
@@ -2386,8 +2588,13 @@ export default function FalabellaApi() {
                                     </p>
                                     <div className="mt-1 flex flex-wrap items-center gap-2">
                                       <span className="font-mono text-xs text-muted-foreground">{venta.client?.numeroDocumento || '-'}</span>
-                                      <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">Boleta</span>
+                                      <span className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{documentLabel}</span>
                                     </div>
+                                    {kindForVenta(venta) === 'FACTURA' && venta.client?.direccion && (
+                                      <p className="mt-1 truncate text-xs text-muted-foreground" title={venta.client.direccion}>
+                                        {venta.client.direccion}
+                                      </p>
+                                    )}
                                   </div>
                                   <div className="text-center">
                                     <button
@@ -2751,7 +2958,7 @@ export default function FalabellaApi() {
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
                 <h3 className="text-base font-semibold text-foreground">
-                  {uploadModal.lockedBoleta ? 'Subir boleta a Falabella' : 'Subir documento a Falabella'}
+                  {showCleanUpload ? `Subir ${cleanDocTipo.toLowerCase()} a Falabella` : 'Subir documento a Falabella'}
                 </h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Orden {uploadModal.order?.OrderNumber || '-'} · ID {uploadModal.order?.OrderId || '-'}
@@ -2771,31 +2978,31 @@ export default function FalabellaApi() {
               {uploadModal.loading && (
                 <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-4 py-6 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  {uploadModal.lockedBoleta ? 'Preparando boleta...' : 'Preparando documento y consultando OrderItemIds...'}
+                  {showCleanUpload ? `Preparando ${cleanDocTipo.toLowerCase()}...` : 'Preparando documento y consultando OrderItemIds...'}
                 </div>
               )}
 
               {!uploadModal.loading && (
                 <div className="space-y-4">
-                  {uploadModal.lockedBoleta ? (
+                  {showCleanUpload ? (
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
                       <div className="rounded-xl border border-border bg-background p-6">
                         <div className="flex items-start justify-between gap-6 border-b border-border pb-5">
                           <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Boleta electrónica</p>
+                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">{cleanDocTipo} electrónica</p>
                             <p className="mt-2 font-mono text-2xl font-semibold text-foreground">{uploadModal.invoiceNumber || '-'}</p>
                           </div>
                           <div className="rounded-lg border border-border px-4 py-3 text-right">
                             <p className="text-xs text-muted-foreground">Estado SUNAT</p>
-                            <p className="mt-1 text-sm font-semibold text-emerald-700">{uploadModal.resolved?.boleta?.estadoSunat || '-'}</p>
+                            <p className="mt-1 text-sm font-semibold text-emerald-700">{cleanDoc?.estadoSunat || '-'}</p>
                           </div>
                         </div>
 
                         <div className="grid gap-4 border-b border-border py-5 md:grid-cols-2">
                           <div>
                             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Cliente</p>
-                            <p className="mt-2 text-sm font-semibold text-foreground">{uploadModal.resolved?.boleta?.cliente || '-'}</p>
-                            <p className="mt-1 font-mono text-xs text-muted-foreground">{uploadModal.resolved?.boleta?.clienteDocumento || '-'}</p>
+                            <p className="mt-2 text-sm font-semibold text-foreground">{cleanDoc?.cliente || '-'}</p>
+                            <p className="mt-1 font-mono text-xs text-muted-foreground">{cleanDoc?.clienteDocumento || '-'}</p>
                           </div>
                           <div>
                             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Orden</p>
@@ -2807,7 +3014,7 @@ export default function FalabellaApi() {
                         <div className="grid gap-4 py-5 md:grid-cols-3">
                           <div className="rounded-lg bg-muted/35 px-4 py-3">
                             <p className="text-xs text-muted-foreground">Total</p>
-                            <p className="mt-1 text-lg font-semibold text-foreground">{money(Number(uploadModal.resolved?.boleta?.total || 0))}</p>
+                            <p className="mt-1 text-lg font-semibold text-foreground">{money(Number(cleanDoc?.total || 0))}</p>
                           </div>
                           <div className="rounded-lg bg-muted/35 px-4 py-3">
                             <p className="text-xs text-muted-foreground">Fecha</p>
@@ -2815,25 +3022,25 @@ export default function FalabellaApi() {
                           </div>
                           <div className="rounded-lg bg-muted/35 px-4 py-3">
                             <p className="text-xs text-muted-foreground">Tipo</p>
-                            <p className="mt-1 text-sm font-medium text-foreground">Boleta</p>
+                            <p className="mt-1 text-sm font-medium text-foreground">{cleanDocTipo}</p>
                           </div>
                         </div>
 
                         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
                           <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">XML / SUNAT</p>
                           <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-                            {uploadModal.resolved?.boleta?.codigoHash
-                              ? `Hash: ${uploadModal.resolved.boleta.codigoHash}`
-                              : uploadModal.resolved?.boleta?.xmlPath
-                                ? uploadModal.resolved.boleta.xmlPath
-                                : 'XML registrado en la boleta local'}
+                            {cleanDoc?.codigoHash
+                              ? `Hash: ${cleanDoc.codigoHash}`
+                              : cleanDoc?.xmlPath
+                                ? cleanDoc.xmlPath
+                                : `XML registrado en la ${cleanDocTipo.toLowerCase()} local`}
                           </p>
                         </div>
                       </div>
 
                       <div className="space-y-4">
                         <div className="rounded-xl border border-border bg-background p-4">
-                          <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Boleta</p>
+                          <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">{cleanDocTipo}</p>
                           <p className="mt-2 font-mono text-xl font-semibold text-foreground">{uploadModal.invoiceNumber || '-'}</p>
                           <dl className="mt-4 space-y-3 text-sm">
                             <div className="flex items-center justify-between gap-4">
@@ -2852,9 +3059,9 @@ export default function FalabellaApi() {
                           <p className="mt-2 text-sm text-muted-foreground">
                             Al subir, se generará el PDF en memoria, se enviará a Falabella y se descartará.
                           </p>
-                          {uploadModal.resolved?.boleta?.falabellaPdfUploadedAt && (
+                          {cleanDoc?.falabellaPdfUploadedAt && (
                             <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                              Subida el {formatDate(uploadModal.resolved.boleta.falabellaPdfUploadedAt)}. Puedes volver a subirla si necesitas reemplazarla.
+                              Subida el {formatDate(cleanDoc.falabellaPdfUploadedAt)}. Puedes volver a subirla si necesitas reemplazarla.
                             </div>
                           )}
                         </div>
@@ -2907,7 +3114,7 @@ export default function FalabellaApi() {
                   </div>
                   )}
 
-                  {!uploadModal.lockedBoleta && (
+                  {!showCleanUpload && (
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Tipo de documento</label>
@@ -3018,7 +3225,7 @@ export default function FalabellaApi() {
                   </div>
                   )}
 
-                  {!uploadModal.lockedBoleta && (
+                  {!showCleanUpload && (
                   <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_220px]">
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Número de documento</label>
@@ -3058,12 +3265,12 @@ export default function FalabellaApi() {
                   </div>
                   )}
 
-                  {!uploadModal.lockedBoleta && (
+                  {!showCleanUpload && (
                   <div className="rounded-xl border border-border bg-background p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-medium text-foreground">
-                          {uploadModal.lockedBoleta ? 'PDF de boleta' : 'PDF a subir'}
+                          PDF a subir
                         </p>
                         {uploadModal.pdfMode === 'auto' && (
                           <p className="mt-1 text-xs text-muted-foreground">
@@ -3130,10 +3337,10 @@ export default function FalabellaApi() {
                       {uploadModal.submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                       {uploadModal.submitting
                         ? 'Subiendo...'
-                        : uploadModal.lockedBoleta
-                          ? uploadModal.resolved?.boleta?.falabellaPdfUploadedAt
-                            ? 'Volver a subir boleta'
-                            : 'Generar y subir boleta'
+                        : showCleanUpload
+                          ? cleanDoc?.falabellaPdfUploadedAt
+                            ? `Volver a subir ${cleanDocTipo.toLowerCase()}`
+                            : `Generar y subir ${cleanDocTipo.toLowerCase()}`
                           : 'Subir documento'}
                     </button>
                   </div>

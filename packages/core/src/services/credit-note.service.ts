@@ -127,6 +127,10 @@ export async function sendCreditNoteToSunat(
     isc: Number(d.isc || 0),
     icbper: Number(d.icbper || 0),
   }));
+  const clientTipoDocumento = client.tipoDocumento || '0';
+  const clientNumeroDocumento = clientTipoDocumento === '0' && !client.numeroDocumento
+    ? '00000000'
+    : client.numeroDocumento;
 
   const noteData: CreditNoteSunatData = {
     tipoDocumento: '07',
@@ -140,8 +144,8 @@ export async function sendCreditNoteToSunat(
     codMotivo: note.codMotivo,
     desMotivo: note.desMotivo,
     client: {
-      tipoDocumento: client.tipoDocumento,
-      numeroDocumento: client.numeroDocumento,
+      tipoDocumento: clientTipoDocumento,
+      numeroDocumento: clientNumeroDocumento,
       razonSocial: client.razonSocial,
       direccion: client.direccion || undefined,
     },

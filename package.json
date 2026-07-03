@@ -26,7 +26,8 @@
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
     "audit:falabella-igv": "node scripts/audit-falabella-igv.js",
     "pdf:falabella-corrected": "node scripts/generate-corrected-falabella-pdfs.js",
-    "credit-notes:batch": "./node_modules/.bin/electron scripts/send-credit-notes-batch.js"
+    "credit-notes:batch": "./node_modules/.bin/electron scripts/send-credit-notes-batch.js",
+    "r2:pull": "node scripts/pull-r2-to-minio.mjs"
   },
   "devDependencies": {
     "pg": "^8.21.0"

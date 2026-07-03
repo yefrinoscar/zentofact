@@ -177,23 +177,58 @@ CREATE TABLE IF NOT EXISTS facturas (
   id SERIAL PRIMARY KEY,
   company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   branch_id INTEGER REFERENCES branches(id) ON DELETE SET NULL,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  daily_summary_id INTEGER REFERENCES daily_summaries(id) ON DELETE SET NULL,
   tipo_documento TEXT DEFAULT '01',
+  serie TEXT DEFAULT '',
+  correlativo TEXT DEFAULT '',
   numero_completo TEXT NOT NULL,
-  order_number TEXT NOT NULL,
+  order_number TEXT,
   fecha_emision TEXT NOT NULL,
+  ubl_version TEXT DEFAULT '2.1',
+  tipo_operacion TEXT DEFAULT '0101',
+  moneda TEXT DEFAULT 'PEN',
+  metodo_envio TEXT DEFAULT 'individual',
+  valor_venta TEXT DEFAULT '0',
+  mto_oper_gravadas TEXT DEFAULT '0',
+  mto_oper_exoneradas TEXT DEFAULT '0',
+  mto_oper_inafectas TEXT DEFAULT '0',
+  mto_oper_gratuitas TEXT DEFAULT '0',
+  mto_igv_gratuitas TEXT DEFAULT '0',
+  mto_igv TEXT DEFAULT '0',
+  mto_base_ivap TEXT DEFAULT '0',
+  mto_ivap TEXT DEFAULT '0',
+  mto_isc TEXT DEFAULT '0',
+  mto_icbper TEXT DEFAULT '0',
+  total_impuestos TEXT DEFAULT '0',
+  sub_total TEXT DEFAULT '0',
+  mto_imp_venta TEXT DEFAULT '0',
+  detalles JSONB NOT NULL DEFAULT '[]',
+  leyendas JSONB,
+  datos_adicionales JSONB,
+  xml_path TEXT,
+  cdr_path TEXT,
   pdf_path TEXT,
+  estado_sunat TEXT DEFAULT 'PENDIENTE',
+  respuesta_sunat TEXT,
+  codigo_hash TEXT,
   fuente TEXT DEFAULT 'manual',
   estado TEXT DEFAULT 'REGISTRADO',
   order_item_ids JSONB,
   respuesta_falabella TEXT,
+  usuario_creacion TEXT,
   created_at BIGINT,
   updated_at BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_facturas_company ON facturas(company_id);
+CREATE INDEX IF NOT EXISTS idx_facturas_company_branch ON facturas(company_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_facturas_company_serie_corr ON facturas(company_id, serie, correlativo);
 CREATE INDEX IF NOT EXISTS idx_facturas_order_number ON facturas(order_number);
 CREATE INDEX IF NOT EXISTS idx_facturas_fecha_emision ON facturas(fecha_emision);
 CREATE INDEX IF NOT EXISTS idx_facturas_estado ON facturas(estado);
+CREATE INDEX IF NOT EXISTS idx_facturas_estado_sunat ON facturas(estado_sunat);
+CREATE INDEX IF NOT EXISTS idx_facturas_daily_summary ON facturas(daily_summary_id);
 
 CREATE TABLE IF NOT EXISTS credit_notes (
   id SERIAL PRIMARY KEY,

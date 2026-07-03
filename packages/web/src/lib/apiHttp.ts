@@ -10,7 +10,13 @@ async function req(path: string, init?: RequestInit) {
     ...init,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (parseError: any) {
+    console.error('[REQ JSON PARSE ERROR]', path, res.status, 'response text:', text?.slice(0, 500));
+    throw new Error(`Error al parsear respuesta de ${path}: ${parseError?.message}. Response: ${text?.slice(0, 200)}`);
+  }
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
   return data;
 }
@@ -50,12 +56,23 @@ const apiHttp = {
   listDailySummaries: (filter: any) => req(`/daily-summaries${qs(filter)}`),
   refreshDailySummaryStatus: (id: number) => req(`/daily-summaries/${id}/refresh`, { method: 'POST' }),
   refreshBoletaStatus: (id: number) => req(`/boletas/${id}/refresh-status`, { method: 'POST' }),
+  refreshFacturaStatus: (id: number) => req(`/facturas/${id}/refresh-status`, { method: 'POST' }),
+
+  // Boletas (emitir individual)
+  createBoleta: (input: any) => req('/boletas', { method: 'POST', body: JSON.stringify({ input }) }),
+  sendBoletaToSunat: (id: number) => req(`/boletas/${id}/send`, { method: 'POST' }),
+
+  // Facturas (emitir individual)
+  createFactura: (input: any) => req('/facturas', { method: 'POST', body: JSON.stringify({ input }) }),
+  sendFacturaToSunat: (id: number) => req(`/facturas/${id}/send`, { method: 'POST' }),
 
   // PDFs (base64) y previews (HTML)
   generateBoletaPdf: (id: number) => req(`/boletas/${id}/pdf`),
+  generateFacturaPdf: (id: number) => req(`/facturas/${id}/pdf`),
   previewAcceptedBoletaHtml: (id: number) => req(`/boletas/${id}/preview`),
   previewCreditNoteHtml: (id: number) => req(`/credit-notes/${id}/preview`),
   previewBoletaHtml: (companyId: number, venta: any) => req('/boletas/preview', { method: 'POST', body: JSON.stringify({ companyId, venta }) }),
+  previewFacturaHtml: (companyId: number, venta: any) => req('/facturas/preview', { method: 'POST', body: JSON.stringify({ companyId, venta }) }),
 
   // Notas de crédito (emitir)
   createAndSendCreditNote: (boletaId: number, options?: any) => req('/credit-notes', { method: 'POST', body: JSON.stringify({ boletaId, options }) }),
@@ -112,10 +129,20 @@ const apiHttp = {
   falabellaApiMonthSummary: (companyId: number, month: string) => req(`/falabella/${companyId}/month-summary${qs({ month })}`),
   falabellaApiGetOrderItems: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${orderId}/items`),
   falabellaApiBuildBoletaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-boleta-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
+  falabellaApiBuildFacturaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-factura-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
   falabellaApiResolveOrderIds: (payload: any) => req(`/falabella/${payload.companyId}/resolve-order-ids`, { method: 'POST', body: JSON.stringify({ entries: payload.entries }) }),
   falabellaApiResolveDocument: (companyId: number, orderNumber: string) => req(`/falabella/${companyId}/resolve-document${qs({ orderNumber })}`),
   falabellaApiUploadInvoicePdf: (payload: any) => req('/falabella/upload-invoice-pdf', { method: 'POST', body: JSON.stringify(payload) }),
   falabellaApiUploadBoletaPdf: (payload: any) => req('/falabella/upload-boleta-pdf', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Emisión automática (panel de control)
+  autoEmitGetConfig: () => req('/auto-emit/config'),
+  autoEmitSetCompany: (companyId: number, enabled: boolean) => req(`/auto-emit/config/${companyId}`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  autoEmitJobs: (limit = 50) => req(`/auto-emit/jobs${qs({ limit })}`),
+  autoEmitEvents: (limit = 50) => req(`/auto-emit/events${qs({ limit })}`),
+  autoEmitRun: (limit = 5) => req(`/auto-emit/run${qs({ limit })}`, { method: 'POST' }),
+  autoEmitSetPaused: (paused: boolean) => req('/auto-emit/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
+  autoEmitRetryJob: (id: number) => req(`/auto-emit/jobs/${id}/retry`, { method: 'POST' }),
 
   // Solo desktop (FS / diálogos / scraper): en web son no-ops o valores neutros.
   getHomeDir: async () => '',            // web no tiene home dir; el server define STORAGE_PATH

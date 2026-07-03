@@ -15,6 +15,8 @@ const apiPrefixes = [
   '/daily-summaries',
   '/falabella',
   '/workflow',
+  '/auto-emit',
+  '/webhooks',
 ];
 
 // Frontend web independiente. El proxy mantiene la API desacoplada en dev.

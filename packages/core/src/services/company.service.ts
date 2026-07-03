@@ -92,7 +92,7 @@ export async function createCompany(data: CreateCompanyInput) {
   if (result) {
     await db.insert(branches).values({
       companyId: result.id,
-      codigo: '0001',
+      codigo: '0000',
       nombre: 'Principal',
       direccion: data.direccion,
       ubigeo: data.ubigeo,

@@ -1,0 +1,389 @@
+// Emisión automática de boletas Falabella.
+// Flujo: webhook (o cron) -> cola en Postgres -> worker emite INDIVIDUAL -> sube a Falabella.
+// Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
+import { Pool } from 'pg';
+import {
+  getCompany,
+  listCompanies,
+  processWorkflow,
+  falabellaBuildBoletaVenta,
+  falabellaResolveDocument,
+  falabellaUploadBoletaPdf,
+} from '@zentofact/core';
+import { FalabellaApiClient } from '@zentofact/falabella-api';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
+
+// Estados de Falabella que habilitan la boleta (idéntico al Gestor de Sellers).
+const READY_STATUSES = ['ready_to_ship', 'shipped', 'delivered'];
+const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED === 'true';
+const DRY_RUN = process.env.AUTO_EMIT_DRY_RUN === 'true';
+const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de seguridad; on por defecto
+
+const log = (...a) => console.log('[auto-emit]', ...a);
+const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
+const today = () => new Date().toISOString().slice(0, 10);
+
+// Extrae identificadores de la orden del payload del webhook (defensivo: nombres variables).
+function extractOrder(payload) {
+  const p = payload || {};
+  const body = p.data || p.payload || p.order || p.Order || p;
+  const orderNumber = String(body.OrderNumber || body.orderNumber || body.order_number || p.orderNumber || '').trim();
+  const orderId = String(body.OrderId || body.orderId || body.order_id || p.orderId || '').trim();
+  return { orderNumber: orderNumber || orderId, orderId, raw: p };
+}
+
+// Estado de la orden. Falabella V2 devuelve Statuses: [{ Status: "shipped" }, ...].
+function statusOfOrder(order) {
+  const s = order?.Statuses?.Status ?? order?.Statuses ?? order?.status;
+  const pick = (x) => (typeof x === 'object' && x ? (x.Status || x.Name || x.name || '') : x);
+  if (Array.isArray(s)) return s.map(pick).join('|');
+  if (s && typeof s === 'object') return String(pick(s) || '');
+  return String(s || '');
+}
+
+// InvoiceRequired llega como boolean, número o string ("true"/"false"/"1"/"0").
+function invoiceRequired(order) {
+  const v = order?.InvoiceRequired;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v === 1;
+  if (typeof v === 'string') return v.toLowerCase() === 'true' || v === '1';
+  return false;
+}
+
+function buildConfig(company) {
+  return {
+    companyId: company.id,
+    ruc: company.ruc,
+    razonSocial: company.razonSocial,
+    direccion: company.direccion || '',
+    ubigeo: company.ubigeo || '',
+    usuarioSol: company.usuarioSol || '',
+    claveSol: company.claveSol || '',
+    certificadoBase64: company.certificado || '',
+    certificadoPassword: company.certificadoPassword || '',
+    modoProduccion: true, // el automático SIEMPRE es producción real
+    serieBoleta: 'B001',
+    outputDir: process.env.STORAGE_PATH || 'storage',
+  };
+}
+
+// ── Esquema (idempotente, para deploys nuevos) ──
+export async function ensureTables() {
+  await pool.query(`
+    create table if not exists webhook_events (
+      id bigserial primary key,
+      company_id integer,
+      order_number text,
+      event text,
+      raw jsonb,
+      processed boolean default false,
+      received_at timestamptz not null default now()
+    );
+    create table if not exists emission_jobs (
+      id bigserial primary key,
+      company_id integer not null,
+      order_number text not null,
+      order_id text,
+      status text not null default 'pending',
+      attempts integer not null default 0,
+      last_error text,
+      result text,
+      boleta_numero text,
+      source text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (company_id, order_number)
+    );
+    alter table emission_jobs add column if not exists order_id text;
+    create table if not exists auto_emission_config (
+      company_id integer primary key,
+      enabled boolean not null default false,
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists auto_emission_state (
+      id integer primary key default 1,
+      paused boolean not null default false,
+      updated_at timestamptz not null default now()
+    );
+    insert into auto_emission_state (id, paused) values (1, false) on conflict (id) do nothing;
+  `);
+}
+
+// ── Pausa global de la cola (runtime, sin reiniciar) ──
+export async function getPaused() {
+  const r = await pool.query('select paused from auto_emission_state where id=1');
+  return r.rows[0]?.paused === true;
+}
+export async function setPaused(paused) {
+  await pool.query(
+    `insert into auto_emission_state (id, paused, updated_at) values (1, $1, now())
+     on conflict (id) do update set paused=excluded.paused, updated_at=now()`,
+    [!!paused],
+  );
+  log(paused ? 'cola PAUSADA' : 'cola REANUDADA');
+  return { paused: !!paused };
+}
+
+// Reintentar un job (fallido/omitido) → vuelve a pending, reinicia intentos.
+export async function retryJob(id) {
+  const r = await pool.query(
+    `update emission_jobs set status='pending', attempts=0, last_error=null, updated_at=now()
+     where id=$1 returning id, company_id, order_number, status`, [id]);
+  return r.rows[0] || null;
+}
+
+// ── Config por empresa (qué empresas emiten automáticamente) ──
+export async function getConfig() {
+  const companies = await listCompanies();
+  const rows = (await pool.query('select company_id, enabled from auto_emission_config')).rows;
+  const map = new Map(rows.map((r) => [r.company_id, r.enabled]));
+  const paused = await getPaused();
+  // Conteo por estado (resumen del panel).
+  const stats = Object.fromEntries((await pool.query(
+    'select status, count(*)::int as n from emission_jobs group by status')).rows.map((r) => [r.status, r.n]));
+  return {
+    globalEnabled: AUTO_ENABLED,
+    dryRun: DRY_RUN,
+    reconcileEnabled: RECONCILE_ENABLED,
+    paused,
+    stats,
+    companies: companies.map((c) => ({
+      id: c.id,
+      nombre: c.nombre,
+      ruc: c.ruc,
+      hasFalabella: !!(c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim()),
+      enabled: map.get(c.id) ?? false,
+    })),
+  };
+}
+
+export async function setCompanyEnabled(companyId, enabled) {
+  await pool.query(
+    `insert into auto_emission_config (company_id, enabled, updated_at) values ($1,$2,now())
+     on conflict (company_id) do update set enabled=excluded.enabled, updated_at=now()`,
+    [companyId, !!enabled],
+  );
+  return { companyId, enabled: !!enabled };
+}
+
+async function isCompanyEnabled(companyId) {
+  const r = await pool.query('select enabled from auto_emission_config where company_id=$1', [companyId]);
+  return r.rows[0]?.enabled === true;
+}
+
+// Últimos jobs y eventos (para el panel).
+export async function recentJobs(limit = 50) {
+  const r = await pool.query(
+    `select j.id, j.company_id, c.nombre as company, j.order_number, j.order_id, j.status, j.source,
+            j.attempts, j.result, j.last_error, j.boleta_numero, j.created_at, j.updated_at
+     from emission_jobs j left join companies c on c.id=j.company_id
+     order by j.updated_at desc limit $1`, [Math.min(limit, 200)]);
+  return r.rows;
+}
+
+export async function recentEvents(limit = 50) {
+  const r = await pool.query(
+    `select e.id, e.company_id, c.nombre as company, e.order_number, e.event, e.processed, e.received_at
+     from webhook_events e left join companies c on c.id=e.company_id
+     order by e.received_at desc limit $1`, [Math.min(limit, 200)]);
+  return r.rows;
+}
+
+// GetOrder puntual por OrderId (1 llamada). Devuelve la orden cruda o null.
+async function fetchOrderById(client, orderId) {
+  if (!orderId) return null;
+  const r = await client.call({ action: 'GetOrder', params: { OrderId: orderId } });
+  const body = r?.data?.SuccessResponse?.Body?.Orders?.Order ?? r?.data?.SuccessResponse?.Body?.Order;
+  const ord = Array.isArray(body) ? body[0] : body;
+  return ord && typeof ord === 'object' ? ord : null;
+}
+
+// ── Cola ──
+export async function enqueue(companyId, orderNumber, source = 'webhook', orderId = null) {
+  if (!orderNumber) return;
+  await pool.query(
+    `insert into emission_jobs (company_id, order_number, order_id, status, source, created_at, updated_at)
+     values ($1, $2, $3, 'pending', $4, now(), now())
+     on conflict (company_id, order_number) do update
+       set status = case when emission_jobs.status in ('failed','skipped') then 'pending' else emission_jobs.status end,
+           order_id = coalesce(excluded.order_id, emission_jobs.order_id),
+           updated_at = now()`,
+    [companyId, orderNumber, orderId || null, source],
+  );
+}
+
+// ── Webhook ──
+export async function handleWebhook(companyId, payload) {
+  const { orderNumber, orderId } = extractOrder(payload);
+  await pool.query(
+    `insert into webhook_events (company_id, order_number, event, raw) values ($1,$2,$3,$4)`,
+    [companyId, orderNumber || null, 'onOrderItemsStatusChanged', JSON.stringify(payload || {})],
+  ).catch(() => {});
+  const enabled = await isCompanyEnabled(companyId);
+  log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${enabled ? '' : '(empresa NO activa, se ignora)'}`);
+  if (!enabled) return { ok: true, orderNumber, orderId, ignored: 'empresa no activa para emisión automática' };
+  // Clave de dedup: OrderNumber si lo trae; si no, el OrderId (el worker resuelve el número real vía GetOrder).
+  const key = orderNumber || orderId;
+  if (key) await enqueue(companyId, key, 'webhook', orderId);
+  return { ok: true, orderNumber, orderId };
+}
+
+// ── Worker ──
+async function processJob(job) {
+  if (!(await isCompanyEnabled(job.company_id))) {
+    return { status: 'skipped', result: 'empresa no activa para emisión automática' };
+  }
+  const company = await getCompany(job.company_id);
+  if (!company || !company.falabellaApiUserId?.trim() || !company.falabellaApiKey?.trim()) {
+    return { status: 'skipped', result: 'empresa sin credenciales Falabella' };
+  }
+
+  // 1) Traer la orden de Falabella (estado autoritativo).
+  //    Si el webhook nos dio OrderId → GetOrder puntual (1 llamada). Si no, fallback: escaneo por fecha.
+  const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
+  let order = await fetchOrderById(client, job.order_id);
+  if (!order) {
+    const found = await client.findOrderByOrderNumber(job.order_number, today());
+    if (!found) return { retry: true, error: 'orden aún no visible en Falabella' };
+    order = found.raw || found;
+  }
+  // El número real (por si encolamos con el OrderId como clave).
+  const orderNumber = String(order.OrderNumber || job.order_number).trim();
+
+  // 2) Condiciones (mismas que el Gestor de Sellers).
+  if (invoiceRequired(order)) return { status: 'skipped', result: 'requiere factura, no boleta' };
+  const status = norm(statusOfOrder(order));
+  const ready = READY_STATUSES.some((s) => status.includes(s));
+  if (!ready) return { status: 'skipped', result: `estado "${status}" aún no habilita boleta` };
+
+  // 3) ¿ya tiene boleta?
+  const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
+  if (doc?.boleta) return { status: 'done', result: `ya tenía boleta ${doc.boleta.numeroCompleto}`, boletaNumero: doc.boleta.numeroCompleto };
+
+  if (DRY_RUN) return { status: 'skipped', result: 'DRY_RUN: cumpliría condiciones, no se emitió' };
+
+  // 4) Construir venta + emitir INDIVIDUAL (producción).
+  const built = await falabellaBuildBoletaVenta({ companyId: job.company_id, order });
+  if (built.error) throw new Error(`build-venta: ${built.error}`);
+  const result = await processWorkflow(buildConfig(company), [built.venta]);
+  const b = result?.boletas?.[0];
+  if (!b || String(b.estadoSunat).toUpperCase() !== 'ACEPTADO') {
+    throw new Error(b?.error || 'SUNAT no aceptó la boleta');
+  }
+  log(`orden ${orderNumber} -> boleta ${b.numeroCompleto} ACEPTADA`);
+
+  // 5) Subir la boleta a Falabella (necesita Chromium para el PDF; ver nota de deploy).
+  let uploadNote = '';
+  try {
+    const emitted = (await pool.query(
+      `select id, numero_completo, fecha_emision from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' order by id desc limit 1`,
+      [job.company_id, orderNumber],
+    )).rows[0];
+    if (emitted) {
+      const up = await falabellaUploadBoletaPdf({
+        companyId: job.company_id,
+        boletaId: emitted.id,
+        orderNumber,
+        orderId: order.OrderId,
+        invoiceNumber: emitted.numero_completo,
+        invoiceDate: emitted.fecha_emision,
+      });
+      uploadNote = up?.ok && !up?.error ? ' + subida a Falabella' : ` (subida falló: ${up?.error?.Head?.ErrorMessage || up?.error || up?.skipped || 'ver logs'})`;
+      log(`orden ${orderNumber} subida a Falabella:`, uploadNote);
+    }
+  } catch (e) {
+    uploadNote = ` (subida falló: ${e.message})`;
+  }
+
+  return { status: 'done', result: `boleta ${b.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: b.numeroCompleto };
+}
+
+export async function processQueue(limit = 3) {
+  if (await getPaused()) return 0; // cola pausada desde el panel
+  const client = await pool.connect();
+  let jobs = [];
+  try {
+    // Toma jobs sin pisarse entre instancias.
+    const res = await client.query(
+      `update emission_jobs set status='processing', attempts=attempts+1, updated_at=now()
+       where id in (
+         select id from emission_jobs where status='pending' order by created_at asc limit $1 for update skip locked
+       ) returning *`,
+      [limit],
+    );
+    jobs = res.rows;
+  } finally {
+    client.release();
+  }
+
+  for (const job of jobs) {
+    try {
+      const r = await processJob(job);
+      if (r.retry) {
+        const failed = job.attempts >= 6;
+        await pool.query(`update emission_jobs set status=$2, last_error=$3, updated_at=now() where id=$1`,
+          [job.id, failed ? 'failed' : 'pending', r.error || 'retry']);
+      } else {
+        await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, updated_at=now() where id=$1`,
+          [job.id, r.status, r.result || null, r.boletaNumero || null]);
+      }
+    } catch (e) {
+      const failed = job.attempts >= 6;
+      log(`ERROR orden ${job.order_number}:`, e.message);
+      await pool.query(`update emission_jobs set status=$2, last_error=$3, updated_at=now() where id=$1`,
+        [job.id, failed ? 'failed' : 'pending', String(e.message || e)]);
+    }
+  }
+  return jobs.length;
+}
+
+// ── Reconciliación (red de seguridad): barre órdenes listas sin boleta y las encola ──
+// Solo empresas ACTIVAS en la config (auto_emission_config.enabled = true).
+export async function reconcile() {
+  const enabledRows = (await pool.query('select company_id from auto_emission_config where enabled=true')).rows;
+  const enabledIds = new Set(enabledRows.map((r) => r.company_id));
+  const companies = (await listCompanies()).filter(
+    (c) => enabledIds.has(c.id) && c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim(),
+  );
+  if (!companies.length) return;
+  const createdAfter = new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString().slice(0, 10) + 'T00:00:00+00:00';
+  for (const company of companies) {
+    try {
+      const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
+      let enqueued = 0;
+      for (let offset = 0; offset < 1000; offset += 100) {
+        const resp = await client.getOrdersV2({ createdAfter, limit: 100, offset });
+        const { normalizeGetOrdersResult } = await import('@zentofact/falabella-api');
+        const orders = normalizeGetOrdersResult(resp.data).orders || [];
+        for (const order of orders) {
+          const on = String(order?.OrderNumber || '').trim();
+          if (!on) continue;
+          if (invoiceRequired(order)) continue;
+          const status = norm(statusOfOrder(order));
+          if (!READY_STATUSES.some((s) => status.includes(s))) continue;
+          const doc = await falabellaResolveDocument({ companyId: company.id, orderNumber: on });
+          if (doc?.boleta) continue;
+          await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null);
+          enqueued++;
+        }
+        if (orders.length < 100) break;
+      }
+      if (enqueued) log(`reconcile ${company.nombre}: ${enqueued} órdenes encoladas`);
+    } catch (e) {
+      log(`reconcile ${company.nombre} error:`, e.message);
+    }
+  }
+}
+
+// ── Arranque de los loops ──
+export function startAutoEmission() {
+  if (!AUTO_ENABLED) { log('deshabilitado (AUTO_EMIT_ENABLED != true)'); return; }
+  log(`activo${DRY_RUN ? ' (DRY_RUN)' : ''}. worker cada 20s${RECONCILE_ENABLED ? ', reconcile cada 15min' : ', reconcile OFF'}.`);
+  setInterval(() => { processQueue().catch((e) => log('worker error:', e.message)); }, 20_000);
+  if (RECONCILE_ENABLED) {
+    setInterval(() => { reconcile().catch((e) => log('reconcile error:', e.message)); }, 15 * 60_000);
+    // Reconcile inicial (backfill) a los 10s de arrancar.
+    setTimeout(() => { reconcile().catch(() => {}); }, 10_000);
+  }
+}

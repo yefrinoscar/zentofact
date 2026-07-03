@@ -23,6 +23,7 @@ export interface CompanyConfig {
   distrito?: string;
   provincia?: string;
   departamento?: string;
+  codigoLocal?: string;
 }
 
 export interface SendResult {
@@ -144,7 +145,15 @@ export class SunatService {
   private endpoint: string;
 
   constructor(private config: CompanyConfig) {
-    this.endpoint = config.modoProduccion ? SUNAT_PROD_ENDPOINT : SUNAT_BETA_ENDPOINT;
+    // Override por ambiente: SUNAT_FORCE_ENV=beta|produccion fuerza el endpoint sin importar
+    // la config de la empresa. Local => beta; Railway (prod) => sin flag o 'produccion'.
+    const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
+    const useProd = forced === 'produccion' || forced === 'produ' || forced === 'prod'
+      ? true
+      : forced === 'beta'
+        ? false
+        : config.modoProduccion;
+    this.endpoint = useProd ? SUNAT_PROD_ENDPOINT : SUNAT_BETA_ENDPOINT;
     this.parseCertificate();
   }
 
@@ -171,6 +180,63 @@ export class SunatService {
     }
   }
 
+  private getCodigoLocal(): string {
+    const digits = String(this.config.codigoLocal || '').replace(/\D/g, '');
+    return (digits || '0000').padStart(4, '0').slice(-4);
+  }
+
+  private appendAddressContent(address: any, includeCodigoLocal = false) {
+    address.ele('cbc:ID', { schemeAgencyName: 'PE:INEI', schemeName: 'Ubigeos' }).txt(this.config.ubigeo).up();
+
+    if (includeCodigoLocal) {
+      address.ele('cbc:AddressTypeCode', {
+        listAgencyName: 'PE:SUNAT',
+        listName: 'Establecimientos anexos',
+      }).txt(this.getCodigoLocal()).up();
+    }
+
+    address.ele('cac:AddressLine').ele('cbc:Line').txt(this.config.direccion).up().up();
+    address.ele('cac:Country')
+      .ele('cbc:IdentificationCode', {
+        listAgencyName: 'United Nations Economic Commission for Europe',
+        listID: 'ISO 3166-1',
+        listName: 'Country',
+      }).txt('PE').up()
+      .up();
+  }
+
+  private appendSupplierParty(parent: any) {
+    const supplier = parent.ele('cac:AccountingSupplierParty').ele('cac:Party');
+
+    supplier.ele('cac:PartyIdentification')
+      .ele('cbc:ID', {
+        schemeAgencyName: 'PE:SUNAT',
+        schemeID: '6',
+        schemeName: 'Documento de Identidad',
+        schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06',
+      }).txt(this.config.ruc).up()
+      .up();
+
+    this.appendAddressContent(supplier.ele('cac:PostalAddress'));
+
+    const legalEntity = supplier.ele('cac:PartyLegalEntity');
+    legalEntity.ele('cbc:RegistrationName').txt(this.config.razonSocial).up();
+    this.appendAddressContent(legalEntity.ele('cac:RegistrationAddress'), true);
+  }
+
+  private appendPaymentTerms(parent: any, data: BoletaSunatData) {
+    const paymentType = data.formaPagoTipo === 'Credito' ? 'Credito' : 'Contado';
+    const paymentTerms = parent.ele('cac:PaymentTerms');
+    paymentTerms.ele('cbc:ID').txt('FormaPago').up();
+    paymentTerms.ele('cbc:PaymentMeansID').txt(paymentType).up();
+
+    if (paymentType === 'Credito') {
+      paymentTerms.ele('cbc:Amount', { currencyID: data.moneda }).txt(data.mtoImpVenta.toFixed(2)).up();
+    }
+
+    paymentTerms.up();
+  }
+
   buildUBLXml(data: BoletaSunatData): string {
     const { issueDate, issueTime } = this.resolveIssueDateTime(data.fechaEmision);
 
@@ -190,7 +256,7 @@ export class SunatService {
     doc.ele('cbc:UBLVersionID').txt(data.ublVersion).up();
     doc.ele('cbc:CustomizationID').txt('2.0').up();
     doc.ele('cbc:ProfileID', {
-      schemeName: 'Tipo de Operacion',
+      schemeName: 'SUNAT:Identificador de Tipo de Operación',
       schemeAgencyName: 'PE:SUNAT',
       schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo17',
     }).txt(data.tipoOperacion).up();
@@ -199,16 +265,13 @@ export class SunatService {
     doc.ele('cbc:IssueTime').txt(issueTime).up();
     doc.ele('cbc:InvoiceTypeCode', {
       listAgencyName: 'PE:SUNAT',
-      listName: 'Tipo de Documento',
+      listName: 'SUNAT:Identificador de Tipo de Documento',
       listURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01',
       listID: data.tipoOperacion,
     }).txt(data.tipoDocumento).up();
     doc.ele('cbc:DocumentCurrencyCode', { listAgencyName: 'United Nations Economic Commission for Europe', listID: 'ISO 4217 Alpha', listName: 'Currency' }).txt(data.moneda).up();
 
-    const supplier = doc.ele('cac:AccountingSupplierParty').ele('cac:Party');
-    supplier.ele('cac:PartyIdentification').ele('cbc:ID', { schemeAgencyName: 'PE:SUNAT', schemeID: '6', schemeName: 'Documento de Identidad', schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06' }).txt(this.config.ruc).up().up();
-    supplier.ele('cac:PostalAddress').ele('cbc:ID', { schemeAgencyName: 'PE:INEI', schemeName: 'Ubigeos' }).txt(this.config.ubigeo).up().ele('cac:AddressLine').ele('cbc:Line').txt(this.config.direccion).up().up().up();
-    supplier.ele('cac:PartyLegalEntity').ele('cbc:RegistrationName').txt(this.config.razonSocial).up().up();
+    this.appendSupplierParty(doc);
 
     const customer = doc.ele('cac:AccountingCustomerParty').ele('cac:Party');
     customer.ele('cac:PartyIdentification').ele('cbc:ID', { schemeAgencyName: 'PE:SUNAT', schemeID: data.client.tipoDocumento, schemeName: 'Documento de Identidad', schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06' }).txt(data.client.numeroDocumento).up().up();
@@ -218,6 +281,8 @@ export class SunatService {
     }
 
     customer.ele('cac:PartyLegalEntity').ele('cbc:RegistrationName').txt(data.client.razonSocial).up().up();
+
+    this.appendPaymentTerms(doc, data);
 
     if (data.mtoIgv > 0) {
       doc.ele('cac:TaxTotal')
@@ -311,10 +376,7 @@ export class SunatService {
       .up()
       .up();
 
-    const supplier = doc.ele('cac:AccountingSupplierParty').ele('cac:Party');
-    supplier.ele('cac:PartyIdentification').ele('cbc:ID', { schemeAgencyName: 'PE:SUNAT', schemeID: '6', schemeName: 'Documento de Identidad', schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06' }).txt(this.config.ruc).up().up();
-    supplier.ele('cac:PostalAddress').ele('cbc:ID', { schemeAgencyName: 'PE:INEI', schemeName: 'Ubigeos' }).txt(this.config.ubigeo).up().ele('cac:AddressLine').ele('cbc:Line').txt(this.config.direccion).up().up().up();
-    supplier.ele('cac:PartyLegalEntity').ele('cbc:RegistrationName').txt(this.config.razonSocial).up().up();
+    this.appendSupplierParty(doc);
 
     const customer = doc.ele('cac:AccountingCustomerParty').ele('cac:Party');
     customer.ele('cac:PartyIdentification').ele('cbc:ID', { schemeAgencyName: 'PE:SUNAT', schemeID: data.client.tipoDocumento, schemeName: 'Documento de Identidad', schemeURI: 'urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06' }).txt(data.client.numeroDocumento).up().up();

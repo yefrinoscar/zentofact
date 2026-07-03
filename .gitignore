@@ -33,3 +33,7 @@ reports/
 # Build web del front (se genera con build:web)
 packages/web/dist/
 packages/desktop/web-dist/
+
+# Respaldos de entorno (nunca commitear)
+.env.production.bak
+*.bak

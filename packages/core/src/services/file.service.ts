@@ -82,6 +82,16 @@ export function savePdf(document: { serie: string; correlativo: string; fechaEmi
   return `boletas/pdf/${dateStr}/${filename}`;
 }
 
+export async function saveFacturaXml(document: { serie: string; correlativo: string; fechaEmision: string }, xmlContent: string): Promise<string> {
+  const dateStr = formatDate(document.fechaEmision);
+  return saveArchive(`facturas/xml/${dateStr}/${document.serie}-${document.correlativo}.xml`, xmlContent, XML_TYPE);
+}
+
+export async function saveFacturaCdr(document: { serie: string; correlativo: string; fechaEmision: string }, cdrBuffer: Buffer): Promise<string> {
+  const dateStr = formatDate(document.fechaEmision);
+  return saveArchive(`facturas/cdr/${dateStr}/R-${document.serie}-${document.correlativo}.zip`, cdrBuffer, ZIP_TYPE);
+}
+
 export function saveFacturaPdf(document: { numeroCompleto: string; fechaEmision: string; orderNumber?: string }, pdfBuffer: Buffer): string {
   const dateStr = formatDate(document.fechaEmision);
   const dir = path.join(STORAGE_PATH, 'facturas', 'pdf', dateStr);

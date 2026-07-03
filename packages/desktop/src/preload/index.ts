@@ -45,12 +45,17 @@ const api = {
   createBranch: (data: any) => ipcRenderer.invoke('branch:create', data),
   updateBranch: (id: number, data: any) => ipcRenderer.invoke('branch:update', id, data),
 
-  // Boletas
+  // Boletas y facturas
   listBoletas: (filter: any) => ipcRenderer.invoke('boletas:list', filter),
+  createBoleta: (input: any) => ipcRenderer.invoke('boletas:create', input),
+  sendBoletaToSunat: (id: number) => ipcRenderer.invoke('boletas:send', id),
   listFacturas: (filter: any) => ipcRenderer.invoke('facturas:list', filter),
-  listCreditNotes: (filter: any) => ipcRenderer.invoke('credit-notes:list', filter),
+  createFactura: (input: any) => ipcRenderer.invoke('facturas:create', input),
+  sendFacturaToSunat: (id: number) => ipcRenderer.invoke('facturas:send', id),
   generateBoletaPdf: (id: number, outputDir?: string) => ipcRenderer.invoke('boletas:generate-pdf', id, outputDir),
+  generateFacturaPdf: (id: number, outputDir?: string) => ipcRenderer.invoke('facturas:generate-pdf', id, outputDir),
   previewBoletaHtml: (companyId: number, venta: any) => ipcRenderer.invoke('boletas:preview-html', companyId, venta),
+  previewFacturaHtml: (companyId: number, venta: any) => ipcRenderer.invoke('facturas:preview-html', companyId, venta),
   previewAcceptedBoletaHtml: (id: number) => ipcRenderer.invoke('boletas:preview-accepted-html', id),
   previewCreditNoteHtml: (id: number) => ipcRenderer.invoke('credit-notes:preview-html', id),
   createAndSendCreditNote: (boletaId: number, options?: { codMotivo?: string; desMotivo?: string; modoProduccion?: boolean }) =>

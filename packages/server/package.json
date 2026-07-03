@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@zentofact/core": "*",
+    "@zentofact/falabella-api": "*",
     "@hono/node-server": "^1.13.7",
     "better-auth": "^1.6.23",
     "dotenv": "^16.4.5",

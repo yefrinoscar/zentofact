@@ -8,7 +8,13 @@
 
 # UI/UX
 See [ui/ux/taste.md](ui/ux/taste.md)
+- In the individual emission form, when the user switches company, also update the correlative to match the selected company's correlatives — do not keep stale correlative data from the previous company. Confidence: 0.70
+- In the individual emission form, auto-select the first branch by default and hide the branch selector from the UI — the user should not need to manually pick a branch. Confidence: 0.70
 - Use shadcn/ui components by default (Select, DatePicker with Range Calendar, etc.) — prefer shadcn over custom or alternative UI components. Confidence: 0.75
+- For the individual emission form, use a step-by-step stepper/wizard pattern instead of a flat grid layout — show one section at a time with click-to-progress progression. Confidence: 0.70
+- The individual emission form must let the user choose between document types (boleta/factura) — do not hardcode it to only factura or only boleta. Provide a selector for tipo de documento (e.g., 03 for boleta, 01 for factura) at the start of the flow. Confidence: 0.70
+- When the user provides a total/con-IGV price per item, auto-calculate the base (sin IGV) and IGV automatically — do not ask the user to enter IGV or base prices manually. IGV is always 18% unless specified otherwise. Confidence: 0.75
+- Do not ask the user to enter the correlative (it's auto-generated from the database correlatives table). The form only needs: company, branch, serie, client data, and items with total prices. Confidence: 0.70
 - Display errors in red text with precise indication of where the error occurred (which step, which element, what operation was being attempted). Confidence: 0.80
 - Don't ship broken or blank UI sections/screens — either fix them to work properly or remove them from the UI entirely. Confidence: 0.70
 - After scraper extraction completes, surface the export/download button in the workflow execution/results area (not in the preflight section). Make it clearly visible as a call-to-action. Confidence: 0.75
@@ -80,3 +86,49 @@ See [strong-soap-/-sunat/taste.md](strong-soap-/-sunat/taste.md)
 # Pagination
 - Default pagination to 20 items per page. Confidence: 0.65
 
+# Monorepo
+- Decouple backend and frontend into separate packages within a monorepo. Use common ports like 3010/3011. Confidence: 0.80
+- Use a root-level command to run both backend and frontend simultaneously without custom shell scripts. Confidence: 0.70
+
+# Tailwind
+- Migrate to Tailwind CSS v4. Confidence: 0.70
+
+# Naming
+- The project is named "ZentoFact" — never "boletas sunat" or "zentofacto". Confidence: 0.80
+
+# App Platform
+- The app is web-only; do not reference desktop or Electron concepts. All UI is browser-based. Confidence: 0.80
+
+# Database
+- Use PostgreSQL as the database, not SQLite or local file-based storage. Confidence: 0.75
+
+# Communication
+- Respond in Spanish (the user is a Spanish speaker). Confidence: 0.75
+
+# Credit Notes
+- When generating credit notes by monto, randomize the boleta selection list rather than using sequential correlatives. Confidence: 0.70
+- Default the beta/production switch to beta in the credit notes section. Confidence: 0.70
+- When annulling boletas via credit notes, show a modal with progress tracking for each boleta being annulled. Update/refresh the list after completion. In beta mode, still persist the changes locally. Confidence: 0.70
+
+# Beta Mode
+- Beta mode must never consume or increment correlativos. Beta is for testing only — correlativos should only advance in production mode. When emitting in beta, skip correlativo assignment entirely. Confidence: 0.75
+- Default all emisiones (boletas, facturas, credit notes, etc.) to beta mode — the production switch should be opt-in, not default. Confidence: 0.75
+
+# SUNAT Operations
+- Never register or persist a failed SUNAT operation (boleta, credit note, summary). If SUNAT returns an error, do not save anything to the database — only persist on successful acceptance. Confidence: 0.70
+
+# File Storage
+- Store XML firmados and CDRs (constancias de recepción) in Cloudflare R2, not local filesystem. PDFs stay local. Daily summaries (resúmenes diarios) also go to R2. Confidence: 0.70
+
+# File Management
+- Never upload .DS_Store, thumbs.db, or other OS-generated files to R2 or any storage. Only upload the intended document files (XML, CDR, PDF). Confidence: 0.65
+
+# Loading States
+- Use skeleton loading components (with animated placeholders) instead of raw "loading" text or empty states when fetching data. Confidence: 0.70
+
+# Performance
+- Cache the selected company in localStorage to avoid repeated API calls on load. Fetch from API only if localStorage is empty. Confidence: 0.70
+
+# UI Components
+- Use shadcn's month picker component for date/month selection in filters and reports. Confidence: 0.70
+- Prefer clean form-like layouts without card-based UI containers — avoid nesting cards or using bordered card sections for form inputs; use shadcn/ui form components directly for a cleaner, more open feel. Confidence: 0.75

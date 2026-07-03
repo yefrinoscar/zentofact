@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { homedir } from 'os';
 import { isAbsolute, join } from 'path';
-import { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generateAcceptedBoletaPdf, generateAcceptedBoletaPreviewHtml, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@zentofact/core';
+import { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, createBoleta, sendBoletaToSunat, generateAcceptedBoletaPdf, generateAcceptedBoletaPreviewHtml, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, generatePreviewCreditNoteHtml, listBoletas, listFacturas, listCreditNotes, listDailySummaries, refreshDailySummaryStatus } from '@zentofact/core';
 import type { BoletaFilter, FacturaFilter, CreditNoteFilter, DailySummaryFilter } from '@zentofact/core';
 
 interface CreditNoteOptions {
@@ -22,6 +22,14 @@ function normalizeOutputDir(outputDir?: string) {
 export function registerBoletaHandlers() {
   ipcMain.handle('boletas:list', async (_e, filter: BoletaFilter) => {
     return listBoletas(filter);
+  });
+
+  ipcMain.handle('boletas:create', async (_e, input: any) => {
+    return createBoleta(input);
+  });
+
+  ipcMain.handle('boletas:send', async (_e, id: number) => {
+    return sendBoletaToSunat(id);
   });
 
   ipcMain.handle('facturas:list', async (_e, filter: FacturaFilter) => {

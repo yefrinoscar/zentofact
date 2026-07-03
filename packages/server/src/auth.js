@@ -34,7 +34,7 @@ export const auth = betterAuth({
 });
 
 // Prefijos del API que exigen sesión. Todo lo demás (login, estáticos del front) es público.
-const PROTECTED = ['/companies', '/branches', '/boletas', '/facturas', '/credit-notes', '/daily-summaries', '/falabella', '/workflow'];
+const PROTECTED = ['/companies', '/branches', '/boletas', '/facturas', '/credit-notes', '/daily-summaries', '/falabella', '/workflow', '/auto-emit'];
 
 // Guard: exige sesión solo en rutas protegidas del API.
 export function requireAuth() {

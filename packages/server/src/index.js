@@ -14,7 +14,10 @@ const { Hono } = await import('hono');
 const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
+await core.runMigrations(core.pool);
 const { auth, requireAuth } = await import('./auth.js');
+const autoEmit = await import('./auto-emission.js');
+await autoEmit.ensureTables();
 
 const app = new Hono();
 // CORS con credenciales (cookies de sesión) para el front web.
@@ -37,6 +40,25 @@ app.use('*', async (c, next) => {
 
 // Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
+
+// Webhook de Falabella (onOrderItemsStatusChanged). Público: lo llama Falabella, no lleva cookie.
+// Se protege con secreto compartido (?secret= o header x-webhook-secret) contra AUTO_EMIT_WEBHOOK_SECRET.
+app.on(['POST', 'GET'], '/webhooks/falabella/:companyId', async (c) => {
+  const expected = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
+  const given = c.req.query('secret') || c.req.header('x-webhook-secret') || '';
+  if (expected && given !== expected) return c.json({ error: 'unauthorized' }, 401);
+  const companyId = Number(c.req.param('companyId'));
+  let payload = {};
+  try { payload = c.req.method === 'POST' ? await c.req.json() : c.req.query(); } catch {}
+  try {
+    const r = await autoEmit.handleWebhook(companyId, payload);
+    return c.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[WEBHOOK ERROR]', (e && e.stack) || e);
+    // 200 igual para que Falabella no reintente en bucle por errores nuestros; ya quedó en webhook_events.
+    return c.json({ ok: false, error: String((e && e.message) || e) }, 200);
+  }
+});
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 
@@ -77,10 +99,36 @@ const parseFilter = (c) => {
 };
 app.get('/boletas', async (c) => { try { return ok(c, await core.listBoletas(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.get('/facturas', async (c) => { try { return ok(c, await core.listFacturas(parseFilter(c))); } catch (e) { return fail(c, e); } });
+app.post('/facturas', async (c) => {
+  try { const { input } = await c.req.json(); return ok(c, await core.createFactura(input), 201); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/facturas/:id/send', async (c) => {
+  try { return ok(c, await core.sendFacturaToSunat(Number(c.req.param('id')))); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/boletas', async (c) => {
+  try { const { input } = await c.req.json(); return ok(c, await core.createBoleta(input), 201); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/boletas/:id/send', async (c) => {
+  try { return ok(c, await core.sendBoletaToSunat(Number(c.req.param('id')))); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/facturas/:id/pdf', async (c) => {
+  try { const b64 = await core.generateAcceptedFacturaPdfBase64(Number(c.req.param('id'))); return ok(c, { base64: b64 }); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/facturas/:id/preview', async (c) => { try { return ok(c, await core.generateAcceptedFacturaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/facturas/preview', async (c) => {
+  try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewFacturaHtmlForVenta(companyId, venta)); }
+  catch (e) { return fail(c, e); }
+});
 app.get('/credit-notes', async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.get('/daily-summaries', async (c) => { try { return ok(c, await core.listDailySummaries(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.post('/daily-summaries/:id/refresh', async (c) => { try { return ok(c, await core.refreshDailySummaryStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/boletas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/facturas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshFacturaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 
 // ── Correlativos ──
 app.get('/branches/:id/correlatives', async (c) => { try { return ok(c, await core.getCorrelatives(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
@@ -119,6 +167,10 @@ app.get('/falabella/:companyId/orders/:orderId/items', async (c) => {
 });
 app.post('/falabella/:companyId/build-boleta-venta', async (c) => {
   try { const { order } = await c.req.json(); return ok(c, await core.falabellaBuildBoletaVenta({ companyId: Number(c.req.param('companyId')), order })); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/build-factura-venta', async (c) => {
+  try { const { order } = await c.req.json(); return ok(c, await core.falabellaBuildFacturaVenta({ companyId: Number(c.req.param('companyId')), order })); }
   catch (e) { return fail(c, e); }
 });
 app.post('/falabella/:companyId/resolve-order-ids', async (c) => {
@@ -164,6 +216,26 @@ app.post('/workflow/process', async (c) => {
   });
 });
 
+// ── Emisión automática: panel de control (config + logs) ──
+app.get('/auto-emit/config', async (c) => {
+  try {
+    const cfg = await autoEmit.getConfig();
+    // URL del webhook para configurar en el portal de Falabella (el secreto va en query).
+    const base = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${process.env.PORT || 3010}`;
+    const secret = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
+    return ok(c, { ...cfg, webhookBase: `${base}/webhooks/falabella`, webhookSecretSet: !!secret });
+  } catch (e) { return fail(c, e); }
+});
+app.post('/auto-emit/config/:companyId', async (c) => {
+  try { const { enabled } = await c.req.json(); return ok(c, await autoEmit.setCompanyEnabled(Number(c.req.param('companyId')), enabled)); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/auto-emit/pause', async (c) => { try { const { paused } = await c.req.json(); return ok(c, await autoEmit.setPaused(paused)); } catch (e) { return fail(c, e, 400); } });
+app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await autoEmit.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
+app.get('/auto-emit/jobs', async (c) => { try { return ok(c, await autoEmit.recentJobs(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
+app.get('/auto-emit/events', async (c) => { try { return ok(c, await autoEmit.recentEvents(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
+app.post('/auto-emit/run', async (c) => { try { const n = await autoEmit.processQueue(Number(c.req.query('limit') || 5)); return ok(c, { processed: n }); } catch (e) { return fail(c, e); } });
+
 const serveWeb = process.env.SERVE_WEB === 'true';
 
 // ── Front web estático (opt-in) ──
@@ -180,4 +252,5 @@ if (serveWeb) {
 const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ZentoFact en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
+  autoEmit.startAutoEmission();
 });

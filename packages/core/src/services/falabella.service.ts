@@ -10,7 +10,7 @@ import { listBoletas } from './boleta-query.service';
 import { listFacturas } from './factura-query.service';
 import { listCreditNotes } from './credit-note-query.service';
 import { generateAcceptedBoletaPdfBase64, markBoletaFalabellaPdfUpload } from './boleta.service';
-import { recordFacturaUpload } from './factura.service';
+import { recordFacturaUpload, generateAcceptedFacturaPdfBase64 } from './factura.service';
 
 async function requireCompanyWithFalabella(companyId: number) {
   const company = await getCompany(companyId);
@@ -92,6 +92,52 @@ export async function falabellaBuildBoletaVenta(payload: { companyId: number; or
   };
 }
 
+export async function falabellaBuildFacturaVenta(payload: { companyId: number; order: any }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const order = payload.order?.Order && typeof payload.order.Order === 'object' ? payload.order.Order : payload.order;
+  const orderId = order?.OrderId;
+  const orderNumber = String(order?.OrderNumber || '').trim();
+  if (!orderId || !orderNumber) return { error: 'La orden no tiene OrderId u OrderNumber.' };
+  const client = new FalabellaApiClient({ userId: company.falabellaApiUserId!, apiKey: company.falabellaApiKey!, version: '1.0', defaultFormat: 'JSON' });
+  const itemsResponse = await client.call({ action: 'GetOrderItems', params: { OrderId: orderId }, accept: 'application/json' });
+  const error = getFalabellaError(itemsResponse.data);
+  if (error) return { ok: itemsResponse.ok, status: itemsResponse.status, url: itemsResponse.url, error };
+  const orderItems = extractOrderItems(itemsResponse.data);
+  const total = orderTotalForBoletaBuilder(order);
+  const warnings: string[] = [];
+  const billing = getOrderBillingDataForFactura(order);
+  if (!billing.ruc) {
+    return { error: `La orden ${orderNumber} requiere factura, pero Falabella no envió un RUC válido en ExtraBillingAttributes.LegalId.` };
+  }
+  if (!billing.razonSocial) {
+    return { error: `La orden ${orderNumber} requiere factura, pero Falabella no envió razón social en ExtraBillingAttributes.ReceiverLegalName.` };
+  }
+  if (!orderItems.length) warnings.push('Falabella no devolvió items. Se emitirá una línea consolidada por el total.');
+  const venta: VentaItem = {
+    orderNumber,
+    serie: 'F001',
+    fechaEmision: normalizeIssueDateForBoletaBuilder(order?.CreatedAt) || new Date().toISOString().slice(0, 10),
+    moneda: 'PEN',
+    total,
+    client: {
+      tipoDocumento: '6',
+      numeroDocumento: billing.ruc,
+      razonSocial: billing.razonSocial,
+      direccion: billing.direccion || undefined,
+    },
+    detalles: buildVentaDetallesFromOrderItems(orderItems, total, orderNumber, warnings),
+  };
+  return {
+    ok: true,
+    orderItems,
+    orderItemIds: orderItems.map((item: any) => String(item.OrderItemId || item.OrderItemID || item.Id || item.id || '')).filter(Boolean),
+    warnings,
+    venta,
+  };
+}
+
 export async function falabellaResolveOrderIds(payload: { companyId: number; entries: Array<{ orderNumber: string; invoiceDate: string }> }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { error: found.error };
@@ -109,6 +155,14 @@ export async function falabellaResolveOrderIds(payload: { companyId: number; ent
   };
 }
 
+// Una factura está "subida a Falabella" si guardó la respuesta del upload (respuestaFalabella).
+function facturaFalabellaUploadedAt(factura: any): string {
+  if (!factura?.respuestaFalabella) return '';
+  const raw = factura.updatedAt || factura.createdAt;
+  const ms = raw ? Number(raw) * (Number(raw) < 1e12 ? 1000 : 1) : Date.now();
+  try { return new Date(ms).toISOString(); } catch { return new Date().toISOString(); }
+}
+
 export async function falabellaResolveDocument(payload: { companyId: number; orderNumber: string }) {
   const boletasResult = await listBoletas({ companyId: payload.companyId, orderNumber: payload.orderNumber, limit: 20 });
   const facturasResult = await listFacturas({ companyId: payload.companyId, orderNumber: payload.orderNumber, limit: 20 });
@@ -123,7 +177,9 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
     options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '' });
   }
   if (factura) {
-    options.push({ kind: 'FACTURA', source: 'manual', invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || '', estadoSunat: factura.estado });
+    // local_factura → el server puede auto-generar el PDF desde la factura local aceptada (igual que boleta).
+    const facturaAceptada = String(factura.estadoSunat || '').toUpperCase() === 'ACEPTADO';
+    options.push({ kind: 'FACTURA', source: facturaAceptada ? 'local_factura' : 'manual', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || '', estadoSunat: factura.estadoSunat || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) });
   }
   if (creditNote) {
     options.push({ kind: 'NOTA_DE_CREDITO', source: 'local_credit_note', creditNoteId: creditNote.id, invoiceNumber: creditNote.numeroCompleto, invoiceDate: creditNote.fechaEmision, invoiceType: 'NOTA_DE_CREDITO', pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat });
@@ -135,7 +191,7 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
   return {
     orderNumber: payload.orderNumber,
     boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || '' } : null,
-    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || '', estado: factura.estado } : null,
+    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || '', estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) } : null,
     creditNote: creditNote ? { id: creditNote.id, numeroCompleto: creditNote.numeroCompleto, fechaEmision: creditNote.fechaEmision, pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat } : null,
     options,
     defaultKind: boleta ? 'BOLETA' : factura ? 'FACTURA' : creditNote ? 'NOTA_DE_CREDITO' : 'FACTURA',
@@ -144,7 +200,7 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
 
 export async function falabellaUploadInvoicePdf(payload: {
   companyId: number; orderNumber: string; orderItemIds: string[]; invoiceNumber: string; invoiceDate: string;
-  invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_credit_note' | 'manual'; boletaId?: number; pdfPath?: string; pdfBase64?: string;
+  invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_factura' | 'local_credit_note' | 'manual'; boletaId?: number; facturaId?: number; pdfPath?: string; pdfBase64?: string;
 }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { error: found.error };
@@ -331,6 +387,40 @@ function getOrderCustomerName(order: any): string {
   if (full) return full;
   return compactTextForBoletaBuilder([order?.CustomerFirstName, order?.CustomerLastName, order?.CustomerLastName2].filter(Boolean).join(' '));
 }
+function getOrderBillingDataForFactura(order: any): { ruc: string; razonSocial: string; direccion: string; email: string; phone: string } {
+  const attrs = normalizeExtraBillingAttributes(order?.ExtraBillingAttributes);
+  const rawRuc = pickFirstTextForBoletaBuilder(attrs, ['LegalId', 'ReceiverLegalId', 'TaxId', 'RUC', 'DocumentNumber']);
+  const ruc = rawRuc.replace(/\D/g, '');
+  const fallbackDoc = getOrderCustomerDocument(order).replace(/\D/g, '');
+  const legalName = pickFirstTextForBoletaBuilder(attrs, ['ReceiverLegalName', 'LegalName', 'BusinessName', 'CompanyName', 'RazonSocial']);
+  const fallbackName = getOrderCustomerName(order);
+  return {
+    ruc: ruc.length === 11 ? ruc : fallbackDoc.length === 11 ? fallbackDoc : '',
+    razonSocial: legalName || (fallbackDoc.length === 11 ? fallbackName : ''),
+    direccion: pickFirstTextForBoletaBuilder(attrs, ['ReceiverAddress', 'Address', 'Direccion']),
+    email: pickFirstTextForBoletaBuilder(attrs, ['ReceiverEmail', 'Email']),
+    phone: pickFirstTextForBoletaBuilder(attrs, ['ReceiverPhone', 'Phone']),
+  };
+}
+function normalizeExtraBillingAttributes(value: any): Record<string, unknown> {
+  if (!value) return {};
+  if (Array.isArray(value)) return normalizeKeyValueArray(value);
+  if (typeof value !== 'object') return {};
+  const nested = value.ExtraBillingAttribute || value.ExtraBillingAttributes || value.Attribute || value.Attributes;
+  if (Array.isArray(nested)) return normalizeKeyValueArray(nested);
+  if (nested && typeof nested === 'object' && nested !== value) return normalizeExtraBillingAttributes(nested);
+  return value;
+}
+function normalizeKeyValueArray(values: any[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const item of values) {
+    if (!item || typeof item !== 'object') continue;
+    const key = item.Name ?? item.name ?? item.Key ?? item.key ?? item.Code ?? item.code;
+    const val = item.Value ?? item.value ?? item.Text ?? item.text;
+    if (key != null) result[String(key)] = val;
+  }
+  return result;
+}
 function inferDocTypeForBoletaBuilder(docNumber: string): '1' | '4' | '6' | '7' | '0' {
   const digits = String(docNumber || '').replace(/\D/g, '');
   if (digits.length === 8) return '1';
@@ -369,12 +459,13 @@ function buildVentaDetallesFromOrderItems(orderItems: any[], total: number, orde
 
 async function uploadInvoicePdfForCompany(company: any, payload: {
   companyId: number; orderNumber: string; orderItemIds: string[]; invoiceNumber: string; invoiceDate: string;
-  invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_credit_note' | 'manual'; boletaId?: number; pdfPath?: string; pdfBase64?: string;
+  invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_factura' | 'local_credit_note' | 'manual'; boletaId?: number; facturaId?: number; pdfPath?: string; pdfBase64?: string;
 }) {
   let pdfBase64 = payload.pdfBase64 || '';
   if (!pdfBase64 && payload.source === 'local_boleta' && payload.boletaId) pdfBase64 = await generateAcceptedBoletaPdfBase64(payload.boletaId, 'A4');
+  if (!pdfBase64 && payload.source === 'local_factura' && payload.facturaId) pdfBase64 = await generateAcceptedFacturaPdfBase64(payload.facturaId, 'A4');
   if (!pdfBase64 && payload.pdfPath) pdfBase64 = readFileSync(payload.pdfPath, { encoding: 'base64' });
-  if (!pdfBase64) return { error: 'No se encontró un PDF para subir. Selecciona un archivo PDF o usa una boleta con PDF disponible.' };
+  if (!pdfBase64) return { error: 'No se encontró un PDF para subir. Selecciona un archivo PDF o usa un documento local aceptado.' };
 
   const timestamp = buildIsoUtcTimestamp();
   const authParameters = { Action: 'SetInvoicePDF', Format: 'JSON', Service: 'Invoice', Timestamp: timestamp, UserID: company.falabellaApiUserId, Version: process.env.FALABELLA_API_VERSION || '1.0' };
@@ -390,7 +481,7 @@ async function uploadInvoicePdfForCompany(company: any, payload: {
   const error = getFalabellaError(data);
   const result = { ok: response.ok, status: response.status, error, data, rawText };
   if (response.ok && !error && payload.invoiceType === 'FACTURA') {
-    const pdfBuffer = payload.pdfBase64 ? Buffer.from(payload.pdfBase64, 'base64') : payload.pdfPath ? readFileSync(payload.pdfPath) : null;
+    const pdfBuffer = pdfBase64 ? Buffer.from(pdfBase64, 'base64') : payload.pdfPath ? readFileSync(payload.pdfPath) : null;
     if (pdfBuffer) {
       await recordFacturaUpload({ companyId: payload.companyId, orderNumber: payload.orderNumber, numeroCompleto: payload.invoiceNumber, fechaEmision: payload.invoiceDate, pdfBuffer, source: payload.source || 'manual', orderItemIds: payload.orderItemIds, respuestaFalabella: data });
     }

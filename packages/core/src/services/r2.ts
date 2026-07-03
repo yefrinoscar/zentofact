@@ -8,7 +8,7 @@ let cachedClient: S3Client | null = null;
 
 export function isR2Enabled(): boolean {
   return Boolean(
-    process.env.R2_ACCOUNT_ID &&
+    (process.env.R2_ACCOUNT_ID || process.env.R2_ENDPOINT) &&
     process.env.R2_ACCESS_KEY_ID &&
     process.env.R2_SECRET_ACCESS_KEY &&
     process.env.R2_BUCKET,
@@ -20,9 +20,13 @@ function getClient(): { client: S3Client; bucket: string } {
     throw new Error('R2 no está configurado (faltan variables R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET).');
   }
   if (!cachedClient) {
+    // R2_ENDPOINT permite apuntar a un S3 compatible local (MinIO en OrbStack).
+    // Sin él, se usa el endpoint real de Cloudflare R2.
+    const customEndpoint = process.env.R2_ENDPOINT;
     cachedClient = new S3Client({
-      region: 'auto',
-      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      region: process.env.R2_REGION || 'auto',
+      endpoint: customEndpoint || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      forcePathStyle: Boolean(customEndpoint), // MinIO usa path-style
       credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID as string,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY as string,
