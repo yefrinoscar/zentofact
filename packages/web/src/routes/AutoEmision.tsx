@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   RefreshCw, Copy, Check, AlertTriangle, CheckCircle2, XCircle, Clock, Loader2,
   Radio, ChevronDown, Settings as SettingsIcon, Search, Building2, Pause, Play, RotateCcw,
+  Plus, Trash2,
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
@@ -23,6 +24,25 @@ type Job = {
   last_error: string | null; boleta_numero: string | null; updated_at: string;
 };
 type Evt = { id: number; company: string; company_id?: number; order_number: string | null; event: string; processed: boolean; received_at: string };
+type FalabellaWebhook = {
+  webhookId: string;
+  callbackUrl: string;
+  webhookSource: string;
+  events: string[];
+  raw?: any;
+};
+
+const WEBHOOK_EVENTS = [
+  { value: 'onOrderCreated', label: 'Orden creada' },
+  { value: 'onOrderItemsStatusChanged', label: 'Cambio de estado de items' },
+  { value: 'onFeedCreated', label: 'Feed creado' },
+  { value: 'onFeedCompleted', label: 'Feed completado' },
+  { value: 'onProductCreated', label: 'Producto creado' },
+  { value: 'onProductUpdated', label: 'Producto actualizado' },
+  { value: 'onProductQcStatusChanged', label: 'QC de producto modificado' },
+];
+
+const DEFAULT_WEBHOOK_EVENTS = ['onOrderCreated', 'onOrderItemsStatusChanged'];
 
 function sunatLabel(env: string) {
   return env === 'beta' ? 'SUNAT beta' : env === 'produccion' ? 'SUNAT producción' : 'SUNAT (según empresa)';
@@ -92,6 +112,12 @@ export default function AutoEmision() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<string>('all');
   const [configOpen, setConfigOpen] = useState(false);
+  const [webhookCompanyId, setWebhookCompanyId] = useState<number | null>(null);
+  const [webhooks, setWebhooks] = useState<FalabellaWebhook[]>([]);
+  const [webhooksLoading, setWebhooksLoading] = useState(false);
+  const [webhookSaving, setWebhookSaving] = useState(false);
+  const [webhookError, setWebhookError] = useState('');
+  const [selectedEvents, setSelectedEvents] = useState<string[]>(DEFAULT_WEBHOOK_EVENTS);
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
 
@@ -153,6 +179,70 @@ export default function AutoEmision() {
     const next = { ...config.cron, ...patch };
     setConfig((prev) => (prev ? { ...prev, cron: next } : prev));
     try { await api.autoEmitSetCron(patch); } catch { setConfig((prev) => (prev ? { ...prev, cron: config.cron } : prev)); }
+  };
+
+  const webhookCompanies = config?.companies.filter((company) => company.hasFalabella) || [];
+  const selectedWebhookCompanyId = webhookCompanyId || webhookCompanies[0]?.id || null;
+  const selectedWebhookCompany = webhookCompanies.find((company) => company.id === selectedWebhookCompanyId) || null;
+
+  const loadWebhooks = useCallback(async (companyId = selectedWebhookCompanyId) => {
+    if (!companyId) return;
+    setWebhooksLoading(true);
+    setWebhookError('');
+    try {
+      const response = await api.autoEmitGetWebhooks(companyId);
+      if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella devolvió un error.');
+      setWebhooks(response?.webhooks || []);
+    } catch (error: any) {
+      setWebhookError(error?.message || 'No se pudieron consultar los webhooks de Falabella.');
+      setWebhooks([]);
+    } finally {
+      setWebhooksLoading(false);
+    }
+  }, [selectedWebhookCompanyId]);
+
+  useEffect(() => {
+    if (!configOpen || !selectedWebhookCompanyId) return;
+    void loadWebhooks(selectedWebhookCompanyId);
+  }, [configOpen, selectedWebhookCompanyId, loadWebhooks]);
+
+  const toggleWebhookEvent = (event: string) => {
+    setSelectedEvents((current) => (
+      current.includes(event)
+        ? current.filter((item) => item !== event)
+        : [...current, event]
+    ));
+  };
+
+  const createWebhook = async () => {
+    if (!selectedWebhookCompanyId || !selectedEvents.length) return;
+    setWebhookSaving(true);
+    setWebhookError('');
+    try {
+      const response = await api.autoEmitCreateWebhook(selectedWebhookCompanyId, selectedEvents);
+      if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella rechazó la creación del webhook.');
+      await loadWebhooks(selectedWebhookCompanyId);
+    } catch (error: any) {
+      setWebhookError(error?.message || 'No se pudo crear el webhook en Falabella.');
+    } finally {
+      setWebhookSaving(false);
+    }
+  };
+
+  const deleteWebhook = async (webhookId: string) => {
+    if (!selectedWebhookCompanyId || !webhookId) return;
+    if (!window.confirm(`¿Eliminar webhook ${webhookId}?`)) return;
+    setWebhookSaving(true);
+    setWebhookError('');
+    try {
+      const response = await api.autoEmitDeleteWebhook(selectedWebhookCompanyId, webhookId);
+      if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella rechazó la eliminación del webhook.');
+      await loadWebhooks(selectedWebhookCompanyId);
+    } catch (error: any) {
+      setWebhookError(error?.message || 'No se pudo eliminar el webhook en Falabella.');
+    } finally {
+      setWebhookSaving(false);
+    }
   };
 
   const retryJob = async (id: number) => {
@@ -418,6 +508,129 @@ export default function AutoEmision() {
                   </button>
                 </div>
                 <p className="text-xs text-muted-foreground">Regístralo en el portal de Falabella para el evento <code className="rounded bg-muted px-1">onOrderItemsStatusChanged</code>.</p>
+
+                <div className="rounded-xl border border-border bg-background p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Gestor de webhooks en Falabella</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Crea, consulta y elimina los webhooks registrados en Seller Center.</p>
+                    </div>
+                    <button
+                      onClick={() => loadWebhooks(selectedWebhookCompanyId || undefined)}
+                      disabled={!selectedWebhookCompanyId || webhooksLoading}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', webhooksLoading && 'animate-spin')} />
+                      Consultar
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
+                    <div>
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">Empresa</p>
+                      <Select
+                        value={selectedWebhookCompanyId ? String(selectedWebhookCompanyId) : ''}
+                        onValueChange={(value) => setWebhookCompanyId(Number(value))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecciona empresa" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {webhookCompanies.map((company) => (
+                            <SelectItem key={company.id} value={String(company.id)}>
+                              {shortName(company.nombre)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">Eventos</p>
+                      <div className="flex flex-wrap gap-2">
+                        {WEBHOOK_EVENTS.map((event) => {
+                          const checked = selectedEvents.includes(event.value);
+                          return (
+                            <button
+                              key={event.value}
+                              type="button"
+                              onClick={() => toggleWebhookEvent(event.value)}
+                              className={cn(
+                                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition',
+                                checked ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
+                              )}
+                            >
+                              <span className={cn('grid h-3.5 w-3.5 place-items-center rounded border', checked ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-input')}>
+                                {checked && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+                              </span>
+                              {event.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 text-xs text-muted-foreground">
+                      {selectedWebhookCompany
+                        ? <>Callback: <span className="font-mono">{config.webhookBase}/{selectedWebhookCompany.id}?secret=***</span></>
+                        : 'Configura credenciales Falabella en una empresa para crear webhooks.'}
+                    </div>
+                    <button
+                      onClick={createWebhook}
+                      disabled={!selectedWebhookCompanyId || !selectedEvents.length || webhookSaving || !config.webhookSecretSet}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {webhookSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                      Crear webhook
+                    </button>
+                  </div>
+
+                  {webhookError && (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {webhookError}
+                    </div>
+                  )}
+
+                  <div className="mt-4 overflow-hidden rounded-lg border border-border">
+                    {webhooksLoading ? (
+                      <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Consultando Falabella…
+                      </div>
+                    ) : webhooks.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">No hay webhooks registrados para esta empresa.</p>
+                    ) : (
+                      <div className="max-h-56 overflow-auto divide-y divide-border">
+                        {webhooks.map((webhook) => (
+                          <div key={webhook.webhookId || webhook.callbackUrl} className="grid gap-2 px-3 py-3 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono font-semibold text-foreground">{webhook.webhookId || 'sin ID'}</span>
+                                {webhook.webhookSource && <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{webhook.webhookSource}</span>}
+                              </div>
+                              <p className="mt-1 truncate font-mono text-muted-foreground" title={webhook.callbackUrl}>{webhook.callbackUrl || '-'}</p>
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {webhook.events.length ? webhook.events.map((event) => (
+                                  <span key={event} className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">{event}</span>
+                                )) : <span className="text-muted-foreground">Sin eventos informados</span>}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => deleteWebhook(webhook.webhookId)}
+                              disabled={!webhook.webhookId || webhookSaving}
+                              className="inline-flex h-8 items-center gap-1.5 self-start rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Eliminar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
 
                 <div>
                   <p className="mb-1.5 text-xs font-medium text-foreground">Últimos webhooks recibidos</p>

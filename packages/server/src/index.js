@@ -251,6 +251,25 @@ app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await au
 app.get('/auto-emit/jobs', async (c) => { try { return ok(c, await autoEmit.recentJobs(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
 app.get('/auto-emit/events', async (c) => { try { return ok(c, await autoEmit.recentEvents(Number(c.req.query('limit') || 50))); } catch (e) { return fail(c, e); } });
 app.post('/auto-emit/run', async (c) => { try { const n = await autoEmit.processQueue(Number(c.req.query('limit') || 5)); return ok(c, { processed: n }); } catch (e) { return fail(c, e); } });
+app.get('/auto-emit/webhooks/:companyId', async (c) => {
+  try {
+    const ids = (c.req.query('ids') || '').split(',').map((id) => id.trim()).filter(Boolean);
+    return ok(c, await core.falabellaGetWebhooks({ companyId: Number(c.req.param('companyId')), webhookIds: ids }));
+  } catch (e) { return fail(c, e); }
+});
+app.post('/auto-emit/webhooks/:companyId', async (c) => {
+  try {
+    const { events, callbackUrl } = await c.req.json();
+    const base = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${process.env.PORT || 3010}`;
+    const secret = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
+    const targetUrl = callbackUrl || `${base}/webhooks/falabella/${Number(c.req.param('companyId'))}${secret ? `?secret=${encodeURIComponent(secret)}` : ''}`;
+    return ok(c, await core.falabellaCreateWebhook({ companyId: Number(c.req.param('companyId')), callbackUrl: targetUrl, events }));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.delete('/auto-emit/webhooks/:companyId/:webhookId', async (c) => {
+  try { return ok(c, await core.falabellaDeleteWebhook({ companyId: Number(c.req.param('companyId')), webhookId: c.req.param('webhookId') })); }
+  catch (e) { return fail(c, e, 400); }
+});
 
 const serveWeb = process.env.SERVE_WEB === 'true';
 

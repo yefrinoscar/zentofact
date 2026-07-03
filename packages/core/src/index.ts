@@ -107,6 +107,7 @@ export { getCorrelatives, getCorrelativeBySerie } from './services/correlative-q
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
+  falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook, FALABELLA_WEBHOOK_EVENTS,
 } from './services/falabella.service';
 
 // ── Utilitarios ──

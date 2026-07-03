@@ -2,7 +2,7 @@
 // Orquesta el cliente Falabella (@zentofact/falabella-api) + queries/servicios del core.
 // Sin Electron: lo usan tanto el desktop (IPC) como el server (HTTP).
 import { readFileSync } from 'fs';
-import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters } from '@zentofact/falabella-api';
+import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters, canonicalizeParameters } from '@zentofact/falabella-api';
 import type { GetOrdersV2Filters } from '@zentofact/falabella-api';
 import type { VentaItem } from '../index';
 import { getCompany } from './company.service';
@@ -21,6 +21,80 @@ async function requireCompanyWithFalabella(companyId: number) {
   return { company };
 }
 
+function escXml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function signedFalabellaUrl(company: any, action: string, extraParams: Record<string, string> = {}) {
+  const params: Record<string, string> = {
+    Action: action,
+    Format: 'JSON',
+    Timestamp: buildIsoUtcTimestamp(),
+    UserID: company.falabellaApiUserId,
+    Version: process.env.FALABELLA_API_VERSION || '1.0',
+    ...extraParams,
+  };
+  params.Signature = signParameters(params, company.falabellaApiKey);
+  return `https://sellercenter-api.falabella.com/?${canonicalizeParameters(params)}`;
+}
+
+async function parseFalabellaResponse(response: Response) {
+  const rawText = await response.text();
+  let data: any = rawText;
+  try { data = JSON.parse(rawText); } catch {}
+  const error = getFalabellaError(data);
+  return { ok: response.ok, status: response.status, error, data, rawText };
+}
+
+function extractWebhooks(data: any): any[] {
+  const candidate =
+    data?.SuccessResponse?.Body?.Webhooks?.Webhook
+    || data?.SuccessResponse?.Body?.Webhook
+    || data?.Webhooks?.Webhook
+    || data?.Webhook
+    || data?.webhooks
+    || data?.data?.webhooks;
+  if (Array.isArray(candidate)) return candidate;
+  if (candidate && typeof candidate === 'object') return [candidate];
+  return [];
+}
+
+function webhookIdOf(webhook: any): string {
+  return String(webhook?.WebhookId ?? webhook?.Webhook ?? webhook?.id ?? webhook?.webhookId ?? '').trim();
+}
+
+function webhookEventsOf(webhook: any): string[] {
+  const events = webhook?.Events?.Event ?? webhook?.Event ?? webhook?.events ?? webhook?.Events;
+  if (Array.isArray(events)) return events.map((event) => String(event)).filter(Boolean);
+  if (events == null) return [];
+  return [String(events)].filter(Boolean);
+}
+
+function normalizeWebhook(webhook: any) {
+  return {
+    webhookId: webhookIdOf(webhook),
+    callbackUrl: String(webhook?.CallbackUrl ?? webhook?.callbackUrl ?? ''),
+    webhookSource: String(webhook?.WebhookSource ?? webhook?.webhookSource ?? ''),
+    events: webhookEventsOf(webhook),
+    raw: webhook,
+  };
+}
+
+export const FALABELLA_WEBHOOK_EVENTS = [
+  'onOrderCreated',
+  'onOrderItemsStatusChanged',
+  'onFeedCreated',
+  'onFeedCompleted',
+  'onProductCreated',
+  'onProductUpdated',
+  'onProductQcStatusChanged',
+] as const;
+
 export async function falabellaGetOrders(payload: { companyId: number; filters: GetOrdersV2Filters }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { error: found.error };
@@ -34,6 +108,63 @@ export async function falabellaGetOrders(payload: { companyId: number; filters: 
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const normalized = normalizeGetOrdersResult(response.data);
   return { ok: response.ok, status: response.status, url: response.url, totalCount: normalized.totalCount, orders: normalized.orders };
+}
+
+export async function falabellaGetWebhooks(payload: { companyId: number; webhookIds?: string[] }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const webhookIds = (payload.webhookIds || []).map((id) => String(id).trim()).filter(Boolean);
+  const extraParams: Record<string, string> = webhookIds.length ? { WebhookIds: `[${webhookIds.join(',')}]` } : {};
+  const response = await fetch(signedFalabellaUrl(company, 'GetWebhooks', extraParams), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+  const result = await parseFalabellaResponse(response);
+  return { ...result, webhooks: extractWebhooks(result.data).map(normalizeWebhook) };
+}
+
+export async function falabellaCreateWebhook(payload: { companyId: number; callbackUrl: string; events: string[] }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const callbackUrl = String(payload.callbackUrl || '').trim();
+  const events = Array.from(new Set((payload.events || []).map((event) => String(event).trim()).filter(Boolean)));
+  if (!callbackUrl) return { ok: false, error: 'Falta la URL del webhook.' };
+  if (!events.length) return { ok: false, error: 'Selecciona al menos un evento de Falabella.' };
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+<Request>
+  <Webhook>
+    <CallbackUrl>${escXml(callbackUrl)}</CallbackUrl>
+    <Events>
+${events.map((event) => `      <Event>${escXml(event)}</Event>`).join('\n')}
+    </Events>
+  </Webhook>
+</Request>`;
+  const response = await fetch(signedFalabellaUrl(company, 'CreateWebhook'), {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/xml' },
+    body,
+  });
+  return parseFalabellaResponse(response);
+}
+
+export async function falabellaDeleteWebhook(payload: { companyId: number; webhookId: string }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const webhookId = String(payload.webhookId || '').trim();
+  if (!webhookId) return { ok: false, error: 'Falta el ID del webhook.' };
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+<Request>
+  <Webhook>${escXml(webhookId)}</Webhook>
+</Request>`;
+  const response = await fetch(signedFalabellaUrl(company, 'DeleteWebhook'), {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/xml' },
+    body,
+  });
+  return parseFalabellaResponse(response);
 }
 
 export async function falabellaGetOrderItems(payload: { companyId: number; orderId: string | number }) {
@@ -391,6 +522,14 @@ function isInvalidRequestFormat(error: any, rawText: string): boolean {
   return /invalid request format/i.test(`${falabellaErrorText(error)} ${rawText || ''}`);
 }
 
+// Falabella responde 409 INVOICE_ALREADY_EXISTS cuando el documento YA está subido.
+// No es un fallo: el estado deseado (documento en Falabella) ya se cumplió → idempotente.
+function isInvoiceAlreadyExists(data: any, rawText: string): boolean {
+  const errs = data?.ErrorResponse?.Body?.errors ?? data?.Body?.errors;
+  if (Array.isArray(errs) && errs.some((e: any) => e?.message === 'INVOICE_ALREADY_EXISTS' || String(e?.code) === 'Conflict')) return true;
+  return /INVOICE_ALREADY_EXISTS|ya existe/i.test(String(rawText || ''));
+}
+
 function parseMoneyForBoletaBuilder(value: unknown): number {
   if (value && typeof value === 'object') {
     const amount = (value as any).amount ?? (value as any).Amount ?? (value as any).value ?? (value as any).Value;
@@ -590,8 +729,11 @@ async function uploadInvoicePdfForCompany(company: any, payload: {
   }
 
   const { response, rawText, data, error } = uploadResponse;
-  const result = { ok: response.ok, status: response.status, error, data, rawText, transport };
-  if (response.ok && !error && payload.invoiceType === 'FACTURA') {
+  // 409 "ya existe" = éxito idempotente: el documento ya está en Falabella.
+  const alreadyExists = isInvoiceAlreadyExists(data, rawText);
+  const ok = response.ok || alreadyExists;
+  const result = { ok, status: response.status, error: alreadyExists ? null : error, alreadyExists, data, rawText, transport };
+  if (ok && payload.invoiceType === 'FACTURA') {
     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
     if (pdfBuffer) {
       await recordFacturaUpload({ companyId: payload.companyId, orderNumber: payload.orderNumber, numeroCompleto: invoiceNumber, fechaEmision: invoiceDate, pdfBuffer, source: payload.source || 'manual', orderItemIds, respuestaFalabella: data });
