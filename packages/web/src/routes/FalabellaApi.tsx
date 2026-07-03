@@ -510,6 +510,20 @@ function companyHasApi(company?: Company | null) {
   return !!company?.falabellaApiUserId && !!company?.falabellaApiKey;
 }
 
+function sellerDisplayName(company?: Company | null) {
+  return String(company?.nombre || company?.razonSocial || '').trim() || 'Empresa';
+}
+
+function sellerDisplayDetail(company?: Company | null) {
+  const name = sellerDisplayName(company);
+  const legalName = String(company?.razonSocial || '').trim();
+  const ruc = String(company?.ruc || '').trim();
+  const parts = [];
+  if (legalName && legalName !== name) parts.push(legalName);
+  if (ruc) parts.push(ruc);
+  return parts.join(' · ');
+}
+
 function isInvoiceRequired(value: FalabellaOrder['InvoiceRequired']) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value === 1;
@@ -1971,7 +1985,7 @@ export default function FalabellaApi() {
                 >
                   <SelectTrigger
                     placeholder="Selecciona una empresa"
-                    value={selectedCompany ? `${selectedCompany.razonSocial} (${selectedCompany.ruc})` : undefined}
+                    value={selectedCompany ? `${sellerDisplayName(selectedCompany)}${sellerDisplayDetail(selectedCompany) ? ` · ${sellerDisplayDetail(selectedCompany)}` : ''}` : undefined}
                   />
                   <Select.Portal>
                     <Select.Content
@@ -1987,8 +2001,8 @@ export default function FalabellaApi() {
                             className="relative flex cursor-default select-none items-center rounded-lg px-3 py-2.5 pr-8 text-sm outline-none transition focus:bg-accent focus:text-accent-foreground"
                           >
                             <div className="min-w-0">
-                              <div className="truncate font-medium">{company.razonSocial}</div>
-                              <div className="truncate text-xs text-muted-foreground">{company.ruc}</div>
+                              <div className="truncate font-medium">{sellerDisplayName(company)}</div>
+                              <div className="truncate text-xs text-muted-foreground">{sellerDisplayDetail(company)}</div>
                             </div>
                             <Select.ItemIndicator className="absolute right-2 inline-flex items-center">
                               <Check className="h-4 w-4" />

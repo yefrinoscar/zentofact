@@ -276,7 +276,18 @@ export async function setCompanyEnabled(companyId, enabled) {
      on conflict (company_id) do update set enabled=excluded.enabled, updated_at=now()`,
     [companyId, !!enabled],
   );
-  return { companyId, enabled: !!enabled };
+  let clearedSkipped = 0;
+  if (enabled) {
+    const deleted = await pool.query(
+      `delete from emission_jobs where company_id=$1 and status='skipped'`,
+      [companyId],
+    );
+    clearedSkipped = deleted.rowCount || 0;
+    setTimeout(() => {
+      reconcile().catch((e) => log('reconcile after company activation error:', e.message));
+    }, 0);
+  }
+  return { companyId, enabled: !!enabled, clearedSkipped };
 }
 
 async function isCompanyEnabled(companyId) {

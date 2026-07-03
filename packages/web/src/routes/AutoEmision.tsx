@@ -253,6 +253,20 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleString('es-PE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+function fullDateTime(value?: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.replace('T', ' ').slice(0, 19);
+  return date.toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 function formatDateTime(value?: string) {
   if (!value) return '-';
   const date = new Date(value);
@@ -329,7 +343,10 @@ export default function AutoEmision() {
     const flip = (val: boolean) => setConfig((prev) => prev
       ? { ...prev, companies: prev.companies.map((c) => (c.id === id ? { ...c, enabled: val } : c)) } : prev);
     flip(enabled);
-    try { await api.autoEmitSetCompany(id, enabled); } catch { flip(!enabled); }
+    try {
+      await api.autoEmitSetCompany(id, enabled);
+      await Promise.all([loadConfig(), loadLogs()]);
+    } catch { flip(!enabled); }
   };
 
   const togglePaused = async () => {
@@ -635,7 +652,9 @@ export default function AutoEmision() {
                             </button>
                           )}
                         </td>
-                        <td className="px-5 py-2.5 whitespace-nowrap text-xs text-muted-foreground">{timeAgo(j.updated_at)}</td>
+                        <td className="px-5 py-2.5 whitespace-nowrap text-xs text-muted-foreground" title={timeAgo(j.updated_at)}>
+                          <span className="block text-foreground">{fullDateTime(j.updated_at)}</span>
+                        </td>
                       </tr>
                     );
                   })}
