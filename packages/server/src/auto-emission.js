@@ -318,7 +318,7 @@ async function isCompanyEnabled(companyId) {
 // Últimos jobs y eventos (para el panel).
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
-    `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
+    `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
             j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.created_at, j.updated_at
      from emission_jobs j left join companies c on c.id=j.company_id
      left join lateral (
@@ -326,6 +326,11 @@ export async function recentJobs(limit = 50) {
        where company_id=j.company_id and numero_completo=j.boleta_numero
        order by id desc limit 1
      ) b on true
+     left join lateral (
+       select order_number from facturas
+       where company_id=j.company_id and numero_completo=j.boleta_numero
+       order by id desc limit 1
+     ) f on true
      order by j.updated_at desc limit $1`, [Math.min(limit, 200)]);
   return r.rows;
 }
@@ -349,7 +354,15 @@ async function fetchOrderById(client, orderId) {
 
 async function saveResolvedOrderNumber(job, orderNumber) {
   const resolved = String(orderNumber || '').trim();
-  if (!resolved || resolved === String(job.order_number || '').trim()) return;
+  if (!resolved || resolved === String(job.order_number || '').trim()) return null;
+  const duplicate = (await pool.query(
+    `select id, status, result, boleta_numero
+     from emission_jobs
+     where company_id=$1 and order_number=$2 and id<>$3
+     limit 1`,
+    [job.company_id, resolved, job.id],
+  )).rows[0] || null;
+  if (duplicate) return duplicate;
   await pool.query(
     `update emission_jobs j
      set order_number=$2, updated_at=now()
@@ -360,6 +373,7 @@ async function saveResolvedOrderNumber(job, orderNumber) {
        )`,
     [job.id, resolved],
   ).catch((e) => log(`no se pudo actualizar OrderNumber real para job ${job.id}:`, e.message));
+  return null;
 }
 
 function previewOrder(order) {
@@ -481,7 +495,21 @@ async function processJob(job, setStep = async () => {}) {
   }
   // El número real (por si encolamos con el OrderId como clave).
   const orderNumber = String(order.OrderNumber || job.order_number).trim();
-  await saveResolvedOrderNumber(job, orderNumber);
+  const duplicateJob = await saveResolvedOrderNumber(job, orderNumber);
+  if (duplicateJob) {
+    if (duplicateJob.status === 'done') {
+      return {
+        status: 'done',
+        result: duplicateJob.result || `orden ${orderNumber} ya procesada en job ${duplicateJob.id}`,
+        boletaNumero: duplicateJob.boleta_numero || null,
+      };
+    }
+    return {
+      status: 'skipped',
+      result: `orden ${orderNumber} ya existe en job ${duplicateJob.id} (${duplicateJob.status})`,
+      boletaNumero: duplicateJob.boleta_numero || null,
+    };
+  }
 
   // 1.5) Omitir órdenes anteriores a la fecha mínima (julio 2026).
   const orderDate = order.CreatedAt ? new Date(order.CreatedAt) : null;
