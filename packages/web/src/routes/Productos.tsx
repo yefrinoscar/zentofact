@@ -11,20 +11,18 @@ import {
   AlertTriangle,
   Box,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
   PackagePlus,
   RefreshCw,
   Search,
-  Store,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 
 type Company = {
   id: number;
@@ -65,17 +63,8 @@ type Product = {
   raw?: any;
 };
 
-const STATUS_TABS = [
+const PRODUCT_FILTERS = [
   { value: 'all', label: 'Todos' },
-  { value: 'live', label: 'En vivo' },
-  { value: 'active', label: 'Activos' },
-  { value: 'inactive', label: 'Inactivos' },
-  { value: 'pending', label: 'Pendientes' },
-  { value: 'rejected', label: 'Rechazados' },
-  { value: 'deleted', label: 'Eliminados' },
-];
-
-const REVIEW_FILTERS = [
   { value: 'sold-out', label: 'Sin stock' },
   { value: 'image-missing', label: 'Sin imagen' },
 ];
@@ -84,12 +73,6 @@ const PAGE_SIZE = 50;
 
 function sellerName(company: Company) {
   return String(company.nombre || company.razonSocial || `Empresa ${company.id}`).trim();
-}
-
-function sellerDetail(company: Company) {
-  const legal = String(company.razonSocial || '').trim();
-  const ruc = String(company.ruc || '').trim();
-  return [legal && legal !== sellerName(company) ? legal : '', ruc].filter(Boolean).join(' · ');
 }
 
 function money(value: string | number | null | undefined) {
@@ -130,19 +113,19 @@ function ProductImage({ product }: { product: Product }) {
   const src = product.images?.[0];
   if (!src) {
     return (
-      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-        <Box className="h-5 w-5" />
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
+        <Box className="h-4 w-4" />
       </div>
     );
   }
-  return <img src={src} alt="" className="h-11 w-11 shrink-0 rounded-md object-cover ring-1 ring-border" />;
+  return <img src={src} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover ring-1 ring-border" />;
 }
 
 function SkeletonRows() {
   return (
-    <div className="divide-y divide-border">
+    <div className="divide-y divide-border border-y border-border">
       {Array.from({ length: 6 }).map((_, index) => (
-        <div key={index} className="grid grid-cols-[1.5fr_0.7fr_0.55fr_0.6fr_0.65fr_0.65fr] items-center gap-5 px-5 py-4">
+        <div key={index} className="grid grid-cols-[1.5fr_0.7fr_0.55fr_0.6fr_0.65fr_0.65fr] items-center gap-5 px-3 py-4">
           <div className="flex items-center gap-4">
             <div className="h-10 w-10 animate-pulse rounded-lg bg-muted" />
             <div className="space-y-2">
@@ -167,30 +150,14 @@ const productColumns: ColumnDef<Product>[] = [
     cell: ({ row }) => {
       const product = row.original;
       return (
-        <span className="flex min-w-0 items-center gap-4">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
-            <ChevronDown className="h-4 w-4" />
-          </span>
+        <span className="flex min-w-0 items-center gap-3">
           <ProductImage product={product} />
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-foreground">{product.name || product.sellerSku || '-'}</span>
+            <span className="block truncate text-sm font-medium text-foreground">{product.name || product.sellerSku || '-'}</span>
             <span className="mt-1 block truncate text-xs text-muted-foreground">
               {[product.brand, product.primaryCategory].filter(Boolean).join(' · ') || product.productId || 'Sin categoria'}
             </span>
           </span>
-        </span>
-      );
-    },
-  },
-  {
-    accessorKey: 'sellerSku',
-    header: 'SKU del seller',
-    cell: ({ row }) => {
-      const product = row.original;
-      return (
-        <span className="min-w-0">
-          <span className="inline-flex max-w-full truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground">{product.sellerSku || '-'}</span>
-          {product.shopSku && <span className="mt-1 block truncate text-xs text-muted-foreground">{product.shopSku}</span>}
         </span>
       );
     },
@@ -201,7 +168,7 @@ const productColumns: ColumnDef<Product>[] = [
     cell: ({ row }) => {
       const product = row.original;
       return (
-        <span className="text-sm font-semibold text-foreground">
+        <span className="text-sm font-medium text-foreground">
           {money(product.salePrice || product.price)}
           {product.salePrice && product.price && String(product.salePrice) !== String(product.price) && (
             <span className="ml-2 text-xs font-normal text-muted-foreground line-through">{money(product.price)}</span>
@@ -211,19 +178,10 @@ const productColumns: ColumnDef<Product>[] = [
     },
   },
   {
-    accessorKey: 'contentScore',
-    header: 'Score',
-    cell: ({ row }) => (
-      <span className="text-sm font-semibold text-foreground">
-        {row.original.contentScore ?? '-'}
-      </span>
-    ),
-  },
-  {
     accessorKey: 'quantity',
     header: 'Stock',
     cell: ({ row }) => (
-      <span className="text-sm font-semibold text-foreground">
+      <span className="text-sm text-foreground">
         {row.original.quantity ?? '-'} <span className="text-xs font-normal text-muted-foreground">u</span>
       </span>
     ),
@@ -236,18 +194,24 @@ const productColumns: ColumnDef<Product>[] = [
       const unit = productBusinessUnit(product);
       const status = statusView(unit?.status || product.status, unit?.stock ?? product.quantity, unit?.isPublished);
       return (
-        <span className={cn('inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-semibold', status.cls)}>
-          <span className="mr-2 h-2 w-2 rounded-full bg-current" /> {status.label}
+        <span className={cn('inline-flex w-fit items-center rounded-md border px-2 py-0.5 text-xs font-medium', status.cls)}>
+          {status.label}
         </span>
       );
     },
   },
   {
-    accessorKey: 'qcStatus',
-    header: 'QC',
+    id: 'quality',
+    header: 'Calidad',
     cell: ({ row }) => {
-      const qc = qcView(row.original.qcStatus);
-      return <span className={cn('inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-semibold', qc.cls)}>{qc.label}</span>;
+      const product = row.original;
+      const qc = qcView(product.qcStatus);
+      return (
+        <span className="inline-flex min-w-[110px] flex-col items-start gap-1">
+          <span className={cn('inline-flex w-fit items-center rounded-md border px-2 py-0.5 text-xs font-medium', qc.cls)}>{qc.label}</span>
+          <span className="pl-0.5 text-xs text-muted-foreground">{product.contentScore ?? '-'} score</span>
+        </span>
+      );
     },
   },
 ];
@@ -428,110 +392,85 @@ export default function Productos() {
   };
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <Select value={selectedCompany?.id ? String(selectedCompany.id) : ''} onValueChange={(value) => switchSeller(Number(value))}>
-              <SelectTrigger className="h-11 w-full min-w-[260px] rounded-xl md:w-[340px]">
-                <SelectValue placeholder="Selecciona seller" />
-              </SelectTrigger>
-              <SelectContent>
-                {sellers.map((company) => (
-                  <SelectItem key={company.id} value={String(company.id)}>
-                    {sellerName(company)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              {selectedCompany && (
-                <span className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3">
-                  <Store className="mr-2 h-4 w-4" />
-                  {sellerDetail(selectedCompany) || 'Seller Falabella'}
-                </span>
-              )}
-              <span className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 font-semibold text-foreground">
-                {countingTotal ? <Loader2 className="mr-2 h-4 w-4 animate-spin text-muted-foreground" /> : <Box className="mr-2 h-4 w-4 text-muted-foreground" />}
-                {sellerTotal == null ? '-' : sellerTotal} productos
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <form onSubmit={submitSearch} className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por nombre, SKU o ShopSku"
-                className="h-11 w-full rounded-xl border border-input bg-background pl-11 pr-20 text-sm outline-none transition placeholder:text-muted-foreground focus:border-ring sm:w-[420px]"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => { setSearch(''); setSubmittedSearch(''); setOffset(0); }}
-                  className="absolute right-12 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                  aria-label="Limpiar busqueda"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-              <button
-                type="submit"
-                className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg bg-primary text-primary-foreground transition hover:bg-primary/90"
-                aria-label="Buscar"
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            </form>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Productos</h1>
+          <p className="text-sm text-muted-foreground">Catálogo Falabella</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => { setCreateOpen(true); setCreateError(''); setCreateResult(null); }}
+          disabled={!selectedCompany}
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+        >
+          <PackagePlus className="h-4 w-4" /> Agregar producto
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-2 md:flex-row md:items-center">
+        <Select value={selectedCompany?.id ? String(selectedCompany.id) : ''} onValueChange={(value) => switchSeller(Number(value))}>
+          <SelectTrigger className="h-9 w-full rounded-md md:w-[320px]">
+            <SelectValue placeholder="Selecciona seller" />
+          </SelectTrigger>
+          <SelectContent>
+            {sellers.map((company) => (
+              <SelectItem key={company.id} value={String(company.id)}>
+                {sellerName(company)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <form onSubmit={submitSearch} className="relative flex-1 md:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar producto o SKU"
+            className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-20 text-sm outline-none transition placeholder:text-muted-foreground focus:border-ring"
+          />
+          {search && (
             <button
               type="button"
-              onClick={() => { setCreateOpen(true); setCreateError(''); setCreateResult(null); }}
-              disabled={!selectedCompany}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50"
+              onClick={() => { setSearch(''); setSubmittedSearch(''); setOffset(0); }}
+              className="absolute right-10 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              aria-label="Limpiar busqueda"
             >
-              <PackagePlus className="h-4 w-4" /> Agregar producto
+              <X className="h-4 w-4" />
             </button>
-            <button
-              onClick={() => loadProducts(true)}
-              disabled={refreshing || !selectedCompany}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-60"
-            >
-              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-              Actualizar
-            </button>
-          </div>
-        </div>
-      </section>
+          )}
+          <button
+            type="submit"
+            className="absolute right-1 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            aria-label="Buscar"
+          >
+            <Search className="h-4 w-4" />
+          </button>
+        </form>
 
-      <section className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <Tabs value={filter} onValueChange={(value) => { setFilter(value); setOffset(0); }} className="min-w-0">
-          <TabsList className="flex h-auto flex-wrap rounded-xl">
-            {STATUS_TABS.map((item) => (
-              <TabsTrigger key={item.value} value={item.value} className="h-9 px-4 text-sm">
+        <Select value={filter} onValueChange={(value) => { setFilter(value); setOffset(0); }}>
+          <SelectTrigger className="h-9 w-full rounded-md md:w-[160px]">
+            <SelectValue placeholder="Filtro" />
+          </SelectTrigger>
+          <SelectContent>
+            {PRODUCT_FILTERS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
                 {item.label}
-              </TabsTrigger>
+              </SelectItem>
             ))}
-          </TabsList>
-        </Tabs>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Revisión</span>
-          {REVIEW_FILTERS.map((item) => (
-            <button
-              key={item.value}
-              onClick={() => { setFilter(item.value); setOffset(0); }}
-              className={cn(
-                'h-9 rounded-xl border px-3 text-sm font-medium transition',
-                filter === item.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </section>
+          </SelectContent>
+        </Select>
+
+        <button
+          onClick={() => loadProducts(true)}
+          disabled={refreshing || !selectedCompany}
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-60"
+        >
+          <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+          Actualizar
+        </button>
+      </div>
 
       {error && (
         <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -541,33 +480,34 @@ export default function Productos() {
       )}
 
       {!selectedCompany && !loading ? (
-        <div className="rounded-2xl border border-border bg-card p-10 text-center text-sm text-muted-foreground">
+        <div className="border-y border-border p-10 text-center text-sm text-muted-foreground">
           No hay sellers con credenciales Falabella configuradas.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-border px-5 py-4 md:flex-row md:items-center md:justify-between">
+        <div className="overflow-hidden rounded-md border border-border">
+          <div className="flex flex-col gap-2 border-b border-border px-3 py-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-foreground">Catálogo</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
+              <p className="text-sm font-medium text-foreground">
+                {countingTotal ? 'Calculando...' : `${sellerTotal == null ? '-' : sellerTotal} productos`}
+              </p>
+              <p className="text-xs text-muted-foreground">
                 {submittedSearch ? `Búsqueda: "${submittedSearch}" · ` : ''}
-                Visibles: {products.length} · Total seller: {sellerTotal == null ? 'calculando...' : sellerTotal}
+                Mostrando {products.length}
               </p>
             </div>
-            <span className="rounded-full border border-border bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
+            <span className="text-xs font-medium text-muted-foreground">
               Página {Math.floor(offset / PAGE_SIZE) + 1} · máximo {PAGE_SIZE}
             </span>
           </div>
           {loading ? <SkeletonRows /> : products.length === 0 ? (
             <div className="p-12 text-center text-sm text-muted-foreground">No hay productos para este filtro.</div>
           ) : (
-            <div className="overflow-auto">
-              <table className="w-full min-w-[980px] text-sm">
-                <thead className="bg-muted/50 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            <Table className="min-w-[860px]">
+                <TableHeader className="bg-muted/40">
                   {table.getHeaderGroups().map((headerGroup) => (
-                    <tr key={headerGroup.id} className="border-b border-border">
+                    <TableRow key={headerGroup.id} className="hover:bg-transparent">
                       {headerGroup.headers.map((header) => (
-                        <th key={header.id} className="px-5 py-3 font-semibold">
+                        <TableHead key={header.id}>
                           {header.isPlaceholder ? null : (
                             <button
                               type="button"
@@ -578,35 +518,35 @@ export default function Productos() {
                               {header.column.getIsSorted() === 'asc' ? '↑' : header.column.getIsSorted() === 'desc' ? '↓' : ''}
                             </button>
                           )}
-                        </th>
+                        </TableHead>
                       ))}
-                    </tr>
+                    </TableRow>
                   ))}
-                </thead>
-                <tbody className="divide-y divide-border">
+                </TableHeader>
+                <TableBody>
                   {table.getRowModel().rows.map((row) => {
                     const product = row.original;
                     const key = productKey(product, row.index);
-                const open = expanded === key;
-                return (
-                  <Fragment key={row.id}>
-                    <tr key={row.id} onClick={() => setExpanded(open ? null : key)} className="cursor-pointer transition hover:bg-accent/40">
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-5 py-4 align-middle">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                    {open && (
-                      <tr key={`${row.id}-expanded`}>
-                        <td colSpan={row.getVisibleCells().length} className="border-t border-border bg-muted/30 px-5 py-5">
-                        <div className="mb-4 flex items-center justify-between gap-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Detalle de publicación</p>
-                          <span className="rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold text-foreground">
+                    const open = expanded === key;
+                    return (
+                      <Fragment key={row.id}>
+                        <TableRow onClick={() => setExpanded(open ? null : key)} className="cursor-pointer">
+                          {row.getVisibleCells().map((cell) => (
+                            <TableCell key={cell.id}>
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                        {open && (
+                          <TableRow>
+                            <TableCell colSpan={row.getVisibleCells().length} className="bg-muted/20 px-3 py-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Detalle de publicación</p>
+                          <span className="text-xs font-medium text-foreground">
                             {(product.businessUnits?.length || 0)} unidad(es) · {product.variationsCount || 0} variacion(es)
                           </span>
                         </div>
-                        <div className="grid gap-3 rounded-xl border border-border bg-card p-4 text-sm md:grid-cols-5">
+                        <div className="grid gap-3 border-y border-border py-3 text-sm md:grid-cols-5">
                           <div>
                             <p className="text-xs text-muted-foreground">Seller</p>
                             <p className="mt-1 font-semibold text-foreground">{selectedCompany ? sellerName(selectedCompany) : '-'}</p>
@@ -629,8 +569,8 @@ export default function Productos() {
                           </div>
                         </div>
                         {product.businessUnits?.length ? (
-                          <div className="mt-4 overflow-hidden rounded-xl border border-border bg-card">
-                            <div className="grid grid-cols-[1fr_0.7fr_0.7fr_0.55fr_0.7fr_0.65fr] gap-4 border-b border-border bg-muted/40 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          <div className="mt-4 overflow-auto border border-border">
+                            <div className="grid min-w-[720px] grid-cols-[1fr_0.7fr_0.7fr_0.55fr_0.7fr_0.65fr] gap-4 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                               <span>Marketplace</span>
                               <span>Precio</span>
                               <span>Especial</span>
@@ -641,7 +581,7 @@ export default function Productos() {
                             {product.businessUnits.map((unit, unitIndex) => {
                               const unitStatus = statusView(unit.status, unit.stock, unit.isPublished);
                               return (
-                                <div key={`${unit.name || unit.operatorCode || unitIndex}`} className="grid grid-cols-[1fr_0.7fr_0.7fr_0.55fr_0.7fr_0.65fr] gap-4 px-4 py-3 text-sm">
+                                <div key={`${unit.name || unit.operatorCode || unitIndex}`} className="grid min-w-[720px] grid-cols-[1fr_0.7fr_0.7fr_0.55fr_0.7fr_0.65fr] gap-4 border-b border-border px-3 py-2 text-sm last:border-b-0">
                                   <span className="font-semibold text-foreground">{unit.name || unit.operatorCode || '-'}</span>
                                   <span>{money(unit.price)}</span>
                                   <span>{money(unit.specialPrice)}</span>
@@ -660,17 +600,16 @@ export default function Productos() {
                             })}
                           </div>
                         ) : null}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
                   })}
-                </tbody>
-              </table>
-            </div>
+                </TableBody>
+              </Table>
           )}
-          <div className="flex flex-col gap-3 border-t border-border px-5 py-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 border-t border-border px-3 py-3 md:flex-row md:items-center md:justify-between">
             <p className="text-sm text-muted-foreground">
               Mostrando {products.length} producto(s). Total del seller: {sellerTotal == null ? '-' : sellerTotal}.
             </p>
