@@ -15,6 +15,7 @@ import {
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
 import falabellaIcon from '../assets/falabella.png';
+import webPackage from '../../package.json';
 
 const navItems = [
   { to: '/documentos', icon: ReceiptText, img: null, label: 'Documentos' },
@@ -25,6 +26,16 @@ const navItems = [
   { to: '/summaries', icon: ClipboardList, img: null, label: 'Resúmenes' },
   { to: '/settings', icon: Settings, img: null, label: 'Ajustes' },
 ];
+
+const APP_VERSION = webPackage.version;
+
+function runtimeEnvironment() {
+  const env = (import.meta as any).env || {};
+  const forcedSunat = String(env.VITE_SUNAT_ENV || '').trim().toLowerCase();
+  const appEnv = env.PROD ? 'Producción' : 'Local';
+  const sunatEnv = forcedSunat === 'produccion' ? 'SUNAT prod.' : forcedSunat === 'beta' ? 'SUNAT beta' : '';
+  return sunatEnv ? `${appEnv} · ${sunatEnv}` : appEnv;
+}
 
 export default function Sidebar() {
   const { pathname } = useLocation();
@@ -103,8 +114,33 @@ export default function Sidebar() {
         })}
       </nav>
 
+      <RuntimeFooter collapsed={collapsed} />
       <UserFooter collapsed={collapsed} />
     </aside>
+  );
+}
+
+function RuntimeFooter({ collapsed }: { collapsed: boolean }) {
+  const env = (import.meta as any).env || {};
+  const isProd = Boolean(env.PROD);
+  const label = isProd ? `v${APP_VERSION}` : `v${APP_VERSION} · ${runtimeEnvironment()}`;
+
+  if (collapsed) {
+    return (
+      <div className="border-t border-sidebar-border px-3 py-2 text-center">
+        <span title={label} className="text-[10px] font-medium text-muted-foreground">
+          v{APP_VERSION.split('.')[0]}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-sidebar-border px-4 py-2">
+      <p className="truncate text-[11px] font-medium text-muted-foreground">
+        {label}
+      </p>
+    </div>
   );
 }
 
@@ -125,6 +161,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
 
   const email = session?.user?.email || '';
   const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
+  const role = String((session?.user as any)?.role || '').trim();
   const initial = (name || email || 'Z').trim().charAt(0).toUpperCase();
 
   const logout = async () => {
@@ -151,7 +188,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
           <>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-sidebar-foreground">{name}</span>
-              <span className="block truncate text-xs text-muted-foreground">{email}</span>
+              <span className="block truncate text-xs text-muted-foreground">{role ? `${role} · ${email}` : email}</span>
             </span>
             <MoreVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
           </>
@@ -168,6 +205,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
             <div className="border-b border-border px-3 py-2">
               <p className="truncate text-sm font-medium text-foreground">{name}</p>
               <p className="truncate text-xs text-muted-foreground">{email}</p>
+              {role && <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{role}</p>}
             </div>
           )}
           <button

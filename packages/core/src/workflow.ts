@@ -1,7 +1,7 @@
 import { db } from './db';
 import { boletas, branches, companies, dailySummaries } from './db/schema';
 import { eq, and } from 'drizzle-orm';
-import { createBoleta, sendBoletasAsDailySummary, sendBoletaToSunat } from './services/boleta.service';
+import { createBoleta, sendBoletaToSunat } from './services/boleta.service';
 import type { DetalleItem } from './utils/tax-calculator';
 import type { CoreConfig, VentaItem, WorkflowResult, WorkflowProgress } from './index';
 
@@ -82,25 +82,20 @@ export async function processWorkflow(
   const { companyId, branchId } = await ensureSetup(config);
   const serie = config.serieBoleta || 'B001';
   const isProduction = config.modoProduccion ?? false;
-  // Emisión de UNA sola boleta => envío INDIVIDUAL a SUNAT (así el nombre del cliente queda en el
-  // registro; el resumen diario lo muestra como "-"). En lote se usa el resumen diario.
-  const isIndividual = ventas.length === 1;
 
   const results: WorkflowResult['boletas'] = [];
   let exitosas = 0;
   let rechazadas = 0;
   const total = ventas.length;
-  const pendingBoletaIds: number[] = [];
   const betaBoletaIds: number[] = [];
-  const betaSummaryIds = new Set<number>();
-  let summaryReferenceDate = '';
 
   for (let i = 0; i < ventas.length; i++) {
     const venta = ventas[i];
     const ventaSerie = venta.serie || serie;
+    const orderNumber = String(venta.orderNumber || '');
 
     try {
-      onProgress?.(i, total, `[${venta.client.razonSocial}] Creando boleta...`);
+      onProgress?.(i, total, `[${orderNumber || venta.client.razonSocial}] Creando boleta...`);
 
       const existing = isProduction && venta.orderNumber
         ? (await db.select().from(boletas).where(and(
@@ -142,6 +137,7 @@ export async function processWorkflow(
               ? `Orden ${venta.orderNumber} ya está vinculada al resumen ${summary.numeroCompleto}. No se volvió a enviar a SUNAT.`
               : `Orden ${venta.orderNumber} ya fue informada en un resumen diario.`,
           });
+          onProgress?.(i + 1, total, `[${orderNumber || existing.numeroCompleto}] Omitida: ya existe ${existing.numeroCompleto}.`);
           continue;
         }
 
@@ -175,7 +171,7 @@ export async function processWorkflow(
         serie: ventaSerie,
         fecha_emision: venta.fechaEmision,
         moneda: venta.moneda || 'PEN',
-        metodo_envio: isIndividual ? 'individual' : 'resumen_diario',
+        metodo_envio: 'individual',
         client: {
           tipo_documento: venta.client.tipoDocumento,
           numero_documento: venta.client.numeroDocumento,
@@ -187,9 +183,38 @@ export async function processWorkflow(
         persistCorrelative: isProduction,
       });
 
-      pendingBoletaIds.push(boleta.id);
       if (!isProduction) betaBoletaIds.push(boleta.id);
-      if (!summaryReferenceDate) summaryReferenceDate = boleta.fechaEmision;
+
+      onProgress?.(i, total, `[${orderNumber || boleta.numeroCompleto}] Enviando ${boleta.numeroCompleto} a SUNAT...`);
+      let sendError = '';
+      try {
+        const r = await sendBoletaToSunat(boleta.id);
+        if (!r.success) sendError = r.message || 'Rechazado por SUNAT';
+      } catch (e: any) {
+        sendError = e?.message || 'Error al enviar a SUNAT';
+      }
+
+      const b = (await db.select().from(boletas).where(eq(boletas.id, boleta.id)).limit(1))[0];
+      const estado = String(b?.estadoSunat || '').toUpperCase();
+      const accepted = estado === 'ACEPTADO';
+      if (accepted) {
+        exitosas++;
+      } else {
+        rechazadas++;
+      }
+      results.push({
+        numeroCompleto: b?.numeroCompleto || boleta.numeroCompleto,
+        estadoSunat: (estado || 'RECHAZADO') as any,
+        pdfPath: '',
+        xmlPath: b?.xmlPath || '',
+        orderNumber: b?.orderNumber || venta.orderNumber || undefined,
+        error: accepted ? undefined : (sendError || 'Rechazado por SUNAT'),
+      });
+      onProgress?.(
+        i + 1,
+        total,
+        `[${orderNumber || boleta.numeroCompleto}] ${accepted ? 'Aceptada' : `Rechazada: ${sendError || 'SUNAT rechazó el comprobante'}`} (${b?.numeroCompleto || boleta.numeroCompleto})`,
+      );
     } catch (e: any) {
       rechazadas++;
       results.push({
@@ -197,116 +222,15 @@ export async function processWorkflow(
         estadoSunat: 'RECHAZADO',
         pdfPath: '',
         xmlPath: '',
+        orderNumber: venta.orderNumber || undefined,
         error: e.message,
       });
-      break;
-    }
-  }
-
-  if (pendingBoletaIds.length > 0) {
-    const boletaIds = Array.from(new Set(pendingBoletaIds));
-
-    if (isIndividual && boletaIds.length === 1) {
-    // Envío INDIVIDUAL a SUNAT: la boleta se acepta al instante con su CDR y el nombre del cliente queda registrado.
-    const id = boletaIds[0];
-    onProgress?.(total, total, 'Enviando boleta a SUNAT (individual)...');
-    let sendError = '';
-    try {
-      const r = await sendBoletaToSunat(id);
-      if (!r.success) sendError = r.message || 'Rechazado por SUNAT';
-    } catch (e: any) {
-      sendError = e?.message || 'Error al enviar a SUNAT';
-    }
-    const b = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
-    const estado = String(b?.estadoSunat || '').toUpperCase();
-    if (estado === 'ACEPTADO') exitosas++; else rechazadas++;
-    results.push({
-      numeroCompleto: b?.numeroCompleto || '',
-      estadoSunat: (estado || 'RECHAZADO') as any,
-      pdfPath: '',
-      xmlPath: b?.xmlPath || '',
-      orderNumber: b?.orderNumber || undefined,
-      error: estado === 'ACEPTADO' ? undefined : (sendError || 'Rechazado por SUNAT'),
-    });
-    } else {
-    const progressScope = summaryReferenceDate || 'Resumen diario';
-
-    onProgress?.(total, total, `[${progressScope}] Enviando resumen diario a SUNAT...`);
-    const summaryResult = await sendBoletasAsDailySummary(
-      companyId,
-      branchId,
-      summaryReferenceDate,
-      boletaIds,
-      (message) => onProgress?.(total, total, `[${progressScope}] ${message}`),
-    );
-    const summaryMessage = formatSummaryMessage(summaryResult);
-    const summaryStatus: any = summaryResult.status || {};
-    if (!isProduction && summaryResult.summaryId) betaSummaryIds.add(summaryResult.summaryId);
-
-    if (!summaryResult.success) {
-      rechazadas += boletaIds.length;
-      for (const id of boletaIds) {
-        const rejected = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
-        if (!rejected) continue;
-        results.push({
-          numeroCompleto: rejected.numeroCompleto,
-          estadoSunat: 'RECHAZADO',
-          pdfPath: '',
-          xmlPath: '',
-          orderNumber: rejected.orderNumber || undefined,
-          summaryId: summaryResult.summaryId,
-          summaryNumero: summaryResult.numeroCompleto,
-          summaryTicket: summaryResult.ticket,
-          summaryEstado: summaryResult.status?.estado || 'RECHAZADO',
-          summaryResponseCode: summaryResult.status?.responseCode || summaryResult.error?.code,
-          summaryResponse: summaryMessage,
-          error: summaryMessage,
-        });
-      }
-    } else if (summaryResult.status?.estado !== 'ACEPTADO') {
-      for (const id of boletaIds) {
-        const pending = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
-        if (!pending) continue;
-        results.push({
-          numeroCompleto: pending.numeroCompleto,
-          estadoSunat: summaryResult.status?.estado || 'ENVIADO',
-          pdfPath: '',
-          xmlPath: '',
-          orderNumber: pending.orderNumber || undefined,
-          summaryId: summaryResult.summaryId,
-          summaryNumero: summaryResult.numeroCompleto,
-          summaryTicket: summaryResult.ticket,
-          summaryEstado: summaryResult.status?.estado || 'ENVIADO',
-          summaryResponseCode: summaryStatus.responseCode || summaryStatus.statusCode,
-          summaryResponse: summaryMessage,
-          error: summaryMessage,
-        });
-      }
-    } else {
-      for (const id of boletaIds) {
-        const acceptedBoleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
-        if (!acceptedBoleta) continue;
-        exitosas++;
-        results.push({
-          numeroCompleto: acceptedBoleta.numeroCompleto,
-          estadoSunat: 'ACEPTADO',
-          pdfPath: '',
-          xmlPath: acceptedBoleta.xmlPath || '',
-          orderNumber: acceptedBoleta.orderNumber || undefined,
-          summaryId: summaryResult.summaryId,
-          summaryNumero: summaryResult.numeroCompleto,
-          summaryTicket: summaryResult.ticket,
-          summaryEstado: summaryResult.status?.estado || 'ACEPTADO',
-          summaryResponseCode: summaryResult.status?.responseCode,
-          summaryResponse: summaryMessage,
-        });
-      }
-    }
+      onProgress?.(i + 1, total, `[${orderNumber || venta.client.razonSocial}] Rechazada: ${e.message}`);
     }
   }
 
   onProgress?.(total, total, 'Completado');
-  if (!isProduction) await cleanupBetaWorkflowData(betaBoletaIds, Array.from(betaSummaryIds));
+  if (!isProduction) await cleanupBetaWorkflowData(betaBoletaIds, []);
 
   return {
     total,

@@ -62,6 +62,45 @@ function sunatReason(raw?: string): string {
     .trim();
 }
 
+function emissionStatusInfo(status: EmissionItemStatus) {
+  switch (status) {
+    case 'creating':
+      return { label: 'Creando', className: 'border-blue-200 bg-blue-50 text-blue-700', icon: Loader2 };
+    case 'sending':
+      return { label: 'Enviando', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: Loader2 };
+    case 'accepted':
+      return { label: 'Aceptada', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 };
+    case 'rejected':
+      return { label: 'Rechazada', className: 'border-red-200 bg-red-50 text-red-700', icon: XCircle };
+    case 'skipped':
+      return { label: 'Omitida', className: 'border-slate-200 bg-slate-50 text-slate-700', icon: AlertCircle };
+    default:
+      return { label: 'Pendiente', className: 'border-border bg-muted/40 text-muted-foreground', icon: FileText };
+  }
+}
+
+function inferEmissionStatus(message: string): EmissionItemStatus {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('creando')) return 'creating';
+  if (normalized.includes('enviando')) return 'sending';
+  if (normalized.includes('aceptada') || normalized.includes('aceptado')) return 'accepted';
+  if (normalized.includes('rechazada') || normalized.includes('rechazado') || normalized.includes('error')) return 'rejected';
+  if (normalized.includes('omitida') || normalized.includes('omitido')) return 'skipped';
+  return 'pending';
+}
+
+function parseEmissionProgress(status: string) {
+  const match = status.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (!match) return null;
+  const message = match[2]?.trim() || status;
+  return {
+    orderNumber: match[1].trim(),
+    message,
+    status: inferEmissionStatus(message),
+    numeroCompleto: message.match(/\b[BF]\d{3}-\d{6}\b/)?.[0] || '',
+  };
+}
+
 // Celda de estado del documento local: ícono por estado + tooltip shadcn.
 // El refresh solo aparece si NO está aceptado (ya aceptado = estado final).
 function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { label: string; status: string; reason?: string; boletaId?: number; facturaId?: number }) {
@@ -339,6 +378,7 @@ type EmitBoletaModalState = {
   error: string;
   rows: InvoiceFlowRow[];
   ventas: any[];
+  emissionItems: EmissionItem[];
   warningsByOrder: Record<string, string[]>;
   validationErrors: string[];
   previewHtml: string;
@@ -348,6 +388,17 @@ type EmitBoletaModalState = {
   result: any | null;
   progress: { current: number; total: number; status: string };
   log: string[];
+};
+
+type EmissionItemStatus = 'pending' | 'creating' | 'sending' | 'accepted' | 'rejected' | 'skipped';
+
+type EmissionItem = {
+  orderNumber: string;
+  invoiceKind: InvoiceKind;
+  numeroCompleto: string;
+  status: EmissionItemStatus;
+  message: string;
+  error: string;
 };
 
 type InvoiceFlowBucket = 'ready_to_invoice' | 'has_document' | 'not_ready' | 'review';
@@ -807,6 +858,7 @@ function createEmptyEmitBoletaState(): EmitBoletaModalState {
     error: '',
     rows: [],
     ventas: [],
+    emissionItems: [],
     warningsByOrder: {},
     validationErrors: [],
     previewHtml: '',
@@ -1280,6 +1332,14 @@ export default function FalabellaApi() {
         acc[entry.row.orderNumber] = entry.warnings;
         return acc;
       }, {});
+      const emissionItems = prepared.map((entry): EmissionItem => ({
+        orderNumber: String(entry.venta?.orderNumber || entry.row.orderNumber || ''),
+        invoiceKind: entry.row.invoiceKind,
+        numeroCompleto: '',
+        status: 'pending',
+        message: 'Pendiente',
+        error: '',
+      }));
       const validationErrors = await api.validateVentas(ventas);
 
       setEmitBoletaModal((current) => ({
@@ -1287,6 +1347,7 @@ export default function FalabellaApi() {
         loading: false,
         rows: readyRows,
         ventas,
+        emissionItems,
         warningsByOrder,
         expandedOrders: ventas.length === 1 && ventas[0]?.orderNumber
           ? { [String(ventas[0].orderNumber)]: true }
@@ -1439,6 +1500,27 @@ export default function FalabellaApi() {
     }
   };
 
+  const updateEmissionItem = (
+    orderNumber: string,
+    update: Partial<Pick<EmissionItem, 'status' | 'message' | 'numeroCompleto' | 'error'>>,
+  ) => {
+    const key = String(orderNumber || '').trim();
+    if (!key) return;
+    setEmitBoletaModal((current) => ({
+      ...current,
+      emissionItems: current.emissionItems.map((item) => (
+        item.orderNumber === key
+          ? {
+              ...item,
+              ...update,
+              numeroCompleto: update.numeroCompleto || item.numeroCompleto,
+              error: update.error ?? item.error,
+            }
+          : item
+      )),
+    }));
+  };
+
   const submitEmitBoletas = async () => {
     if (!selectedCompany || !emitBoletaModal.ventas.length || emitBoletaModal.validationErrors.length) return;
 
@@ -1463,6 +1545,7 @@ export default function FalabellaApi() {
           const venta = emitBoletaModal.ventas[i];
           const orderNumber = String(venta?.orderNumber || '');
 
+          updateEmissionItem(orderNumber, { status: 'creating', message: `Creando factura ${orderNumber}...` });
           setEmitBoletaModal((state) => ({
             ...state,
             progress: { current: i, total: emitBoletaModal.ventas.length, status: `Creando factura ${orderNumber}...` },
@@ -1502,6 +1585,11 @@ export default function FalabellaApi() {
             const facturaId = created?.id;
             if (!facturaId) throw new Error('No se obtuvo ID de factura');
 
+            updateEmissionItem(orderNumber, {
+              status: 'sending',
+              numeroCompleto: created.numeroCompleto,
+              message: `Enviando ${created.numeroCompleto} a SUNAT...`,
+            });
             setEmitBoletaModal((state) => ({
               ...state,
               progress: { current: i, total: emitBoletaModal.ventas.length, status: `Enviando factura ${created.numeroCompleto} a SUNAT...` },
@@ -1521,8 +1609,20 @@ export default function FalabellaApi() {
 
             if (accepted) {
               successCount++;
+              updateEmissionItem(orderNumber, {
+                status: 'accepted',
+                numeroCompleto: created.numeroCompleto,
+                message: `${created.numeroCompleto} aceptada por SUNAT.`,
+                error: '',
+              });
             } else {
               errorCount++;
+              updateEmissionItem(orderNumber, {
+                status: 'rejected',
+                numeroCompleto: created.numeroCompleto,
+                message: `${created.numeroCompleto} rechazada por SUNAT.`,
+                error: errorMessage,
+              });
               setEmitBoletaModal((state) => ({
                 ...state,
                 log: [...state.log, `Error ${created.numeroCompleto}: ${errorMessage}`].slice(-80),
@@ -1535,6 +1635,11 @@ export default function FalabellaApi() {
               numeroCompleto: venta.numeroCompleto || orderNumber,
               estadoSunat: 'ERROR',
               orderNumber,
+              error: errorMessage,
+            });
+            updateEmissionItem(orderNumber, {
+              status: 'rejected',
+              message: 'Error en la emisión.',
               error: errorMessage,
             });
 
@@ -1574,11 +1679,25 @@ export default function FalabellaApi() {
             : data?.status == null
               ? ''
               : JSON.stringify(data.status);
+          const progressEvent = parseEmissionProgress(status);
           setEmitBoletaModal((state) => {
             if (!state.open) return state;
             return {
               ...state,
               progress: { current: progressCurrent, total: progressTotal, status },
+              emissionItems: progressEvent
+                ? state.emissionItems.map((item) => (
+                    item.orderNumber === progressEvent.orderNumber
+                      ? {
+                          ...item,
+                          status: progressEvent.status,
+                          message: progressEvent.message,
+                          numeroCompleto: progressEvent.numeroCompleto || item.numeroCompleto,
+                          error: progressEvent.status === 'rejected' ? progressEvent.message.replace(/^Rechazada:\s*/i, '') : item.error,
+                        }
+                      : item
+                  ))
+                : state.emissionItems,
               log: status ? [...state.log, status].slice(-80) : state.log,
             };
           });
@@ -1600,7 +1719,9 @@ export default function FalabellaApi() {
           outputDir,
         }, emitBoletaModal.ventas);
 
-        const success = Boolean(result?.success);
+        const workflowResult = result?.result || result;
+        const rejectedCount = Number(workflowResult?.rechazadas || 0);
+        const success = Boolean(result?.success) && rejectedCount === 0;
         const resultError = typeof result?.error === 'string'
           ? result.error
           : result?.error
@@ -1610,12 +1731,37 @@ export default function FalabellaApi() {
         setEmitBoletaModal((current) => ({
           ...current,
           processing: false,
-          result,
-          error: success ? '' : resultError || 'No se pudo emitir.',
+          result: { ...result, success },
+          emissionItems: current.emissionItems.map((item) => {
+            const emitted = Array.isArray(workflowResult?.boletas)
+              ? workflowResult.boletas.find((boleta: any) => String(boleta?.orderNumber || '') === item.orderNumber)
+              : null;
+            if (!emitted) return item;
+            const estado = String(emitted.estadoSunat || '').toUpperCase();
+            const nextStatus: EmissionItemStatus = estado === 'ACEPTADO'
+              ? 'accepted'
+              : estado === 'OMITIDO'
+                ? 'skipped'
+                : 'rejected';
+            return {
+              ...item,
+              status: nextStatus,
+              numeroCompleto: emitted.numeroCompleto || item.numeroCompleto,
+              message: nextStatus === 'accepted'
+                ? `${emitted.numeroCompleto || 'Boleta'} aceptada por SUNAT.`
+                : nextStatus === 'skipped'
+                  ? String(emitted.error || 'Orden omitida.')
+                  : String(emitted.error || 'Rechazada por SUNAT.'),
+              error: nextStatus === 'rejected' ? String(emitted.error || 'Rechazada por SUNAT.') : '',
+            };
+          }),
+          error: success ? '' : resultError || `${rejectedCount || 'Algunas'} boleta(s) tuvieron errores.`,
         }));
 
-        if (success) {
-          setSelectedReadyOrders(new Set());
+        if (Boolean(result?.success)) {
+          if (success) {
+            setSelectedReadyOrders(new Set());
+          }
           await loadInvoiceFlowPrototype();
         }
       }
@@ -2518,7 +2664,7 @@ export default function FalabellaApi() {
 
       {emitBoletaModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+          <div className="flex max-h-[92vh] w-full max-w-[min(1400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl">
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div className="min-w-0">
                 <h3 className="text-base font-semibold text-foreground">
@@ -2569,6 +2715,36 @@ export default function FalabellaApi() {
                       emitBoletaModal.rows.find((row) => row.orderNumber === String(venta?.orderNumber || ''))?.invoiceKind || 'BOLETA'
                     );
                     const labelForVenta = (venta: any) => documentKindLabel(kindForVenta(venta));
+                    const emissionForVenta = (venta: any) => (
+                      emitBoletaModal.emissionItems.find((item) => item.orderNumber === String(venta?.orderNumber || ''))
+                    );
+                    const renderEmissionStatus = (item?: EmissionItem) => {
+                      const current = item || {
+                        status: 'pending' as EmissionItemStatus,
+                        message: 'Pendiente',
+                        numeroCompleto: '',
+                        error: '',
+                      };
+                      const info = emissionStatusInfo(current.status);
+                      const Icon = info.icon;
+                      const spinning = current.status === 'creating' || current.status === 'sending';
+                      return (
+                        <div className="min-w-0">
+                          <span className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${info.className}`}>
+                            <Icon className={`h-3.5 w-3.5 ${spinning ? 'animate-spin' : ''}`} />
+                            {info.label}
+                          </span>
+                          {current.numeroCompleto && (
+                            <p className="mt-1 truncate font-mono text-xs text-foreground">{current.numeroCompleto}</p>
+                          )}
+                          {current.error ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-red-700" title={current.error}>{current.error}</p>
+                          ) : current.message && current.message !== 'Pendiente' ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={current.message}>{current.message}</p>
+                          ) : null}
+                        </div>
+                      );
+                    };
                     const renderItems = (venta: any) => (
                       <div className="rounded-xl border border-border bg-background">
                         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -2607,18 +2783,20 @@ export default function FalabellaApi() {
                       const orderNumber = String(venta.orderNumber || '');
                       const orderWarnings = emitBoletaModal.warningsByOrder[orderNumber] || [];
                       const documentLabel = labelForVenta(venta);
+                      const emissionItem = emissionForVenta(venta);
                       return (
                         <div className="space-y-4">
                           <div className="overflow-hidden rounded-xl border border-border bg-background">
-                            <div className="grid grid-cols-[150px_135px_minmax(280px,1fr)_100px_130px_120px] items-center gap-3 bg-muted/30 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                            <div className="grid grid-cols-[minmax(120px,0.9fr)_minmax(108px,0.65fr)_minmax(180px,1.6fr)_72px_minmax(88px,0.6fr)_minmax(128px,0.85fr)_minmax(86px,0.6fr)] items-center gap-3 bg-muted/30 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                               <div>Orden</div>
                               <div>Fecha emisión</div>
                               <div>Cliente</div>
                               <div className="text-center">Items</div>
                               <div className="text-right">Total</div>
+                              <div>SUNAT</div>
                               <div className="text-right">Preview</div>
                             </div>
-                            <div className="grid grid-cols-[150px_135px_minmax(280px,1fr)_100px_130px_120px] items-center gap-3 px-4 py-4 text-sm">
+                            <div className="grid grid-cols-[minmax(120px,0.9fr)_minmax(108px,0.65fr)_minmax(180px,1.6fr)_72px_minmax(88px,0.6fr)_minmax(128px,0.85fr)_minmax(86px,0.6fr)] items-center gap-3 px-4 py-4 text-sm">
                               <div className="font-mono text-xs text-foreground">{venta.orderNumber || '-'}</div>
                               <div className="text-foreground">{venta.fechaEmision || '-'}</div>
                               <div>
@@ -2646,6 +2824,7 @@ export default function FalabellaApi() {
                                 </button>
                               </div>
                               <div className="text-right font-semibold tabular-nums text-foreground">{money(Number(venta.total || 0))}</div>
+                              <div>{renderEmissionStatus(emissionItem)}</div>
                               <div className="text-right">
                                 <button
                                   type="button"
@@ -2679,13 +2858,14 @@ export default function FalabellaApi() {
 
                     return (
                       <div className="overflow-x-auto rounded-xl border border-border bg-background">
-                        <div className="min-w-[860px]">
-                          <div className="grid grid-cols-[155px_130px_minmax(260px,1fr)_100px_120px_115px] gap-3 bg-muted/30 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        <div className="w-full min-w-[900px]">
+                          <div className="grid grid-cols-[minmax(120px,0.9fr)_minmax(108px,0.65fr)_minmax(180px,1.6fr)_72px_minmax(88px,0.6fr)_minmax(128px,0.85fr)_minmax(86px,0.6fr)] gap-3 bg-muted/30 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                             <div>Orden</div>
                             <div>Fecha emisión</div>
                             <div>Cliente</div>
                             <div className="text-center">Items</div>
                             <div className="text-right">Total</div>
+                            <div>SUNAT</div>
                             <div className="text-right">Preview</div>
                           </div>
                           {emitBoletaModal.ventas.map((venta) => {
@@ -2693,6 +2873,7 @@ export default function FalabellaApi() {
                             const orderWarnings = emitBoletaModal.warningsByOrder[orderNumber] || [];
                             const expanded = !!emitBoletaModal.expandedOrders[orderNumber];
                             const documentLabel = labelForVenta(venta);
+                            const emissionItem = emissionForVenta(venta);
                             const toggleExpanded = () => setEmitBoletaModal((current) => ({
                               ...current,
                               expandedOrders: {
@@ -2702,7 +2883,7 @@ export default function FalabellaApi() {
                             }));
                             return (
                               <div key={orderNumber} className="border-t border-border/70">
-                                <div className="grid grid-cols-[155px_130px_minmax(260px,1fr)_100px_120px_115px] items-center gap-3 px-4 py-3 text-sm">
+                                <div className="grid grid-cols-[minmax(120px,0.9fr)_minmax(108px,0.65fr)_minmax(180px,1.6fr)_72px_minmax(88px,0.6fr)_minmax(128px,0.85fr)_minmax(86px,0.6fr)] items-center gap-3 px-4 py-3 text-sm">
                                   <div className="font-mono text-xs text-foreground">{venta.orderNumber || '-'}</div>
                                   <div className="text-foreground">{venta.fechaEmision || '-'}</div>
                                   <div>
@@ -2734,6 +2915,7 @@ export default function FalabellaApi() {
                                     </button>
                                   </div>
                                   <div className="text-right tabular-nums text-foreground">{money(Number(venta.total || 0))}</div>
+                                  <div>{renderEmissionStatus(emissionItem)}</div>
                                   <div className="text-right">
                                     <button
                                       type="button"
@@ -2797,43 +2979,43 @@ export default function FalabellaApi() {
                     </div>
                   )}
 
-                  {emitBoletaModal.result?.success && (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  {emitBoletaModal.result && (
+                    <div className={`rounded-xl border p-4 text-sm ${
+                      emitBoletaModal.result?.success
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-900'
+                    }`}>
                       {(() => {
-                        const boletas = Array.isArray(emitBoletaModal.result?.result?.boletas)
-                          ? emitBoletaModal.result.result.boletas
+                        const workflowResult = emitBoletaModal.result?.result || emitBoletaModal.result;
+                        const boletas = Array.isArray(workflowResult?.boletas)
+                          ? workflowResult.boletas
                           : [];
-                        const total = Number(emitBoletaModal.result?.result?.total || boletas.length || emitBoletaModal.ventas.length || 0);
-                        const exitosas = Number(emitBoletaModal.result?.result?.exitosas || boletas.filter((b: any) => String(b?.estadoSunat || '').toUpperCase() === 'ACEPTADO').length || 0);
-                        const rechazadas = Number(emitBoletaModal.result?.result?.rechazadas || 0);
+                        const total = Number(workflowResult?.total || boletas.length || emitBoletaModal.ventas.length || 0);
+                        const exitosas = Number(workflowResult?.exitosas || boletas.filter((b: any) => String(b?.estadoSunat || '').toUpperCase() === 'ACEPTADO').length || 0);
+                        const rechazadas = Number(workflowResult?.rechazadas || 0);
                         const failedBoletas = boletas.filter((boleta: any) => {
                           const estado = String(boleta?.estadoSunat || '').toUpperCase();
                           return Boolean(boleta?.error) || (estado && estado !== 'ACEPTADO' && estado !== 'OMITIDO');
                         });
-                        const first = boletas[0] || {};
-                        const summaryNumero = first.summaryNumero || first.summaryId || '';
-                        const summaryTicket = first.summaryTicket || '';
-                        const summaryEstado = first.summaryEstado || first.estadoSunat || 'PROCESADO';
                         return (
                           <>
-                            <p className="font-medium">Emisión finalizada</p>
+                            <p className="font-medium">
+                              {emitBoletaModal.result?.success ? 'Emisión individual finalizada' : 'Emisión individual finalizada con errores'}
+                            </p>
                             <div className="mt-2 grid gap-2 sm:grid-cols-3">
                               <div>
-                                <p className="text-xs text-emerald-700/80">Boletas</p>
+                                <p className="text-xs opacity-80">Documentos</p>
                                 <p className="font-semibold">{exitosas} aceptada(s){rechazadas ? ` · ${rechazadas} rechazada(s)` : ''} / {total}</p>
                               </div>
                               <div>
-                                <p className="text-xs text-emerald-700/80">Resumen diario</p>
-                                <p className="font-mono text-sm">{summaryNumero || '-'}</p>
+                                <p className="text-xs opacity-80">Modo</p>
+                                <p className="font-semibold">1x1 individual</p>
                               </div>
                               <div>
-                                <p className="text-xs text-emerald-700/80">Estado SUNAT</p>
-                                <p className="font-semibold">{String(summaryEstado)}</p>
+                                <p className="text-xs opacity-80">Estado</p>
+                                <p className="font-semibold">{emitBoletaModal.result?.success ? 'Completado' : 'Revisar rechazos'}</p>
                               </div>
                             </div>
-                            {summaryTicket && (
-                              <p className="mt-2 text-xs text-emerald-700/80">Ticket: <span className="font-mono text-emerald-900">{summaryTicket}</span></p>
-                            )}
                             {failedBoletas.length > 0 && (
                               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">
                                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700">Detalle de fallas</p>
@@ -2866,7 +3048,9 @@ export default function FalabellaApi() {
               <div className="text-xs text-muted-foreground">
                 {emitBoletaModal.result?.success
                   ? `Este modal se cerrará en ${emitCloseCountdown || 5} segundo${(emitCloseCountdown || 5) === 1 ? '' : 's'}.`
-                  : 'Fecha de emisión: fecha de creación de la venta en Falabella.'}
+                  : emitBoletaModal.result
+                    ? 'Revisa el estado y el motivo por cada documento emitido.'
+                    : 'Fecha de emisión: fecha de creación de la venta en Falabella.'}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -2877,7 +3061,7 @@ export default function FalabellaApi() {
                 >
                   {emitBoletaModal.result?.success ? 'Cerrar ahora' : 'Cerrar'}
                 </button>
-                {!emitBoletaModal.result?.success && (
+                {!emitBoletaModal.result && (
                   <button
                     type="button"
                     onClick={submitEmitBoletas}
