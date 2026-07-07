@@ -815,7 +815,10 @@ export default function FalabellaApi() {
   const [selectedReadyOrders, setSelectedReadyOrders] = useState<Set<string>>(() => new Set());
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
-  const falabellaProductionMode = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase().startsWith('prod');
+  const falabellaSunatEnv = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase();
+  const falabellaProductionMode = falabellaSunatEnv
+    ? falabellaSunatEnv.startsWith('prod')
+    : !(import.meta as any).env?.DEV;
   const [invoiceFlow, setInvoiceFlow] = useState<InvoiceFlowState>({
     loading: false,
     error: '',
