@@ -48,9 +48,23 @@ function Tooltip({ content, children }: { content: React.ReactNode; children: Re
   );
 }
 
+function sunatReason(raw?: string): string {
+  if (!raw) return '';
+  let msg = raw;
+  try {
+    const parsed = JSON.parse(raw);
+    msg = parsed.message || parsed.error || parsed.description || raw;
+  } catch { /* texto plano */ }
+  return String(msg)
+    .replace(/&#243;/g, 'ó')
+    .replace(/&#[0-9]+;/g, '')
+    .replace(/\[Paso[^\]]*\]\s*/g, '')
+    .trim();
+}
+
 // Celda de estado del documento local: ícono por estado + tooltip shadcn.
 // El refresh solo aparece si NO está aceptado (ya aceptado = estado final).
-function DocumentStatusCell({ label, status, boletaId, facturaId }: { label: string; status: string; boletaId?: number; facturaId?: number }) {
+function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { label: string; status: string; reason?: string; boletaId?: number; facturaId?: number }) {
   const [current, setCurrent] = useState(status);
   const [refreshing, setRefreshing] = useState(false);
   const s = String(current || '').toUpperCase();
@@ -69,10 +83,11 @@ function DocumentStatusCell({ label, status, boletaId, facturaId }: { label: str
     setRefreshing(false);
   };
 
+  const readableReason = sunatReason(reason);
   const view = accepted
     ? { Icon: CheckCircle2, color: 'text-emerald-600', title: 'Aceptado por SUNAT' }
     : s === 'RECHAZADO'
-    ? { Icon: XCircle, color: 'text-red-600', title: 'Rechazado por SUNAT' }
+    ? { Icon: XCircle, color: 'text-red-600', title: readableReason || 'Rechazado por SUNAT' }
     : { Icon: AlertCircle, color: 'text-amber-500', title: `${current || 'Enviado'} · pendiente de confirmación en SUNAT` };
   const Icon = view.Icon;
 
@@ -180,6 +195,7 @@ type ResolvedDocumentOption = {
   invoiceType: InvoiceKind;
   pdfPath: string;
   estadoSunat?: string;
+  respuestaSunat?: string;
   falabellaPdfUploadedAt?: string;
 };
 
@@ -191,6 +207,7 @@ type ResolvedDocumentResponse = {
     fechaEmision: string;
     pdfPath: string;
     estadoSunat?: string;
+    respuestaSunat?: string;
     falabellaPdfUploadedAt?: string;
     total?: string;
     cliente?: string;
@@ -205,6 +222,7 @@ type ResolvedDocumentResponse = {
     pdfPath: string;
     estado?: string;
     estadoSunat?: string;
+    respuestaSunat?: string;
     total?: string;
     cliente?: string;
     clienteDocumento?: string;
@@ -218,6 +236,7 @@ type ResolvedDocumentResponse = {
     fechaEmision: string;
     pdfPath: string;
     estadoSunat?: string;
+    respuestaSunat?: string;
   } | null;
   options: ResolvedDocumentOption[];
   defaultKind: InvoiceKind;
@@ -349,6 +368,7 @@ type InvoiceFlowRow = {
   actionLabel: string;
   documentLabel: string;
   documentStatus: string;
+  documentReason: string;
   documentKind?: InvoiceKind;
   documentSource?: DocumentSource;
   documentId?: number;
@@ -1618,6 +1638,7 @@ export default function FalabellaApi() {
                 invoiceType: 'BOLETA' as InvoiceKind,
                 pdfPath: resolved.boleta.pdfPath,
                 estadoSunat: resolved.boleta.estadoSunat,
+                respuestaSunat: resolved.boleta.respuestaSunat,
                 falabellaPdfUploadedAt: resolved.boleta.falabellaPdfUploadedAt,
               }
             : null)
@@ -1631,6 +1652,7 @@ export default function FalabellaApi() {
                 invoiceType: 'NOTA_DE_CREDITO' as InvoiceKind,
                 pdfPath: resolved.creditNote.pdfPath,
                 estadoSunat: resolved.creditNote.estadoSunat,
+                respuestaSunat: resolved.creditNote.respuestaSunat,
               }
             : null);
         const hasDocument = Boolean(existingOption);
@@ -1639,6 +1661,7 @@ export default function FalabellaApi() {
           || resolved?.creditNote?.numeroCompleto
           || '-';
         const documentStatus = existingOption?.estadoSunat || resolved?.boleta?.estadoSunat || resolved?.factura?.estadoSunat || resolved?.creditNote?.estadoSunat || '';
+        const documentReason = existingOption?.respuestaSunat || resolved?.boleta?.respuestaSunat || resolved?.factura?.respuestaSunat || resolved?.creditNote?.respuestaSunat || '';
         let bucket: InvoiceFlowBucket;
         let actionLabel: string;
 
@@ -1671,6 +1694,7 @@ export default function FalabellaApi() {
           actionLabel,
           documentLabel,
           documentStatus,
+          documentReason,
           documentKind: existingOption?.kind,
           documentSource: existingOption?.source,
           documentId: existingOption?.boletaId || existingOption?.facturaId || existingOption?.creditNoteId,
@@ -2303,6 +2327,7 @@ export default function FalabellaApi() {
                               <DocumentStatusCell
                                 label={row.documentLabel}
                                 status={row.documentStatus}
+                                reason={row.documentReason}
                                 boletaId={row.documentKind === 'BOLETA' ? row.documentId : undefined}
                                 facturaId={row.documentKind === 'FACTURA' ? row.documentId : undefined}
                               />

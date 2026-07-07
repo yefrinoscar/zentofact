@@ -85,6 +85,205 @@ function normalizeWebhook(webhook: any) {
   };
 }
 
+function asArray(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return [value];
+  return [];
+}
+
+function readPath(value: any, path: string[]) {
+  let current = value;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object' || !(segment in current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function normalizeGetProductsResult(data: any): { totalCount: number | null; products: any[] } {
+  const candidates = [
+    readPath(data, ['SuccessResponse', 'Body', 'Products', 'Product']),
+    readPath(data, ['SuccessResponse', 'Body', 'Product']),
+    readPath(data, ['Products', 'Product']),
+    readPath(data, ['Product']),
+    readPath(data, ['products']),
+    readPath(data, ['data', 'products']),
+  ];
+  const products = candidates.flatMap(asArray);
+  const totalCandidates = [
+    readPath(data, ['SuccessResponse', 'Head', 'TotalCount']),
+    readPath(data, ['SuccessResponse', 'Body', 'TotalCount']),
+    readPath(data, ['Head', 'TotalCount']),
+    readPath(data, ['totalCount']),
+    readPath(data, ['data', 'totalCount']),
+  ];
+  const totalCount = totalCandidates.map(Number).find((value) => Number.isFinite(value)) ?? null;
+  return { totalCount, products };
+}
+
+function productImages(product: any): string[] {
+  const raw = product?.Images?.Image ?? product?.Images ?? product?.ProductData?.Images?.Image ?? product?.ProductData?.Image ?? product?.Image;
+  return [product?.MainImage, ...asArray(raw)]
+    .map((image) => (typeof image === 'string' ? image : image?.Url || image?.URL || image?.url || image?.Image))
+    .map((image) => String(image || '').trim())
+    .filter(Boolean);
+}
+
+function productStatus(product: any): string {
+  const status = product?.Status ?? product?.ProductStatus ?? product?.SellerStatus ?? product?.VariationStatus;
+  if (Array.isArray(status)) return status.map((entry) => String(entry?.Status || entry || '')).filter(Boolean).join(', ');
+  if (status && typeof status === 'object') return String(status.Status || status.Name || JSON.stringify(status));
+  return String(status || '');
+}
+
+function normalizeProduct(product: any) {
+  const productData = product?.ProductData || {};
+  const businessUnits = asArray(product?.BusinessUnits?.BusinessUnit ?? product?.BusinessUnits).map((unit) => ({
+    name: String(unit?.BusinessUnit ?? unit?.Name ?? '').trim(),
+    operatorCode: String(unit?.OperatorCode ?? '').trim(),
+    price: unit?.Price ?? null,
+    specialPrice: unit?.SpecialPrice ?? null,
+    stock: unit?.Stock ?? null,
+    status: String(unit?.Status ?? '').trim(),
+    isPublished: String(unit?.IsPublished ?? '').trim(),
+    raw: unit,
+  }));
+  const primaryUnit = businessUnits[0] || {};
+  const sellerSku = String(product?.SellerSku ?? product?.SellerSKU ?? product?.SkuSeller ?? product?.SkuSellerList ?? productData?.SellerSku ?? '').trim();
+  const shopSku = String(product?.ShopSku ?? product?.ShopSKU ?? product?.Sku ?? productData?.ShopSku ?? '').trim();
+  const name = String(product?.Name ?? product?.ProductName ?? productData?.Name ?? productData?.ProductName ?? sellerSku ?? '').trim();
+  const quantity = product?.Quantity ?? product?.Available ?? product?.Stock ?? product?.StockAvailable ?? productData?.Quantity ?? primaryUnit.stock ?? null;
+  const price = product?.Price ?? product?.ProductData?.Price ?? product?.SpecialPrice ?? primaryUnit.price ?? null;
+  const salePrice = product?.SalePrice ?? product?.SpecialPrice ?? product?.ProductData?.SalePrice ?? primaryUnit.specialPrice ?? null;
+  const variations = asArray(product?.Variations?.Variation ?? product?.Variations ?? product?.Variation);
+  return {
+    sellerSku,
+    shopSku,
+    name,
+    brand: String(product?.Brand ?? productData?.Brand ?? '').trim(),
+    primaryCategory: String(product?.PrimaryCategory ?? productData?.PrimaryCategory ?? '').trim(),
+    price,
+    salePrice,
+    quantity,
+    status: productStatus(product) || primaryUnit.status || product?.QCStatus || '',
+    images: productImages(product),
+    productId: String(product?.ProductId ?? product?.ProductID ?? product?.Id ?? '').trim(),
+    url: String(product?.Url ?? product?.URL ?? '').trim(),
+    contentScore: product?.ContentScore ?? null,
+    qcStatus: String(product?.QCStatus ?? '').trim(),
+    createdAt: String(product?.CreatedAt ?? product?.Created ?? '').trim(),
+    updatedAt: String(product?.UpdatedAt ?? product?.Updated ?? '').trim(),
+    variationsCount: variations.length,
+    businessUnits,
+    raw: product,
+  };
+}
+
+function normalizeFeed(feed: any) {
+  return {
+    feedId: String(feed?.Feed ?? feed?.FeedId ?? feed?.FeedID ?? feed?.RequestId ?? feed?.id ?? '').trim(),
+    action: String(feed?.Action ?? feed?.FeedAction ?? feed?.RequestAction ?? '').trim(),
+    status: String(feed?.Status ?? feed?.FeedStatus ?? '').trim(),
+    source: String(feed?.Source ?? '').trim(),
+    totalRecords: feed?.TotalRecords ?? feed?.Total ?? null,
+    processedRecords: feed?.ProcessedRecords ?? feed?.Processed ?? null,
+    failedRecords: feed?.FailedRecords ?? feed?.Failed ?? null,
+    createdAt: String(feed?.CreatedAt ?? feed?.CreationDate ?? feed?.Created ?? '').trim(),
+    updatedAt: String(feed?.UpdatedAt ?? feed?.Updated ?? '').trim(),
+    raw: feed,
+  };
+}
+
+function extractFeeds(data: any): any[] {
+  const candidates = [
+    readPath(data, ['SuccessResponse', 'Body', 'FeedList', 'Feed']),
+    readPath(data, ['SuccessResponse', 'Body', 'Feeds', 'Feed']),
+    readPath(data, ['SuccessResponse', 'Body', 'Feed']),
+    readPath(data, ['FeedList', 'Feed']),
+    readPath(data, ['Feeds', 'Feed']),
+    readPath(data, ['Feed']),
+    readPath(data, ['feeds']),
+  ];
+  return candidates.flatMap(asArray);
+}
+
+function extractFeedStatus(data: any): any {
+  return readPath(data, ['SuccessResponse', 'Body', 'FeedDetail'])
+    || readPath(data, ['SuccessResponse', 'Body', 'Feed'])
+    || readPath(data, ['FeedDetail'])
+    || readPath(data, ['Feed'])
+    || data;
+}
+
+function productCreateXml(input: any) {
+  const productData = input.productData || {};
+  const extraAttributes = input.extraAttributes || {};
+  const productDataXml = Object.entries({
+    ConditionType: input.conditionType || productData.ConditionType || 'Nuevo',
+    PackageHeight: input.packageHeight || productData.PackageHeight,
+    PackageWidth: input.packageWidth || productData.PackageWidth,
+    PackageLength: input.packageLength || productData.PackageLength,
+    PackageWeight: input.packageWeight || productData.PackageWeight,
+    ...productData,
+  })
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => `      <${key}>${escXml(value)}</${key}>`)
+    .join('\n');
+  const extraXml = Object.entries(extraAttributes)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => `    <${key}>${escXml(value)}</${key}>`)
+    .join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Request>
+  <Product>
+    <SellerSku>${escXml(input.sellerSku)}</SellerSku>
+    ${input.parentSku ? `<ParentSku>${escXml(input.parentSku)}</ParentSku>` : ''}
+    <Name>${escXml(input.name)}</Name>
+    <PrimaryCategory>${escXml(input.primaryCategory)}</PrimaryCategory>
+    <Description><![CDATA[${String(input.description || '').replaceAll(']]>', ']]]]><![CDATA[>')}]]></Description>
+    <Brand>${escXml(input.brand)}</Brand>
+    ${input.productId ? `<ProductId>${escXml(input.productId)}</ProductId>` : ''}
+${extraXml}
+    <BusinessUnits>
+      <BusinessUnit>
+        <OperatorCode>${escXml(input.operatorCode || 'fape')}</OperatorCode>
+        <Price>${escXml(input.price)}</Price>
+        ${input.specialPrice ? `<SpecialPrice>${escXml(input.specialPrice)}</SpecialPrice>` : ''}
+        ${input.specialFromDate ? `<SpecialFromDate>${escXml(input.specialFromDate)}</SpecialFromDate>` : ''}
+        ${input.specialToDate ? `<SpecialToDate>${escXml(input.specialToDate)}</SpecialToDate>` : ''}
+        <Stock>${escXml(input.stock)}</Stock>
+        <Status>${escXml(input.status || 'active')}</Status>
+      </BusinessUnit>
+    </BusinessUnits>
+    <ProductData>
+${productDataXml}
+    </ProductData>
+  </Product>
+</Request>`;
+}
+
+function requireProductCreateFields(input: any) {
+  const required = [
+    ['sellerSku', 'SKU del seller'],
+    ['name', 'Nombre'],
+    ['primaryCategory', 'Categoria principal'],
+    ['description', 'Descripcion'],
+    ['brand', 'Marca'],
+    ['operatorCode', 'OperatorCode'],
+    ['price', 'Precio'],
+    ['stock', 'Stock'],
+    ['status', 'Estado'],
+    ['packageHeight', 'Alto paquete'],
+    ['packageWidth', 'Ancho paquete'],
+    ['packageLength', 'Largo paquete'],
+    ['packageWeight', 'Peso paquete'],
+  ];
+  const missing = required.filter(([key]) => String(input?.[key] ?? '').trim() === '').map(([, label]) => label);
+  if (missing.length) return `Faltan campos: ${missing.join(', ')}.`;
+  if (String(input.description || '').trim().length < 6) return 'La descripcion debe tener al menos 6 caracteres.';
+  return '';
+}
+
 export const FALABELLA_WEBHOOK_EVENTS = [
   'onOrderCreated',
   'onOrderItemsStatusChanged',
@@ -108,6 +307,144 @@ export async function falabellaGetOrders(payload: { companyId: number; filters: 
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const normalized = normalizeGetOrdersResult(response.data);
   return { ok: response.ok, status: response.status, url: response.url, totalCount: normalized.totalCount, orders: normalized.orders };
+}
+
+export async function falabellaGetProducts(payload: {
+  companyId: number;
+  filters?: {
+    search?: string;
+    filter?: string;
+    limit?: number;
+    offset?: number;
+    skuSellerList?: string[];
+    createdAfter?: string;
+    createdBefore?: string;
+    updatedAfter?: string;
+    updatedBefore?: string;
+    globalIdentifier?: number;
+    includeTotal?: boolean;
+    countOnly?: boolean;
+  };
+}) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const filters = payload.filters || {};
+  const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 1000);
+  const offset = Math.max(Number(filters.offset || 0), 0);
+  const skuSellerList = (filters.skuSellerList || []).map((sku) => String(sku).trim()).filter(Boolean);
+  const client = new FalabellaApiClient({ userId: company.falabellaApiUserId!, apiKey: company.falabellaApiKey!, version: '1.0', defaultFormat: 'JSON' });
+  const response = await client.call({
+    action: 'GetProducts',
+    params: {
+      Search: filters.search?.trim() || undefined,
+      Filter: filters.filter || 'all',
+      Limit: limit,
+      Offset: offset,
+      SkuSellerList: skuSellerList.length ? JSON.stringify(skuSellerList) : undefined,
+      CreatedAfter: filters.createdAfter || undefined,
+      CreatedBefore: filters.createdBefore || undefined,
+      UpdatedAfter: filters.updatedAfter || undefined,
+      UpdatedBefore: filters.updatedBefore || undefined,
+      GlobalIdentifier: filters.globalIdentifier,
+    },
+  });
+  const error = getFalabellaError(response.data);
+  if (error) return { ok: response.ok, status: response.status, url: response.url, error };
+  const normalized = normalizeGetProductsResult(response.data);
+  let totalCount = normalized.totalCount;
+  if (filters.includeTotal || filters.countOnly) {
+    totalCount = 0;
+    const countLimit = 1000;
+    for (let countOffset = 0; countOffset < 20000; countOffset += countLimit) {
+      const countResponse = await client.call({
+        action: 'GetProducts',
+        params: {
+          Search: filters.search?.trim() || undefined,
+          Filter: filters.filter || 'all',
+          Limit: countLimit,
+          Offset: countOffset,
+          SkuSellerList: skuSellerList.length ? JSON.stringify(skuSellerList) : undefined,
+          CreatedAfter: filters.createdAfter || undefined,
+          CreatedBefore: filters.createdBefore || undefined,
+          UpdatedAfter: filters.updatedAfter || undefined,
+          UpdatedBefore: filters.updatedBefore || undefined,
+          GlobalIdentifier: filters.globalIdentifier,
+        },
+      });
+      const countError = getFalabellaError(countResponse.data);
+      if (countError) break;
+      const countNormalized = normalizeGetProductsResult(countResponse.data);
+      totalCount += countNormalized.products.length;
+      if (countNormalized.products.length < countLimit) break;
+    }
+  }
+  if (filters.countOnly) {
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: response.url,
+      totalCount,
+      products: [],
+    };
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    url: response.url,
+    totalCount,
+    products: normalized.products.map(normalizeProduct),
+  };
+}
+
+export async function falabellaCreateProduct(payload: { companyId: number; product: any }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const product = payload.product || {};
+  const validationError = requireProductCreateFields(product);
+  if (validationError) return { ok: false, error: validationError };
+  const body = productCreateXml(product);
+  const response = await fetch(signedFalabellaUrl(company, 'ProductCreate'), {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/xml' },
+    body,
+  });
+  const result = await parseFalabellaResponse(response);
+  const requestId = result.data?.SuccessResponse?.Head?.RequestId || result.data?.Head?.RequestId || '';
+  return { ...result, requestId, xml: body };
+}
+
+export async function falabellaGetFeeds(payload: { companyId: number; filters?: { action?: string; status?: string; limit?: number; offset?: number } }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const filters = payload.filters || {};
+  const response = await fetch(signedFalabellaUrl(company, 'FeedList', {
+    ActionFilter: filters.action || '',
+    Status: filters.status || '',
+    Limit: String(Math.min(Math.max(Number(filters.limit || 50), 1), 1000)),
+    Offset: String(Math.max(Number(filters.offset || 0), 0)),
+  }), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+  const result = await parseFalabellaResponse(response);
+  return { ...result, feeds: extractFeeds(result.data).map(normalizeFeed) };
+}
+
+export async function falabellaGetFeedStatus(payload: { companyId: number; feedId: string }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const feedId = String(payload.feedId || '').trim();
+  if (!feedId) return { ok: false, error: 'Falta FeedID.' };
+  const response = await fetch(signedFalabellaUrl(company, 'FeedStatus', { FeedID: feedId }), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+  const result = await parseFalabellaResponse(response);
+  return { ...result, feed: normalizeFeed(extractFeedStatus(result.data)) };
 }
 
 export async function falabellaGetWebhooks(payload: { companyId: number; webhookIds?: string[] }) {
@@ -305,15 +642,15 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
   const options: Array<any> = [];
   if (boleta) {
     const falabellaPdfUpload = getBoletaFalabellaPdfUpload(boleta);
-    options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '' });
+    options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '' });
   }
   if (factura) {
     // local_factura → el server puede auto-generar el PDF desde la factura local aceptada (igual que boleta).
     const facturaAceptada = String(factura.estadoSunat || '').toUpperCase() === 'ACEPTADO';
-    options.push({ kind: 'FACTURA', source: facturaAceptada ? 'local_factura' : 'manual', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || '', estadoSunat: factura.estadoSunat || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) });
+    options.push({ kind: 'FACTURA', source: facturaAceptada ? 'local_factura' : 'manual', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) });
   }
   if (creditNote) {
-    options.push({ kind: 'NOTA_DE_CREDITO', source: 'local_credit_note', creditNoteId: creditNote.id, invoiceNumber: creditNote.numeroCompleto, invoiceDate: creditNote.fechaEmision, invoiceType: 'NOTA_DE_CREDITO', pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat });
+    options.push({ kind: 'NOTA_DE_CREDITO', source: 'local_credit_note', creditNoteId: creditNote.id, invoiceNumber: creditNote.numeroCompleto, invoiceDate: creditNote.fechaEmision, invoiceType: 'NOTA_DE_CREDITO', pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '' });
   }
   if (!factura) {
     options.push({ kind: 'FACTURA', source: 'manual', invoiceNumber: '', invoiceDate: '', invoiceType: 'FACTURA', pdfPath: '', estadoSunat: '' });
@@ -321,9 +658,9 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
 
   return {
     orderNumber: payload.orderNumber,
-    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || '' } : null,
-    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || '', estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) } : null,
-    creditNote: creditNote ? { id: creditNote.id, numeroCompleto: creditNote.numeroCompleto, fechaEmision: creditNote.fechaEmision, pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat } : null,
+    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || '' } : null,
+    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || '', estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) } : null,
+    creditNote: creditNote ? { id: creditNote.id, numeroCompleto: creditNote.numeroCompleto, fechaEmision: creditNote.fechaEmision, pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '' } : null,
     options,
     defaultKind: boleta ? 'BOLETA' : factura ? 'FACTURA' : creditNote ? 'NOTA_DE_CREDITO' : 'FACTURA',
   };

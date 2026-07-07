@@ -1,12 +1,17 @@
 import { ipcMain } from 'electron';
 import {
-  falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaResolveOrderIds,
+  falabellaGetOrders, falabellaGetProducts, falabellaCreateProduct, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaResolveOrderIds,
+  falabellaGetFeeds, falabellaGetFeedStatus,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
 } from '@zentofact/core';
 
 // Handlers delgados: toda la lógica vive en @zentofact/core (compartida con el server web).
 export function registerFalabellaApiHandlers() {
   ipcMain.handle('falabella-api:get-orders', (_e, payload) => falabellaGetOrders(payload));
+  ipcMain.handle('falabella-api:get-products', (_e, payload) => falabellaGetProducts(payload));
+  ipcMain.handle('falabella-api:create-product', (_e, payload) => falabellaCreateProduct(payload));
+  ipcMain.handle('falabella-api:get-feeds', (_e, payload) => falabellaGetFeeds(payload));
+  ipcMain.handle('falabella-api:get-feed-status', (_e, payload) => falabellaGetFeedStatus(payload));
   ipcMain.handle('falabella-api:get-order-items', (_e, payload) => falabellaGetOrderItems(payload));
   ipcMain.handle('falabella-api:build-boleta-venta', (_e, payload) => falabellaBuildBoletaVenta(payload));
   ipcMain.handle('falabella-api:resolve-order-ids', (_e, payload) => falabellaResolveOrderIds(payload));

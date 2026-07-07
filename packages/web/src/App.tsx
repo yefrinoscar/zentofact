@@ -9,6 +9,7 @@ import CreditNotes from './routes/CreditNotes';
 import DailySummaries from './routes/DailySummaries';
 import Settings from './routes/Settings';
 import FalabellaApi from './routes/FalabellaApi';
+import Productos from './routes/Productos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
@@ -35,6 +36,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/falabella-api': {
     title: 'Gestor de Sellers',
     subtitle: 'Consulta órdenes por empresa usando las credenciales Seller API guardadas.',
+  },
+  '/productos': {
+    title: 'Productos',
+    subtitle: 'Consulta productos publicados en Falabella por seller, SKU y estado.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -242,6 +247,7 @@ function AppLayout() {
               <Route path="/workflow" element={<Workflow />} />
               <Route path="/credit-notes" element={<CreditNotes />} />
               <Route path="/falabella-api" element={<FalabellaApi />} />
+              <Route path="/productos" element={<Productos />} />
               <Route path="/auto-emision" element={<AutoEmision />} />
               <Route path="/documentos" element={<Documentos />} />
               <Route path="/documentos/nuevo" element={<IndividualInvoice />} />

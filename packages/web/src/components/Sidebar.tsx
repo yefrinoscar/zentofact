@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   MoreVertical,
   LogOut,
+  PackageSearch,
   Zap,
   ReceiptText,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ import falabellaIcon from '../assets/falabella.png';
 const navItems = [
   { to: '/documentos', icon: ReceiptText, img: null, label: 'Documentos' },
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string | null, label: 'Falabella' },
+  { to: '/productos', icon: PackageSearch, img: null, label: 'Productos' },
   { to: '/auto-emision', icon: Zap, img: null, label: 'Automatización' },
   { to: '/credit-notes', icon: FileMinus2, img: null, label: 'Notas de crédito' },
   { to: '/summaries', icon: ClipboardList, img: null, label: 'Resúmenes' },

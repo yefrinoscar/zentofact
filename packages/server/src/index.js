@@ -179,6 +179,22 @@ app.get('/falabella/:companyId/orders', async (c) => {
   try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetOrders({ companyId: Number(c.req.param('companyId')), filters })); }
   catch (e) { return fail(c, e); }
 });
+app.get('/falabella/:companyId/products', async (c) => {
+  try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetProducts({ companyId: Number(c.req.param('companyId')), filters })); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/products', async (c) => {
+  try { const product = await c.req.json(); return ok(c, await core.falabellaCreateProduct({ companyId: Number(c.req.param('companyId')), product })); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/falabella/:companyId/feeds', async (c) => {
+  try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetFeeds({ companyId: Number(c.req.param('companyId')), filters })); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/falabella/:companyId/feeds/:feedId', async (c) => {
+  try { return ok(c, await core.falabellaGetFeedStatus({ companyId: Number(c.req.param('companyId')), feedId: c.req.param('feedId') })); }
+  catch (e) { return fail(c, e); }
+});
 app.get('/falabella/:companyId/orders/:orderId/items', async (c) => {
   try { return ok(c, await core.falabellaGetOrderItems({ companyId: Number(c.req.param('companyId')), orderId: c.req.param('orderId') })); }
   catch (e) { return fail(c, e); }

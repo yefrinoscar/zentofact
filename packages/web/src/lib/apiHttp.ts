@@ -129,6 +129,10 @@ const apiHttp = {
 
   // Falabella (lógica compartida en @zentofact/core, expuesta por el server)
   falabellaApiGetOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ filters: JSON.stringify(filters) })}`),
+  falabellaApiGetProducts: (companyId: number, filters: any) => req(`/falabella/${companyId}/products${qs({ filters: JSON.stringify(filters) })}`),
+  falabellaApiCreateProduct: (companyId: number, product: any) => req(`/falabella/${companyId}/products`, { method: 'POST', body: JSON.stringify(product) }),
+  falabellaApiGetFeeds: (companyId: number, filters: any) => req(`/falabella/${companyId}/feeds${qs({ filters: JSON.stringify(filters) })}`),
+  falabellaApiGetFeedStatus: (companyId: number, feedId: string) => req(`/falabella/${companyId}/feeds/${encodeURIComponent(feedId)}`),
   falabellaApiMonthSummary: (companyId: number, month: string) => req(`/falabella/${companyId}/month-summary${qs({ month })}`),
   falabellaApiGetOrderItems: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${orderId}/items`),
   falabellaApiBuildBoletaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-boleta-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
