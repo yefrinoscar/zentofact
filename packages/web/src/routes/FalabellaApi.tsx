@@ -848,6 +848,7 @@ export default function FalabellaApi() {
   });
 
   const autoLoadKeyRef = useRef('');
+  const uploadDocumentRefreshKeyRef = useRef('');
 
   useEffect(() => {
     const className = 'app-modal-open';
@@ -864,6 +865,92 @@ export default function FalabellaApi() {
       document.body.classList.remove(className);
     };
   }, [uploadModal.open]);
+
+  useEffect(() => {
+    if (!uploadModal.open || uploadModal.loading || !selectedCompanyId || !uploadModal.order) return;
+
+    const localDocument = uploadModal.source === 'local_boleta'
+      || uploadModal.source === 'local_factura'
+      || uploadModal.source === 'local_credit_note';
+    if (!localDocument) return;
+
+    const orderNumber = String(uploadModal.order.OrderNumber || '').trim();
+    if (!orderNumber) return;
+
+    const refreshKey = [
+      selectedCompanyId,
+      orderNumber,
+      uploadModal.source,
+      uploadModal.selectedKind,
+      uploadModal.invoiceNumber,
+      uploadModal.invoiceDate,
+    ].join(':');
+    if (uploadDocumentRefreshKeyRef.current === refreshKey) return;
+    uploadDocumentRefreshKeyRef.current = refreshKey;
+
+    let cancelled = false;
+    api.falabellaApiResolveDocument(selectedCompanyId, orderNumber)
+      .then((nextResolved: ResolvedDocumentResponse) => {
+        if (cancelled) return;
+
+        setUploadModal((current) => {
+          const currentOrderNumber = String(current.order?.OrderNumber || '').trim();
+          if (!current.open || currentOrderNumber !== orderNumber) return current;
+
+          const option = nextResolved.options.find((entry) => (
+            entry.source === current.source
+            && entry.kind === current.selectedKind
+            && (current.boletaId == null || entry.boletaId === current.boletaId)
+            && (current.facturaId == null || entry.facturaId === current.facturaId)
+          )) || nextResolved.options.find((entry) => entry.kind === current.selectedKind)
+            || nextResolved.options[0];
+          const nextDoc = current.source === 'local_boleta'
+            ? nextResolved.boleta
+            : current.source === 'local_factura'
+              ? nextResolved.factura
+              : nextResolved.creditNote;
+          const nextInvoiceDate = normalizeInvoiceDate(option?.invoiceDate || nextDoc?.fechaEmision) || current.invoiceDate;
+          const nextInvoiceNumber = option?.invoiceNumber || nextDoc?.numeroCompleto || current.invoiceNumber;
+
+          if (
+            current.resolved === nextResolved
+            && current.invoiceDate === nextInvoiceDate
+            && current.invoiceNumber === nextInvoiceNumber
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            resolved: nextResolved,
+            source: option?.source || current.source,
+            boletaId: option?.boletaId ?? current.boletaId,
+            facturaId: option?.facturaId ?? current.facturaId,
+            invoiceNumber: nextInvoiceNumber,
+            invoiceDate: nextInvoiceDate,
+            invoiceType: option?.invoiceType || current.invoiceType,
+          };
+        });
+      })
+      .catch(() => {
+        // Keep the modal usable with its current data if the silent refresh fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedCompanyId,
+    uploadModal.open,
+    uploadModal.loading,
+    uploadModal.order?.OrderNumber,
+    uploadModal.source,
+    uploadModal.selectedKind,
+    uploadModal.boletaId,
+    uploadModal.facturaId,
+    uploadModal.invoiceNumber,
+    uploadModal.invoiceDate,
+  ]);
 
   useEffect(() => {
     api.listCompanies().then((list: Company[]) => {
@@ -1871,6 +1958,13 @@ export default function FalabellaApi() {
   const submitUpload = async () => {
     if (!selectedCompanyId || !uploadModal.order) return;
 
+    const localDocumentDate = normalizeInvoiceDate(uploadModal.lockedBoleta
+      ? uploadModal.resolved?.boleta?.fechaEmision
+      : uploadModal.source === 'local_factura'
+        ? uploadModal.resolved?.factura?.fechaEmision
+        : '');
+    const invoiceDateForUpload = localDocumentDate || uploadModal.invoiceDate;
+
     if (!uploadModal.lockedBoleta && !uploadModal.orderItemIds.length) {
       setUploadModal((current) => ({
         ...current,
@@ -1887,7 +1981,7 @@ export default function FalabellaApi() {
       return;
     }
 
-    if (!uploadModal.invoiceDate) {
+    if (!invoiceDateForUpload) {
       setUploadModal((current) => ({
         ...current,
         error: 'Debes indicar la fecha del documento.',
@@ -1934,7 +2028,7 @@ export default function FalabellaApi() {
             orderNumber: String(uploadModal.order?.OrderNumber || ''),
             orderId: uploadModal.order?.OrderId,
             invoiceNumber: uploadModal.invoiceNumber.trim(),
-            invoiceDate: uploadModal.invoiceDate,
+            invoiceDate: invoiceDateForUpload,
             pdfPath: uploadModal.pdfPath,
           })
         : await api.falabellaApiUploadInvoicePdf({
@@ -1942,7 +2036,7 @@ export default function FalabellaApi() {
             orderNumber: String(uploadModal.order?.OrderNumber || ''),
             orderItemIds: uploadModal.orderItemIds,
             invoiceNumber: uploadModal.invoiceNumber.trim(),
-            invoiceDate: uploadModal.invoiceDate,
+            invoiceDate: invoiceDateForUpload,
             invoiceType: uploadModal.invoiceType,
             source: uploadModal.pdfMode === 'selected_file' ? 'manual' : uploadModal.source,
             boletaId: uploadModal.pdfMode === 'auto' ? uploadModal.boletaId : undefined,
@@ -1996,6 +2090,7 @@ export default function FalabellaApi() {
   const showCleanUpload = uploadModal.lockedBoleta || (uploadModal.source === 'local_factura' && uploadModal.pdfMode === 'auto');
   const cleanDocTipo = uploadModal.lockedBoleta ? 'Boleta' : 'Factura';
   const cleanDoc = uploadModal.lockedBoleta ? uploadModal.resolved?.boleta : uploadModal.resolved?.factura;
+  const cleanDocDate = normalizeInvoiceDate(cleanDoc?.fechaEmision) || uploadModal.invoiceDate;
   const canUseLocalFile = !!selectedDocumentOption?.pdfPath;
 
   return (
@@ -3035,7 +3130,7 @@ export default function FalabellaApi() {
                           <div>
                             <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Orden</p>
                             <p className="mt-2 font-mono text-sm font-semibold text-foreground">{uploadModal.order?.OrderNumber || '-'}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">{formatDateOnly(uploadModal.invoiceDate)}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{formatDateOnly(cleanDocDate)}</p>
                           </div>
                         </div>
 
@@ -3046,7 +3141,7 @@ export default function FalabellaApi() {
                           </div>
                           <div className="rounded-lg bg-muted/35 px-4 py-3">
                             <p className="text-xs text-muted-foreground">Fecha</p>
-                            <p className="mt-1 text-sm font-medium text-foreground">{formatDateOnly(uploadModal.invoiceDate)}</p>
+                            <p className="mt-1 text-sm font-medium text-foreground">{formatDateOnly(cleanDocDate)}</p>
                           </div>
                           <div className="rounded-lg bg-muted/35 px-4 py-3">
                             <p className="text-xs text-muted-foreground">Tipo</p>
@@ -3077,7 +3172,7 @@ export default function FalabellaApi() {
                             </div>
                             <div className="flex items-center justify-between gap-4">
                               <dt className="text-muted-foreground">Fecha</dt>
-                              <dd className="text-foreground">{formatDateOnly(uploadModal.invoiceDate)}</dd>
+                              <dd className="text-foreground">{formatDateOnly(cleanDocDate)}</dd>
                             </div>
                           </dl>
                         </div>

@@ -11,6 +11,7 @@ import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
 import type { DetalleItem } from '../utils/tax-calculator';
 import { getCorrelativeBySerie } from './correlative-query.service';
+import { resolveIssueDate, withIssueDateTrace } from '../utils/issue-date';
 
 export interface CreateFacturaInput {
   company_id: number;
@@ -167,6 +168,8 @@ export async function createFactura(input: CreateFacturaInput) {
 
   const correlativo = await getNextCorrelative(input.branch_id, '01', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
+  const issueDate = resolveIssueDate(input.fecha_emision, '01');
+  const datosAdicionales = withIssueDateTrace(input.datos_adicionales, issueDate);
   const detalles = normalizeFacturaDetalles(input.detalles);
   const totals = calculateTotals(detalles);
   const ts = now();
@@ -184,7 +187,7 @@ export async function createFactura(input: CreateFacturaInput) {
     companyId: input.company_id, branchId: input.branch_id, clientId: clientRecord.id,
     tipoDocumento: '01', serie: input.serie, correlativo, numeroCompleto,
     orderNumber: input.order_number || null,
-    fechaEmision: input.fecha_emision, ublVersion: input.ubl_version || '2.1',
+    fechaEmision: issueDate.fechaEmision, ublVersion: input.ubl_version || '2.1',
     tipoOperacion: input.tipo_operacion || '0101', moneda: input.moneda || 'PEN',
     metodoEnvio: input.metodo_envio,
     valorVenta: String(totals.valorVenta), mtoOperGravadas: String(totals.mtoOperGravadas),
@@ -195,7 +198,7 @@ export async function createFactura(input: CreateFacturaInput) {
     totalImpuestos: String(totals.totalImpuestos), subTotal: String(totals.subTotal),
     mtoImpVenta: String(totals.mtoImpVenta),
     detalles, leyendas: input.leyendas || null,
-    datosAdicionales: input.datos_adicionales || null,
+    datosAdicionales,
     estadoSunat: 'PENDIENTE', usuarioCreacion: input.usuario_creacion || null,
     createdAt: ts, updatedAt: ts,
   }).returning({ id: facturas.id });
@@ -203,7 +206,7 @@ export async function createFactura(input: CreateFacturaInput) {
   return {
     id: result[0].id, companyId: input.company_id, branchId: input.branch_id,
     clientId: clientRecord.id, serie: input.serie, correlativo, numeroCompleto,
-    fechaEmision: input.fecha_emision, moneda: input.moneda || 'PEN',
+    fechaEmision: issueDate.fechaEmision, moneda: input.moneda || 'PEN',
     ...totals, detalles, leyendas: input.leyendas || [], estadoSunat: 'PENDIENTE',
   };
 }
@@ -304,6 +307,8 @@ export async function reEmitFactura(id: number) {
   const now = Math.floor(Date.now() / 1000);
   const nextCorrelativo = await getNextCorrelative(factura.branchId, '01', factura.serie, true);
   const numeroCompleto = `${factura.serie}-${nextCorrelativo}`;
+  const issueDate = resolveIssueDate(factura.fechaEmision, '01');
+  const datosAdicionales = withIssueDateTrace(factura.datosAdicionales, issueDate);
 
   // La rechazada se mantiene como evidencia del hueco (conserva el motivo), pero libera
   // la orden y pasa a REEMPLAZADO para que no vuelva a ofrecer reintento.
@@ -316,6 +321,8 @@ export async function reEmitFactura(id: number) {
     correlativo: nextCorrelativo,
     numeroCompleto,
     orderNumber: factura.orderNumber,
+    fechaEmision: issueDate.fechaEmision,
+    datosAdicionales,
     estadoSunat: 'PENDIENTE',
     respuestaSunat: null,
     xmlPath: null,

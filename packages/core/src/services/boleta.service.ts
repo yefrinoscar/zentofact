@@ -12,6 +12,7 @@ import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
 import type { DetalleItem } from '../utils/tax-calculator';
 import { getCorrelativeBySerie } from './correlative-query.service';
+import { resolveIssueDate, withIssueDateTrace } from '../utils/issue-date';
 
 export interface CreateBoletaInput {
   company_id: number;
@@ -122,6 +123,8 @@ export async function createBoleta(input: CreateBoletaInput) {
 
   const correlativo = await getNextCorrelative(input.branch_id, '03', input.serie, input.persistCorrelative !== false);
   const numeroCompleto = `${input.serie}-${correlativo}`;
+  const issueDate = resolveIssueDate(input.fecha_emision, '03');
+  const datosAdicionales = withIssueDateTrace(input.datos_adicionales, issueDate);
   const totals = calculateTotals(input.detalles);
   const ts = now();
 
@@ -129,7 +132,7 @@ export async function createBoleta(input: CreateBoletaInput) {
     companyId: input.company_id, branchId: input.branch_id, clientId: clientRecord.id,
     tipoDocumento: '03', serie: input.serie, correlativo, numeroCompleto,
     orderNumber: input.order_number || null,
-    fechaEmision: input.fecha_emision, ublVersion: input.ubl_version || '2.1',
+    fechaEmision: issueDate.fechaEmision, ublVersion: input.ubl_version || '2.1',
     tipoOperacion: input.tipo_operacion || '0101', moneda: input.moneda || 'PEN',
     metodoEnvio: input.metodo_envio,
     valorVenta: String(totals.valorVenta), mtoOperGravadas: String(totals.mtoOperGravadas),
@@ -140,7 +143,7 @@ export async function createBoleta(input: CreateBoletaInput) {
     totalImpuestos: String(totals.totalImpuestos), subTotal: String(totals.subTotal),
     mtoImpVenta: String(totals.mtoImpVenta),
     detalles: input.detalles, leyendas: input.leyendas || null,
-    datosAdicionales: input.datos_adicionales || null,
+    datosAdicionales,
     estadoSunat: 'PENDIENTE', usuarioCreacion: input.usuario_creacion || null,
     createdAt: ts, updatedAt: ts,
   }).returning({ id: boletas.id });
@@ -148,7 +151,7 @@ export async function createBoleta(input: CreateBoletaInput) {
   return {
     id: result[0].id, companyId: input.company_id, branchId: input.branch_id,
     clientId: clientRecord.id, serie: input.serie, correlativo, numeroCompleto,
-    fechaEmision: input.fecha_emision, moneda: input.moneda || 'PEN',
+    fechaEmision: issueDate.fechaEmision, moneda: input.moneda || 'PEN',
     ...totals, detalles: input.detalles, leyendas: input.leyendas || [], estadoSunat: 'PENDIENTE',
   };
 }
@@ -238,6 +241,8 @@ export async function reEmitBoleta(id: number) {
   const now = Math.floor(Date.now() / 1000);
   const nextCorrelativo = await getNextCorrelative(boleta.branchId, '03', boleta.serie, true);
   const numeroCompleto = `${boleta.serie}-${nextCorrelativo}`;
+  const issueDate = resolveIssueDate(boleta.fechaEmision, '03');
+  const datosAdicionales = withIssueDateTrace(boleta.datosAdicionales, issueDate);
 
   await db.update(boletas).set({ orderNumber: null, estadoSunat: 'REEMPLAZADO', updatedAt: now }).where(eq(boletas.id, id));
 
@@ -247,7 +252,9 @@ export async function reEmitBoleta(id: number) {
     correlativo: nextCorrelativo,
     numeroCompleto,
     orderNumber: boleta.orderNumber,
+    fechaEmision: issueDate.fechaEmision,
     dailySummaryId: null,
+    datosAdicionales,
     estadoSunat: 'PENDIENTE',
     respuestaSunat: null,
     xmlPath: null,
