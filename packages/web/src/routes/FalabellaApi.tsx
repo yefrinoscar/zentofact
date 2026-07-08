@@ -106,9 +106,12 @@ function parseEmissionProgress(status: string) {
 function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { label: string; status: string; reason?: string; boletaId?: number; facturaId?: number }) {
   const [current, setCurrent] = useState(status);
   const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => setCurrent(status), [status]);
   const s = String(current || '').toUpperCase();
   const accepted = s === 'ACEPTADO';
   const canRefresh = boletaId != null || facturaId != null;
+  const hasDocumentLabel = Boolean(String(label || '').trim() && String(label || '').trim() !== '-');
+  const noDocument = !hasDocumentLabel && !canRefresh;
 
   const refresh = async () => {
     if (!canRefresh) return;
@@ -123,7 +126,9 @@ function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { la
   };
 
   const readableReason = sunatReason(reason);
-  const view = accepted
+  const view = noDocument
+    ? { Icon: XCircle, color: 'text-muted-foreground', title: 'Sin documento' }
+    : accepted
     ? { Icon: CheckCircle2, color: 'text-emerald-600', title: 'Aceptado por SUNAT' }
     : s === 'RECHAZADO'
     ? { Icon: XCircle, color: 'text-red-600', title: readableReason || 'Rechazado por SUNAT' }
@@ -138,7 +143,7 @@ function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { la
           <Icon className="h-4 w-4" />
         </span>
       </Tooltip>
-      {!accepted && canRefresh && (
+      {!noDocument && !accepted && canRefresh && (
         <Tooltip content="Actualizar estado en SUNAT">
           <button
             type="button" onClick={refresh} disabled={refreshing}
@@ -1035,8 +1040,16 @@ export default function FalabellaApi() {
     const base = {
       totalBoleta: 0,
       totalBoletaAmount: 0,
+      boletaWithDocument: 0,
+      boletaWithDocumentAmount: 0,
+      boletaWithoutDocument: 0,
+      boletaWithoutDocumentAmount: 0,
       totalFactura: 0,
       totalFacturaAmount: 0,
+      facturaWithDocument: 0,
+      facturaWithDocumentAmount: 0,
+      facturaWithoutDocument: 0,
+      facturaWithoutDocumentAmount: 0,
       readyToInvoice: 0,
       readyToInvoiceAmount: 0,
       hasDocument: 0,
@@ -1051,9 +1064,23 @@ export default function FalabellaApi() {
       if (row.invoiceKind === 'BOLETA') {
         base.totalBoleta += 1;
         base.totalBoletaAmount += row.total;
+        if (row.bucket === 'has_document') {
+          base.boletaWithDocument += 1;
+          base.boletaWithDocumentAmount += row.total;
+        } else {
+          base.boletaWithoutDocument += 1;
+          base.boletaWithoutDocumentAmount += row.total;
+        }
       } else if (row.invoiceKind === 'FACTURA') {
         base.totalFactura += 1;
         base.totalFacturaAmount += row.total;
+        if (row.bucket === 'has_document') {
+          base.facturaWithDocument += 1;
+          base.facturaWithDocumentAmount += row.total;
+        } else {
+          base.facturaWithoutDocument += 1;
+          base.facturaWithoutDocumentAmount += row.total;
+        }
       }
       if (row.bucket === 'ready_to_invoice') {
         base.readyToInvoice += 1;
@@ -1077,6 +1104,16 @@ export default function FalabellaApi() {
     () => invoiceFlow.rows.filter((row) => row.bucket === selectedFlowFilter),
     [invoiceFlow.rows, selectedFlowFilter],
   );
+
+  const filteredFlowKindStats = useMemo(() => {
+    let boletas = 0;
+    let facturas = 0;
+    for (const row of filteredFlowRows) {
+      if (row.invoiceKind === 'FACTURA') facturas += 1;
+      else boletas += 1;
+    }
+    return { boletas, facturas };
+  }, [filteredFlowRows]);
 
   const readyBoletaRows = useMemo(
     () => invoiceFlow.rows.filter((row) => row.bucket === 'ready_to_invoice' && row.invoiceKind === 'BOLETA'),
@@ -1161,7 +1198,7 @@ export default function FalabellaApi() {
     const meta: Record<InvoiceFlowFilter, { title: string; description: string }> = {
       ready_to_invoice: {
         title: 'Sin documento listo para emitir',
-        description: 'Órdenes listas para facturar en Falabella. Las facturas se muestran, pero la app no crea boleta para ellas.',
+        description: 'Órdenes listas para emitir boleta o factura desde la app.',
       },
       has_document: {
         title: 'Con documento local',
@@ -1909,7 +1946,9 @@ export default function FalabellaApi() {
           actionLabel = 'Esperar a que esté lista';
         } else {
           bucket = 'review';
-          actionLabel = falabellaStatus.description;
+          actionLabel = statusKey.includes('canceled') || statusKey.includes('returned')
+            ? 'No hay documento emitido; no corresponde nota de crédito.'
+            : falabellaStatus.description;
         }
 
         return {
@@ -2309,13 +2348,24 @@ export default function FalabellaApi() {
             <div>
               <div className="grid gap-6 md:grid-cols-[minmax(220px,0.8fr)_1fr]">
                 <div>
-                  <p className="text-sm text-muted-foreground">Órdenes del mes</p>
+                  <p className="text-sm text-muted-foreground">
+                    {invoiceFlow.rows.length} orden{invoiceFlow.rows.length === 1 ? '' : 'es'} del mes
+                  </p>
                   <p className="mt-2 text-5xl font-semibold tracking-normal text-foreground">
                     {money(flowStats.totalBoletaAmount + flowStats.totalFacturaAmount)}
                   </p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {invoiceFlow.rows.length} orden{invoiceFlow.rows.length === 1 ? '' : 'es'}
-                  </p>
+                  <div className="mt-2 grid max-w-xs grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-xs font-medium text-foreground/70">Emitido</p>
+                      <p className="font-medium text-foreground">{money(flowStats.hasDocumentAmount)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Pendiente</p>
+                      <p className="text-muted-foreground">
+                        {money((flowStats.totalBoletaAmount + flowStats.totalFacturaAmount) - flowStats.hasDocumentAmount)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
@@ -2323,26 +2373,60 @@ export default function FalabellaApi() {
                       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Boletas</p>
                       <p className="text-sm font-semibold text-foreground">{flowStats.totalBoleta}</p>
                     </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="relative mt-2 h-2 overflow-hidden rounded-full bg-muted"
+                      title={`${flowStats.boletaWithDocument} con documento · ${flowStats.boletaWithoutDocument} sin documento`}
+                    >
                       <div
-                        className="h-full rounded-full bg-emerald-500"
+                        className="absolute inset-y-0 left-0 rounded-full bg-emerald-200"
                         style={{ width: `${invoiceFlow.rows.length ? Math.round((flowStats.totalBoleta / invoiceFlow.rows.length) * 100) : 0}%` }}
+                      />
+                      <div
+                        className="absolute inset-y-0 left-0 rounded-full bg-emerald-500"
+                        style={{ width: `${invoiceFlow.rows.length ? Math.round((flowStats.boletaWithDocument / invoiceFlow.rows.length) * 100) : 0}%` }}
                       />
                     </div>
                     <p className="mt-2 text-xl font-semibold text-foreground">{money(flowStats.totalBoletaAmount)}</p>
+                    <div className="mt-1 grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-[11px] font-medium text-emerald-700/80">Emitido</p>
+                        <p className="font-medium text-emerald-700">{money(flowStats.boletaWithDocumentAmount)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium text-muted-foreground">Pendiente</p>
+                        <p className="text-muted-foreground">{money(flowStats.boletaWithoutDocumentAmount)}</p>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Facturas</p>
                       <p className="text-sm font-semibold text-foreground">{flowStats.totalFactura}</p>
                     </div>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="relative mt-2 h-2 overflow-hidden rounded-full bg-muted"
+                      title={`${flowStats.facturaWithDocument} con documento · ${flowStats.facturaWithoutDocument} sin documento`}
+                    >
                       <div
-                        className="h-full rounded-full bg-sky-500"
+                        className="absolute inset-y-0 left-0 rounded-full bg-sky-200"
                         style={{ width: `${invoiceFlow.rows.length ? Math.round((flowStats.totalFactura / invoiceFlow.rows.length) * 100) : 0}%` }}
+                      />
+                      <div
+                        className="absolute inset-y-0 left-0 rounded-full bg-sky-500"
+                        style={{ width: `${invoiceFlow.rows.length ? Math.round((flowStats.facturaWithDocument / invoiceFlow.rows.length) * 100) : 0}%` }}
                       />
                     </div>
                     <p className="mt-2 text-xl font-semibold text-foreground">{money(flowStats.totalFacturaAmount)}</p>
+                    <div className="mt-1 grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-[11px] font-medium text-sky-700/80">Emitido</p>
+                        <p className="font-medium text-sky-700">{money(flowStats.facturaWithDocumentAmount)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium text-muted-foreground">Pendiente</p>
+                        <p className="text-muted-foreground">{money(flowStats.facturaWithoutDocumentAmount)}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2386,9 +2470,21 @@ export default function FalabellaApi() {
                       {selectedFlowMeta.description}
                     </p>
                   </div>
-                  <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">
-                    Mostrando {filteredFlowRows.length} orden(es)
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {(selectedFlowFilter === 'ready_to_invoice' || selectedFlowFilter === 'has_document') && (
+                      <>
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700">
+                          {filteredFlowKindStats.boletas} boleta{filteredFlowKindStats.boletas === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-sky-50 px-2.5 py-1 font-medium text-sky-700">
+                          {filteredFlowKindStats.facturas} factura{filteredFlowKindStats.facturas === 1 ? '' : 's'}
+                        </span>
+                      </>
+                    )}
+                    <span className="rounded-full bg-background px-3 py-1 font-medium text-muted-foreground">
+                      Mostrando {filteredFlowRows.length} orden(es)
+                    </span>
+                  </div>
                 </div>
                 {selectedFlowFilter === 'ready_to_invoice' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -2549,11 +2645,6 @@ export default function FalabellaApi() {
                             >
                               {row.statusLabel}
                             </span>
-                            {selectedFlowFilter === 'review' && (
-                              <div className="mt-1 font-mono text-[10px] uppercase text-muted-foreground">
-                                Falabella API: {row.status || '-'}
-                              </div>
-                            )}
                           </td>
                           <td className="p-3 align-middle">
                             <span className={row.invoiceKind === 'FACTURA'

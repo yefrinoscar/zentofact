@@ -244,6 +244,63 @@ function SkeletonRows() {
   );
 }
 
+function AutoEmissionSkeleton() {
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="h-9 w-36 animate-pulse rounded-lg bg-muted" />
+        <div className="flex items-center gap-2">
+          <div className="h-9 w-32 animate-pulse rounded-lg bg-muted" />
+          <div className="h-9 w-28 animate-pulse rounded-lg bg-muted" />
+          <div className="h-9 w-32 animate-pulse rounded-lg bg-muted" />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+          <div className="space-y-2">
+            <div className="h-4 w-44 animate-pulse rounded bg-muted" />
+            <div className="h-3 w-72 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="h-3 w-16 animate-pulse rounded bg-muted" />
+            <div className="h-7 w-7 animate-pulse rounded-md bg-muted" />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 border-b border-border px-5 py-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="h-8 w-24 animate-pulse rounded-md bg-muted" />
+          ))}
+        </div>
+        <SkeletonRows />
+      </div>
+    </div>
+  );
+}
+
+function WebhooksSkeleton() {
+  return (
+    <div className="divide-y divide-border">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="grid gap-3 px-3 py-3 md:grid-cols-[160px_minmax(0,1fr)_auto] md:items-start">
+          <div className="space-y-2">
+            <div className="h-3 w-24 animate-pulse rounded bg-muted" />
+            <div className="h-5 w-16 animate-pulse rounded-full bg-muted" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-3 w-full animate-pulse rounded bg-muted" />
+            <div className="flex gap-1">
+              <div className="h-5 w-28 animate-pulse rounded-full bg-muted" />
+              <div className="h-5 w-24 animate-pulse rounded-full bg-muted" />
+            </div>
+          </div>
+          <div className="h-8 w-20 animate-pulse rounded-md bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function timeAgo(iso: string) {
   const d = new Date(iso).getTime();
   const s = Math.floor((Date.now() - d) / 1000);
@@ -469,7 +526,7 @@ export default function AutoEmision() {
   };
 
   if (loading) {
-    return <div className="flex h-64 items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Cargando…</div>;
+    return <AutoEmissionSkeleton />;
   }
   if (!config) {
     return <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">No se pudo cargar la emisión automática.</div>;
@@ -824,10 +881,7 @@ export default function AutoEmision() {
 
                   <div className="mt-4 overflow-hidden rounded-lg border border-border">
                     {webhooksLoading ? (
-                      <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Consultando Falabella…
-                      </div>
+                      <WebhooksSkeleton />
                     ) : webhooks.length === 0 ? (
                       <p className="px-3 py-6 text-center text-sm text-muted-foreground">No hay webhooks registrados para esta empresa.</p>
                     ) : (
