@@ -431,6 +431,11 @@ type InvoiceFlowRow = {
   documentDate?: string;
   documentPdfPath?: string;
   documentUploadedAt?: string;
+  affectedBoletaId?: number;
+  creditNoteId?: number;
+  creditNoteNumber?: string;
+  creditNoteStatus?: string;
+  canCreateCreditNote?: boolean;
 };
 
 type InvoiceFlowState = {
@@ -531,6 +536,14 @@ function monthValue(year: number, monthIndex: number) {
 
 function canInvoiceFromStatus(statusKey: string) {
   return ['ready_to_ship', 'shipped', 'delivered'].some((status) => statusKey.includes(status));
+}
+
+function needsCreditNoteReview(statusKey: string) {
+  return statusKey.includes('canceled')
+    || statusKey.includes('cancelled')
+    || statusKey.includes('cancelada')
+    || statusKey.includes('returned')
+    || statusKey.includes('devuelta');
 }
 
 function statusInfo(statusKey: string) {
@@ -892,6 +905,7 @@ export default function FalabellaApi() {
   const [selectedReadyOrders, setSelectedReadyOrders] = useState<Set<string>>(() => new Set());
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
+  const [creditNoteAction, setCreditNoteAction] = useState<{ orderNumber: string; loading: boolean; error: string } | null>(null);
   const falabellaSunatEnv = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase();
   const falabellaProductionMode = falabellaSunatEnv
     ? falabellaSunatEnv.startsWith('prod')
@@ -1325,6 +1339,27 @@ export default function FalabellaApi() {
       }
       return new Set(documentUploadCandidates.eligible.map((candidate) => candidate.orderNumber));
     });
+  };
+
+  const createCreditNoteForRow = async (row: InvoiceFlowRow) => {
+    if (!row.affectedBoletaId) return;
+
+    setCreditNoteAction({ orderNumber: row.orderNumber, loading: true, error: '' });
+    try {
+      await api.createAndSendCreditNote(row.affectedBoletaId, {
+        codMotivo: '01',
+        desMotivo: 'ANULACION DE LA OPERACION',
+        modoProduccion: falabellaProductionMode,
+      });
+      setCreditNoteAction(null);
+      await loadInvoiceFlowPrototype();
+    } catch (nextError: any) {
+      setCreditNoteAction({
+        orderNumber: row.orderNumber,
+        loading: false,
+        error: nextError?.message || 'No se pudo emitir la nota de crédito.',
+      });
+    }
   };
 
   const openEmitBoletaModal = async (rows: InvoiceFlowRow[]) => {
@@ -1844,6 +1879,7 @@ export default function FalabellaApi() {
     setSelectedReadyOrders(new Set());
     setDocumentSelectionMode(false);
     setSelectedDocumentOrders(new Set());
+    setCreditNoteAction(null);
     setInvoiceFlow({
       loading: true,
       error: '',
@@ -1894,6 +1930,7 @@ export default function FalabellaApi() {
         const statusKey = normalizeStatusKey(order);
         const falabellaStatus = statusInfo(statusKey);
         const readyByStatus = canInvoiceFromStatus(statusKey);
+        const requiresCreditNoteReview = needsCreditNoteReview(statusKey);
         const resolved = orderNumber
           ? await api.falabellaApiResolveDocument(selectedCompanyId, orderNumber) as ResolvedDocumentResponse
           : null;
@@ -1932,10 +1969,19 @@ export default function FalabellaApi() {
           || '-';
         const documentStatus = existingOption?.estadoSunat || resolved?.boleta?.estadoSunat || resolved?.factura?.estadoSunat || resolved?.creditNote?.estadoSunat || '';
         const documentReason = existingOption?.respuestaSunat || resolved?.boleta?.respuestaSunat || resolved?.factura?.respuestaSunat || resolved?.creditNote?.respuestaSunat || '';
+        const creditNoteNumber = resolved?.creditNote?.numeroCompleto || '';
+        const canCreateCreditNote = requiresCreditNoteReview && Boolean(resolved?.boleta?.id) && !creditNoteNumber;
         let bucket: InvoiceFlowBucket;
         let actionLabel: string;
 
-        if (hasDocument) {
+        if (requiresCreditNoteReview && hasDocument) {
+          bucket = 'review';
+          actionLabel = creditNoteNumber
+            ? `Tiene nota de crédito ${creditNoteNumber}`
+            : resolved?.boleta?.id
+              ? 'Emitir nota de crédito'
+              : 'Tiene documento emitido; revisar nota de crédito manualmente.';
+        } else if (hasDocument) {
           bucket = 'has_document';
           actionLabel = 'Ya tiene documento';
         } else if (readyByStatus) {
@@ -1946,7 +1992,7 @@ export default function FalabellaApi() {
           actionLabel = 'Esperar a que esté lista';
         } else {
           bucket = 'review';
-          actionLabel = statusKey.includes('canceled') || statusKey.includes('returned')
+          actionLabel = needsCreditNoteReview(statusKey)
             ? 'No hay documento emitido; no corresponde nota de crédito.'
             : falabellaStatus.description;
         }
@@ -1973,6 +2019,11 @@ export default function FalabellaApi() {
           documentDate: existingOption?.invoiceDate,
           documentPdfPath: existingOption?.pdfPath || '',
           documentUploadedAt: existingOption?.falabellaPdfUploadedAt || '',
+          affectedBoletaId: resolved?.boleta?.id,
+          creditNoteId: resolved?.creditNote?.id,
+          creditNoteNumber,
+          creditNoteStatus: resolved?.creditNote?.estadoSunat || '',
+          canCreateCreditNote,
         };
       }));
 
@@ -2728,6 +2779,33 @@ export default function FalabellaApi() {
                                   </button>
                                 </Tooltip>
                               )
+                            ) : row.bucket === 'review' && row.creditNoteNumber ? (
+                              <span
+                                title={row.creditNoteStatus ? `Estado SUNAT: ${row.creditNoteStatus}` : undefined}
+                                className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Nota de crédito {row.creditNoteNumber}
+                              </span>
+                            ) : row.bucket === 'review' && row.canCreateCreditNote ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <button
+                                  type="button"
+                                  disabled={creditNoteAction?.orderNumber === row.orderNumber && creditNoteAction.loading}
+                                  onClick={() => void createCreditNoteForRow(row)}
+                                  className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+                                >
+                                  {creditNoteAction?.orderNumber === row.orderNumber && creditNoteAction.loading ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <FilePlus2 className="h-3.5 w-3.5" />
+                                  )}
+                                  Emitir nota de crédito
+                                </button>
+                                {creditNoteAction?.orderNumber === row.orderNumber && creditNoteAction.error && (
+                                  <span className="max-w-[260px] text-xs text-red-600">{creditNoteAction.error}</span>
+                                )}
+                              </div>
                             ) : (
                               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
                                 {row.actionLabel}
