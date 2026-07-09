@@ -1,66 +1,162 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FolderOpen, Building2, ChevronRight } from 'lucide-react';
+import { Building2, ChevronRight, Plus } from 'lucide-react';
 import api from '../lib/api';
-
-const OUTPUT_DIR_KEY = 'boletas.outputDir';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { type AppTheme, getStoredTheme, setStoredTheme } from '../lib/theme';
+import { cn } from '../lib/cn';
+import { usePermissions } from '../hooks/usePermissions';
 
 export default function Settings() {
-  const [outputDir, setOutputDir] = useState('');
+  const { can, loading: permLoading } = usePermissions();
+  const canCompanies = can('companies');
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
 
   useEffect(() => {
-    const saved = localStorage.getItem(OUTPUT_DIR_KEY);
-    if (saved) {
-      setOutputDir(saved);
+    if (permLoading) return;
+    if (!canCompanies) {
+      setCompanies([]);
       return;
     }
-    api.getHomeDir().then((home: string) => setOutputDir(`${home}/boletas-emitidas`)).catch(() => {});
-  }, []);
+    let mounted = true;
+    setLoadingCompanies(true);
+    api.listCompanies()
+      .then((list: any[]) => {
+        if (mounted) setCompanies(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (mounted) setCompanies([]);
+      })
+      .finally(() => {
+        if (mounted) setLoadingCompanies(false);
+      });
 
-  const selectOutput = async () => {
-    const directory = await api.selectOutputDir();
-    if (!directory) return;
-    localStorage.setItem(OUTPUT_DIR_KEY, directory);
-    setOutputDir(directory);
+    return () => {
+      mounted = false;
+    };
+  }, [canCompanies, permLoading]);
+
+  const changeTheme = (value: string) => {
+    const nextTheme = value === 'dark' ? 'dark' : 'light';
+    setTheme(nextTheme);
+    setStoredTheme(nextTheme);
   };
 
+  const displayedCompanies = companies.slice(0, 5);
+  const hiddenCompanyCount = Math.max(companies.length - displayedCompanies.length, 0);
+
   return (
-    <div className="max-w-3xl space-y-6">
-      <Link
-        to="/companies"
-        className="flex items-center gap-4 rounded-xl border border-border bg-card p-6 shadow-sm transition hover:bg-accent"
-      >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Building2 className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-foreground">Empresas</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">Gestiona las empresas, RUC y credenciales.</p>
-        </div>
-        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-      </Link>
+    <div className="max-w-5xl space-y-0 text-foreground">
+      <section className="border-b border-border pb-8">
+        <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Apariencia</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Preferencias visuales guardadas en este navegador.
+            </p>
+          </div>
 
-      <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-foreground">Salida por defecto</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Los PDFs generados se copiarán en esta carpeta automáticamente.
-        </p>
-        <div className="mt-3 rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs text-muted-foreground">
-          {outputDir || 'Sin carpeta seleccionada'}
+          <div className="border-y border-border py-4">
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Tema
+            </label>
+            <Tabs value={theme} onValueChange={changeTheme}>
+              <TabsList>
+                <TabsTrigger value="light">Light theme</TabsTrigger>
+                <TabsTrigger value="dark">Dark theme</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
         </div>
+      </section>
 
-        <button
-          onClick={selectOutput}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium transition hover:bg-accent"
-        >
-          <FolderOpen className="h-4 w-4" /> Seleccionar carpeta
-        </button>
+      {canCompanies && (
+        <section className="py-8">
+          <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Empresas</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Empresas disponibles para emisión y automatización.
+              </p>
+            </div>
+
+            <div>
+              {loadingCompanies ? (
+                <div className="border-y border-border py-4 text-sm text-muted-foreground">Cargando empresas...</div>
+              ) : companies.length === 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-4 border-y border-border py-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">No hay empresas registradas.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Agrega una empresa para configurar SUNAT y Falabella.</p>
+                  </div>
+                  <Link
+                    to="/companies"
+                    className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Agregar
+                  </Link>
+                </div>
+              ) : (
+                <div className="border-y border-border">
+                  <div className="divide-y divide-border">
+                    {displayedCompanies.map((company) => (
+                      <CompanyRow key={company.id} company={company} />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
+                    <p className="text-xs text-muted-foreground">
+                      {hiddenCompanyCount > 0
+                        ? `${displayedCompanies.length} de ${companies.length} empresas visibles`
+                        : `${companies.length} empresa${companies.length === 1 ? '' : 's'} registrada${companies.length === 1 ? '' : 's'}`}
+                    </p>
+                    <Link
+                      to="/companies"
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-primary transition hover:opacity-80"
+                    >
+                      Administrar empresas
+                      <ChevronRight className="h-4 w-4" />
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function CompanyRow({ company }: { company: any }) {
+  const name = company.nombre || company.razonSocial || 'Empresa sin nombre';
+  const complete = !!(
+    company.certificado
+    && company.usuarioSol
+    && company.claveSol
+    && company.falabellaApiUserId
+    && company.falabellaApiKey
+  );
+
+  return (
+    <div className="grid gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <Building2 className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{name}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">RUC {company.ruc || '-'}</p>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-        <h3 className="font-semibold text-foreground">Acerca de</h3>
-        <p className="mt-2 text-sm text-muted-foreground">ZentoFact v1.0.0</p>
-        <p className="text-sm text-muted-foreground">Generación de boletas electrónicas peruanas</p>
+      <div className="flex items-center gap-2 pl-11 sm:pl-0">
+        <span className={cn('h-2 w-2 rounded-full', complete ? 'bg-emerald-500' : 'bg-amber-500')} />
+        <span className="text-xs font-medium text-muted-foreground">
+          {complete ? 'Configurada' : 'Pendiente'}
+        </span>
       </div>
     </div>
   );

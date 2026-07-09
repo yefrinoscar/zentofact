@@ -55,10 +55,6 @@ export async function getCompany(id: number) {
   return rows[0];
 }
 
-export async function getCompanyByRuc(ruc: string) {
-  const rows = await db.select().from(companies).where(eq(companies.ruc, ruc)).limit(1);
-  return rows[0];
-}
 
 export async function createCompany(data: CreateCompanyInput) {
   const now = Math.floor(Date.now() / 1000);

@@ -17,16 +17,10 @@
     "build": "vp run -r build",
     "core": "vp run --filter @zentofact/core",
     "web": "vp run --filter @zentofact/web",
-    "desktop": "vp run --filter @zentofact/desktop",
-    "package": "vp run --filter @zentofact/desktop package",
-    "package:dmg": "vp run --filter @zentofact/desktop package:mac",
     "db:push:neon": "node scripts/push-schema-neon.mjs",
     "check:net": "node scripts/check-connectivity.mjs",
     "r2:backfill": "node scripts/upload-archives-to-r2.mjs",
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
-    "audit:falabella-igv": "node scripts/audit-falabella-igv.js",
-    "pdf:falabella-corrected": "node scripts/generate-corrected-falabella-pdfs.js",
-    "credit-notes:batch": "./node_modules/.bin/electron scripts/send-credit-notes-batch.js",
     "r2:pull": "node scripts/pull-r2-to-minio.mjs"
   },
   "devDependencies": {

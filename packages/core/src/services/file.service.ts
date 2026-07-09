@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { isR2Enabled, putObject, getObject, objectExists } from './r2';
-import { isProxyEnabled, proxyPut, proxyGet, proxyHead } from './r2-proxy';
+import { isR2Enabled, putObject } from './r2';
+import { isProxyEnabled, proxyPut } from './r2-proxy';
 
 const STORAGE_PATH = process.env.STORAGE_PATH || './storage';
 
@@ -104,37 +104,6 @@ export function saveFacturaPdf(document: { numeroCompleto: string; fechaEmision:
   fs.writeFileSync(filepath, pdfBuffer);
 
   return `facturas/pdf/${dateStr}/${filename}`;
-}
-
-// Reads an archive (XML/CDR) by its stored key: from R2 when configured, else
-// from local disk.
-export async function readArchive(relativeKey: string): Promise<Buffer> {
-  if (isProxyEnabled()) {
-    return proxyGet(relativeKey);
-  }
-  if (isR2Enabled()) {
-    return getObject(relativeKey);
-  }
-  return fs.readFileSync(path.join(STORAGE_PATH, relativeKey));
-}
-
-export async function archiveExists(relativeKey: string): Promise<boolean> {
-  if (isProxyEnabled()) {
-    return proxyHead(relativeKey);
-  }
-  if (isR2Enabled()) {
-    return objectExists(relativeKey);
-  }
-  return fs.existsSync(path.join(STORAGE_PATH, relativeKey));
-}
-
-export function fileExists(filePath: string): boolean {
-  const fullPath = path.join(STORAGE_PATH, filePath);
-  return fs.existsSync(fullPath);
-}
-
-export function getFilePath(filePath: string): string {
-  return path.join(STORAGE_PATH, filePath);
 }
 
 function formatDate(dateStr: string): string {

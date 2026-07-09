@@ -1,6 +1,30 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  ArrowLeft, Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
+  CheckCircle2, HelpCircle,
+} from 'lucide-react';
+import {
+  ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  SortingState,
+  useReactTable,
+} from '@tanstack/react-table';
 import api from '../lib/api';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
 
 type CompanyForm = {
   nombre: string;
@@ -17,17 +41,24 @@ type CompanyForm = {
   falabellaApiKey: string;
 };
 
-type SunatConnectionResult = {
-  success: boolean;
-  severity: 'success' | 'warning' | 'error';
-  environment: 'beta' | 'produccion';
-  endpoint: string;
-  authAccepted: boolean;
-  certificateValid: boolean;
-  code?: string;
-  message: string;
-  rawStatusCode?: string;
-  rawContent?: string;
+type CompanyRow = {
+  id: number;
+  nombre?: string | null;
+  ruc?: string | null;
+  razonSocial?: string | null;
+  nombreComercial?: string | null;
+  direccion?: string | null;
+  ubigeo?: string | null;
+  usuarioSol?: string | null;
+  claveSol?: string | null;
+  certificado?: string | null;
+  certificadoPassword?: string | null;
+  sellerUsername?: string | null;
+  sellerPassword?: string | null;
+  falabellaApiUserId?: string | null;
+  falabellaApiKey?: string | null;
+  modoProduccion?: boolean | null;
+  activo?: boolean | null;
 };
 
 const initialForm: CompanyForm = {
@@ -45,19 +76,60 @@ const initialForm: CompanyForm = {
   falabellaApiKey: '',
 };
 
+function hasFalabellaApi(c: CompanyRow) {
+  return !!(c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim());
+}
+
+function hasCertificate(c: CompanyRow) {
+  return !!c.certificado?.trim();
+}
+
+function hasSol(c: CompanyRow) {
+  return !!c.usuarioSol?.trim();
+}
+
+/** Estado operativo sin exponer credenciales. */
+function setupReady(c: CompanyRow) {
+  return hasFalabellaApi(c) && hasCertificate(c) && hasSol(c);
+}
+
+/** Check circular verde (CheckCircle2) o ? — mismo estilo que en Falabella/Documentos. */
+function StatusIcon({
+  ok,
+  okTitle,
+  badTitle,
+}: {
+  ok: boolean;
+  okTitle: string;
+  badTitle: string;
+}) {
+  return (
+    <span title={ok ? okTitle : badTitle} className="inline-flex" aria-label={ok ? okTitle : badTitle}>
+      {ok ? (
+        <CheckCircle2 className="size-5 text-emerald-500" strokeWidth={2} />
+      ) : (
+        <HelpCircle className="size-5 text-muted-foreground" strokeWidth={2} />
+      )}
+    </span>
+  );
+}
+
 export default function Companies() {
-  const [companies, setCompanies] = useState<any[]>([]);
+  const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [editing, setEditing] = useState<any>(null);
+  const [editing, setEditing] = useState<CompanyRow | null>(null);
   const [form, setForm] = useState<CompanyForm>(initialForm);
   const formRef = useRef<HTMLFormElement | null>(null);
-  const [certPath, setCertPath] = useState('');
+  const certInputRef = useRef<HTMLInputElement | null>(null);
+  const [hasStoredCert, setHasStoredCert] = useState(false);
+  const [certFileName, setCertFileName] = useState('');
+  const [certBase64, setCertBase64] = useState('');
   const [certPass, setCertPass] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [sunatChecks, setSunatChecks] = useState<Record<string, { loading: boolean; result?: SunatConnectionResult }>>({});
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'nombre', desc: false }]);
   const [showClaveSol, setShowClaveSol] = useState(false);
   const [showSellerPassword, setShowSellerPassword] = useState(false);
   const [showFalabellaApiKey, setShowFalabellaApiKey] = useState(false);
@@ -83,13 +155,30 @@ export default function Companies() {
 
   const resetForm = () => {
     setForm(initialForm);
-    setCertPath('');
+    setHasStoredCert(false);
+    setCertFileName('');
+    setCertBase64('');
     setCertPass('');
     setError('');
     setShowClaveSol(false);
     setShowSellerPassword(false);
     setShowFalabellaApiKey(false);
     setShowCertPassword(false);
+    if (certInputRef.current) certInputRef.current.value = '';
+  };
+
+  const onCertFileChange = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const base64 = await fileToBase64(file);
+      setCertBase64(base64);
+      setCertFileName(file.name);
+      setError('');
+    } catch (e: any) {
+      setCertBase64('');
+      setCertFileName('');
+      setError(e?.message || 'No se pudo leer el certificado.');
+    }
   };
 
   const closeEditor = () => {
@@ -132,15 +221,15 @@ export default function Companies() {
     setSaving(true);
     setError('');
 
-    try {
-      let certificado: string | undefined;
-      if (certPath && certPath !== '(certificado guardado)') {
-        certificado = await api.readCertFile(certPath);
-      }
+    if (!certBase64) {
+      setError('Debes seleccionar un certificado digital (.pfx o .p12).');
+      return;
+    }
 
+    try {
       await api.createCompany({
         ...nextForm,
-        ...(certificado ? { certificado } : {}),
+        certificado: certBase64,
         ...(certPass ? { certificadoPassword: certPass } : {}),
       });
       closeEditor();
@@ -173,13 +262,8 @@ export default function Companies() {
     setError('');
 
     try {
-      let certificado: string | undefined;
-      if (certPath && certPath !== '(certificado guardado)') {
-        certificado = await api.readCertFile(certPath);
-      }
-
       const updateData: any = { ...nextForm };
-      if (certificado) updateData.certificado = certificado;
+      if (certBase64) updateData.certificado = certBase64;
       if (certPass) updateData.certificadoPassword = certPass;
 
       await api.updateCompany(editing.id, updateData);
@@ -198,49 +282,118 @@ export default function Companies() {
     load();
   };
 
-  const handleTestSunat = async (companyId: number, environment: 'beta' | 'produccion') => {
-    const key = `${companyId}-${environment}`;
-    setSunatChecks((prev) => ({
-      ...prev,
-      [key]: { loading: true },
-    }));
+  const columns = useMemo<ColumnDef<CompanyRow>[]>(() => [
+    {
+      accessorKey: 'ruc',
+      header: 'RUC',
+      cell: ({ row }) => (
+        <span className="font-mono text-xs tabular-nums text-foreground">{row.original.ruc || '—'}</span>
+      ),
+    },
+    {
+      id: 'nombre',
+      accessorFn: (c) => c.nombre || c.razonSocial || '',
+      header: 'Empresa',
+      cell: ({ row }) => {
+        const c = row.original;
+        const name = c.nombre || c.razonSocial || 'Sin nombre';
+        return (
+          <div className="min-w-0">
+            <p className="truncate font-medium text-foreground">{name}</p>
+            {c.nombreComercial ? (
+              <p className="truncate text-xs text-muted-foreground">{c.nombreComercial}</p>
+            ) : c.razonSocial && c.nombre && c.razonSocial !== c.nombre ? (
+              <p className="truncate text-xs text-muted-foreground">{c.razonSocial}</p>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      id: 'falabella',
+      header: 'Falabella',
+      cell: ({ row }) => (
+        <StatusIcon
+          ok={hasFalabellaApi(row.original)}
+          okTitle="API Falabella configurada"
+          badTitle="Falta User ID o API Key de Falabella"
+        />
+      ),
+    },
+    {
+      id: 'certificado',
+      header: 'Certificado',
+      cell: ({ row }) => (
+        <StatusIcon
+          ok={hasCertificate(row.original)}
+          okTitle="Certificado digital cargado"
+          badTitle="Falta certificado digital"
+        />
+      ),
+    },
+    {
+      id: 'estado',
+      header: 'Estado',
+      cell: ({ row }) => (
+        <StatusIcon
+          ok={setupReady(row.original)}
+          okTitle="Empresa lista (Falabella + certificado + SOL)"
+          badTitle="Configuración incompleta"
+        />
+      ),
+    },
+    {
+      id: 'acciones',
+      header: () => <span className="block text-right">Acciones</span>,
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            title="Editar"
+            onClick={() => startEdit(row.original)}
+          >
+            <Pencil />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            title="Desactivar"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => void handleDelete(row.original.id)}
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      ),
+    },
+  ], []);
 
-    try {
-      const result = await api.testSunatConnection(companyId, environment);
-      setSunatChecks((prev) => ({
-        ...prev,
-        [key]: { loading: false, result },
-      }));
-    } catch (e: any) {
-      setSunatChecks((prev) => ({
-        ...prev,
-        [key]: {
-          loading: false,
-          result: {
-            success: false,
-            environment,
-            endpoint: '',
-            severity: 'error',
-            authAccepted: false,
-            certificateValid: false,
-            code: 'CLIENT_ERROR',
-            message: e?.message || 'No se pudo verificar la conexión SUNAT.',
-          },
-        },
-      }));
-    }
-  };
+  const table = useReactTable({
+    data: companies,
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
 
-  const startEdit = (company: any) => {
+  const startEdit = (company: CompanyRow) => {
     setEditing(company);
     setShowCreate(false);
-    setCertPath(company.certificado ? '(certificado guardado)' : '');
+    setHasStoredCert(!!company.certificado);
+    setCertFileName('');
+    setCertBase64('');
     setCertPass(company.certificadoPassword || '');
     setError('');
+    if (certInputRef.current) certInputRef.current.value = '';
     setForm({
       nombre: company.nombre || company.razonSocial || '',
-      ruc: company.ruc,
-      razonSocial: company.razonSocial,
+      ruc: company.ruc || '',
+      razonSocial: company.razonSocial || '',
       nombreComercial: company.nombreComercial || '',
       direccion: company.direccion || '',
       ubigeo: company.ubigeo || '',
@@ -289,24 +442,31 @@ export default function Companies() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="pb-2">
+        <Link
+          to="/settings"
+          className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver a configuración
+        </Link>
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-foreground">Empresas</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="text-xl font-semibold text-foreground">Empresas</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               Configura credenciales de Falabella Seller, SUNAT y certificado por empresa.
             </p>
           </div>
-          <button
+          <Button
             onClick={() => {
               resetForm();
               setEditing(null);
               setShowCreate(true);
             }}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
           >
-            <Plus className="h-4 w-4" /> Nueva Empresa
-          </button>
+            <Plus data-icon="inline-start" />
+            Nueva Empresa
+          </Button>
         </div>
       </div>
 
@@ -375,22 +535,38 @@ export default function Companies() {
                   </label>
                   <div className="flex gap-2">
                     <input
-                      value={certPath === '(certificado guardado)' ? 'Certificado ya almacenado' : certPath ? certPath.split('/').pop() || certPath : ''}
+                      value={
+                        certFileName
+                          || (hasStoredCert ? 'Certificado ya almacenado' : '')
+                      }
                       readOnly
                       placeholder=".pfx o .p12"
-                      className={`flex-1 rounded-lg border border-input px-3 py-2 text-sm ${certPath === '(certificado guardado)' ? 'text-emerald-700 bg-emerald-50' : 'bg-background'}`}
+                      className={`flex-1 rounded-lg border border-input px-3 py-2 text-sm ${
+                        hasStoredCert && !certFileName
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-background'
+                      }`}
+                    />
+                    <input
+                      ref={certInputRef}
+                      type="file"
+                      accept=".pfx,.p12,application/x-pkcs12"
+                      className="hidden"
+                      onChange={(e) => void onCertFileChange(e.target.files?.[0] || null)}
                     />
                     <button
                       type="button"
-                      onClick={async () => {
-                        const p = await api.selectCertificate();
-                        if (p) setCertPath(p);
-                      }}
+                      onClick={() => certInputRef.current?.click()}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm transition hover:bg-accent"
                     >
                       <Upload className="h-4 w-4" /> Examinar
                     </button>
                   </div>
+                  {certFileName ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Se subirá el archivo seleccionado al guardar.
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-foreground">Contraseña del certificado</label>
@@ -435,122 +611,70 @@ export default function Companies() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-        {loadingCompanies ? (
-          <div className="p-10 text-center">
-            <Loader2 className="mx-auto mb-3 h-10 w-10 animate-spin text-muted-foreground/60" />
-            <p className="font-medium text-foreground">Cargando empresas</p>
-          </div>
-        ) : loadError ? (
-          <div className="p-10 text-center">
-            <AlertCircle className="mx-auto mb-3 h-10 w-10 text-destructive" />
-            <p className="font-medium text-foreground">No se pudieron cargar las empresas</p>
-            <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
-          </div>
-        ) : companies.length === 0 ? (
-          <div className="p-10 text-center">
-            <Building2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-            <p className="font-medium text-foreground">No hay empresas registradas</p>
-            <p className="mt-1 text-sm text-muted-foreground">Crea tu primera empresa para comenzar a emitir.</p>
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr className="text-left">
-                <th className="p-3 font-medium text-muted-foreground">RUC</th>
-                <th className="p-3 font-medium text-muted-foreground">Nombre</th>
-                <th className="p-3 font-medium text-muted-foreground">SUNAT</th>
-                <th className="p-3 font-medium text-muted-foreground">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {companies.map((company) => {
-                const betaKey = `${company.id}-beta`;
-                const prodKey = `${company.id}-produccion`;
-                const betaCheck = sunatChecks[betaKey];
-                const prodCheck = sunatChecks[prodKey];
-                const latestCheck = prodCheck?.result || betaCheck?.result;
-                const toneClass = latestCheck
-                  ? latestCheck.severity === 'success'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                    : latestCheck.severity === 'warning'
-                      ? 'border-amber-200 bg-amber-50 text-amber-800'
-                      : 'border-red-200 bg-red-50 text-red-800'
-                  : '';
-
-                return (
-                  <tr key={company.id} className="border-t border-border/70 hover:bg-accent/40">
-                    <td className="p-3 font-mono text-xs">{company.ruc}</td>
-                    <td className="p-3">{company.nombre || company.razonSocial}</td>
-                    <td className="p-3 align-top">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap gap-2">
+      <Card>
+        <CardContent className="px-0 pt-0">
+          {loadingCompanies ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Loader2 className="size-8 animate-spin text-muted-foreground/60" />
+              <p className="text-sm font-medium">Cargando empresas</p>
+            </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <AlertCircle className="size-8 text-destructive" />
+              <p className="text-sm font-medium">No se pudieron cargar las empresas</p>
+              <p className="text-sm text-muted-foreground">{loadError}</p>
+            </div>
+          ) : companies.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Building2 className="size-8 text-muted-foreground/60" />
+              <p className="text-sm font-medium">No hay empresas registradas</p>
+              <p className="text-sm text-muted-foreground">Crea tu primera empresa para comenzar a emitir.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id} className="hover:bg-transparent">
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={cn(header.column.id === 'acciones' && 'text-right')}
+                      >
+                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
                           <button
-                            onClick={() => handleTestSunat(company.id, 'beta')}
-                            disabled={betaCheck?.loading}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className="inline-flex items-center gap-1 transition hover:text-foreground"
                           >
-                            {betaCheck?.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                            {betaCheck?.loading ? 'Probando beta...' : 'Probar beta'}
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {{
+                              asc: ' ↑',
+                              desc: ' ↓',
+                            }[header.column.getIsSorted() as string] ?? null}
                           </button>
-                          <button
-                            onClick={() => handleTestSunat(company.id, 'produccion')}
-                            disabled={prodCheck?.loading}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {prodCheck?.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                            {prodCheck?.loading ? 'Probando prod...' : 'Probar prod'}
-                          </button>
-                        </div>
-                        {latestCheck && (
-                          <div className={`rounded-lg border px-2.5 py-2 text-xs ${toneClass}`}>
-                            <div className="flex items-center gap-1.5 font-medium">
-                              {latestCheck.severity === 'success' ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
-                              <span>
-                                {latestCheck.severity === 'success'
-                                  ? 'Conexión correcta'
-                                  : latestCheck.severity === 'warning'
-                                    ? 'Prueba no concluyente'
-                                    : 'Conexión fallida'}
-                              </span>
-                            </div>
-                            <p className="mt-1 leading-5">{latestCheck.message}</p>
-                            {latestCheck.code && (
-                              <p className="mt-1 font-mono text-[11px] opacity-80">Código: {latestCheck.code}</p>
-                            )}
-                            <p className="mt-1 opacity-80">
-                              Ambiente: {latestCheck.environment === 'produccion' ? 'Producción' : 'Beta'}
-                              {latestCheck.rawStatusCode ? ` · SUNAT ${latestCheck.rawStatusCode}` : ''}
-                            </p>
-                          </div>
+                        ) : (
+                          flexRender(header.column.columnDef.header, header.getContext())
                         )}
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => startEdit(company)}
-                          className="rounded-md p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(company.id)}
-                          className="rounded-md p-1.5 text-red-600 transition hover:bg-red-50"
-                          title="Desactivar"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.map((row) => (
+                  <TableRow key={row.id}>
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

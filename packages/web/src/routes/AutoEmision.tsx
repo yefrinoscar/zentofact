@@ -653,21 +653,51 @@ export default function AutoEmision() {
           </div>
         </div>
 
-        {/* Filtro por estado (tabs shadcn) */}
+        {/* Filtro por estado */}
         <div className="border-b border-border px-5 py-3">
-          <Tabs value={filter} onValueChange={setFilter}>
-            <TabsList className="flex-wrap">
-              {FILTERS.map(([key, label]) => {
-                const count = key === 'all' ? Object.values(config.stats || {}).reduce((a, b) => a + b, 0) : (config.stats?.[key] || 0);
-                return (
-                  <TabsTrigger key={key} value={key}>
-                    {label}
-                    <span className={cn('rounded-full px-1.5 text-[11px]', key === 'failed' && count > 0 ? 'bg-red-200 text-red-800' : 'bg-muted-foreground/15 text-muted-foreground')}>{count}</span>
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-          </Tabs>
+          <div
+            role="tablist"
+            aria-label="Filtrar por estado"
+            className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl bg-muted p-1"
+          >
+            {FILTERS.map(([key, label]) => {
+              const count = key === 'all'
+                ? Object.values(config.stats || {}).reduce((a, b) => a + Number(b || 0), 0)
+                : Number(config.stats?.[key] || 0);
+              const active = filter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setFilter(key)}
+                  className={cn(
+                    'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl px-3 text-sm font-medium transition-colors',
+                    active
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <span>{label}</span>
+                  <span
+                    className={cn(
+                      'min-w-5 rounded-full px-1.5 py-0.5 text-center text-[11px] font-semibold tabular-nums leading-none',
+                      active
+                        ? key === 'failed' && count > 0
+                          ? 'bg-destructive/15 text-destructive'
+                          : 'bg-muted text-foreground'
+                        : key === 'failed' && count > 0
+                          ? 'bg-destructive/10 text-destructive'
+                          : 'bg-background/70 text-muted-foreground',
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="max-h-[520px] overflow-auto">

@@ -17,12 +17,7 @@ storage.backup-*/
 *.db-wal
 *.db-shm
 
-# Bundled browser binaries (regenerated via prepare-* scripts)
-packages/desktop/vendor/
-
 # Generated / debug artifacts
-packages/desktop/data/
-packages/scraper/data/
 scripts/output/
 
 # macOS
@@ -33,7 +28,6 @@ reports/
 
 # Build web del front (se genera con build:web)
 packages/web/dist/
-packages/desktop/web-dist/
 
 # Respaldos de entorno (nunca commitear)
 .env.production.bak

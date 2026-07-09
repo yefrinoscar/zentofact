@@ -3,7 +3,6 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   FileMinus2,
   ShoppingBag,
-  ClipboardList,
   Settings,
   ChevronLeft,
   MoreVertical,
@@ -11,20 +10,33 @@ import {
   PackageSearch,
   Zap,
   ReceiptText,
+  Users,
+  Building2,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
 import falabellaIcon from '../assets/falabella.png';
 import webPackage from '../../package.json';
+import { usePermissions } from '../hooks/usePermissions';
+import type { PermissionKey } from '../lib/permissions';
 
-const navItems = [
-  { to: '/documentos', icon: ReceiptText, img: null, label: 'Documentos' },
-  { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string | null, label: 'Falabella' },
-  { to: '/productos', icon: PackageSearch, img: null, label: 'Productos' },
-  { to: '/auto-emision', icon: Zap, img: null, label: 'Automatización' },
-  { to: '/credit-notes', icon: FileMinus2, img: null, label: 'Notas de crédito' },
-  { to: '/summaries', icon: ClipboardList, img: null, label: 'Resúmenes' },
-  { to: '/settings', icon: Settings, img: null, label: 'Ajustes' },
+type NavItem = {
+  to: string;
+  icon: typeof Settings;
+  img?: string | null;
+  label: string;
+  permission: PermissionKey;
+};
+
+const navItems: NavItem[] = [
+  { to: '/documentos', icon: ReceiptText, label: 'Documentos', permission: 'documentos' },
+  { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
+  { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
+  { to: '/auto-emision', icon: Zap, label: 'Automatización', permission: 'auto_emision' },
+  { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito', permission: 'credit_notes' },
+  { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
+  { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
+  { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
 ];
 
 const APP_VERSION = webPackage.version;
@@ -41,6 +53,9 @@ export default function Sidebar() {
   const { pathname } = useLocation();
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggle = useAppStore((s) => s.toggleSidebar);
+  const { can, loading } = usePermissions();
+
+  const visibleItems = navItems.filter((item) => can(item.permission));
 
   return (
     <aside
@@ -48,10 +63,8 @@ export default function Sidebar() {
         collapsed ? 'w-[76px]' : 'w-64'
       }`}
     >
-      {/* Marca — h-20 para cuadrar con el header del contenido */}
       <div className="flex h-20 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
         {collapsed ? (
-          // Colapsado: solo el logo Z (clic para expandir)
           <button
             onClick={toggle}
             aria-label="Expandir menú"
@@ -85,33 +98,37 @@ export default function Sidebar() {
             Menú
           </p>
         )}
-        {navItems.map(({ to, icon: Icon, img, label }) => {
-          const active = pathname === to;
-          const iconNode = img
-            ? <img src={img} alt="" className="h-[18px] w-[18px] shrink-0 rounded-[4px]" />
-            : <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? '' : 'text-muted-foreground group-hover:text-sidebar-accent-foreground'}`} />;
+        {loading ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground">Cargando…</p>
+        ) : (
+          visibleItems.map(({ to, icon: Icon, img, label }) => {
+            const active = pathname === to || (to !== '/' && pathname.startsWith(to + '/'));
+            const iconNode = img
+              ? <img src={img} alt="" className="h-[18px] w-[18px] shrink-0 rounded-[4px]" />
+              : <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? '' : 'text-muted-foreground group-hover:text-sidebar-accent-foreground'}`} />;
 
-          return (
-            <Link
-              key={to}
-              to={to}
-              title={collapsed ? label : undefined}
-              className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
-                collapsed ? 'justify-center' : ''
-              } ${
-                active
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-              }`}
-            >
-              {active && !collapsed && (
-                <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />
-              )}
-              {iconNode}
-              {!collapsed && <span className="truncate">{label}</span>}
-            </Link>
-          );
-        })}
+            return (
+              <Link
+                key={to}
+                to={to}
+                title={collapsed ? label : undefined}
+                className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                  collapsed ? 'justify-center' : ''
+                } ${
+                  active
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                }`}
+              >
+                {active && !collapsed && (
+                  <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />
+                )}
+                {iconNode}
+                {!collapsed && <span className="truncate">{label}</span>}
+              </Link>
+            );
+          })
+        )}
       </nav>
 
       <RuntimeFooter collapsed={collapsed} />
@@ -146,6 +163,7 @@ function RuntimeFooter({ collapsed }: { collapsed: boolean }) {
 
 function UserFooter({ collapsed }: { collapsed: boolean }) {
   const { data: session } = authClient.useSession();
+  const { role } = usePermissions();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -161,7 +179,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
 
   const email = session?.user?.email || '';
   const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
-  const role = String((session?.user as any)?.role || '').trim();
+  const roleLabel = role === 'admin' ? 'Admin' : role === 'viewer' ? 'Consulta' : role === 'operator' ? 'Operador' : role;
   const initial = (name || email || 'Z').trim().charAt(0).toUpperCase();
 
   const logout = async () => {
@@ -188,7 +206,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
           <>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-sidebar-foreground">{name}</span>
-              <span className="block truncate text-xs text-muted-foreground">{role ? `${role} · ${email}` : email}</span>
+              <span className="block truncate text-xs text-muted-foreground">{roleLabel ? `${roleLabel} · ${email}` : email}</span>
             </span>
             <MoreVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
           </>
@@ -205,9 +223,17 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
             <div className="border-b border-border px-3 py-2">
               <p className="truncate text-sm font-medium text-foreground">{name}</p>
               <p className="truncate text-xs text-muted-foreground">{email}</p>
-              {role && <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{role}</p>}
+              {roleLabel && <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{roleLabel}</p>}
             </div>
           )}
+          <Link
+            to="/settings"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <Settings className="h-4 w-4" />
+            Ajustes y tema
+          </Link>
           <button
             onClick={logout}
             disabled={signingOut}

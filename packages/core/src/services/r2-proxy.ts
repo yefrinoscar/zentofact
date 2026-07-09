@@ -26,15 +26,3 @@ export async function proxyPut(key: string, body: Buffer | string, contentType: 
     throw new Error(`R2 proxy PUT ${key} -> ${res.status} ${await res.text().catch(() => '')}`);
   }
 }
-
-export async function proxyGet(key: string): Promise<Buffer> {
-  const res = await fetch(endpoint(key), { headers: authHeader() });
-  if (res.status === 404) throw new Error(`Archivo no encontrado en R2: ${key}`);
-  if (!res.ok) throw new Error(`R2 proxy GET ${key} -> ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
-export async function proxyHead(key: string): Promise<boolean> {
-  const res = await fetch(endpoint(key), { method: 'HEAD', headers: authHeader() });
-  return res.ok;
-}

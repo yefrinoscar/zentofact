@@ -6,7 +6,7 @@ import { SunatService } from './sunat.service';
 import type { CompanyConfig } from './sunat.service';
 import { saveFacturaXml, saveFacturaCdr } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
-import { savePdf, saveFacturaPdf } from './file.service';
+import { saveFacturaPdf } from './file.service';
 import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
 import type { DetalleItem } from '../utils/tax-calculator';
@@ -364,76 +364,6 @@ export async function refreshFacturaStatus(id: number) {
   return { estadoSunat: factura.estadoSunat, changed: false };
 }
 
-export async function generateAcceptedFacturaPdf(id: number, outputDir: string, pdfFormat: PdfFormat = 'A4') {
-  const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
-  if (!factura) throw new Error('Factura no encontrada');
-  if (factura.estadoSunat !== 'ACEPTADO') throw new Error('Solo se puede generar PDF de facturas aceptadas');
-
-  const companyData = (await db.select().from(companies).where(eq(companies.id, factura.companyId)).limit(1))[0];
-  const branchData = (await db.select().from(branches).where(eq(branches.id, factura.branchId)).limit(1))[0];
-  const clientData = (await db.select().from(clients).where(eq(clients.id, factura.clientId)).limit(1))[0];
-  if (!companyData || !branchData || !clientData) throw new Error('Datos incompletos para generar PDF');
-
-  const pdfBuffer = await generateBoletaPdf({
-    company: {
-      ruc: companyData.ruc,
-      razonSocial: companyData.razonSocial,
-      nombreComercial: companyData.nombreComercial || undefined,
-      direccion: companyData.direccion || '',
-      ubigeo: companyData.ubigeo || '',
-    },
-    branch: {
-      codigo: branchData.codigo,
-      nombre: branchData.nombre,
-      direccion: branchData.direccion || '',
-    },
-    client: {
-      tipoDocumento: clientData.tipoDocumento,
-      numeroDocumento: clientData.numeroDocumento,
-      razonSocial: clientData.razonSocial,
-      direccion: clientData.direccion || undefined,
-    },
-    serie: factura.serie,
-    correlativo: factura.correlativo,
-    numeroCompleto: factura.numeroCompleto,
-    fechaEmision: factura.fechaEmision,
-    moneda: factura.moneda || 'PEN',
-    detalles: (factura.detalles as any[]) || [],
-    mtoOperGravadas: String(factura.mtoOperGravadas || '0'),
-    mtoOperExoneradas: String(factura.mtoOperExoneradas || '0'),
-    mtoOperInafectas: String(factura.mtoOperInafectas || '0'),
-    mtoOperGratuitas: String(factura.mtoOperGratuitas || '0'),
-    mtoIgv: String(factura.mtoIgv || '0'),
-    mtoIgvGratuitas: String(factura.mtoIgvGratuitas || '0'),
-    mtoIsc: String(factura.mtoIsc || '0'),
-    mtoIcbper: String(factura.mtoIcbper || '0'),
-    totalImpuestos: String(factura.totalImpuestos || '0'),
-    subTotal: String(factura.subTotal || '0'),
-    mtoImpVenta: String(factura.mtoImpVenta || '0'),
-    codigoHash: factura.codigoHash || undefined,
-    logoPath: companyData.logoPath || undefined,
-    documentTypeCode: '01',
-    documentTitle: 'FACTURA ELECTRÓNICA',
-    printDocumentLabel: 'FACTURA ELECTRÓNICA',
-  }, pdfFormat);
-
-  const pdfPath = savePdf(
-    { serie: factura.serie, correlativo: factura.correlativo, fechaEmision: factura.fechaEmision },
-    pdfBuffer,
-    pdfFormat,
-  );
-
-  const fs = await import('fs');
-  const path = await import('path');
-  const targetDir = outputDir;
-  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-  const pdfFilename = `${factura.orderNumber || factura.id}_${factura.serie}-${clientData.numeroDocumento}.pdf`;
-  const outPath = path.join(targetDir, pdfFilename);
-  fs.writeFileSync(outPath, pdfBuffer);
-
-  await db.update(facturas).set({ pdfPath: outPath, updatedAt: now() }).where(eq(facturas.id, id));
-  return { pdfPath: outPath, internalPdfPath: pdfPath };
-}
 
 export async function generateAcceptedFacturaPdfBase64(id: number, pdfFormat: PdfFormat = 'A4') {
   const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];

@@ -77,9 +77,9 @@ export type WorkflowProgress = (current: number, total: number, status: string) 
 export { processWorkflow };
 export { pool } from './db';
 export { runMigrations } from './db/migrate';
-export { listCompanies, getCompany, getCompanyByRuc, createCompany, updateCompany, deleteCompany, testSunatConnection } from './services/company.service';
+export { listCompanies, getCompany, createCompany, updateCompany, deleteCompany, testSunatConnection } from './services/company.service';
 export type { CreateCompanyInput, UpdateCompanyInput, TestSunatConnectionResult, SunatEnvironment } from './services/company.service';
-export { listBranches, getBranch, createBranch, updateBranch } from './services/branch.service';
+export { listBranches, createBranch, updateBranch } from './services/branch.service';
 export type { CreateBranchInput, UpdateBranchInput } from './services/branch.service';
 export { listBoletas } from './services/boleta-query.service';
 export type { BoletaFilter } from './services/boleta-query.service';
@@ -87,30 +87,35 @@ export { listFacturas } from './services/factura-query.service';
 export type { FacturaFilter } from './services/factura-query.service';
 export { listCreditNotes } from './services/credit-note-query.service';
 export type { CreditNoteFilter } from './services/credit-note-query.service';
-export { listDailySummaries, refreshDailySummaryStatus, refreshBoletaStatus } from './services/daily-summary-query.service';
-export type { DailySummaryFilter } from './services/daily-summary-query.service';
-export { createBoleta, sendBoletaToSunat, reEmitBoleta, sendBoletasAsDailySummary, generateAcceptedBoletaPdf, generateAcceptedBoletaPdfBase64, generateAcceptedBoletaPreviewHtml, markBoletaFalabellaPdfUpload, generateDailySummaryPdfs, generatePreviewBoletaHtmlForVenta, sendBoletasAsVoidedDailySummary, sendBoletasAsVoidedDailySummaries } from './services/boleta.service';
+export { refreshBoletaStatus } from './services/daily-summary-query.service';
+// PDF disk helpers (generateAccepted*Pdf) stay internal; web/server use base64 variants.
 export {
-  recordFacturaUpload,
+  createBoleta,
+  sendBoletaToSunat,
+  reEmitBoleta,
+  generateAcceptedBoletaPdfBase64,
+  generateAcceptedBoletaPreviewHtml,
+  generatePreviewBoletaHtmlForVenta,
+} from './services/boleta.service';
+export {
   refreshFacturaStatus,
   createFactura,
   sendFacturaToSunat,
   reEmitFactura,
-  generateAcceptedFacturaPdf,
   generateAcceptedFacturaPdfBase64,
   generateAcceptedFacturaPreviewHtml,
   generatePreviewFacturaHtmlForVenta,
 } from './services/factura.service';
 export type { CreateFacturaInput } from './services/factura.service';
-export { createCreditNoteFromBoleta, sendCreditNoteToSunat, createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, listCreditNotesByAffectedBoletaIds, generatePreviewCreditNoteHtml } from './services/credit-note.service';
+export { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generatePreviewCreditNoteHtml } from './services/credit-note.service';
 export type { CreateCreditNoteFromBoletaOptions } from './services/credit-note.service';
-export { getCorrelatives, getCorrelativeBySerie } from './services/correlative-query.service';
+export { getCorrelatives } from './services/correlative-query.service';
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
   falabellaGetProducts, falabellaCreateProduct,
   falabellaGetFeeds, falabellaGetFeedStatus,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
-  falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook, FALABELLA_WEBHOOK_EVENTS,
+  falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook,
 } from './services/falabella.service';
 
 // ── Utilitarios ──
@@ -135,30 +140,4 @@ export function validateVentas(ventas: VentaItem[]): string[] {
     if (!v.detalles?.length) errors.push(`Venta ${i + 1}: al menos un detalle requerido`);
   });
   return errors;
-}
-
-export function sanitizeVentaItem(v: VentaItem): VentaItem {
-  return {
-    orderNumber: v.orderNumber,
-    serie: v.serie,
-    fechaEmision: v.fechaEmision,
-    moneda: v.moneda,
-    client: {
-      tipoDocumento: v.client.tipoDocumento,
-      numeroDocumento: v.client.numeroDocumento,
-      razonSocial: v.client.razonSocial,
-      direccion: v.client.direccion,
-    },
-    detalles: v.detalles.map(d => ({
-      codigo: d.codigo,
-      descripcion: d.descripcion,
-      unidad: d.unidad,
-      cantidad: d.cantidad,
-      mtoValorUnitario: d.mtoValorUnitario,
-      ...(d.mtoBruto != null ? { mtoBruto: d.mtoBruto } : {}),
-      porcentajeIgv: d.porcentajeIgv,
-      tipAfeIgv: d.tipAfeIgv,
-      ...(d.codigoProductoSunat ? { codigoProductoSunat: d.codigoProductoSunat } : {}),
-    })),
-  };
 }

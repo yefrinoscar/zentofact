@@ -1,5 +1,4 @@
-// Implementación HTTP de la misma superficie `api` que usa el renderer.
-// Se usa cuando la UI corre en web (no hay window.electronAPI); apunta al backend @zentofact/server.
+// Cliente HTTP del frontend web; apunta al backend @zentofact/server.
 // Vacío = mismo origen (el front se sirve desde el propio server). En dev se puede fijar VITE_API_URL.
 const BASE = (import.meta as any).env?.VITE_API_URL || '';
 
@@ -26,12 +25,19 @@ const qs = (o: Record<string, any> = {}) => {
   const s = p.toString();
   return s ? `?${s}` : '';
 };
-const nope = (name: string) => () => { throw new Error(`"${name}" no está disponible en la versión web (solo desktop).`); };
 
 // Handler de progreso registrado por la UI (via onProgress). El stream de /workflow/process lo alimenta.
 let progressHandler: ((data: any) => void) | null = null;
 
 const apiHttp = {
+  // Sesión y usuarios
+  getMe: () => req('/me'),
+  listUsers: () => req('/users'),
+  createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
+  usersCatalog: () => req('/users/meta/catalog'),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),
@@ -53,8 +59,6 @@ const apiHttp = {
   listBoletas: (filter: any) => req(`/boletas${qs(filter)}`),
   listFacturas: (filter: any) => req(`/facturas${qs(filter)}`),
   listCreditNotes: (filter: any) => req(`/credit-notes${qs(filter)}`),
-  listDailySummaries: (filter: any) => req(`/daily-summaries${qs(filter)}`),
-  refreshDailySummaryStatus: (id: number) => req(`/daily-summaries/${id}/refresh`, { method: 'POST' }),
   refreshBoletaStatus: (id: number) => req(`/boletas/${id}/refresh-status`, { method: 'POST' }),
   refreshFacturaStatus: (id: number) => req(`/facturas/${id}/refresh-status`, { method: 'POST' }),
 
@@ -81,7 +85,7 @@ const apiHttp = {
   createAndSendCreditNote: (boletaId: number, options?: any) => req('/credit-notes', { method: 'POST', body: JSON.stringify({ boletaId, options }) }),
   createAndSendCreditNotesBatch: (boletaIds: number[], options?: any) => req('/credit-notes/batch', { method: 'POST', body: JSON.stringify({ boletaIds, options }) }),
 
-  // Workflow
+  // Workflow (emisión en lote)
   validateConfig: (config: any) => req('/workflow/validate-config', { method: 'POST', body: JSON.stringify(config) }),
   validateVentas: (ventas: any) => req('/workflow/validate-ventas', { method: 'POST', body: JSON.stringify(ventas) }),
   processWorkflow: async (config: any, ventas: any) => {
@@ -91,7 +95,6 @@ const apiHttp = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ config, ventas }),
     });
-    // Error HTTP (auth/proxy) o sin cuerpo streameable: parseo normal.
     if (!res.ok || !res.body) {
       const text = await res.text();
       let data: any = null;
@@ -123,11 +126,10 @@ const apiHttp = {
       }
     }
     if (buffer) handleLine(buffer);
-    // Mismo shape que el handler IPC del desktop: { success, result }.
     return { success: true, result: finalResult };
   },
 
-  // Falabella (lógica compartida en @zentofact/core, expuesta por el server)
+  // Falabella
   falabellaApiGetOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ filters: JSON.stringify(filters) })}`),
   falabellaApiGetProducts: (companyId: number, filters: any) => req(`/falabella/${companyId}/products${qs({ filters: JSON.stringify(filters) })}`),
   falabellaApiCreateProduct: (companyId: number, product: any) => req(`/falabella/${companyId}/products`, { method: 'POST', body: JSON.stringify(product) }),
@@ -142,7 +144,7 @@ const apiHttp = {
   falabellaApiUploadInvoicePdf: (payload: any) => req('/falabella/upload-invoice-pdf', { method: 'POST', body: JSON.stringify(payload) }),
   falabellaApiUploadBoletaPdf: (payload: any) => req('/falabella/upload-boleta-pdf', { method: 'POST', body: JSON.stringify(payload) }),
 
-  // Emisión automática (panel de control)
+  // Emisión automática
   autoEmitGetConfig: () => req('/auto-emit/config'),
   autoEmitSetCompany: (companyId: number, enabled: boolean) => req(`/auto-emit/config/${companyId}`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   autoEmitJobs: (limit = 50) => req(`/auto-emit/jobs${qs({ limit })}`),
@@ -157,29 +159,7 @@ const apiHttp = {
   autoEmitCreateWebhook: (companyId: number, events: string[], callbackUrl?: string) => req(`/auto-emit/webhooks/${companyId}`, { method: 'POST', body: JSON.stringify({ events, callbackUrl }) }),
   autoEmitDeleteWebhook: (companyId: number, webhookId: string) => req(`/auto-emit/webhooks/${companyId}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' }),
 
-  // Solo desktop (FS / diálogos / scraper): en web son no-ops o valores neutros.
-  getHomeDir: async () => '',            // web no tiene home dir; el server define STORAGE_PATH
-  openFolder: () => {},                  // no hay carpetas que abrir en web
-  openOutputDir: () => {},
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },
-  onScraperProgress: () => {},
-
-  // Diálogos nativos: en web devuelven null (= "no se eligió archivo"), sin crash.
-  // TODO web: reemplazar por <input type="file"> que lea a base64 en el navegador.
-  selectCertificate: nope('selectCertificate'),
-  selectOutputDir: async () => null,
-  selectInputFile: async () => null,
-  selectPdfFile: nope('selectPdfFile'),
-  selectSaveFile: async () => null,
-  // Lecturas por ruta de archivo: no aplican en web (no hay paths).
-  readInputFile: nope('readInputFile'),
-  readTextFile: nope('readTextFile'),
-  readFileDataUrl: nope('readFileDataUrl'),
-  readCertBase64: nope('readCertBase64'),
-  readFileBase64: nope('readFileBase64'),
-  readCertFile: nope('readCertFile'),
-  // PDFs de resumen diario: pendiente variante web (base64). Por ahora, mensaje claro.
-  generateDailySummaryPdfs: nope('generateDailySummaryPdfs (PDFs de resumen — pendiente en web)'),
 };
 
 export default apiHttp;

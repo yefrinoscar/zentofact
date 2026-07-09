@@ -3,7 +3,7 @@
 //
 // Uso (tras desplegar el Worker y poner R2_PROXY_URL / R2_PROXY_SECRET en .env):
 //   node scripts/upload-archives-via-proxy.mjs
-//   (opcional) STORAGE_PATH=packages/desktop/storage
+//   (opcional) STORAGE_PATH=storage
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STORAGE_PATH = process.env.STORAGE_PATH ||
-  path.join(__dirname, '..', 'packages', 'desktop', 'storage');
+  path.join(__dirname, '..', 'storage');
 
 const URL_BASE = (process.env.R2_PROXY_URL || '').replace(/\/+$/, '');
 const SECRET = process.env.R2_PROXY_SECRET;

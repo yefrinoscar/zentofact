@@ -22,10 +22,6 @@ export function listBranches(companyId: number) {
     .where(and(eq(branches.companyId, companyId), eq(branches.activo, true)));
 }
 
-export async function getBranch(id: number) {
-  const rows = await db.select().from(branches).where(eq(branches.id, id)).limit(1);
-  return rows[0];
-}
 
 export async function createBranch(data: CreateBranchInput) {
   const now = Math.floor(Date.now() / 1000);

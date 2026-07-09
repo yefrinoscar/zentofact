@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '../db';
 import { boletas, branches, clients, companies, creditNotes } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
@@ -267,10 +267,6 @@ export async function createAndSendCreditNotesFromBoletas(
   };
 }
 
-export async function listCreditNotesByAffectedBoletaIds(boletaIds: number[]) {
-  if (!boletaIds.length) return [];
-  return db.select().from(creditNotes).where(inArray(creditNotes.affectedBoletaId, boletaIds));
-}
 
 export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFormat = 'A4') {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, id)).limit(1))[0];

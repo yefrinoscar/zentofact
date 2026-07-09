@@ -1,6 +1,6 @@
 // ZentoFact API — capa HTTP delgada que expone @zentofact/core.
 // El core no sabe que lo llama HTTP; aquí solo mapeamos rutas -> funciones del core.
-// Omitido en web (queda en desktop): paths/FS, diálogos nativos, scraper Falabella.
+// Omitido en web: paths/FS, diálogos nativos y scraper Falabella local.
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
@@ -17,7 +17,10 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
-const { auth, requireAuth } = await import('./auth.js');
+const { auth, requireAuth, requirePermission } = await import('./auth.js');
+const users = await import('./users.js');
+const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
+await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 
@@ -72,6 +75,22 @@ app.on(['POST', 'GET'], '/webhooks/falabella/:companyId', async (c) => {
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 
+// Permisos por módulo (menú). /me y /health no aplican.
+const moduleGuards = [
+  ['/companies', 'companies'],
+  ['/boletas', 'documentos'],
+  ['/facturas', 'documentos'],
+  ['/credit-notes', 'credit_notes'],
+  ['/falabella', 'falabella'],
+  ['/workflow', 'falabella'],
+  ['/auto-emit', 'auto_emision'],
+  ['/branches', 'companies'],
+];
+for (const [prefix, perm] of moduleGuards) {
+  app.use(prefix, requirePermission(perm));
+  app.use(`${prefix}/*`, requirePermission(perm));
+}
+
 const ok = (c, data, status = 200) => c.json(data, status);
 const fail = (c, e, status = 500) => {
   console.error('[API ERROR]', c.req.method, c.req.path, '→', (e && e.stack) || e);
@@ -79,6 +98,39 @@ const fail = (c, e, status = 500) => {
 };
 
 app.get('/health', (c) => ok(c, { ok: true, service: 'zentofact-api', ts: new Date().toISOString() }));
+
+// ── Sesión / catálogo de permisos ──
+app.get('/me', async (c) => {
+  try {
+    const sessionUser = c.get('user');
+    const full = sessionUser?.id ? await users.getUserById(sessionUser.id) : null;
+    return ok(c, {
+      user: full || sessionUser,
+      permissions: PERMISSIONS,
+      roles: ROLE_PRESETS,
+    });
+  } catch (e) { return fail(c, e); }
+});
+
+// ── Usuarios (solo admin / permiso users) ──
+app.get('/users', requirePermission('users'), async (c) => {
+  try { return ok(c, await users.listUsers()); } catch (e) { return fail(c, e); }
+});
+app.post('/users', requirePermission('users'), async (c) => {
+  try { return ok(c, await users.createUser(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); }
+});
+app.patch('/users/:id', requirePermission('users'), async (c) => {
+  try { return ok(c, await users.updateUser(c.req.param('id'), await c.req.json())); } catch (e) { return fail(c, e, 400); }
+});
+app.delete('/users/:id', requirePermission('users'), async (c) => {
+  try {
+    const actor = c.get('user');
+    return ok(c, await users.deleteUser(c.req.param('id'), actor?.id));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
+  try { return ok(c, { permissions: PERMISSIONS, roles: ROLE_PRESETS }); } catch (e) { return fail(c, e); }
+});
 
 // ── Empresas ──
 app.get('/companies', async (c) => { try { return ok(c, await core.listCompanies()); } catch (e) { return fail(c, e); } });
@@ -143,8 +195,6 @@ app.post('/facturas/preview', async (c) => {
   catch (e) { return fail(c, e); }
 });
 app.get('/credit-notes', async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
-app.get('/daily-summaries', async (c) => { try { return ok(c, await core.listDailySummaries(parseFilter(c))); } catch (e) { return fail(c, e); } });
-app.post('/daily-summaries/:id/refresh', async (c) => { try { return ok(c, await core.refreshDailySummaryStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/boletas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/facturas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshFacturaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 

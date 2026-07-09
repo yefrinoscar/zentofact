@@ -12,8 +12,6 @@ const FORMAT_DIMS: Record<PdfFormat, { width: string; height: string }> = {
   'ticket': { width: '50mm',  height: '150mm' },
 };
 
-export const FORMATS = FORMAT_DIMS;
-
 let _browser: Browser | null = null;
 
 async function getBrowser(): Promise<Browser> {

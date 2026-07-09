@@ -682,6 +682,14 @@ function resolvePdfMode(option?: ResolvedDocumentOption | null): PdfMode {
   return 'selected_file';
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 function SelectTrigger({
   value,
   placeholder,
@@ -906,6 +914,19 @@ export default function FalabellaApi() {
   const [documentSelectionMode, setDocumentSelectionMode] = useState(false);
   const [selectedDocumentOrders, setSelectedDocumentOrders] = useState<Set<string>>(() => new Set());
   const [creditNoteAction, setCreditNoteAction] = useState<{ orderNumber: string; loading: boolean; error: string } | null>(null);
+  const [creditNoteModal, setCreditNoteModal] = useState<{
+    open: boolean;
+    row: InvoiceFlowRow | null;
+    submitting: boolean;
+    error: string;
+    result: any | null;
+  }>({
+    open: false,
+    row: null,
+    submitting: false,
+    error: '',
+    result: null,
+  });
   const falabellaSunatEnv = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase();
   const falabellaProductionMode = falabellaSunatEnv
     ? falabellaSunatEnv.startsWith('prod')
@@ -920,6 +941,8 @@ export default function FalabellaApi() {
 
   const autoLoadKeyRef = useRef('');
   const uploadDocumentRefreshKeyRef = useRef('');
+  const flowToolbarSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [flowToolbarStuck, setFlowToolbarStuck] = useState(false);
 
   useEffect(() => {
     const className = 'app-modal-open';
@@ -936,6 +959,21 @@ export default function FalabellaApi() {
       document.body.classList.remove(className);
     };
   }, [uploadModal.open]);
+
+  useEffect(() => {
+    const sentinel = flowToolbarSentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setFlowToolbarStuck(!entry.isIntersecting);
+      },
+      { threshold: 1 },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!uploadModal.open || uploadModal.loading || !selectedCompanyId || !uploadModal.order) return;
@@ -1341,24 +1379,54 @@ export default function FalabellaApi() {
     });
   };
 
+  const openCreditNoteModal = (row: InvoiceFlowRow) => {
+    setCreditNoteAction(null);
+    setCreditNoteModal({
+      open: true,
+      row,
+      submitting: false,
+      error: '',
+      result: null,
+    });
+  };
+
+  const closeCreditNoteModal = () => {
+    setCreditNoteModal({
+      open: false,
+      row: null,
+      submitting: false,
+      error: '',
+      result: null,
+    });
+  };
+
   const createCreditNoteForRow = async (row: InvoiceFlowRow) => {
     if (!row.affectedBoletaId) return;
 
     setCreditNoteAction({ orderNumber: row.orderNumber, loading: true, error: '' });
+    setCreditNoteModal((current) => ({ ...current, submitting: true, error: '' }));
     try {
-      await api.createAndSendCreditNote(row.affectedBoletaId, {
+      const result = await api.createAndSendCreditNote(row.affectedBoletaId, {
         codMotivo: '01',
         desMotivo: 'ANULACION DE LA OPERACION',
         modoProduccion: falabellaProductionMode,
       });
       setCreditNoteAction(null);
+      setCreditNoteModal((current) => ({
+        ...current,
+        submitting: false,
+        error: '',
+        result,
+      }));
       await loadInvoiceFlowPrototype();
     } catch (nextError: any) {
+      const message = nextError?.message || 'No se pudo emitir la nota de crédito.';
       setCreditNoteAction({
         orderNumber: row.orderNumber,
         loading: false,
-        error: nextError?.message || 'No se pudo emitir la nota de crédito.',
+        error: message,
       });
+      setCreditNoteModal((current) => ({ ...current, submitting: false, error: message }));
     }
   };
 
@@ -1775,9 +1843,6 @@ export default function FalabellaApi() {
           });
         });
 
-        const homeDir = await api.getHomeDir();
-        const savedOutputDir = localStorage.getItem('boletas.outputDir');
-        const outputDir = savedOutputDir || (homeDir ? `${homeDir}/boletas-emitidas` : 'boletas-emitidas');
         const result = await api.processWorkflow({
           companyId: selectedCompany.id,
           ruc: selectedCompany.ruc,
@@ -1788,7 +1853,7 @@ export default function FalabellaApi() {
           claveSol: selectedCompany.claveSol || '',
           certificadoBase64: selectedCompany.certificado || '',
           certificadoPassword: selectedCompany.certificadoPassword || '',
-          outputDir,
+          outputDir: 'storage',
         }, emitBoletaModal.ventas);
 
         const workflowResult = result?.result || result;
@@ -2168,27 +2233,32 @@ export default function FalabellaApi() {
     }
   };
 
-  const pickPdfFile = async () => {
-    try {
-      const filePath = await api.selectPdfFile();
-      if (!filePath) return;
-
-      const pdfBase64 = await api.readFileBase64(filePath);
-      setUploadModal((current) => ({
-        ...current,
-        error: '',
-        uploadResult: null,
-        pdfMode: 'selected_file',
-        pdfPath: filePath,
-        pdfBase64,
-        pdfName: String(filePath).split('/').pop() || filePath,
-      }));
-    } catch (nextError: any) {
-      setUploadModal((current) => ({
-        ...current,
-        error: nextError?.message || 'No se pudo leer el PDF seleccionado.',
-      }));
-    }
+  const pickPdfFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf,.pdf';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const pdfBase64 = await fileToBase64(file);
+        setUploadModal((current) => ({
+          ...current,
+          error: '',
+          uploadResult: null,
+          pdfMode: 'selected_file',
+          pdfPath: file.name,
+          pdfBase64,
+          pdfName: file.name,
+        }));
+      } catch (nextError: any) {
+        setUploadModal((current) => ({
+          ...current,
+          error: nextError?.message || 'No se pudo leer el PDF seleccionado.',
+        }));
+      }
+    };
+    input.click();
   };
 
   const submitUpload = async () => {
@@ -2332,11 +2402,18 @@ export default function FalabellaApi() {
   return (
     <div className="space-y-5">
       <section className="space-y-5">
-        <div>
-          <div className="flex flex-wrap items-start justify-between gap-4">
+        <div ref={flowToolbarSentinelRef} className="h-px" />
+        <div
+          className={`sticky top-[-1.5rem] z-40 -mx-6 -mt-6 border-b bg-background px-6 transition-[padding,border-color,box-shadow] duration-200 ease-out lg:top-[-2rem] lg:-mx-8 lg:-mt-8 lg:px-8 ${
+            flowToolbarStuck
+              ? 'border-border py-3 shadow-[0_8px_18px_rgba(15,23,42,0.06)]'
+              : 'border-transparent pb-4 pt-6 shadow-none lg:pt-8'
+          }`}
+        >
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="flex flex-wrap items-end gap-3">
               <div className="w-[min(420px,calc(100vw-3rem))]">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Empresa</label>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Empresa</label>
                 <Select.Root
                   value={selectedCompanyId ? String(selectedCompanyId) : undefined}
                   onValueChange={(value) => void selectCompany(Number(value))}
@@ -2373,7 +2450,7 @@ export default function FalabellaApi() {
                 </Select.Root>
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Mes</label>
+                <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Mes</label>
                 <MonthPicker value={flowMonth} onChange={setFlowMonth} />
               </div>
             </div>
@@ -2792,7 +2869,7 @@ export default function FalabellaApi() {
                                 <button
                                   type="button"
                                   disabled={creditNoteAction?.orderNumber === row.orderNumber && creditNoteAction.loading}
-                                  onClick={() => void createCreditNoteForRow(row)}
+                                  onClick={() => openCreditNoteModal(row)}
                                   className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
                                 >
                                   {creditNoteAction?.orderNumber === row.orderNumber && creditNoteAction.loading ? (
@@ -2830,6 +2907,113 @@ export default function FalabellaApi() {
           </>
         )}
       </section>
+
+      {creditNoteModal.open && creditNoteModal.row && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">Emitir nota de crédito</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Revisa el documento afectado antes de enviarlo a SUNAT.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCreditNoteModal}
+                disabled={creditNoteModal.submitting}
+                className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Se emitirá una nota de crédito por anulación de la operación. Esta acción se enviará a SUNAT.
+              </div>
+
+              <dl className="grid gap-3 text-sm sm:grid-cols-[160px_1fr]">
+                <dt className="text-muted-foreground">Orden Falabella</dt>
+                <dd className="font-mono text-foreground">{creditNoteModal.row.orderNumber || '-'}</dd>
+
+                <dt className="text-muted-foreground">Boleta afectada</dt>
+                <dd className="font-mono text-foreground">{creditNoteModal.row.documentLabel || '-'}</dd>
+
+                <dt className="text-muted-foreground">Monto</dt>
+                <dd className="font-semibold text-foreground">{money(creditNoteModal.row.total)}</dd>
+
+                <dt className="text-muted-foreground">Motivo</dt>
+                <dd className="text-foreground">Anulación de la operación</dd>
+
+                <dt className="text-muted-foreground">Ambiente SUNAT</dt>
+                <dd className="text-foreground">{falabellaProductionMode ? 'Producción' : 'Beta'}</dd>
+
+                <dt className="text-muted-foreground">Estado Falabella</dt>
+                <dd className="text-foreground">{creditNoteModal.row.statusLabel || creditNoteModal.row.status || '-'}</dd>
+              </dl>
+
+              {creditNoteModal.error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {creditNoteModal.error}
+                </div>
+              )}
+
+              {creditNoteModal.result && (
+                <div
+                  className={`rounded-lg border px-3 py-3 text-sm ${
+                    creditNoteModal.result.success
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : 'border-red-200 bg-red-50 text-red-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-semibold">
+                    {creditNoteModal.result.success ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    {creditNoteModal.result.success
+                      ? 'SUNAT aceptó la nota de crédito'
+                      : 'SUNAT no aceptó la nota de crédito'}
+                  </div>
+                  {creditNoteModal.result.numeroCompleto && (
+                    <p className="mt-2 font-mono text-xs">
+                      Documento: {creditNoteModal.result.numeroCompleto}
+                    </p>
+                  )}
+                  {creditNoteModal.result.error?.message && (
+                    <p className="mt-2 leading-5">{creditNoteModal.result.error.message}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+              <button
+                type="button"
+                onClick={closeCreditNoteModal}
+                disabled={creditNoteModal.submitting}
+                className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm font-medium transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creditNoteModal.result ? 'Aceptar y cerrar' : 'Cancelar'}
+              </button>
+              {!creditNoteModal.result && (
+                <button
+                  type="button"
+                  onClick={() => creditNoteModal.row && void createCreditNoteForRow(creditNoteModal.row)}
+                  disabled={creditNoteModal.submitting || !creditNoteModal.row.affectedBoletaId}
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {creditNoteModal.submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
+                  {creditNoteModal.submitting ? 'Emitiendo...' : 'Emitir nota de crédito'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {emitBoletaModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
@@ -3770,7 +3954,7 @@ export default function FalabellaApi() {
                       {uploadModal.pdfMode === 'selected_file' && (
                         <button
                           type="button"
-                          onClick={() => void pickPdfFile()}
+                          onClick={() => pickPdfFile()}
                           className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground transition hover:bg-accent"
                         >
                           <FileText className="h-3.5 w-3.5" />

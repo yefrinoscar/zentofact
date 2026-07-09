@@ -1,11 +1,9 @@
 import { useState } from 'react';
-import { authClient, isWeb } from '../lib/authClient';
+import { authClient } from '../lib/authClient';
 import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 
-// Puerta de autenticación (solo web). En desktop deja pasar directo (IPC local).
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  if (!isWeb) return <>{children}</>;
   return <WebAuthGate>{children}</WebAuthGate>;
 }
 

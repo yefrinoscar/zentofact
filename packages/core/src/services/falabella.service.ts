@@ -1,6 +1,5 @@
-// Servicio Falabella compartido (extraído de desktop/main/ipc/falabella-api.ts).
+// Servicio Falabella compartido entre core y server.
 // Orquesta el cliente Falabella (@zentofact/falabella-api) + queries/servicios del core.
-// Sin Electron: lo usan tanto el desktop (IPC) como el server (HTTP).
 import { readFileSync } from 'fs';
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters, canonicalizeParameters } from '@zentofact/falabella-api';
 import type { GetOrdersV2Filters } from '@zentofact/falabella-api';
@@ -283,16 +282,6 @@ function requireProductCreateFields(input: any) {
   if (String(input.description || '').trim().length < 6) return 'La descripcion debe tener al menos 6 caracteres.';
   return '';
 }
-
-export const FALABELLA_WEBHOOK_EVENTS = [
-  'onOrderCreated',
-  'onOrderItemsStatusChanged',
-  'onFeedCreated',
-  'onFeedCompleted',
-  'onProductCreated',
-  'onProductUpdated',
-  'onProductQcStatusChanged',
-] as const;
 
 export async function falabellaGetOrders(payload: { companyId: number; filters: GetOrdersV2Filters }) {
   const found = await requireCompanyWithFalabella(payload.companyId);

@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 
-// Idempotent Postgres schema bootstrap. Mirrors packages/core/src/db/schema.postgres.sql.
+// Idempotent Postgres schema bootstrap.
 // Safe to call on every startup; uses CREATE TABLE / INDEX IF NOT EXISTS.
 const DDL = `
   CREATE TABLE IF NOT EXISTS companies (

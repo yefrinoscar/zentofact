@@ -6,4 +6,3 @@ export { boletas } from './boletas';
 export { facturas } from './facturas';
 export { creditNotes } from './credit-notes';
 export { dailySummaries } from './daily-summaries';
-export { users } from './users';

@@ -4,7 +4,7 @@
 // Usage (after creating the R2 bucket + token):
 //   R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=zentofact \
 //   node scripts/upload-archives-to-r2.mjs
-//   (optional) STORAGE_PATH=packages/desktop/storage
+//   (optional) STORAGE_PATH=storage
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +15,7 @@ const __dirname = dirname();
 function dirname() { return path.dirname(fileURLToPath(import.meta.url)); }
 
 const STORAGE_PATH = process.env.STORAGE_PATH ||
-  path.join(__dirname, '..', 'packages', 'desktop', 'storage');
+  path.join(__dirname, '..', 'storage');
 
 for (const v of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']) {
   if (!process.env[v]) { console.error(`Missing env var: ${v}`); process.exit(1); }

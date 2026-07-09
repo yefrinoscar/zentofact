@@ -1,6 +1,6 @@
 # ZentoFact — Monorepo
 
-Emite documentos electronicos peruanos con SUNAT y cruza ordenes de Falabella desde una web desacoplada.
+Emite documentos electrónicos peruanos con SUNAT y cruza ordenes de Falabella desde una web desacoplada.
 
 ## Estructura
 
@@ -9,17 +9,15 @@ zentofact/
 ├── packages/
 │   ├── core/         ← @zentofact/core — logica SUNAT, PDF, BD
 │   ├── falabella-api/← @zentofact/falabella-api — cliente oficial Seller API
-│   ├── scraper/      ← @zentofact/scraper — extrae ventas (placeholder)
 │   ├── server/       ← @zentofact/server — API HTTP
 │   ├── web/          ← @zentofact/web — frontend React web
-│   └── desktop/      ← @zentofact/desktop — shell Electron que monta @zentofact/web
 └── package.json
 ```
 
 ## Requisitos
 
-- Node.js >= 18
-- npm >= 9
+- Node.js >= 22.12
+- npm >= 11
 
 ## Instalar
 
@@ -33,24 +31,11 @@ npm install
 # Core
 cd packages/core && npx tsc --noEmit   # verifica tipos
 
-# Scraper
-cd packages/scraper && npx tsc --noEmit
-
 # Falabella API
 cd packages/falabella-api && npx tsc --noEmit
 
 # Web
 cd packages/web && npm run build
-
-# Electron
-cd packages/desktop && npx tsc --noEmit
-```
-
-## Ejecutar (desktop)
-
-```bash
-cd packages/desktop
-npm run dev
 ```
 
 ## Ejecutar (web desacoplado)
@@ -127,26 +112,20 @@ const result = await processWorkflow(config, ventas, (current, total, status) =>
 // }
 ```
 
-## Electron — pantallas
-
-1. **Configuracion** — RUC, certificado .pfx, credenciales SOL, carpeta salida
-2. **Datos** — cargar JSON de ventas, vista previa
-3. **Procesando** — barra de progreso, estado por boleta
-4. **Resultados** — exitos/rechazos, abrir carpeta PDFs
-
 ## Stack
 
 | Capa | Libreria |
 |------|----------|
 | Monorepo | npm workspaces |
 | Lenguaje | TypeScript 5.8 |
-| Desktop | Electron 33 |
-| BD | SQLite (better-sqlite3) |
+| Frontend | React + Vite |
+| Backend | Hono |
+| BD | PostgreSQL |
 | ORM | Drizzle ORM |
 | SUNAT XML | xmlbuilder2 |
 | SUNAT firma | xml-crypto + node-forge |
-| SUNAT SOAP | strong-soap |
-| PDF | pdfmake |
+| SUNAT SOAP | XML manual + fetch |
+| PDF | Puppeteer |
 | QR | qrcode |
 | ZIP | adm-zip |
 
