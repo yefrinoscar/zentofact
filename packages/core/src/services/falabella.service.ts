@@ -620,6 +620,16 @@ function facturaFalabellaUploadedAt(factura: any): string {
   try { return new Date(ms).toISOString(); } catch { return new Date().toISOString(); }
 }
 
+function localDocumentUploadReadiness(document: any): { canUploadPdf: boolean; uploadBlockedReason: string } {
+  const accepted = String(document?.estadoSunat || '').toUpperCase() === 'ACEPTADO';
+  if (!accepted) return { canUploadPdf: false, uploadBlockedReason: 'El documento debe estar ACEPTADO por SUNAT para subirlo.' };
+  if (document?.xmlPath || document?.cdrPath) return { canUploadPdf: true, uploadBlockedReason: '' };
+  return {
+    canUploadPdf: false,
+    uploadBlockedReason: 'Documento registrado localmente sin XML ni CDR; no se puede subir a Falabella.',
+  };
+}
+
 export async function falabellaResolveDocument(payload: { companyId: number; orderNumber: string }) {
   const boletasResult = await listBoletas({ companyId: payload.companyId, orderNumber: payload.orderNumber, limit: 20 });
   const facturasResult = await listFacturas({ companyId: payload.companyId, orderNumber: payload.orderNumber, limit: 20 });
@@ -631,24 +641,27 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
   const options: Array<any> = [];
   if (boleta) {
     const falabellaPdfUpload = getBoletaFalabellaPdfUpload(boleta);
-    options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '' });
+    const readiness = localDocumentUploadReadiness(boleta);
+    options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || null, xmlPath: boleta.xmlPath || null, cdrPath: boleta.cdrPath || null, estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '', ...readiness });
   }
   if (factura) {
     // local_factura → el server puede auto-generar el PDF desde la factura local aceptada (igual que boleta).
     const facturaAceptada = String(factura.estadoSunat || '').toUpperCase() === 'ACEPTADO';
-    options.push({ kind: 'FACTURA', source: facturaAceptada ? 'local_factura' : 'manual', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) });
+    const readiness = localDocumentUploadReadiness(factura);
+    options.push({ kind: 'FACTURA', source: facturaAceptada ? 'local_factura' : 'manual', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', pdfPath: factura.pdfPath || null, xmlPath: factura.xmlPath || null, cdrPath: factura.cdrPath || null, estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura), ...readiness });
   }
   if (creditNote) {
-    options.push({ kind: 'NOTA_DE_CREDITO', source: 'local_credit_note', creditNoteId: creditNote.id, invoiceNumber: creditNote.numeroCompleto, invoiceDate: creditNote.fechaEmision, invoiceType: 'NOTA_DE_CREDITO', pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '' });
+    const readiness = localDocumentUploadReadiness(creditNote);
+    options.push({ kind: 'NOTA_DE_CREDITO', source: 'local_credit_note', creditNoteId: creditNote.id, invoiceNumber: creditNote.numeroCompleto, invoiceDate: creditNote.fechaEmision, invoiceType: 'NOTA_DE_CREDITO', pdfPath: creditNote.pdfPath || null, xmlPath: creditNote.xmlPath || null, cdrPath: creditNote.cdrPath || null, estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '', ...readiness });
   }
   if (!factura) {
-    options.push({ kind: 'FACTURA', source: 'manual', invoiceNumber: '', invoiceDate: '', invoiceType: 'FACTURA', pdfPath: '', estadoSunat: '' });
+    options.push({ kind: 'FACTURA', source: 'manual', invoiceNumber: '', invoiceDate: '', invoiceType: 'FACTURA', pdfPath: null, xmlPath: null, cdrPath: null, estadoSunat: '' });
   }
 
   return {
     orderNumber: payload.orderNumber,
-    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || '', estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || '' } : null,
-    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || '', estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || '', falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura) } : null,
+    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || null, estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || null, cdrPath: boleta.cdrPath || null, ...localDocumentUploadReadiness(boleta) } : null,
+    factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || null, estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || null, cdrPath: factura.cdrPath || null, falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura), ...localDocumentUploadReadiness(factura) } : null,
     creditNote: creditNote ? { id: creditNote.id, numeroCompleto: creditNote.numeroCompleto, fechaEmision: creditNote.fechaEmision, pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '' } : null,
     options,
     defaultKind: boleta ? 'BOLETA' : factura ? 'FACTURA' : creditNote ? 'NOTA_DE_CREDITO' : 'FACTURA',
@@ -1018,6 +1031,13 @@ async function uploadInvoicePdfForCompany(company: any, payload: {
   companyId: number; orderNumber: string; orderItemIds: string[]; invoiceNumber: string; invoiceDate: string;
   invoiceType: 'BOLETA' | 'FACTURA' | 'NOTA_DE_CREDITO'; source?: 'local_boleta' | 'local_factura' | 'local_credit_note' | 'manual'; boletaId?: number; facturaId?: number; pdfPath?: string; pdfBase64?: string;
 }) {
+  if (payload.source === 'local_factura' && payload.facturaId) {
+    const facturasResult = await listFacturas({ companyId: payload.companyId, numeroCompleto: payload.invoiceNumber, limit: 20 });
+    const factura = (facturasResult.facturas || []).find((row: any) => row.id === payload.facturaId);
+    const readiness = localDocumentUploadReadiness(factura);
+    if (!readiness.canUploadPdf) return { ok: false, error: readiness.uploadBlockedReason };
+  }
+
   let pdfBase64 = payload.pdfBase64 || '';
   if (!pdfBase64 && payload.source === 'local_boleta' && payload.boletaId) pdfBase64 = await generateAcceptedBoletaPdfBase64(payload.boletaId, 'A4');
   if (!pdfBase64 && payload.source === 'local_factura' && payload.facturaId) pdfBase64 = await generateAcceptedFacturaPdfBase64(payload.facturaId, 'A4');

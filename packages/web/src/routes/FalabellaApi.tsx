@@ -38,7 +38,7 @@ function Tooltip({ content, children }: { content: React.ReactNode; children: Re
       {show && (
         <span
           role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background shadow-md"
+          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-80 max-w-[calc(100vw-2rem)] -translate-x-1/2 whitespace-normal break-words rounded-md bg-foreground px-3 py-2 text-xs font-medium leading-snug text-background shadow-md"
         >
           {content}
           <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 bg-foreground" />
@@ -237,10 +237,14 @@ type ResolvedDocumentOption = {
   invoiceNumber: string;
   invoiceDate: string;
   invoiceType: InvoiceKind;
-  pdfPath: string;
+  pdfPath: string | null;
+  xmlPath?: string | null;
+  cdrPath?: string | null;
   estadoSunat?: string;
   respuestaSunat?: string;
   falabellaPdfUploadedAt?: string;
+  canUploadPdf?: boolean;
+  uploadBlockedReason?: string;
 };
 
 type ResolvedDocumentResponse = {
@@ -249,7 +253,7 @@ type ResolvedDocumentResponse = {
     id: number;
     numeroCompleto: string;
     fechaEmision: string;
-    pdfPath: string;
+    pdfPath: string | null;
     estadoSunat?: string;
     respuestaSunat?: string;
     falabellaPdfUploadedAt?: string;
@@ -257,13 +261,16 @@ type ResolvedDocumentResponse = {
     cliente?: string;
     clienteDocumento?: string;
     codigoHash?: string;
-    xmlPath?: string;
+    xmlPath?: string | null;
+    cdrPath?: string | null;
+    canUploadPdf?: boolean;
+    uploadBlockedReason?: string;
   } | null;
   factura?: {
     id: number;
     numeroCompleto: string;
     fechaEmision: string;
-    pdfPath: string;
+    pdfPath: string | null;
     estado?: string;
     estadoSunat?: string;
     respuestaSunat?: string;
@@ -271,8 +278,11 @@ type ResolvedDocumentResponse = {
     cliente?: string;
     clienteDocumento?: string;
     codigoHash?: string;
-    xmlPath?: string;
+    xmlPath?: string | null;
+    cdrPath?: string | null;
     falabellaPdfUploadedAt?: string;
+    canUploadPdf?: boolean;
+    uploadBlockedReason?: string;
   } | null;
   creditNote?: {
     id: number;
@@ -431,6 +441,8 @@ type InvoiceFlowRow = {
   documentDate?: string;
   documentPdfPath?: string;
   documentUploadedAt?: string;
+  documentCanUpload?: boolean;
+  documentUploadBlockedReason?: string;
   affectedBoletaId?: number;
   creditNoteId?: number;
   creditNoteNumber?: string;
@@ -1222,6 +1234,10 @@ export default function FalabellaApi() {
         skipped.push({ ...base, reason: 'La boleta aún no está ACEPTADO en SUNAT' });
         continue;
       }
+      if (row.documentCanUpload === false) {
+        skipped.push({ ...base, reason: row.documentUploadBlockedReason || 'El documento no tiene PDF/XML/CDR para subir' });
+        continue;
+      }
       eligible.push(base);
     }
 
@@ -2009,9 +2025,13 @@ export default function FalabellaApi() {
                 invoiceDate: resolved.boleta.fechaEmision,
                 invoiceType: 'BOLETA' as InvoiceKind,
                 pdfPath: resolved.boleta.pdfPath,
+                xmlPath: resolved.boleta.xmlPath,
+                cdrPath: resolved.boleta.cdrPath,
                 estadoSunat: resolved.boleta.estadoSunat,
                 respuestaSunat: resolved.boleta.respuestaSunat,
                 falabellaPdfUploadedAt: resolved.boleta.falabellaPdfUploadedAt,
+                canUploadPdf: resolved.boleta.canUploadPdf,
+                uploadBlockedReason: resolved.boleta.uploadBlockedReason,
               }
             : null)
           || (resolved?.creditNote
@@ -2034,6 +2054,8 @@ export default function FalabellaApi() {
           || '-';
         const documentStatus = existingOption?.estadoSunat || resolved?.boleta?.estadoSunat || resolved?.factura?.estadoSunat || resolved?.creditNote?.estadoSunat || '';
         const documentReason = existingOption?.respuestaSunat || resolved?.boleta?.respuestaSunat || resolved?.factura?.respuestaSunat || resolved?.creditNote?.respuestaSunat || '';
+        const documentCanUpload = existingOption?.canUploadPdf ?? (String(documentStatus || '').toUpperCase() === 'ACEPTADO');
+        const documentUploadBlockedReason = existingOption?.uploadBlockedReason || '';
         const creditNoteNumber = resolved?.creditNote?.numeroCompleto || '';
         const canCreateCreditNote = requiresCreditNoteReview && Boolean(resolved?.boleta?.id) && !creditNoteNumber;
         let bucket: InvoiceFlowBucket;
@@ -2084,6 +2106,8 @@ export default function FalabellaApi() {
           documentDate: existingOption?.invoiceDate,
           documentPdfPath: existingOption?.pdfPath || '',
           documentUploadedAt: existingOption?.falabellaPdfUploadedAt || '',
+          documentCanUpload,
+          documentUploadBlockedReason,
           affectedBoletaId: resolved?.boleta?.id,
           creditNoteId: resolved?.creditNote?.id,
           creditNoteNumber,
@@ -2196,13 +2220,14 @@ export default function FalabellaApi() {
           || resolved.options.find((entry) => entry.kind === 'BOLETA')
         : resolved.options.find((entry) => entry.kind === selectedKind) || resolved.options[0];
       const pdfMode = lockedBoleta ? 'auto' : resolvePdfMode(option);
+      const blockedUploadReason = option?.canUploadPdf === false ? option.uploadBlockedReason || 'Este documento no se puede subir a Falabella.' : '';
 
       setUploadModal({
         open: true,
         loading: false,
         submitting: false,
         lockedBoleta,
-        error: '',
+        error: blockedUploadReason,
         uploadResult: null,
         order,
         orderItemIds: (itemsResponse?.orderItemIds || []).map((value: string) => String(value)),
@@ -2291,6 +2316,19 @@ export default function FalabellaApi() {
       setUploadModal((current) => ({
         ...current,
         error: 'Debes indicar la fecha del documento.',
+      }));
+      return;
+    }
+
+    const selectedOption = uploadModal.resolved?.options?.find((option) => (
+      option.kind === uploadModal.selectedKind
+      && option.invoiceNumber === uploadModal.invoiceNumber
+      && option.source === uploadModal.source
+    ));
+    if (selectedOption?.canUploadPdf === false) {
+      setUploadModal((current) => ({
+        ...current,
+        error: selectedOption.uploadBlockedReason || 'Este documento no se puede subir a Falabella.',
       }));
       return;
     }
@@ -2389,8 +2427,11 @@ export default function FalabellaApi() {
     [uploadModal.resolved, uploadModal.selectedKind],
   );
 
-  const canUseAutoPdf = (selectedDocumentOption?.source === 'local_boleta' && !!selectedDocumentOption.boletaId)
-    || (selectedDocumentOption?.source === 'local_factura' && !!selectedDocumentOption.facturaId);
+  const selectedUploadBlocked = selectedDocumentOption?.canUploadPdf === false;
+  const canUseAutoPdf = !selectedUploadBlocked && (
+    (selectedDocumentOption?.source === 'local_boleta' && !!selectedDocumentOption.boletaId)
+    || (selectedDocumentOption?.source === 'local_factura' && !!selectedDocumentOption.facturaId)
+  );
 
   // Pantalla limpia (misma que boleta) también para facturas locales aceptadas (auto-PDF).
   const showCleanUpload = uploadModal.lockedBoleta || (uploadModal.source === 'local_factura' && uploadModal.pdfMode === 'auto');
@@ -2716,6 +2757,13 @@ export default function FalabellaApi() {
                             ? 'bg-amber-100 text-amber-700'
                             : 'bg-slate-100 text-slate-700';
                       const canSelectDocument = documentUploadCandidates.eligible.some((candidate) => candidate.orderNumber === row.orderNumber);
+                      const documentStatusAccepted = String(row.documentStatus || '').toUpperCase() === 'ACEPTADO';
+                      const documentUploadDisabled = !documentStatusAccepted || row.documentCanUpload === false;
+                      const documentUploadDisabledReason = row.documentCanUpload === false
+                        ? row.documentUploadBlockedReason || 'El documento no tiene XML/CDR para subir'
+                        : !documentStatusAccepted
+                          ? 'El documento debe estar ACEPTADO por SUNAT para subirlo'
+                          : '';
                       return (
                         <tr key={`${row.orderId}-${row.orderNumber}`} className="border-t border-border/70">
                           {showSelectionColumn && (
@@ -2807,21 +2855,20 @@ export default function FalabellaApi() {
                               </button>
                             ) : row.bucket === 'has_document' && row.invoiceKind === 'BOLETA' ? (
                               row.documentUploadedAt ? (
-                                <Tooltip content="Ya lo subiste a Falabella">
-                                  <button
-                                    type="button"
-                                    onClick={() => void openUploadModal(row.order, true)}
-                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
-                                  >
-                                    <Upload className="h-3.5 w-3.5" />
-                                    Volver a subir
-                                  </button>
-                                </Tooltip>
+                                <button
+                                  type="button"
+                                  onClick={() => void openUploadModal(row.order, true)}
+                                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                  Volver a subir
+                                </button>
                               ) : (
-                                <Tooltip content={String(row.documentStatus || '').toUpperCase() === 'ACEPTADO' ? 'Subir la boleta a Falabella' : 'La boleta debe estar ACEPTADA por SUNAT para subirla'}>
+                                documentUploadDisabledReason ? (
+                                <Tooltip content={documentUploadDisabledReason}>
                                   <button
                                     type="button"
-                                    disabled={String(row.documentStatus || '').toUpperCase() !== 'ACEPTADO'}
+                                    disabled={documentUploadDisabled}
                                     onClick={() => void openUploadModal(row.order, true)}
                                     className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
                                   >
@@ -2829,25 +2876,35 @@ export default function FalabellaApi() {
                                     Subir documento
                                   </button>
                                 </Tooltip>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={documentUploadDisabled}
+                                    onClick={() => void openUploadModal(row.order, true)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Subir documento
+                                  </button>
+                                )
                               )
                             ) : row.bucket === 'has_document' ? (
                               // Facturas / notas de crédito con documento: también permiten (re)subir el PDF a Falabella.
                               row.documentUploadedAt ? (
-                                <Tooltip content="Ya lo subiste a Falabella. Puedes volver a subirlo para reemplazarlo.">
-                                  <button
-                                    type="button"
-                                    onClick={() => void openUploadModal(row.order, false)}
-                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
-                                  >
-                                    <Upload className="h-3.5 w-3.5" />
-                                    Volver a subir
-                                  </button>
-                                </Tooltip>
+                                <button
+                                  type="button"
+                                  onClick={() => void openUploadModal(row.order, false)}
+                                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 text-xs font-medium text-indigo-400 transition hover:bg-indigo-100/60"
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                  Volver a subir
+                                </button>
                               ) : (
-                                <Tooltip content={String(row.documentStatus || '').toUpperCase() === 'ACEPTADO' ? 'Subir el documento a Falabella' : 'El documento debe estar ACEPTADO por SUNAT para subirlo'}>
+                                documentUploadDisabledReason ? (
+                                <Tooltip content={documentUploadDisabledReason}>
                                   <button
                                     type="button"
-                                    disabled={String(row.documentStatus || '').toUpperCase() !== 'ACEPTADO'}
+                                    disabled={documentUploadDisabled}
                                     onClick={() => void openUploadModal(row.order, false)}
                                     className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
                                   >
@@ -2855,6 +2912,17 @@ export default function FalabellaApi() {
                                     Subir documento
                                   </button>
                                 </Tooltip>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={documentUploadDisabled}
+                                    onClick={() => void openUploadModal(row.order, false)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:hover:bg-muted"
+                                  >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    Subir documento
+                                  </button>
+                                )
                               )
                             ) : row.bucket === 'review' && row.creditNoteNumber ? (
                               <span
@@ -3991,7 +4059,7 @@ export default function FalabellaApi() {
                     <button
                       type="button"
                       onClick={() => void submitUpload()}
-                      disabled={uploadModal.submitting || uploadModal.loading}
+                      disabled={uploadModal.submitting || uploadModal.loading || selectedUploadBlocked}
                       className="inline-flex h-[42px] items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {uploadModal.submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
