@@ -26,6 +26,8 @@ import api from '../lib/api';
 // Tooltip estilo shadcn (sin dependencia): burbuja oscura al hover con flecha.
 function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactNode }) {
   const [show, setShow] = useState(false);
+  const textContent = typeof content === 'string' ? content : '';
+  const compact = textContent.length > 0 && textContent.length <= 32;
   return (
     <span
       className="relative inline-flex"
@@ -38,7 +40,11 @@ function Tooltip({ content, children }: { content: React.ReactNode; children: Re
       {show && (
         <span
           role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 inline-block max-w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 whitespace-normal break-words rounded-md bg-foreground px-3 py-2 text-xs font-medium leading-snug text-background shadow-md"
+          className={`pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 rounded-md bg-foreground px-3 py-2 text-xs font-medium leading-snug text-background shadow-md ${
+            compact
+              ? 'w-max whitespace-nowrap'
+              : 'w-80 max-w-[calc(100vw-2rem)] whitespace-normal break-words'
+          }`}
         >
           {content}
           <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 bg-foreground" />
