@@ -1,0 +1,4 @@
+# Vite 8 / Rolldown requires Node ^20.19.0 || >=22.12.0 for native bindings.
+# Without this, Nixpacks may install 22.11.x and skip @rolldown/binding-linux-*.
+[variables]
+NIXPACKS_NODE_VERSION = "22.12.0"
