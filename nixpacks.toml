@@ -6,6 +6,9 @@ NIXPACKS_NODE_VERSION = "22.12.0"
 [phases.setup]
 aptPkgs = [
   "...",
+  # Required by `@puppeteer/browsers` to extract the Chrome zip during
+  # `npx puppeteer browsers install chrome` (build fails without it).
+  "unzip",
   "ca-certificates",
   "fonts-liberation",
   "libatk-bridge2.0-0",
