@@ -8,7 +8,7 @@ export type PermissionKey =
   | 'settings'
   | 'users';
 
-export type AppRole = 'admin' | 'operator' | 'viewer';
+export type AppRole = 'superadmin' | 'admin' | 'operator' | 'viewer';
 
 export type PermissionDef = {
   key: PermissionKey;
@@ -31,6 +31,11 @@ export const PERMISSIONS: PermissionDef[] = [
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 
 export const ROLE_PRESETS: Record<AppRole, { label: string; description: string; permissions: PermissionKey[] }> = {
+  superadmin: {
+    label: 'Superadministrador',
+    description: 'Gestiona administradores, seguridad y recuperación del sistema',
+    permissions: [...ALL_PERMISSION_KEYS],
+  },
   admin: {
     label: 'Administrador',
     description: 'Acceso total a todos los módulos',
@@ -48,6 +53,26 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
   },
 };
 
+export const ROLE_RANK: Record<AppRole, number> = {
+  viewer: 10,
+  operator: 20,
+  admin: 80,
+  superadmin: 100,
+};
+
+export function normalizeRole(role: unknown): AppRole {
+  const value = String(role || 'operator');
+  return value in ROLE_PRESETS ? value as AppRole : 'operator';
+}
+
+export function isAdminRole(role: unknown) {
+  return ROLE_RANK[normalizeRole(role)] >= ROLE_RANK.admin;
+}
+
+export function isSuperadminRole(role: unknown) {
+  return normalizeRole(role) === 'superadmin';
+}
+
 export type AppUser = {
   id: string;
   name: string;
@@ -58,7 +83,7 @@ export type AppUser = {
 };
 
 export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey[] {
-  if (role === 'admin') return [...ALL_PERMISSION_KEYS];
+  if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
   let list: string[] = [];
   if (Array.isArray(raw)) list = raw.map(String);
   else if (typeof raw === 'string') {
@@ -76,8 +101,9 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
 export function userHasPermission(user: AppUser | null | undefined, key: PermissionKey): boolean {
   if (!user) return false;
   if (user.active === false) return false;
-  const role = String(user.role || 'operator');
-  if (role === 'admin') return true;
+  const role = normalizeRole(user.role);
+  if (key === 'users') return isAdminRole(role);
+  if (isAdminRole(role)) return true;
   return parsePermissions(user.permissions, role).includes(key);
 }
 

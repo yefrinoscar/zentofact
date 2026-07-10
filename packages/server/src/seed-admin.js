@@ -9,8 +9,11 @@ const { auth } = await import('./auth.js');
 const users = await import('./users.js');
 await users.ensureUserColumns();
 
-const email = process.env.ADMIN_EMAIL || 'admin@zentofact.com';
-const password = process.env.ADMIN_PASSWORD || 'ZentoFact2026!';
+const email = String(process.env.ADMIN_EMAIL || '').trim();
+const password = String(process.env.ADMIN_PASSWORD || '');
+if (!email || !password) {
+  throw new Error('ADMIN_EMAIL y ADMIN_PASSWORD son obligatorios para crear el superadministrador');
+}
 try {
   const res = await auth.api.signUpEmail({ body: { email, password, name: 'Admin' } });
   console.log('Admin creado:', email, '(id:', res?.user?.id, ')');
@@ -18,19 +21,11 @@ try {
   console.log('No se creó (¿ya existe?):', String(e && e.message || e).slice(0, 120));
 }
 
-// Asegurar rol admin al usuario seed
+// Asegurar rol superadmin al usuario seed sin credenciales por defecto.
 try {
-  const { Pool } = await import('pg');
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
-  const { ALL_PERMISSION_KEYS } = await import('./permissions.js');
-  await pool.query(
-    `UPDATE "user" SET role = 'admin', permissions = $2, active = true
-     WHERE lower(email) = lower($1)`,
-    [email, JSON.stringify(ALL_PERMISSION_KEYS)],
-  );
-  console.log('Rol admin aplicado a', email);
-  await pool.end();
+  await users.promoteSuperadminByEmail(email);
+  console.log('Rol superadmin aplicado a', email);
 } catch (e) {
-  console.log('No se pudo marcar admin:', String(e && e.message || e).slice(0, 120));
+  console.log('No se pudo marcar superadmin:', String(e && e.message || e).slice(0, 120));
 }
 process.exit(0);

@@ -1,11 +1,33 @@
 // Cliente HTTP del frontend web; apunta al backend @zentofact/server.
 // Vacío = mismo origen (el front se sirve desde el propio server). En dev se puede fijar VITE_API_URL.
 const BASE = (import.meta as any).env?.VITE_API_URL || '';
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+let csrfToken = '';
+
+function rememberCsrfToken(data: any) {
+  if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
+}
+
+async function ensureCsrfToken() {
+  if (csrfToken) return csrfToken;
+  const res = await fetch(`${BASE}/me`, {
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.csrfToken) throw new Error((data && data.error) || 'No se pudo validar la sesión');
+  rememberCsrfToken(data);
+  return csrfToken;
+}
 
 async function req(path: string, init?: RequestInit) {
+  const method = String(init?.method || 'GET').toUpperCase();
+  const csrfHeaders = UNSAFE_METHODS.has(method)
+    ? { 'x-csrf-token': await ensureCsrfToken() }
+    : {};
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'content-type': 'application/json', ...(init?.headers || {}) },
+    headers: { 'content-type': 'application/json', ...csrfHeaders, ...(init?.headers || {}) },
     ...init,
   });
   const text = await res.text();
@@ -16,6 +38,7 @@ async function req(path: string, init?: RequestInit) {
     console.error('[REQ JSON PARSE ERROR]', path, res.status, 'response text:', text?.slice(0, 500));
     throw new Error(`Error al parsear respuesta de ${path}: ${parseError?.message}. Response: ${text?.slice(0, 200)}`);
   }
+  rememberCsrfToken(data);
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
   return data;
 }
@@ -89,10 +112,11 @@ const apiHttp = {
   validateConfig: (config: any) => req('/workflow/validate-config', { method: 'POST', body: JSON.stringify(config) }),
   validateVentas: (ventas: any) => req('/workflow/validate-ventas', { method: 'POST', body: JSON.stringify(ventas) }),
   processWorkflow: async (config: any, ventas: any) => {
+    const token = await ensureCsrfToken();
     const res = await fetch(`${BASE}/workflow/process`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-csrf-token': token },
       body: JSON.stringify({ config, ventas }),
     });
     if (!res.ok || !res.body) {

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
-  ArrowLeft, Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
-  CheckCircle2, HelpCircle,
+  Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
+  MoreHorizontal, RefreshCw, Search,
 } from 'lucide-react';
 import {
   ColumnDef,
@@ -15,8 +14,16 @@ import {
 import api from '../lib/api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
+  TablePanelHeader, TableRow,
+} from '@/components/ui/table';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
@@ -93,24 +100,32 @@ function setupReady(c: CompanyRow) {
   return hasFalabellaApi(c) && hasCertificate(c) && hasSol(c);
 }
 
-/** Check circular verde (CheckCircle2) o ? — mismo estilo que en Falabella/Documentos. */
-function StatusIcon({
+function SetupBadge({
   ok,
   okTitle,
   badTitle,
+  okLabel = 'Configurado',
+  badLabel = 'Pendiente',
 }: {
   ok: boolean;
   okTitle: string;
   badTitle: string;
+  okLabel?: string;
+  badLabel?: string;
 }) {
   return (
-    <span title={ok ? okTitle : badTitle} className="inline-flex" aria-label={ok ? okTitle : badTitle}>
-      {ok ? (
-        <CheckCircle2 className="size-5 text-emerald-500" strokeWidth={2} />
-      ) : (
-        <HelpCircle className="size-5 text-muted-foreground" strokeWidth={2} />
+    <Badge
+      variant="outline"
+      title={ok ? okTitle : badTitle}
+      className={cn(
+        'rounded-md',
+        ok
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+          : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
       )}
-    </span>
+    >
+      {ok ? okLabel : badLabel}
+    </Badge>
   );
 }
 
@@ -134,6 +149,8 @@ export default function Companies() {
   const [showSellerPassword, setShowSellerPassword] = useState(false);
   const [showFalabellaApiKey, setShowFalabellaApiKey] = useState(false);
   const [showCertPassword, setShowCertPassword] = useState(false);
+  const [search, setSearch] = useState('');
+  const [setupFilter, setSetupFilter] = useState('all');
 
   const load = () => {
     setLoadingCompanies(true);
@@ -282,6 +299,25 @@ export default function Companies() {
     load();
   };
 
+  const filteredCompanies = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return companies.filter((company) => {
+      const matchesSearch = !query || [
+        company.ruc,
+        company.nombre,
+        company.razonSocial,
+        company.nombreComercial,
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+      const ready = setupReady(company);
+      const matchesSetup = setupFilter === 'all'
+        || (setupFilter === 'ready' && ready)
+        || (setupFilter === 'incomplete' && !ready);
+      return matchesSearch && matchesSetup;
+    });
+  }, [companies, search, setupFilter]);
+
+  const readyCompanies = useMemo(() => companies.filter(setupReady).length, [companies]);
+
   const columns = useMemo<ColumnDef<CompanyRow>[]>(() => [
     {
       accessorKey: 'ruc',
@@ -313,7 +349,7 @@ export default function Companies() {
       id: 'falabella',
       header: 'Falabella',
       cell: ({ row }) => (
-        <StatusIcon
+        <SetupBadge
           ok={hasFalabellaApi(row.original)}
           okTitle="API Falabella configurada"
           badTitle="Falta User ID o API Key de Falabella"
@@ -324,7 +360,7 @@ export default function Companies() {
       id: 'certificado',
       header: 'Certificado',
       cell: ({ row }) => (
-        <StatusIcon
+        <SetupBadge
           ok={hasCertificate(row.original)}
           okTitle="Certificado digital cargado"
           badTitle="Falta certificado digital"
@@ -335,10 +371,12 @@ export default function Companies() {
       id: 'estado',
       header: 'Estado',
       cell: ({ row }) => (
-        <StatusIcon
+        <SetupBadge
           ok={setupReady(row.original)}
           okTitle="Empresa lista (Falabella + certificado + SOL)"
           badTitle="Configuración incompleta"
+          okLabel="Lista"
+          badLabel="Incompleta"
         />
       ),
     },
@@ -347,33 +385,30 @@ export default function Companies() {
       header: () => <span className="block text-right">Acciones</span>,
       enableSorting: false,
       cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title="Editar"
-            onClick={() => startEdit(row.original)}
-          >
-            <Pencil />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title="Desactivar"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => void handleDelete(row.original.id)}
-          >
-            <Trash2 />
-          </Button>
+        <div className="flex justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={`Acciones de ${row.original.nombre || row.original.razonSocial || 'empresa'}`}>
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-40">
+              <DropdownMenuItem onClick={() => startEdit(row.original)}>
+                <Pencil /> Editar
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => void handleDelete(row.original.id)}>
+                <Trash2 /> Desactivar
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
   ], []);
 
   const table = useReactTable({
-    data: companies,
+    data: filteredCompanies,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
@@ -441,33 +476,39 @@ export default function Companies() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="pb-2">
-        <Link
-          to="/settings"
-          className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Volver a configuración
-        </Link>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-foreground">Empresas</h2>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Configura credenciales de Falabella Seller, SUNAT y certificado por empresa.
-            </p>
+    <div className="space-y-4">
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="grid min-w-0 w-full gap-3 sm:grid-cols-[minmax(0,24rem)_12rem] lg:max-w-xl">
+          <div className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar empresa o RUC"
+              className="pl-9"
+            />
           </div>
-          <Button
-            onClick={() => {
-              resetForm();
-              setEditing(null);
-              setShowCreate(true);
-            }}
-          >
-            <Plus data-icon="inline-start" />
-            Nueva Empresa
-          </Button>
+          <Select value={setupFilter} onValueChange={setSetupFilter}>
+            <SelectTrigger className="w-full" aria-label="Filtrar empresas por configuración">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="all">Todos los estados</SelectItem>
+              <SelectItem value="ready">Listas</SelectItem>
+              <SelectItem value="incomplete">Incompletas</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
+        <Button
+          onClick={() => {
+            resetForm();
+            setEditing(null);
+            setShowCreate(true);
+          }}
+        >
+          <Plus data-icon="inline-start" />
+          Nueva empresa
+        </Button>
       </div>
 
       {(showCreate || editing) && (
@@ -611,8 +652,17 @@ export default function Companies() {
         </div>
       )}
 
-      <Card>
-        <CardContent className="px-0 pt-0">
+      <TablePanel aria-label="Directorio de empresas">
+        <TablePanelHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-foreground">{companies.length} empresa(s)</p>
+            <p className="text-xs text-muted-foreground">{readyCompanies} listas · {companies.length - readyCompanies} con configuración pendiente</p>
+          </div>
+          <Button variant="outline" onClick={() => void load()} disabled={loadingCompanies}>
+            <RefreshCw className={cn(loadingCompanies && 'animate-spin')} />
+            Actualizar
+          </Button>
+        </TablePanelHeader>
           {loadingCompanies ? (
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <Loader2 className="size-8 animate-spin text-muted-foreground/60" />
@@ -630,8 +680,14 @@ export default function Companies() {
               <p className="text-sm font-medium">No hay empresas registradas</p>
               <p className="text-sm text-muted-foreground">Crea tu primera empresa para comenzar a emitir.</p>
             </div>
+          ) : filteredCompanies.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-14 text-center">
+              <Search className="size-8 text-muted-foreground/50" />
+              <p className="text-sm font-medium">No encontramos empresas</p>
+              <p className="text-sm text-muted-foreground">Prueba con otra búsqueda o filtro.</p>
+            </div>
           ) : (
-            <Table>
+            <Table className="min-w-[820px]">
               <TableHeader>
                 {table.getHeaderGroups().map((headerGroup) => (
                   <TableRow key={headerGroup.id} className="hover:bg-transparent">
@@ -673,8 +729,12 @@ export default function Companies() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        {!loadingCompanies && companies.length > 0 && (
+          <TablePanelFooter className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Mostrando {filteredCompanies.length} de {companies.length} empresas</p>
+          </TablePanelFooter>
+        )}
+      </TablePanel>
     </div>
   );
 }

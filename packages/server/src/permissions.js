@@ -15,6 +15,11 @@ export const PERMISSIONS = [
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 
 export const ROLE_PRESETS = {
+  superadmin: {
+    label: 'Superadministrador',
+    description: 'Gestiona administradores, seguridad y recuperación del sistema',
+    permissions: [...ALL_PERMISSION_KEYS],
+  },
   admin: {
     label: 'Administrador',
     description: 'Acceso total a todos los módulos',
@@ -32,8 +37,33 @@ export const ROLE_PRESETS = {
   },
 };
 
+export const ROLE_RANK = {
+  viewer: 10,
+  operator: 20,
+  admin: 80,
+  superadmin: 100,
+};
+
+export function normalizeRole(role) {
+  const value = String(role || '').trim();
+  return ROLE_PRESETS[value] ? value : 'operator';
+}
+
+export function roleRank(role) {
+  return ROLE_RANK[normalizeRole(role)] || ROLE_RANK.operator;
+}
+
+export function isAdminRole(role) {
+  return roleRank(role) >= ROLE_RANK.admin;
+}
+
+export function isSuperadminRole(role) {
+  return normalizeRole(role) === 'superadmin';
+}
+
 export function normalizePermissions(input, role = 'operator') {
-  if (role === 'admin') return [...ALL_PERMISSION_KEYS];
+  const normalizedRole = normalizeRole(role);
+  if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
   const list = Array.isArray(input)
     ? input
     : typeof input === 'string'
@@ -51,16 +81,18 @@ export function normalizePermissions(input, role = 'operator') {
 }
 
 export function permissionsForRole(role) {
-  const preset = ROLE_PRESETS[role];
-  if (role === 'admin') return [...ALL_PERMISSION_KEYS];
+  const normalizedRole = normalizeRole(role);
+  const preset = ROLE_PRESETS[normalizedRole];
+  if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
   return preset ? [...preset.permissions] : [...ROLE_PRESETS.operator.permissions];
 }
 
 export function userHasPermission(user, key) {
   if (!user) return false;
   if (user.active === false || user.active === 'false') return false;
-  const role = String(user.role || 'operator');
-  if (role === 'admin') return true;
+  const role = normalizeRole(user.role);
+  if (key === 'users') return isAdminRole(role);
+  if (isAdminRole(role)) return true;
   const perms = normalizePermissions(user.permissions, role);
   return perms.includes(key);
 }

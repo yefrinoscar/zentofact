@@ -17,7 +17,7 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
-const { auth, requireAuth, requirePermission } = await import('./auth.js');
+const { auth, requireAuth, requireCsrf, requirePermission, csrfTokenForSession } = await import('./auth.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
@@ -74,6 +74,7 @@ app.on(['POST', 'GET'], '/webhooks/falabella/:companyId', async (c) => {
 });
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
+app.use('*', requireCsrf());
 
 // Permisos por módulo (menú). /me y /health no aplican.
 const moduleGuards = [
@@ -108,6 +109,7 @@ app.get('/me', async (c) => {
       user: full || sessionUser,
       permissions: PERMISSIONS,
       roles: ROLE_PRESETS,
+      csrfToken: csrfTokenForSession(c.get('session')),
     });
   } catch (e) { return fail(c, e); }
 });
@@ -117,10 +119,10 @@ app.get('/users', requirePermission('users'), async (c) => {
   try { return ok(c, await users.listUsers()); } catch (e) { return fail(c, e); }
 });
 app.post('/users', requirePermission('users'), async (c) => {
-  try { return ok(c, await users.createUser(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); }
+  try { return ok(c, await users.createUser(await c.req.json(), c.get('user')?.id), 201); } catch (e) { return fail(c, e, 400); }
 });
 app.patch('/users/:id', requirePermission('users'), async (c) => {
-  try { return ok(c, await users.updateUser(c.req.param('id'), await c.req.json())); } catch (e) { return fail(c, e, 400); }
+  try { return ok(c, await users.updateUser(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, 400); }
 });
 app.delete('/users/:id', requirePermission('users'), async (c) => {
   try {
@@ -229,11 +231,11 @@ app.get('/falabella/:companyId/orders', async (c) => {
   try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetOrders({ companyId: Number(c.req.param('companyId')), filters })); }
   catch (e) { return fail(c, e); }
 });
-app.get('/falabella/:companyId/products', async (c) => {
+app.get('/falabella/:companyId/products', requirePermission('productos'), async (c) => {
   try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetProducts({ companyId: Number(c.req.param('companyId')), filters })); }
   catch (e) { return fail(c, e); }
 });
-app.post('/falabella/:companyId/products', async (c) => {
+app.post('/falabella/:companyId/products', requirePermission('productos'), async (c) => {
   try { const product = await c.req.json(); return ok(c, await core.falabellaCreateProduct({ companyId: Number(c.req.param('companyId')), product })); }
   catch (e) { return fail(c, e, 400); }
 });

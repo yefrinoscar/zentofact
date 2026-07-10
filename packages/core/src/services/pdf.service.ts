@@ -15,7 +15,7 @@ const FORMAT_DIMS: Record<PdfFormat, { width: string; height: string }> = {
 let _browser: Browser | null = null;
 
 async function getBrowser(): Promise<Browser> {
-  if (!_browser || !_browser.isConnected()) {
+  if (!_browser || !_browser.connected) {
     _browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -105,7 +105,7 @@ export async function generateBoletaPdf(data: PdfBoletaData, format: PdfFormat):
 
   const browser = await getBrowser();
   const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: 'networkidle0' });
+  await page.setContent(html, { waitUntil: 'load' });
 
   const dims = FORMAT_DIMS[format];
   const pdf = await page.pdf({

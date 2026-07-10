@@ -1,16 +1,23 @@
-// Administración de usuarios de Better Auth + campos de rol/permisos.
+// Administración de usuarios de Better Auth con Drizzle, jerarquía y auditoría.
 import { randomBytes } from 'crypto';
-import { Pool } from 'pg';
+import { db, pool } from '@zentofact/core';
+import { asc, and, count, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { hashPassword } from 'better-auth/crypto';
 import {
   ALL_PERMISSION_KEYS,
   ROLE_PRESETS,
+  isAdminRole,
+  isSuperadminRole,
   normalizePermissions,
+  normalizeRole,
   permissionsForRole,
+  roleRank,
   userHasPermission,
 } from './permissions.js';
+import { authAccounts, authSessions, authUsers, userAuditLog } from './db-schema.js';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
+const PASSWORD_MIN_LENGTH = 12;
+const USER_ADMIN_LOCK = 917204;
 
 function newId() {
   return randomBytes(24).toString('base64url');
@@ -20,173 +27,282 @@ function parsePermissions(raw, role) {
   return normalizePermissions(raw, role);
 }
 
+function isActive(value) {
+  return value !== false && value !== 'f' && value !== 0 && value !== 'false';
+}
+
 function serializeUser(row) {
   if (!row) return null;
-  const role = row.role || 'operator';
-  const permissions = parsePermissions(row.permissions, role);
+  const role = normalizeRole(row.role);
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     role,
-    permissions,
-    active: row.active !== false && row.active !== 'f' && row.active !== 0,
+    permissions: parsePermissions(row.permissions, role),
+    active: isActive(row.active),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
+function normalizeRequestedRole(role, fallback = 'operator') {
+  if (role == null) return normalizeRole(fallback);
+  const value = String(role).trim();
+  if (!ROLE_PRESETS[value]) throw new Error('Rol inválido');
+  return value;
+}
+
+function normalizeRequestedPermissions(input, role, fallback) {
+  if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
+  return normalizePermissions(input != null ? input : fallback, role).filter((key) => key !== 'users');
+}
+
+function validatePassword(password) {
+  if (String(password || '').length < PASSWORD_MIN_LENGTH) {
+    throw new Error(`La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`);
+  }
+}
+
+function validateEmail(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error('Correo inválido');
+  return clean;
+}
+
+function requireAdminActor(actor) {
+  if (!actor || !actor.active || !isAdminRole(actor.role)) {
+    throw new Error('Solo un administrador puede gestionar usuarios');
+  }
+}
+
+function assertCanAssignRole(actor, targetRole) {
+  requireAdminActor(actor);
+  if (!isSuperadminRole(actor.role) && roleRank(targetRole) >= roleRank('admin')) {
+    throw new Error('Solo un superadministrador puede crear o promover administradores');
+  }
+}
+
+function assertCanManageTarget(actor, target, nextRole, patch) {
+  requireAdminActor(actor);
+  if (actor.id === target.id) {
+    const keys = Object.keys(patch || {});
+    if (keys.every((key) => key === 'name')) return;
+    throw new Error('No puedes cambiar tus propios privilegios, estado o contraseña desde esta pantalla');
+  }
+  if (isSuperadminRole(actor.role)) return;
+  if (roleRank(target.role) >= roleRank('admin') || roleRank(nextRole) >= roleRank('admin')) {
+    throw new Error('Solo un superadministrador puede administrar cuentas administrativas');
+  }
+}
+
+async function getUserByIdWith(database, id) {
+  const rows = await database
+    .select()
+    .from(authUsers)
+    .where(eq(authUsers.id, id))
+    .limit(1);
+  return serializeUser(rows[0]);
+}
+
+async function addAudit(tx, { actorId = null, targetId = null, action, details = {} }) {
+  await tx.insert(userAuditLog).values({
+    actorId,
+    targetId,
+    action,
+    details,
+    createdAt: new Date(),
+  });
+}
+
+async function lockAdministration(tx) {
+  // PostgreSQL advisory lock: serializa cambios sobre administradores.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${USER_ADMIN_LOCK})`);
+}
+
+async function assertAdminInvariants(tx, current, nextRole, nextActive) {
+  const losesSuperadmin = isSuperadminRole(current.role) && (!isSuperadminRole(nextRole) || !nextActive);
+  if (losesSuperadmin) {
+    const [row] = await tx
+      .select({ n: count() })
+      .from(authUsers)
+      .where(and(eq(authUsers.active, true), eq(authUsers.role, 'superadmin')));
+    if (Number(row?.n || 0) < 2) throw new Error('Debe existir al menos un superadministrador activo');
+  }
+
+  const losesAdmin = isAdminRole(current.role) && (!isAdminRole(nextRole) || !nextActive);
+  if (losesAdmin) {
+    const [row] = await tx
+      .select({ n: count() })
+      .from(authUsers)
+      .where(and(eq(authUsers.active, true), inArray(authUsers.role, ['admin', 'superadmin'])));
+    if (Number(row?.n || 0) < 2) throw new Error('Debe existir al menos un administrador activo');
+  }
+}
+
 export async function ensureUserColumns() {
+  // DDL de compatibilidad para tablas de Better Auth; el CRUD usa Drizzle.
   await pool.query(`
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'operator';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS permissions TEXT DEFAULT '[]';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
-  `);
-  // Si no hay ningún admin activo, promover al usuario más antiguo.
-  const admins = await pool.query(
-    `SELECT id FROM "user" WHERE role = 'admin' AND COALESCE(active, true) = true LIMIT 1`,
-  );
-  if (!admins.rows.length) {
-    await pool.query(
-      `UPDATE "user"
-       SET role = 'admin', permissions = $1, active = true, "updatedAt" = NOW()
-       WHERE id = (SELECT id FROM "user" ORDER BY "createdAt" ASC LIMIT 1)`,
-      [JSON.stringify(ALL_PERMISSION_KEYS)],
+    CREATE TABLE IF NOT EXISTS user_audit_log (
+      id BIGSERIAL PRIMARY KEY,
+      actor_id TEXT,
+      target_id TEXT,
+      action TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE INDEX IF NOT EXISTS user_audit_log_target_created_idx ON user_audit_log (target_id, created_at DESC);
+  `);
+
+  // Bootstrap explícito: nunca promocionar la cuenta más antigua ni reactivar usuarios.
+  const bootstrapEmail = String(process.env.AUTH_SUPERADMIN_EMAIL || '').trim().toLowerCase();
+  if (bootstrapEmail) {
+    try {
+      await promoteSuperadminByEmail(bootstrapEmail, 'system.bootstrap');
+    } catch (error) {
+      console.error('[AUTH] No se pudo aplicar AUTH_SUPERADMIN_EMAIL:', error?.message || error);
+    }
   }
 }
 
 export async function listUsers() {
-  const { rows } = await pool.query(`
-    SELECT id, name, email, role, permissions, active, "createdAt", "updatedAt"
-    FROM "user"
-    ORDER BY "createdAt" ASC
-  `);
+  const rows = await db.select().from(authUsers).orderBy(asc(authUsers.createdAt));
   return rows.map(serializeUser);
 }
 
 export async function getUserById(id) {
-  const { rows } = await pool.query(
-    `SELECT id, name, email, role, permissions, active, "createdAt", "updatedAt" FROM "user" WHERE id = $1`,
-    [id],
-  );
-  return serializeUser(rows[0]);
+  return getUserByIdWith(db, id);
 }
 
-export async function createUser({ name, email, password, role = 'operator', permissions, active = true }) {
-  const cleanEmail = String(email || '').trim().toLowerCase();
+export async function promoteSuperadminByEmail(email, actorId = null) {
+  const cleanEmail = validateEmail(email);
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: authUsers.id, role: authUsers.role })
+      .from(authUsers)
+      .where(and(ilike(authUsers.email, cleanEmail), eq(authUsers.active, true)))
+      .limit(1);
+    const current = rows[0];
+    if (!current) throw new Error('No existe un usuario activo con ese correo para promoverlo a superadministrador');
+    if (!isSuperadminRole(current.role)) {
+      await tx
+        .update(authUsers)
+        .set({ role: 'superadmin', permissions: JSON.stringify(ALL_PERMISSION_KEYS), updatedAt: new Date() })
+        .where(eq(authUsers.id, current.id));
+      await addAudit(tx, {
+        actorId,
+        targetId: current.id,
+        action: 'superadmin.bootstrap',
+        details: { source: actorId ? 'system' : 'seed' },
+      });
+    }
+    return { id: current.id, changed: !isSuperadminRole(current.role) };
+  });
+}
+
+export async function createUser({ name, email, password, role = 'operator', permissions, active = true }, actorId) {
+  const actor = await getUserById(actorId);
+  const cleanEmail = validateEmail(email);
   const cleanName = String(name || '').trim() || cleanEmail.split('@')[0];
-  if (!cleanEmail || !password) throw new Error('Email y contraseña son requeridos');
-  if (String(password).length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres');
+  if (!cleanName) throw new Error('Nombre requerido');
+  validatePassword(password);
 
-  const roleKey = ROLE_PRESETS[role] ? role : 'operator';
-  const perms = roleKey === 'admin'
-    ? [...ALL_PERMISSION_KEYS]
-    : (permissions != null ? normalizePermissions(permissions, roleKey) : permissionsForRole(roleKey));
-
-  const existing = await pool.query(`SELECT id FROM "user" WHERE lower(email) = $1`, [cleanEmail]);
-  if (existing.rows[0]) throw new Error('Ya existe un usuario con ese correo');
-
+  const roleKey = normalizeRequestedRole(role);
+  assertCanAssignRole(actor, roleKey);
+  const perms = normalizeRequestedPermissions(permissions, roleKey, permissionsForRole(roleKey));
   const userId = newId();
   const accountId = newId();
   const now = new Date();
   const hashed = await hashPassword(String(password));
 
-  const client = await pool.connect();
-  try {
-    await client.query('begin');
-    await client.query(
-      `INSERT INTO "user" (id, name, email, "emailVerified", image, "createdAt", "updatedAt", role, permissions, active)
-       VALUES ($1, $2, $3, false, null, $4, $4, $5, $6, $7)`,
-      [userId, cleanName, cleanEmail, now, roleKey, JSON.stringify(perms), !!active],
-    );
-    await client.query(
-      `INSERT INTO account (
-         id, "accountId", "providerId", "userId", password,
-         "accessToken", "refreshToken", "idToken",
-         "accessTokenExpiresAt", "refreshTokenExpiresAt", scope,
-         "createdAt", "updatedAt"
-       ) VALUES ($1, $2, 'credential', $3, $4, null, null, null, null, null, null, $5, $5)`,
-      [accountId, userId, userId, hashed, now],
-    );
-    await client.query('commit');
-  } catch (e) {
-    await client.query('rollback');
-    throw e;
-  } finally {
-    client.release();
-  }
+  await db.transaction(async (tx) => {
+    await tx.insert(authUsers).values({
+      id: userId,
+      name: cleanName,
+      email: cleanEmail,
+      emailVerified: false,
+      image: null,
+      role: roleKey,
+      permissions: JSON.stringify(perms),
+      active: !!active,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await tx.insert(authAccounts).values({
+      id: accountId,
+      accountId: userId,
+      providerId: 'credential',
+      userId,
+      password: hashed,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await addAudit(tx, { actorId, targetId: userId, action: 'user.create', details: { role: roleKey, active: !!active } });
+  });
 
   return getUserById(userId);
 }
 
-export async function updateUser(id, patch = {}) {
-  const current = await getUserById(id);
-  if (!current) throw new Error('Usuario no encontrado');
+export async function updateUser(id, patch = {}, actorId) {
+  await db.transaction(async (tx) => {
+    await lockAdministration(tx);
+    const current = await getUserByIdWith(tx, id);
+    const actor = await getUserByIdWith(tx, actorId);
+    if (!current) throw new Error('Usuario no encontrado');
 
-  const name = patch.name != null ? String(patch.name).trim() : current.name;
-  const role = patch.role != null
-    ? (ROLE_PRESETS[patch.role] ? patch.role : current.role)
-    : current.role;
-  const permissions = patch.permissions != null
-    ? normalizePermissions(patch.permissions, role)
-    : (role === 'admin' ? [...ALL_PERMISSION_KEYS] : current.permissions);
-  const active = patch.active != null ? !!patch.active : current.active;
+    const role = normalizeRequestedRole(patch.role, current.role);
+    assertCanManageTarget(actor, current, role, patch);
+    const name = patch.name != null ? String(patch.name).trim() : current.name;
+    if (!name) throw new Error('Nombre requerido');
+    const permissions = normalizeRequestedPermissions(patch.permissions, role, current.permissions);
+    const active = patch.active != null ? !!patch.active : current.active;
+    const passwordChanged = patch.password != null && String(patch.password) !== '';
+    if (passwordChanged) validatePassword(patch.password);
 
-  // No dejar el sistema sin un admin activo.
-  if (current.role === 'admin' && (role !== 'admin' || !active)) {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int AS n FROM "user" WHERE role = 'admin' AND active = true AND id <> $1`,
-      [id],
-    );
-    if ((rows[0]?.n || 0) < 1) {
-      throw new Error('Debe existir al menos un administrador activo');
+    await assertAdminInvariants(tx, current, role, active);
+    await tx
+      .update(authUsers)
+      .set({ name, role, permissions: JSON.stringify(permissions), active, updatedAt: new Date() })
+      .where(eq(authUsers.id, id));
+
+    if (passwordChanged) {
+      await tx
+        .update(authAccounts)
+        .set({ password: await hashPassword(String(patch.password)), updatedAt: new Date() })
+        .where(and(eq(authAccounts.userId, id), eq(authAccounts.providerId, 'credential')));
     }
-  }
 
-  await pool.query(
-    `UPDATE "user"
-     SET name = $2, role = $3, permissions = $4, active = $5, "updatedAt" = $6
-     WHERE id = $1`,
-    [id, name, role, JSON.stringify(role === 'admin' ? ALL_PERMISSION_KEYS : permissions), active, new Date()],
-  );
-
-  if (patch.password) {
-    if (String(patch.password).length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres');
-    const hashed = await hashPassword(String(patch.password));
-    await pool.query(
-      `UPDATE account SET password = $2, "updatedAt" = $3
-       WHERE "userId" = $1 AND "providerId" = 'credential'`,
-      [id, hashed, new Date()],
-    );
-  }
-
+    const privilegesChanged = current.role !== role || JSON.stringify(current.permissions) !== JSON.stringify(permissions);
+    const sessionsRevoked = passwordChanged || !active || privilegesChanged;
+    if (sessionsRevoked) await tx.delete(authSessions).where(eq(authSessions.userId, id));
+    await addAudit(tx, {
+      actorId,
+      targetId: id,
+      action: passwordChanged ? 'user.update_with_password_reset' : 'user.update',
+      details: { fromRole: current.role, toRole: role, active, sessionsRevoked },
+    });
+  });
   return getUserById(id);
 }
 
 export async function deleteUser(id, actorId) {
   if (id === actorId) throw new Error('No puedes eliminar tu propia cuenta');
-  const current = await getUserById(id);
-  if (!current) throw new Error('Usuario no encontrado');
-  if (current.role === 'admin') {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int AS n FROM "user" WHERE role = 'admin' AND active = true AND id <> $1`,
-      [id],
-    );
-    if ((rows[0]?.n || 0) < 1) throw new Error('No se puede eliminar el último administrador');
-  }
-  await pool.query(`DELETE FROM "user" WHERE id = $1`, [id]);
+  await db.transaction(async (tx) => {
+    await lockAdministration(tx);
+    const current = await getUserByIdWith(tx, id);
+    const actor = await getUserByIdWith(tx, actorId);
+    if (!current) throw new Error('Usuario no encontrado');
+    assertCanManageTarget(actor, current, current.role, {});
+    await assertAdminInvariants(tx, current, 'viewer', false);
+    await tx.delete(authSessions).where(eq(authSessions.userId, id));
+    await tx.delete(authAccounts).where(eq(authAccounts.userId, id));
+    await tx.delete(authUsers).where(eq(authUsers.id, id));
+    await addAudit(tx, { actorId, targetId: id, action: 'user.delete', details: { role: current.role } });
+  });
   return { ok: true };
-}
-
-export function requirePermission(key) {
-  return async (c, next) => {
-    const user = c.get('user');
-    if (!userHasPermission(user, key)) {
-      return c.json({ error: 'Sin permiso para esta acción' }, 403);
-    }
-    return next();
-  };
 }
 
 export { ROLE_PRESETS, ALL_PERMISSION_KEYS, userHasPermission };

@@ -410,7 +410,7 @@ export default function Productos() {
 
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <Select value={selectedCompany?.id ? String(selectedCompany.id) : ''} onValueChange={(value) => switchSeller(Number(value))}>
-          <SelectTrigger className="h-9 w-full rounded-md md:w-[320px]">
+          <SelectTrigger className="w-full md:w-[320px]">
             <SelectValue placeholder="Selecciona seller" />
           </SelectTrigger>
           <SelectContent>
@@ -450,7 +450,7 @@ export default function Productos() {
         </form>
 
         <Select value={filter} onValueChange={(value) => { setFilter(value); setOffset(0); }}>
-          <SelectTrigger className="h-9 w-full rounded-md md:w-[160px]">
+          <SelectTrigger className="w-full md:w-[160px]">
             <SelectValue placeholder="Filtro" />
           </SelectTrigger>
           <SelectContent>

@@ -75,7 +75,7 @@ export type WorkflowProgress = (current: number, total: number, status: string) 
 // ── API pública ──
 
 export { processWorkflow };
-export { pool } from './db';
+export { db, pool } from './db';
 export { runMigrations } from './db/migrate';
 export { listCompanies, getCompany, createCompany, updateCompany, deleteCompany, testSunatConnection } from './services/company.service';
 export type { CreateCompanyInput, UpdateCompanyInput, TestSunatConnectionResult, SunatEnvironment } from './services/company.service';

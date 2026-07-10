@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Download, Loader2, RefreshCw, FileText, CheckCircle2, XCircle, AlertCircle, Eye, RotateCcw } from 'lucide-react';
+import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
+import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
+  TablePanelHeader, TableRow,
+} from '../components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/tooltip';
 
@@ -25,21 +32,21 @@ function sunatReason(d: Doc): string {
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
 
-function EstadoIcon({ d }: { d: Doc }) {
+function EstadoBadge({ d }: { d: Doc }) {
   const v = String(d.estadoSunat || d.estado || '').toUpperCase();
-  const { Icon, color } = v === 'ACEPTADO'
-    ? { Icon: CheckCircle2, color: 'text-emerald-600' }
+  const view = v === 'ACEPTADO'
+    ? { label: 'Aceptado', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300' }
     : v === 'RECHAZADO'
-    ? { Icon: XCircle, color: 'text-red-600' }
+    ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'REEMPLAZADO'
-    ? { Icon: XCircle, color: 'text-muted-foreground' }
-    : { Icon: AlertCircle, color: 'text-amber-500' };
+    ? { label: 'Reemplazado', cls: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' }
+    : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
-  const icon = <span className={cn('inline-flex', color)}><Icon className="h-[18px] w-[18px]" /></span>;
-  if (!reason) return <span title={v || '—'}>{icon}</span>;
+  const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
+  if (!reason) return badge;
   return (
     <Tooltip>
-      <TooltipTrigger asChild><button type="button" className="inline-flex cursor-help">{icon}</button></TooltipTrigger>
+      <TooltipTrigger asChild><button type="button" className="inline-flex cursor-help">{badge}</button></TooltipTrigger>
       <TooltipContent>{v === 'REEMPLAZADO' && <span className="font-medium">Reemplazada. </span>}{reason}</TooltipContent>
     </Tooltip>
   );
@@ -173,28 +180,26 @@ export default function Documentos() {
 
   return (
    <TooltipProvider delayDuration={150}>
-    <div className="space-y-5">
-      {/* Barra: empresa + tipo de documento */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+    <div className="space-y-4">
+      <div className="space-y-3">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Select value={activeId ? String(activeId) : ''} onValueChange={(v) => { const id = Number(v); setActiveId(id); api.setActiveCompanyId(id); }}>
-            <SelectTrigger className="h-11 w-[min(390px,72vw)]"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
+            <SelectTrigger className="w-full sm:w-[360px]"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
             <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre || c.razonSocial} — {c.ruc}</SelectItem>)}</SelectContent>
           </Select>
+
+          <Button onClick={() => navigate('/documentos/nuevo')}>
+            <Plus data-icon="inline-start" /> Nuevo documento
+          </Button>
         </div>
 
-        <button onClick={() => navigate('/documentos/nuevo')} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
-          <Plus className="h-4 w-4" /> Nuevo documento
-        </button>
-      </div>
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative min-w-0 sm:w-[320px] lg:w-[360px]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar número, orden o cliente" className="pl-9" />
+          </div>
 
-      {/* Filtros */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative w-[300px] max-w-full">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por número, orden, cliente…" className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition focus:border-ring" />
-        </div>
-        <div className="relative grid h-10 w-[222px] grid-cols-2 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground">
+        <div className="relative grid h-9 w-full grid-cols-2 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground sm:w-[190px]">
           <span
             className={cn(
               'absolute bottom-1 left-1 top-1 w-[calc(50%_-_4px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out',
@@ -216,7 +221,7 @@ export default function Documentos() {
             Facturas
           </button>
         </div>
-        <div className="relative grid h-10 w-[222px] grid-cols-3 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground">
+        <div className="relative grid h-9 w-full grid-cols-3 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground sm:w-[210px]">
           <span
             className="absolute bottom-1 left-1 top-1 w-[calc(33.333333%_-_2.666667px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out"
             style={{ transform: `translateX(${DAY_WINDOWS.indexOf(dayWindow) * 100}%)` }}
@@ -232,9 +237,7 @@ export default function Documentos() {
             </button>
           ))}
         </div>
-        <button onClick={load} disabled={loading} className="ml-auto rounded-md p-2 text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-50" title="Refrescar">
-          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-        </button>
+        </div>
       </div>
 
       {retryMsg && (
@@ -243,89 +246,109 @@ export default function Documentos() {
         </div>
       )}
 
-      {/* Lista */}
-      <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <TablePanel aria-label={`Listado de ${kind}`}>
+        <TablePanelHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-foreground">{filtered.length} {kind === 'boletas' ? 'boleta(s)' : 'factura(s)'}</p>
+            <p className="text-xs text-muted-foreground">
+              Últimos {dayWindow} días{search.trim() ? ` · Búsqueda: “${search.trim()}”` : ''}
+            </p>
+          </div>
+          <span className="text-xs font-medium text-muted-foreground">Máximo 500 registros</span>
+        </TablePanelHeader>
         {!activeId ? (
-          <p className="p-12 text-center text-sm text-muted-foreground">Selecciona una empresa para ver sus documentos.</p>
+          <div className="flex flex-col items-center gap-2 py-14 text-center">
+            <FileText className="size-8 text-muted-foreground/50" />
+            <p className="text-sm font-medium">Selecciona una empresa</p>
+            <p className="text-sm text-muted-foreground">Elige una empresa para consultar sus documentos.</p>
+          </div>
         ) : loading && rows.length === 0 ? (
-          <p className="flex items-center justify-center gap-2 p-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando {kind === 'boletas' ? 'boletas' : 'facturas'}…</p>
+          <p className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Cargando {kind === 'boletas' ? 'boletas' : 'facturas'}…</p>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 p-12 text-center">
-            <FileText className="h-8 w-8 text-muted-foreground/50" />
-            <p className="text-sm text-muted-foreground">No hay {kind === 'boletas' ? 'boletas' : 'facturas'} para mostrar.</p>
-            <button onClick={() => navigate('/documentos/nuevo')} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:opacity-80"><Plus className="h-4 w-4" /> Emitir una</button>
+          <div className="flex flex-col items-center gap-2 py-14 text-center">
+            <FileText className="size-8 text-muted-foreground/50" />
+            <p className="text-sm font-medium">No hay {kind === 'boletas' ? 'boletas' : 'facturas'} para mostrar</p>
+            <p className="text-sm text-muted-foreground">Cambia los filtros o crea un nuevo documento.</p>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/documentos/nuevo')} className="mt-1 text-primary hover:text-primary">
+              <Plus /> Emitir una
+            </Button>
           </div>
         ) : (
           <div className="relative max-h-[calc(100vh-16rem)] overflow-auto">
             {loading && (
               <div className="absolute inset-0 z-20 grid place-items-center bg-card/70 backdrop-blur-[1px]">
-                <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                <div className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-muted-foreground shadow-sm">
+                  <Loader2 className="size-4 animate-spin" />
                   Actualizando…
                 </div>
               </div>
             )}
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="px-5 py-2.5 font-medium">Número</th>
-                  <th className="px-5 py-2.5 font-medium">Fecha</th>
-                  <th className="px-5 py-2.5 font-medium">Cliente</th>
-                  <th className="px-5 py-2.5 font-medium text-right">Total</th>
-                  <th className="px-5 py-2.5 font-medium text-center">Estado</th>
-                  <th className="px-5 py-2.5 font-medium text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="min-w-[820px]">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Número</TableHead>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {filtered.map((d) => {
                   const est = String(d.estadoSunat || d.estado || '').toUpperCase();
                   return (
-                    <tr key={d.id} className="border-b border-border/50 last:border-0 align-top hover:bg-accent/30">
-                      <td className="px-5 py-2.5 font-mono text-xs text-foreground">{d.numeroCompleto || '—'}</td>
-                      <td className="px-5 py-2.5 text-muted-foreground">{d.fechaEmision || '—'}</td>
-                      <td className="px-5 py-2.5">
+                    <TableRow key={d.id}>
+                      <TableCell className="font-mono text-xs tabular-nums text-foreground">{d.numeroCompleto || '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">{d.fechaEmision || '—'}</TableCell>
+                      <TableCell>
                         <div className="text-foreground">{d.clientRazonSocial || '—'}</div>
-                        <div className="text-xs text-muted-foreground">{d.clientNumeroDocumento || '—'}</div>
-                      </td>
-                      <td className="px-5 py-2.5 text-right font-medium text-foreground">{money(d.mtoImpVenta)}</td>
-                      <td className="px-5 py-2.5 text-center">
+                        <div className="text-sm text-muted-foreground">{d.clientNumeroDocumento || '—'}</div>
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-foreground">{money(d.mtoImpVenta)}</TableCell>
+                      <TableCell>
                         {retryingId === d.id
-                          ? <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Procesando</span>
-                          : <span className="inline-flex justify-center"><EstadoIcon d={d} /></span>}
-                      </td>
-                      <td className="px-5 py-2.5">
+                          ? <Badge variant="outline" className="rounded-md border-amber-200 bg-amber-50 text-amber-700"><Loader2 className="animate-spin" /> Procesando</Badge>
+                          : <EstadoBadge d={d} />}
+                      </TableCell>
+                      <TableCell>
                         {est === 'ACEPTADO' ? (
                           <div className="flex items-center justify-end gap-1.5">
-                            <button onClick={() => openPreview(d)} disabled={previewingId === d.id} title="Vista previa" className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40">
-                              {previewingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Ver
-                            </button>
-                            <button onClick={() => downloadPdf(d)} disabled={downloadingId === d.id} title="Descargar PDF" className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40">
-                              {downloadingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} PDF
-                            </button>
+                            <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId === d.id}>
+                              {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
+                              {downloadingId === d.id ? <Loader2 className="animate-spin" /> : <Download />} PDF
+                            </Button>
                           </div>
                         ) : est === 'RECHAZADO' ? (
                           <div className="flex justify-end">
-                            <button onClick={() => retry(d)} disabled={retryingId === d.id} title="Reintentar emisión a SUNAT (mismo número)" className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-40">
-                              {retryingId === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Reintentar
-                            </button>
+                            <Button variant="outline" size="sm" onClick={() => retry(d)} disabled={retryingId === d.id} className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900">
+                              {retryingId === d.id ? <Loader2 className="animate-spin" /> : <RotateCcw />} Reintentar
+                            </Button>
                           </div>
                         ) : <span className="block text-right text-xs text-muted-foreground">—</span>}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
-      </div>
+        {activeId && !loading && rows.length > 0 && (
+          <TablePanelFooter>
+            <p className="text-sm text-muted-foreground">Mostrando {filtered.length} de {rows.length} documentos cargados</p>
+          </TablePanelFooter>
+        )}
+      </TablePanel>
 
       {/* Vista previa en modal (iframe: aísla el CSS del documento y hace scroll interno) */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader><DialogTitle>Vista previa</DialogTitle></DialogHeader>
           <div className="p-4">
-            <iframe srcDoc={previewHtml} title="Vista previa" className="h-[75vh] w-full rounded-lg border border-border bg-white" />
+            <iframe sandbox="" srcDoc={previewHtml} title="Vista previa" className="h-[75vh] w-full rounded-md border border-border bg-white" />
           </div>
         </DialogContent>
       </Dialog>

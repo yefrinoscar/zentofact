@@ -4,6 +4,8 @@ import api from '../lib/api';
 import {
   type AppUser,
   type PermissionKey,
+  isAdminRole,
+  isSuperadminRole,
   parsePermissions,
   userHasPermission,
 } from '../lib/permissions';
@@ -52,7 +54,8 @@ export function usePermissions() {
     role,
     permissions,
     can,
-    isAdmin: role === 'admin',
+    isAdmin: isAdminRole(role),
+    isSuperadmin: isSuperadminRole(role),
     loading: isPending || loadingProfile,
   };
 }
