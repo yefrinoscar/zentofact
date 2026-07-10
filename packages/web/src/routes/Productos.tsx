@@ -30,7 +30,7 @@ type Company = {
   razonSocial?: string | null;
   ruc?: string | null;
   falabellaApiUserId?: string | null;
-  falabellaApiKey?: string | null;
+  hasFalabellaCredentials?: boolean;
 };
 
 type Product = {
@@ -258,7 +258,7 @@ export default function Productos() {
   });
 
   const sellers = useMemo(
-    () => companies.filter((company) => company.falabellaApiUserId?.trim() && company.falabellaApiKey?.trim()),
+    () => companies.filter((company) => company.hasFalabellaCredentials),
     [companies],
   );
   const selectedCompany = sellers.find((company) => company.id === companyId) || sellers[0] || null;
@@ -278,7 +278,7 @@ export default function Productos() {
     api.listCompanies().then((rows: Company[]) => {
       if (!mounted) return;
       setCompanies(rows || []);
-      const first = (rows || []).find((company) => company.falabellaApiUserId?.trim() && company.falabellaApiKey?.trim());
+      const first = (rows || []).find((company) => company.hasFalabellaCredentials);
       setCompanyId((current) => current || first?.id || null);
     }).catch((e: any) => {
       if (!mounted) return;

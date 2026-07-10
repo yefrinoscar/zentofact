@@ -12,12 +12,21 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
 
-type CompanyCfg = { id: number; nombre: string; ruc: string; hasFalabella: boolean; enabled: boolean };
+type CompanyCfg = {
+  id: number;
+  nombre: string;
+  ruc: string;
+  hasFalabella: boolean;
+  enabled: boolean;
+  hasWebhookSecret?: boolean;
+  /** Preview redactada; el token real no llega al browser. */
+  webhookCallbackUrl?: string | null;
+};
 type CronCfg = { enabled: boolean; intervalMinutes: number; windowDays: number };
 type Config = {
   globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion' | 'segun-empresa'; reconcileEnabled: boolean;
   paused: boolean; stats: Record<string, number>; cron: CronCfg;
-  companies: CompanyCfg[]; webhookBase: string; webhookSecretSet: boolean;
+  companies: CompanyCfg[]; webhookBase: string;
 };
 type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
@@ -361,7 +370,6 @@ export default function AutoEmision() {
   const [webhookError, setWebhookError] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(DEFAULT_WEBHOOK_EVENTS);
   const [webhookIdQuery, setWebhookIdQuery] = useState('');
-  const [callbackUrl, setCallbackUrl] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const showDevCronInterval = ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -433,11 +441,11 @@ export default function AutoEmision() {
   const selectedWebhookCompanyId = webhookCompanyId || webhookCompanies[0]?.id || null;
   const selectedWebhookCompany = webhookCompanies.find((company) => company.id === selectedWebhookCompanyId) || null;
 
-  const defaultCallbackUrl = selectedWebhookCompanyId
-    ? `${config?.webhookBase || ''}/${selectedWebhookCompanyId}${config?.webhookSecretSet ? '?secret=***' : ''}`
-    : '';
-  const customCallbackUrl = callbackUrl.trim();
-  const previewCallbackUrl = customCallbackUrl || defaultCallbackUrl;
+  // Preview redactada: el token real solo lo usa el servidor al registrar en Falabella.
+  const companyCallbackPreview = selectedWebhookCompany?.webhookCallbackUrl
+    || (selectedWebhookCompanyId
+      ? `${config?.webhookBase || ''}/${selectedWebhookCompanyId}/***`
+      : '');
 
   const loadWebhooks = useCallback(async (companyId = selectedWebhookCompanyId, ids?: string[]) => {
     if (!companyId) return;
@@ -447,6 +455,24 @@ export default function AutoEmision() {
       const response = await api.autoEmitGetWebhooks(companyId, ids);
       if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella devolvió un error.');
       setWebhooks(response?.webhooks || []);
+      // Sincroniza flags de secret por empresa si el backend los devuelve.
+      if (response && typeof response.hasWebhookSecret === 'boolean') {
+        setConfig((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            companies: prev.companies.map((c) => (
+              c.id === companyId
+                ? {
+                    ...c,
+                    hasWebhookSecret: response.hasWebhookSecret,
+                    webhookCallbackUrl: response.webhookCallbackUrl ?? c.webhookCallbackUrl,
+                  }
+                : c
+            )),
+          };
+        });
+      }
     } catch (error: any) {
       setWebhookError(error?.message || 'No se pudieron consultar los webhooks de Falabella.');
       setWebhooks([]);
@@ -470,21 +496,36 @@ export default function AutoEmision() {
 
   const createWebhook = async () => {
     if (!selectedWebhookCompanyId || !selectedEvents.length) return;
-    if (!customCallbackUrl && !config?.webhookSecretSet) {
-      setWebhookError('Falta el secreto del webhook o una URL callback personalizada.');
-      return;
-    }
-    if (/localhost|127\.0\.0\.1/i.test(previewCallbackUrl) && !window.confirm(
-      'La URL callback es local. Falabella no podrá llamarla desde internet. ¿Crear de todas formas para prueba?'
+    if (/localhost|127\.0\.0\.1/i.test(config?.webhookBase || '') && !window.confirm(
+      'La API es local. Falabella no podrá llamar el webhook desde internet. ¿Crear de todas formas para prueba?'
     )) return;
     setWebhookSaving(true);
     setWebhookError('');
     try {
-      const response = await api.autoEmitCreateWebhook(selectedWebhookCompanyId, selectedEvents, customCallbackUrl || undefined);
+      const response = await api.autoEmitCreateWebhook(selectedWebhookCompanyId, selectedEvents);
       if (response?.error) throw new Error(typeof response.error === 'string' ? response.error : response.error?.Head?.ErrorMessage || 'Falabella rechazó la creación del webhook.');
+      await loadConfig();
       await loadWebhooks(selectedWebhookCompanyId);
     } catch (error: any) {
       setWebhookError(error?.message || 'No se pudo crear el webhook en Falabella.');
+    } finally {
+      setWebhookSaving(false);
+    }
+  };
+
+  const rotateWebhookSecret = async () => {
+    if (!selectedWebhookCompanyId) return;
+    if (!window.confirm(
+      '¿Rotar el secreto de webhook de esta empresa?\n\nLos webhooks antiguos en Falabella dejarán de autenticar. Debes eliminarlos y crear uno nuevo.'
+    )) return;
+    setWebhookSaving(true);
+    setWebhookError('');
+    try {
+      await api.autoEmitRotateWebhookSecret(selectedWebhookCompanyId);
+      await loadConfig();
+      await loadWebhooks(selectedWebhookCompanyId);
+    } catch (error: any) {
+      setWebhookError(error?.message || 'No se pudo rotar el secreto del webhook.');
     } finally {
       setWebhookSaving(false);
     }
@@ -521,8 +562,12 @@ export default function AutoEmision() {
   };
 
   const copyWebhook = async () => {
-    if (!config) return;
-    try { await navigator.clipboard.writeText(`${config.webhookBase}/{companyId}?secret=***`); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+    if (!companyCallbackPreview) return;
+    try {
+      await navigator.clipboard.writeText(companyCallbackPreview);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* noop */ }
   };
 
   if (loading) {
@@ -753,12 +798,15 @@ export default function AutoEmision() {
       </div>
 
       {/* Configuración (modal con tabs) */}
+      {/* sm:max-w-* pisa el max-w-md del Dialog base; hace falta el prefijo sm: */}
       <Dialog open={configOpen} onOpenChange={setConfigOpen}>
-        <DialogContent className="max-h-[88vh] max-w-5xl overflow-hidden">
-          <DialogHeader><DialogTitle>Configuración</DialogTitle></DialogHeader>
-          <div className="max-h-[calc(88vh-66px)] overflow-auto p-5">
-            <Tabs defaultValue="cron">
-              <TabsList className="mb-4">
+        <DialogContent className="flex max-h-[min(92vh,900px)] w-[calc(100%-1.5rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl md:max-w-4xl lg:max-w-5xl">
+          <DialogHeader className="shrink-0 border-b border-border px-6 py-4 pr-14">
+            <DialogTitle>Configuración</DialogTitle>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <Tabs defaultValue="webhook">
+              <TabsList className="mb-5">
                 <TabsTrigger value="cron">Revisión automática</TabsTrigger>
                 <TabsTrigger value="webhook">Webhook</TabsTrigger>
               </TabsList>
@@ -797,167 +845,244 @@ export default function AutoEmision() {
               </TabsContent>
 
               {/* Webhook */}
-              <TabsContent value="webhook" className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">Webhook de Falabella</p>
-                  {config.webhookSecretSet
-                    ? <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><Check className="h-3.5 w-3.5" /> secreto ok</span>
-                    : <span className="inline-flex items-center gap-1 text-xs text-red-600"><AlertTriangle className="h-3.5 w-3.5" /> falta secreto</span>}
+              <TabsContent value="webhook" className="space-y-5">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Webhooks en Seller Center</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    Cada empresa tiene su propio secreto en base de datos. Al crear, el servidor registra en Falabella
+                    la URL con token (el token no se muestra completo en pantalla).
+                  </p>
                 </div>
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-foreground">
-                  <span className="truncate">{config.webhookBase}/<span className="text-muted-foreground">{'{companyId}'}</span>?secret=<span className="text-muted-foreground">***</span></span>
-                  <button onClick={copyWebhook} className="ml-auto shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="Copiar">
-                    {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+
+                {/* Empresa + estado del secreto */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="min-w-0 flex-1">
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Empresa</label>
+                    <Select
+                      value={selectedWebhookCompanyId ? String(selectedWebhookCompanyId) : ''}
+                      onValueChange={(value) => setWebhookCompanyId(Number(value))}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Selecciona empresa" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {webhookCompanies.map((company) => (
+                          <SelectItem key={company.id} value={String(company.id)}>
+                            {shortName(company.nombre)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 pb-0.5">
+                    {selectedWebhookCompany?.hasWebhookSecret ? (
+                      <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+                        <Check className="h-3.5 w-3.5" /> Secreto listo
+                      </span>
+                    ) : (
+                      <span className="inline-flex h-9 items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 text-xs font-medium text-amber-800">
+                        <AlertTriangle className="h-3.5 w-3.5" /> Se genera al crear
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={rotateWebhookSecret}
+                      disabled={!selectedWebhookCompanyId || webhookSaving}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Invalida el token anterior; hay que recrear el webhook en Falabella"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Rotar secreto
+                    </button>
+                  </div>
+                </div>
+
+                {/* URL preview */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">URL de callback (token oculto)</label>
+                  <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+                    <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                      {companyCallbackPreview || `${config.webhookBase}/{companyId}/***`}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={copyWebhook}
+                      disabled={!companyCallbackPreview}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:opacity-40"
+                      title="Copiar preview (token oculto)"
+                    >
+                      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                      {copied ? 'Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Eventos */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-muted-foreground">Eventos a registrar</label>
+                    <span className="text-[11px] text-muted-foreground">{selectedEvents.length} seleccionados</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {WEBHOOK_EVENTS.map((event) => {
+                      const checked = selectedEvents.includes(event.value);
+                      return (
+                        <button
+                          key={event.value}
+                          type="button"
+                          onClick={() => toggleWebhookEvent(event.value)}
+                          className={cn(
+                            'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition',
+                            checked
+                              ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                              : 'border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border',
+                              checked ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-input',
+                            )}
+                          >
+                            {checked && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+                          </span>
+                          {event.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Acciones */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <input
+                      value={webhookIdQuery}
+                      onChange={(event) => setWebhookIdQuery(event.target.value)}
+                      placeholder="Filtrar por ID de webhook (opcional)"
+                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={consultWebhooks}
+                      disabled={!selectedWebhookCompanyId || webhooksLoading}
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', webhooksLoading && 'animate-spin')} />
+                      Consultar
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={createWebhook}
+                    disabled={!selectedWebhookCompanyId || !selectedEvents.length || webhookSaving}
+                    className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {webhookSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Crear en Falabella
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">Regístralo en el portal de Falabella para el evento <code className="rounded bg-muted px-1">onOrderItemsStatusChanged</code>.</p>
 
-                <div className="rounded-xl border border-border bg-background p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Gestor de webhooks en Falabella</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">Crea, consulta y elimina los webhooks registrados en Seller Center.</p>
-                    </div>
+                {webhookError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {webhookError}
                   </div>
+                )}
 
-                  <div className="mt-4 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_auto] lg:items-end">
-                    <div className="min-w-0">
-                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">Empresa</p>
-                      <Select
-                        value={selectedWebhookCompanyId ? String(selectedWebhookCompanyId) : ''}
-                        onValueChange={(value) => setWebhookCompanyId(Number(value))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecciona empresa" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {webhookCompanies.map((company) => (
-                            <SelectItem key={company.id} value={String(company.id)}>
-                              {shortName(company.nombre)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <label className="mt-3 block">
-                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Consultar por ID</span>
-                        <input
-                          value={webhookIdQuery}
-                          onChange={(event) => setWebhookIdQuery(event.target.value)}
-                          placeholder="Opcional, separados por coma"
-                          className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="min-w-0">
-                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">Eventos</p>
-                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                        {WEBHOOK_EVENTS.map((event) => {
-                          const checked = selectedEvents.includes(event.value);
-                          return (
-                            <button
-                              key={event.value}
-                              type="button"
-                              onClick={() => toggleWebhookEvent(event.value)}
-                              className={cn(
-                                'inline-flex min-h-9 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs font-medium transition',
-                                checked ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
-                              )}
-                            >
-                              <span className={cn('grid h-3.5 w-3.5 place-items-center rounded border', checked ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-input')}>
-                                {checked && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
-                              </span>
-                              {event.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <label className="mt-3 block">
-                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Callback personalizado</span>
-                        <input
-                          value={callbackUrl}
-                          onChange={(event) => setCallbackUrl(event.target.value)}
-                          placeholder={defaultCallbackUrl || 'Se genera con el secreto local'}
-                          className="h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-xs text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="flex gap-2 lg:flex-col">
-                      <button
-                        onClick={consultWebhooks}
-                        disabled={!selectedWebhookCompanyId || webhooksLoading}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <RefreshCw className={cn('h-3.5 w-3.5', webhooksLoading && 'animate-spin')} />
-                        Consultar
-                      </button>
-                      <button
-                        onClick={createWebhook}
-                        disabled={!selectedWebhookCompanyId || !selectedEvents.length || webhookSaving || (!config.webhookSecretSet && !customCallbackUrl)}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {webhookSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                        Crear
-                      </button>
-                    </div>
-                  </div>
-
-                  {webhookError && (
-                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                      {webhookError}
-                    </div>
-                  )}
-
-                  <div className="mt-4 overflow-hidden rounded-lg border border-border">
+                {/* Lista registrada */}
+                <div>
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Registrados en Falabella</p>
+                  <div className="overflow-hidden rounded-xl border border-border">
                     {webhooksLoading ? (
                       <WebhooksSkeleton />
                     ) : webhooks.length === 0 ? (
-                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">No hay webhooks registrados para esta empresa.</p>
+                      <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        No hay webhooks para esta empresa. Elige eventos y pulsa «Crear en Falabella».
+                      </p>
                     ) : (
-                      <div className="max-h-56 overflow-auto divide-y divide-border">
-                        {webhooks.map((webhook) => (
-                          <div key={webhook.webhookId || webhook.callbackUrl} className="grid gap-3 px-3 py-3 text-xs md:grid-cols-[160px_minmax(0,1fr)_auto] md:items-start">
-                            <div className="min-w-0">
-                              <span className="block font-mono font-semibold text-foreground">{webhook.webhookId || 'sin ID'}</span>
-                              {webhook.webhookSource && <span className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{webhook.webhookSource}</span>}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate font-mono text-muted-foreground" title={webhook.callbackUrl}>{webhook.callbackUrl || '-'}</p>
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                {webhook.events.length ? webhook.events.map((event) => (
-                                  <span key={event} className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">{event}</span>
-                                )) : <span className="text-muted-foreground">Sin eventos informados</span>}
+                      <ul className="max-h-72 divide-y divide-border overflow-auto">
+                        {webhooks.map((webhook) => {
+                          const isLegacySecretQuery = /[?&]secret=/i.test(webhook.callbackUrl || '');
+                          const isPathToken = /\/webhooks\/falabella\/\d+\/[^/?#]+/i.test(webhook.callbackUrl || '');
+                          return (
+                            <li key={webhook.webhookId || webhook.callbackUrl} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="break-all font-mono text-xs font-semibold text-foreground">
+                                    {webhook.webhookId || 'sin ID'}
+                                  </span>
+                                  {webhook.webhookSource && (
+                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                                      {webhook.webhookSource}
+                                    </span>
+                                  )}
+                                  {isLegacySecretQuery && (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                                      Formato antiguo — eliminar y recrear
+                                    </span>
+                                  )}
+                                  {isPathToken && !isLegacySecretQuery && (
+                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                      Formato actual
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+                                  {webhook.callbackUrl || '—'}
+                                </p>
+                                {isLegacySecretQuery && (
+                                  <p className="text-[11px] leading-relaxed text-amber-800">
+                                    Usa <code className="rounded bg-amber-100/80 px-1">?secret=</code> (global viejo).
+                                    Con el modelo nuevo cada empresa tiene token en la ruta. Elimínalo y pulsa «Crear en Falabella».
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap gap-1.5">
+                                  {webhook.events.length
+                                    ? webhook.events.map((event) => (
+                                      <span key={event} className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                        {event}
+                                      </span>
+                                    ))
+                                    : <span className="text-[11px] text-muted-foreground">Sin eventos informados</span>}
+                                </div>
                               </div>
-                            </div>
-                            <button
-                              onClick={() => deleteWebhook(webhook.webhookId)}
-                              disabled={!webhook.webhookId || webhookSaving}
-                              className="inline-flex h-8 items-center gap-1.5 self-start rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Eliminar
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                              <button
+                                type="button"
+                                onClick={() => deleteWebhook(webhook.webhookId)}
+                                disabled={!webhook.webhookId || webhookSaving}
+                                className="inline-flex h-8 shrink-0 items-center gap-1.5 self-start rounded-md border border-red-200 px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Eliminar
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
                   </div>
                 </div>
 
+                {/* Recibidos recientes */}
                 <div>
-                  <p className="mb-1.5 text-xs font-medium text-foreground">Últimos webhooks recibidos</p>
-                  <div className="max-h-40 space-y-0.5 overflow-auto">
-                    {events.length === 0
-                      ? <p className="py-3 text-center text-xs text-muted-foreground">Sin eventos todavía.</p>
-                      : events.map((e) => (
-                        <div key={e.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50">
-                          <Radio className="h-3 w-3 shrink-0 text-blue-500" />
-                          <span className="truncate text-foreground">{e.company || `Empresa ${e.company_id ?? ''}`}</span>
-                          <span className="truncate text-muted-foreground">· orden {e.order_number || '—'}</span>
-                          <span className="ml-auto shrink-0 text-muted-foreground">{timeAgo(e.received_at)}</span>
-                        </div>
-                      ))}
+                  <p className="mb-2 text-xs font-medium text-muted-foreground">Últimos recibidos en ZentoFact</p>
+                  <div className="max-h-40 overflow-auto rounded-xl border border-border">
+                    {events.length === 0 ? (
+                      <p className="px-4 py-6 text-center text-xs text-muted-foreground">Sin eventos todavía.</p>
+                    ) : (
+                      <ul className="divide-y divide-border">
+                        {events.map((e) => (
+                          <li key={e.id} className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-accent/40">
+                            <Radio className="h-3 w-3 shrink-0 text-blue-500" />
+                            <span className="min-w-0 truncate font-medium text-foreground">
+                              {e.company || `Empresa ${e.company_id ?? ''}`}
+                            </span>
+                            <span className="min-w-0 truncate text-muted-foreground">orden {e.order_number || '—'}</span>
+                            <span className="ml-auto shrink-0 text-muted-foreground">{timeAgo(e.received_at)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               </TabsContent>

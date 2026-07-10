@@ -3,6 +3,8 @@ import { companies, branches, dailySummaries } from '../db/schema';
 import { eq, and, desc, isNotNull } from 'drizzle-orm';
 import { parsePem, parsePfxToPem } from '../utils/certificate';
 
+export type CompanyRecord = typeof companies.$inferSelect;
+
 export interface CreateCompanyInput {
   nombre?: string;
   ruc: string;
@@ -29,6 +31,35 @@ export interface CreateCompanyInput {
 export interface UpdateCompanyInput extends Partial<CreateCompanyInput> {}
 export type SunatEnvironment = 'beta' | 'produccion';
 
+/** DTO seguro para HTTP: nunca incluye contraseñas, PFX ni API keys. */
+export type PublicCompany = {
+  id: number;
+  nombre: string | null;
+  ruc: string;
+  razonSocial: string;
+  nombreComercial: string | null;
+  direccion: string | null;
+  ubigeo: string | null;
+  distrito: string | null;
+  provincia: string | null;
+  departamento: string | null;
+  telefono: string | null;
+  email: string | null;
+  /** Identificadores operativos (no secretos). */
+  usuarioSol: string | null;
+  sellerUsername: string | null;
+  falabellaApiUserId: string | null;
+  logoPath: string | null;
+  modoProduccion: boolean | null;
+  activo: boolean | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+  hasSolCredentials: boolean;
+  hasCertificate: boolean;
+  hasSellerPassword: boolean;
+  hasFalabellaCredentials: boolean;
+};
+
 export interface TestSunatConnectionResult {
   success: boolean;
   severity: 'success' | 'warning' | 'error';
@@ -46,17 +77,72 @@ const SUNAT_BETA_ENDPOINT = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/bi
 const SUNAT_PROD_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
 const PRODUCTION_DUMMY_TICKETS = ['202620699999999', '202600000000001'];
 
+function hasText(value: unknown): boolean {
+  return String(value ?? '').trim().length > 0;
+}
+
+/** Solo aplica secretos no vacíos en updates (vacío = conservar el valor almacenado). */
+function nonEmptySecret(value: string | undefined | null): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed.length ? String(value) : undefined;
+}
+
+export function toPublicCompany(row: CompanyRecord): PublicCompany {
+  const hasSolPassword = hasText(row.claveSol);
+  const hasCertificate = hasText(row.certificado);
+  const hasSellerPassword = hasText(row.sellerPassword);
+  const hasFalabellaApiKey = hasText(row.falabellaApiKey);
+  return {
+    id: row.id,
+    nombre: row.nombre ?? null,
+    ruc: row.ruc,
+    razonSocial: row.razonSocial,
+    nombreComercial: row.nombreComercial ?? null,
+    direccion: row.direccion ?? null,
+    ubigeo: row.ubigeo ?? null,
+    distrito: row.distrito ?? null,
+    provincia: row.provincia ?? null,
+    departamento: row.departamento ?? null,
+    telefono: row.telefono ?? null,
+    email: row.email ?? null,
+    usuarioSol: row.usuarioSol ?? null,
+    sellerUsername: row.sellerUsername ?? null,
+    falabellaApiUserId: row.falabellaApiUserId ?? null,
+    logoPath: row.logoPath ?? null,
+    modoProduccion: row.modoProduccion ?? null,
+    activo: row.activo ?? null,
+    createdAt: row.createdAt ?? null,
+    updatedAt: row.updatedAt ?? null,
+    hasSolCredentials: hasText(row.usuarioSol) && hasSolPassword,
+    hasCertificate,
+    hasSellerPassword,
+    hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
+  };
+}
+
+/** Uso interno del backend (SUNAT, Falabella, workflow). No devolver por HTTP. */
 export function listCompanies() {
   return db.select().from(companies).where(eq(companies.activo, true));
 }
 
+/** Uso interno del backend. No devolver por HTTP. */
 export async function getCompany(id: number) {
   const rows = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
   return rows[0];
 }
 
+export async function listPublicCompanies(): Promise<PublicCompany[]> {
+  const rows = await listCompanies();
+  return rows.map(toPublicCompany);
+}
 
-export async function createCompany(data: CreateCompanyInput) {
+export async function getPublicCompany(id: number): Promise<PublicCompany | undefined> {
+  const row = await getCompany(id);
+  return row ? toPublicCompany(row) : undefined;
+}
+
+export async function createCompany(data: CreateCompanyInput): Promise<PublicCompany> {
   const now = Math.floor(Date.now() / 1000);
   const inserted = await db.insert(companies).values({
     nombre: data.nombre || data.razonSocial,
@@ -98,10 +184,10 @@ export async function createCompany(data: CreateCompanyInput) {
     });
   }
 
-  return result;
+  return toPublicCompany(result);
 }
 
-export async function updateCompany(id: number, data: UpdateCompanyInput) {
+export async function updateCompany(id: number, data: UpdateCompanyInput): Promise<PublicCompany | undefined> {
   const now = Math.floor(Date.now() / 1000);
   const updates: Record<string, any> = { updatedAt: now };
   if (data.ruc !== undefined) updates.ruc = data.ruc;
@@ -116,17 +202,24 @@ export async function updateCompany(id: number, data: UpdateCompanyInput) {
   if (data.telefono !== undefined) updates.telefono = data.telefono;
   if (data.email !== undefined) updates.email = data.email;
   if (data.usuarioSol !== undefined) updates.usuarioSol = data.usuarioSol;
-  if (data.claveSol !== undefined) updates.claveSol = data.claveSol;
-  if (data.certificado !== undefined) updates.certificado = data.certificado;
-  if (data.certificadoPassword !== undefined) updates.certificadoPassword = data.certificadoPassword;
+  // Secretos: solo se reemplazan si el cliente envía un valor no vacío.
+  const claveSol = nonEmptySecret(data.claveSol);
+  if (claveSol !== undefined) updates.claveSol = claveSol;
+  const certificado = nonEmptySecret(data.certificado);
+  if (certificado !== undefined) updates.certificado = certificado;
+  const certificadoPassword = nonEmptySecret(data.certificadoPassword);
+  if (certificadoPassword !== undefined) updates.certificadoPassword = certificadoPassword;
   if (data.sellerUsername !== undefined) updates.sellerUsername = data.sellerUsername;
-  if (data.sellerPassword !== undefined) updates.sellerPassword = data.sellerPassword;
+  const sellerPassword = nonEmptySecret(data.sellerPassword);
+  if (sellerPassword !== undefined) updates.sellerPassword = sellerPassword;
   if (data.falabellaApiUserId !== undefined) updates.falabellaApiUserId = data.falabellaApiUserId;
-  if (data.falabellaApiKey !== undefined) updates.falabellaApiKey = data.falabellaApiKey;
+  const falabellaApiKey = nonEmptySecret(data.falabellaApiKey);
+  if (falabellaApiKey !== undefined) updates.falabellaApiKey = falabellaApiKey;
   if (data.modoProduccion !== undefined) updates.modoProduccion = data.modoProduccion;
 
   const updated = await db.update(companies).set(updates).where(eq(companies.id, id)).returning();
-  return updated[0];
+  const row = updated[0];
+  return row ? toPublicCompany(row) : undefined;
 }
 
 export async function deleteCompany(id: number) {

@@ -4,16 +4,18 @@ import { processWorkflow } from './workflow';
 // ── Tipos públicos ──
 
 export interface CoreConfig {
+  /** Obligatorio: secretos se cargan en el servidor desde la empresa. */
   companyId?: number;
   branchId?: number;
-  ruc: string;
-  razonSocial: string;
-  direccion: string;
-  ubigeo: string;
-  usuarioSol: string;
-  claveSol: string;
-  certificadoBase64: string;
-  certificadoPassword: string;
+  /** @deprecated No se usan en HTTP; se conservan solo por compatibilidad tipada. */
+  ruc?: string;
+  razonSocial?: string;
+  direccion?: string;
+  ubigeo?: string;
+  usuarioSol?: string;
+  claveSol?: string;
+  certificadoBase64?: string;
+  certificadoPassword?: string;
   modoProduccion?: boolean;
   branchCodigo?: string;
   branchNombre?: string;
@@ -77,8 +79,25 @@ export type WorkflowProgress = (current: number, total: number, status: string) 
 export { processWorkflow };
 export { db, pool } from './db';
 export { runMigrations } from './db/migrate';
-export { listCompanies, getCompany, createCompany, updateCompany, deleteCompany, testSunatConnection } from './services/company.service';
-export type { CreateCompanyInput, UpdateCompanyInput, TestSunatConnectionResult, SunatEnvironment } from './services/company.service';
+export {
+  listCompanies,
+  getCompany,
+  listPublicCompanies,
+  getPublicCompany,
+  toPublicCompany,
+  createCompany,
+  updateCompany,
+  deleteCompany,
+  testSunatConnection,
+} from './services/company.service';
+export type {
+  CreateCompanyInput,
+  UpdateCompanyInput,
+  PublicCompany,
+  CompanyRecord,
+  TestSunatConnectionResult,
+  SunatEnvironment,
+} from './services/company.service';
 export { listBranches, createBranch, updateBranch } from './services/branch.service';
 export type { CreateBranchInput, UpdateBranchInput } from './services/branch.service';
 export { listBoletas } from './services/boleta-query.service';
@@ -122,11 +141,10 @@ export {
 
 export function validateConfig(config: CoreConfig): string[] {
   const errors: string[] = [];
-  if (!config.ruc || config.ruc.length !== 11) errors.push('RUC inválido (debe tener 11 dígitos)');
-  if (!config.razonSocial) errors.push('Razón social requerida');
-  if (!config.usuarioSol) errors.push('Usuario SOL requerido');
-  if (!config.claveSol) errors.push('Clave SOL requerida');
-  if (!config.certificadoBase64) errors.push('Certificado digital requerido');
+  // Flujo actual: el servidor carga secretos por companyId; no se aceptan credenciales del cliente.
+  if (!config.companyId) {
+    errors.push('companyId es requerido');
+  }
   if (!config.outputDir) errors.push('Directorio de salida requerido');
   return errors;
 }

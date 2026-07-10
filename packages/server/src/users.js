@@ -305,4 +305,25 @@ export async function deleteUser(id, actorId) {
   return { ok: true };
 }
 
+/**
+ * Cierra sesión en todos los dispositivos: elimina todas las filas de session
+ * del usuario. Cualquier cookie residual deja de ser válida y obliga a login.
+ */
+export async function revokeAllSessionsForUser(userId) {
+  if (!userId) throw new Error('Usuario requerido');
+  let revoked = 0;
+  await db.transaction(async (tx) => {
+    const existing = await tx.select({ id: authSessions.id }).from(authSessions).where(eq(authSessions.userId, userId));
+    revoked = existing.length;
+    await tx.delete(authSessions).where(eq(authSessions.userId, userId));
+    await addAudit(tx, {
+      actorId: userId,
+      targetId: userId,
+      action: 'user.logout_all_sessions',
+      details: { revoked },
+    });
+  });
+  return { ok: true, revoked };
+}
+
 export { ROLE_PRESETS, ALL_PERMISSION_KEYS, userHasPermission };

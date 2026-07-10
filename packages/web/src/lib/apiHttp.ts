@@ -1,11 +1,25 @@
 // Cliente HTTP del frontend web; apunta al backend @zentofact/server.
 // Vacío = mismo origen (el front se sirve desde el propio server). En dev se puede fijar VITE_API_URL.
+import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
+
 const BASE = (import.meta as any).env?.VITE_API_URL || '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
 
 function rememberCsrfToken(data: any) {
   if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
+}
+
+function clearCsrfToken() {
+  csrfToken = '';
+}
+
+/** Sesión inválida o revocada: limpia storage y fuerza login de nuevo. */
+function handleUnauthorized(path: string) {
+  // No reentrar en el propio logout (evita bucle).
+  if (path === '/me/logout') return;
+  clearCsrfToken();
+  forceReauthAndReload('session-revoked');
 }
 
 async function ensureCsrfToken() {
@@ -15,6 +29,10 @@ async function ensureCsrfToken() {
     headers: { 'content-type': 'application/json' },
   });
   const data = await res.json().catch(() => null);
+  if (res.status === 401 || res.status === 403) {
+    handleUnauthorized('/me');
+    throw new Error((data && data.error) || 'Sesión expirada. Inicia sesión de nuevo.');
+  }
   if (!res.ok || !data?.csrfToken) throw new Error((data && data.error) || 'No se pudo validar la sesión');
   rememberCsrfToken(data);
   return csrfToken;
@@ -39,6 +57,10 @@ async function req(path: string, init?: RequestInit) {
     throw new Error(`Error al parsear respuesta de ${path}: ${parseError?.message}. Response: ${text?.slice(0, 200)}`);
   }
   rememberCsrfToken(data);
+  if (res.status === 401) {
+    handleUnauthorized(path);
+    throw new Error((data && data.error) || 'Sesión expirada. Inicia sesión de nuevo.');
+  }
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
   return data;
 }
@@ -55,6 +77,8 @@ let progressHandler: ((data: any) => void) | null = null;
 const apiHttp = {
   // Sesión y usuarios
   getMe: () => req('/me'),
+  /** Revoca todas las sesiones del usuario en el servidor (todos los dispositivos). */
+  logoutAll: () => req('/me/logout', { method: 'POST' }),
   listUsers: () => req('/users'),
   createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -180,7 +204,9 @@ const apiHttp = {
   autoEmitRetryJob: (id: number) => req(`/auto-emit/jobs/${id}/retry`, { method: 'POST' }),
   autoEmitOrderPreview: (id: number) => req(`/auto-emit/jobs/${id}/order-preview`),
   autoEmitGetWebhooks: (companyId: number, ids?: string[]) => req(`/auto-emit/webhooks/${companyId}${qs({ ids: ids?.join(',') })}`),
-  autoEmitCreateWebhook: (companyId: number, events: string[], callbackUrl?: string) => req(`/auto-emit/webhooks/${companyId}`, { method: 'POST', body: JSON.stringify({ events, callbackUrl }) }),
+  /** Crea webhook en Falabella; el servidor arma la URL con secret por empresa (no se envía callback del cliente). */
+  autoEmitCreateWebhook: (companyId: number, events: string[]) => req(`/auto-emit/webhooks/${companyId}`, { method: 'POST', body: JSON.stringify({ events }) }),
+  autoEmitRotateWebhookSecret: (companyId: number) => req(`/auto-emit/webhooks/${companyId}/rotate-secret`, { method: 'POST' }),
   autoEmitDeleteWebhook: (companyId: number, webhookId: string) => req(`/auto-emit/webhooks/${companyId}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' }),
 
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },

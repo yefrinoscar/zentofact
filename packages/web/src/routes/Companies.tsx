@@ -57,15 +57,14 @@ type CompanyRow = {
   direccion?: string | null;
   ubigeo?: string | null;
   usuarioSol?: string | null;
-  claveSol?: string | null;
-  certificado?: string | null;
-  certificadoPassword?: string | null;
   sellerUsername?: string | null;
-  sellerPassword?: string | null;
   falabellaApiUserId?: string | null;
-  falabellaApiKey?: string | null;
   modoProduccion?: boolean | null;
   activo?: boolean | null;
+  hasSolCredentials?: boolean;
+  hasCertificate?: boolean;
+  hasSellerPassword?: boolean;
+  hasFalabellaCredentials?: boolean;
 };
 
 const initialForm: CompanyForm = {
@@ -84,15 +83,15 @@ const initialForm: CompanyForm = {
 };
 
 function hasFalabellaApi(c: CompanyRow) {
-  return !!(c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim());
+  return !!c.hasFalabellaCredentials;
 }
 
 function hasCertificate(c: CompanyRow) {
-  return !!c.certificado?.trim();
+  return !!c.hasCertificate;
 }
 
 function hasSol(c: CompanyRow) {
-  return !!c.usuarioSol?.trim();
+  return !!c.hasSolCredentials;
 }
 
 /** Estado operativo sin exponer credenciales. */
@@ -217,11 +216,15 @@ export default function Companies() {
     return snapshot;
   };
 
-  const validate = (candidate: CompanyForm): string | null => {
+  const validate = (candidate: CompanyForm, isEdit: boolean): string | null => {
     if (!candidate.ruc || candidate.ruc.length !== 11) return 'El RUC debe tener 11 dígitos.';
     if (!candidate.razonSocial.trim()) return 'La razón social es requerida.';
     if (!candidate.usuarioSol.trim()) return 'El usuario SOL es requerido.';
-    if (!candidate.claveSol.trim()) return 'La clave SOL es requerida.';
+    // Al editar, dejar la clave vacía conserva la almacenada en el servidor.
+    if (!isEdit && !candidate.claveSol.trim()) return 'La clave SOL es requerida.';
+    if (isEdit && !editing?.hasSolCredentials && !candidate.claveSol.trim()) {
+      return 'La clave SOL es requerida.';
+    }
     return null;
   };
 
@@ -229,7 +232,7 @@ export default function Companies() {
     const nextForm = readFormSnapshot();
     setForm(nextForm);
 
-    const validationError = validate(nextForm);
+    const validationError = validate(nextForm, false);
     if (validationError) {
       setError(validationError);
       return;
@@ -240,6 +243,7 @@ export default function Companies() {
 
     if (!certBase64) {
       setError('Debes seleccionar un certificado digital (.pfx o .p12).');
+      setSaving(false);
       return;
     }
 
@@ -269,7 +273,7 @@ export default function Companies() {
     const nextForm = readFormSnapshot();
     setForm(nextForm);
 
-    const validationError = validate(nextForm);
+    const validationError = validate(nextForm, true);
     if (validationError) {
       setError(validationError);
       return;
@@ -279,9 +283,23 @@ export default function Companies() {
     setError('');
 
     try {
-      const updateData: any = { ...nextForm };
+      // Solo enviar secretos cuando el usuario escribe un valor nuevo; vacío = conservar.
+      const updateData: Record<string, unknown> = {
+        nombre: nextForm.nombre,
+        ruc: nextForm.ruc,
+        razonSocial: nextForm.razonSocial,
+        nombreComercial: nextForm.nombreComercial,
+        direccion: nextForm.direccion,
+        ubigeo: nextForm.ubigeo,
+        usuarioSol: nextForm.usuarioSol,
+        sellerUsername: nextForm.sellerUsername,
+        falabellaApiUserId: nextForm.falabellaApiUserId,
+      };
+      if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
+      if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
+      if (nextForm.falabellaApiKey.trim()) updateData.falabellaApiKey = nextForm.falabellaApiKey;
       if (certBase64) updateData.certificado = certBase64;
-      if (certPass) updateData.certificadoPassword = certPass;
+      if (certPass.trim()) updateData.certificadoPassword = certPass;
 
       await api.updateCompany(editing.id, updateData);
       closeEditor();
@@ -419,12 +437,13 @@ export default function Companies() {
   const startEdit = (company: CompanyRow) => {
     setEditing(company);
     setShowCreate(false);
-    setHasStoredCert(!!company.certificado);
+    setHasStoredCert(!!company.hasCertificate);
     setCertFileName('');
     setCertBase64('');
-    setCertPass(company.certificadoPassword || '');
+    setCertPass('');
     setError('');
     if (certInputRef.current) certInputRef.current.value = '';
+    // Secretos nunca vienen del API: campos de contraseña vacíos = conservar al guardar.
     setForm({
       nombre: company.nombre || company.razonSocial || '',
       ruc: company.ruc || '',
@@ -433,11 +452,11 @@ export default function Companies() {
       direccion: company.direccion || '',
       ubigeo: company.ubigeo || '',
       usuarioSol: company.usuarioSol || '',
-      claveSol: company.claveSol || '',
+      claveSol: '',
       sellerUsername: company.sellerUsername || '',
-      sellerPassword: company.sellerPassword || '',
+      sellerPassword: '',
       falabellaApiUserId: company.falabellaApiUserId || '',
-      falabellaApiKey: company.falabellaApiKey || '',
+      falabellaApiKey: '',
     });
   };
 
@@ -538,22 +557,34 @@ export default function Companies() {
                 {field('Ubigeo (6 dígitos)', 'ubigeo')}
                 <div className="md:col-span-2">{field('Dirección', 'direccion')}</div>
                 {field('Usuario SOL', 'usuarioSol')}
-                {field('Clave SOL', 'claveSol', 'password', '', {
-                  revealable: true,
-                  revealed: showClaveSol,
-                  onToggleReveal: () => setShowClaveSol((value) => !value),
-                })}
+                {field(
+                  'Clave SOL',
+                  'claveSol',
+                  'password',
+                  editing?.hasSolCredentials ? 'Dejar vacío para mantener la actual' : '',
+                  {
+                    revealable: true,
+                    revealed: showClaveSol,
+                    onToggleReveal: () => setShowClaveSol((value) => !value),
+                  },
+                )}
               </div>
 
               <div className="mt-4 pt-4 border-t border-border">
                 <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella Seller</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {field('Usuario Seller', 'sellerUsername')}
-                  {field('Contraseña Seller', 'sellerPassword', 'password', '', {
-                    revealable: true,
-                    revealed: showSellerPassword,
-                    onToggleReveal: () => setShowSellerPassword((value) => !value),
-                  })}
+                  {field(
+                    'Contraseña Seller',
+                    'sellerPassword',
+                    'password',
+                    editing?.hasSellerPassword ? 'Dejar vacío para mantener la actual' : '',
+                    {
+                      revealable: true,
+                      revealed: showSellerPassword,
+                      onToggleReveal: () => setShowSellerPassword((value) => !value),
+                    },
+                  )}
                 </div>
               </div>
 
@@ -561,11 +592,17 @@ export default function Companies() {
                 <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella API</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {field('User ID API', 'falabellaApiUserId', 'text', 'Settings > Integration Management > API')}
-                  {field('API Key', 'falabellaApiKey', 'password', '', {
-                    revealable: true,
-                    revealed: showFalabellaApiKey,
-                    onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
-                  })}
+                  {field(
+                    'API Key',
+                    'falabellaApiKey',
+                    'password',
+                    editing?.hasFalabellaCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    {
+                      revealable: true,
+                      revealed: showFalabellaApiKey,
+                      onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
+                    },
+                  )}
                 </div>
               </div>
 
@@ -616,6 +653,7 @@ export default function Companies() {
                       type={showCertPassword ? 'text' : 'password'}
                       value={certPass}
                       onChange={(e) => setCertPass(e.target.value)}
+                      placeholder={hasStoredCert ? 'Dejar vacío para mantener la actual' : ''}
                       className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm shadow-sm outline-none transition focus:border-ring"
                     />
                     <button

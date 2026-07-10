@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { authClient } from '../lib/authClient';
+import { clearClientStorageOnLogout, installSessionSecurityListeners } from '../lib/clearClientStorage';
 import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 
@@ -118,6 +119,15 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Otras pestañas: si alguien cierra sesión, aquí también se limpia y se pide login.
+  useEffect(() => installSessionSecurityListeners(), []);
+
+  // Sin sesión válida: no dejar datos de la app en localStorage (security).
+  useEffect(() => {
+    if (isPending) return;
+    if (!session) clearClientStorageOnLogout();
+  }, [isPending, session]);
+
   if (isPending) {
     return (
       <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
@@ -132,6 +142,8 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     setError('');
     setLoading(true);
+    // Antes de un login nuevo, vacía restos de sesiones anteriores en este navegador.
+    clearClientStorageOnLogout();
     const { data, error } = await authClient.signIn.email({
       email,
       password,

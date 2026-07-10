@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
+import api from '../lib/api';
+import { clearClientStorageOnLogout, broadcastForceReauth } from '../lib/clearClientStorage';
 import falabellaIcon from '../assets/falabella.png';
 import webPackage from '../../package.json';
 import { usePermissions } from '../hooks/usePermissions';
@@ -185,8 +187,24 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
   const logout = async () => {
     setSigningOut(true);
     try {
-      await authClient.signOut();
+      // 1) Revoca TODAS las sesiones del usuario en el servidor.
+      //    Otros dispositivos reciben 401 y limpian su propio localStorage.
+      try {
+        await api.logoutAll();
+      } catch {
+        // Si la sesión ya expiró, seguimos limpiando cliente.
+      }
+      // 2) Limpia cookie de Better Auth en este navegador.
+      try {
+        await authClient.signOut();
+      } catch {
+        // ignore
+      }
     } finally {
+      // 3) Limpia localStorage/sessionStorage de ESTA pestaña y avisa a las demás.
+      clearClientStorageOnLogout();
+      broadcastForceReauth('logout');
+      // 4) Recarga → pantalla de login.
       window.location.reload();
     }
   };

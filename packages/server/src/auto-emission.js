@@ -1,6 +1,7 @@
 // Emisión automática de boletas Falabella.
 // Flujo: webhook (o cron) -> cola en Postgres -> worker emite INDIVIDUAL -> sube a Falabella.
 // Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import {
   getCompany,
@@ -19,6 +20,113 @@ import {
 import { FalabellaApiClient } from '@zentofact/falabella-api';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
+
+/** Secreto opaco por empresa (64 hex). No se usa un secret global en env. */
+function generateWebhookSecret() {
+  return randomBytes(32).toString('hex');
+}
+
+export function publicApiBaseUrl() {
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  if (process.env.AUTH_BASE_URL) {
+    try { return new URL(process.env.AUTH_BASE_URL).origin; } catch { /* ignore */ }
+  }
+  return `http://localhost:${process.env.PORT || 3010}`;
+}
+
+/** URL que se registra en Falabella: token en path, nunca en ?secret= */
+export function buildWebhookCallbackUrl(companyId, secret) {
+  const token = encodeURIComponent(String(secret || ''));
+  return `${publicApiBaseUrl()}/webhooks/falabella/${Number(companyId)}/${token}`;
+}
+
+/** Redacta tokens de URL para UI/logs (path o query legacy). */
+export function redactWebhookUrl(url) {
+  return String(url || '')
+    .replace(/([?&]secret=)[^&]*/gi, '$1***')
+    .replace(/(\/webhooks\/falabella\/\d+\/)[^/?#]+/gi, '$1***');
+}
+
+function secretsEqual(expected, provided) {
+  const a = Buffer.from(String(expected || ''), 'utf8');
+  const b = Buffer.from(String(provided || ''), 'utf8');
+  if (!a.length || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Crea el secret de la empresa si no existe. Nunca devuelve el valor a callers HTTP sin cuidado. */
+export async function ensureCompanyWebhookSecret(companyId) {
+  const id = Number(companyId);
+  if (!Number.isFinite(id) || id <= 0) throw new Error('companyId inválido');
+
+  const existing = await pool.query(
+    'select webhook_secret from auto_emission_config where company_id=$1',
+    [id],
+  );
+  const current = String(existing.rows[0]?.webhook_secret || '').trim();
+  if (current) return current;
+
+  const secret = generateWebhookSecret();
+  const upserted = await pool.query(
+    `insert into auto_emission_config (company_id, enabled, webhook_secret, updated_at)
+     values ($1, false, $2, now())
+     on conflict (company_id) do update
+       set webhook_secret = coalesce(nullif(trim(auto_emission_config.webhook_secret), ''), excluded.webhook_secret),
+           updated_at = now()
+     returning webhook_secret`,
+    [id, secret],
+  );
+  return String(upserted.rows[0]?.webhook_secret || secret);
+}
+
+export async function rotateCompanyWebhookSecret(companyId) {
+  const id = Number(companyId);
+  if (!Number.isFinite(id) || id <= 0) throw new Error('companyId inválido');
+  const secret = generateWebhookSecret();
+  await pool.query(
+    `insert into auto_emission_config (company_id, enabled, webhook_secret, updated_at)
+     values ($1, false, $2, now())
+     on conflict (company_id) do update
+       set webhook_secret = excluded.webhook_secret, updated_at = now()`,
+    [id, secret],
+  );
+  log(`webhook secret rotado company=${id}`);
+  return {
+    companyId: id,
+    rotated: true,
+    hasWebhookSecret: true,
+    webhookCallbackUrl: redactWebhookUrl(buildWebhookCallbackUrl(id, secret)),
+  };
+}
+
+/** Fail-closed: sin secret en DB → no autorizado. */
+export async function verifyCompanyWebhookAuth(companyId, providedSecret) {
+  const id = Number(companyId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  const given = String(providedSecret || '').trim();
+  if (!given) return false;
+  const r = await pool.query(
+    'select webhook_secret from auto_emission_config where company_id=$1',
+    [id],
+  );
+  const expected = String(r.rows[0]?.webhook_secret || '').trim();
+  if (!expected) return false;
+  return secretsEqual(expected, given);
+}
+
+export async function getCompanyWebhookMeta(companyId) {
+  const id = Number(companyId);
+  const r = await pool.query(
+    'select webhook_secret from auto_emission_config where company_id=$1',
+    [id],
+  );
+  const secret = String(r.rows[0]?.webhook_secret || '').trim();
+  return {
+    companyId: id,
+    hasWebhookSecret: !!secret,
+    webhookCallbackUrl: secret ? redactWebhookUrl(buildWebhookCallbackUrl(id, secret)) : null,
+  };
+}
 
 // Estados de Falabella que habilitan la boleta (idéntico al Gestor de Sellers).
 const READY_STATUSES = ['ready_to_ship', 'shipped', 'delivered'];
@@ -84,16 +192,9 @@ function invoiceRequired(order) {
 }
 
 function buildConfig(company) {
+  // Solo companyId: processWorkflow carga certificado/SOL desde la DB.
   return {
     companyId: company.id,
-    ruc: company.ruc,
-    razonSocial: company.razonSocial,
-    direccion: company.direccion || '',
-    ubigeo: company.ubigeo || '',
-    usuarioSol: company.usuarioSol || '',
-    claveSol: company.claveSol || '',
-    certificadoBase64: company.certificado || '',
-    certificadoPassword: company.certificadoPassword || '',
     modoProduccion: true, // el automático SIEMPRE es producción real
     serieBoleta: 'B001',
     outputDir: process.env.STORAGE_PATH || 'storage',
@@ -172,8 +273,10 @@ export async function ensureTables() {
     create table if not exists auto_emission_config (
       company_id integer primary key,
       enabled boolean not null default false,
+      webhook_secret text,
       updated_at timestamptz not null default now()
     );
+    alter table auto_emission_config add column if not exists webhook_secret text;
     create table if not exists auto_emission_state (
       id integer primary key default 1,
       paused boolean not null default false,
@@ -261,8 +364,10 @@ export async function retryJob(id) {
 // ── Config por empresa (qué empresas emiten automáticamente) ──
 export async function getConfig() {
   const companies = await listCompanies();
-  const rows = (await pool.query('select company_id, enabled from auto_emission_config')).rows;
-  const map = new Map(rows.map((r) => [r.company_id, r.enabled]));
+  const rows = (await pool.query(
+    'select company_id, enabled, webhook_secret from auto_emission_config',
+  )).rows;
+  const map = new Map(rows.map((r) => [r.company_id, r]));
   const paused = await getPaused();
   const cron = await getCron();
   const dryRun = await getDryRun();
@@ -280,17 +385,28 @@ export async function getConfig() {
     paused,
     cron,
     stats,
-    companies: companies.map((c) => ({
-      id: c.id,
-      nombre: c.nombre,
-      ruc: c.ruc,
-      hasFalabella: !!(c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim()),
-      enabled: map.get(c.id) ?? false,
-    })),
+    // Base sin secret ni companyId; la URL real se arma por empresa en el servidor.
+    webhookBase: `${publicApiBaseUrl()}/webhooks/falabella`,
+    companies: companies.map((c) => {
+      const cfg = map.get(c.id);
+      const secret = String(cfg?.webhook_secret || '').trim();
+      return {
+        id: c.id,
+        nombre: c.nombre,
+        ruc: c.ruc,
+        hasFalabella: !!(c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim()),
+        enabled: cfg?.enabled ?? false,
+        hasWebhookSecret: !!secret,
+        // Solo preview redactada; el token completo no sale al browser.
+        webhookCallbackUrl: secret ? redactWebhookUrl(buildWebhookCallbackUrl(c.id, secret)) : null,
+      };
+    }),
   };
 }
 
 export async function setCompanyEnabled(companyId, enabled) {
+  // Al activar, asegura secret por empresa (fail-closed en el webhook público).
+  if (enabled) await ensureCompanyWebhookSecret(companyId);
   await pool.query(
     `insert into auto_emission_config (company_id, enabled, updated_at) values ($1,$2,now())
      on conflict (company_id) do update set enabled=excluded.enabled, updated_at=now()`,

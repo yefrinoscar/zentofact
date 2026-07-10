@@ -54,24 +54,35 @@ app.use('*', async (c, next) => {
 // Better Auth: /api/auth/* (login, logout, sesión). Público (antes del guard).
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 
-// Webhook de Falabella (onOrderItemsStatusChanged). Público: lo llama Falabella, no lleva cookie.
-// Se protege con secreto compartido (?secret= o header x-webhook-secret) contra AUTO_EMIT_WEBHOOK_SECRET.
-app.on(['POST', 'GET'], '/webhooks/falabella/:companyId', async (c) => {
-  const expected = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
-  const given = c.req.query('secret') || c.req.header('x-webhook-secret') || '';
-  if (expected && given !== expected) return c.json({ error: 'unauthorized' }, 401);
-  const companyId = Number(c.req.param('companyId'));
+// Webhook de Falabella. Público (sin cookie de sesión).
+// Auth: secreto ÚNICO por empresa en DB (auto_emission_config.webhook_secret).
+// Preferido: POST /webhooks/falabella/:companyId/:token  (token en path; Falabella solo soporta URL).
+// Legacy:     POST /webhooks/falabella/:companyId?secret=... o header x-webhook-secret
+// Fail-closed: sin secret en DB o token incorrecto → 401. GET → 405.
+async function handleFalabellaWebhook(c, companyId, token) {
+  const id = Number(companyId);
+  if (!Number.isFinite(id) || id <= 0) return c.json({ error: 'unauthorized' }, 401);
+  const provided = String(token || c.req.query('secret') || c.req.header('x-webhook-secret') || '').trim();
+  if (!(await autoEmit.verifyCompanyWebhookAuth(id, provided))) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
   let payload = {};
-  try { payload = c.req.method === 'POST' ? await c.req.json() : c.req.query(); } catch {}
+  try { payload = await c.req.json(); } catch { payload = {}; }
   try {
-    const r = await autoEmit.handleWebhook(companyId, payload);
+    const r = await autoEmit.handleWebhook(id, payload);
     return c.json({ ok: true, ...r });
   } catch (e) {
     console.error('[WEBHOOK ERROR]', (e && e.stack) || e);
-    // 200 igual para que Falabella no reintente en bucle por errores nuestros; ya quedó en webhook_events.
+    // 200 para que Falabella no reintente en bucle por errores nuestros; el evento ya puede estar en DB.
     return c.json({ ok: false, error: String((e && e.message) || e) }, 200);
   }
-});
+}
+
+app.post('/webhooks/falabella/:companyId/:token', (c) =>
+  handleFalabellaWebhook(c, c.req.param('companyId'), c.req.param('token')));
+app.post('/webhooks/falabella/:companyId', (c) =>
+  handleFalabellaWebhook(c, c.req.param('companyId'), ''));
+app.on(['GET'], '/webhooks/falabella/*', (c) => c.json({ error: 'method not allowed' }, 405));
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 app.use('*', requireCsrf());
@@ -113,6 +124,16 @@ app.get('/me', async (c) => {
     });
   } catch (e) { return fail(c, e); }
 });
+// Logout total: revoca TODAS las sesiones del usuario (otros tabs/dispositivos) y
+// fuerza nuevo login. El cliente limpia cookies + localStorage después.
+app.post('/me/logout', async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user?.id) return c.json({ error: 'No autenticado' }, 401);
+    const result = await users.revokeAllSessionsForUser(user.id);
+    return ok(c, { success: true, ...result });
+  } catch (e) { return fail(c, e); }
+});
 
 // ── Usuarios (solo admin / permiso users) ──
 app.get('/users', requirePermission('users'), async (c) => {
@@ -134,11 +155,23 @@ app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
   try { return ok(c, { permissions: PERMISSIONS, roles: ROLE_PRESETS }); } catch (e) { return fail(c, e); }
 });
 
-// ── Empresas ──
-app.get('/companies', async (c) => { try { return ok(c, await core.listCompanies()); } catch (e) { return fail(c, e); } });
-app.get('/companies/:id', async (c) => { try { return ok(c, await core.getCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+// ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──
+app.get('/companies', async (c) => { try { return ok(c, await core.listPublicCompanies()); } catch (e) { return fail(c, e); } });
+app.get('/companies/:id', async (c) => {
+  try {
+    const company = await core.getPublicCompany(Number(c.req.param('id')));
+    if (!company) return c.json({ error: 'Empresa no encontrada' }, 404);
+    return ok(c, company);
+  } catch (e) { return fail(c, e); }
+});
 app.post('/companies', async (c) => { try { return ok(c, await core.createCompany(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); } });
-app.patch('/companies/:id', async (c) => { try { return ok(c, await core.updateCompany(Number(c.req.param('id')), await c.req.json())); } catch (e) { return fail(c, e, 400); } });
+app.patch('/companies/:id', async (c) => {
+  try {
+    const company = await core.updateCompany(Number(c.req.param('id')), await c.req.json());
+    if (!company) return c.json({ error: 'Empresa no encontrada' }, 404);
+    return ok(c, company);
+  } catch (e) { return fail(c, e, 400); }
+});
 app.delete('/companies/:id', async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
 app.post('/companies/:id/test-sunat', async (c) => {
   try { const { environment } = await c.req.json(); return ok(c, await core.testSunatConnection(Number(c.req.param('id')), environment)); }
@@ -281,12 +314,19 @@ app.post('/workflow/validate-ventas', async (c) => { try { return ok(c, { errors
 // El front (apiHttp) lee el stream y dispara onProgress con cada 'progress'.
 app.post('/workflow/process', async (c) => {
   const { config: rawCfg, ventas } = await c.req.json();
+  // Solo datos operativos del cliente. Secretos (cert/SOL) se cargan por companyId en el servidor.
+  const forcedMode = resolveSunatProductionMode(undefined);
   const cfg = {
-    ...rawCfg,
-    modoProduccion: resolveSunatProductionMode(rawCfg?.modoProduccion),
+    companyId: rawCfg?.companyId,
+    branchId: rawCfg?.branchId,
+    branchCodigo: rawCfg?.branchCodigo,
+    serieBoleta: rawCfg?.serieBoleta,
+    outputDir: rawCfg?.outputDir || 'storage',
+    // undefined → workflow usa modoProduccion de la empresa en DB
+    ...(forcedMode !== undefined ? { modoProduccion: forcedMode } : {}),
   };
-  console.log('[WORKFLOW] companyId=%s ventas=%s cert=%s claveSol=%s modoProd=%s',
-    cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', cfg?.certificadoBase64 ? 'sí' : 'NO', cfg?.claveSol ? 'sí' : 'NO', cfg?.modoProduccion);
+  console.log('[WORKFLOW] companyId=%s ventas=%s modoProd=%s',
+    cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', cfg?.modoProduccion ?? 'empresa');
   c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
   c.header('Cache-Control', 'no-cache, no-transform');
   c.header('X-Accel-Buffering', 'no'); // evita buffering de proxies (Railway/nginx)
@@ -308,13 +348,8 @@ app.post('/workflow/process', async (c) => {
 
 // ── Emisión automática: panel de control (config + logs) ──
 app.get('/auto-emit/config', async (c) => {
-  try {
-    const cfg = await autoEmit.getConfig();
-    // URL del webhook para configurar en el portal de Falabella (el secreto va en query).
-    const base = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${process.env.PORT || 3010}`;
-    const secret = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
-    return ok(c, { ...cfg, webhookBase: `${base}/webhooks/falabella`, webhookSecretSet: !!secret });
-  } catch (e) { return fail(c, e); }
+  try { return ok(c, await autoEmit.getConfig()); }
+  catch (e) { return fail(c, e); }
 });
 app.post('/auto-emit/config/:companyId', async (c) => {
   try { const { enabled } = await c.req.json(); return ok(c, await autoEmit.setCompanyEnabled(Number(c.req.param('companyId')), enabled)); }
@@ -330,17 +365,43 @@ app.get('/auto-emit/events', async (c) => { try { return ok(c, await autoEmit.re
 app.post('/auto-emit/run', async (c) => { try { const n = await autoEmit.processQueue(Number(c.req.query('limit') || 5)); return ok(c, { processed: n }); } catch (e) { return fail(c, e); } });
 app.get('/auto-emit/webhooks/:companyId', async (c) => {
   try {
+    const companyId = Number(c.req.param('companyId'));
     const ids = (c.req.query('ids') || '').split(',').map((id) => id.trim()).filter(Boolean);
-    return ok(c, await core.falabellaGetWebhooks({ companyId: Number(c.req.param('companyId')), webhookIds: ids }));
+    const data = await core.falabellaGetWebhooks({ companyId, webhookIds: ids });
+    // Nunca devolver la URL completa con token al browser (Falabella la devuelve en CallbackUrl).
+    if (Array.isArray(data?.webhooks)) {
+      data.webhooks = data.webhooks.map((w) => ({
+        ...w,
+        callbackUrl: autoEmit.redactWebhookUrl(w.callbackUrl),
+        raw: undefined,
+      }));
+    }
+    const meta = await autoEmit.getCompanyWebhookMeta(companyId);
+    return ok(c, { ...data, ...meta });
   } catch (e) { return fail(c, e); }
+});
+// Genera (si falta) o rota el secret de webhook de UNA empresa. No devuelve el valor en claro.
+app.post('/auto-emit/webhooks/:companyId/rotate-secret', async (c) => {
+  try {
+    const companyId = Number(c.req.param('companyId'));
+    return ok(c, await autoEmit.rotateCompanyWebhookSecret(companyId));
+  } catch (e) { return fail(c, e, 400); }
 });
 app.post('/auto-emit/webhooks/:companyId', async (c) => {
   try {
-    const { events, callbackUrl } = await c.req.json();
-    const base = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${process.env.PORT || 3010}`;
-    const secret = process.env.AUTO_EMIT_WEBHOOK_SECRET || '';
-    const targetUrl = callbackUrl || `${base}/webhooks/falabella/${Number(c.req.param('companyId'))}${secret ? `?secret=${encodeURIComponent(secret)}` : ''}`;
-    return ok(c, await core.falabellaCreateWebhook({ companyId: Number(c.req.param('companyId')), callbackUrl: targetUrl, events }));
+    const companyId = Number(c.req.param('companyId'));
+    const body = await c.req.json().catch(() => ({}));
+    const events = body?.events;
+    // Ignorar callbackUrl del cliente (DR-006): solo URL interna con secret por empresa.
+    const secret = await autoEmit.ensureCompanyWebhookSecret(companyId);
+    const targetUrl = autoEmit.buildWebhookCallbackUrl(companyId, secret);
+    const result = await core.falabellaCreateWebhook({ companyId, callbackUrl: targetUrl, events });
+    // No filtrar el secret en la respuesta al browser.
+    return ok(c, {
+      ...result,
+      callbackUrl: autoEmit.redactWebhookUrl(targetUrl),
+      hasWebhookSecret: true,
+    });
   } catch (e) { return fail(c, e, 400); }
 });
 app.delete('/auto-emit/webhooks/:companyId/:webhookId', async (c) => {

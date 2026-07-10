@@ -5,72 +5,51 @@ import { createBoleta, sendBoletaToSunat } from './services/boleta.service';
 import type { DetalleItem } from './utils/tax-calculator';
 import type { CoreConfig, VentaItem, WorkflowResult, WorkflowProgress } from './index';
 
+/**
+ * Resuelve empresa/sucursal solo desde la base de datos.
+ * No acepta ni persiste certificado, clave SOL u otros secretos del cliente.
+ */
 async function ensureSetup(config: CoreConfig) {
-  const now = Math.floor(Date.now() / 1000);
-
-  // Ensure company
-  let company = config.companyId
-    ? (await db.select().from(companies).where(eq(companies.id, config.companyId)).limit(1))[0]
-    : (await db.select().from(companies).where(eq(companies.ruc, config.ruc)).limit(1))[0];
-  if (!company) {
-    const insertedCompany = await db.insert(companies).values({
-      ruc: config.ruc,
-      razonSocial: config.razonSocial,
-      direccion: config.direccion,
-      ubigeo: config.ubigeo,
-      usuarioSol: config.usuarioSol,
-      claveSol: config.claveSol,
-      certificado: config.certificadoBase64,
-      certificadoPassword: config.certificadoPassword,
-      modoProduccion: config.modoProduccion ?? false,
-      activo: true,
-      createdAt: now,
-      updatedAt: now,
-    }).returning();
-    company = insertedCompany[0];
-  } else {
-    await db.update(companies).set({
-      razonSocial: config.razonSocial,
-      direccion: config.direccion,
-      ubigeo: config.ubigeo,
-      usuarioSol: config.usuarioSol,
-      claveSol: config.claveSol,
-      certificado: config.certificadoBase64,
-      certificadoPassword: config.certificadoPassword,
-      modoProduccion: config.modoProduccion ?? false,
-      updatedAt: now,
-    }).where(eq(companies.id, company.id));
+  if (!config.companyId) {
+    throw new Error('companyId es obligatorio. Las credenciales se cargan en el servidor.');
   }
 
-  const branchCodigo = config.branchCodigo || '0001';
-  const branchNombre = config.branchNombre || 'Principal';
+  const company = (await db.select().from(companies).where(eq(companies.id, config.companyId)).limit(1))[0];
+  if (!company || company.activo === false) {
+    throw new Error('Empresa no encontrada o inactiva');
+  }
+  if (!String(company.claveSol || '').trim() || !String(company.certificado || '').trim()) {
+    throw new Error('La empresa no tiene certificado o clave SOL configurados en el servidor.');
+  }
 
-  // Ensure branch
   let branch = config.branchId
     ? (await db.select().from(branches).where(and(
         eq(branches.id, config.branchId),
         eq(branches.companyId, company.id),
       )).limit(1))[0]
-    : (await db.select().from(branches).where(and(
-        eq(branches.companyId, company.id),
-        eq(branches.codigo, branchCodigo),
-      )).limit(1))[0];
+    : undefined;
 
   if (!branch) {
-    const insertedBranch = await db.insert(branches).values({
-      companyId: company.id,
-      codigo: branchCodigo,
-      nombre: branchNombre,
-      direccion: config.direccion,
-      ubigeo: config.ubigeo,
-      activo: true,
-      createdAt: now,
-      updatedAt: now,
-    }).returning();
-    branch = insertedBranch[0];
+    const preferredCodigo = config.branchCodigo || '0000';
+    branch = (await db.select().from(branches).where(and(
+      eq(branches.companyId, company.id),
+      eq(branches.codigo, preferredCodigo),
+    )).limit(1))[0]
+      || (await db.select().from(branches).where(and(
+        eq(branches.companyId, company.id),
+        eq(branches.activo, true),
+      )).limit(1))[0];
   }
 
-  return { companyId: company.id, branchId: branch.id };
+  if (!branch) {
+    throw new Error('La empresa no tiene una sucursal activa configurada.');
+  }
+
+  return {
+    companyId: company.id,
+    branchId: branch.id,
+    modoProduccion: Boolean(company.modoProduccion),
+  };
 }
 
 export async function processWorkflow(
@@ -78,10 +57,11 @@ export async function processWorkflow(
   ventas: VentaItem[],
   onProgress?: WorkflowProgress,
 ): Promise<WorkflowResult> {
-  process.env.STORAGE_PATH = config.outputDir;
-  const { companyId, branchId } = await ensureSetup(config);
+  process.env.STORAGE_PATH = config.outputDir || 'storage';
+  const { companyId, branchId, modoProduccion: companyModoProduccion } = await ensureSetup(config);
   const serie = config.serieBoleta || 'B001';
-  const isProduction = config.modoProduccion ?? false;
+  // Env force (via server) wins; otherwise use the company record — never trust client secrets.
+  const isProduction = config.modoProduccion ?? companyModoProduccion;
 
   const results: WorkflowResult['boletas'] = [];
   let exitosas = 0;

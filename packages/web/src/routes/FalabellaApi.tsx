@@ -171,30 +171,32 @@ type Company = {
   direccion?: string | null;
   ubigeo?: string | null;
   usuarioSol?: string | null;
-  claveSol?: string | null;
-  certificado?: string | null;
-  certificadoPassword?: string | null;
   modoProduccion?: boolean | null;
   falabellaApiUserId?: string | null;
-  falabellaApiKey?: string | null;
+  hasSolCredentials?: boolean;
+  hasCertificate?: boolean;
+  hasFalabellaCredentials?: boolean;
 };
 
+/** Cache antigua podía guardar secretos; se purga al arrancar el módulo. */
 const FALABELLA_COMPANIES_CACHE_KEY = 'boletas.falabellaApi.companies';
 const APP_STORE_KEY = 'boletas.app';
 
-function readCachedCompanies(): Company[] {
-  try {
-    const raw = localStorage.getItem(FALABELLA_COMPANIES_CACHE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+try {
+  localStorage.removeItem(FALABELLA_COMPANIES_CACHE_KEY);
+} catch {
+  // Ignore storage access errors (SSR / privacy mode).
 }
 
-function writeCachedCompanies(companies: Company[]) {
+function readCachedCompanies(): Company[] {
+  // Ya no cacheamos empresas: el listado público no tiene secretos, pero
+  // preferimos no persistir datos de sesión en localStorage.
+  return [];
+}
+
+function writeCachedCompanies(_companies: Company[]) {
   try {
-    localStorage.setItem(FALABELLA_COMPANIES_CACHE_KEY, JSON.stringify(companies));
+    localStorage.removeItem(FALABELLA_COMPANIES_CACHE_KEY);
   } catch {
     // Ignore cache write failures; the service remains the source of truth.
   }
@@ -614,7 +616,7 @@ function statusInfo(statusKey: string) {
 }
 
 function companyHasApi(company?: Company | null) {
-  return !!company?.falabellaApiUserId && !!company?.falabellaApiKey;
+  return !!company?.hasFalabellaCredentials;
 }
 
 function sellerDisplayName(company?: Company | null) {
@@ -1865,16 +1867,9 @@ export default function FalabellaApi() {
           });
         });
 
+        // Solo companyId: el servidor carga certificado y clave SOL internamente.
         const result = await api.processWorkflow({
           companyId: selectedCompany.id,
-          ruc: selectedCompany.ruc,
-          razonSocial: selectedCompany.razonSocial,
-          direccion: selectedCompany.direccion || '',
-          ubigeo: selectedCompany.ubigeo || '',
-          usuarioSol: selectedCompany.usuarioSol || '',
-          claveSol: selectedCompany.claveSol || '',
-          certificadoBase64: selectedCompany.certificado || '',
-          certificadoPassword: selectedCompany.certificadoPassword || '',
           outputDir: 'storage',
         }, emitBoletaModal.ventas);
 
@@ -2144,8 +2139,7 @@ export default function FalabellaApi() {
     const key = [
       selectedCompanyId,
       flowMonth,
-      selectedCompany.falabellaApiUserId || '',
-      selectedCompany.falabellaApiKey || '',
+      selectedCompany.hasFalabellaCredentials ? '1' : '0',
     ].join(':');
 
     if (autoLoadKeyRef.current === key) return;
@@ -2153,8 +2147,7 @@ export default function FalabellaApi() {
     void loadInvoiceFlowPrototype();
   }, [
     selectedCompanyId,
-    selectedCompany?.falabellaApiUserId,
-    selectedCompany?.falabellaApiKey,
+    selectedCompany?.hasFalabellaCredentials,
     flowMonth,
   ]);
 
