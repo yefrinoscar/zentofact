@@ -141,7 +141,11 @@ function normalizeBoletaQueryRow(row: any) {
 }
 
 function isAcceptedByStoredSunatResponse(row: any) {
-  if (String(row.estadoSunat || '').toUpperCase() === 'ACEPTADO') return false;
+  // ANULADO/REEMPLAZADO son estados finales del documento local. El código 0
+  // de la respuesta puede corresponder a la aceptación del resumen o de la
+  // nota de crédito, no a que la boleta siga vigente.
+  const estado = String(row.estadoSunat || '').toUpperCase();
+  if (estado === 'ACEPTADO' || estado === 'ANULADO' || estado === 'REEMPLAZADO') return false;
   const response = String(row.respuestaSunat || '');
   if (!response) return false;
   if (response.includes('"code":"0"') || response.includes('"code": "0"')) return true;

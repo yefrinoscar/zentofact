@@ -346,7 +346,11 @@ export async function checkDailySummaryStatus(summaryId: number) {
 export async function generateAcceptedBoletaPdfBase64(id: number, pdfFormat: PdfFormat = 'A4') {
   const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
   if (!boleta) throw new Error('Boleta no encontrada');
-  if (boleta.estadoSunat !== 'ACEPTADO') throw new Error('Solo se puede generar PDF de boletas aceptadas');
+  const estado = String(boleta.estadoSunat || '').toUpperCase();
+  const acceptedArchiveExists = Boolean(boleta.xmlPath || boleta.cdrPath);
+  if (estado !== 'ACEPTADO' && !(estado === 'ANULADO' && acceptedArchiveExists)) {
+    throw new Error('Solo se puede generar PDF de boletas aceptadas o anuladas después de su aceptación');
+  }
 
   const companyData = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
   const branchData = (await db.select().from(branches).where(eq(branches.id, boleta.branchId)).limit(1))[0];
@@ -597,4 +601,3 @@ function buildCompanyConfig(company: any): CompanyConfig {
     modoProduccion: Boolean(company.modoProduccion),
   };
 }
-

@@ -115,6 +115,7 @@ function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { la
   useEffect(() => setCurrent(status), [status]);
   const s = String(current || '').toUpperCase();
   const accepted = s === 'ACEPTADO';
+  const annulled = s === 'ANULADO';
   const canRefresh = boletaId != null || facturaId != null;
   const hasDocumentLabel = Boolean(String(label || '').trim() && String(label || '').trim() !== '-');
   const noDocument = !hasDocumentLabel && !canRefresh;
@@ -136,6 +137,8 @@ function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { la
     ? { Icon: XCircle, color: 'text-muted-foreground', title: 'Sin documento' }
     : accepted
     ? { Icon: CheckCircle2, color: 'text-emerald-600', title: 'Aceptado por SUNAT' }
+    : annulled
+    ? { Icon: XCircle, color: 'text-amber-600', title: 'Aceptada por SUNAT y luego anulada con nota de crédito' }
     : s === 'RECHAZADO'
     ? { Icon: XCircle, color: 'text-red-600', title: readableReason || 'Rechazado por SUNAT' }
     : { Icon: AlertCircle, color: 'text-amber-500', title: `${current || 'Enviado'} · pendiente de confirmación en SUNAT` };
@@ -1238,8 +1241,9 @@ export default function FalabellaApi() {
         skipped.push({ ...base, reason: 'Falta fecha de emisión' });
         continue;
       }
-      if (String(base.estadoSunat || '').toUpperCase() !== 'ACEPTADO') {
-        skipped.push({ ...base, reason: 'La boleta aún no está ACEPTADO en SUNAT' });
+      const statusAllowsPdf = ['ACEPTADO', 'ANULADO'].includes(String(base.estadoSunat || '').toUpperCase());
+      if (!statusAllowsPdf) {
+        skipped.push({ ...base, reason: 'La boleta no está aceptada por SUNAT' });
         continue;
       }
       if (row.documentCanUpload === false) {
@@ -2756,12 +2760,12 @@ export default function FalabellaApi() {
                             ? 'bg-amber-100 text-amber-700'
                             : 'bg-slate-100 text-slate-700';
                       const canSelectDocument = documentUploadCandidates.eligible.some((candidate) => candidate.orderNumber === row.orderNumber);
-                      const documentStatusAccepted = String(row.documentStatus || '').toUpperCase() === 'ACEPTADO';
-                      const documentUploadDisabled = !documentStatusAccepted || row.documentCanUpload === false;
+                      const documentStatusAllowsPdf = ['ACEPTADO', 'ANULADO'].includes(String(row.documentStatus || '').toUpperCase());
+                      const documentUploadDisabled = !documentStatusAllowsPdf || row.documentCanUpload === false;
                       const documentUploadDisabledReason = row.documentCanUpload === false
                         ? row.documentUploadBlockedReason || 'El documento no tiene XML/CDR para subir'
-                        : !documentStatusAccepted
-                          ? 'El documento debe estar ACEPTADO por SUNAT para subirlo'
+                        : !documentStatusAllowsPdf
+                          ? 'El documento no está aceptado por SUNAT'
                           : '';
                       return (
                         <tr key={`${row.orderId}-${row.orderNumber}`} className="border-t border-border/70">

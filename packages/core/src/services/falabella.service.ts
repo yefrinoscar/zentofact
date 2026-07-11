@@ -620,8 +620,9 @@ function facturaFalabellaUploadedAt(factura: any): string {
   try { return new Date(ms).toISOString(); } catch { return new Date().toISOString(); }
 }
 
-function localDocumentUploadReadiness(document: any): { canUploadPdf: boolean; uploadBlockedReason: string } {
-  const accepted = String(document?.estadoSunat || '').toUpperCase() === 'ACEPTADO';
+function localDocumentUploadReadiness(document: any, allowAnnulledBoleta = false): { canUploadPdf: boolean; uploadBlockedReason: string } {
+  const estado = String(document?.estadoSunat || '').toUpperCase();
+  const accepted = estado === 'ACEPTADO' || (allowAnnulledBoleta && estado === 'ANULADO');
   if (!accepted) return { canUploadPdf: false, uploadBlockedReason: 'El documento debe estar ACEPTADO por SUNAT para subirlo.' };
   if (document?.xmlPath || document?.cdrPath) return { canUploadPdf: true, uploadBlockedReason: '' };
   return {
@@ -641,7 +642,7 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
   const options: Array<any> = [];
   if (boleta) {
     const falabellaPdfUpload = getBoletaFalabellaPdfUpload(boleta);
-    const readiness = localDocumentUploadReadiness(boleta);
+    const readiness = localDocumentUploadReadiness(boleta, true);
     options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', pdfPath: boleta.pdfPath || null, xmlPath: boleta.xmlPath || null, cdrPath: boleta.cdrPath || null, estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: falabellaPdfUpload?.uploadedAt || '', ...readiness });
   }
   if (factura) {
@@ -660,7 +661,7 @@ export async function falabellaResolveDocument(payload: { companyId: number; ord
 
   return {
     orderNumber: payload.orderNumber,
-    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || null, estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || null, cdrPath: boleta.cdrPath || null, ...localDocumentUploadReadiness(boleta) } : null,
+    boleta: boleta ? { id: boleta.id, numeroCompleto: boleta.numeroCompleto, fechaEmision: boleta.fechaEmision, pdfPath: boleta.pdfPath || null, estadoSunat: boleta.estadoSunat, respuestaSunat: boleta.respuestaSunat || '', falabellaPdfUploadedAt: getBoletaFalabellaPdfUpload(boleta)?.uploadedAt || '', total: boleta.mtoImpVenta || '', cliente: boleta.clientRazonSocial || '', clienteDocumento: boleta.clientNumeroDocumento || '', codigoHash: boleta.codigoHash || '', xmlPath: boleta.xmlPath || null, cdrPath: boleta.cdrPath || null, ...localDocumentUploadReadiness(boleta, true) } : null,
     factura: factura ? { id: factura.id, numeroCompleto: factura.numeroCompleto, fechaEmision: factura.fechaEmision, pdfPath: factura.pdfPath || null, estado: factura.estadoSunat || '', estadoSunat: factura.estadoSunat || '', respuestaSunat: factura.respuestaSunat || '', total: factura.mtoImpVenta || '', cliente: factura.clientRazonSocial || '', clienteDocumento: factura.clientNumeroDocumento || '', codigoHash: factura.codigoHash || '', xmlPath: factura.xmlPath || null, cdrPath: factura.cdrPath || null, falabellaPdfUploadedAt: facturaFalabellaUploadedAt(factura), ...localDocumentUploadReadiness(factura) } : null,
     creditNote: creditNote ? { id: creditNote.id, numeroCompleto: creditNote.numeroCompleto, fechaEmision: creditNote.fechaEmision, pdfPath: creditNote.pdfPath || '', estadoSunat: creditNote.estadoSunat, respuestaSunat: creditNote.respuestaSunat || '' } : null,
     options,
