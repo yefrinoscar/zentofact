@@ -147,6 +147,9 @@ const dateOnly = (value) => {
   return Number.isNaN(d.getTime()) ? today() : d.toISOString().slice(0, 10);
 };
 const timeoutLabel = () => `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`;
+const isReadyStatus = (status) => READY_STATUSES.some((s) => String(status || '').includes(s));
+const isPendingStatus = (status) => String(status || '').includes('pending');
+const retryDelaySeconds = (attempts) => Math.min(15 * 60, 60 * (2 ** Math.max(0, Number(attempts || 1) - 1)));
 
 class JobTimeoutError extends Error {
   constructor(step) {
@@ -170,7 +173,7 @@ function extractOrder(payload) {
   const body = p.data || p.payload || p.order || p.Order || p;
   const orderNumber = String(body.OrderNumber || body.orderNumber || body.order_number || p.orderNumber || '').trim();
   const orderId = String(body.OrderId || body.orderId || body.order_id || p.orderId || '').trim();
-  return { orderNumber: orderNumber || orderId, orderId, raw: p };
+  return { orderNumber, orderId, body, raw: p };
 }
 
 // Estado de la orden. Falabella V2 devuelve Statuses: [{ Status: "shipped" }, ...].
@@ -266,10 +269,12 @@ export async function ensureTables() {
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
+      next_attempt_at timestamptz,
       unique (company_id, order_number)
     );
     alter table emission_jobs add column if not exists order_id text;
     alter table emission_jobs add column if not exists current_step text;
+    alter table emission_jobs add column if not exists next_attempt_at timestamptz;
     create table if not exists auto_emission_config (
       company_id integer primary key,
       enabled boolean not null default false,
@@ -356,7 +361,7 @@ export async function setPaused(paused) {
 // Reintentar un job (fallido/omitido) → vuelve a pending, reinicia intentos.
 export async function retryJob(id) {
   const r = await pool.query(
-    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, updated_at=now()
+    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, next_attempt_at=null, updated_at=now()
      where id=$1 returning id, company_id, order_number, status`, [id]);
   return r.rows[0] || null;
 }
@@ -468,6 +473,31 @@ async function fetchOrderById(client, orderId) {
   return ord && typeof ord === 'object' ? ord : null;
 }
 
+// Confirma el estado autoritativo antes de crear un job desde un webhook.
+// Si Falabella no responde, el cron de reconciliación será la red de seguridad.
+async function fetchOrderForWebhook(companyId, orderId, orderNumber) {
+  const company = await getCompany(companyId);
+  if (!company?.falabellaApiUserId?.trim() || !company?.falabellaApiKey?.trim()) return null;
+  const client = new FalabellaApiClient({
+    userId: company.falabellaApiUserId,
+    apiKey: company.falabellaApiKey,
+    version: '2.0',
+    defaultFormat: 'JSON',
+  });
+  if (orderId) {
+    const byId = await fetchOrderById(client, orderId);
+    if (byId) return byId;
+  }
+  if (orderNumber) {
+    const dates = [today(), dateOnly(Date.now() - 24 * 60 * 60 * 1000)];
+    for (const date of dates) {
+      const found = await client.findOrderByOrderNumber(orderNumber, date);
+      if (found?.raw) return found.raw;
+    }
+  }
+  return null;
+}
+
 async function saveResolvedOrderNumber(job, orderNumber) {
   const resolved = String(orderNumber || '').trim();
   if (!resolved || resolved === String(job.order_number || '').trim()) return null;
@@ -574,7 +604,7 @@ export async function enqueue(companyId, orderNumber, source = 'webhook', orderI
 
 // ── Webhook ──
 export async function handleWebhook(companyId, payload) {
-  const { orderNumber, orderId } = extractOrder(payload);
+  const { orderNumber, orderId, body } = extractOrder(payload);
   await pool.query(
     `insert into webhook_events (company_id, order_number, event, raw) values ($1,$2,$3,$4)`,
     [companyId, orderNumber || null, 'onOrderItemsStatusChanged', JSON.stringify(payload || {})],
@@ -582,9 +612,42 @@ export async function handleWebhook(companyId, payload) {
   const enabled = await isCompanyEnabled(companyId);
   log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${enabled ? '' : '(empresa NO activa, se ignora)'}`);
   if (!enabled) return { ok: true, orderNumber, orderId, ignored: 'empresa no activa para emisión automática' };
-  // Clave de dedup: OrderNumber si lo trae; si no, el OrderId (el worker resuelve el número real vía GetOrder).
-  const key = orderNumber || orderId;
-  if (key) await enqueue(companyId, key, 'webhook', orderId);
+
+  const payloadStatus = norm(statusOfOrder(body));
+  if (payloadStatus && !isReadyStatus(payloadStatus)) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId || '?'} no se encola: estado "${payloadStatus}"`);
+    return { ok: true, orderNumber, orderId, ignored: `estado "${payloadStatus}" aún no habilita comprobante` };
+  }
+
+  let authoritative = null;
+  try {
+    authoritative = await fetchOrderForWebhook(companyId, orderId, orderNumber);
+  } catch (e) {
+    log(`webhook company=${companyId} no pudo confirmar orden:`, e.message);
+  }
+  if (authoritative) {
+    const currentStatus = norm(statusOfOrder(authoritative));
+    if (!isReadyStatus(currentStatus)) {
+      log(`webhook company=${companyId} orden=${authoritative.OrderNumber || orderNumber || orderId || '?'} no se encola: estado "${currentStatus || 'desconocido'}"`);
+      return {
+        ok: true,
+        orderNumber: String(authoritative.OrderNumber || orderNumber || '').trim(),
+        orderId: String(authoritative.OrderId || orderId || '').trim(),
+        ignored: `estado "${currentStatus || 'desconocido'}" aún no habilita comprobante`,
+      };
+    }
+    const resolvedNumber = String(authoritative.OrderNumber || orderNumber || '').trim();
+    if (resolvedNumber) await enqueue(companyId, resolvedNumber, 'webhook', authoritative.OrderId || orderId);
+    return { ok: true, orderNumber: resolvedNumber, orderId: String(authoritative.OrderId || orderId || '') };
+  }
+
+  // Un webhook sin estado verificable no debe crear un job a ciegas (ni usar OrderId como OrderNumber).
+  // El cron consultará las órdenes listas y las encolará con su OrderNumber real.
+  if (!payloadStatus || !isReadyStatus(payloadStatus)) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId || '?'} no se encola: estado no confirmado`);
+    return { ok: true, orderNumber, orderId, ignored: 'estado no confirmado; lo resolverá la reconciliación' };
+  }
+  if (orderNumber) await enqueue(companyId, orderNumber, 'webhook', orderId);
   return { ok: true, orderNumber, orderId };
 }
 
@@ -636,8 +699,13 @@ async function processJob(job, setStep = async () => {}) {
   // 2) Condiciones (mismas que el Gestor de Sellers).
   const requiresInvoice = invoiceRequired(order);
   const status = norm(statusOfOrder(order));
-  const ready = READY_STATUSES.some((s) => status.includes(s));
-  if (!ready) return { status: 'skipped', result: `estado "${status}" aún no habilita comprobante` };
+  const ready = isReadyStatus(status);
+  if (!ready) {
+    // Un pending puede cambiar a delivered sin que Falabella reenvíe el webhook.
+    // Se difiere el job; no se convierte en skipped ni bloquea la reconciliación.
+    if (isPendingStatus(status)) return { retry: true, error: `estado "${status}" aún no habilita comprobante` };
+    return { status: 'skipped', result: `estado "${status}" aún no habilita comprobante` };
+  }
 
   // 3) ¿ya tiene documento? Solo cuenta como emitido si está ACEPTADO por SUNAT.
   //    Si existe pero está RECHAZADO/sin aceptar → falla visible (no se oculta como "Emitida").
@@ -746,7 +814,9 @@ export async function processQueue(limit = 3) {
     const res = await client.query(
       `update emission_jobs set status='processing', attempts=attempts+1, current_step='iniciando', updated_at=now()
        where id in (
-         select id from emission_jobs where status='pending' order by created_at asc limit $1 for update skip locked
+         select id from emission_jobs
+         where status='pending' and (next_attempt_at is null or next_attempt_at <= now())
+         order by created_at asc limit $1 for update skip locked
        ) returning *`,
       [limit],
     );
@@ -765,18 +835,32 @@ export async function processQueue(limit = 3) {
       const r = await withJobTimeout(processJob(job, setStep), () => currentStep);
       if (r.retry) {
         const failed = job.attempts >= 6;
-        await pool.query(`update emission_jobs set status=$2, last_error=$3, current_step=null, updated_at=now() where id=$1`,
-          [job.id, failed ? 'failed' : 'pending', r.error || 'retry']);
+        const nextStatus = failed ? 'failed' : 'pending';
+        await pool.query(`update emission_jobs
+          set status=$2,
+              last_error=$3,
+              current_step=null,
+              next_attempt_at=case when $2='pending' then now() + ($4::int * interval '1 second') else null end,
+              updated_at=now()
+          where id=$1`,
+        [job.id, nextStatus, r.error || 'retry', retryDelaySeconds(job.attempts)]);
       } else {
-        await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, current_step=null, updated_at=now() where id=$1`,
+        await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, current_step=null, next_attempt_at=null, updated_at=now() where id=$1`,
           [job.id, r.status, r.result || null, r.boletaNumero || null]);
       }
     } catch (e) {
       const isTimeout = e instanceof JobTimeoutError;
       const failed = isTimeout || job.attempts >= 6;
       log(`ERROR orden ${job.order_number}:`, e.message);
-      await pool.query(`update emission_jobs set status=$2, last_error=$3, current_step=$4, updated_at=now() where id=$1`,
-        [job.id, failed ? 'failed' : 'pending', String(e.message || e), isTimeout ? currentStep : null]);
+      const nextStatus = failed ? 'failed' : 'pending';
+      await pool.query(`update emission_jobs
+        set status=$2,
+            last_error=$3,
+            current_step=$4,
+            next_attempt_at=case when $2='pending' then now() + ($5::int * interval '1 second') else null end,
+            updated_at=now()
+        where id=$1`,
+      [job.id, nextStatus, String(e.message || e), isTimeout ? currentStep : null, retryDelaySeconds(job.attempts)]);
     }
   }
   return jobs.length;
@@ -801,11 +885,11 @@ export async function reconcile() {
       // Dedup en memoria: 3 queries por empresa.
       //  - órdenes que ya tienen boleta
       //  - órdenes que ya tienen factura
-      //  - órdenes que ya están en la cola (cualquier estado) → no re-encolar, mata el bucle
+      //  - órdenes activas en la cola; los skipped sin documento sí deben poder recuperarse
       const [withBoleta, withFactura, inQueue] = await Promise.all([
         pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
         pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query('select order_number from emission_jobs where company_id=$1', [company.id]),
+        pool.query("select order_number from emission_jobs where company_id=$1 and status in ('pending','processing','done')", [company.id]),
       ]);
       const known = new Set([
         ...withBoleta.rows.map((r) => String(r.order_number)),
@@ -822,7 +906,7 @@ export async function reconcile() {
           const on = String(order?.OrderNumber || '').trim();
           if (!on || known.has(on)) continue; // ya tiene boleta o ya está en la cola
           const status = norm(statusOfOrder(order));
-          if (!READY_STATUSES.some((s) => status.includes(s))) continue;
+          if (!isReadyStatus(status)) continue;
           await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null);
           known.add(on);
           enqueued++;
