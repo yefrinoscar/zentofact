@@ -15,3 +15,8 @@ test('un superadmin conserva acceso total', () => {
 test('un usuario desactivado no obtiene permisos', () => {
   assert.equal(userHasPermission({ role: 'admin', active: false, permissions: [] }, 'users'), false);
 });
+
+test('el rol de consulta puede ver el dashboard sin permisos administrativos', () => {
+  assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'dashboard'), true);
+  assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'companies'), false);
+});

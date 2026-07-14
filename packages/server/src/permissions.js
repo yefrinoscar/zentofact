@@ -2,6 +2,7 @@
 // role=admin ignora la lista y tiene acceso total.
 
 export const PERMISSIONS = [
+  { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard' },
   { key: 'documentos', label: 'Documentos', description: 'Ver y emitir boletas/facturas', path: '/documentos' },
   { key: 'falabella', label: 'Falabella', description: 'Gestor de sellers y órdenes', path: '/falabella-api' },
   { key: 'productos', label: 'Productos', description: 'Catálogo de productos Falabella', path: '/productos' },
@@ -33,7 +34,7 @@ export const ROLE_PRESETS = {
   viewer: {
     label: 'Consulta',
     description: 'Solo lectura de documentos, Falabella y productos',
-    permissions: ['documentos', 'falabella', 'productos', 'settings'],
+    permissions: ['dashboard', 'documentos', 'falabella', 'productos', 'settings'],
   },
 };
 
@@ -99,6 +100,7 @@ export function userHasPermission(user, key) {
 
 export function pathPermission(pathname) {
   if (!pathname) return null;
+  if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella';
   if (pathname.startsWith('/productos')) return 'productos';

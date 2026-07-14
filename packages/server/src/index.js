@@ -24,6 +24,8 @@ await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
+const dashboard = await import('./dashboard.js');
+dashboard.startDashboardRefreshLoop();
 
 const app = new Hono();
 
@@ -90,6 +92,7 @@ app.use('*', requireCsrf());
 
 // Permisos por módulo (menú). /me y /health no aplican.
 const moduleGuards = [
+  ['/dashboard', 'dashboard'],
   ['/companies', 'companies'],
   ['/boletas', 'documentos'],
   ['/facturas', 'documentos'],
@@ -133,6 +136,22 @@ app.post('/me/logout', async (c) => {
     if (!user?.id) return c.json({ error: 'No autenticado' }, 401);
     const result = await users.revokeAllSessionsForUser(user.id);
     return ok(c, { success: true, ...result });
+  } catch (e) { return fail(c, e); }
+});
+
+// ── Dashboard consolidado ──
+app.get('/dashboard', async (c) => {
+  try {
+    await dashboard.refreshDashboardIfStale();
+    const data = await dashboard.getDashboard(c.req.query());
+    c.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=240');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, 400); }
+});
+app.post('/dashboard/refresh', async (c) => {
+  try {
+    const refresh = await dashboard.refreshDashboard();
+    return ok(c, refresh);
   } catch (e) { return fail(c, e); }
 });
 

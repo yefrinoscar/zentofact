@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import AuthGate from './components/AuthGate';
@@ -16,10 +16,16 @@ import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
 import { firstAllowedPath, pathPermission, userHasPermission } from './lib/permissions';
 
+const Dashboard = lazy(() => import('./routes/Dashboard'));
+
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
     title: 'Panel General',
     subtitle: 'Resumen operativo y acceso rápido a emisión y control.',
+  },
+  '/dashboard': {
+    title: 'Dashboard',
+    subtitle: 'Ventas y documentos consolidados de todas tus empresas.',
   },
   '/companies': {
     title: 'Empresas',
@@ -138,6 +144,7 @@ function AppLayout() {
           <div className="mx-auto w-full max-w-7xl">
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
+              <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />

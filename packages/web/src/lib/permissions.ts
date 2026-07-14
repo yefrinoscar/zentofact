@@ -1,4 +1,5 @@
 export type PermissionKey =
+  | 'dashboard'
   | 'documentos'
   | 'falabella'
   | 'productos'
@@ -18,6 +19,7 @@ export type PermissionDef = {
 };
 
 export const PERMISSIONS: PermissionDef[] = [
+  { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard' },
   { key: 'documentos', label: 'Documentos', description: 'Ver y emitir boletas/facturas', path: '/documentos' },
   { key: 'falabella', label: 'Falabella', description: 'Gestor de sellers y órdenes', path: '/falabella-api' },
   { key: 'productos', label: 'Productos', description: 'Catálogo de productos Falabella', path: '/productos' },
@@ -49,7 +51,7 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
   viewer: {
     label: 'Consulta',
     description: 'Solo lectura de documentos, Falabella y productos',
-    permissions: ['documentos', 'falabella', 'productos', 'settings'],
+    permissions: ['dashboard', 'documentos', 'falabella', 'productos', 'settings'],
   },
 };
 
@@ -108,6 +110,7 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
 }
 
 export function pathPermission(pathname: string): PermissionKey | null {
+  if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella';
   if (pathname.startsWith('/productos')) return 'productos';

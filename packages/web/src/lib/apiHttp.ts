@@ -85,6 +85,11 @@ const apiHttp = {
   deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
   usersCatalog: () => req('/users/meta/catalog'),
 
+  // Dashboard consolidado
+  getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
+    req(`/dashboard${qs(filter)}`),
+  refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),

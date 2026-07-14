@@ -322,6 +322,68 @@ const DDL = `
 
   ALTER TABLE credit_notes ALTER COLUMN affected_boleta_id DROP NOT NULL;
 
+  -- Índices de lectura para analítica por empresa/sucursal y periodo.
+  CREATE INDEX IF NOT EXISTS idx_boletas_company_fecha
+    ON boletas(company_id, fecha_emision);
+  CREATE INDEX IF NOT EXISTS idx_boletas_company_branch_fecha
+    ON boletas(company_id, branch_id, fecha_emision);
+  CREATE INDEX IF NOT EXISTS idx_facturas_company_fecha
+    ON facturas(company_id, fecha_emision);
+  CREATE INDEX IF NOT EXISTS idx_facturas_company_branch_fecha
+    ON facturas(company_id, branch_id, fecha_emision);
+  CREATE INDEX IF NOT EXISTS idx_credit_notes_company_fecha
+    ON credit_notes(company_id, fecha_emision);
+  CREATE INDEX IF NOT EXISTS idx_credit_notes_company_branch_fecha
+    ON credit_notes(company_id, branch_id, fecha_emision);
+
+  -- Caché analítica compartida por todas las instancias del API. La vista conserva
+  -- solo agregados diarios; el dashboard nunca necesita leer miles de documentos.
+  CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_daily_metrics AS
+  SELECT
+    source.fecha_emision::date AS day,
+    source.company_id,
+    COALESCE(source.branch_id, 0) AS branch_id,
+    source.document_type,
+    UPPER(COALESCE(source.estado_sunat, 'PENDIENTE')) AS status,
+    COALESCE(source.moneda, 'PEN') AS currency,
+    COUNT(*)::bigint AS document_count,
+    SUM(
+      CASE
+        WHEN COALESCE(source.mto_imp_venta, '') ~ '^-?[0-9]+([.][0-9]+)?$'
+          THEN source.mto_imp_venta::numeric
+        ELSE 0
+      END
+    )::numeric(18, 2) AS total_amount
+  FROM (
+    SELECT fecha_emision, company_id, branch_id, 'BOLETA'::text AS document_type,
+      estado_sunat, moneda, mto_imp_venta
+    FROM boletas
+    WHERE fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+    UNION ALL
+    SELECT fecha_emision, company_id, branch_id, 'FACTURA'::text AS document_type,
+      estado_sunat, moneda, mto_imp_venta
+    FROM facturas
+    WHERE fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+    UNION ALL
+    SELECT fecha_emision, company_id, branch_id, 'NOTA_CREDITO'::text AS document_type,
+      estado_sunat, moneda, mto_imp_venta
+    FROM credit_notes
+    WHERE fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+  ) source
+  GROUP BY 1, 2, 3, 4, 5, 6
+  WITH DATA;
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_daily_metrics_unique
+    ON dashboard_daily_metrics(day, company_id, branch_id, document_type, status, currency);
+  CREATE INDEX IF NOT EXISTS idx_dashboard_daily_metrics_filters
+    ON dashboard_daily_metrics(company_id, branch_id, day);
+
+  CREATE TABLE IF NOT EXISTS dashboard_refresh_state (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  INSERT INTO dashboard_refresh_state(id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS falabella_orders (
     id BIGSERIAL PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

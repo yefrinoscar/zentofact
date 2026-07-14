@@ -12,6 +12,7 @@ import {
   ReceiptText,
   Users,
   Building2,
+  ChartNoAxesCombined,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
@@ -31,6 +32,7 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
+  { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
   { to: '/documentos', icon: ReceiptText, label: 'Documentos', permission: 'documentos' },
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
   { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
@@ -61,11 +63,11 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ${
-        collapsed ? 'w-[76px]' : 'w-64'
+      className={`flex h-full w-[68px] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ${
+        collapsed ? 'md:w-[76px]' : 'md:w-64'
       }`}
     >
-      <div className="flex h-20 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
+      <div className="flex h-20 shrink-0 items-center justify-center gap-2.5 border-b border-sidebar-border px-2 md:justify-start md:px-4">
         {collapsed ? (
           <button
             onClick={toggle}
@@ -81,12 +83,12 @@ export default function Sidebar() {
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sidebar-primary text-sm font-black tracking-tighter text-sidebar-primary-foreground shadow-sm">
                 Z
               </span>
-              <span className="truncate text-[15px] font-semibold tracking-tight">ZentoFact</span>
+              <span className="hidden truncate text-[15px] font-semibold tracking-tight md:block">ZentoFact</span>
             </div>
             <button
               onClick={toggle}
               aria-label="Colapsar menú"
-              className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              className="ml-auto hidden h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground md:grid"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -96,7 +98,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {!collapsed && (
-          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          <p className="hidden px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 md:block">
             Menú
           </p>
         )}
@@ -113,9 +115,9 @@ export default function Sidebar() {
               <Link
                 key={to}
                 to={to}
-                title={collapsed ? label : undefined}
-                className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
-                  collapsed ? 'justify-center' : ''
+                title={label}
+                className={`group relative flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                  collapsed ? 'md:justify-center' : 'md:justify-start'
                 } ${
                   active
                     ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
@@ -123,10 +125,10 @@ export default function Sidebar() {
                 }`}
               >
                 {active && !collapsed && (
-                  <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />
+                  <span className="absolute -left-3 top-1/2 hidden h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary md:block" />
                 )}
                 {iconNode}
-                {!collapsed && <span className="truncate">{label}</span>}
+                {!collapsed && <span className="hidden truncate md:inline">{label}</span>}
               </Link>
             );
           })
@@ -156,9 +158,10 @@ function RuntimeFooter({ collapsed }: { collapsed: boolean }) {
 
   return (
     <div className="border-t border-sidebar-border px-4 py-2">
-      <p className="truncate text-[11px] font-medium text-muted-foreground">
+      <p className="hidden truncate text-[11px] font-medium text-muted-foreground md:block">
         {label}
       </p>
+      <p className="text-center text-[10px] font-medium text-muted-foreground md:hidden">v{APP_VERSION.split('.')[0]}</p>
     </div>
   );
 }
@@ -213,8 +216,8 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
     <div ref={ref} className="relative border-t border-sidebar-border p-3">
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center gap-2.5 rounded-xl p-1.5 text-left transition-colors hover:bg-sidebar-accent ${
-          collapsed ? 'justify-center' : ''
+        className={`flex w-full items-center justify-center gap-2.5 rounded-xl p-1.5 text-left transition-colors hover:bg-sidebar-accent ${
+          collapsed ? '' : 'md:justify-start'
         }`}
       >
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
@@ -222,11 +225,11 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
         </span>
         {!collapsed && (
           <>
-            <span className="min-w-0 flex-1">
+            <span className="hidden min-w-0 flex-1 md:block">
               <span className="block truncate text-sm font-medium text-sidebar-foreground">{name}</span>
               <span className="block truncate text-xs text-muted-foreground">{roleLabel ? `${roleLabel} · ${email}` : email}</span>
             </span>
-            <MoreVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <MoreVertical className="hidden h-4 w-4 shrink-0 text-muted-foreground md:block" />
           </>
         )}
       </button>

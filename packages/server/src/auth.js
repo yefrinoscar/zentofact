@@ -82,6 +82,7 @@ export const auth = betterAuth({
 
 // Prefijos del API que exigen sesión. Todo lo demás (login, estáticos del front) es público.
 const PROTECTED = [
+  '/dashboard',
   '/companies',
   '/branches',
   '/boletas',
