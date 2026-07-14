@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
   Building2,
   CalendarDays,
+  CircleDollarSign,
   FileCheck2,
   FileText,
   RefreshCw,
@@ -365,9 +366,6 @@ export default function Dashboard() {
 
   const summary = data?.summary || {};
   const mixTotal = Number(summary.boletas || 0) + Number(summary.facturas || 0);
-  const acceptanceRate = Number(summary.generatedDocuments || 0)
-    ? (Number(summary.acceptedDocuments || 0) / Number(summary.generatedDocuments)) * 100
-    : 0;
   const monthName = format(dateFromKey(filters.from), 'MMMM yyyy', { locale: es });
 
   return (
@@ -444,16 +442,17 @@ export default function Dashboard() {
         <KpiCard
           title={period === 'month' ? 'Ventas aceptadas del mes' : 'Ventas aceptadas del periodo'}
           value={money.format(summary.grossSales || 0)}
-          detail={`Neto después de NC: ${money.format(summary.netSales || 0)}`}
+          detail="Antes de descontar notas de crédito"
           change={data?.changes?.grossSales}
           icon={TrendingUp}
           accent
         />
         <KpiCard
-          title="Tasa de aceptación SUNAT"
-          value={`${acceptanceRate.toFixed(1)}%`}
-          detail={`${integer.format(summary.acceptedDocuments || 0)} aceptados de ${integer.format(summary.generatedDocuments || 0)}`}
-          icon={FileCheck2}
+          title={period === 'month' ? 'Ventas finales del mes' : 'Ventas finales del periodo'}
+          value={money.format(summary.netSales || 0)}
+          detail={`Después de restar ${money.format(summary.creditNotes || 0)} en notas de crédito`}
+          change={data?.changes?.netSales}
+          icon={CircleDollarSign}
         />
         <KpiCard
           title="Ticket promedio"
@@ -566,13 +565,13 @@ export default function Dashboard() {
           <CardContent className="px-2 sm:px-4">
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data?.documentsByDay || []} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
+                <BarChart data={data?.documentsByDay || []} barGap={2} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
                   <XAxis dataKey="day" tickFormatter={formatDay} axisLine={false} tickLine={false} tickMargin={12} minTickGap={30} fontSize={11} stroke="var(--muted-foreground)" />
                   <YAxis orientation="right" allowDecimals={false} axisLine={false} tickLine={false} tickMargin={10} width={34} fontSize={11} stroke="var(--muted-foreground)" />
                   <Tooltip content={<DocumentsTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.6 }} />
-                  <Bar dataKey="boletas" stackId="documents" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={24} />
-                  <Bar dataKey="facturas" stackId="documents" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="boletas" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={14} />
+                  <Bar dataKey="facturas" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={14} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
