@@ -179,6 +179,9 @@ const apiHttp = {
 
   // Falabella
   falabellaApiGetOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ filters: JSON.stringify(filters) })}`),
+  falabellaApiGetLocalOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ source: 'postgres', filters: JSON.stringify(filters) })}`),
+  falabellaApiSyncOrders: (companyId: number, options: { mode?: 'month' | 'incremental'; month?: string } = {}) => req(`/falabella/${companyId}/orders/sync`, { method: 'POST', body: JSON.stringify(options) }),
+  falabellaApiSyncStatus: (companyId: number) => req(`/falabella/${companyId}/orders/sync-status`),
   falabellaApiGetProducts: (companyId: number, filters: any) => req(`/falabella/${companyId}/products${qs({ filters: JSON.stringify(filters) })}`),
   falabellaApiCreateProduct: (companyId: number, product: any) => req(`/falabella/${companyId}/products`, { method: 'POST', body: JSON.stringify(product) }),
   falabellaApiGetFeeds: (companyId: number, filters: any) => req(`/falabella/${companyId}/feeds${qs({ filters: JSON.stringify(filters) })}`),

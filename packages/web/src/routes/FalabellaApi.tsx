@@ -467,6 +467,13 @@ type InvoiceFlowState = {
   rows: InvoiceFlowRow[];
   totalOrders: number;
   checkedOrders: number;
+  sync?: {
+    status?: string;
+    dataUpdatedThrough?: string;
+    lastSuccessfulSyncAt?: string;
+    monthLastSuccessfulSyncAt?: string;
+    lastError?: string;
+  } | null;
 };
 
 function formatDate(value?: string) {
@@ -1959,7 +1966,7 @@ export default function FalabellaApi() {
     });
   };
 
-  const loadInvoiceFlowPrototype = async () => {
+  const loadInvoiceFlowPrototype = async (forceSync = false) => {
     if (!selectedCompanyId) return;
 
     setSelectedReadyOrders(new Set());
@@ -1976,30 +1983,46 @@ export default function FalabellaApi() {
 
     try {
       const collected = new Map<string, FalabellaOrder>();
-      const limit = 100;
-      for (let offset = 0; offset < 10000; offset += limit) {
-        const response = await api.falabellaApiGetOrders(selectedCompanyId, {
-          createdAfter: monthStart(flowMonth),
-          createdBefore: monthEnd(flowMonth),
-          limit,
-          offset,
-        });
-
-        if (response?.error) {
-          throw new Error(falabellaErrorMessage(response.error, 'Falabella devolvió un error.'));
-        }
-
-        const pageOrders = ((response?.orders || []) as FalabellaOrderPayload[]).map(normalizeOrder);
-        let added = 0;
-        for (const order of pageOrders) {
-          const orderNumber = String(order.OrderNumber || '').trim();
-          if (orderNumber && !collected.has(orderNumber)) {
-            collected.set(orderNumber, order);
-            added += 1;
+      const limit = 1000;
+      let sync: InvoiceFlowState['sync'] = null;
+      const loadLocalPages = async () => {
+        collected.clear();
+        let latestSync: InvoiceFlowState['sync'] = null;
+        for (let offset = 0; offset < 100000; offset += limit) {
+          const response = await api.falabellaApiGetLocalOrders(selectedCompanyId, {
+            createdAfter: monthStart(flowMonth),
+            createdBefore: monthEnd(flowMonth),
+            limit,
+            offset,
+          });
+          latestSync = {
+            ...(response?.sync || latestSync),
+            monthLastSuccessfulSyncAt: response?.coverage?.last_successful_sync_at || undefined,
+          };
+          const pageOrders = ((response?.orders || []) as FalabellaOrderPayload[]).map(normalizeOrder);
+          for (const order of pageOrders) {
+            const orderNumber = String(order.OrderNumber || '').trim();
+            if (orderNumber) collected.set(orderNumber, order);
           }
+          if (pageOrders.length < limit) break;
         }
+        return latestSync;
+      };
 
-        if (pageOrders.length < limit || added === 0) break;
+      sync = await loadLocalPages();
+      const lastSuccessMs = sync?.monthLastSuccessfulSyncAt ? new Date(sync.monthLastSuccessfulSyncAt).getTime() : 0;
+      const stale = !lastSuccessMs || Date.now() - lastSuccessMs > 30 * 60_000;
+      if (forceSync || stale) {
+        try {
+          await api.falabellaApiSyncOrders(selectedCompanyId, { mode: 'month', month: flowMonth });
+          sync = await loadLocalPages();
+        } catch (syncError: any) {
+          sync = {
+            ...sync,
+            status: 'error',
+            lastError: syncError?.message || 'Falabella no respondió; se muestran los datos guardados.',
+          };
+        }
       }
 
       const ordered = Array.from(collected.values()).sort((a, b) => String(b.CreatedAt || '').localeCompare(String(a.CreatedAt || '')));
@@ -2017,9 +2040,10 @@ export default function FalabellaApi() {
         const falabellaStatus = statusInfo(statusKey);
         const readyByStatus = canInvoiceFromStatus(statusKey);
         const requiresCreditNoteReview = needsCreditNoteReview(statusKey);
-        const resolved = orderNumber
+        const localResolved = (order as any).__resolved as ResolvedDocumentResponse | undefined;
+        const resolved = localResolved || (orderNumber
           ? await api.falabellaApiResolveDocument(selectedCompanyId, orderNumber) as ResolvedDocumentResponse
-          : null;
+          : null);
         const existingOption = resolved?.options?.find((option) => option.invoiceNumber)
           || (resolved?.boleta
             ? {
@@ -2127,6 +2151,7 @@ export default function FalabellaApi() {
         rows,
         totalOrders: ordered.length,
         checkedOrders: ordered.length,
+        sync,
       });
     } catch (nextError: any) {
       setInvoiceFlow((current) => ({
@@ -2497,6 +2522,17 @@ export default function FalabellaApi() {
                 <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Mes</label>
                 <MonthPicker value={flowMonth} onChange={setFlowMonth} />
               </div>
+              <button
+                type="button"
+                onClick={() => void loadInvoiceFlowPrototype(true)}
+                disabled={!selectedCompanyId || invoiceFlow.loading}
+                aria-label={`Consultar nuevamente en Falabella las órdenes de ${formatMonthLabel(flowMonth)}`}
+                title={`Consultar nuevamente en Falabella las órdenes de ${formatMonthLabel(flowMonth)}`}
+                className="inline-flex h-[46px] items-center gap-1.5 rounded-xl border border-input bg-background px-3 text-xs font-medium text-muted-foreground transition hover:border-ring hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${invoiceFlow.loading ? 'animate-spin' : ''}`} />
+                {invoiceFlow.loading ? 'Sincronizando…' : 'Sincronizar'}
+              </button>
             </div>
           </div>
         </div>
@@ -2523,6 +2559,16 @@ export default function FalabellaApi() {
                   <p className="text-sm text-muted-foreground">
                     {invoiceFlow.rows.length} orden{invoiceFlow.rows.length === 1 ? '' : 'es'} del mes
                   </p>
+                  {invoiceFlow.sync?.monthLastSuccessfulSyncAt && (
+                    <p className="mt-1 text-[11px] text-muted-foreground/80">
+                      Última consulta a Falabella: {formatDate(invoiceFlow.sync.monthLastSuccessfulSyncAt)}
+                    </p>
+                  )}
+                  {invoiceFlow.sync?.lastError && (
+                    <p className="mt-1 text-[11px] text-amber-700" title={invoiceFlow.sync.lastError}>
+                      No se pudo sincronizar; mostrando datos guardados.
+                    </p>
+                  )}
                   <p className="mt-2 text-5xl font-semibold tracking-normal text-foreground">
                     {money(flowStats.totalBoletaAmount + flowStats.totalFacturaAmount)}
                   </p>

@@ -23,6 +23,7 @@ const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
+const falabellaSync = await import('./falabella-sync.js');
 
 const app = new Hono();
 
@@ -261,8 +262,23 @@ app.post('/credit-notes/batch', async (c) => {
 
 // ── Falabella (lógica compartida en core) ──
 app.get('/falabella/:companyId/orders', async (c) => {
-  try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetOrders({ companyId: Number(c.req.param('companyId')), filters })); }
+  try {
+    const companyId = Number(c.req.param('companyId'));
+    const filters = JSON.parse(c.req.query('filters') || '{}');
+    if (c.req.query('source') === 'postgres') return ok(c, await falabellaSync.listLocalFalabellaOrders(companyId, filters));
+    return ok(c, await core.falabellaGetOrders({ companyId, filters }));
+  }
   catch (e) { return fail(c, e); }
+});
+app.get('/falabella/:companyId/orders/sync-status', async (c) => {
+  try { return ok(c, await falabellaSync.getFalabellaSyncStatus(Number(c.req.param('companyId')))); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/orders/sync', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await falabellaSync.syncFalabellaOrders(Number(c.req.param('companyId')), body));
+  } catch (e) { return fail(c, e, 400); }
 });
 app.get('/falabella/:companyId/products', requirePermission('productos'), async (c) => {
   try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetProducts({ companyId: Number(c.req.param('companyId')), filters })); }
@@ -429,4 +445,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`ZentoFact en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
+  falabellaSync.startFalabellaSyncScheduler();
 });

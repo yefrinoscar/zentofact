@@ -321,6 +321,88 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_credit_notes_estado_sunat ON credit_notes(estado_sunat);
 
   ALTER TABLE credit_notes ALTER COLUMN affected_boleta_id DROP NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS falabella_orders (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    order_id TEXT NOT NULL,
+    order_number TEXT NOT NULL,
+    falabella_created_at TIMESTAMPTZ,
+    falabella_updated_at TIMESTAMPTZ,
+    status TEXT,
+    invoice_required BOOLEAN NOT NULL DEFAULT FALSE,
+    grand_total NUMERIC(14, 2),
+    currency TEXT,
+    raw_data JSONB NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (company_id, order_id),
+    UNIQUE (company_id, order_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_created
+    ON falabella_orders(company_id, falabella_created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_updated
+    ON falabella_orders(company_id, falabella_updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_status
+    ON falabella_orders(company_id, status);
+
+  CREATE TABLE IF NOT EXISTS falabella_sync_state (
+    company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    full_sync_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    initial_sync_from DATE,
+    backfill_cursor_date DATE,
+    cursor_updated_at TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ,
+    last_started_at TIMESTAMPTZ,
+    last_finished_at TIMESTAMPTZ,
+    last_successful_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_pages_processed INTEGER NOT NULL DEFAULT 0,
+    last_orders_received INTEGER NOT NULL DEFAULT 0,
+    last_orders_upserted INTEGER NOT NULL DEFAULT 0,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 30,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  DO $$
+  DECLARE sync_interval_default TEXT;
+  BEGIN
+    SELECT column_default INTO sync_interval_default
+    FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='falabella_sync_state'
+      AND column_name='sync_interval_minutes';
+    IF sync_interval_default LIKE '10%' THEN
+      UPDATE falabella_sync_state SET sync_interval_minutes=30 WHERE sync_interval_minutes=10;
+    END IF;
+    ALTER TABLE falabella_sync_state ALTER COLUMN sync_interval_minutes SET DEFAULT 30;
+  END $$;
+
+  CREATE TABLE IF NOT EXISTS falabella_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    window_from TIMESTAMPTZ,
+    window_to TIMESTAMPTZ,
+    pages_processed INTEGER NOT NULL DEFAULT 0,
+    orders_received INTEGER NOT NULL DEFAULT 0,
+    orders_upserted INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    error TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_sync_runs_company_started
+    ON falabella_sync_runs(company_id, started_at DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_sync_windows (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    month TEXT NOT NULL,
+    last_successful_sync_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    orders_received INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (company_id, month)
+  );
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

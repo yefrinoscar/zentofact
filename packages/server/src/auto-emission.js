@@ -18,6 +18,7 @@ import {
   sendFacturaToSunat,
 } from '@zentofact/core';
 import { FalabellaApiClient } from '@zentofact/falabella-api';
+import { upsertFalabellaWebhookOrder } from './falabella-sync.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 
@@ -626,6 +627,11 @@ export async function handleWebhook(companyId, payload) {
     log(`webhook company=${companyId} no pudo confirmar orden:`, e.message);
   }
   if (authoritative) {
+    // El webhook también mantiene la copia local de lectura; el cursor incremental
+    // no avanza porque una orden puntual no prueba que recibimos todos los cambios.
+    await upsertFalabellaWebhookOrder(companyId, authoritative).catch((e) => {
+      log(`webhook company=${companyId} no pudo guardar orden local:`, e.message);
+    });
     const currentStatus = norm(statusOfOrder(authoritative));
     if (!isReadyStatus(currentStatus)) {
       log(`webhook company=${companyId} orden=${authoritative.OrderNumber || orderNumber || orderId || '?'} no se encola: estado "${currentStatus || 'desconocido'}"`);
