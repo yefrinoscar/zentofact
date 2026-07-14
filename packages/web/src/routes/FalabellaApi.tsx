@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import api from '../lib/api';
+import { waitForDevLoadingDelay } from '../config/dev';
 
 // Tooltip estilo shadcn (sin dependencia): burbuja oscura al hover con flecha.
 function Tooltip({ content, children }: { content: React.ReactNode; children: React.ReactNode }) {
@@ -181,8 +182,9 @@ type Company = {
   hasFalabellaCredentials?: boolean;
 };
 
-/** Cache antigua podía guardar secretos; se purga al arrancar el módulo. */
+/** La cache antigua en localStorage podía guardar secretos; se purga al arrancar. */
 const FALABELLA_COMPANIES_CACHE_KEY = 'boletas.falabellaApi.companies';
+const FALABELLA_PUBLIC_COMPANIES_SESSION_KEY = 'boletas.falabellaApi.publicCompanies';
 const APP_STORE_KEY = 'boletas.app';
 
 try {
@@ -192,16 +194,30 @@ try {
 }
 
 function readCachedCompanies(): Company[] {
-  // Ya no cacheamos empresas: el listado público no tiene secretos, pero
-  // preferimos no persistir datos de sesión en localStorage.
-  return [];
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(FALABELLA_PUBLIC_COMPANIES_SESSION_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
-function writeCachedCompanies(_companies: Company[]) {
+function writeCachedCompanies(companies: Company[]) {
   try {
-    localStorage.removeItem(FALABELLA_COMPANIES_CACHE_KEY);
+    // Solo identidad y flags públicos necesarios para pintar la selección.
+    const publicCompanies = companies.map((company) => ({
+      id: company.id,
+      ruc: company.ruc,
+      razonSocial: company.razonSocial,
+      nombre: company.nombre,
+      modoProduccion: company.modoProduccion,
+      hasSolCredentials: company.hasSolCredentials,
+      hasCertificate: company.hasCertificate,
+      hasFalabellaCredentials: company.hasFalabellaCredentials,
+    }));
+    sessionStorage.setItem(FALABELLA_PUBLIC_COMPANIES_SESSION_KEY, JSON.stringify(publicCompanies));
   } catch {
-    // Ignore cache write failures; the service remains the source of truth.
+    // La API sigue siendo la fuente de verdad si sessionStorage no está disponible.
   }
 }
 
@@ -933,6 +949,8 @@ export default function FalabellaApi() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 
   const [companies, setCompanies] = useState<Company[]>(() => readCachedCompanies());
+  const [companiesLoading, setCompaniesLoading] = useState(() => companies.length === 0);
+  const [pageBootstrapping, setPageBootstrapping] = useState(true);
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(() => activeCompanyId || readCachedActiveCompanyId());
   const [uploadModal, setUploadModal] = useState<UploadModalState>(createEmptyUploadState);
   const [falabellaBatch, setFalabellaBatch] = useState<FalabellaBatchState>(createEmptyFalabellaBatchState);
@@ -968,6 +986,7 @@ export default function FalabellaApi() {
     totalOrders: 0,
     checkedOrders: 0,
   });
+  const [falabellaSyncing, setFalabellaSyncing] = useState(false);
 
   const autoLoadKeyRef = useRef('');
   const uploadDocumentRefreshKeyRef = useRef('');
@@ -1092,25 +1111,24 @@ export default function FalabellaApi() {
   ]);
 
   useEffect(() => {
+    if (!companies.length) setCompaniesLoading(true);
     api.listCompanies().then((list: Company[]) => {
       const next = Array.isArray(list) ? list : [];
       setCompanies(next);
       writeCachedCompanies(next);
 
-      if (activeCompanyId && next.some((company) => company.id === activeCompanyId)) {
-        setSelectedCompanyId(activeCompanyId);
-        return;
-      }
-
-      if (selectedCompanyId && next.some((company) => company.id === selectedCompanyId)) {
-        return;
-      }
-
-      const firstReady = next.find((company) => companyHasApi(company));
-      setSelectedCompanyId(firstReady?.id || next[0]?.id || null);
+      const nextSelectedId = activeCompanyId && next.some((company) => company.id === activeCompanyId)
+        ? activeCompanyId
+        : selectedCompanyId && next.some((company) => company.id === selectedCompanyId)
+          ? selectedCompanyId
+          : next.find((company) => companyHasApi(company))?.id || next[0]?.id || null;
+      setSelectedCompanyId(nextSelectedId);
+      const nextSelectedCompany = next.find((company) => company.id === nextSelectedId) || null;
+      if (!nextSelectedCompany || !companyHasApi(nextSelectedCompany)) setPageBootstrapping(false);
     }).catch(() => {
       setCompanies((current) => current.length ? current : []);
-    });
+      setPageBootstrapping(false);
+    }).finally(() => setCompaniesLoading(false));
   }, [activeCompanyId, selectedCompanyId]);
 
   const selectedCompany = useMemo(
@@ -1968,6 +1986,8 @@ export default function FalabellaApi() {
 
   const loadInvoiceFlowPrototype = async (forceSync = false) => {
     if (!selectedCompanyId) return;
+    const initialLoadStartedAt = Date.now();
+    const simulateInitialDelay = pageBootstrapping;
 
     setSelectedReadyOrders(new Set());
     setDocumentSelectionMode(false);
@@ -2013,6 +2033,7 @@ export default function FalabellaApi() {
       const lastSuccessMs = sync?.monthLastSuccessfulSyncAt ? new Date(sync.monthLastSuccessfulSyncAt).getTime() : 0;
       const stale = !lastSuccessMs || Date.now() - lastSuccessMs > 30 * 60_000;
       if (forceSync || stale) {
+        setFalabellaSyncing(true);
         try {
           await api.falabellaApiSyncOrders(selectedCompanyId, { mode: 'month', month: flowMonth });
           sync = await loadLocalPages();
@@ -2022,6 +2043,8 @@ export default function FalabellaApi() {
             status: 'error',
             lastError: syncError?.message || 'Falabella no respondió; se muestran los datos guardados.',
           };
+        } finally {
+          setFalabellaSyncing(false);
         }
       }
 
@@ -2145,6 +2168,7 @@ export default function FalabellaApi() {
         };
       }));
 
+      if (simulateInitialDelay) await waitForDevLoadingDelay(initialLoadStartedAt);
       setInvoiceFlow({
         loading: false,
         error: '',
@@ -2153,12 +2177,15 @@ export default function FalabellaApi() {
         checkedOrders: ordered.length,
         sync,
       });
+      setPageBootstrapping(false);
     } catch (nextError: any) {
+      if (simulateInitialDelay) await waitForDevLoadingDelay(initialLoadStartedAt);
       setInvoiceFlow((current) => ({
         ...current,
         loading: false,
         error: nextError?.message || 'No se pudo analizar el flujo de boletas por API.',
       }));
+      setPageBootstrapping(false);
     }
   };
 
@@ -2486,10 +2513,13 @@ export default function FalabellaApi() {
                 <Select.Root
                   value={selectedCompanyId ? String(selectedCompanyId) : undefined}
                   onValueChange={(value) => void selectCompany(Number(value))}
+                  disabled={companiesLoading && companies.length === 0}
                 >
                   <SelectTrigger
-                    placeholder="Selecciona una empresa"
-                    value={selectedCompany ? `${sellerDisplayName(selectedCompany)}${sellerDisplayDetail(selectedCompany) ? ` · ${sellerDisplayDetail(selectedCompany)}` : ''}` : undefined}
+                    placeholder={companiesLoading ? 'Cargando empresa…' : 'Selecciona una empresa'}
+                    value={selectedCompany
+                      ? `${sellerDisplayName(selectedCompany)}${sellerDisplayDetail(selectedCompany) ? ` · ${sellerDisplayDetail(selectedCompany)}` : ''}`
+                      : companiesLoading ? 'Cargando empresa…' : undefined}
                   />
                   <Select.Portal>
                     <Select.Content
@@ -2525,13 +2555,13 @@ export default function FalabellaApi() {
               <button
                 type="button"
                 onClick={() => void loadInvoiceFlowPrototype(true)}
-                disabled={!selectedCompanyId || invoiceFlow.loading}
+                disabled={!selectedCompanyId || invoiceFlow.loading || falabellaSyncing}
                 aria-label={`Consultar nuevamente en Falabella las órdenes de ${formatMonthLabel(flowMonth)}`}
                 title={`Consultar nuevamente en Falabella las órdenes de ${formatMonthLabel(flowMonth)}`}
                 className="inline-flex h-[46px] items-center gap-1.5 rounded-xl border border-input bg-background px-3 text-xs font-medium text-muted-foreground transition hover:border-ring hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <RefreshCw className={`h-3.5 w-3.5 ${invoiceFlow.loading ? 'animate-spin' : ''}`} />
-                {invoiceFlow.loading ? 'Sincronizando…' : 'Sincronizar'}
+                <RefreshCw className={`h-3.5 w-3.5 ${falabellaSyncing ? 'animate-spin' : ''}`} />
+                {falabellaSyncing ? 'Sincronizando…' : 'Sincronizar'}
               </button>
             </div>
           </div>
@@ -2543,7 +2573,7 @@ export default function FalabellaApi() {
           </div>
         )}
 
-        {invoiceFlow.loading && <InvoiceFlowSkeleton />}
+        {(pageBootstrapping || invoiceFlow.loading) && <InvoiceFlowSkeleton />}
 
         {invoiceFlow.error && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -2551,7 +2581,7 @@ export default function FalabellaApi() {
           </div>
         )}
 
-        {!invoiceFlow.loading && !invoiceFlow.error && selectedCompany && companyHasApi(selectedCompany) && (
+        {!pageBootstrapping && !invoiceFlow.loading && !invoiceFlow.error && selectedCompany && companyHasApi(selectedCompany) && (
           <>
             <div>
               <div className="grid gap-6 md:grid-cols-[minmax(220px,0.8fr)_1fr]">

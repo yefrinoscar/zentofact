@@ -15,7 +15,6 @@ import { useAppStore } from './stores/app';
 import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
 import { firstAllowedPath, pathPermission, userHasPermission } from './lib/permissions';
-import { Loading } from './components/Loading';
 
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
@@ -62,13 +61,20 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
 
 function RequirePermission({
   permission,
+  user,
+  loading,
+  can,
   children,
 }: {
   permission?: ReturnType<typeof pathPermission>;
+  user: ReturnType<typeof usePermissions>['user'];
+  loading: boolean;
+  can: ReturnType<typeof usePermissions>['can'];
   children: React.ReactNode;
 }) {
-  const { user, loading, can } = usePermissions();
-  if (loading) return <Loading />;
+  // La sesión ya fue validada por AuthGate. Mientras llega el perfil completo,
+  // dejamos que la ruta pinte su propio skeleton para evitar loaders sucesivos.
+  if (loading) return <>{children}</>;
   if (!permission) return <>{children}</>;
   if (!can(permission)) {
     return <Navigate to={firstAllowedPath(user)} replace />;
@@ -76,9 +82,8 @@ function RequirePermission({
   return <>{children}</>;
 }
 
-function HomeRedirect() {
-  const { user, loading } = usePermissions();
-  if (loading) return <Loading />;
+function HomeRedirect({ user, loading }: Pick<ReturnType<typeof usePermissions>, 'user' | 'loading'>) {
+  if (loading) return null;
   return <Navigate to={firstAllowedPath(user)} replace />;
 }
 
@@ -86,7 +91,7 @@ function AppLayout() {
   const { pathname } = useLocation();
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
-  const { user, loading } = usePermissions();
+  const { user, loading, can } = usePermissions();
 
   useEffect(() => {
     if (activeCompanyId) return;
@@ -113,6 +118,7 @@ function AppLayout() {
   }, [pathname, user, loading]);
 
   const currentRoute = routeMeta[pathname] || routeMeta['/'];
+  const permissionState = { user, loading, can };
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -131,18 +137,18 @@ function AppLayout() {
         <main className="flex-1 overflow-auto p-6 lg:p-8">
           <div className="mx-auto w-full max-w-7xl">
             <Routes>
-              <Route path="/" element={<HomeRedirect />} />
-              <Route path="/companies" element={<RequirePermission permission="companies"><Companies /></RequirePermission>} />
+              <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
+              <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
-              <Route path="/credit-notes" element={<RequirePermission permission="credit_notes"><CreditNotes /></RequirePermission>} />
-              <Route path="/falabella-api" element={<RequirePermission permission="falabella"><FalabellaApi /></RequirePermission>} />
-              <Route path="/productos" element={<RequirePermission permission="productos"><Productos /></RequirePermission>} />
-              <Route path="/auto-emision" element={<RequirePermission permission="auto_emision"><AutoEmision /></RequirePermission>} />
-              <Route path="/documentos" element={<RequirePermission permission="documentos"><Documentos /></RequirePermission>} />
-              <Route path="/documentos/nuevo" element={<RequirePermission permission="documentos"><IndividualInvoice /></RequirePermission>} />
+              <Route path="/credit-notes" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
+              <Route path="/falabella-api" element={<RequirePermission permission="falabella" {...permissionState}><FalabellaApi /></RequirePermission>} />
+              <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
+              <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
+              <Route path="/documentos" element={<RequirePermission permission="documentos" {...permissionState}><Documentos /></RequirePermission>} />
+              <Route path="/documentos/nuevo" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice /></RequirePermission>} />
               <Route path="/individual-invoice" element={<Navigate to="/documentos/nuevo" replace />} />
-              <Route path="/users" element={<RequirePermission permission="users"><UsersPage /></RequirePermission>} />
-              <Route path="/settings" element={<RequirePermission permission="settings"><Settings /></RequirePermission>} />
+              <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
+              <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
             </Routes>
           </div>
         </main>
