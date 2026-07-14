@@ -12,7 +12,6 @@ import {
   FileCheck2,
   FileText,
   RefreshCw,
-  ReceiptText,
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
@@ -35,6 +34,11 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Tooltip as StatusTooltip,
+  TooltipContent as StatusTooltipContent,
+  TooltipTrigger as StatusTooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Select,
   SelectContent,
@@ -84,12 +88,44 @@ const dateTimeLabel = new Intl.DateTimeFormat('es-PE', {
   timeZone: 'America/Lima',
 });
 
-const STATUS_META: Record<string, { label: string; color: string; dot: string }> = {
-  ACEPTADO: { label: 'Aceptados', color: '#10b981', dot: 'bg-emerald-500' },
-  PENDIENTE: { label: 'Pendientes', color: '#f59e0b', dot: 'bg-amber-500' },
-  RECHAZADO: { label: 'Rechazados', color: '#ef4444', dot: 'bg-red-500' },
-  ANULADO: { label: 'Anulados', color: '#94a3b8', dot: 'bg-slate-400' },
+type DocumentStatus = 'ACEPTADO' | 'REGISTRADO' | 'PENDIENTE' | 'RECHAZADO' | 'ANULADO';
+
+const DOCUMENT_STATUS: Record<DocumentStatus, { label: string; description: string; dot: string }> = {
+  ACEPTADO: {
+    label: 'Aceptados',
+    description: 'Comprobantes aceptados por SUNAT.',
+    dot: 'bg-emerald-500',
+  },
+  REGISTRADO: {
+    label: 'Registrados',
+    description: 'Comprobantes guardados desde una fuente externa, sin aceptación SUNAT confirmada.',
+    dot: 'bg-slate-500',
+  },
+  PENDIENTE: {
+    label: 'Pendientes',
+    description: 'Comprobantes en espera de envío o respuesta de SUNAT.',
+    dot: 'bg-amber-500',
+  },
+  RECHAZADO: {
+    label: 'Rechazados',
+    description: 'Comprobantes observados o rechazados por SUNAT.',
+    dot: 'bg-red-500',
+  },
+  ANULADO: {
+    label: 'Anulados',
+    description: 'Comprobantes anulados o reemplazados.',
+    dot: 'bg-slate-400',
+  },
 };
+
+function statusMeta(value: unknown) {
+  const key = String(value || '').trim().toUpperCase() as DocumentStatus;
+  return DOCUMENT_STATUS[key] || {
+    label: key ? key.charAt(0) + key.slice(1).toLocaleLowerCase('es-PE') : 'Sin estado',
+    description: key ? `Estado de origen no catalogado: ${key}.` : 'El comprobante no tiene un estado informado.',
+    dot: 'bg-slate-400',
+  };
+}
 
 function localToday() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -222,6 +258,37 @@ function DocumentsTooltip({ active, payload, label }: any) {
   );
 }
 
+function DocumentMixTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const item = payload[0] || {};
+  const label = String(item.name || item.payload?.type || 'Comprobantes');
+  const isInvoice = label.toLocaleLowerCase('es-PE').includes('factura');
+  return (
+    <div className="min-w-40 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
+      <p className="font-medium text-foreground">{label}</p>
+      <div className="mt-2 flex items-center justify-between gap-8">
+        <span className="text-muted-foreground">Cantidad</span>
+        <strong className={isInvoice ? 'text-violet-600' : 'text-sky-600'}>{integer.format(Number(item.value || 0))}</strong>
+      </div>
+    </div>
+  );
+}
+
+function CompanyRankingTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const company = payload[0]?.payload || {};
+  return (
+    <div className="min-w-60 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
+      <p className="mb-2 max-w-64 font-medium text-foreground">{company.name}</p>
+      <div className="space-y-1.5 text-muted-foreground">
+        <p className="flex justify-between gap-6"><span>Ventas aceptadas</span><strong className="text-foreground">{money.format(company.grossSales || 0)}</strong></p>
+        <p className="flex justify-between gap-6"><span>Notas de crédito</span><strong className="text-orange-600">−{money.format(company.creditNotes || 0)}</strong></p>
+        <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Después de notas de crédito</span><strong className="text-primary">{money.format(company.netSales || 0)}</strong></p>
+      </div>
+    </div>
+  );
+}
+
 function SkeletonDashboard() {
   return (
     <div className="space-y-5 animate-pulse">
@@ -298,6 +365,9 @@ export default function Dashboard() {
 
   const summary = data?.summary || {};
   const mixTotal = Number(summary.boletas || 0) + Number(summary.facturas || 0);
+  const acceptanceRate = Number(summary.generatedDocuments || 0)
+    ? (Number(summary.acceptedDocuments || 0) / Number(summary.generatedDocuments)) * 100
+    : 0;
   const monthName = format(dateFromKey(filters.from), 'MMMM yyyy', { locale: es });
 
   return (
@@ -380,11 +450,10 @@ export default function Dashboard() {
           accent
         />
         <KpiCard
-          title="Documentos generados"
-          value={integer.format(summary.generatedDocuments || 0)}
-          detail={`${integer.format(summary.acceptedDocuments || 0)} aceptados`}
-          change={data?.changes?.generatedDocuments}
-          icon={ReceiptText}
+          title="Tasa de aceptación SUNAT"
+          value={`${acceptanceRate.toFixed(1)}%`}
+          detail={`${integer.format(summary.acceptedDocuments || 0)} aceptados de ${integer.format(summary.generatedDocuments || 0)}`}
+          icon={FileCheck2}
         />
         <KpiCard
           title="Ticket promedio"
@@ -454,7 +523,7 @@ export default function Dashboard() {
                     <Cell fill="#0ea5e9" />
                     <Cell fill="#8b5cf6" />
                   </Pie>
-                  <Tooltip formatter={(value: any, name: any) => [integer.format(Number(value || 0)), name]} />
+                  <Tooltip content={<DocumentMixTooltip />} wrapperStyle={{ zIndex: 20 }} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
@@ -467,10 +536,18 @@ export default function Dashboard() {
             </div>
             <div className="mt-4 space-y-2 border-t border-border pt-4">
               {(data?.statusBreakdown || []).map((status: any) => {
-                const meta = STATUS_META[status.status] || { label: status.status, dot: 'bg-slate-500' };
+                const meta = statusMeta(status.status);
                 return (
                   <div key={status.status} className="flex items-center justify-between text-xs">
-                    <span className="inline-flex items-center gap-2 text-muted-foreground"><span className={cn('size-2 rounded-full', meta.dot)} />{meta.label}</span>
+                    <StatusTooltip>
+                      <StatusTooltipTrigger asChild>
+                        <button type="button" className="inline-flex cursor-help items-center gap-2 text-muted-foreground hover:text-foreground">
+                          <span className={cn('size-2 rounded-full', meta.dot)} />
+                          {meta.label}
+                        </button>
+                      </StatusTooltipTrigger>
+                      <StatusTooltipContent side="left">{meta.description}</StatusTooltipContent>
+                    </StatusTooltip>
                     <strong>{integer.format(status.count)} <span className="font-normal text-muted-foreground">· {statusTotal ? ((status.count / statusTotal) * 100).toFixed(1) : 0}%</span></strong>
                   </div>
                 );
@@ -514,7 +591,7 @@ export default function Dashboard() {
                   <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 6" />
                   <XAxis type="number" hide />
                   <YAxis type="category" dataKey="name" width={118} axisLine={false} tickLine={false} fontSize={11} stroke="var(--muted-foreground)" tickFormatter={(value) => String(value).length > 17 ? `${String(value).slice(0, 16)}…` : String(value)} />
-                  <Tooltip formatter={(value: any) => [money.format(Number(value || 0)), 'Después de notas de crédito']} cursor={{ fill: 'var(--muted)', opacity: 0.55 }} />
+                  <Tooltip content={<CompanyRankingTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.55 }} wrapperStyle={{ zIndex: 20 }} />
                   <Bar dataKey="netSales" fill="var(--primary)" radius={[0, 6, 6, 0]} maxBarSize={22} />
                 </BarChart>
               </ResponsiveContainer>
