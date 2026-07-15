@@ -191,7 +191,7 @@ function KpiCard({
 }: {
   title: string;
   value: string;
-  detail: string;
+  detail?: string;
   change?: number | null;
   icon: typeof TrendingUp;
   accent?: boolean;
@@ -214,18 +214,20 @@ function KpiCard({
             <Icon className="size-[18px]" />
           </span>
         </div>
-        <div className="mt-4 flex items-center justify-between gap-2 text-xs">
-          <span className={accent ? 'text-primary-foreground/65' : 'text-muted-foreground'}>{detail}</span>
-          {change !== undefined && (
-            <span className={cn(
-              'inline-flex items-center gap-0.5 font-semibold',
-              accent ? 'text-white' : positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
-            )}>
-              {positive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-              {formatChange(change)}
-            </span>
-          )}
-        </div>
+        {(detail || change !== undefined) && (
+          <div className="mt-4 flex items-center justify-between gap-2 text-xs">
+            <span className={accent ? 'text-primary-foreground/65' : 'text-muted-foreground'}>{detail || ''}</span>
+            {change !== undefined && (
+              <span className={cn(
+                'inline-flex items-center gap-0.5 font-semibold',
+                accent ? 'text-white' : positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
+              )}>
+                {positive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+                {formatChange(change)}
+              </span>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -469,14 +471,13 @@ export default function Dashboard() {
         <KpiCard
           title={period === 'month' ? 'Cantidad de ventas del mes' : 'Cantidad de ventas del periodo'}
           value={integer.format(summary.acceptedDocuments || 0)}
-          detail="Ventas con comprobante aceptado por SUNAT"
           change={data?.changes?.acceptedDocuments}
           icon={ShoppingBag}
         />
         <KpiCard
           title="Ticket promedio"
           value={money.format(summary.averageTicket || 0)}
-          detail="Sobre documentos aceptados"
+          detail="Promedio por venta"
           change={data?.changes?.averageTicket}
           icon={WalletCards}
         />
