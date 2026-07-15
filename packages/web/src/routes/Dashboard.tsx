@@ -7,12 +7,11 @@ import {
   Activity,
   ArrowDownRight,
   ArrowUpRight,
-  Building2,
   CalendarDays,
-  CircleDollarSign,
   FileCheck2,
   FileText,
   RefreshCw,
+  ShoppingBag,
   TrendingUp,
   WalletCards,
 } from 'lucide-react';
@@ -232,6 +231,54 @@ function KpiCard({
   );
 }
 
+function SalesSummaryCard({
+  title,
+  gross,
+  net,
+  creditNotes,
+  change,
+}: {
+  title: string;
+  gross: number;
+  net: number;
+  creditNotes: number;
+  change?: number | null;
+}) {
+  const positive = change == null || change >= 0;
+  return (
+    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
+      <CardContent className="px-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium text-primary-foreground/70">{title}</p>
+            <p className="mt-3 text-[11px] font-medium uppercase tracking-wider text-primary-foreground/55">Bruto</p>
+            <p className="mt-1 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums">{money.format(gross)}</p>
+          </div>
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
+            <TrendingUp className="size-[18px]" />
+          </span>
+        </div>
+
+        <div className="mt-4 rounded-xl bg-white/10 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-primary-foreground/65">Neto después de notas de crédito</span>
+            <strong className="whitespace-nowrap text-sm tabular-nums">{money.format(net)}</strong>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-primary-foreground/55">
+            <span>Bruto − {money.format(creditNotes)}</span>
+            {change !== undefined && (
+              <span className="inline-flex items-center gap-0.5 font-semibold text-white">
+                {positive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+                {formatChange(change)}
+              </span>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SalesTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload || {};
@@ -294,8 +341,8 @@ function SkeletonDashboard() {
   return (
     <div className="space-y-5 animate-pulse">
       <div className="h-20 rounded-2xl bg-muted" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-36 rounded-2xl bg-muted" />)}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-40 rounded-2xl bg-muted" />)}
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="h-[420px] rounded-2xl bg-muted xl:col-span-2" />
@@ -438,21 +485,20 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard
-          title={period === 'month' ? 'Ventas aceptadas del mes' : 'Ventas aceptadas del periodo'}
-          value={money.format(summary.grossSales || 0)}
-          detail="Antes de descontar notas de crédito"
-          change={data?.changes?.grossSales}
-          icon={TrendingUp}
-          accent
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SalesSummaryCard
+          title={period === 'month' ? 'Ventas del mes' : 'Ventas del periodo'}
+          gross={Number(summary.grossSales || 0)}
+          net={Number(summary.netSales || 0)}
+          creditNotes={Number(summary.creditNotes || 0)}
+          change={data?.changes?.netSales}
         />
         <KpiCard
-          title={period === 'month' ? 'Ventas finales del mes' : 'Ventas finales del periodo'}
-          value={money.format(summary.netSales || 0)}
-          detail={`Después de restar ${money.format(summary.creditNotes || 0)} en notas de crédito`}
-          change={data?.changes?.netSales}
-          icon={CircleDollarSign}
+          title={period === 'month' ? 'Cantidad de ventas del mes' : 'Cantidad de ventas del periodo'}
+          value={integer.format(summary.acceptedDocuments || 0)}
+          detail="Ventas con comprobante aceptado por SUNAT"
+          change={data?.changes?.acceptedDocuments}
+          icon={ShoppingBag}
         />
         <KpiCard
           title="Ticket promedio"
@@ -466,12 +512,6 @@ export default function Dashboard() {
           value={money.format(summary.creditNotes || 0)}
           detail={`${summary.grossSales ? ((summary.creditNotes / summary.grossSales) * 100).toFixed(1) : '0.0'}% de las ventas aceptadas`}
           icon={FileText}
-        />
-        <KpiCard
-          title="Empresas con ventas"
-          value={`${integer.format(summary.activeCompanies || 0)} / ${integer.format(data?.companies?.length || 0)}`}
-          detail={`${integer.format(summary.pendingDocuments || 0)} documentos pendientes`}
-          icon={Building2}
         />
       </div>
 

@@ -364,6 +364,7 @@ export async function getDashboard(input = {}, db) {
     changes: {
       grossSales: percentageDelta(summary.grossSales, previousSummary.grossSales),
       netSales: percentageDelta(summary.netSales, previousSummary.netSales),
+      acceptedDocuments: percentageDelta(summary.acceptedDocuments, previousSummary.acceptedDocuments),
       generatedDocuments: percentageDelta(summary.generatedDocuments, previousSummary.generatedDocuments),
       averageTicket: percentageDelta(summary.averageTicket, previousSummary.averageTicket),
     },
