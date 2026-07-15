@@ -233,16 +233,11 @@ function KpiCard({
 
 function SalesSummaryCard({
   title,
-  gross,
   net,
-  creditNotes,
 }: {
   title: string;
-  gross: number;
   net: number;
-  creditNotes: number;
 }) {
-  const creditNoteRate = gross > 0 ? (creditNotes / gross) * 100 : 0;
   return (
     <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
       <CardContent className="px-5">
@@ -254,14 +249,6 @@ function SalesSummaryCard({
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
             <TrendingUp className="size-[18px]" />
           </span>
-        </div>
-
-        <div className="mt-5 rounded-xl bg-white/10 px-3 py-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-primary-foreground/65">Notas de crédito</span>
-            <strong className="whitespace-nowrap text-sm tabular-nums">−{money.format(creditNotes)}</strong>
-          </div>
-          <p className="mt-1 text-[11px] text-primary-foreground/55">{creditNoteRate.toFixed(1)}% de las ventas</p>
         </div>
       </CardContent>
     </Card>
@@ -477,9 +464,7 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SalesSummaryCard
           title={period === 'month' ? 'Ventas netas del mes' : 'Ventas netas'}
-          gross={Number(summary.grossSales || 0)}
           net={Number(summary.netSales || 0)}
-          creditNotes={Number(summary.creditNotes || 0)}
         />
         <KpiCard
           title={period === 'month' ? 'Cantidad de ventas del mes' : 'Cantidad de ventas del periodo'}
