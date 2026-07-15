@@ -34,7 +34,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
-  { to: '/pedidos', icon: Inbox, label: 'Pedidos', permission: 'falabella' },
+  { to: '/pedidos', icon: Inbox, label: 'Bandeja de pedidos', permission: 'falabella' },
   { to: '/documentos', icon: ReceiptText, label: 'Documentos', permission: 'documentos' },
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
   { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
