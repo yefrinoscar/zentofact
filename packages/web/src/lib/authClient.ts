@@ -1,7 +1,6 @@
 import { createAuthClient } from 'better-auth/react';
 
-// Cliente de auth (Better Auth) para la versión web. Apunta al backend @zentofact/server.
+// Mantener auth en el mismo origen evita que Safari bloquee la cookie de sesión.
 export const authClient = createAuthClient({
-  // Mismo origen que el front (o VITE_API_URL en dev).
-  baseURL: (import.meta as any).env?.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010'),
+  baseURL: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010',
 });

@@ -19,6 +19,7 @@ storage.backup-*/
 
 # Generated / debug artifacts
 scripts/output/
+*.log
 
 # macOS
 .DS_Store

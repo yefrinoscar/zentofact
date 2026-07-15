@@ -3,12 +3,13 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
-const apiTarget = process.env.VITE_API_TARGET || 'http://localhost:3010';
+const apiTarget = process.env.VITE_API_TARGET || process.env.VITE_API_URL || 'http://localhost:3010';
 const apiPrefixes = [
   '/api',
   '/health',
   '/me',
   '/dashboard',
+  '/orders-inbox',
   '/users',
   '/companies',
   '/branches',
@@ -20,6 +21,15 @@ const apiPrefixes = [
   '/auto-emit',
   '/webhooks',
 ];
+const apiProxy = Object.fromEntries(
+  apiPrefixes.map((prefix) => [
+    prefix,
+    {
+      target: apiTarget,
+      changeOrigin: true,
+    },
+  ]),
+);
 
 // Frontend web independiente. El proxy mantiene la API desacoplada en dev.
 export default defineConfig({
@@ -29,18 +39,11 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 3011,
-    proxy: Object.fromEntries(
-      apiPrefixes.map((prefix) => [
-        prefix,
-        {
-          target: apiTarget,
-          changeOrigin: true,
-        },
-      ]),
-    ),
+    proxy: apiProxy,
   },
   preview: {
     allowedHosts: true,
+    proxy: apiProxy,
   },
   build: { outDir: path.resolve(__dirname, 'dist'), emptyOutDir: true },
 });

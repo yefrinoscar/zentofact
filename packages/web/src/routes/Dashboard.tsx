@@ -236,43 +236,32 @@ function SalesSummaryCard({
   gross,
   net,
   creditNotes,
-  change,
 }: {
   title: string;
   gross: number;
   net: number;
   creditNotes: number;
-  change?: number | null;
 }) {
-  const positive = change == null || change >= 0;
+  const creditNoteRate = gross > 0 ? (creditNotes / gross) * 100 : 0;
   return (
     <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
       <CardContent className="px-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium text-primary-foreground/70">{title}</p>
-            <p className="mt-3 text-[11px] font-medium uppercase tracking-wider text-primary-foreground/55">Bruto</p>
-            <p className="mt-1 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums">{money.format(gross)}</p>
+            <p className="mt-3 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums">{money.format(net)}</p>
           </div>
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
             <TrendingUp className="size-[18px]" />
           </span>
         </div>
 
-        <div className="mt-4 rounded-xl bg-white/10 px-3 py-2.5">
+        <div className="mt-5 rounded-xl bg-white/10 px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-primary-foreground/65">Neto después de notas de crédito</span>
-            <strong className="whitespace-nowrap text-sm tabular-nums">{money.format(net)}</strong>
+            <span className="text-xs text-primary-foreground/65">Notas de crédito</span>
+            <strong className="whitespace-nowrap text-sm tabular-nums">−{money.format(creditNotes)}</strong>
           </div>
-          <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-primary-foreground/55">
-            <span>Bruto − {money.format(creditNotes)}</span>
-            {change !== undefined && (
-              <span className="inline-flex items-center gap-0.5 font-semibold text-white">
-                {positive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                {formatChange(change)}
-              </span>
-            )}
-          </div>
+          <p className="mt-1 text-[11px] text-primary-foreground/55">{creditNoteRate.toFixed(1)}% de las ventas</p>
         </div>
       </CardContent>
     </Card>
@@ -487,11 +476,10 @@ export default function Dashboard() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SalesSummaryCard
-          title={period === 'month' ? 'Ventas del mes' : 'Ventas del periodo'}
+          title={period === 'month' ? 'Ventas netas del mes' : 'Ventas netas'}
           gross={Number(summary.grossSales || 0)}
           net={Number(summary.netSales || 0)}
           creditNotes={Number(summary.creditNotes || 0)}
-          change={data?.changes?.netSales}
         />
         <KpiCard
           title={period === 'month' ? 'Cantidad de ventas del mes' : 'Cantidad de ventas del periodo'}

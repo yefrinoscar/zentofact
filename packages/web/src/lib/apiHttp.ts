@@ -1,8 +1,8 @@
-// Cliente HTTP del frontend web; apunta al backend @zentofact/server.
-// Vacío = mismo origen (el front se sirve desde el propio server). En dev se puede fijar VITE_API_URL.
+// Cliente HTTP del frontend web. Vite redirige el API al backend manteniendo
+// las cookies bajo el mismo origen del navegador.
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 
-const BASE = (import.meta as any).env?.VITE_API_URL || '';
+const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
 
