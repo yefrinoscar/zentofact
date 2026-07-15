@@ -101,6 +101,7 @@ export function userHasPermission(user, key) {
 export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/pedidos')) return 'falabella';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella';
   if (pathname.startsWith('/productos')) return 'productos';

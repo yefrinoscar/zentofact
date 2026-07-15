@@ -111,6 +111,7 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
 
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/pedidos')) return 'falabella';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella';
   if (pathname.startsWith('/productos')) return 'productos';

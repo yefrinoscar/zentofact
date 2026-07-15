@@ -24,6 +24,7 @@ await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
+const ordersInbox = await import('./orders-inbox.js');
 const dashboard = await import('./dashboard.js');
 dashboard.startDashboardRefreshLoop();
 
@@ -93,6 +94,7 @@ app.use('*', requireCsrf());
 // Permisos por módulo (menú). /me y /health no aplican.
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
+  ['/orders-inbox', 'falabella'],
   ['/companies', 'companies'],
   ['/boletas', 'documentos'],
   ['/facturas', 'documentos'],
@@ -153,6 +155,16 @@ app.post('/dashboard/refresh', async (c) => {
     const refresh = await dashboard.refreshDashboard();
     return ok(c, refresh);
   } catch (e) { return fail(c, e); }
+});
+
+// ── Bandeja general de pedidos ──
+app.get('/orders-inbox', async (c) => {
+  try { return ok(c, await ordersInbox.listOrdersInbox(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/orders-inbox/sync', async (c) => {
+  try { return ok(c, await ordersInbox.syncAllOrdersInbox()); }
+  catch (e) { return fail(c, e, 400); }
 });
 
 // ── Usuarios (solo admin / permiso users) ──

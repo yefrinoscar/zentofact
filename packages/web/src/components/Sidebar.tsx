@@ -13,6 +13,7 @@ import {
   Users,
   Building2,
   ChartNoAxesCombined,
+  Inbox,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
@@ -33,6 +34,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
+  { to: '/pedidos', icon: Inbox, label: 'Pedidos', permission: 'falabella' },
   { to: '/documentos', icon: ReceiptText, label: 'Documentos', permission: 'documentos' },
   { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
   { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
@@ -63,8 +65,8 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`flex h-full w-[68px] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ${
-        collapsed ? 'md:w-[76px]' : 'md:w-64'
+      className={`flex h-full w-[68px] min-w-[68px] max-w-[68px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 ${
+        collapsed ? 'md:w-[76px] md:min-w-[76px] md:max-w-[76px]' : 'md:w-64 md:min-w-64 md:max-w-64'
       }`}
     >
       <div className="flex h-20 shrink-0 items-center justify-center gap-2.5 border-b border-sidebar-border px-2 md:justify-start md:px-4">

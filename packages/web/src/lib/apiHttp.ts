@@ -90,6 +90,11 @@ const apiHttp = {
     req(`/dashboard${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
 
+  // Bandeja consolidada de pedidos
+  getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>
+    req(`/orders-inbox${qs(filter)}`),
+  syncOrdersInbox: () => req('/orders-inbox/sync', { method: 'POST' }),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),

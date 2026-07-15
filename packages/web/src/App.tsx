@@ -11,6 +11,7 @@ import Productos from './routes/Productos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
+import Pedidos from './routes/Pedidos';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
@@ -26,6 +27,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/dashboard': {
     title: 'Dashboard',
     subtitle: 'Ventas y documentos consolidados de todas tus empresas.',
+  },
+  '/pedidos': {
+    title: 'Bandeja de pedidos',
+    subtitle: 'Pedidos pendientes de todas tus tiendas, desde que ingresan hasta que quedan resueltos.',
   },
   '/companies': {
     title: 'Empresas',
@@ -145,6 +150,7 @@ function AppLayout() {
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
+              <Route path="/pedidos" element={<RequirePermission permission="falabella" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
