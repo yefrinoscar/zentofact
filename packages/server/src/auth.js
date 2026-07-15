@@ -4,6 +4,7 @@ import { betterAuth } from 'better-auth';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import { isAdminRole, userHasPermission } from './permissions.js';
+import { isProtectedPath } from './protected-paths.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
@@ -81,20 +82,6 @@ export const auth = betterAuth({
 });
 
 // Prefijos del API que exigen sesión. Todo lo demás (login, estáticos del front) es público.
-const PROTECTED = [
-  '/dashboard',
-  '/companies',
-  '/branches',
-  '/boletas',
-  '/facturas',
-  '/credit-notes',
-  '/falabella',
-  '/workflow',
-  '/auto-emit',
-  '/users',
-  '/me',
-];
-
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function isTrustedOrigin(origin) {
@@ -111,7 +98,7 @@ export function csrfTokenForSession(session) {
 export function requireAuth() {
   return async (c, next) => {
     const path = c.req.path;
-    const needsAuth = PROTECTED.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'));
+    const needsAuth = isProtectedPath(path);
     if (!needsAuth) return next();
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     if (!session) return c.json({ error: 'No autenticado' }, 401);
@@ -138,7 +125,7 @@ export function requireAuth() {
 export function requireCsrf() {
   return async (c, next) => {
     const path = c.req.path;
-    const needsAuth = PROTECTED.some((p) => path === p || path.startsWith(p + '/'));
+    const needsAuth = isProtectedPath(path);
     if (!needsAuth || !UNSAFE_METHODS.has(c.req.method)) return next();
     const origin = c.req.header('origin');
     const token = c.req.header('x-csrf-token');
