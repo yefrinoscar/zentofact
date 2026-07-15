@@ -29,8 +29,8 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Ventas y documentos consolidados de todas tus empresas.',
   },
   '/pedidos': {
-    title: 'Bandeja de pedidos',
-    subtitle: 'Pedidos pendientes de todas tus tiendas, desde que ingresan hasta que quedan resueltos.',
+    title: 'Pedidos pendientes',
+    subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
   },
   '/companies': {
     title: 'Empresas',

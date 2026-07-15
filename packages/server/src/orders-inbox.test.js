@@ -21,6 +21,12 @@ test('rechaza etapas y periodos desconocidos', () => {
   assert.throws(() => parseOrdersInboxFilters({ days: 365 }), /Periodo/);
 });
 
+test('acepta la vista operativa y permite cargar el tablero completo', () => {
+  const filters = parseOrdersInboxFilters({ view: 'actionable', limit: 500 });
+  assert.equal(filters.view, 'actionable');
+  assert.equal(filters.limit, 500);
+});
+
 test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   const calls = [];
   const db = {
@@ -31,6 +37,7 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         id: '12', company_id: 7, company_name: 'Tienda Centro', company_ruc: '20123456789',
         order_id: '900', order_number: 'ORD-900', falabella_created_at: '2026-07-14T10:00:00Z',
         falabella_updated_at: '2026-07-14T10:02:00Z', first_seen_at: '2026-07-14T10:03:00Z',
+        promised_shipping_time: '2026-07-15 21:00:00', shipping_type: 'Dropshipping',
         falabella_status: 'ready_to_ship', invoice_required: false, grand_total: '149.90', currency: 'PEN',
         customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 1,
       }] };
@@ -45,13 +52,15 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
     },
   };
 
-  const result = await listOrdersInbox({ companyId: 7, stage: 'por_emitir' }, db);
+  const result = await listOrdersInbox({ companyId: 7, stage: 'por_emitir', view: 'actionable' }, db);
   assert.equal(result.orders[0].orderNumber, 'ORD-900');
   assert.equal(result.orders[0].stage, 'por_emitir');
   assert.equal(result.orders[0].total, 149.9);
+  assert.equal(result.orders[0].promisedShippingAt, '2026-07-15T21:00:00.000Z');
   assert.equal(result.summary.open, 3);
   assert.equal(result.summary.byCompany[0].companyName, 'Tienda Centro');
   assert.equal(result.totalCount, 1);
+  assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
 });
 

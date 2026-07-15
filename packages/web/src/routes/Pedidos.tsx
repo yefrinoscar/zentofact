@@ -3,18 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
+  CalendarClock,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  CircleDot,
   Clock3,
   Inbox,
   Loader2,
-  PackageCheck,
-  ReceiptText,
   RefreshCw,
   Search,
   Store,
+  Truck,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAppStore } from '../stores/app';
@@ -36,19 +33,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TablePanel,
-  TablePanelFooter,
-  TablePanelHeader,
-  TableRow,
-} from '../components/ui/table';
-
-type OrderStage = 'nuevo' | 'por_emitir' | 'en_proceso' | 'atencion' | 'completado';
 
 type InboxOrder = {
   id: number;
@@ -58,94 +42,117 @@ type InboxOrder = {
   orderId: string;
   orderNumber: string;
   createdAt: string | null;
-  updatedAt: string | null;
   firstSeenAt: string | null;
+  promisedShippingAt: string | null;
   falabellaStatus: string;
+  shippingType: string;
   invoiceRequired: boolean;
   total: number;
   currency: string;
   customerName: string;
   itemsCount: number | null;
-  stage: OrderStage;
-  document: null | {
-    id: number;
-    kind: 'BOLETA' | 'FACTURA';
-    number: string;
-    status: string;
-    date: string;
-  };
-};
-
-type CompanySummary = {
-  companyId: number;
-  companyName: string;
-  total: number;
-  open: number;
-  openAmount: number;
 };
 
 type InboxResponse = {
   orders: InboxOrder[];
   totalCount: number;
-  summary: {
-    total: number;
-    open: number;
-    new: number;
-    ready: number;
-    processing: number;
-    attention: number;
-    completed: number;
-    openAmount: number;
-    byCompany: CompanySummary[];
-  };
   lastSyncedAt: string | null;
 };
 
-const PAGE_SIZE = 10;
+type CompanyOption = { id: number; name: string };
+type UrgencyKey = 'overdue' | 'today' | 'tomorrow' | 'later';
 
-const STAGES: Record<OrderStage, {
-  label: string;
-  shortLabel: string;
+const LIMA_TIME_ZONE = 'America/Lima';
+const BOARD_LIMIT = 500;
+
+const COLUMNS: Array<{
+  key: UrgencyKey;
+  title: string;
   description: string;
-  next: string;
-  className: string;
-}> = {
-  nuevo: {
-    label: 'Recién ingresado',
-    shortLabel: 'Nuevos',
-    description: 'El pedido llegó y todavía no tiene comprobante.',
-    next: 'Esperar confirmación de Falabella',
-    className: 'border-amber-200 bg-amber-50 text-amber-700',
+  icon: typeof AlertCircle;
+  headerClass: string;
+  countClass: string;
+  empty: string;
+}> = [
+  {
+    key: 'overdue',
+    title: 'Vencidos',
+    description: 'Debieron entregarse antes',
+    icon: AlertCircle,
+    headerClass: 'border-red-200 bg-red-50/80 text-red-800',
+    countClass: 'bg-red-100 text-red-700',
+    empty: 'No tienes pedidos vencidos.',
   },
-  por_emitir: {
-    label: 'Listo para emitir',
-    shortLabel: 'Por emitir',
-    description: 'Falabella ya permite emitir el comprobante.',
-    next: 'Emitir boleta o factura',
-    className: 'border-sky-200 bg-sky-50 text-sky-700',
+  {
+    key: 'today',
+    title: 'Vencen hoy',
+    description: 'Prioridad del día',
+    icon: Clock3,
+    headerClass: 'border-amber-200 bg-amber-50/80 text-amber-800',
+    countClass: 'bg-amber-100 text-amber-700',
+    empty: 'Nada más vence hoy.',
   },
-  en_proceso: {
-    label: 'En proceso',
-    shortLabel: 'En proceso',
-    description: 'El comprobante existe y sigue en proceso.',
-    next: 'Revisar respuesta de SUNAT',
-    className: 'border-violet-200 bg-violet-50 text-violet-700',
+  {
+    key: 'tomorrow',
+    title: 'Vencen mañana',
+    description: 'Prepara con anticipación',
+    icon: CalendarClock,
+    headerClass: 'border-sky-200 bg-sky-50/80 text-sky-800',
+    countClass: 'bg-sky-100 text-sky-700',
+    empty: 'No hay entregas para mañana.',
   },
-  atencion: {
-    label: 'Requiere atención',
-    shortLabel: 'Atención',
-    description: 'Hay un rechazo, devolución, cancelación o estado excepcional.',
-    next: 'Revisar la incidencia',
-    className: 'border-red-200 bg-red-50 text-red-700',
+  {
+    key: 'later',
+    title: 'Próximos',
+    description: 'Después de mañana',
+    icon: Truck,
+    headerClass: 'border-border bg-muted/40 text-foreground',
+    countClass: 'bg-muted text-muted-foreground',
+    empty: 'No hay pedidos posteriores.',
   },
-  completado: {
-    label: 'Completado',
-    shortLabel: 'Completados',
-    description: 'El pedido ya cuenta con un comprobante resuelto.',
-    next: 'Sin acciones pendientes',
-    className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  },
-};
+];
+
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function limaDateKey(date: Date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: LIMA_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function tomorrowKey(now: Date) {
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  return limaDateKey(tomorrow);
+}
+
+function formatDateTime(value: string | null | undefined) {
+  const date = parseDate(value);
+  if (!date) return 'Sin fecha informada';
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: LIMA_TIME_ZONE,
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function formatTime(value: string | null | undefined) {
+  const date = parseDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: LIMA_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
 
 function formatMoney(value: number, currency = 'PEN') {
   try {
@@ -155,55 +162,114 @@ function formatMoney(value: number, currency = 'PEN') {
   }
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('es-PE', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'America/Lima',
-  }).format(date);
+function elapsedLabel(value: string | null | undefined, now: Date) {
+  const date = parseDate(value);
+  if (!date) return '';
+  const minutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60_000));
+  if (minutes < 60) return `hace ${Math.max(1, minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days} día${days === 1 ? '' : 's'}`;
 }
 
-function falabellaStatusLabel(status: string) {
+function overdueLabel(value: string | null | undefined, now: Date) {
+  const deadline = parseDate(value);
+  if (!deadline) return 'Sin plazo informado';
+  const minutes = Math.max(1, Math.floor((now.getTime() - deadline.getTime()) / 60_000));
+  if (minutes < 60) return `Venció hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Venció hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `Venció hace ${days} día${days === 1 ? '' : 's'}`;
+}
+
+function urgencyFor(order: InboxOrder, now: Date): UrgencyKey {
+  const deadline = parseDate(order.promisedShippingAt);
+  if (!deadline) return 'later';
+  if (deadline.getTime() < now.getTime()) return 'overdue';
+  const deadlineDay = limaDateKey(deadline);
+  if (deadlineDay === limaDateKey(now)) return 'today';
+  if (deadlineDay === tomorrowKey(now)) return 'tomorrow';
+  return 'later';
+}
+
+function deadlineLabel(order: InboxOrder, now: Date) {
+  const urgency = urgencyFor(order, now);
+  if (!order.promisedShippingAt) return 'Sin plazo informado';
+  if (urgency === 'overdue') return overdueLabel(order.promisedShippingAt, now);
+  if (urgency === 'today') return `Hoy · ${formatTime(order.promisedShippingAt)}`;
+  if (urgency === 'tomorrow') return `Mañana · ${formatTime(order.promisedShippingAt)}`;
+  return formatDateTime(order.promisedShippingAt);
+}
+
+function statusMeta(status: string) {
   const key = status.toLowerCase();
-  if (key.includes('ready_to_ship')) return 'Lista para enviar';
-  if (key.includes('delivered')) return 'Entregada';
-  if (key.includes('shipped')) return 'Enviada';
-  if (key.includes('pending')) return 'Pendiente';
-  if (key.includes('returned')) return 'Devuelta';
-  if (key.includes('cancel')) return 'Cancelada';
-  if (key.includes('failed')) return 'Fallida';
-  return status ? status.replace(/_/g, ' ') : 'Sin estado';
+  if (key.includes('ready_to_ship')) {
+    return {
+      label: 'Listo para entregar',
+      className: 'border-sky-200 bg-sky-50 text-sky-700',
+    };
+  }
+  return {
+    label: 'Por preparar',
+    className: 'border-amber-200 bg-amber-50 text-amber-700',
+  };
 }
 
-function StageBadge({ stage }: { stage: OrderStage }) {
-  const meta = STAGES[stage];
-  return <Badge variant="outline" className={`rounded-md ${meta.className}`}>{meta.label}</Badge>;
-}
+function OrderCard({ order, now, onOpen }: { order: InboxOrder; now: Date; onOpen: () => void }) {
+  const urgency = urgencyFor(order, now);
+  const status = statusMeta(order.falabellaStatus);
+  const deadlineTone = urgency === 'overdue'
+    ? 'text-red-700'
+    : urgency === 'today'
+      ? 'text-amber-700'
+      : 'text-foreground';
 
-function Metric({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: number;
-  icon: typeof Inbox;
-  tone: string;
-}) {
   return (
-    <div className="flex min-w-0 items-center gap-3 px-4 py-3.5">
-      <span className={`grid size-9 shrink-0 place-items-center rounded-md ${tone}`}>
-        <Icon className="size-4" />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-2xl font-semibold tabular-nums text-foreground">{value}</span>
-        <span className="block truncate text-xs text-muted-foreground">{label}</span>
-      </span>
-    </div>
+    <article className="rounded-md border border-border bg-card p-3.5 transition-colors hover:border-foreground/20">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={`flex items-center gap-1.5 text-sm font-semibold ${deadlineTone}`}>
+            {urgency === 'overdue' && <AlertCircle className="size-4 shrink-0" />}
+            {deadlineLabel(order, now)}
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Límite de entrega al operador</p>
+        </div>
+        <Badge variant="outline" className={`rounded-md ${status.className}`}>{status.label}</Badge>
+      </div>
+
+      <div className="mt-3 border-t border-border/70 pt-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
+              {order.orderNumber}
+            </button>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.companyName}</p>
+          </div>
+          <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatMoney(order.total, order.currency)}</p>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <p className="text-muted-foreground">Ingresó</p>
+            <p className="mt-0.5 font-medium text-foreground">{elapsedLabel(order.createdAt, now)}</p>
+            <p className="text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-muted-foreground">Contenido</p>
+            <p className="mt-0.5 font-medium text-foreground">
+              {order.itemsCount ?? '-'} producto{order.itemsCount === 1 ? '' : 's'}
+            </p>
+            <p className="text-[11px] text-muted-foreground">{order.invoiceRequired ? 'Factura' : 'Boleta'}</p>
+          </div>
+        </div>
+      </div>
+
+      <Button variant="ghost" size="sm" className="mt-3 w-full justify-between" onClick={onOpen}>
+        Ver pedido <ArrowRight />
+      </Button>
+    </article>
   );
 }
 
@@ -211,19 +277,16 @@ export default function Pedidos() {
   const navigate = useNavigate();
   const setActiveCompanyId = useAppStore((state) => state.setActiveCompanyId);
   const [data, setData] = useState<InboxResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState('');
-  const [syncMessage, setSyncMessage] = useState('');
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [companyId, setCompanyId] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [companyId, setCompanyId] = useState('all');
-  const [stage, setStage] = useState('all');
-  const [view, setView] = useState<'open' | 'all'>('open');
-  const [days, setDays] = useState('0');
-  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<InboxOrder | null>(null);
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300);
@@ -231,8 +294,9 @@ export default function Pedidos() {
   }, [searchInput]);
 
   useEffect(() => {
-    setPage(1);
-  }, [search, companyId, stage, view, days]);
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const load = async (quiet = false) => {
     if (quiet) setRefreshing(true);
@@ -241,16 +305,19 @@ export default function Pedidos() {
     try {
       const response = await api.getOrdersInbox({
         companyId: companyId === 'all' ? undefined : Number(companyId),
-        stage: stage === 'all' ? undefined : stage,
-        view,
-        days: Number(days),
+        view: 'actionable',
         search: search || undefined,
-        limit: PAGE_SIZE,
-        offset: (page - 1) * PAGE_SIZE,
-      });
-      setData(response as InboxResponse);
+        limit: BOARD_LIMIT,
+        offset: 0,
+      }) as InboxResponse;
+      setData(response);
+      if (companyId === 'all' && !search) {
+        const unique = new Map<number, CompanyOption>();
+        for (const order of response.orders) unique.set(order.companyId, { id: order.companyId, name: order.companyName });
+        setCompanies([...unique.values()].sort((a, b) => a.name.localeCompare(b.name, 'es')));
+      }
     } catch (nextError: any) {
-      setError(nextError?.message || 'No se pudo cargar la bandeja de pedidos.');
+      setError(nextError?.message || 'No se pudieron cargar los pedidos pendientes.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -259,39 +326,44 @@ export default function Pedidos() {
 
   useEffect(() => {
     void load();
-    // load cambia cuando cambian los filtros de esta pantalla.
+    // La carga depende únicamente de los filtros visibles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, companyId, stage, view, days, page]);
+  }, [companyId, search]);
 
   const syncAll = async () => {
-    setSyncing(true);
+    setRefreshing(true);
     setError('');
     setSyncMessage('');
     try {
       const result = await api.syncOrdersInbox();
       const failed = Number(result?.failed || 0);
       setSyncMessage(failed
-        ? `Se actualizaron ${result.successful} de ${result.stores} tiendas; ${failed} requiere revisión.`
-        : `${result.successful} tienda${result.successful === 1 ? '' : 's'} actualizada${result.successful === 1 ? '' : 's'}.`);
+        ? `${result.successful} tiendas actualizadas; ${failed} no pudieron sincronizarse.`
+        : 'Pedidos actualizados con Falabella.');
       await load(true);
     } catch (nextError: any) {
       setError(nextError?.message || 'No se pudieron sincronizar las tiendas.');
     } finally {
-      setSyncing(false);
+      setRefreshing(false);
     }
   };
 
-  const companies = data?.summary.byCompany || [];
-  const totalPages = Math.max(1, Math.ceil((data?.totalCount || 0) / PAGE_SIZE));
-  const from = data?.totalCount ? (page - 1) * PAGE_SIZE + 1 : 0;
-  const to = Math.min(page * PAGE_SIZE, data?.totalCount || 0);
-  const summary = data?.summary;
-  const selectedMeta = selectedOrder ? STAGES[selectedOrder.stage] : null;
+  const grouped = useMemo(() => {
+    const groups: Record<UrgencyKey, InboxOrder[]> = { overdue: [], today: [], tomorrow: [], later: [] };
+    for (const order of data?.orders || []) groups[urgencyFor(order, now)].push(order);
+    for (const orders of Object.values(groups)) {
+      orders.sort((a, b) => {
+        const deadlineA = parseDate(a.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const deadlineB = parseDate(b.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        return deadlineA - deadlineB || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+      });
+    }
+    return groups;
+  }, [data?.orders, now]);
 
-  const selectedCompanyName = useMemo(
-    () => companyId === 'all' ? 'Todas las tiendas' : companies.find((company) => String(company.companyId) === companyId)?.companyName || 'Tienda',
-    [companyId, companies],
-  );
+  const total = data?.totalCount || 0;
+  const selectedUrgency = selectedOrder ? urgencyFor(selectedOrder, now) : null;
+  const selectedStatus = selectedOrder ? statusMeta(selectedOrder.falabellaStatus) : null;
 
   const openStore = (order: InboxOrder) => {
     setActiveCompanyId(order.companyId);
@@ -300,89 +372,64 @@ export default function Pedidos() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex h-9 rounded-xl bg-muted p-1">
-            <button
-              type="button"
-              onClick={() => {
-                setView('open');
-                if (stage === 'completado') setStage('all');
-              }}
-              className={`rounded-lg px-3 text-sm font-medium transition-colors ${view === 'open' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Pendientes
-            </button>
-            <button
-              type="button"
-              onClick={() => setView('all')}
-              className={`rounded-lg px-3 text-sm font-medium transition-colors ${view === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Todos
-            </button>
+      <section className="flex flex-col gap-4 rounded-md border border-border bg-card px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-4">
+          <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+            <Inbox className="size-5" />
+          </span>
+          <div>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <p className="text-2xl font-semibold tabular-nums text-foreground">{total}</p>
+              <p className="text-sm font-medium text-foreground">pedidos por despachar</p>
+            </div>
+            <p className="text-sm text-muted-foreground">Atiéndelos en orden según su límite de entrega.</p>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {grouped.overdue.length > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 font-medium text-red-700">
+              <AlertCircle className="size-4" /> {grouped.overdue.length} vencido{grouped.overdue.length === 1 ? '' : 's'}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 font-medium text-amber-700">
+            <Clock3 className="size-4" /> {grouped.today.length} vence{grouped.today.length === 1 ? '' : 'n'} hoy
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronización registrada'}
+          </span>
+        </div>
+      </section>
+
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Select value={companyId} onValueChange={setCompanyId}>
-            <SelectTrigger className="w-[210px] border-border bg-background">
+            <SelectTrigger className="w-full border-border bg-background sm:w-[230px]">
               <Store className="size-4 text-muted-foreground" />
               <SelectValue placeholder="Todas las tiendas" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todas las tiendas</SelectItem>
               {companies.map((company) => (
-                <SelectItem key={company.companyId} value={String(company.companyId)}>{company.companyName}</SelectItem>
+                <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={stage}
-            onValueChange={(value) => {
-              setStage(value);
-              if (value === 'completado') setView('all');
-            }}
-          >
-            <SelectTrigger className="w-[180px] border-border bg-background">
-              <SelectValue placeholder="Todas las etapas" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas las etapas</SelectItem>
-              {(Object.keys(STAGES) as OrderStage[]).map((key) => (
-                <SelectItem key={key} value={key}>{STAGES[key].label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="w-[150px] border-border bg-background">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="0">Todo el tiempo</SelectItem>
-              <SelectItem value="7">Últimos 7 días</SelectItem>
-              <SelectItem value="30">Últimos 30 días</SelectItem>
-              <SelectItem value="90">Últimos 90 días</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <div className="relative sm:w-72">
+          <div className="relative sm:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Buscar orden, cliente o tienda"
+              placeholder="Buscar pedido, cliente o tienda"
               className="pl-9"
-              aria-label="Buscar pedidos"
+              aria-label="Buscar pedidos pendientes"
             />
           </div>
-          <Button variant="outline" onClick={() => void load(true)} disabled={refreshing || loading}>
-            <RefreshCw className={refreshing ? 'animate-spin' : ''} />
-            Actualizar
-          </Button>
-          <Button onClick={() => void syncAll()} disabled={syncing}>
-            {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Sincronizar tiendas
-          </Button>
         </div>
+        <Button onClick={() => void syncAll()} disabled={refreshing}>
+          {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          Sincronizar pedidos
+        </Button>
       </div>
 
       {error && (
@@ -398,220 +445,100 @@ export default function Pedidos() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-md border border-border bg-card">
-        <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-6">
-          <Metric label="Pendientes totales" value={summary?.open || 0} icon={Inbox} tone="bg-primary/10 text-primary" />
-          <Metric label="Recién ingresados" value={summary?.new || 0} icon={CircleDot} tone="bg-amber-50 text-amber-700" />
-          <Metric label="Listos para emitir" value={summary?.ready || 0} icon={ReceiptText} tone="bg-sky-50 text-sky-700" />
-          <Metric label="En proceso" value={summary?.processing || 0} icon={Clock3} tone="bg-violet-50 text-violet-700" />
-          <Metric label="Requieren atención" value={summary?.attention || 0} icon={AlertCircle} tone="bg-red-50 text-red-700" />
-          <Metric label="Completados" value={summary?.completed || 0} icon={PackageCheck} tone="bg-emerald-50 text-emerald-700" />
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-card py-20 text-sm text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" /> Cargando pedidos pendientes…
         </div>
-        <div className="flex flex-col gap-1 border-t border-border bg-muted/20 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-muted-foreground">Valor de pedidos pendientes</span>
-          <span className="font-semibold tabular-nums text-foreground">{formatMoney(summary?.openAmount || 0)}</span>
+      ) : total === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-card py-16 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-emerald-50 text-emerald-700">
+            <CheckCircle2 className="size-6" />
+          </span>
+          <p className="text-sm font-medium text-foreground">No tienes pedidos pendientes de despacho</p>
+          <p className="text-sm text-muted-foreground">Todo está al día con los filtros actuales.</p>
         </div>
-      </section>
-
-      {companies.length > 0 && (
-        <section className="rounded-md border border-border bg-card px-4 py-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-foreground">Pendientes por tienda</p>
-              <p className="text-xs text-muted-foreground">Dónde se concentra la carga de trabajo actual.</p>
-            </div>
-            <span className="text-xs text-muted-foreground">{companies.length} tienda{companies.length === 1 ? '' : 's'}</span>
+      ) : (
+        <div className="overflow-x-auto pb-2">
+          <div className="grid min-w-[1120px] grid-cols-4 gap-3">
+            {COLUMNS.map((column) => {
+              const Icon = column.icon;
+              const orders = grouped[column.key];
+              return (
+                <section key={column.key} className="flex min-h-[420px] flex-col rounded-md border border-border bg-muted/15">
+                  <header className={`flex items-center justify-between gap-3 rounded-t-md border-b px-3.5 py-3 ${column.headerClass}`}>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <Icon className="size-4 shrink-0" />
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold">{column.title}</h2>
+                        <p className="truncate text-[11px] opacity-75">{column.description}</p>
+                      </div>
+                    </div>
+                    <span className={`grid min-w-7 place-items-center rounded-md px-1.5 py-1 text-xs font-semibold tabular-nums ${column.countClass}`}>
+                      {orders.length}
+                    </span>
+                  </header>
+                  <div className="max-h-[calc(100vh-21rem)] min-h-[340px] flex-1 space-y-2.5 overflow-y-auto p-2.5">
+                    {orders.map((order) => (
+                      <OrderCard key={order.id} order={order} now={now} onOpen={() => setSelectedOrder(order)} />
+                    ))}
+                    {orders.length === 0 && (
+                      <div className="flex h-36 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                        {column.empty}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {companies.map((company) => (
-              <button
-                key={company.companyId}
-                type="button"
-                onClick={() => setCompanyId(String(company.companyId))}
-                className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-left transition-colors hover:bg-muted/40 ${companyId === String(company.companyId) ? 'border-primary bg-primary/5' : 'border-border'}`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-foreground">{company.companyName}</span>
-                  <span className="block text-xs text-muted-foreground">{formatMoney(company.openAmount)} pendientes</span>
-                </span>
-                <span className="text-xl font-semibold tabular-nums text-foreground">{company.open}</span>
-              </button>
-            ))}
-          </div>
-        </section>
+        </div>
       )}
 
-      <TablePanel className={refreshing ? 'opacity-70' : undefined}>
-        <TablePanelHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">{selectedCompanyName}</p>
-            <p className="text-xs text-muted-foreground">
-              {view === 'open' ? 'Pedidos que aún tienen un paso pendiente.' : 'Historial completo de pedidos.'}
-            </p>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {data?.lastSyncedAt ? `Actualizado ${formatDate(data.lastSyncedAt)}` : 'Aún sin sincronización registrada'}
-          </div>
-        </TablePanelHeader>
-
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-            <Loader2 className="size-5 animate-spin" />
-            Cargando pedidos…
-          </div>
-        ) : data?.orders.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Pedido</TableHead>
-                <TableHead>Tienda</TableHead>
-                <TableHead>Ingreso</TableHead>
-                <TableHead>Etapa</TableHead>
-                <TableHead className="hidden lg:table-cell">Estado Falabella</TableHead>
-                <TableHead className="hidden xl:table-cell">Comprobante</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="w-24 text-right">Acción</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.orders.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell>
-                    <button type="button" onClick={() => setSelectedOrder(order)} className="text-left hover:underline">
-                      <span className="block font-mono text-xs font-semibold text-foreground">{order.orderNumber}</span>
-                      <span className="block max-w-48 truncate text-xs text-muted-foreground">{order.customerName || 'Cliente no informado'}</span>
-                    </button>
-                  </TableCell>
-                  <TableCell>
-                    <span className="block max-w-44 truncate font-medium text-foreground">{order.companyName}</span>
-                    <span className="block font-mono text-xs text-muted-foreground">{order.companyRuc}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="block text-sm text-foreground">{formatDate(order.createdAt)}</span>
-                    {order.itemsCount !== null && <span className="block text-xs text-muted-foreground">{order.itemsCount} producto{order.itemsCount === 1 ? '' : 's'}</span>}
-                  </TableCell>
-                  <TableCell><StageBadge stage={order.stage} /></TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    <span className="text-sm text-muted-foreground">{falabellaStatusLabel(order.falabellaStatus)}</span>
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell">
-                    {order.document ? (
-                      <span>
-                        <span className="block font-mono text-xs font-medium text-foreground">{order.document.number}</span>
-                        <span className="block text-xs text-muted-foreground">{order.document.status || 'Pendiente'}</span>
-                      </span>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Sin emitir</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{formatMoney(order.total, order.currency)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedOrder(order)} aria-label={`Ver pedido ${order.orderNumber}`}>
-                      Ver <ArrowRight />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <div className="flex flex-col items-center gap-2 py-14 text-center">
-            <Inbox className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
-            <p className="text-sm text-muted-foreground">Prueba otra etapa, tienda o periodo.</p>
-          </div>
-        )}
-
-        {!loading && (
-          <TablePanelFooter className="flex items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">Mostrando {from}–{to} de {data?.totalCount || 0}</p>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>
-                <ChevronLeft /> Anterior
-              </Button>
-              <span className="min-w-16 text-center text-xs text-muted-foreground">{page} de {totalPages}</span>
-              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>
-                Siguiente <ChevronRight />
-              </Button>
-            </div>
-          </TablePanelFooter>
-        )}
-      </TablePanel>
-
       <Dialog open={Boolean(selectedOrder)} onOpenChange={(open) => !open && setSelectedOrder(null)}>
-        <DialogContent className="sm:max-w-xl">
-          {selectedOrder && selectedMeta && (
+        <DialogContent className="sm:max-w-lg">
+          {selectedOrder && selectedUrgency && selectedStatus && (
             <>
               <DialogHeader>
-                <div className="flex items-center gap-2 pr-8">
+                <div className="flex flex-wrap items-center gap-2 pr-8">
                   <DialogTitle className="font-mono">Pedido {selectedOrder.orderNumber}</DialogTitle>
-                  <StageBadge stage={selectedOrder.stage} />
+                  <Badge variant="outline" className={`rounded-md ${selectedStatus.className}`}>{selectedStatus.label}</Badge>
                 </div>
-                <DialogDescription>{selectedMeta.description}</DialogDescription>
+                <DialogDescription>{selectedOrder.companyName}</DialogDescription>
               </DialogHeader>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-3 rounded-md border border-border p-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Tienda</p>
-                    <p className="font-medium text-foreground">{selectedOrder.companyName}</p>
-                    <p className="font-mono text-xs text-muted-foreground">RUC {selectedOrder.companyRuc}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Cliente</p>
-                    <p className="font-medium text-foreground">{selectedOrder.customerName || 'No informado'}</p>
-                  </div>
-                  <div className="flex items-end justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Comprobante requerido</p>
-                      <p className="font-medium text-foreground">{selectedOrder.invoiceRequired ? 'Factura' : 'Boleta'}</p>
-                    </div>
-                    <p className="text-lg font-semibold tabular-nums text-foreground">{formatMoney(selectedOrder.total, selectedOrder.currency)}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 rounded-md border border-border p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recorrido del pedido</p>
-                  <div className="space-y-0">
-                    <div className="flex gap-3 pb-4">
-                      <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="size-3.5" /></span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Pedido recibido</p>
-                        <p className="text-xs text-muted-foreground">{formatDate(selectedOrder.createdAt)}</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3 pb-4">
-                      <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"><CircleDot className="size-3.5" /></span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{selectedMeta.label}</p>
-                        <p className="text-xs text-muted-foreground">{falabellaStatusLabel(selectedOrder.falabellaStatus)}</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"><ArrowRight className="size-3.5" /></span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Siguiente paso</p>
-                        <p className="text-xs text-muted-foreground">{selectedMeta.next}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className={`rounded-md border p-4 ${selectedUrgency === 'overdue' ? 'border-red-200 bg-red-50' : selectedUrgency === 'today' ? 'border-amber-200 bg-amber-50' : 'border-border bg-muted/30'}`}>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Límite para entregar al operador logístico</p>
+                <p className={`mt-1 text-xl font-semibold ${selectedUrgency === 'overdue' ? 'text-red-700' : selectedUrgency === 'today' ? 'text-amber-700' : 'text-foreground'}`}>
+                  {deadlineLabel(selectedOrder, now)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Fecha informada por Falabella: {formatDateTime(selectedOrder.promisedShippingAt)}</p>
               </div>
 
-              {selectedOrder.document && (
-                <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/30 px-4 py-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">{selectedOrder.document.kind === 'FACTURA' ? 'Factura emitida' : 'Boleta emitida'}</p>
-                    <p className="font-mono text-sm font-medium text-foreground">{selectedOrder.document.number}</p>
-                  </div>
-                  <Badge variant="outline" className="rounded-md">SUNAT: {selectedOrder.document.status || 'Pendiente'}</Badge>
+              <dl className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-md border border-border p-4 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">Ingresó</dt>
+                  <dd className="mt-1 font-medium text-foreground">{formatDateTime(selectedOrder.createdAt)}</dd>
+                  <dd className="text-xs text-muted-foreground">{elapsedLabel(selectedOrder.createdAt, now)}</dd>
                 </div>
-              )}
+                <div>
+                  <dt className="text-xs text-muted-foreground">Total</dt>
+                  <dd className="mt-1 font-semibold tabular-nums text-foreground">{formatMoney(selectedOrder.total, selectedOrder.currency)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Cliente</dt>
+                  <dd className="mt-1 font-medium text-foreground">{selectedOrder.customerName || 'No informado'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">Contenido</dt>
+                  <dd className="mt-1 font-medium text-foreground">{selectedOrder.itemsCount ?? '-'} producto{selectedOrder.itemsCount === 1 ? '' : 's'}</dd>
+                  <dd className="text-xs text-muted-foreground">Requiere {selectedOrder.invoiceRequired ? 'factura' : 'boleta'}</dd>
+                </div>
+              </dl>
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setSelectedOrder(null)}>Cerrar</Button>
                 <Button onClick={() => openStore(selectedOrder)}>
-                  Gestionar en Falabella <ArrowRight />
+                  Gestionar pedido <ArrowRight />
                 </Button>
               </DialogFooter>
             </>

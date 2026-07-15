@@ -25,7 +25,7 @@ export function parseOrdersInboxFilters(input = {}) {
   if (stage && !STAGES.has(stage)) throw new Error('Etapa de pedido inválida.');
 
   const view = String(input.view || 'open').trim().toLowerCase();
-  if (!['open', 'all'].includes(view)) throw new Error('Vista de pedidos inválida.');
+  if (!['actionable', 'open', 'all'].includes(view)) throw new Error('Vista de pedidos inválida.');
 
   const days = input.days === undefined || input.days === '' ? 0 : Number(input.days);
   if (![0, 7, 30, 90].includes(days)) throw new Error('Periodo inválido.');
@@ -36,7 +36,7 @@ export function parseOrdersInboxFilters(input = {}) {
     view,
     days,
     search: String(input.search || '').trim().slice(0, 120),
-    limit: positiveInt(input.limit, 10, 100),
+    limit: positiveInt(input.limit, 10, 500),
     offset: Math.max(Number.isInteger(Number(input.offset)) ? Number(input.offset) : 0, 0),
   };
 }
@@ -57,6 +57,8 @@ const BASE_CTE = `
       fo.grand_total,
       coalesce(nullif(fo.currency, ''), 'PEN') as currency,
       fo.first_seen_at,
+      nullif(fo.raw_data->>'PromisedShippingTime', '') as promised_shipping_time,
+      nullif(fo.raw_data->>'ShippingType', '') as shipping_type,
       concat_ws(' ', nullif(fo.raw_data->>'CustomerFirstName', ''), nullif(fo.raw_data->>'CustomerLastName', ''), nullif(fo.raw_data->>'CustomerLastName2', '')) as customer_name,
       nullif(fo.raw_data->>'ItemsCount', '') as items_count,
       doc.document_id,
@@ -115,6 +117,8 @@ function normalizeOrder(row) {
     createdAt: row.falabella_created_at,
     updatedAt: row.falabella_updated_at,
     firstSeenAt: row.first_seen_at,
+    promisedShippingAt: falabellaUtcDate(row.promised_shipping_time),
+    shippingType: row.shipping_type || '',
     falabellaStatus: row.falabella_status,
     invoiceRequired: row.invoice_required,
     total: Number(row.grand_total || 0),
@@ -143,7 +147,11 @@ export async function listOrdersInbox(input = {}, db) {
       `${BASE_CTE}
        select *, count(*) over()::int as total_count
        from base_orders
-       where ($4::text = 'all' or stage <> 'completado')
+       where (
+         $4::text = 'all'
+         or ($4::text = 'open' and stage <> 'completado')
+         or ($4::text = 'actionable' and lower(falabella_status) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)')
+       )
          and ($5::text is null or stage = $5)
        order by falabella_created_at desc nulls last, id desc
        limit $6 offset $7`,
@@ -207,6 +215,15 @@ export async function listOrdersInbox(input = {}, db) {
     lastSyncedAt: syncResult.rows[0]?.last_synced_at || null,
     filters,
   };
+}
+
+function falabellaUtcDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  const withZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`;
+  const date = new Date(withZone);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 export async function syncAllOrdersInbox(dependencies = {}) {
