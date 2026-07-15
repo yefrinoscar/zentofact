@@ -8,6 +8,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarDays,
+  Clock3,
   FileCheck2,
   FileText,
   RefreshCw,
@@ -341,8 +342,8 @@ function SkeletonDashboard() {
   return (
     <div className="space-y-5 animate-pulse">
       <div className="h-20 rounded-2xl bg-muted" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-40 rounded-2xl bg-muted" />)}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-40 rounded-2xl bg-muted" />)}
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="h-[420px] rounded-2xl bg-muted xl:col-span-2" />
@@ -485,7 +486,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <SalesSummaryCard
           title={period === 'month' ? 'Ventas del mes' : 'Ventas del periodo'}
           gross={Number(summary.grossSales || 0)}
@@ -499,6 +500,12 @@ export default function Dashboard() {
           detail="Ventas con comprobante aceptado por SUNAT"
           change={data?.changes?.acceptedDocuments}
           icon={ShoppingBag}
+        />
+        <KpiCard
+          title="Pedidos pendientes"
+          value={integer.format(summary.pendingOrders || 0)}
+          detail="Pedidos abiertos actualmente en Falabella"
+          icon={Clock3}
         />
         <KpiCard
           title="Ticket promedio"

@@ -95,6 +95,7 @@ function normalizeSummary(raw = {}) {
     facturas: numeric(raw.facturas),
     averageTicket: numeric(raw.averageTicket),
     activeCompanies: numeric(raw.activeCompanies),
+    pendingOrders: numeric(raw.pendingOrders),
   };
   return result;
 }
@@ -177,6 +178,18 @@ const DASHBOARD_SQL = `
         WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
       ), 0) AS accepted_documents
     FROM previous_metrics
+  ),
+  pending_orders AS (
+    SELECT COUNT(*) AS count
+    FROM falabella_orders fo
+    JOIN companies c ON c.id = fo.company_id AND c.activo IS NOT FALSE
+    WHERE ($5::int IS NULL OR fo.company_id = $5)
+      AND (
+        fo.status = 'pending'
+        OR fo.status LIKE 'pending|%'
+        OR fo.status LIKE '%|pending'
+        OR fo.status LIKE '%|pending|%'
+      )
   ),
   sales_daily AS (
     SELECT day,
@@ -262,7 +275,8 @@ const DASHBOARD_SQL = `
         'boletas', boletas,
         'facturas', facturas,
         'averageTicket', CASE WHEN accepted_documents > 0 THEN gross_sales / accepted_documents ELSE 0 END,
-        'activeCompanies', active_companies
+        'activeCompanies', active_companies,
+        'pendingOrders', (SELECT count FROM pending_orders)
       ) FROM current_summary
     ) AS summary,
     (
