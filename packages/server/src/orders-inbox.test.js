@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listOrdersInbox, parseOrdersInboxFilters, syncAllOrdersInbox } from './orders-inbox.js';
+import { deliveryCycleWindows, listFalabellaInboxCompanies, listOrdersInbox, parseOrdersInboxFilters, syncAllOrdersInbox } from './orders-inbox.js';
 
 test('normaliza filtros seguros para la bandeja', () => {
   assert.deepEqual(parseOrdersInboxFilters({
@@ -27,6 +27,20 @@ test('acepta la vista operativa y permite cargar el tablero completo', () => {
   assert.equal(filters.limit, 500);
 });
 
+test('calcula los turnos de 5pm a mediodía y de mediodía a 5pm en Lima', () => {
+  const evening = deliveryCycleWindows('2026-07-16T04:00:00Z');
+  assert.deepEqual(evening, [
+    { key: 'evening_to_noon', from: '2026-07-15T22:00:00.000Z', to: '2026-07-16T17:00:00.000Z', state: 'active' },
+    { key: 'noon_to_evening', from: '2026-07-16T17:00:00.000Z', to: '2026-07-16T22:00:00.000Z', state: 'upcoming' },
+  ]);
+  const afternoon = deliveryCycleWindows('2026-07-16T18:00:00Z');
+  assert.equal(afternoon[0].state, 'completed');
+  assert.equal(afternoon[1].state, 'active');
+  const exactNoon = deliveryCycleWindows('2026-07-16T17:00:00Z');
+  assert.equal(exactNoon[0].state, 'completed');
+  assert.equal(exactNoon[1].state, 'active');
+});
+
 test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   const calls = [];
   const db = {
@@ -41,7 +55,13 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         falabella_status: 'ready_to_ship', invoice_required: false, grand_total: '149.90', currency: 'PEN',
         customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 1,
       }] };
-      if (compact.includes('max(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
+      if (compact.includes('min(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
+      if (compact.includes('from falabella_order_lifecycle')) return { rows: [{
+        window_key: 'evening_to_noon', deliveries: 3,
+        preparation_measured: 3, preparation_avg: 42, preparation_min: 20, preparation_max: 70,
+        handoff_measured: 2, handoff_avg: 18, handoff_min: 10, handoff_max: 26,
+        total_measured: 3, total_avg: 60, total_min: 35, total_max: 88,
+      }] };
       if (compact.includes('group by company_id, company_name')) return { rows: [{
         company_id: 7, company_name: 'Tienda Centro', total: 4, open: 3, open_amount: '399.80',
       }] };
@@ -60,8 +80,12 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(result.summary.open, 3);
   assert.equal(result.summary.byCompany[0].companyName, 'Tienda Centro');
   assert.equal(result.totalCount, 1);
+  assert.equal(result.deliveryMetrics.windows[0].deliveries, 3);
+  assert.equal(result.deliveryMetrics.windows[0].handoff.averageMinutes, 18);
+  assert.equal(result.deliveryMetrics.windows[1].deliveries, 0);
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
+  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
 });
 
 test('sincroniza solo tiendas activas con credenciales y conserva errores por tienda', async () => {
@@ -82,4 +106,20 @@ test('sincroniza solo tiendas activas con credenciales y conserva errores por ti
   assert.equal(result.stores, 2);
   assert.equal(result.successful, 1);
   assert.equal(result.failed, 1);
+});
+
+test('lista todas las tiendas Falabella aunque no tengan pedidos pendientes', async () => {
+  const result = await listFalabellaInboxCompanies({
+    listPublicCompanies: async () => [
+      { id: 1, nombre: 'Higher', activo: true, hasFalabellaCredentials: true },
+      { id: 2, nombre: 'Runapuma', activo: true, hasFalabellaCredentials: true },
+      { id: 3, nombre: 'Sin API', activo: true, hasFalabellaCredentials: false },
+      { id: 4, nombre: 'Inactiva', activo: false, hasFalabellaCredentials: true },
+    ],
+  });
+
+  assert.deepEqual(result, [
+    { id: 1, name: 'Higher' },
+    { id: 2, name: 'Runapuma' },
+  ]);
 });

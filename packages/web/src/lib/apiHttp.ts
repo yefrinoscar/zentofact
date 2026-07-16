@@ -93,6 +93,7 @@ const apiHttp = {
   // Bandeja consolidada de pedidos
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>
     req(`/orders-inbox${qs(filter)}`),
+  getOrdersInboxCompanies: () => req('/orders-inbox/companies'),
   syncOrdersInbox: () => req('/orders-inbox/sync', { method: 'POST' }),
 
   // Empresas
@@ -198,6 +199,9 @@ const apiHttp = {
   falabellaApiGetFeedStatus: (companyId: number, feedId: string) => req(`/falabella/${companyId}/feeds/${encodeURIComponent(feedId)}`),
   falabellaApiMonthSummary: (companyId: number, month: string) => req(`/falabella/${companyId}/month-summary${qs({ month })}`),
   falabellaApiGetOrderItems: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${orderId}/items`),
+  falabellaApiSetReadyToShip: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${encodeURIComponent(orderId)}/ready-to-ship`, { method: 'POST', body: '{}' }),
+  falabellaApiGetShippingLabel: (companyId: number, orderId: string | number) => req(`/falabella/${companyId}/orders/${encodeURIComponent(orderId)}/shipping-label`),
+  falabellaApiGetShippingLabelsA4: (orders: Array<{ companyId: number; orderId: string; orderNumber: string }>) => req('/falabella/shipping-labels/a4', { method: 'POST', body: JSON.stringify({ orders }) }),
   falabellaApiBuildBoletaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-boleta-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
   falabellaApiBuildFacturaVenta: (companyId: number, order: any) => req(`/falabella/${companyId}/build-factura-venta`, { method: 'POST', body: JSON.stringify({ order }) }),
   falabellaApiResolveOrderIds: (payload: any) => req(`/falabella/${payload.companyId}/resolve-order-ids`, { method: 'POST', body: JSON.stringify({ entries: payload.entries }) }),

@@ -26,6 +26,7 @@ await autoEmit.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const dashboard = await import('./dashboard.js');
+const shippingLabelSheet = await import('./shipping-label-sheet.js');
 dashboard.startDashboardRefreshLoop();
 
 const app = new Hono();
@@ -105,8 +106,15 @@ const moduleGuards = [
   ['/branches', 'companies'],
 ];
 for (const [prefix, perm] of moduleGuards) {
-  app.use(prefix, requirePermission(perm));
-  app.use(`${prefix}/*`, requirePermission(perm));
+  const permissionGuard = requirePermission(perm);
+  const readOnlyPostGuard = requirePermission(perm, { readOnly: true });
+  const guard = (c, next) => (
+    c.req.path === '/falabella/shipping-labels/a4'
+      ? readOnlyPostGuard(c, next)
+      : permissionGuard(c, next)
+  );
+  app.use(prefix, guard);
+  app.use(`${prefix}/*`, guard);
 }
 
 const ok = (c, data, status = 200) => c.json(data, status);
@@ -162,8 +170,16 @@ app.get('/orders-inbox', async (c) => {
   try { return ok(c, await ordersInbox.listOrdersInbox(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/orders-inbox/companies', async (c) => {
+  try { return ok(c, await ordersInbox.listFalabellaInboxCompanies()); }
+  catch (e) { return fail(c, e); }
+});
 app.post('/orders-inbox/sync', async (c) => {
-  try { return ok(c, await ordersInbox.syncAllOrdersInbox()); }
+  try {
+    const result = await ordersInbox.syncAllOrdersInbox();
+    dashboard.clearDashboardResponseCache();
+    return ok(c, result);
+  }
   catch (e) { return fail(c, e, 400); }
 });
 
@@ -330,6 +346,92 @@ app.get('/falabella/:companyId/feeds/:feedId', async (c) => {
 app.get('/falabella/:companyId/orders/:orderId/items', async (c) => {
   try { return ok(c, await core.falabellaGetOrderItems({ companyId: Number(c.req.param('companyId')), orderId: c.req.param('orderId') })); }
   catch (e) { return fail(c, e); }
+});
+app.post('/falabella/:companyId/orders/:orderId/ready-to-ship', async (c) => {
+  const db = await core.pool.connect();
+  try {
+    const companyId = Number(c.req.param('companyId'));
+    const orderId = c.req.param('orderId');
+    await db.query('begin');
+    await db.query('select pg_advisory_xact_lock($1,$2)', [0x46414c41, companyId]);
+    const current = (await db.query(
+      'select status from falabella_orders where company_id=$1 and order_id=$2 for update',
+      [companyId, orderId],
+    )).rows[0];
+    if (/(^|\|)(shipped|delivered)(\||$)/i.test(String(current?.status || ''))) {
+      await db.query('rollback');
+      return c.json({ error: 'El pedido ya fue enviado a Falabella. Sincroniza la bandeja para ver su estado actual.' }, 409);
+    }
+    const result = await core.falabellaSetStatusToReadyToShip({ companyId, orderId });
+    if (result?.error) {
+      await db.query('rollback');
+      const providerStatus = Number(result.status || 0);
+      const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : providerStatus >= 400 ? providerStatus : 400;
+      return c.json({ error: result.error }, status);
+    }
+    await db.query(
+      `update falabella_orders
+       set status='ready_to_ship',
+           raw_data=jsonb_set(coalesce(raw_data, '{}'::jsonb), '{Statuses}', to_jsonb('ready_to_ship'::text), true),
+           last_seen_at=now(), synchronized_at=now()
+       where company_id=$1 and order_id=$2`,
+      [companyId, orderId],
+    );
+    await db.query(
+      `insert into falabella_order_lifecycle (
+         company_id, order_id, order_number, current_status, pending_at,
+         ready_to_ship_at, last_provider_update_at, first_observed_at, last_observed_at
+       )
+       select company_id, order_id, order_number, 'ready_to_ship',
+         coalesce(falabella_created_at, first_seen_at),
+         case when $3::boolean then null else now() end,
+         case when $3::boolean then falabella_updated_at else now() end,
+         first_seen_at, now()
+       from falabella_orders where company_id=$1 and order_id=$2
+       on conflict (company_id, order_id) do update set
+         current_status='ready_to_ship',
+         pending_at=coalesce(falabella_order_lifecycle.pending_at, excluded.pending_at),
+         ready_to_ship_at=coalesce(falabella_order_lifecycle.ready_to_ship_at, excluded.ready_to_ship_at),
+         last_provider_update_at=excluded.last_provider_update_at,
+         last_observed_at=now()`,
+      [companyId, orderId, Boolean(result.alreadyReady)],
+    );
+    await db.query('commit');
+    dashboard.clearDashboardResponseCache();
+    return ok(c, result);
+  } catch (e) {
+    await db.query('rollback').catch(() => {});
+    return fail(c, e);
+  } finally {
+    db.release();
+  }
+});
+app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
+  try {
+    const result = await core.falabellaGetShippingLabel({ companyId: Number(c.req.param('companyId')), orderId: c.req.param('orderId') });
+    if (result?.error) {
+      const providerStatus = Number(result.status || 0);
+      const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : providerStatus >= 400 ? providerStatus : 400;
+      return c.json({ error: result.error }, status);
+    }
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, result);
+  } catch (e) { return fail(c, e); }
+});
+app.post('/falabella/shipping-labels/a4', async (c) => {
+  try {
+    const { orders } = await c.req.json();
+    const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
+      orders,
+      ({ companyId, orderId }) => core.falabellaGetShippingLabel({ companyId, orderId }),
+    );
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, result);
+  } catch (e) {
+    const providerStatus = Number(e?.providerStatus || 0);
+    const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : 400;
+    return fail(c, e, status);
+  }
 });
 app.post('/falabella/:companyId/build-boleta-venta', async (c) => {
   try { const { order } = await c.req.json(); return ok(c, await core.falabellaBuildBoletaVenta({ companyId: Number(c.req.param('companyId')), order })); }

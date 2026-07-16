@@ -142,13 +142,13 @@ export function requireCsrf() {
   };
 }
 
-export function requirePermission(permissionKey) {
+export function requirePermission(permissionKey, options = {}) {
   return async (c, next) => {
     const user = c.get('user');
     if (!userHasPermission(user, permissionKey)) {
       return c.json({ error: 'Sin permiso' }, 403);
     }
-    if (String(user?.role || '') === 'viewer' && UNSAFE_METHODS.has(c.req.method)) {
+    if (!options.readOnly && String(user?.role || '') === 'viewer' && UNSAFE_METHODS.has(c.req.method)) {
       return c.json({ error: 'Perfil de solo lectura' }, 403);
     }
     return next();

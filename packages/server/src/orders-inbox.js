@@ -41,6 +41,50 @@ export function parseOrdersInboxFilters(input = {}) {
   };
 }
 
+export function deliveryCycleWindows(nowInput = new Date()) {
+  const now = new Date(nowInput);
+  if (Number.isNaN(now.getTime())) throw new Error('Fecha inválida para métricas de despacho.');
+  const limaClock = new Date(now.getTime() - 5 * 60 * 60_000);
+  const cycleDay = new Date(Date.UTC(
+    limaClock.getUTCFullYear(),
+    limaClock.getUTCMonth(),
+    limaClock.getUTCDate() - (limaClock.getUTCHours() < 17 ? 1 : 0),
+  ));
+  const cycleStart = new Date(Date.UTC(
+    cycleDay.getUTCFullYear(), cycleDay.getUTCMonth(), cycleDay.getUTCDate(), 22,
+  ));
+  const noonBoundary = new Date(cycleStart.getTime() + 19 * 60 * 60_000);
+  const cycleEnd = new Date(cycleStart.getTime() + 24 * 60 * 60_000);
+  const stateFor = (from, to) => now < from ? 'upcoming' : now >= to ? 'completed' : 'active';
+  return [
+    { key: 'evening_to_noon', from: cycleStart.toISOString(), to: noonBoundary.toISOString(), state: stateFor(cycleStart, noonBoundary) },
+    { key: 'noon_to_evening', from: noonBoundary.toISOString(), to: cycleEnd.toISOString(), state: stateFor(noonBoundary, cycleEnd) },
+  ];
+}
+
+function durationMetric(row, prefix) {
+  return {
+    measured: Number(row?.[`${prefix}_measured`] || 0),
+    averageMinutes: row?.[`${prefix}_avg`] == null ? null : Number(row[`${prefix}_avg`]),
+    minMinutes: row?.[`${prefix}_min`] == null ? null : Number(row[`${prefix}_min`]),
+    maxMinutes: row?.[`${prefix}_max`] == null ? null : Number(row[`${prefix}_max`]),
+  };
+}
+
+function normalizeDeliveryMetrics(rows, windows) {
+  const byWindow = new Map(rows.map((row) => [row.window_key, row]));
+  return windows.map((window) => {
+    const row = byWindow.get(window.key) || {};
+    return {
+      ...window,
+      deliveries: Number(row.deliveries || 0),
+      preparation: durationMetric(row, 'preparation'),
+      handoff: durationMetric(row, 'handoff'),
+      total: durationMetric(row, 'total'),
+    };
+  });
+}
+
 const BASE_CTE = `
   with base_orders as (
     select
@@ -139,10 +183,11 @@ function normalizeOrder(row) {
 export async function listOrdersInbox(input = {}, db) {
   const filters = parseOrdersInboxFilters(input);
   const target = db || (await loadCore()).pool;
+  const deliveryWindows = deliveryCycleWindows();
   const baseValues = [filters.companyId, filters.days, filters.search];
   const listValues = [...baseValues, filters.view, filters.stage, filters.limit, filters.offset];
 
-  const [ordersResult, summaryResult, syncResult] = await Promise.all([
+  const [ordersResult, summaryResult, syncResult, deliveryMetricsResult] = await Promise.all([
     target.query(
       `${BASE_CTE}
        select *, count(*) over()::int as total_count
@@ -150,7 +195,7 @@ export async function listOrdersInbox(input = {}, db) {
        where (
          $4::text = 'all'
          or ($4::text = 'open' and stage <> 'completado')
-         or ($4::text = 'actionable' and lower(falabella_status) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)')
+          or ($4::text = 'actionable' and lower(falabella_status) ~ '(^|\\|)(pending|ready_to_ship|shipped)(\\||$)')
        )
          and ($5::text is null or stage = $5)
        order by falabella_created_at desc nulls last, id desc
@@ -172,10 +217,41 @@ export async function listOrdersInbox(input = {}, db) {
       baseValues,
     ),
     target.query(
-      `select max(last_successful_sync_at) as last_synced_at
+      `select min(last_successful_sync_at) as last_synced_at
        from falabella_sync_state
        where ($1::int is null or company_id = $1)`,
       [filters.companyId],
+    ),
+    target.query(
+      `select
+         case when shipped_at < $3::timestamptz then 'evening_to_noon' else 'noon_to_evening' end as window_key,
+         count(*)::int as deliveries,
+         count(*) filter (where ready_to_ship_at >= pending_at)::int as preparation_measured,
+         round(avg(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_avg,
+         round(min(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_min,
+         round(max(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_max,
+         count(*) filter (where shipped_at >= ready_to_ship_at)::int as handoff_measured,
+         round(avg(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_avg,
+         round(min(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_min,
+         round(max(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_max,
+         count(*) filter (where shipped_at >= pending_at)::int as total_measured,
+         round(avg(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_avg,
+         round(min(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_min,
+         round(max(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_max
+       from falabella_order_lifecycle
+       where ($1::int is null or company_id=$1)
+         and shipped_at >= $2::timestamptz and shipped_at < $4::timestamptz
+       group by window_key`,
+      [filters.companyId, deliveryWindows[0].from, deliveryWindows[0].to, deliveryWindows[1].to],
     ),
   ]);
 
@@ -213,8 +289,25 @@ export async function listOrdersInbox(input = {}, db) {
       })),
     },
     lastSyncedAt: syncResult.rows[0]?.last_synced_at || null,
+    deliveryMetrics: {
+      updatedAt: new Date().toISOString(),
+      windows: normalizeDeliveryMetrics(deliveryMetricsResult.rows, deliveryWindows),
+    },
     filters,
   };
+}
+
+export async function listFalabellaInboxCompanies(dependencies = {}) {
+  const core = dependencies.listPublicCompanies ? null : await loadCore();
+  const listPublicCompanies = dependencies.listPublicCompanies || core.listPublicCompanies;
+  const companies = await listPublicCompanies();
+  return companies
+    .filter((company) => company.activo !== false && company.hasFalabellaCredentials)
+    .map((company) => ({
+      id: Number(company.id),
+      name: String(company.nombre || company.nombreComercial || company.razonSocial || company.ruc || `Tienda ${company.id}`),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 }
 
 function falabellaUtcDate(value) {
