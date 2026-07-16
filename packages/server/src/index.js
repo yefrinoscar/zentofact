@@ -27,7 +27,6 @@ const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
-dashboard.startDashboardRefreshLoop();
 
 const app = new Hono();
 
@@ -152,7 +151,6 @@ app.post('/me/logout', async (c) => {
 // ── Dashboard consolidado ──
 app.get('/dashboard', async (c) => {
   try {
-    await dashboard.refreshDashboardIfStale();
     const data = await dashboard.getDashboard(c.req.query());
     c.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=240');
     return ok(c, data);

@@ -8,11 +8,12 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarDays,
-  FileCheck2,
-  FileText,
+  ChartNoAxesCombined,
+  CircleDollarSign,
   RefreshCw,
+  RotateCcw,
   ShoppingBag,
-  TrendingUp,
+  Store,
   WalletCards,
 } from 'lucide-react';
 import {
@@ -21,9 +22,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -34,11 +33,6 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Tooltip as StatusTooltip,
-  TooltipContent as StatusTooltipContent,
-  TooltipTrigger as StatusTooltipTrigger,
-} from '@/components/ui/tooltip';
 import {
   Select,
   SelectContent,
@@ -64,6 +58,21 @@ type DashboardFilters = {
   companyId?: number;
 };
 
+type CompanyPerformance = {
+  id: number;
+  name: string;
+  netSales: number;
+  cancelledSales: number;
+  orders: number;
+  cancelledOrders: number;
+  totalOrders: number;
+  previousNetSales: number;
+  averageTicket: number;
+  salesShare: number;
+  salesChange: number | null;
+  cancellationRate: number;
+};
+
 const money = new Intl.NumberFormat('es-PE', {
   style: 'currency',
   currency: 'PEN',
@@ -87,45 +96,6 @@ const dateTimeLabel = new Intl.DateTimeFormat('es-PE', {
   timeStyle: 'short',
   timeZone: 'America/Lima',
 });
-
-type DocumentStatus = 'ACEPTADO' | 'REGISTRADO' | 'PENDIENTE' | 'RECHAZADO' | 'ANULADO';
-
-const DOCUMENT_STATUS: Record<DocumentStatus, { label: string; description: string; dot: string }> = {
-  ACEPTADO: {
-    label: 'Aceptados',
-    description: 'Comprobantes aceptados por SUNAT.',
-    dot: 'bg-emerald-500',
-  },
-  REGISTRADO: {
-    label: 'Registrados',
-    description: 'Comprobantes guardados desde una fuente externa, sin aceptación SUNAT confirmada.',
-    dot: 'bg-slate-500',
-  },
-  PENDIENTE: {
-    label: 'Pendientes',
-    description: 'Comprobantes en espera de envío o respuesta de SUNAT.',
-    dot: 'bg-amber-500',
-  },
-  RECHAZADO: {
-    label: 'Rechazados',
-    description: 'Comprobantes observados o rechazados por SUNAT.',
-    dot: 'bg-red-500',
-  },
-  ANULADO: {
-    label: 'Anulados',
-    description: 'Comprobantes anulados o reemplazados.',
-    dot: 'bg-slate-400',
-  },
-};
-
-function statusMeta(value: unknown) {
-  const key = String(value || '').trim().toUpperCase() as DocumentStatus;
-  return DOCUMENT_STATUS[key] || {
-    label: key ? key.charAt(0) + key.slice(1).toLocaleLowerCase('es-PE') : 'Sin estado',
-    description: key ? `Estado de origen no catalogado: ${key}.` : 'El comprobante no tiene un estado informado.',
-    dot: 'bg-slate-400',
-  };
-}
 
 function localToday() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -159,9 +129,9 @@ function rangeLabel(from: string, to: string) {
   const end = dateFromKey(to);
   if (from === to) return format(start, "d 'de' MMMM 'de' yyyy", { locale: es });
   if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
-    return `${format(start, 'd', { locale: es })} – ${format(end, "d 'de' MMMM 'de' yyyy", { locale: es })}`;
+    return `${format(start, 'd', { locale: es })} - ${format(end, "d 'de' MMMM 'de' yyyy", { locale: es })}`;
   }
-  return `${format(start, 'd MMM yyyy', { locale: es })} – ${format(end, 'd MMM yyyy', { locale: es })}`;
+  return `${format(start, 'd MMM yyyy', { locale: es })} - ${format(end, 'd MMM yyyy', { locale: es })}`;
 }
 
 function rangeFor(period: Exclude<PeriodKey, 'custom'>) {
@@ -176,9 +146,26 @@ function formatDay(value: unknown) {
   return day ? dateLabel.format(new Date(`${day}T12:00:00.000Z`)) : '';
 }
 
-function formatChange(value: number | null | undefined) {
-  if (value === null) return 'Nuevo';
-  return `${Math.abs(Number(value || 0)).toFixed(1)}%`;
+function periodDays(from: string, to: string) {
+  const start = new Date(`${from}T12:00:00.000Z`).getTime();
+  const end = new Date(`${to}T12:00:00.000Z`).getTime();
+  return Math.round((end - start) / 86_400_000) + 1;
+}
+
+function Trend({ value, inverse = false }: { value: number | null | undefined; inverse?: boolean }) {
+  if (value === undefined) return null;
+  if (value === null) return <span className="font-medium text-muted-foreground">Sin base previa</span>;
+  const rising = value >= 0;
+  const favorable = inverse ? !rising : rising;
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-0.5 font-semibold',
+      favorable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
+    )}>
+      {rising ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+      {Math.abs(value).toFixed(1)}%
+    </span>
+  );
 }
 
 function KpiCard({
@@ -187,129 +174,109 @@ function KpiCard({
   detail,
   change,
   icon: Icon,
-  accent = false,
+  warning = false,
 }: {
   title: string;
   value: string;
-  detail?: string;
+  detail: string;
   change?: number | null;
-  icon: typeof TrendingUp;
-  accent?: boolean;
+  icon: typeof ShoppingBag;
+  warning?: boolean;
 }) {
-  const positive = change == null || change >= 0;
   return (
-    <Card className={cn('gap-4 py-5', accent && 'bg-primary text-primary-foreground ring-primary/20')}>
+    <Card className="gap-4 py-5">
       <CardContent className="px-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className={cn('text-xs font-medium', accent ? 'text-primary-foreground/70' : 'text-muted-foreground')}>
-              {title}
+            <p className="text-xs font-medium text-muted-foreground">{title}</p>
+            <p className={cn(
+              'mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.035em] tabular-nums 2xl:text-2xl',
+              warning && 'text-orange-600 dark:text-orange-400',
+            )}>
+              {value}
             </p>
-            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.035em] tabular-nums 2xl:text-2xl">{value}</p>
           </div>
           <span className={cn(
             'grid size-9 shrink-0 place-items-center rounded-xl',
-            accent ? 'bg-white/12 text-white' : 'bg-primary/8 text-primary dark:bg-primary/15',
+            warning ? 'bg-orange-500/10 text-orange-600' : 'bg-primary/8 text-primary dark:bg-primary/15',
           )}>
             <Icon className="size-[18px]" />
           </span>
         </div>
-        {(detail || change !== undefined) && (
-          <div className="mt-4 flex items-center justify-between gap-2 text-xs">
-            <span className={accent ? 'text-primary-foreground/65' : 'text-muted-foreground'}>{detail || ''}</span>
-            {change !== undefined && (
-              <span className={cn(
-                'inline-flex items-center gap-0.5 font-semibold',
-                accent ? 'text-white' : positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
-              )}>
-                {positive ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                {formatChange(change)}
-              </span>
-            )}
-          </div>
-        )}
+        <div className="mt-4 flex min-h-4 items-center justify-between gap-2 text-xs">
+          <span className="truncate text-muted-foreground">{detail}</span>
+          <Trend value={change} inverse={warning} />
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function SalesSummaryCard({
-  title,
-  net,
-}: {
-  title: string;
-  net: number;
-}) {
+function SalesSummaryCard({ summary, change }: { summary: any; change?: number | null }) {
   return (
     <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
       <CardContent className="px-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-medium text-primary-foreground/70">{title}</p>
-            <p className="mt-3 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums">{money.format(net)}</p>
+            <p className="text-xs font-medium text-primary-foreground/70">Ventas netas</p>
+            <p className="mt-2 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums 2xl:text-[1.7rem]">
+              {money.format(summary.netSales || 0)}
+            </p>
           </div>
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
-            <TrendingUp className="size-[18px]" />
+            <CircleDollarSign className="size-[18px]" />
           </span>
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-2 text-xs">
+          <span className="text-primary-foreground/65">{money.format(summary.dailyAverage || 0)} por día</span>
+          {change === null ? (
+            <span className="font-medium text-primary-foreground/65">Sin base previa</span>
+          ) : (
+            <span className="inline-flex items-center gap-0.5 font-semibold text-white">
+              {(change || 0) >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+              {Math.abs(change || 0).toFixed(1)}%
+            </span>
+          )}
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function SalesTooltip({ active, payload, label }: any) {
+function SalesTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload || {};
   return (
-    <div className="min-w-48 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
-      <p className="mb-2 font-medium text-foreground">{formatDay(label)}</p>
-      <div className="space-y-1.5 text-muted-foreground">
-        <p className="flex justify-between gap-6"><span>Ventas aceptadas</span><strong className="text-foreground">{money.format(row.grossSales || 0)}</strong></p>
-        <p className="flex justify-between gap-6"><span>Notas de crédito</span><strong className="text-orange-600">−{money.format(row.creditNotes || 0)}</strong></p>
-        <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Después de notas de crédito</span><strong className="text-primary">{money.format(row.netSales || 0)}</strong></p>
+    <div className="min-w-56 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-6">
+          <span className="text-muted-foreground">{formatDay(row.day)}</span>
+          <strong className="text-primary">{money.format(row.netSales || 0)}</strong>
+        </div>
+        <div className="flex items-center justify-between gap-6">
+          <span className="text-muted-foreground">{formatDay(row.previousDay)}</span>
+          <strong>{money.format(row.previousSales || 0)}</strong>
+        </div>
+        <div className="flex items-center justify-between gap-6 border-t border-border pt-2">
+          <span className="text-muted-foreground">Pedidos del día</span>
+          <strong>{integer.format(row.orders || 0)}</strong>
+        </div>
       </div>
     </div>
   );
 }
 
-function DocumentsTooltip({ active, payload, label }: any) {
+function CompanyTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
-  const row = payload[0]?.payload || {};
-  return (
-    <div className="min-w-40 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
-      <p className="mb-2 font-medium text-foreground">{formatDay(label)}</p>
-      <p className="flex justify-between gap-6 text-muted-foreground"><span>Boletas</span><strong className="text-sky-600">{integer.format(row.boletas || 0)}</strong></p>
-      <p className="mt-1 flex justify-between gap-6 text-muted-foreground"><span>Facturas</span><strong className="text-violet-600">{integer.format(row.facturas || 0)}</strong></p>
-    </div>
-  );
-}
-
-function DocumentMixTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const item = payload[0] || {};
-  const label = String(item.name || item.payload?.type || 'Comprobantes');
-  const isInvoice = label.toLocaleLowerCase('es-PE').includes('factura');
-  return (
-    <div className="min-w-40 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
-      <p className="font-medium text-foreground">{label}</p>
-      <div className="mt-2 flex items-center justify-between gap-8">
-        <span className="text-muted-foreground">Cantidad</span>
-        <strong className={isInvoice ? 'text-violet-600' : 'text-sky-600'}>{integer.format(Number(item.value || 0))}</strong>
-      </div>
-    </div>
-  );
-}
-
-function CompanyRankingTooltip({ active, payload }: any) {
-  if (!active || !payload?.length) return null;
-  const company = payload[0]?.payload || {};
+  const company = payload[0]?.payload as CompanyPerformance;
   return (
     <div className="min-w-60 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
       <p className="mb-2 max-w-64 font-medium text-foreground">{company.name}</p>
       <div className="space-y-1.5 text-muted-foreground">
-        <p className="flex justify-between gap-6"><span>Ventas aceptadas</span><strong className="text-foreground">{money.format(company.grossSales || 0)}</strong></p>
-        <p className="flex justify-between gap-6"><span>Notas de crédito</span><strong className="text-orange-600">−{money.format(company.creditNotes || 0)}</strong></p>
-        <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Después de notas de crédito</span><strong className="text-primary">{money.format(company.netSales || 0)}</strong></p>
+        <p className="flex justify-between gap-6"><span>Ventas netas</span><strong className="text-primary">{money.format(company.netSales)}</strong></p>
+        <p className="flex justify-between gap-6"><span>Participación</span><strong className="text-foreground">{company.salesShare.toFixed(1)}%</strong></p>
+        <p className="flex justify-between gap-6"><span>Ticket promedio</span><strong className="text-foreground">{money.format(company.averageTicket)}</strong></p>
+        <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Cancelaciones</span><strong className="text-orange-600">{money.format(company.cancelledSales)}</strong></p>
       </div>
     </div>
   );
@@ -317,14 +284,14 @@ function CompanyRankingTooltip({ active, payload }: any) {
 
 function SkeletonDashboard() {
   return (
-    <div className="space-y-5 animate-pulse">
+    <div className="animate-pulse space-y-5">
       <div className="h-20 rounded-2xl bg-muted" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-40 rounded-2xl bg-muted" />)}
+        {Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-36 rounded-2xl bg-muted" />)}
       </div>
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-5">
+        <div className="h-[420px] rounded-2xl bg-muted xl:col-span-3" />
         <div className="h-[420px] rounded-2xl bg-muted xl:col-span-2" />
-        <div className="h-[420px] rounded-2xl bg-muted" />
       </div>
     </div>
   );
@@ -348,18 +315,18 @@ export default function Dashboard() {
     placeholderData: (previous) => previous,
   });
   const refresh = useMutation({
-    mutationFn: () => api.refreshDashboard(),
+    mutationFn: () => api.syncOrdersInbox(),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
   const data: any = query.data;
 
-  const rankingChart = useMemo(() => (data?.companyRanking || []).slice(0, 6).reverse(), [data?.companyRanking]);
-  const statusTotal = useMemo(
-    () => (data?.statusBreakdown || []).reduce((sum: number, item: any) => sum + Number(item.count || 0), 0),
-    [data?.statusBreakdown],
+  const ranking = useMemo(
+    () => (data?.companyRanking || []).filter((company: CompanyPerformance) => company.totalOrders > 0),
+    [data?.companyRanking],
   );
+  const rankingChart = useMemo(() => ranking.slice(0, 7).reverse(), [ranking]);
 
   const choosePeriod = (next: Exclude<PeriodKey, 'custom'>) => {
     const nextRange = rangeFor(next);
@@ -390,125 +357,126 @@ export default function Dashboard() {
   }
 
   const summary = data?.summary || {};
-  const mixTotal = Number(summary.boletas || 0) + Number(summary.facturas || 0);
-  const monthName = format(dateFromKey(filters.from), 'MMMM yyyy', { locale: es });
+  const days = periodDays(filters.from, filters.to);
+  const comparisonLabel = `vs. ${rangeLabel(data?.filters?.previousFrom || filters.from, data?.filters?.previousTo || filters.to)}`;
 
   return (
     <div className="space-y-5 pb-8">
-      <section>
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted/60 p-1">
-            {([
-              ['7d', '7 días'],
-              ['30d', '30 días'],
-              ['month', 'Este mes'],
-              ['90d', '90 días'],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => choosePeriod(key)}
-                className={cn(
-                  'rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
-                  period === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="h-9 w-full justify-start rounded-xl bg-background px-3 text-left text-xs font-normal sm:w-[270px]"
-                >
-                  <CalendarDays className="size-4 text-muted-foreground" />
-                  <span className="truncate">{rangeLabel(filters.from, filters.to)}</span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-auto max-w-[calc(100vw-2rem)] overflow-auto p-1.5">
-                <Calendar
-                  mode="range"
-                  selected={selectedRange}
-                  onSelect={chooseRange}
-                  defaultMonth={selectedRange.from}
-                  numberOfMonths={2}
-                  locale={es}
-                  disabled={{ after: dateFromKey(localToday()) }}
-                  autoFocus
-                />
-              </PopoverContent>
-            </Popover>
-
-            <Select
-              value={filters.companyId ? String(filters.companyId) : 'all'}
-              onValueChange={(value) => setFilters((current) => ({
-                ...current,
-                companyId: value === 'all' ? undefined : Number(value),
-              }))}
+      <section className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-1 rounded-xl bg-muted/60 p-1">
+          {([
+            ['7d', '7 días'],
+            ['30d', '30 días'],
+            ['month', 'Este mes'],
+            ['90d', '90 días'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => choosePeriod(key)}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
+                period === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
             >
-              <SelectTrigger className="w-full sm:w-[210px]"><SelectValue placeholder="Todas las empresas" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las empresas</SelectItem>
-                {(data?.companies || []).map((company: any) => <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+              {label}
+            </button>
+          ))}
+        </div>
 
-            <Button variant="outline" size="icon" onClick={() => refresh.mutate()} disabled={refresh.isPending || query.isFetching} title="Actualizar datos">
-              <RefreshCw className={cn('size-4', (refresh.isPending || query.isFetching) && 'animate-spin')} />
-            </Button>
-          </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="h-9 w-full justify-start rounded-xl bg-background px-3 text-left text-xs font-normal sm:w-[270px]">
+                <CalendarDays className="size-4 text-muted-foreground" />
+                <span className="truncate">{rangeLabel(filters.from, filters.to)}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto max-w-[calc(100vw-2rem)] overflow-auto p-1.5">
+              <Calendar
+                mode="range"
+                selected={selectedRange}
+                onSelect={chooseRange}
+                defaultMonth={selectedRange.from}
+                numberOfMonths={2}
+                locale={es}
+                disabled={{ after: dateFromKey(localToday()) }}
+                autoFocus
+              />
+            </PopoverContent>
+          </Popover>
+
+          <Select
+            value={filters.companyId ? String(filters.companyId) : 'all'}
+            onValueChange={(value) => setFilters((current) => ({
+              ...current,
+              companyId: value === 'all' ? undefined : Number(value),
+            }))}
+          >
+            <SelectTrigger className="w-full sm:w-[210px]"><SelectValue placeholder="Todas las tiendas" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las tiendas</SelectItem>
+              {(data?.companies || []).map((company: any) => <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending || query.isFetching}
+            title="Sincronizar ventas"
+          >
+            <RefreshCw className={cn('size-4', (refresh.isPending || query.isFetching) && 'animate-spin')} />
+          </Button>
         </div>
       </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SalesSummaryCard
-          title={period === 'month' ? 'Ventas netas del mes' : 'Ventas netas'}
-          net={Number(summary.netSales || 0)}
-        />
+        <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
         <KpiCard
-          title={period === 'month' ? 'Cantidad de ventas del mes' : 'Cantidad de ventas del periodo'}
-          value={integer.format(summary.acceptedDocuments || 0)}
-          change={data?.changes?.acceptedDocuments}
+          title="Pedidos vendidos"
+          value={integer.format(summary.orders || 0)}
+          detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
+          change={data?.changes?.orders}
           icon={ShoppingBag}
         />
         <KpiCard
           title="Ticket promedio"
           value={money.format(summary.averageTicket || 0)}
-          detail="Promedio por venta"
+          detail="Ingreso promedio por pedido"
           change={data?.changes?.averageTicket}
           icon={WalletCards}
         />
         <KpiCard
-          title={`Notas de crédito ${period === 'month' ? 'del mes' : 'del periodo'}`}
-          value={money.format(summary.creditNotes || 0)}
-          detail={`${summary.grossSales ? ((summary.creditNotes / summary.grossSales) * 100).toFixed(1) : '0.0'}% de las ventas aceptadas`}
-          icon={FileText}
+          title="Ventas canceladas"
+          value={money.format(summary.cancelledSales || 0)}
+          detail={`${Number(summary.cancellationRate || 0).toFixed(1)}% de los pedidos`}
+          change={data?.changes?.cancellationRate}
+          icon={RotateCcw}
+          warning
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <div className="grid gap-4 xl:grid-cols-5">
+        <Card className="xl:col-span-3">
           <CardHeader className="gap-3 sm:grid-cols-[1fr_auto]">
             <div>
-              <p className="text-xs font-medium text-muted-foreground">Ventas después de notas de crédito {period === 'month' ? `· ${monthName}` : ''}</p>
-              <CardTitle className="mt-1 text-2xl font-semibold tracking-tight">{money.format(summary.netSales || 0)}</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Ventas aceptadas menos notas de crédito emitidas.</p>
+              <p className="text-xs font-medium text-muted-foreground">Evolución financiera</p>
+              <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Ventas netas por día</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">Compara el ritmo de ventas con el periodo inmediatamente anterior.</p>
             </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground sm:justify-end">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Después de notas de crédito</span>
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-orange-500" />Notas de crédito</span>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground sm:justify-end">
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Periodo actual</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/60" />Periodo anterior</span>
             </div>
           </CardHeader>
           <CardContent className="px-2 sm:px-4">
-            <div className="h-[320px] w-full">
+            <div className="h-[330px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data?.salesByDay || []} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.26} />
+                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.24} />
                       <stop offset="92%" stopColor="var(--primary)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
@@ -516,6 +484,7 @@ export default function Dashboard() {
                   <XAxis dataKey="day" tickFormatter={formatDay} axisLine={false} tickLine={false} tickMargin={12} minTickGap={34} fontSize={11} stroke="var(--muted-foreground)" />
                   <YAxis orientation="right" tickFormatter={(value) => compactMoney.format(value)} axisLine={false} tickLine={false} tickMargin={10} width={66} fontSize={11} stroke="var(--muted-foreground)" />
                   <Tooltip content={<SalesTooltip />} cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.45 }} />
+                  <Line type="monotone" dataKey="previousSales" stroke="var(--muted-foreground)" strokeOpacity={0.55} strokeWidth={1.75} strokeDasharray="5 5" dot={false} activeDot={false} />
                   <Area type="monotone" dataKey="netSales" stroke="var(--primary)" strokeWidth={2.5} fill="url(#salesFill)" activeDot={{ r: 5, strokeWidth: 3, stroke: 'var(--background)' }} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -523,89 +492,21 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <p className="text-xs font-medium text-muted-foreground">Composición documental</p>
-            <CardTitle>Boletas y facturas</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="relative mx-auto h-[210px] max-w-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={data?.documentMix || []} dataKey="value" nameKey="type" innerRadius={66} outerRadius={88} paddingAngle={3} strokeWidth={0}>
-                    <Cell fill="#0ea5e9" />
-                    <Cell fill="#8b5cf6" />
-                  </Pie>
-                  <Tooltip content={<DocumentMixTooltip />} wrapperStyle={{ zIndex: 20 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
-                <div><p className="text-2xl font-semibold tabular-nums">{integer.format(mixTotal)}</p><p className="text-[11px] text-muted-foreground">documentos</p></div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-sky-500/8 p-3"><p className="text-xs text-muted-foreground">Boletas</p><p className="mt-1 text-lg font-semibold text-sky-600">{integer.format(summary.boletas || 0)}</p></div>
-              <div className="rounded-xl bg-violet-500/8 p-3"><p className="text-xs text-muted-foreground">Facturas</p><p className="mt-1 text-lg font-semibold text-violet-600">{integer.format(summary.facturas || 0)}</p></div>
-            </div>
-            <div className="mt-4 space-y-2 border-t border-border pt-4">
-              {(data?.statusBreakdown || []).map((status: any) => {
-                const meta = statusMeta(status.status);
-                return (
-                  <div key={status.status} className="flex items-center justify-between text-xs">
-                    <StatusTooltip>
-                      <StatusTooltipTrigger asChild>
-                        <button type="button" className="inline-flex cursor-help items-center gap-2 text-muted-foreground hover:text-foreground">
-                          <span className={cn('size-2 rounded-full', meta.dot)} />
-                          {meta.label}
-                        </button>
-                      </StatusTooltipTrigger>
-                      <StatusTooltipContent side="left">{meta.description}</StatusTooltipContent>
-                    </StatusTooltip>
-                    <strong>{integer.format(status.count)} <span className="font-normal text-muted-foreground">· {statusTotal ? ((status.count / statusTotal) * 100).toFixed(1) : 0}%</span></strong>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-5">
-        <Card className="xl:col-span-3">
-          <CardHeader>
-            <p className="text-xs font-medium text-muted-foreground">Volumen operativo</p>
-            <CardTitle>Documentos generados por día</CardTitle>
-          </CardHeader>
-          <CardContent className="px-2 sm:px-4">
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data?.documentsByDay || []} barGap={2} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
-                  <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
-                  <XAxis dataKey="day" tickFormatter={formatDay} axisLine={false} tickLine={false} tickMargin={12} minTickGap={30} fontSize={11} stroke="var(--muted-foreground)" />
-                  <YAxis orientation="right" allowDecimals={false} axisLine={false} tickLine={false} tickMargin={10} width={34} fontSize={11} stroke="var(--muted-foreground)" />
-                  <Tooltip content={<DocumentsTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.6 }} />
-                  <Bar dataKey="boletas" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={14} />
-                  <Bar dataKey="facturas" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={14} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
         <Card className="xl:col-span-2">
           <CardHeader>
-            <p className="text-xs font-medium text-muted-foreground">Comparativo</p>
-            <CardTitle>Empresas por ventas después de notas de crédito</CardTitle>
+            <p className="text-xs font-medium text-muted-foreground">Comparativo de tiendas</p>
+            <CardTitle className="text-xl font-semibold tracking-tight">Aporte a las ventas</CardTitle>
+            <p className="text-xs text-muted-foreground">Ranking por ingreso neto en el periodo seleccionado.</p>
           </CardHeader>
           <CardContent className="px-2 sm:px-4">
-            <div className="h-[300px] w-full">
+            <div className="h-[330px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={rankingChart} layout="vertical" margin={{ top: 2, right: 42, bottom: 0, left: 8 }}>
+                <BarChart data={rankingChart} layout="vertical" margin={{ top: 2, right: 34, bottom: 0, left: 8 }}>
                   <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 6" />
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="name" width={118} axisLine={false} tickLine={false} fontSize={11} stroke="var(--muted-foreground)" tickFormatter={(value) => String(value).length > 17 ? `${String(value).slice(0, 16)}…` : String(value)} />
-                  <Tooltip content={<CompanyRankingTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.55 }} wrapperStyle={{ zIndex: 20 }} />
-                  <Bar dataKey="netSales" fill="var(--primary)" radius={[0, 6, 6, 0]} maxBarSize={22} />
+                  <XAxis type="number" tickFormatter={(value) => compactMoney.format(value)} axisLine={false} tickLine={false} fontSize={10} stroke="var(--muted-foreground)" />
+                  <YAxis type="category" dataKey="name" width={116} axisLine={false} tickLine={false} fontSize={11} stroke="var(--muted-foreground)" tickFormatter={(value) => String(value).length > 17 ? `${String(value).slice(0, 16)}...` : String(value)} />
+                  <Tooltip content={<CompanyTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.55 }} wrapperStyle={{ zIndex: 20 }} />
+                  <Bar dataKey="netSales" fill="var(--primary)" radius={[0, 6, 6, 0]} maxBarSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -616,49 +517,68 @@ export default function Dashboard() {
       <Card>
         <CardHeader className="border-b border-border/70 pb-5 sm:grid-cols-[1fr_auto]">
           <div>
-            <CardTitle>Detalle por empresa</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Ventas, documentos y actividad del periodo seleccionado.</p>
+            <p className="text-xs font-medium text-muted-foreground">Desempeño comercial</p>
+            <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Salud financiera por tienda</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Identifica qué tiendas crecen, cuánto aportan y dónde se concentra la cancelación.</p>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <CalendarDays className="size-4" />
-            {data?.dataThrough ? `Datos al ${dateTimeLabel.format(new Date(data.dataThrough))}` : 'Datos actualizados'}
+            {data?.dataThrough ? `Ventas sincronizadas al ${dateTimeLabel.format(new Date(data.dataThrough))}` : comparisonLabel}
           </div>
         </CardHeader>
         <CardContent className="px-0">
-          <Table>
+          <Table className="min-w-[940px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="pl-5">Empresa</TableHead>
-                <TableHead className="text-right">Ventas aceptadas</TableHead>
-                <TableHead className="text-right">Notas de crédito</TableHead>
-                <TableHead className="text-right">Después de notas de crédito</TableHead>
-                <TableHead className="text-right">Documentos</TableHead>
+                <TableHead className="pl-5">Tienda</TableHead>
+                <TableHead className="text-right">Ventas netas</TableHead>
+                <TableHead>Participación</TableHead>
+                <TableHead className="text-right">Vs. anterior</TableHead>
+                <TableHead className="text-right">Pedidos</TableHead>
                 <TableHead className="text-right">Ticket promedio</TableHead>
-                <TableHead className="pr-5 text-right">Días con venta</TableHead>
+                <TableHead className="pr-5 text-right">Cancelaciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(data?.companyRanking || []).map((company: any, index: number) => (
+              {ranking.map((company: CompanyPerformance, index: number) => (
                 <TableRow key={company.id}>
                   <TableCell className="pl-5 font-medium">
                     <span className="mr-3 inline-grid size-7 place-items-center rounded-lg bg-muted text-[11px] font-semibold text-muted-foreground">{index + 1}</span>
                     {company.name}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{money.format(company.grossSales)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-orange-600">{company.creditNotes ? `−${money.format(company.creditNotes)}` : money.format(0)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{money.format(company.netSales)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{integer.format(company.documents)}</TableCell>
+                  <TableCell>
+                    <div className="flex min-w-32 items-center gap-3">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(company.salesShare, 100)}%` }} />
+                      </div>
+                      <span className="w-11 text-right text-xs tabular-nums text-muted-foreground">{company.salesShare.toFixed(1)}%</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right"><Trend value={company.salesChange} /></TableCell>
+                  <TableCell className="text-right tabular-nums">{integer.format(company.orders)}</TableCell>
                   <TableCell className="text-right tabular-nums">{money.format(company.averageTicket)}</TableCell>
-                  <TableCell className="pr-5 text-right tabular-nums">{integer.format(company.activeDays)}</TableCell>
+                  <TableCell className="pr-5 text-right">
+                    <p className="tabular-nums text-orange-600 dark:text-orange-400">{money.format(company.cancelledSales)}</p>
+                    <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{company.cancellationRate.toFixed(1)}% de pedidos</p>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          {!data?.companyRanking?.length && (
-            <div className="py-14 text-center text-sm text-muted-foreground"><FileCheck2 className="mx-auto mb-3 size-8 opacity-50" />No hay empresas para este filtro.</div>
+          {!ranking.length && (
+            <div className="py-14 text-center text-sm text-muted-foreground">
+              <Store className="mx-auto mb-3 size-8 opacity-50" />
+              No hay ventas sincronizadas para este periodo.
+            </div>
           )}
         </CardContent>
       </Card>
+
+      <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+        <ChartNoAxesCombined className="size-4" />
+        Ventas netas excluye pedidos cancelados, devueltos o fallidos. {comparisonLabel}.
+      </div>
     </div>
   );
 }

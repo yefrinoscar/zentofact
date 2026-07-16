@@ -26,7 +26,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/dashboard': {
     title: 'Dashboard',
-    subtitle: 'Ventas y documentos consolidados de todas tus empresas.',
+    subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
   '/pedidos': {
     title: 'Bandeja de pedidos',

@@ -82,22 +82,16 @@ export function percentageDelta(current, previous) {
 }
 
 function normalizeSummary(raw = {}) {
-  const result = {
-    grossSales: numeric(raw.grossSales),
-    creditNotes: numeric(raw.creditNotes),
+  return {
+    grossDemand: numeric(raw.grossDemand),
     netSales: numeric(raw.netSales),
-    generatedDocuments: numeric(raw.generatedDocuments),
-    acceptedDocuments: numeric(raw.acceptedDocuments),
-    pendingDocuments: numeric(raw.pendingDocuments),
-    rejectedDocuments: numeric(raw.rejectedDocuments),
-    cancelledDocuments: numeric(raw.cancelledDocuments),
-    boletas: numeric(raw.boletas),
-    facturas: numeric(raw.facturas),
+    cancelledSales: numeric(raw.cancelledSales),
+    orders: numeric(raw.orders),
+    totalOrders: numeric(raw.totalOrders),
+    cancelledOrders: numeric(raw.cancelledOrders),
     averageTicket: numeric(raw.averageTicket),
-    activeCompanies: numeric(raw.activeCompanies),
-    pendingOrders: numeric(raw.pendingOrders),
+    activeStores: numeric(raw.activeStores),
   };
-  return result;
 }
 
 function fillDailySeries(from, to, rows, empty) {
@@ -119,193 +113,177 @@ function normalizeRows(rows = [], fields = []) {
 
 const DASHBOARD_SQL = `
   WITH
-  current_metrics AS MATERIALIZED (
-    SELECT *
-    FROM dashboard_daily_metrics
-    WHERE day BETWEEN $1::date AND $2::date
-      AND ($5::int IS NULL OR company_id = $5)
-      AND ($6::int IS NULL OR branch_id = $6)
+  sales_source AS MATERIALIZED (
+    SELECT
+      fo.company_id,
+      (fo.falabella_created_at AT TIME ZONE 'America/Lima')::date AS day,
+      COALESCE(fo.grand_total, 0) AS amount,
+      lower(COALESCE(fo.status, '')) ~ '(canceled|cancelled|cancelada|returned|devuelta|failed)' AS is_cancelled
+    FROM falabella_orders fo
+    JOIN companies c ON c.id = fo.company_id AND c.activo IS NOT FALSE
+    WHERE (fo.falabella_created_at AT TIME ZONE 'America/Lima')::date BETWEEN $3::date AND $2::date
+      AND ($5::int IS NULL OR fo.company_id = $5)
+
+    UNION ALL
+
+    SELECT
+      b.company_id,
+      b.fecha_emision::date AS day,
+      CASE WHEN COALESCE(b.mto_imp_venta, '') ~ '^-?[0-9]+([.][0-9]+)?$'
+        THEN b.mto_imp_venta::numeric ELSE 0 END AS amount,
+      UPPER(COALESCE(b.estado_sunat, '')) IN ('ANULADO', 'REEMPLAZADO')
+        OR EXISTS (SELECT 1 FROM credit_notes cn WHERE cn.affected_boleta_id = b.id) AS is_cancelled
+    FROM boletas b
+    JOIN companies c ON c.id = b.company_id AND c.activo IS NOT FALSE
+    WHERE b.fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      AND b.fecha_emision::date BETWEEN $3::date AND $2::date
+      AND ($5::int IS NULL OR b.company_id = $5)
+      AND NOT EXISTS (
+        SELECT 1 FROM falabella_orders fo
+        WHERE fo.company_id = b.company_id AND fo.order_number = b.order_number
+      )
+
+    UNION ALL
+
+    SELECT
+      f.company_id,
+      f.fecha_emision::date AS day,
+      CASE WHEN COALESCE(f.mto_imp_venta, '') ~ '^-?[0-9]+([.][0-9]+)?$'
+        THEN f.mto_imp_venta::numeric ELSE 0 END AS amount,
+      UPPER(COALESCE(f.estado_sunat, '')) IN ('ANULADO', 'REEMPLAZADO') AS is_cancelled
+    FROM facturas f
+    JOIN companies c ON c.id = f.company_id AND c.activo IS NOT FALSE
+    WHERE f.fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      AND f.fecha_emision::date BETWEEN $3::date AND $2::date
+      AND ($5::int IS NULL OR f.company_id = $5)
+      AND NOT EXISTS (
+        SELECT 1 FROM falabella_orders fo
+        WHERE fo.company_id = f.company_id AND fo.order_number = f.order_number
+      )
   ),
-  previous_metrics AS MATERIALIZED (
-    SELECT *
-    FROM dashboard_daily_metrics
-    WHERE day BETWEEN $3::date AND $4::date
-      AND ($5::int IS NULL OR company_id = $5)
-      AND ($6::int IS NULL OR branch_id = $6)
+  current_orders AS MATERIALIZED (
+    SELECT * FROM sales_source WHERE day BETWEEN $1::date AND $2::date
+  ),
+  previous_orders AS MATERIALIZED (
+    SELECT * FROM sales_source WHERE day BETWEEN $3::date AND $4::date
   ),
   current_summary AS (
     SELECT
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS gross_sales,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type = 'NOTA_CREDITO' AND status = 'ACEPTADO'
-      ), 0) AS credit_notes,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA')
-      ), 0) AS generated_documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS accepted_documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'PENDIENTE'
-      ), 0) AS pending_documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'RECHAZADO'
-      ), 0) AS rejected_documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status IN ('ANULADO', 'REEMPLAZADO')
-      ), 0) AS cancelled_documents,
-      COALESCE(SUM(document_count) FILTER (WHERE document_type = 'BOLETA'), 0) AS boletas,
-      COALESCE(SUM(document_count) FILTER (WHERE document_type = 'FACTURA'), 0) AS facturas,
-      COUNT(DISTINCT company_id) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ) AS active_companies
-    FROM current_metrics
+      COALESCE(SUM(amount), 0) AS gross_demand,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
+      COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
+      COUNT(*) AS total_orders,
+      COUNT(*) FILTER (WHERE is_cancelled) AS cancelled_orders,
+      COUNT(DISTINCT company_id) FILTER (WHERE NOT is_cancelled) AS active_stores
+    FROM current_orders
   ),
   previous_summary AS (
     SELECT
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS gross_sales,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type = 'NOTA_CREDITO' AND status = 'ACEPTADO'
-      ), 0) AS credit_notes,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA')
-      ), 0) AS generated_documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS accepted_documents
-    FROM previous_metrics
-  ),
-  pending_orders AS (
-    SELECT COUNT(*) AS count
-    FROM falabella_orders fo
-    JOIN companies c ON c.id = fo.company_id AND c.activo IS NOT FALSE
-    WHERE ($5::int IS NULL OR fo.company_id = $5)
-      AND (
-        fo.status = 'pending'
-        OR fo.status LIKE 'pending|%'
-        OR fo.status LIKE '%|pending'
-        OR fo.status LIKE '%|pending|%'
-      )
+      COALESCE(SUM(amount), 0) AS gross_demand,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
+      COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
+      COUNT(*) AS total_orders,
+      COUNT(*) FILTER (WHERE is_cancelled) AS cancelled_orders,
+      COUNT(DISTINCT company_id) FILTER (WHERE NOT is_cancelled) AS active_stores
+    FROM previous_orders
   ),
   sales_daily AS (
-    SELECT day,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS gross_sales,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type = 'NOTA_CREDITO' AND status = 'ACEPTADO'
-      ), 0) AS credit_notes
-    FROM current_metrics
-    GROUP BY day
-    ORDER BY day
-  ),
-  documents_daily AS (
-    SELECT day,
-      COALESCE(SUM(document_count) FILTER (WHERE document_type = 'BOLETA'), 0) AS boletas,
-      COALESCE(SUM(document_count) FILTER (WHERE document_type = 'FACTURA'), 0) AS facturas
-    FROM current_metrics
-    GROUP BY day
-    ORDER BY day
-  ),
-  statuses AS (
     SELECT
-      CASE WHEN status IN ('ANULADO', 'REEMPLAZADO') THEN 'ANULADO' ELSE status END AS status,
-      SUM(document_count) AS count
-    FROM current_metrics
-    WHERE document_type IN ('BOLETA', 'FACTURA')
-    GROUP BY 1
-    ORDER BY count DESC
+      day,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
+      COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders
+    FROM current_orders
+    GROUP BY day
+    ORDER BY day
+  ),
+  previous_sales_daily AS (
+    SELECT
+      day,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales
+    FROM previous_orders
+    GROUP BY day
+    ORDER BY day
   ),
   company_totals AS (
-    SELECT company_id,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS gross_sales,
-      COALESCE(SUM(total_amount) FILTER (
-        WHERE document_type = 'NOTA_CREDITO' AND status = 'ACEPTADO'
-      ), 0) AS credit_notes,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA')
-      ), 0) AS documents,
-      COALESCE(SUM(document_count) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ), 0) AS accepted_documents,
-      COUNT(DISTINCT day) FILTER (
-        WHERE document_type IN ('BOLETA', 'FACTURA') AND status = 'ACEPTADO'
-      ) AS active_days
-    FROM current_metrics
+    SELECT
+      company_id,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
+      COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
+      COUNT(*) FILTER (WHERE is_cancelled) AS cancelled_orders,
+      COUNT(*) AS total_orders
+    FROM current_orders
+    GROUP BY company_id
+  ),
+  previous_company_totals AS (
+    SELECT
+      company_id,
+      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders
+    FROM previous_orders
     GROUP BY company_id
   ),
   ranking AS (
     SELECT c.id, COALESCE(NULLIF(c.nombre_comercial, ''), NULLIF(c.nombre, ''), c.razon_social) AS name,
-      COALESCE(t.gross_sales, 0) AS gross_sales,
-      COALESCE(t.credit_notes, 0) AS credit_notes,
-      COALESCE(t.gross_sales, 0) - COALESCE(t.credit_notes, 0) AS net_sales,
-      COALESCE(t.documents, 0) AS documents,
-      COALESCE(t.accepted_documents, 0) AS accepted_documents,
-      COALESCE(t.active_days, 0) AS active_days,
-      CASE WHEN COALESCE(t.accepted_documents, 0) > 0
-        THEN COALESCE(t.gross_sales, 0) / t.accepted_documents
+      COALESCE(t.net_sales, 0) AS net_sales,
+      COALESCE(t.cancelled_sales, 0) AS cancelled_sales,
+      COALESCE(t.orders, 0) AS orders,
+      COALESCE(t.cancelled_orders, 0) AS cancelled_orders,
+      COALESCE(t.total_orders, 0) AS total_orders,
+      COALESCE(p.net_sales, 0) AS previous_net_sales,
+      COALESCE(p.orders, 0) AS previous_orders,
+      CASE WHEN COALESCE(t.orders, 0) > 0
+        THEN COALESCE(t.net_sales, 0) / t.orders
         ELSE 0
       END AS average_ticket
     FROM companies c
     LEFT JOIN company_totals t ON t.company_id = c.id
+    LEFT JOIN previous_company_totals p ON p.company_id = c.id
     WHERE c.activo IS NOT FALSE
       AND ($5::int IS NULL OR c.id = $5)
-      AND ($6::int IS NULL OR EXISTS (
-        SELECT 1 FROM branches b WHERE b.id = $6 AND b.company_id = c.id
-      ))
     ORDER BY net_sales DESC, name
   )
   SELECT
     (
       SELECT jsonb_build_object(
-        'grossSales', gross_sales,
-        'creditNotes', credit_notes,
-        'netSales', gross_sales - credit_notes,
-        'generatedDocuments', generated_documents,
-        'acceptedDocuments', accepted_documents,
-        'pendingDocuments', pending_documents,
-        'rejectedDocuments', rejected_documents,
-        'cancelledDocuments', cancelled_documents,
-        'boletas', boletas,
-        'facturas', facturas,
-        'averageTicket', CASE WHEN accepted_documents > 0 THEN gross_sales / accepted_documents ELSE 0 END,
-        'activeCompanies', active_companies,
-        'pendingOrders', (SELECT count FROM pending_orders)
+        'grossDemand', gross_demand,
+        'netSales', net_sales,
+        'cancelledSales', cancelled_sales,
+        'orders', orders,
+        'totalOrders', total_orders,
+        'cancelledOrders', cancelled_orders,
+        'averageTicket', CASE WHEN orders > 0 THEN net_sales / orders ELSE 0 END,
+        'activeStores', active_stores
       ) FROM current_summary
     ) AS summary,
     (
       SELECT jsonb_build_object(
-        'grossSales', gross_sales,
-        'creditNotes', credit_notes,
-        'netSales', gross_sales - credit_notes,
-        'generatedDocuments', generated_documents,
-        'acceptedDocuments', accepted_documents,
-        'averageTicket', CASE WHEN accepted_documents > 0 THEN gross_sales / accepted_documents ELSE 0 END
+        'grossDemand', gross_demand,
+        'netSales', net_sales,
+        'cancelledSales', cancelled_sales,
+        'orders', orders,
+        'totalOrders', total_orders,
+        'cancelledOrders', cancelled_orders,
+        'averageTicket', CASE WHEN orders > 0 THEN net_sales / orders ELSE 0 END,
+        'activeStores', active_stores
       ) FROM previous_summary
     ) AS previous_summary,
     COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'day', day,
-        'grossSales', gross_sales,
-        'creditNotes', credit_notes,
-        'netSales', gross_sales - credit_notes
+        'netSales', net_sales,
+        'cancelledSales', cancelled_sales,
+        'orders', orders
       ) ORDER BY day) FROM sales_daily
     ), '[]'::jsonb) AS sales_by_day,
     COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
-        'day', day, 'boletas', boletas, 'facturas', facturas
-      ) ORDER BY day) FROM documents_daily
-    ), '[]'::jsonb) AS documents_by_day,
-    COALESCE((
-      SELECT jsonb_agg(jsonb_build_object('status', status, 'count', count) ORDER BY count DESC)
-      FROM statuses
-    ), '[]'::jsonb) AS status_breakdown,
+        'day', day, 'netSales', net_sales
+      ) ORDER BY day) FROM previous_sales_daily
+    ), '[]'::jsonb) AS previous_sales_by_day,
     COALESCE((
       SELECT jsonb_agg(to_jsonb(ranking) ORDER BY net_sales DESC, name) FROM ranking
     ), '[]'::jsonb) AS company_ranking,
@@ -316,13 +294,7 @@ const DASHBOARD_SQL = `
       ) ORDER BY COALESCE(NULLIF(c.nombre_comercial, ''), NULLIF(c.nombre, ''), c.razon_social))
       FROM companies c WHERE c.activo IS NOT FALSE
     ), '[]'::jsonb) AS companies,
-    COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-        'id', b.id, 'companyId', b.company_id, 'name', b.nombre
-      ) ORDER BY b.nombre)
-      FROM branches b WHERE b.activo IS NOT FALSE
-    ), '[]'::jsonb) AS branches,
-    (SELECT refreshed_at FROM dashboard_refresh_state WHERE id = 1) AS data_through
+    (SELECT MAX(synchronized_at) FROM falabella_orders) AS data_through
 `;
 
 export async function getDashboard(input = {}, db) {
@@ -340,58 +312,68 @@ export async function getDashboard(input = {}, db) {
     filters.previousFrom,
     filters.previousTo,
     filters.companyId,
-    filters.branchId,
   ]);
   const row = query.rows[0] || {};
   const summary = normalizeSummary(row.summary);
   const previousSummary = normalizeSummary(row.previous_summary);
-  const salesByDay = fillDailySeries(
+  const currentSalesByDay = fillDailySeries(
     filters.from,
     filters.to,
-    normalizeRows(row.sales_by_day, ['grossSales', 'creditNotes', 'netSales']),
-    { grossSales: 0, creditNotes: 0, netSales: 0 },
+    normalizeRows(row.sales_by_day, ['netSales', 'cancelledSales', 'orders']),
+    { netSales: 0, cancelledSales: 0, orders: 0 },
   );
-  const documentsByDay = fillDailySeries(
-    filters.from,
-    filters.to,
-    normalizeRows(row.documents_by_day, ['boletas', 'facturas']),
-    { boletas: 0, facturas: 0 },
+  const previousSalesByDay = fillDailySeries(
+    filters.previousFrom,
+    filters.previousTo,
+    normalizeRows(row.previous_sales_by_day, ['netSales']),
+    { netSales: 0 },
   );
+  const salesByDay = currentSalesByDay.map((item, index) => ({
+    ...item,
+    previousDay: previousSalesByDay[index]?.day || null,
+    previousSales: previousSalesByDay[index]?.netSales || 0,
+  }));
   const companyRanking = normalizeRows(row.company_ranking, [
-    'gross_sales', 'credit_notes', 'net_sales', 'documents', 'accepted_documents', 'active_days', 'average_ticket',
+    'net_sales', 'cancelled_sales', 'orders', 'cancelled_orders', 'total_orders',
+    'previous_net_sales', 'previous_orders', 'average_ticket',
   ]).map((company) => ({
     id: company.id,
     name: company.name,
-    grossSales: company.gross_sales,
-    creditNotes: company.credit_notes,
     netSales: company.net_sales,
-    documents: company.documents,
-    acceptedDocuments: company.accepted_documents,
-    activeDays: company.active_days,
+    cancelledSales: company.cancelled_sales,
+    orders: company.orders,
+    cancelledOrders: company.cancelled_orders,
+    totalOrders: company.total_orders,
+    previousNetSales: company.previous_net_sales,
+    previousOrders: company.previous_orders,
     averageTicket: company.average_ticket,
+    salesShare: summary.netSales > 0 ? (company.net_sales / summary.netSales) * 100 : 0,
+    salesChange: percentageDelta(company.net_sales, company.previous_net_sales),
+    cancellationRate: company.total_orders > 0 ? (company.cancelled_orders / company.total_orders) * 100 : 0,
   }));
-  const statusBreakdown = normalizeRows(row.status_breakdown, ['count']);
+  const periodDays = diffDays(filters.from, filters.to) + 1;
+  summary.dailyAverage = summary.netSales / periodDays;
+  summary.cancellationRate = summary.totalOrders > 0
+    ? (summary.cancelledOrders / summary.totalOrders) * 100
+    : 0;
+  previousSummary.dailyAverage = previousSummary.netSales / periodDays;
+  previousSummary.cancellationRate = previousSummary.totalOrders > 0
+    ? (previousSummary.cancelledOrders / previousSummary.totalOrders) * 100
+    : 0;
   const value = {
     filters,
     summary,
     previousSummary,
     changes: {
-      grossSales: percentageDelta(summary.grossSales, previousSummary.grossSales),
       netSales: percentageDelta(summary.netSales, previousSummary.netSales),
-      acceptedDocuments: percentageDelta(summary.acceptedDocuments, previousSummary.acceptedDocuments),
-      generatedDocuments: percentageDelta(summary.generatedDocuments, previousSummary.generatedDocuments),
+      orders: percentageDelta(summary.orders, previousSummary.orders),
       averageTicket: percentageDelta(summary.averageTicket, previousSummary.averageTicket),
+      dailyAverage: percentageDelta(summary.dailyAverage, previousSummary.dailyAverage),
+      cancellationRate: percentageDelta(summary.cancellationRate, previousSummary.cancellationRate),
     },
     salesByDay,
-    documentsByDay,
-    documentMix: [
-      { type: 'Boletas', value: summary.boletas },
-      { type: 'Facturas', value: summary.facturas },
-    ],
-    statusBreakdown,
     companyRanking,
     companies: row.companies || [],
-    branches: row.branches || [],
     dataThrough: row.data_through ? new Date(row.data_through).toISOString() : null,
     generatedAt: new Date().toISOString(),
     cache: { hit: false, ttlSeconds: RESPONSE_CACHE_TTL_MS / 1000 },
