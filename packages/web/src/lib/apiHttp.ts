@@ -53,6 +53,7 @@ async function req(path: string, init?: RequestInit) {
   try {
     data = text ? JSON.parse(text) : null;
   } catch (parseError: any) {
+    if (!res.ok) throw new Error(text.trim() || `HTTP ${res.status}`);
     console.error('[REQ JSON PARSE ERROR]', path, res.status, 'response text:', text?.slice(0, 500));
     throw new Error(`Error al parsear respuesta de ${path}: ${parseError?.message}. Response: ${text?.slice(0, 200)}`);
   }
