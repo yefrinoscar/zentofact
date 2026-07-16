@@ -409,6 +409,37 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_status
     ON falabella_orders(company_id, status);
 
+  CREATE TABLE IF NOT EXISTS falabella_order_lifecycle (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    order_id TEXT NOT NULL,
+    order_number TEXT NOT NULL,
+    current_status TEXT NOT NULL DEFAULT '',
+    pending_at TIMESTAMPTZ,
+    ready_to_ship_at TIMESTAMPTZ,
+    shipped_at TIMESTAMPTZ,
+    last_provider_update_at TIMESTAMPTZ,
+    first_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (company_id, order_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_lifecycle_company_shipped
+    ON falabella_order_lifecycle(company_id, shipped_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_falabella_lifecycle_shipped
+    ON falabella_order_lifecycle(shipped_at DESC);
+  INSERT INTO falabella_order_lifecycle (
+    company_id, order_id, order_number, current_status, pending_at,
+    ready_to_ship_at, shipped_at, last_provider_update_at,
+    first_observed_at, last_observed_at
+  )
+  SELECT company_id, order_id, order_number, coalesce(status, ''),
+    coalesce(falabella_created_at, first_seen_at),
+    NULL,
+    NULL,
+    falabella_updated_at, first_seen_at, synchronized_at
+  FROM falabella_orders
+  ON CONFLICT (company_id, order_id) DO NOTHING;
+
   CREATE TABLE IF NOT EXISTS falabella_sync_state (
     company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -425,7 +456,7 @@ const DDL = `
     last_pages_processed INTEGER NOT NULL DEFAULT 0,
     last_orders_received INTEGER NOT NULL DEFAULT 0,
     last_orders_upserted INTEGER NOT NULL DEFAULT 0,
-    sync_interval_minutes INTEGER NOT NULL DEFAULT 30,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   DO $$
@@ -435,10 +466,8 @@ const DDL = `
     FROM information_schema.columns
     WHERE table_schema='public' AND table_name='falabella_sync_state'
       AND column_name='sync_interval_minutes';
-    IF sync_interval_default LIKE '10%' THEN
-      UPDATE falabella_sync_state SET sync_interval_minutes=30 WHERE sync_interval_minutes=10;
-    END IF;
-    ALTER TABLE falabella_sync_state ALTER COLUMN sync_interval_minutes SET DEFAULT 30;
+    UPDATE falabella_sync_state SET sync_interval_minutes=15 WHERE sync_interval_minutes <> 15;
+    ALTER TABLE falabella_sync_state ALTER COLUMN sync_interval_minutes SET DEFAULT 15;
   END $$;
 
   CREATE TABLE IF NOT EXISTS falabella_sync_runs (

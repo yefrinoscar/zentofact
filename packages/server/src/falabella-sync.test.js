@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  effectiveFalabellaItemStatus,
   fetchFalabellaPages,
   listLocalFalabellaOrders,
   normalizeFalabellaOrder,
@@ -22,6 +23,13 @@ test('normaliza estados anidados de Falabella sin perder valores', () => {
     normalizeFalabellaStatus([{ Status: 'Ready_To_Ship' }, { Status: { Name: 'Delivered' } }]),
     'ready_to_ship|delivered',
   );
+});
+
+test('prioriza el estado operativo actual de los items de una orden', () => {
+  assert.equal(effectiveFalabellaItemStatus([{ Status: 'shipped' }]), 'shipped');
+  assert.equal(effectiveFalabellaItemStatus([{ Status: 'delivered' }, { Status: 'shipped' }]), 'shipped');
+  assert.equal(effectiveFalabellaItemStatus([{ Status: 'shipped' }, { Status: 'ready_to_ship' }]), 'ready_to_ship');
+  assert.equal(effectiveFalabellaItemStatus([{ Status: 'ready_to_ship' }, { Status: 'pending' }]), 'pending');
 });
 
 test('normaliza una orden y conserva el JSON original', () => {
@@ -143,6 +151,9 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   assert.equal(result.status, 'success');
   assert.equal(result.received, 1);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
+  const lifecycle = db.queries.find((query) => query.sql.startsWith('insert into falabella_order_lifecycle'));
+  assert.equal(lifecycle.params[3], 'pending');
+  assert.equal(lifecycle.params[4], '2026-07-03T10:00:00.000Z');
   const coverage = db.queries.find((query) => query.sql.startsWith('insert into falabella_sync_windows'));
   assert.deepEqual(coverage.params.slice(0, 2), [7, '2026-07']);
   assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'month'), true);

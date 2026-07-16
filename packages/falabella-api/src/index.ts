@@ -7,7 +7,10 @@ export type {
   FalabellaApiFormat,
   FalabellaApiResponse,
   FalabellaErrorDocument,
+  FalabellaDocument,
+  GetDocumentOptions,
   FalabellaOrderRecord,
   GetOrdersV2Filters,
   NormalizedGetOrdersResult,
+  SetStatusToReadyToShipOptions,
 } from './types';

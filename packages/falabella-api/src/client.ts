@@ -3,7 +3,9 @@ import {
   FalabellaApiClientOptions,
   FalabellaApiResponse,
   FalabellaErrorDocument,
+  GetDocumentOptions,
   GetOrdersV2Filters,
+  SetStatusToReadyToShipOptions,
   NormalizedGetOrdersResult,
   FalabellaOrderRecord,
 } from './types';
@@ -55,7 +57,9 @@ export class FalabellaApiClient {
 
     const rawText = await response.text();
     const contentType = response.headers.get('content-type') || '';
-    const data = parseResponseBody<T>(rawText, format, contentType);
+    const data = options.allowXmlResponse && rawText.trimStart().startsWith('<')
+      ? rawText as T
+      : parseResponseBody<T>(rawText, format, contentType);
 
     return {
       url,
@@ -87,6 +91,74 @@ export class FalabellaApiClient {
         ShippingType: filters.shippingType,
       },
     });
+  }
+
+  async getDocument(options: GetDocumentOptions): Promise<FalabellaApiResponse<unknown>> {
+    if (options.orderItemIds.some((value) => !/^\d+$/.test(String(value).trim()))) {
+      throw new Error('Falabella GetDocument recibió un OrderItemId inválido.');
+    }
+    const orderItemIds = Array.from(new Set(options.orderItemIds
+      .map((value) => String(value).trim())
+      .filter((value) => /^\d+$/.test(value))));
+    if (!orderItemIds.length) {
+      throw new Error('Falabella GetDocument requiere al menos un OrderItemId válido.');
+    }
+
+    return this.call({
+      action: 'GetDocument',
+      params: {
+        DocumentType: options.documentType || 'shippingParcel',
+        OrderItemIds: `[${orderItemIds.join(',')}]`,
+      },
+      accept: 'application/json',
+      allowXmlResponse: true,
+    });
+  }
+
+  async setStatusToReadyToShip(options: SetStatusToReadyToShipOptions): Promise<FalabellaApiResponse<unknown>> {
+    if (options.orderItemIds.some((value) => !/^\d+$/.test(String(value).trim()))) {
+      throw new Error('Falabella SetStatusToReadyToShip recibió un OrderItemId inválido.');
+    }
+    const orderItemIds = normalizeNumericIds(options.orderItemIds);
+    const packageId = String(options.packageId || '').trim();
+    if (!orderItemIds.length) {
+      throw new Error('Falabella SetStatusToReadyToShip requiere al menos un OrderItemId válido.');
+    }
+    if (!packageId) {
+      throw new Error('Falabella SetStatusToReadyToShip requiere PackageId.');
+    }
+
+    const format = this.defaultFormat;
+    const parameters: Record<string, string> = {
+      Action: 'SetStatusToReadyToShip',
+      Format: format,
+      Timestamp: buildIsoUtcTimestamp(),
+      UserID: this.options.userId,
+      Version: this.version,
+      OrderItemIds: `[${orderItemIds.join(',')}]`,
+      PackageId: packageId,
+    };
+    parameters.Signature = signParameters(parameters, this.options.apiKey);
+
+    const url = this.baseUrl.replace(/\/$/, '');
+    const response = await this.fetchImpl(url, {
+      method: 'POST',
+      headers: {
+        Accept: format === 'JSON' ? 'application/json' : 'application/xml',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: canonicalizeParameters(parameters),
+    });
+    const rawText = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+    return {
+      url,
+      status: response.status,
+      ok: response.ok,
+      contentType,
+      data: rawText.trimStart().startsWith('<') ? rawText : parseResponseBody(rawText, format, contentType),
+      rawText,
+    };
   }
 
   async resolveOrderIds(entries: Array<{ orderNumber: string; invoiceDate: string }>): Promise<{
@@ -196,6 +268,12 @@ export class FalabellaApiClient {
     (ordersByNumber as any).__debug = debug;
     return ordersByNumber;
   }
+}
+
+function normalizeNumericIds(values: Array<string | number>) {
+  return Array.from(new Set(values
+    .map((value) => String(value).trim())
+    .filter((value) => /^\d+$/.test(value))));
 }
 
 function toApiStartOfDay(dateText: string, deltaDays = 0) {

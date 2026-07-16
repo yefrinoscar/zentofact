@@ -18,6 +18,7 @@ export interface FalabellaApiCallOptions {
   params?: Record<string, string | number | boolean | undefined>;
   format?: FalabellaApiFormat;
   accept?: 'application/json' | 'application/xml';
+  allowXmlResponse?: boolean;
   signal?: AbortSignal;
 }
 
@@ -60,6 +61,23 @@ export interface GetOrdersV2Filters {
   status?: 'pending' | 'canceled' | 'ready_to_ship' | 'delivered' | 'returned' | 'shipped' | 'failed';
   sortDirection?: 'ASC' | 'DESC';
   shippingType?: 'dropshipping' | 'own_warehouse';
+}
+
+export interface GetDocumentOptions {
+  orderItemIds: Array<string | number>;
+  documentType?: 'shippingParcel';
+}
+
+export interface SetStatusToReadyToShipOptions {
+  orderItemIds: Array<string | number>;
+  packageId: string;
+}
+
+export interface FalabellaDocument {
+  DocumentType?: string;
+  MimeType?: string;
+  File?: string;
+  [key: string]: unknown;
 }
 
 export interface FalabellaOrderRecord {
