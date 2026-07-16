@@ -12,13 +12,14 @@
     "auth:seed-admin": "node src/seed-admin.js"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.7",
     "@zentofact/core": "*",
     "@zentofact/falabella-api": "*",
-    "@hono/node-server": "^1.13.7",
     "better-auth": "^1.6.23",
-    "drizzle-orm": "0.45.2",
     "dotenv": "^16.4.5",
+    "drizzle-orm": "0.45.2",
     "hono": "^4.6.14",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.13.0"
   }
 }
