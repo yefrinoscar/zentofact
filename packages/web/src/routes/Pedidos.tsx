@@ -64,6 +64,8 @@ type InboxOrder = {
 type InboxResponse = {
   orders: InboxOrder[];
   totalCount: number;
+  shippedCount: number;
+  operationalCount: number;
   lastSyncedAt: string | null;
   deliveryMetrics?: {
     updatedAt: string;
@@ -91,36 +93,33 @@ type DeliveryWindow = {
 
 type CompanyOption = { id: number; name: string };
 type UrgencyKey = 'overdue' | 'today' | 'tomorrow' | 'later';
-type BoardColumnKey = UrgencyKey | 'shipped';
-
-const LIMA_TIME_ZONE = 'America/Lima';
-const BOARD_LIMIT = 500;
-
-const COLUMNS: Array<{
+type StatusColumnKey = 'pending' | 'ready' | 'fulfillment';
+type BoardColumnKey = UrgencyKey | StatusColumnKey;
+type BoardView = 'deadline' | 'status';
+type BulkReadySelection = { columnKey: BoardColumnKey; columnTitle: string; orders: InboxOrder[] };
+type BoardColumn = {
   key: BoardColumnKey;
   title: string;
   description: string;
   icon: typeof AlertCircle;
+  iconClass: string;
   headerClass: string;
   countClass: string;
   empty: string;
-}> = [
-  {
-    key: 'overdue',
-    title: 'Vencidos',
-    description: 'Debieron entregarse antes',
-    icon: AlertCircle,
-    headerClass: 'border-red-200 bg-red-50/80 text-red-800',
-    countClass: 'bg-red-100 text-red-700',
-    empty: 'No tienes pedidos vencidos.',
-  },
+};
+
+const LIMA_TIME_ZONE = 'America/Lima';
+const BOARD_LIMIT = 500;
+
+const DEADLINE_COLUMNS: BoardColumn[] = [
   {
     key: 'today',
     title: 'Vencen hoy',
     description: 'Prioridad del día',
     icon: Clock3,
-    headerClass: 'border-amber-200 bg-amber-50/80 text-amber-800',
-    countClass: 'bg-amber-100 text-amber-700',
+    iconClass: 'text-current',
+    headerClass: 'border-amber-200 bg-amber-50 text-amber-950',
+    countClass: 'bg-amber-100 text-amber-800',
     empty: 'Nada más vence hoy.',
   },
   {
@@ -128,8 +127,9 @@ const COLUMNS: Array<{
     title: 'Vencen mañana',
     description: 'Prepara con anticipación',
     icon: CalendarClock,
-    headerClass: 'border-sky-200 bg-sky-50/80 text-sky-800',
-    countClass: 'bg-sky-100 text-sky-700',
+    iconClass: 'text-current',
+    headerClass: 'border-sky-200 bg-sky-50 text-sky-950',
+    countClass: 'bg-sky-100 text-sky-800',
     empty: 'No hay entregas para mañana.',
   },
   {
@@ -137,18 +137,53 @@ const COLUMNS: Array<{
     title: 'Próximos',
     description: 'Después de mañana',
     icon: Truck,
-    headerClass: 'border-border bg-muted/40 text-foreground',
-    countClass: 'bg-muted text-muted-foreground',
+    iconClass: 'text-current',
+    headerClass: 'border-slate-200 bg-slate-50 text-slate-950',
+    countClass: 'bg-slate-100 text-slate-700',
     empty: 'No hay pedidos posteriores.',
   },
   {
-    key: 'shipped',
-    title: 'Enviados',
-    description: 'Ya entregados a Falabella',
-    icon: CheckCircle2,
-    headerClass: 'border-emerald-200 bg-emerald-50/80 text-emerald-800',
-    countClass: 'bg-emerald-100 text-emerald-700',
-    empty: 'No hay pedidos enviados.',
+    key: 'overdue',
+    title: 'Vencidos',
+    description: 'Requieren atención',
+    icon: AlertCircle,
+    iconClass: 'text-current',
+    headerClass: 'border-rose-200 bg-rose-50 text-rose-950',
+    countClass: 'bg-rose-100 text-rose-800',
+    empty: 'No tienes pedidos vencidos.',
+  },
+];
+
+const STATUS_COLUMNS: BoardColumn[] = [
+  {
+    key: 'pending',
+    title: 'Pendiente',
+    description: 'Aún no están listos',
+    icon: Inbox,
+    iconClass: 'text-current',
+    headerClass: 'border-amber-200 bg-amber-50 text-amber-950',
+    countClass: 'bg-amber-100 text-amber-800',
+    empty: 'No hay pedidos pendientes.',
+  },
+  {
+    key: 'ready',
+    title: 'Listos para enviar',
+    description: 'Etiqueta disponible',
+    icon: PackageCheck,
+    iconClass: 'text-current',
+    headerClass: 'border-sky-200 bg-sky-50 text-sky-950',
+    countClass: 'bg-sky-100 text-sky-800',
+    empty: 'No hay pedidos listos para enviar.',
+  },
+  {
+    key: 'fulfillment',
+    title: 'Gestión Falabella',
+    description: 'Despacho administrado',
+    icon: Truck,
+    iconClass: 'text-current',
+    headerClass: 'border-violet-200 bg-violet-50 text-violet-950',
+    countClass: 'bg-violet-100 text-violet-800',
+    empty: 'No hay pedidos Fulfillment.',
   },
 ];
 
@@ -224,62 +259,88 @@ function formatShiftBoundary(value: string) {
 }
 
 function shiftStateMeta(state: DeliveryWindow['state']) {
-  if (state === 'active') return { label: 'En curso', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
-  if (state === 'completed') return { label: 'Cerrado', className: 'border-border bg-muted text-muted-foreground' };
-  return { label: 'Próximo', className: 'border-sky-200 bg-sky-50 text-sky-700' };
+  if (state === 'active') return { label: 'En curso', className: 'text-emerald-700' };
+  if (state === 'completed') return { label: 'Cerrado', className: 'text-muted-foreground' };
+  return { label: 'Próximo', className: 'text-sky-700' };
 }
 
 function DeliveryShiftCard({ window }: { window: DeliveryWindow }) {
   const isEvening = window.key === 'evening_to_noon';
   const Icon = isEvening ? Moon : SunMedium;
   const state = shiftStateMeta(window.state);
-  const durations = [
+  const stages = [
     { label: 'Preparación', detail: 'Pendiente → listo', metric: window.preparation },
     { label: 'En espera', detail: 'Listo → enviado', metric: window.handoff },
-    { label: 'Ciclo total', detail: 'Pendiente → enviado', metric: window.total },
   ];
+  const totalMeasured = window.total.measured > 0;
+  const hasStageMetrics = stages.some(({ metric }) => metric.measured > 0);
   return (
-    <article className="overflow-hidden rounded-md border border-border bg-card">
-      <div className={`h-1 ${isEvening ? 'bg-indigo-500' : 'bg-amber-500'}`} />
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className={`grid size-9 shrink-0 place-items-center rounded-md ${isEvening ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
-              <Icon className="size-4" />
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground">
-                {isEvening ? 'Turno 5 p. m. → 12 m.' : 'Turno 12 m. → 5 p. m.'}
-              </h3>
-              <p className="mt-0.5 text-xs capitalize text-muted-foreground">
-                {formatShiftBoundary(window.from)} → {formatShiftBoundary(window.to)}
-              </p>
-            </div>
+    <article>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <Icon className={`mt-0.5 size-3.5 shrink-0 ${isEvening ? 'text-indigo-600' : 'text-amber-600'}`} />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-foreground">
+              {isEvening ? 'Turno 5 p. m. → 12 m.' : 'Turno 12 m. → 5 p. m.'}
+            </h3>
+            <p className="mt-1 text-xs capitalize text-muted-foreground">
+              {formatShiftBoundary(window.from)} → {formatShiftBoundary(window.to)}
+            </p>
           </div>
-          <Badge variant="outline" className={`rounded-md ${state.className}`}>{state.label}</Badge>
+        </div>
+        <span className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-medium ${state.className}`}>
+          <span className="size-1.5 rounded-full bg-current" />
+          {state.label}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">Entregas</p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <strong className="text-3xl font-semibold tracking-tight tabular-nums text-foreground">{window.deliveries}</strong>
+            <span className="text-xs text-muted-foreground">a Falabella</span>
+          </div>
         </div>
 
-        <div className="mt-4 flex items-end gap-2 border-b border-border pb-4">
-          <strong className="text-3xl font-semibold tabular-nums text-foreground">{window.deliveries}</strong>
-          <span className="pb-1 text-sm text-muted-foreground">entrega{window.deliveries === 1 ? '' : 's'} a Falabella</span>
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          {durations.map(({ label, detail, metric }) => (
-            <div key={label} className="rounded-md bg-muted/35 px-2.5 py-2.5">
-              <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-              <p className="mt-1 text-sm font-semibold tabular-nums text-foreground">{formatDuration(metric.averageMinutes)}</p>
-              <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">Promedio</p>
-              <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{detail}</p>
-              <p className="mt-1.5 text-[10px] text-muted-foreground">
-                {metric.measured > 0
-                  ? `${metric.measured} medido${metric.measured === 1 ? '' : 's'} · ${formatDuration(metric.minMinutes)}–${formatDuration(metric.maxMinutes)}`
-                  : 'Aún sin datos'}
-              </p>
-            </div>
-          ))}
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">Ciclo promedio</p>
+          <p className={`${totalMeasured ? 'text-xl' : 'text-sm'} mt-1 font-semibold tracking-tight tabular-nums text-foreground`}>
+            {totalMeasured ? formatDuration(window.total.averageMinutes) : window.state === 'upcoming' ? 'Aún no inicia' : 'Sin datos'}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {totalMeasured
+              ? `${window.total.measured} ciclo${window.total.measured === 1 ? '' : 's'} · ${formatDuration(window.total.minMinutes)}–${formatDuration(window.total.maxMinutes)}`
+              : window.state === 'upcoming' ? 'Pendiente → enviado' : 'No hay ciclos completos registrados.'}
+          </p>
         </div>
       </div>
+
+      {hasStageMetrics && (
+        <details className="mt-3 text-xs">
+          <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">Ver desglose del ciclo</summary>
+          <dl className="mt-3 space-y-3">
+            {stages.map(({ label, detail, metric }) => (
+              <div key={label} className="flex items-start justify-between gap-5">
+                <dt>
+                  <p className="font-medium text-foreground">{label}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>
+                </dt>
+                <dd className="text-right">
+                  <p className="font-semibold tabular-nums text-foreground">
+                    {metric.measured > 0 ? formatDuration(metric.averageMinutes) : 'No registrado'}
+                  </p>
+                  {metric.measured > 0 && (
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {metric.measured} caso{metric.measured === 1 ? '' : 's'} · {formatDuration(metric.minMinutes)}–{formatDuration(metric.maxMinutes)}
+                    </p>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
     </article>
   );
 }
@@ -325,42 +386,62 @@ function deadlineLabel(order: InboxOrder, now: Date) {
   return formatDateTime(order.promisedShippingAt);
 }
 
-function statusMeta(status: string, shippingType = '') {
+function statusMeta(status: string) {
   const key = status.toLowerCase();
   if (key.includes('shipped')) {
     return {
       label: 'Enviado',
       className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      textClass: 'text-emerald-700',
     };
   }
   if (key.includes('ready_to_ship')) {
     return {
-      label: 'Listo para entregar',
+      label: 'Listo para enviar',
       className: 'border-sky-200 bg-sky-50 text-sky-700',
+      textClass: 'text-sky-700',
     };
   }
-  if (shippingType.toLowerCase().includes('fulfillment')) {
+  if (key.includes('pending')) {
     return {
-      label: 'Gestión Falabella',
-      className: 'border-violet-200 bg-violet-50 text-violet-700',
+      label: 'Pendiente',
+      className: 'border-amber-200 bg-amber-50 text-amber-700',
+      textClass: 'text-amber-700',
     };
   }
   return {
-    label: 'Por preparar',
-    className: 'border-amber-200 bg-amber-50 text-amber-700',
+    label: 'Estado Falabella',
+    className: 'border-border bg-muted text-muted-foreground',
+    textClass: 'text-muted-foreground',
   };
 }
 
-function hasShippingLabel(order: InboxOrder) {
-  return /(^|\|)(ready_to_ship|shipped)(\||$)/.test(order.falabellaStatus.toLowerCase());
+function canPrintShippingLabel(order: InboxOrder) {
+  const status = order.falabellaStatus.toLowerCase();
+  return /(^|\|)ready_to_ship(\||$)/.test(status)
+    && !/(^|\|)(pending|shipped)(\||$)/.test(status);
 }
 
 function isShippedOrder(order: InboxOrder) {
   return /(^|\|)shipped(\||$)/.test(order.falabellaStatus.toLowerCase());
 }
 
+function hasCompletedPreparation(order: InboxOrder) {
+  return canPrintShippingLabel(order) || isShippedOrder(order);
+}
+
 function isFulfillmentOrder(order: InboxOrder) {
   return order.shippingType.toLowerCase().includes('fulfillment');
+}
+
+function statusColumnFor(order: InboxOrder): StatusColumnKey {
+  if (isFulfillmentOrder(order)) return 'fulfillment';
+  if (/(^|\|)ready_to_ship(\||$)/.test(order.falabellaStatus.toLowerCase())) return 'ready';
+  return 'pending';
+}
+
+function canMarkReadyToShip(order: InboxOrder) {
+  return !isFulfillmentOrder(order) && !hasCompletedPreparation(order);
 }
 
 function orderKey(order: InboxOrder) {
@@ -493,83 +574,66 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
   canDispatch: boolean;
 }) {
   const urgency = urgencyFor(order, now);
-  const shipped = isShippedOrder(order);
-  const status = statusMeta(order.falabellaStatus, order.shippingType);
-  const deadlineTone = shipped
-    ? 'text-emerald-700'
-    : urgency === 'overdue'
-    ? 'text-red-700'
-    : urgency === 'today'
-      ? 'text-amber-700'
-      : 'text-foreground';
+  const fulfillment = isFulfillmentOrder(order);
+  const status = fulfillment
+    ? { label: 'Gestión Falabella', textClass: 'text-violet-700' }
+    : statusMeta(order.falabellaStatus);
+  const deadlineTone = 'text-foreground';
 
   return (
-    <article className={`rounded-md border bg-card p-3.5 transition-colors ${labelSelected ? 'border-primary ring-1 ring-primary/20' : 'border-border hover:border-foreground/20'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          {labelSelectionMode && hasShippingLabel(order) && (
+    <article className={`px-3 py-3 transition-colors ${labelSelected ? 'bg-primary/5' : 'hover:bg-muted/30'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          {labelSelectionMode && canPrintShippingLabel(order) && (
             <Checkbox
               checked={labelSelected}
               onCheckedChange={onToggleLabel}
               aria-label={`Seleccionar etiqueta del pedido ${order.orderNumber}`}
-              className="mt-0.5"
             />
           )}
-          <div className="min-w-0">
-            <p className={`flex items-center gap-1.5 text-sm font-semibold ${deadlineTone}`}>
-              {shipped
-                ? <CheckCircle2 className="size-4 shrink-0" />
-                : urgency === 'overdue' && <AlertCircle className="size-4 shrink-0" />}
-              {shipped ? 'Enviado a Falabella' : deadlineLabel(order, now)}
-            </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {shipped ? `Actualizado ${formatDateTime(order.updatedAt)}` : 'Límite de entrega al operador'}
-            </p>
-          </div>
+          <p className={`flex min-w-0 items-center gap-1.5 text-xs font-semibold ${deadlineTone}`}>
+            {urgency === 'overdue' && <AlertCircle className="size-3.5 shrink-0" />}
+            <span className="truncate">{deadlineLabel(order, now)}</span>
+          </p>
         </div>
-        <Badge variant="outline" className={`rounded-md ${status.className}`}>{status.label}</Badge>
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground" title={`Estado en Falabella: ${order.falabellaStatus || 'no informado'}`}>
+          <span className="size-1.5 rounded-full bg-current" />
+          {status.label}
+        </span>
       </div>
 
-      <div className="mt-3 border-t border-border/70 pt-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
-              {order.orderNumber}
-            </button>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.companyName}</p>
-          </div>
-          <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatMoney(order.total, order.currency)}</p>
+      <div className="mt-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
+            {order.orderNumber}
+          </button>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.companyName}</p>
         </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <p className="text-muted-foreground">Ingresó</p>
-            <p className="mt-0.5 font-medium text-foreground">{elapsedLabel(order.createdAt, now)}</p>
-            <p className="text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-muted-foreground">Contenido</p>
-            <p className="mt-0.5 font-medium text-foreground">
-              {order.itemsCount ?? '-'} producto{order.itemsCount === 1 ? '' : 's'}
-            </p>
-            <p className="text-[11px] text-muted-foreground">{order.invoiceRequired ? 'Factura' : 'Boleta'}</p>
-          </div>
-        </div>
+        <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatMoney(order.total, order.currency)}</p>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted-foreground">
+        <span title={formatDateTime(order.createdAt)}>{elapsedLabel(order.createdAt, now) || 'Sin fecha de ingreso'}</span>
+        <span aria-hidden="true">·</span>
+        <span>{order.itemsCount == null ? 'Contenido no informado' : `${order.itemsCount} producto${order.itemsCount === 1 ? '' : 's'}`}</span>
+        <span aria-hidden="true">·</span>
+        <span>{order.invoiceRequired ? 'Factura' : 'Boleta'}</span>
+      </div>
+
+      <div className="mt-2.5 flex items-center justify-between gap-3">
+        <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+          Ver detalles <ArrowRight className="size-3" />
+        </button>
         <Button
           variant="outline"
           size="sm"
-          onClick={hasShippingLabel(order) ? onViewLabel : onOpen}
-          disabled={labelLoading || (!hasShippingLabel(order) && !canDispatch)}
-          title={hasShippingLabel(order) ? 'Ver etiqueta de envío' : !canDispatch ? 'Tu perfil es de solo lectura' : isFulfillmentOrder(order) ? 'Revisar el flujo gestionado por Falabella' : 'Revisar y preparar el pedido'}
+          className="h-7 px-2.5 text-xs"
+          onClick={canPrintShippingLabel(order) ? onViewLabel : onOpen}
+          disabled={labelLoading || (!canPrintShippingLabel(order) && !canDispatch)}
+          title={canPrintShippingLabel(order) ? 'Ver etiqueta de envío' : !canDispatch ? 'Tu perfil es de solo lectura' : fulfillment ? 'Revisar el flujo gestionado por Falabella' : 'Marcar pedido listo para envío'}
         >
-          {labelLoading ? <Loader2 className="animate-spin" /> : hasShippingLabel(order) ? <Printer /> : <PackageCheck />}
-          {hasShippingLabel(order) ? 'Etiqueta' : !canDispatch ? 'Solo lectura' : isFulfillmentOrder(order) ? 'Ver flujo' : 'Preparar'}
-        </Button>
-        <Button variant="ghost" size="sm" className="justify-between" onClick={onOpen}>
-          Ver pedido <ArrowRight />
+          {labelLoading ? <Loader2 className="animate-spin" /> : canPrintShippingLabel(order) ? <Printer /> : <PackageCheck />}
+          {canPrintShippingLabel(order) ? 'Etiqueta' : !canDispatch ? 'Solo lectura' : fulfillment ? 'Ver flujo' : 'Listo para envío'}
         </Button>
       </div>
     </article>
@@ -584,6 +648,7 @@ export default function Pedidos() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [companyId, setCompanyId] = useState('all');
+  const [boardView, setBoardView] = useState<BoardView>('deadline');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -595,6 +660,9 @@ export default function Pedidos() {
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
+  const [printingColumn, setPrintingColumn] = useState<BoardColumnKey | null>(null);
+  const [bulkReadySelection, setBulkReadySelection] = useState<BulkReadySelection | null>(null);
+  const [bulkReadyRunning, setBulkReadyRunning] = useState(false);
   const [readyLoadingKey, setReadyLoadingKey] = useState('');
   const [confirmReady, setConfirmReady] = useState(false);
   const [orderActionError, setOrderActionError] = useState('');
@@ -683,28 +751,51 @@ export default function Pedidos() {
     }
   };
 
-  const grouped = useMemo(() => {
-    const groups: Record<BoardColumnKey, InboxOrder[]> = { overdue: [], today: [], tomorrow: [], later: [], shipped: [] };
-    for (const order of data?.orders || []) {
-      groups[isShippedOrder(order) ? 'shipped' : urgencyFor(order, now)].push(order);
-    }
-    for (const [key, orders] of Object.entries(groups) as Array<[BoardColumnKey, InboxOrder[]]>) {
+  const openOrders = useMemo(
+    () => (data?.orders || []).filter((order) => !isShippedOrder(order)),
+    [data?.orders],
+  );
+
+  const deadlineGroups = useMemo(() => {
+    const groups: Record<UrgencyKey, InboxOrder[]> = { today: [], tomorrow: [], later: [], overdue: [] };
+    for (const order of openOrders) groups[urgencyFor(order, now)].push(order);
+    for (const orders of Object.values(groups)) {
       orders.sort((a, b) => {
-        if (key === 'shipped') {
-          const updatedA = parseDate(a.updatedAt)?.getTime() ?? 0;
-          const updatedB = parseDate(b.updatedAt)?.getTime() ?? 0;
-          return updatedB - updatedA;
-        }
         const deadlineA = parseDate(a.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
         const deadlineB = parseDate(b.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
         return deadlineA - deadlineB || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
       });
     }
     return groups;
-  }, [data?.orders, now]);
+  }, [openOrders, now]);
+
+  const statusGroups = useMemo(() => {
+    const groups: Record<StatusColumnKey, InboxOrder[]> = { pending: [], ready: [], fulfillment: [] };
+    for (const order of openOrders) groups[statusColumnFor(order)].push(order);
+    for (const orders of Object.values(groups)) {
+      orders.sort((a, b) => {
+        const deadlineA = parseDate(a.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const deadlineB = parseDate(b.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        return deadlineA - deadlineB || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+      });
+    }
+    return groups;
+  }, [openOrders]);
+
+  const visibleColumns = useMemo(() => {
+    if (boardView === 'deadline') {
+      return DEADLINE_COLUMNS.filter((column) => column.key !== 'overdue' || deadlineGroups.overdue.length > 0);
+    }
+    return STATUS_COLUMNS.filter((column) => column.key !== 'fulfillment' || statusGroups.fulfillment.length > 0);
+  }, [boardView, deadlineGroups.overdue.length, statusGroups.fulfillment.length]);
+
+  const ordersForColumn = (column: BoardColumn) => {
+    if (boardView === 'deadline') return deadlineGroups[column.key as UrgencyKey];
+    return statusGroups[column.key as StatusColumnKey];
+  };
 
   const labelOrders = useMemo(
-    () => (data?.orders || []).filter(hasShippingLabel),
+    () => (data?.orders || []).filter(canPrintShippingLabel),
     [data?.orders],
   );
   const selectedLabelOrders = useMemo(
@@ -713,10 +804,12 @@ export default function Pedidos() {
   );
   const allLabelsSelected = labelOrders.length > 0 && selectedLabelOrders.length === labelOrders.length;
 
-  const total = data?.totalCount || 0;
+  const shippedTotal = data?.shippedCount ?? (data?.orders || []).filter(isShippedOrder).length;
+  const operationalTotal = data?.operationalCount ?? openOrders.length;
+  const currentDeliveryWindow = data?.deliveryMetrics?.windows.find((window) => window.state === 'active') || null;
   const selectedUrgency = selectedOrder ? urgencyFor(selectedOrder, now) : null;
   const selectedShipped = selectedOrder ? isShippedOrder(selectedOrder) : false;
-  const selectedStatus = selectedOrder ? statusMeta(selectedOrder.falabellaStatus, selectedOrder.shippingType) : null;
+  const selectedStatus = selectedOrder ? statusMeta(selectedOrder.falabellaStatus) : null;
   const selectedOrderKey = selectedOrder ? `${selectedOrder.companyId}:${selectedOrder.orderId}` : '';
   const visibleOrderActionError = orderActionErrorKey === selectedOrderKey ? orderActionError : '';
 
@@ -742,7 +835,7 @@ export default function Pedidos() {
   };
 
   const markReadyToShip = async (order: InboxOrder) => {
-    if (!canDispatch || hasShippingLabel(order) || isFulfillmentOrder(order)) return;
+    if (!canDispatch || hasCompletedPreparation(order) || isFulfillmentOrder(order)) return;
     const key = `${order.companyId}:${order.orderId}`;
     setReadyLoadingKey(key);
     setOrderActionError('');
@@ -770,8 +863,52 @@ export default function Pedidos() {
     }
   };
 
+  const markAllReadyToShip = async () => {
+    if (!bulkReadySelection || bulkReadyRunning || !canDispatch) return;
+    const candidates = bulkReadySelection.orders.filter(canMarkReadyToShip);
+    if (!candidates.length) {
+      setBulkReadySelection(null);
+      return;
+    }
+
+    setBulkReadyRunning(true);
+    setError('');
+    setSyncMessage('');
+    const succeeded = new Set<string>();
+    const failed: InboxOrder[] = [];
+    try {
+      for (let index = 0; index < candidates.length; index += 4) {
+        const chunk = candidates.slice(index, index + 4);
+        const results = await Promise.allSettled(chunk.map((order) => (
+          api.falabellaApiSetReadyToShip(order.companyId, order.orderId)
+        )));
+        results.forEach((result, resultIndex) => {
+          const order = chunk[resultIndex];
+          if (result.status === 'fulfilled') succeeded.add(orderKey(order));
+          else failed.push(order);
+        });
+      }
+
+      if (succeeded.size > 0) {
+        setData((current) => current ? {
+          ...current,
+          orders: current.orders.map((order) => succeeded.has(orderKey(order))
+            ? { ...order, falabellaStatus: 'ready_to_ship' }
+            : order),
+        } : current);
+        setSyncMessage(`${succeeded.size} pedido${succeeded.size === 1 ? '' : 's'} marcado${succeeded.size === 1 ? '' : 's'} como listo${succeeded.size === 1 ? '' : 's'} para envío.`);
+      }
+      if (failed.length > 0) {
+        setError(`${failed.length} pedido${failed.length === 1 ? '' : 's'} ${failed.length === 1 ? 'no pudo actualizarse' : 'no pudieron actualizarse'}. Intenta sincronizar y vuelve a revisar.`);
+      }
+      setBulkReadySelection(null);
+    } finally {
+      setBulkReadyRunning(false);
+    }
+  };
+
   const viewShippingLabel = async (order: InboxOrder) => {
-    if (!hasShippingLabel(order)) return;
+    if (!canPrintShippingLabel(order)) return;
     const key = `${order.companyId}:${order.orderId}`;
     const previewWindow = window.open('', '_blank');
     if (previewWindow) {
@@ -827,17 +964,24 @@ export default function Pedidos() {
       : new Set(labelOrders.map(orderKey)));
   };
 
-  const printSelectedShippingLabels = async () => {
-    if (!selectedLabelOrders.length || batchLabelsLoading) return;
+  const cancelLabelSelection = () => {
+    setLabelSelectionMode(false);
+    setSelectedLabelKeys(new Set());
+  };
+
+  const printShippingLabels = async (orders: InboxOrder[], column: BoardColumnKey | null = null) => {
+    const printableOrders = orders.filter(canPrintShippingLabel);
+    if (!printableOrders.length || batchLabelsLoading) return;
     const previewWindow = window.open('', '_blank');
     if (previewWindow) {
       previewWindow.opener = null;
-      renderShippingLabelsLoading(previewWindow, selectedLabelOrders.length);
+      renderShippingLabelsLoading(previewWindow, printableOrders.length);
     }
     setBatchLabelsLoading(true);
+    setPrintingColumn(column);
     setError('');
     try {
-      const result = await api.falabellaApiGetShippingLabelsA4(selectedLabelOrders.map((order) => ({
+      const result = await api.falabellaApiGetShippingLabelsA4(printableOrders.map((order) => ({
         companyId: order.companyId,
         orderId: order.orderId,
         orderNumber: order.orderNumber,
@@ -857,71 +1001,31 @@ export default function Pedidos() {
       setError(nextError?.message || 'No se pudieron agrupar las etiquetas de Falabella.');
     } finally {
       setBatchLabelsLoading(false);
+      setPrintingColumn(null);
     }
   };
 
   return (
     <div className="space-y-4">
-      <section className="flex flex-col gap-4 rounded-md border border-border bg-card px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-4">
-          <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
-            <Inbox className="size-5" />
-          </span>
+      <section className="rounded-md border border-border bg-card p-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <p className="text-2xl font-semibold tabular-nums text-foreground">{total}</p>
-              <p className="text-sm font-medium text-foreground">pedidos en operación</p>
+            <div className="flex items-center gap-2">
+              <Inbox className="size-4 text-primary" />
+              <h1 className="text-sm font-semibold text-foreground">Pedidos por atender</h1>
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-semibold tabular-nums text-foreground">{operationalTotal}</span>
             </div>
-            <p className="text-sm text-muted-foreground">Pendientes, listos para enviar y enviados por Falabella.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Pendientes y listos para entregar a Falabella.</p>
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {grouped.overdue.length > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 font-medium text-red-700">
-              <AlertCircle className="size-4" /> {grouped.overdue.length} vencido{grouped.overdue.length === 1 ? '' : 's'}
-            </span>
-          )}
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 font-medium text-amber-700">
-            <Clock3 className="size-4" /> {grouped.today.length} vence{grouped.today.length === 1 ? '' : 'n'} hoy
-          </span>
-          {grouped.shipped.length > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 font-medium text-emerald-700">
-              <CheckCircle2 className="size-4" /> {grouped.shipped.length} enviado{grouped.shipped.length === 1 ? '' : 's'}
-            </span>
-          )}
           <span className="text-xs text-muted-foreground">
             {data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronización registrada'}
           </span>
         </div>
-      </section>
 
-      {data?.deliveryMetrics?.windows?.length ? (
-        <section className="rounded-md border border-border bg-muted/15 p-4">
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <Timer className="size-4 text-primary" />
-                <h2 className="text-sm font-semibold text-foreground">Entregas por turno</h2>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Se cuenta una entrega cuando el pedido pasa a enviado. Los tiempos se guardan desde pendiente hasta su entrega a Falabella.
-              </p>
-            </div>
-            <span className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
-              <RefreshCw className="size-3" /> Actualización cada 15 min
-            </span>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-2">
-            {data.deliveryMetrics.windows.map((window) => <DeliveryShiftCard key={window.key} window={window} />)}
-          </div>
-        </section>
-      ) : null}
-
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row">
           <Select value={companyId} onValueChange={setCompanyId}>
-            <SelectTrigger className="w-full border-border bg-background sm:w-[230px]">
+            <SelectTrigger className="w-full border-border bg-background sm:w-[210px]">
               <Store className="size-4 text-muted-foreground" />
               <SelectValue placeholder="Todas las tiendas" />
             </SelectTrigger>
@@ -942,25 +1046,83 @@ export default function Pedidos() {
               aria-label="Buscar pedidos"
             />
           </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (labelSelectionMode) cancelLabelSelection();
+                else setLabelSelectionMode(true);
+              }}
+              disabled={labelOrders.length === 0 || batchLabelsLoading}
+            >
+              <Printer />
+              {labelSelectionMode ? 'Cancelar selección' : 'Imprimir etiquetas'}
+            </Button>
+            <Button size="sm" onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
+              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Sincronizar
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setLabelSelectionMode((current) => !current);
-              setSelectedLabelKeys(new Set());
-            }}
-            disabled={labelOrders.length === 0 || batchLabelsLoading}
-          >
-            <Printer />
-            {labelSelectionMode ? 'Cancelar selección' : 'Imprimir etiquetas'}
-          </Button>
-          <Button onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
-            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Sincronizar pedidos
-          </Button>
+      </section>
+
+      <section className="flex flex-wrap gap-2" aria-label="Resumen de pedidos">
+        <div className="min-w-36 flex-1 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-950">
+          <p className="text-[11px] font-medium text-indigo-700">Por atender</p>
+          <p className="mt-0.5 text-lg font-semibold tabular-nums">{operationalTotal}</p>
         </div>
-      </div>
+        <div className="min-w-36 flex-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
+          <p className="text-[11px] font-medium text-amber-700">Vencen hoy</p>
+          <p className="mt-0.5 text-lg font-semibold tabular-nums">{deadlineGroups.today.length}</p>
+        </div>
+        <div className="min-w-36 flex-1 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sky-950">
+          <p className="text-[11px] font-medium text-sky-700">Listos para enviar</p>
+          <p className="mt-0.5 text-lg font-semibold tabular-nums">{statusGroups.ready.length}</p>
+        </div>
+        <div className="min-w-36 flex-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-950">
+          <p className="text-[11px] font-medium text-emerald-700">Enviados</p>
+          <p className="mt-0.5 text-lg font-semibold tabular-nums">{shippedTotal}</p>
+        </div>
+        {deadlineGroups.overdue.length > 0 && (
+          <div className="min-w-36 flex-1 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-950">
+            <p className="text-[11px] font-medium text-rose-700">Vencidos</p>
+            <p className="mt-0.5 text-lg font-semibold tabular-nums">{deadlineGroups.overdue.length}</p>
+          </div>
+        )}
+      </section>
+
+      {currentDeliveryWindow && data?.deliveryMetrics?.windows?.length ? (
+        <details className="rounded-md border border-border bg-card px-3 py-2.5">
+          <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <Timer className="size-3.5 text-primary" />
+                <span className="text-xs font-semibold text-foreground">Métricas del turno actual</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatTime(currentDeliveryWindow.from)} → {formatTime(currentDeliveryWindow.to)}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <span className="font-medium tabular-nums text-foreground">{currentDeliveryWindow.deliveries} entregas</span>
+                <span className="text-muted-foreground">
+                  Ciclo {currentDeliveryWindow.total.measured > 0 ? formatDuration(currentDeliveryWindow.total.averageMinutes) : 'sin datos'}
+                </span>
+                <span className="font-medium text-primary">Ver detalle</span>
+              </div>
+            </div>
+          </summary>
+          <div className="mt-3 border-t border-border pt-3">
+            <div className="flex items-center justify-end gap-1.5 text-[11px] text-muted-foreground">
+              <RefreshCw className="size-3" /> Actualización cada 15 min
+            </div>
+            <div className="mt-3 grid gap-x-10 gap-y-7 lg:grid-cols-2">
+              {data.deliveryMetrics.windows.map((window) => <DeliveryShiftCard key={window.key} window={window} />)}
+            </div>
+          </div>
+        </details>
+      ) : null}
 
       {labelSelectionMode && (
         <div className="flex flex-col gap-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950 sm:flex-row sm:items-center sm:justify-between">
@@ -980,7 +1142,10 @@ export default function Pedidos() {
             <Button type="button" variant="outline" size="sm" onClick={toggleAllLabels} disabled={batchLabelsLoading}>
               {allLabelsSelected ? 'Quitar todas' : 'Seleccionar todas'}
             </Button>
-            <Button type="button" size="sm" onClick={() => void printSelectedShippingLabels()} disabled={!selectedLabelOrders.length || batchLabelsLoading}>
+            <Button type="button" variant="ghost" size="sm" onClick={cancelLabelSelection} disabled={batchLabelsLoading}>
+              Cancelar
+            </Button>
+            <Button type="button" size="sm" onClick={() => void printShippingLabels(selectedLabelOrders)} disabled={!selectedLabelOrders.length || batchLabelsLoading}>
               {batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />}
               {batchLabelsLoading
                 ? 'Preparando PDF…'
@@ -1005,39 +1170,101 @@ export default function Pedidos() {
         </div>
       )}
 
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            {boardView === 'deadline' ? 'Pedidos por vencimiento' : 'Pedidos por estado'}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {boardView === 'deadline' ? 'Prioriza según la fecha límite de entrega.' : 'Organiza el trabajo según el avance en Falabella.'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Agrupar columnas por</span>
+          <div className="inline-flex rounded-md border border-border bg-background p-0.5" role="group" aria-label="Agrupar columnas por">
+            <button
+              type="button"
+              onClick={() => setBoardView('deadline')}
+              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${boardView === 'deadline' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              aria-pressed={boardView === 'deadline'}
+            >
+              Cuándo vence
+            </button>
+            <button
+              type="button"
+              onClick={() => setBoardView('status')}
+              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${boardView === 'status' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              aria-pressed={boardView === 'status'}
+            >
+              Estado
+            </button>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-card py-20 text-sm text-muted-foreground">
           <Loader2 className="size-5 animate-spin" /> Cargando pedidos pendientes…
         </div>
-      ) : total === 0 ? (
+      ) : operationalTotal === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-card py-16 text-center">
           <span className="grid size-12 place-items-center rounded-full bg-emerald-50 text-emerald-700">
             <CheckCircle2 className="size-6" />
           </span>
-          <p className="text-sm font-medium text-foreground">No hay pedidos con los filtros actuales</p>
-          <p className="text-sm text-muted-foreground">Sin pendientes, listos para enviar ni enviados.</p>
+          <p className="text-sm font-medium text-foreground">No hay pedidos por atender</p>
+          <p className="text-sm text-muted-foreground">Prueba con otra tienda o búsqueda.</p>
         </div>
       ) : (
         <div className="overflow-x-auto pb-2">
-          <div className="grid min-w-[1400px] grid-cols-5 gap-3">
-            {COLUMNS.map((column) => {
+          <div className={`grid gap-3 ${visibleColumns.length >= 4 ? 'min-w-[1120px] grid-cols-4' : visibleColumns.length === 3 ? 'min-w-[840px] grid-cols-3' : 'min-w-[560px] grid-cols-2'}`}>
+            {visibleColumns.map((column) => {
               const Icon = column.icon;
-              const orders = grouped[column.key];
+              const orders = ordersForColumn(column);
+              const printableOrders = orders.filter(canPrintShippingLabel);
+              const readyCandidates = orders.filter(canMarkReadyToShip);
               return (
-                <section key={column.key} className="flex min-h-[420px] flex-col rounded-md border border-border bg-muted/15">
-                  <header className={`flex items-center justify-between gap-3 rounded-t-md border-b px-3.5 py-3 ${column.headerClass}`}>
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <Icon className="size-4 shrink-0" />
-                      <div className="min-w-0">
-                        <h2 className="text-sm font-semibold">{column.title}</h2>
-                        <p className="truncate text-[11px] opacity-75">{column.description}</p>
+                <section key={column.key} className="flex min-h-[400px] flex-col overflow-hidden rounded-md border border-border bg-card">
+                  <header className={`border-b px-3 py-2.5 ${column.headerClass}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <Icon className={`size-4 shrink-0 ${column.iconClass}`} />
+                        <div className="min-w-0">
+                          <h2 className="text-sm font-semibold text-current">{column.title}</h2>
+                          <p className="truncate text-[11px] text-current opacity-80">{column.description}</p>
+                        </div>
                       </div>
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${column.countClass}`}>
+                        {orders.length}
+                      </span>
                     </div>
-                    <span className={`grid min-w-7 place-items-center rounded-md px-1.5 py-1 text-xs font-semibold tabular-nums ${column.countClass}`}>
-                      {orders.length}
-                    </span>
+                    {(printableOrders.length > 0 || (canDispatch && readyCandidates.length > 0)) && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {printableOrders.length > 0 && (
+                          <button
+                            type="button"
+                            disabled={batchLabelsLoading}
+                            onClick={() => void printShippingLabels(printableOrders, column.key)}
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-white px-2.5 text-[11px] font-semibold text-slate-900 shadow-sm transition-colors hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {printingColumn === column.key ? <Loader2 className="size-3 animate-spin" /> : <Printer className="size-3" />}
+                            {printingColumn === column.key ? 'Preparando…' : `Imprimir etiquetas (${printableOrders.length})`}
+                          </button>
+                        )}
+                        {canDispatch && readyCandidates.length > 0 && (
+                          <button
+                            type="button"
+                            disabled={bulkReadyRunning}
+                            onClick={() => setBulkReadySelection({ columnKey: column.key, columnTitle: column.title, orders: readyCandidates })}
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-white px-2.5 text-[11px] font-semibold text-slate-900 shadow-sm transition-colors hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <PackageCheck className="size-3" />
+                            Todo listo para envío ({readyCandidates.length})
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </header>
-                  <div className="max-h-[calc(100vh-21rem)] min-h-[340px] flex-1 space-y-2.5 overflow-y-auto p-2.5">
+                  <div className="max-h-[calc(100vh-16rem)] min-h-[340px] flex-1 divide-y divide-border overflow-y-auto">
                     {orders.map((order) => (
                       <OrderCard
                         key={order.id}
@@ -1065,13 +1292,36 @@ export default function Pedidos() {
         </div>
       )}
 
+      <Dialog open={Boolean(bulkReadySelection)} onOpenChange={(open) => !open && !bulkReadyRunning && setBulkReadySelection(null)}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!bulkReadyRunning}>
+          <DialogHeader>
+            <DialogTitle>Marcar todos como listos para envío</DialogTitle>
+            <DialogDescription>
+              {bulkReadySelection
+                ? `${bulkReadySelection.orders.filter(canMarkReadyToShip).length} pedidos de la columna “${bulkReadySelection.columnTitle}”.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+            Confirma que todos estos pedidos ya están empacados. Falabella habilitará sus etiquetas de envío.
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkReadySelection(null)} disabled={bulkReadyRunning}>Cancelar</Button>
+            <Button onClick={() => void markAllReadyToShip()} disabled={bulkReadyRunning}>
+              {bulkReadyRunning ? <Loader2 className="animate-spin" /> : <PackageCheck />}
+              {bulkReadyRunning ? 'Actualizando pedidos…' : 'Confirmar todos'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(selectedOrder)} onOpenChange={(open) => !open && !readyLoadingKey && closeOrder()}>
         <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!readyLoadingKey}>
           {selectedOrder && selectedUrgency && selectedStatus && (
             confirmReady ? (
               <>
                 <DialogHeader>
-                  <DialogTitle>Confirmar pedido preparado</DialogTitle>
+                  <DialogTitle>Confirmar pedido listo para envío</DialogTitle>
                   <DialogDescription>Pedido {selectedOrder.orderNumber} · {selectedOrder.companyName}</DialogDescription>
                 </DialogHeader>
 
@@ -1080,7 +1330,7 @@ export default function Pedidos() {
                   <div>
                     <p className="font-semibold">Confirma que todo el pedido está empacado</p>
                     <p className="mt-1 text-sm text-amber-800">
-                      Falabella cambiará a listo para envío todos los productos asociados a esta orden. Esta acción no debe hacerse si falta algún producto por preparar.
+                      Falabella cambiará a listo para envío todos los productos asociados a esta orden. Esta acción no debe hacerse si falta algún producto por empacar.
                     </p>
                   </div>
                 </div>
@@ -1154,7 +1404,7 @@ export default function Pedidos() {
                     <p className="mt-0.5 text-xs text-muted-foreground">Completa los pasos en orden para obtener la etiqueta.</p>
                   </div>
                   <span className="text-xs font-medium text-muted-foreground">
-                    {isFulfillmentOrder(selectedOrder) ? 'Gestión automática' : hasShippingLabel(selectedOrder) ? '3 de 3' : '1 de 3'}
+                    {isFulfillmentOrder(selectedOrder) ? 'Gestión automática' : hasCompletedPreparation(selectedOrder) ? '3 de 3' : '1 de 3'}
                   </span>
                 </div>
                 {isFulfillmentOrder(selectedOrder) ? (
@@ -1163,13 +1413,13 @@ export default function Pedidos() {
                   </div>
                 ) : (
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                    <div className={`rounded-md border px-2 py-2 ${hasShippingLabel(selectedOrder) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                    <div className={`rounded-md border px-2 py-2 ${hasCompletedPreparation(selectedOrder) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                       <span className="font-semibold">1</span><p className="mt-0.5">Empacar</p>
                     </div>
-                    <div className={`rounded-md border px-2 py-2 ${hasShippingLabel(selectedOrder) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-border bg-muted/30 text-muted-foreground'}`}>
+                    <div className={`rounded-md border px-2 py-2 ${hasCompletedPreparation(selectedOrder) ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-border bg-muted/30 text-muted-foreground'}`}>
                       <span className="font-semibold">2</span><p className="mt-0.5">Marcar listo</p>
                     </div>
-                    <div className={`rounded-md border px-2 py-2 ${hasShippingLabel(selectedOrder) ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-border bg-muted/30 text-muted-foreground'}`}>
+                    <div className={`rounded-md border px-2 py-2 ${hasCompletedPreparation(selectedOrder) ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-border bg-muted/30 text-muted-foreground'}`}>
                       <span className="font-semibold">3</span><p className="mt-0.5">Etiqueta</p>
                     </div>
                   </div>
@@ -1178,10 +1428,10 @@ export default function Pedidos() {
                   {isFulfillmentOrder(selectedOrder)
                     ? 'Este pedido es Fulfillment: Falabella gestiona su inventario y despacho, por lo que no debes marcarlo manualmente.'
                     : selectedShipped
-                      ? 'El pedido ya fue enviado a Falabella. Puedes volver a abrir e imprimir su etiqueta cuando la necesites.'
+                      ? 'El pedido ya fue enviado a Falabella y no requiere volver a imprimir su etiqueta.'
                     : !canDispatch
                       ? 'Tu perfil es de solo lectura. Puedes revisar el pedido y abrir su etiqueta cuando Falabella lo marque como listo.'
-                    : hasShippingLabel(selectedOrder)
+                    : canPrintShippingLabel(selectedOrder)
                       ? 'Falabella confirmó el pedido como listo para envío. Ya puedes abrir e imprimir la etiqueta.'
                       : 'Empaca todos los productos del pedido y luego confirma que está listo para habilitar la etiqueta.'}
                 </p>
@@ -1223,7 +1473,7 @@ export default function Pedidos() {
 
               <DialogFooter>
                 <Button variant="outline" onClick={closeOrder}>Cerrar</Button>
-                {hasShippingLabel(selectedOrder) ? (
+                {canPrintShippingLabel(selectedOrder) ? (
                   <Button
                     onClick={() => void viewShippingLabel(selectedOrder)}
                     disabled={labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
@@ -1231,7 +1481,7 @@ export default function Pedidos() {
                     {labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
                     Ver etiqueta
                   </Button>
-                ) : !isFulfillmentOrder(selectedOrder) && canDispatch ? (
+                ) : !selectedShipped && !isFulfillmentOrder(selectedOrder) && canDispatch ? (
                   <Button onClick={() => { setOrderActionError(''); setConfirmReady(true); }}>
                     <PackageCheck /> Marcar listo para envío
                   </Button>

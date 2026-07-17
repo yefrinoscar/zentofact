@@ -617,6 +617,13 @@ export async function falabellaGetShippingLabel(payload: { companyId: number; or
   if (!orderItems.length || rawOrderItemIds.some((id) => !/^\d+$/.test(id)) || orderItemIds.length !== orderItems.length) {
     return { ok: false, error: 'Falabella devolvió artículos incompletos o inválidos para generar la etiqueta.' };
   }
+  const itemStatuses = orderItems.map(getOrderItemStatus);
+  if (itemStatuses.some((status) => status !== 'ready_to_ship')) {
+    return {
+      ok: false,
+      error: 'Falabella indica que el pedido todavía no está listo para enviar o que ya fue enviado. Sincroniza la bandeja antes de imprimir.',
+    };
+  }
 
   const documentResponse = await client.getDocument({ orderItemIds, documentType: 'shippingParcel' });
   const documentError = getFalabellaError(documentResponse.data);

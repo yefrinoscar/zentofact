@@ -122,6 +122,12 @@ const fail = (c, e, status = 500) => {
   return c.json({ error: String((e && e.message) || e) }, status);
 };
 
+function canPrintFalabellaShippingLabel(status) {
+  const value = String(status || '').toLowerCase();
+  return /(^|\|)ready_to_ship(\||$)/.test(value)
+    && !/(^|\|)(pending|shipped)(\||$)/.test(value);
+}
+
 app.get('/health', (c) => ok(c, { ok: true, service: 'zentofact-api', ts: new Date().toISOString() }));
 
 // ── Sesión / catálogo de permisos ──
@@ -406,7 +412,16 @@ app.post('/falabella/:companyId/orders/:orderId/ready-to-ship', async (c) => {
 });
 app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
   try {
-    const result = await core.falabellaGetShippingLabel({ companyId: Number(c.req.param('companyId')), orderId: c.req.param('orderId') });
+    const companyId = Number(c.req.param('companyId'));
+    const orderId = c.req.param('orderId');
+    const order = (await core.pool.query(
+      'select status from falabella_orders where company_id=$1 and order_id=$2',
+      [companyId, orderId],
+    )).rows[0];
+    if (!order || !canPrintFalabellaShippingLabel(order.status)) {
+      return c.json({ error: 'Solo se pueden imprimir etiquetas de pedidos listos para enviar.' }, 409);
+    }
+    const result = await core.falabellaGetShippingLabel({ companyId, orderId });
     if (result?.error) {
       const providerStatus = Number(result.status || 0);
       const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : providerStatus >= 400 ? providerStatus : 400;
@@ -419,6 +434,37 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
 app.post('/falabella/shipping-labels/a4', async (c) => {
   try {
     const { orders } = await c.req.json();
+    if (!Array.isArray(orders) || !orders.length) {
+      return c.json({ error: 'Selecciona al menos una etiqueta para imprimir.' }, 400);
+    }
+    if (orders.length > 500) {
+      return c.json({ error: 'Puedes imprimir hasta 500 etiquetas por vez.' }, 400);
+    }
+    const params = [];
+    const tuples = [];
+    for (const order of orders) {
+      const companyId = Number(order?.companyId);
+      const orderId = String(order?.orderId || '').trim();
+      if (!Number.isInteger(companyId) || companyId <= 0 || !orderId) {
+        return c.json({ error: 'La selección contiene un pedido inválido.' }, 400);
+      }
+      params.push(companyId, orderId);
+      tuples.push(`($${params.length - 1}::int,$${params.length}::text)`);
+    }
+    const printable = await core.pool.query(
+      `select company_id, order_id, status
+       from falabella_orders
+       where (company_id, order_id) in (${tuples.join(',')})`,
+      params,
+    );
+    const printableByOrder = new Map(printable.rows.map((order) => [
+      `${order.company_id}:${order.order_id}`,
+      canPrintFalabellaShippingLabel(order.status),
+    ]));
+    const invalidOrder = orders.find((order) => !printableByOrder.get(`${Number(order.companyId)}:${String(order.orderId).trim()}`));
+    if (invalidOrder) {
+      return c.json({ error: `La orden ${invalidOrder.orderNumber || invalidOrder.orderId} ya fue enviada o todavía no está lista para imprimir.` }, 409);
+    }
     const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
       orders,
       ({ companyId, orderId }) => core.falabellaGetShippingLabel({ companyId, orderId }),

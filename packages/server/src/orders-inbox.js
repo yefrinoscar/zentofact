@@ -190,7 +190,9 @@ export async function listOrdersInbox(input = {}, db) {
   const [ordersResult, summaryResult, syncResult, deliveryMetricsResult] = await Promise.all([
     target.query(
       `${BASE_CTE}
-       select *, count(*) over()::int as total_count
+       select *,
+         count(*) over()::int as total_count,
+         count(*) filter (where lower(falabella_status) ~ '(^|\\|)shipped(\\||$)') over()::int as shipped_count
        from base_orders
        where (
          $4::text = 'all'
@@ -223,8 +225,8 @@ export async function listOrdersInbox(input = {}, db) {
       [filters.companyId],
     ),
     target.query(
-      `select
-         case when shipped_at < $3::timestamptz then 'evening_to_noon' else 'noon_to_evening' end as window_key,
+       `select
+         case when shipped_at_utc < $3::timestamptz then 'evening_to_noon' else 'noon_to_evening' end as window_key,
          count(*)::int as deliveries,
          count(*) filter (where ready_to_ship_at >= pending_at)::int as preparation_measured,
          round(avg(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
@@ -247,9 +249,13 @@ export async function listOrdersInbox(input = {}, db) {
            filter (where shipped_at >= pending_at))::int as total_min,
          round(max(extract(epoch from (shipped_at - pending_at)) / 60)
            filter (where shipped_at >= pending_at))::int as total_max
-       from falabella_order_lifecycle
+       from (
+         -- Falabella entrega estas horas sin zona; se almacenaron como UTC aunque corresponden a Lima.
+         select *, shipped_at + interval '5 hours' as shipped_at_utc
+         from falabella_order_lifecycle
+       ) lifecycle
        where ($1::int is null or company_id=$1)
-         and shipped_at >= $2::timestamptz and shipped_at < $4::timestamptz
+         and shipped_at_utc >= $2::timestamptz and shipped_at_utc < $4::timestamptz
        group by window_key`,
       [filters.companyId, deliveryWindows[0].from, deliveryWindows[0].to, deliveryWindows[1].to],
     ),
@@ -271,6 +277,11 @@ export async function listOrdersInbox(input = {}, db) {
   return {
     orders: ordersResult.rows.map(normalizeOrder),
     totalCount: Number(ordersResult.rows[0]?.total_count || 0),
+    shippedCount: Number(ordersResult.rows[0]?.shipped_count || 0),
+    operationalCount: Math.max(
+      Number(ordersResult.rows[0]?.total_count || 0) - Number(ordersResult.rows[0]?.shipped_count || 0),
+      0,
+    ),
     summary: {
       total: Number(summary.total || 0),
       open: Number(summary.open || 0),

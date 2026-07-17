@@ -53,7 +53,7 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         falabella_updated_at: '2026-07-14T10:02:00Z', first_seen_at: '2026-07-14T10:03:00Z',
         promised_shipping_time: '2026-07-15 21:00:00', shipping_type: 'Dropshipping',
         falabella_status: 'ready_to_ship', invoice_required: false, grand_total: '149.90', currency: 'PEN',
-        customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 1,
+        customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 4, shipped_count: 3,
       }] };
       if (compact.includes('min(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
       if (compact.includes('from falabella_order_lifecycle')) return { rows: [{
@@ -79,13 +79,16 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(result.orders[0].promisedShippingAt, '2026-07-15T21:00:00.000Z');
   assert.equal(result.summary.open, 3);
   assert.equal(result.summary.byCompany[0].companyName, 'Tienda Centro');
-  assert.equal(result.totalCount, 1);
+  assert.equal(result.totalCount, 4);
+  assert.equal(result.shippedCount, 3);
+  assert.equal(result.operationalCount, 1);
   assert.equal(result.deliveryMetrics.windows[0].deliveries, 3);
   assert.equal(result.deliveryMetrics.windows[0].handoff.averageMinutes, 18);
   assert.equal(result.deliveryMetrics.windows[1].deliveries, 0);
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
+  assert.match(calls.find((call) => call.sql.includes('from falabella_order_lifecycle')).sql, /shipped_at \+ interval '5 hours'/);
 });
 
 test('sincroniza solo tiendas activas con credenciales y conserva errores por tienda', async () => {

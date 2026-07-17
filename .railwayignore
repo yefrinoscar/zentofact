@@ -7,3 +7,5 @@ scripts
 **/dist
 .env
 *.log
+*.xlsx
+~$*
