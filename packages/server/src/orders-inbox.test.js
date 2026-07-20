@@ -56,6 +56,27 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 4, shipped_count: 3,
       }] };
       if (compact.includes('min(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
+      if (compact.includes('generate_series')) return { rows: [{
+        cycle_date: '2026-07-15', window_key: 'evening_to_noon', deliveries: 0,
+        preparation_measured: 0, preparation_avg: null, preparation_min: null, preparation_max: null,
+        handoff_measured: 0, handoff_avg: null, handoff_min: null, handoff_max: null,
+        total_measured: 0, total_avg: null, total_min: null, total_max: null,
+      }, {
+        cycle_date: '2026-07-15', window_key: 'noon_to_evening', deliveries: 0,
+        preparation_measured: 0, preparation_avg: null, preparation_min: null, preparation_max: null,
+        handoff_measured: 0, handoff_avg: null, handoff_min: null, handoff_max: null,
+        total_measured: 0, total_avg: null, total_min: null, total_max: null,
+      }, {
+        cycle_date: '2026-07-16', window_key: 'evening_to_noon', deliveries: 3,
+        preparation_measured: 3, preparation_avg: 32, preparation_min: 12, preparation_max: 50,
+        handoff_measured: 3, handoff_avg: 13, handoff_min: 5, handoff_max: 22,
+        total_measured: 3, total_avg: 45, total_min: 22, total_max: 70,
+      }, {
+        cycle_date: '2026-07-16', window_key: 'noon_to_evening', deliveries: 2,
+        preparation_measured: 2, preparation_avg: 40, preparation_min: 30, preparation_max: 61,
+        handoff_measured: 1, handoff_avg: 20, handoff_min: 20, handoff_max: 20,
+        total_measured: 2, total_avg: 58, total_min: 40, total_max: 80,
+      }] };
       if (compact.includes('from falabella_order_lifecycle')) return { rows: [{
         window_key: 'evening_to_noon', deliveries: 3,
         preparation_measured: 3, preparation_avg: 42, preparation_min: 20, preparation_max: 70,
@@ -85,10 +106,30 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(result.deliveryMetrics.windows[0].deliveries, 3);
   assert.equal(result.deliveryMetrics.windows[0].handoff.averageMinutes, 18);
   assert.equal(result.deliveryMetrics.windows[1].deliveries, 0);
+  assert.equal(result.deliveryMetrics.days[0].date, '2026-07-15');
+  assert.equal(result.deliveryMetrics.days[0].windows.length, 2);
+  assert.deepEqual(result.deliveryMetrics.days[1], {
+    date: '2026-07-16',
+    windows: [{
+      key: 'evening_to_noon',
+      deliveries: 3,
+      preparation: { measured: 3, averageMinutes: 32, minMinutes: 12, maxMinutes: 50 },
+      handoff: { measured: 3, averageMinutes: 13, minMinutes: 5, maxMinutes: 22 },
+      total: { measured: 3, averageMinutes: 45, minMinutes: 22, maxMinutes: 70 },
+    }, {
+      key: 'noon_to_evening',
+      deliveries: 2,
+      preparation: { measured: 2, averageMinutes: 40, minMinutes: 30, maxMinutes: 61 },
+      handoff: { measured: 1, averageMinutes: 20, minMinutes: 20, maxMinutes: 20 },
+      total: { measured: 2, averageMinutes: 58, minMinutes: 40, maxMinutes: 80 },
+    }],
+  });
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
-  assert.match(calls.find((call) => call.sql.includes('from falabella_order_lifecycle')).sql, /shipped_at \+ interval '5 hours'/);
+  assert.match(calls.find((call) => call.sql.includes('shipped_at_utc >=')).sql, /shipped_at \+ interval '5 hours'/);
+  assert.match(calls.find((call) => call.sql.includes('generate_series')).sql, /time '17:00'/);
+  assert.match(calls.find((call) => call.sql.includes('generate_series')).sql, /cross join shift_windows/);
 });
 
 test('sincroniza solo tiendas activas con credenciales y conserva errores por tienda', async () => {

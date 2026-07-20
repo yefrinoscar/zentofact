@@ -70,6 +70,7 @@ type InboxResponse = {
   deliveryMetrics?: {
     updatedAt: string;
     windows: DeliveryWindow[];
+    days: DeliveryDay[];
   };
 };
 
@@ -91,11 +92,23 @@ type DeliveryWindow = {
   total: DurationMetric;
 };
 
+type DeliveryDay = {
+  date: string;
+  windows: Array<{
+    key: DeliveryWindow['key'];
+    deliveries: number;
+    preparation: DurationMetric;
+    handoff: DurationMetric;
+    total: DurationMetric;
+  }>;
+};
+
 type CompanyOption = { id: number; name: string };
 type UrgencyKey = 'overdue' | 'today' | 'tomorrow' | 'later';
 type StatusColumnKey = 'pending' | 'ready' | 'fulfillment';
 type BoardColumnKey = UrgencyKey | StatusColumnKey;
 type BoardView = 'deadline' | 'status';
+type OrderFlowStage = 'pending' | 'ready' | 'shipped';
 type BulkReadySelection = { columnKey: BoardColumnKey; columnTitle: string; orders: InboxOrder[] };
 type BoardColumn = {
   key: BoardColumnKey;
@@ -342,6 +355,74 @@ function DeliveryShiftCard({ window }: { window: DeliveryWindow }) {
         </details>
       )}
     </article>
+  );
+}
+
+function formatDeliveryDay(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return value;
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function DeliveryDayHistory({ days, currentDate }: { days: DeliveryDay[]; currentDate: string }) {
+  if (!days.length) {
+    return (
+      <section className="rounded-xl border border-border bg-card p-4" aria-labelledby="delivery-history-title">
+        <div className="flex items-center gap-2">
+          <CalendarClock className="size-4 text-primary" />
+          <h2 id="delivery-history-title" className="text-sm font-semibold text-foreground">Ciclos de esta semana</h2>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">El historial aparecerá cuando se registre la primera entrega.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-3" aria-labelledby="delivery-history-title">
+      <div className="flex items-center gap-2">
+        <CalendarClock className="size-4 text-primary" />
+        <h2 id="delivery-history-title" className="text-sm font-semibold text-foreground">Ciclos de esta semana</h2>
+      </div>
+
+      <div className="mt-3 flex snap-x gap-2 overflow-x-auto pb-1">
+        {days.map((day) => {
+          const current = day.date === currentDate;
+          return (
+            <article key={day.date} className={`min-w-[230px] flex-1 snap-start rounded-lg border p-3 ${current ? 'border-primary/30 bg-primary/5' : 'border-border bg-background'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium capitalize text-foreground">{formatDeliveryDay(day.date)}</p>
+                {current && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Actual</span>}
+              </div>
+              <div className="mt-2 divide-y divide-border/70">
+                {(day.windows || []).map((window) => {
+                  const evening = window.key === 'evening_to_noon';
+                  return (
+                    <div key={window.key} className="py-2 first:pt-1 last:pb-0">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className={`text-xs font-medium ${evening ? 'text-indigo-700' : 'text-amber-700'}`}>
+                          {evening ? '5 p. m. → 12 m.' : '12 m. → 5 p. m.'}
+                        </span>
+                        <strong className="text-sm tabular-nums text-foreground">
+                          {window.deliveries} entrega{window.deliveries === 1 ? '' : 's'}
+                        </strong>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        Ciclo {window.total.measured ? formatDuration(window.total.averageMinutes) : 'sin datos'}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -649,6 +730,7 @@ export default function Pedidos() {
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [companyId, setCompanyId] = useState('all');
   const [boardView, setBoardView] = useState<BoardView>('deadline');
+  const [flowStage, setFlowStage] = useState<OrderFlowStage>('pending');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -756,6 +838,40 @@ export default function Pedidos() {
     [data?.orders],
   );
 
+  const flowGroups = useMemo(() => {
+    const groups: Record<OrderFlowStage, InboxOrder[]> = { pending: [], ready: [], shipped: [] };
+    for (const order of data?.orders || []) {
+      if (isShippedOrder(order)) groups.shipped.push(order);
+      else if (canPrintShippingLabel(order)) groups.ready.push(order);
+      else groups.pending.push(order);
+    }
+    const priority: Record<UrgencyKey, number> = { overdue: 0, today: 1, tomorrow: 2, later: 3 };
+    for (const [key, orders] of Object.entries(groups) as Array<[OrderFlowStage, InboxOrder[]]>) {
+      orders.sort((a, b) => {
+        if (key === 'shipped') return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+        const urgencyDifference = priority[urgencyFor(a, now)] - priority[urgencyFor(b, now)];
+        if (urgencyDifference) return urgencyDifference;
+        const deadlineA = parseDate(a.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const deadlineB = parseDate(b.promisedShippingAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        return deadlineA - deadlineB || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+      });
+    }
+    return groups;
+  }, [data?.orders, now]);
+  const flowOrders = flowGroups[flowStage];
+  const globalDeadlineCounts = openOrders.reduce<Record<UrgencyKey, number>>((counts, order) => {
+    counts[urgencyFor(order, now)] += 1;
+    return counts;
+  }, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
+  const flowTabs = [
+    { value: 'pending' as const, label: 'Pendientes', description: 'Por preparar', activeClass: 'bg-amber-50 text-amber-900 shadow-sm', badgeClass: 'bg-amber-100 text-amber-800' },
+    { value: 'ready' as const, label: 'Listos para enviar', description: 'Etiqueta disponible', activeClass: 'bg-sky-50 text-sky-900 shadow-sm', badgeClass: 'bg-sky-100 text-sky-800' },
+    { value: 'shipped' as const, label: 'Enviados', description: 'Flujo completado', activeClass: 'bg-emerald-50 text-emerald-900 shadow-sm', badgeClass: 'bg-emerald-100 text-emerald-800' },
+  ];
+  const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
+  const filteredFlowOrders = flowOrders;
+  const filteredCountLabel = `${flowOrders.length} pedido${flowOrders.length === 1 ? '' : 's'}`;
+
   const deadlineGroups = useMemo(() => {
     const groups: Record<UrgencyKey, InboxOrder[]> = { today: [], tomorrow: [], later: [], overdue: [] };
     for (const order of openOrders) groups[urgencyFor(order, now)].push(order);
@@ -807,6 +923,9 @@ export default function Pedidos() {
   const shippedTotal = data?.shippedCount ?? (data?.orders || []).filter(isShippedOrder).length;
   const operationalTotal = data?.operationalCount ?? openOrders.length;
   const currentDeliveryWindow = data?.deliveryMetrics?.windows.find((window) => window.state === 'active') || null;
+  const currentDeliveryDate = currentDeliveryWindow
+    ? limaDateKey(parseDate(currentDeliveryWindow.to) || now)
+    : '';
   const selectedUrgency = selectedOrder ? urgencyFor(selectedOrder, now) : null;
   const selectedShipped = selectedOrder ? isShippedOrder(selectedOrder) : false;
   const selectedStatus = selectedOrder ? statusMeta(selectedOrder.falabellaStatus) : null;
@@ -1007,122 +1126,88 @@ export default function Pedidos() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-md border border-border bg-card p-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <section aria-label="Filtros de pedidos">
+        <div className="grid gap-2 md:grid-cols-[220px_minmax(0,1fr)_160px]">
           <div>
-            <div className="flex items-center gap-2">
-              <Inbox className="size-4 text-primary" />
-              <h1 className="text-sm font-semibold text-foreground">Pedidos por atender</h1>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-semibold tabular-nums text-foreground">{operationalTotal}</span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">Pendientes y listos para entregar a Falabella.</p>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger aria-label="Empresa" className="!h-10 w-full rounded-lg border-border bg-card px-3 py-0 shadow-none">
+                <Store className="size-4 text-muted-foreground" />
+                <SelectValue placeholder="Todas las tiendas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las tiendas</SelectItem>
+                {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
-          <span className="text-xs text-muted-foreground">
-            {data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronización registrada'}
-          </span>
-        </div>
-
-        <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-col gap-2 sm:flex-row">
-          <Select value={companyId} onValueChange={setCompanyId}>
-            <SelectTrigger className="w-full border-border bg-background sm:w-[210px]">
-              <Store className="size-4 text-muted-foreground" />
-              <SelectValue placeholder="Todas las tiendas" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas las tiendas</SelectItem>
-              {companies.map((company) => (
-                <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="relative sm:w-80">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Buscar pedido, cliente o tienda"
-              className="pl-9"
-              aria-label="Buscar pedidos"
-            />
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Buscar pedido" className="h-10 rounded-lg border-border bg-card py-0 pl-10 pr-4 shadow-none" aria-label="Buscar pedidos" />
           </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (labelSelectionMode) cancelLabelSelection();
-                else setLabelSelectionMode(true);
-              }}
-              disabled={labelOrders.length === 0 || batchLabelsLoading}
-            >
-              <Printer />
-              {labelSelectionMode ? 'Cancelar selección' : 'Imprimir etiquetas'}
-            </Button>
-            <Button size="sm" onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
-              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              Sincronizar
-            </Button>
-          </div>
+          <Button size="lg" className="w-full rounded-lg px-4 font-semibold" onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
+            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {refreshing ? 'Sincronizando…' : 'Sincronizar'}
+          </Button>
         </div>
-      </section>
-
-      <section className="flex flex-wrap gap-2" aria-label="Resumen de pedidos">
-        <div className="min-w-36 flex-1 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-950">
-          <p className="text-[11px] font-medium text-indigo-700">Por atender</p>
-          <p className="mt-0.5 text-lg font-semibold tabular-nums">{operationalTotal}</p>
-        </div>
-        <div className="min-w-36 flex-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
-          <p className="text-[11px] font-medium text-amber-700">Vencen hoy</p>
-          <p className="mt-0.5 text-lg font-semibold tabular-nums">{deadlineGroups.today.length}</p>
-        </div>
-        <div className="min-w-36 flex-1 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sky-950">
-          <p className="text-[11px] font-medium text-sky-700">Listos para enviar</p>
-          <p className="mt-0.5 text-lg font-semibold tabular-nums">{statusGroups.ready.length}</p>
-        </div>
-        <div className="min-w-36 flex-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-950">
-          <p className="text-[11px] font-medium text-emerald-700">Enviados</p>
-          <p className="mt-0.5 text-lg font-semibold tabular-nums">{shippedTotal}</p>
-        </div>
-        {deadlineGroups.overdue.length > 0 && (
-          <div className="min-w-36 flex-1 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-950">
-            <p className="text-[11px] font-medium text-rose-700">Vencidos</p>
-            <p className="mt-0.5 text-lg font-semibold tabular-nums">{deadlineGroups.overdue.length}</p>
-          </div>
-        )}
       </section>
 
       {currentDeliveryWindow && data?.deliveryMetrics?.windows?.length ? (
-        <details className="rounded-md border border-border bg-card px-3 py-2.5">
+        <details className="group rounded-xl border border-border bg-card px-4 py-3">
           <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2">
-                <Timer className="size-3.5 text-primary" />
-                <span className="text-xs font-semibold text-foreground">Métricas del turno actual</span>
-                <span className="text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2">
+                <Timer className="size-4 text-primary" />
+                <span className="text-sm font-semibold text-foreground">Métricas del turno actual</span>
+                <span className="text-sm text-muted-foreground">
                   {formatTime(currentDeliveryWindow.from)} → {formatTime(currentDeliveryWindow.to)}
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                 <span className="font-medium tabular-nums text-foreground">{currentDeliveryWindow.deliveries} entregas</span>
                 <span className="text-muted-foreground">
                   Ciclo {currentDeliveryWindow.total.measured > 0 ? formatDuration(currentDeliveryWindow.total.averageMinutes) : 'sin datos'}
                 </span>
-                <span className="font-medium text-primary">Ver detalle</span>
+                <span className="font-medium text-primary group-open:hidden">Ver detalle</span>
+                <span className="hidden font-medium text-primary group-open:inline">Ocultar detalle</span>
               </div>
             </div>
           </summary>
-          <div className="mt-3 border-t border-border pt-3">
-            <div className="flex items-center justify-end gap-1.5 text-[11px] text-muted-foreground">
-              <RefreshCw className="size-3" /> Actualización cada 15 min
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="size-3.5" /> Actualización cada 15 min
             </div>
-            <div className="mt-3 grid gap-x-10 gap-y-7 lg:grid-cols-2">
+            <div className="mt-4 grid gap-8 lg:grid-cols-2">
               {data.deliveryMetrics.windows.map((window) => <DeliveryShiftCard key={window.key} window={window} />)}
+            </div>
+            <div className="mt-6">
+              <DeliveryDayHistory days={data.deliveryMetrics.days || []} currentDate={currentDeliveryDate} />
             </div>
           </div>
         </details>
       ) : null}
+
+      <section>
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="flex items-baseline gap-2"><h2 className="text-sm font-semibold text-foreground">Prioridad global de entrega</h2><span className="text-xs text-muted-foreground">{openOrders.length} sin enviar</span></div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Incluye todos los pedidos pendientes y listos para enviar.</p>
+          </div>
+          <span className="text-[11px] text-muted-foreground/80">{data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronizar'}</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {([
+            { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', count: globalDeadlineCounts.overdue, className: 'border-rose-100 bg-rose-50 text-rose-900' },
+            { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', count: globalDeadlineCounts.today, className: 'border-amber-100 bg-amber-50 text-amber-900' },
+            { value: 'tomorrow', label: 'Vencen mañana', description: 'Preparar con anticipación', count: globalDeadlineCounts.tomorrow, className: 'border-sky-100 bg-sky-50 text-sky-900' },
+            { value: 'later', label: 'Próximos', description: 'Después de mañana', count: globalDeadlineCounts.later, className: 'border-slate-200 bg-slate-100 text-slate-900' },
+          ] as Array<{ value: UrgencyKey; label: string; description: string; count: number; className: string }>).map((item) => (
+            <article key={item.value} aria-label={`${item.label}: ${item.count}`} className={`rounded-xl border px-4 py-3 ${item.className}`}>
+              <div className="flex items-start justify-between gap-3"><span className="text-sm font-medium">{item.label}</span><span className="text-xl font-semibold tabular-nums">{item.count}</span></div>
+              <p className="mt-1 text-xs opacity-75">{item.description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
       {labelSelectionMode && (
         <div className="flex flex-col gap-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950 sm:flex-row sm:items-center sm:justify-between">
@@ -1170,135 +1255,70 @@ export default function Pedidos() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">
-            {boardView === 'deadline' ? 'Pedidos por vencimiento' : 'Pedidos por estado'}
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {boardView === 'deadline' ? 'Prioriza según la fecha límite de entrega.' : 'Organiza el trabajo según el avance en Falabella.'}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Agrupar columnas por</span>
-          <div className="inline-flex rounded-md border border-border bg-background p-0.5" role="group" aria-label="Agrupar columnas por">
-            <button
-              type="button"
-              onClick={() => setBoardView('deadline')}
-              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${boardView === 'deadline' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              aria-pressed={boardView === 'deadline'}
-            >
-              Cuándo vence
-            </button>
-            <button
-              type="button"
-              onClick={() => setBoardView('status')}
-              className={`rounded px-2.5 py-1.5 text-xs font-medium transition-colors ${boardView === 'status' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              aria-pressed={boardView === 'status'}
-            >
-              Estado
-            </button>
+      <section>
+        <div className="mb-2"><h2 className="text-sm font-semibold text-foreground">Estado del pedido</h2><p className="mt-0.5 text-xs text-muted-foreground">Selecciona la etapa operativa que quieres revisar.</p></div>
+        <div className="rounded-xl bg-muted p-1">
+          <div role="tablist" aria-label="Flujo de pedidos" className="grid gap-1 md:grid-cols-3">
+            {flowTabs.map((tab) => {
+              const active = flowStage === tab.value;
+              const orders = flowGroups[tab.value];
+              const count = tab.value === 'shipped' ? shippedTotal : orders.length;
+              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => setFlowStage(tab.value)} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
+            })}
           </div>
         </div>
-      </div>
+      </section>
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-card py-20 text-sm text-muted-foreground">
           <Loader2 className="size-5 animate-spin" /> Cargando pedidos pendientes…
         </div>
-      ) : operationalTotal === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-card py-16 text-center">
-          <span className="grid size-12 place-items-center rounded-full bg-emerald-50 text-emerald-700">
-            <CheckCircle2 className="size-6" />
-          </span>
-          <p className="text-sm font-medium text-foreground">No hay pedidos por atender</p>
-          <p className="text-sm text-muted-foreground">Prueba con otra tienda o búsqueda.</p>
-        </div>
       ) : (
-        <div className="overflow-x-auto pb-2">
-          <div className={`grid gap-3 ${visibleColumns.length >= 4 ? 'min-w-[1120px] grid-cols-4' : visibleColumns.length === 3 ? 'min-w-[840px] grid-cols-3' : 'min-w-[560px] grid-cols-2'}`}>
-            {visibleColumns.map((column) => {
-              const Icon = column.icon;
-              const orders = ordersForColumn(column);
-              const printableOrders = orders.filter(canPrintShippingLabel);
-              const readyCandidates = orders.filter(canMarkReadyToShip);
-              return (
-                <section key={column.key} className="flex min-h-[400px] flex-col overflow-hidden rounded-md border border-border bg-card">
-                  <header className={`border-b px-3 py-2.5 ${column.headerClass}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <Icon className={`size-4 shrink-0 ${column.iconClass}`} />
-                        <div className="min-w-0">
-                          <h2 className="text-sm font-semibold text-current">{column.title}</h2>
-                          <p className="truncate text-[11px] text-current opacity-80">{column.description}</p>
-                        </div>
-                      </div>
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${column.countClass}`}>
-                        {orders.length}
-                      </span>
-                    </div>
-                    {(printableOrders.length > 0 || (canDispatch && readyCandidates.length > 0)) && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {printableOrders.length > 0 && (
-                          <button
-                            type="button"
-                            disabled={batchLabelsLoading}
-                            onClick={() => void printShippingLabels(printableOrders, column.key)}
-                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-white px-2.5 text-[11px] font-semibold text-slate-900 shadow-sm transition-colors hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {printingColumn === column.key ? <Loader2 className="size-3 animate-spin" /> : <Printer className="size-3" />}
-                            {printingColumn === column.key ? 'Preparando…' : `Imprimir etiquetas (${printableOrders.length})`}
-                          </button>
-                        )}
-                        {canDispatch && readyCandidates.length > 0 && (
-                          <button
-                            type="button"
-                            disabled={bulkReadyRunning}
-                            onClick={() => setBulkReadySelection({ columnKey: column.key, columnTitle: column.title, orders: readyCandidates })}
-                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-white px-2.5 text-[11px] font-semibold text-slate-900 shadow-sm transition-colors hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <PackageCheck className="size-3" />
-                            Todo listo para envío ({readyCandidates.length})
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </header>
-                  <div className="max-h-[calc(100vh-16rem)] min-h-[340px] flex-1 divide-y divide-border overflow-y-auto">
-                    {orders.map((order) => (
-                      <OrderCard
-                        key={order.id}
-                        order={order}
-                        now={now}
-                        onOpen={() => openOrder(order)}
-                        onViewLabel={() => void viewShippingLabel(order)}
-                        onToggleLabel={() => toggleLabelSelection(order)}
-                        labelLoading={labelLoadingKey === `${order.companyId}:${order.orderId}`}
-                        labelSelectionMode={labelSelectionMode}
-                        labelSelected={selectedLabelKeys.has(orderKey(order))}
-                        canDispatch={canDispatch}
-                      />
-                    ))}
-                    {orders.length === 0 && (
-                      <div className="flex h-36 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-                        {column.empty}
-                      </div>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
+        <section className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="border-b border-border bg-muted/30 px-4 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="text-sm font-medium">{activeFlow.label}</p><p className="text-xs text-muted-foreground">{activeFlow.description}</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">Mostrando {filteredCountLabel}</span>
+                {flowStage === 'ready' && filteredFlowOrders.length > 0 && <Button size="sm" onClick={() => void printShippingLabels(filteredFlowOrders)} disabled={batchLabelsLoading}>{batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir etiquetas</Button>}
+                {flowStage === 'pending' && canDispatch && filteredFlowOrders.some(canMarkReadyToShip) && <Button size="sm" onClick={() => setBulkReadySelection({ columnKey: 'pending', columnTitle: activeFlow.label, orders: filteredFlowOrders.filter(canMarkReadyToShip) })}><PackageCheck /> Marcar todos listos para enviar</Button>}
+              </div>
+            </div>
           </div>
-        </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="p-3 font-medium">Orden de venta</th><th className="p-3 font-medium">Ingresó</th><th className="p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="p-3 font-medium">Tienda</th><th className="p-3 font-medium">Siguiente paso</th></tr></thead>
+              <tbody>
+                {filteredFlowOrders.map((order) => {
+                  const ready = canPrintShippingLabel(order);
+                  const urgency = urgencyFor(order, now);
+                  const urgencyClass = urgency === 'overdue' ? 'bg-rose-100 text-rose-700' : urgency === 'today' ? 'bg-amber-100 text-amber-700' : urgency === 'tomorrow' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700';
+                  return (
+                    <tr key={order.id} className="border-t border-border/70 transition-colors hover:bg-muted/30">
+                      <td className="p-3 align-middle"><button type="button" onClick={() => openOrder(order)} className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline">{order.orderNumber}</button></td>
+                      <td className="p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
+                      <td className="p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
+                      <td className="max-w-52 truncate p-3 align-middle text-xs text-muted-foreground">{order.companyName}</td>
+                      <td className="p-3 align-middle">
+                        {flowStage === 'shipped' ? <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button> : ready ? <Button size="sm" onClick={() => void viewShippingLabel(order)} disabled={labelLoadingKey === orderKey(order)}>{labelLoadingKey === orderKey(order) ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir</Button> : canMarkReadyToShip(order) && canDispatch ? <Button size="sm" onClick={() => { openOrder(order); setConfirmReady(true); }}><PackageCheck /> Marcar listo para enviar</Button> : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredFlowOrders.length === 0 && <tr><td colSpan={5} className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       <Dialog open={Boolean(bulkReadySelection)} onOpenChange={(open) => !open && !bulkReadyRunning && setBulkReadySelection(null)}>
         <DialogContent className="sm:max-w-md" showCloseButton={!bulkReadyRunning}>
           <DialogHeader>
-            <DialogTitle>Marcar todos como listos para envío</DialogTitle>
+            <DialogTitle>Marcar todos listos para enviar</DialogTitle>
             <DialogDescription>
               {bulkReadySelection
-                ? `${bulkReadySelection.orders.filter(canMarkReadyToShip).length} pedidos de la columna “${bulkReadySelection.columnTitle}”.`
+                ? `${bulkReadySelection.orders.filter(canMarkReadyToShip).length} pedidos visibles en “${bulkReadySelection.columnTitle}”.`
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -1309,7 +1329,7 @@ export default function Pedidos() {
             <Button variant="outline" onClick={() => setBulkReadySelection(null)} disabled={bulkReadyRunning}>Cancelar</Button>
             <Button onClick={() => void markAllReadyToShip()} disabled={bulkReadyRunning}>
               {bulkReadyRunning ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-              {bulkReadyRunning ? 'Actualizando pedidos…' : 'Confirmar todos'}
+              {bulkReadyRunning ? 'Actualizando pedidos…' : 'Marcar todos listos para enviar'}
             </Button>
           </DialogFooter>
         </DialogContent>

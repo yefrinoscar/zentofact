@@ -19,15 +19,15 @@ import {
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   ResponsiveContainer,
   Tooltip,
+  Treemap,
   XAxis,
   YAxis,
 } from 'recharts';
+import type { TreemapNode } from 'recharts';
 import api from '../lib/api';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -282,6 +282,53 @@ function CompanyTooltip({ active, payload }: any) {
   );
 }
 
+function CompanyTreemapCell({ depth, x, y, width, height, index, name, salesShare, netSales }: TreemapNode) {
+  if (depth !== 1 || width < 4 || height < 4) return null;
+
+  const share = Number(salesShare || 0);
+  const sales = Number(netSales || 0);
+  const showName = width >= 86 && height >= 52;
+  const showAmount = width >= 105 && height >= 78;
+  const maxNameLength = Math.max(8, Math.floor((width - 24) / 6.2));
+  const shortName = name.length > maxNameLength ? `${name.slice(0, maxNameLength - 1)}…` : name;
+  const radius = Math.min(8, width / 8, height / 8);
+
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rx={radius}
+        fill="var(--primary)"
+        fillOpacity={Math.max(0.7, 1 - index * 0.045)}
+      />
+      {showName && (
+        <text x={x + 12} y={y + 20} fill="var(--primary-foreground)" fontSize={10} fontWeight={650}>
+          {index + 1}. {shortName}
+        </text>
+      )}
+      {width >= 54 && height >= 38 && (
+        <text
+          x={x + 12}
+          y={showAmount ? y + height - 29 : y + height - 13}
+          fill="var(--primary-foreground)"
+          fontSize={showAmount ? 18 : 13}
+          fontWeight={750}
+        >
+          {share.toFixed(1)}%
+        </text>
+      )}
+      {showAmount && (
+        <text x={x + 12} y={y + height - 11} fill="var(--primary-foreground)" fillOpacity={0.74} fontSize={10}>
+          {compactMoney.format(sales)}
+        </text>
+      )}
+    </g>
+  );
+}
+
 function SkeletonDashboard() {
   return (
     <div className="animate-pulse space-y-5">
@@ -326,7 +373,7 @@ export default function Dashboard() {
     () => (data?.companyRanking || []).filter((company: CompanyPerformance) => company.totalOrders > 0),
     [data?.companyRanking],
   );
-  const rankingChart = useMemo(() => ranking.slice(0, 7).reverse(), [ranking]);
+  const rankingChart = ranking;
 
   const choosePeriod = (next: Exclude<PeriodKey, 'custom'>) => {
     const nextRange = rangeFor(next);
@@ -496,20 +543,36 @@ export default function Dashboard() {
           <CardHeader>
             <p className="text-xs font-medium text-muted-foreground">Comparativo de tiendas</p>
             <CardTitle className="text-xl font-semibold tracking-tight">Aporte a las ventas</CardTitle>
-            <p className="text-xs text-muted-foreground">Ranking por ingreso neto en el periodo seleccionado.</p>
+            <p className="text-xs text-muted-foreground">Ingreso neto y participación en el periodo seleccionado.</p>
           </CardHeader>
           <CardContent className="px-2 sm:px-4">
-            <div className="h-[330px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={rankingChart} layout="vertical" margin={{ top: 2, right: 34, bottom: 0, left: 8 }}>
-                  <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 6" />
-                  <XAxis type="number" tickFormatter={(value) => compactMoney.format(value)} axisLine={false} tickLine={false} fontSize={10} stroke="var(--muted-foreground)" />
-                  <YAxis type="category" dataKey="name" width={116} axisLine={false} tickLine={false} fontSize={11} stroke="var(--muted-foreground)" tickFormatter={(value) => String(value).length > 17 ? `${String(value).slice(0, 16)}...` : String(value)} />
-                  <Tooltip content={<CompanyTooltip />} cursor={{ fill: 'var(--muted)', opacity: 0.55 }} wrapperStyle={{ zIndex: 20 }} />
-                  <Bar dataKey="netSales" fill="var(--primary)" radius={[0, 6, 6, 0]} maxBarSize={24} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {rankingChart.length ? (
+              <div
+                key={`${filters.from}-${filters.to}-${filters.companyId || 'all'}`}
+                className="h-[330px] w-full overflow-hidden rounded-xl motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300"
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <Treemap
+                    data={rankingChart}
+                    dataKey="netSales"
+                    nameKey="name"
+                    aspectRatio={4 / 3}
+                    nodeGap={4}
+                    isAnimationActive={false}
+                    content={(props) => <CompanyTreemapCell {...props} />}
+                  >
+                    <Tooltip content={<CompanyTooltip />} wrapperStyle={{ zIndex: 20 }} />
+                  </Treemap>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="grid h-[330px] place-items-center text-center text-sm text-muted-foreground">
+                <div>
+                  <Store className="mx-auto mb-3 size-8 opacity-50" />
+                  No hay ventas para comparar.
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

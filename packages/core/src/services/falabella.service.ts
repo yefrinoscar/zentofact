@@ -128,6 +128,35 @@ function productImages(product: any): string[] {
     .filter(Boolean);
 }
 
+function orderItemImages(item: any): string[] {
+  const raw = item?.Images?.Image ?? item?.Images ?? item?.ProductImages?.Image ?? item?.ProductImages ?? item?.Image;
+  return [item?.MainImage, item?.ProductMainImage, item?.ImageUrl, item?.ImageURL, ...asArray(raw)]
+    .map((image) => (typeof image === 'string' ? image : image?.Url || image?.URL || image?.url || image?.Image))
+    .map((image) => String(image || '').trim())
+    .filter(Boolean);
+}
+
+function orderItemSku(item: any): string {
+  return String(item?.SellerSku ?? item?.SellerSKU ?? item?.sellerSku ?? item?.ShopSku ?? item?.Sku ?? item?.SKU ?? item?.sku ?? '').trim();
+}
+
+function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normalizeProduct>) {
+  const quantity = Math.max(1, Number(item?.Quantity ?? item?.quantity ?? item?.Qty ?? item?.qty ?? 1) || 1);
+  const unitPrice = Number(item?.PaidPrice ?? item?.paidPrice ?? item?.ItemPrice ?? item?.itemPrice ?? item?.UnitPrice ?? item?.unitPrice ?? item?.Price ?? item?.price ?? 0) || 0;
+  const name = [item?.Name, item?.name, item?.ProductName, item?.productName, item?.Product, item?.product, item?.ItemName, item?.Description, product?.name]
+    .map((value) => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
+    .find(Boolean) || '';
+  return {
+    orderItemId: getOrderItemId(item),
+    sellerSku: orderItemSku(item),
+    name,
+    quantity,
+    unitPrice,
+    status: getOrderItemStatus(item),
+    imageUrl: orderItemImages(item)[0] || product?.images?.[0] || '',
+  };
+}
+
 function productStatus(product: any): string {
   const status = product?.Status ?? product?.ProductStatus ?? product?.SellerStatus ?? product?.VariationStatus;
   if (Array.isArray(status)) return status.map((entry) => String(entry?.Status || entry || '')).filter(Boolean).join(', ');
@@ -502,7 +531,32 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const error = getFalabellaError(response.data);
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const orderItems = extractOrderItems(response.data);
-  return { ok: response.ok, status: response.status, url: response.url, orderItems, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
+  const missingImageSkus = [...new Set(orderItems.filter((item) => !orderItemImages(item).length).map(orderItemSku).filter(Boolean))];
+  let products: Array<ReturnType<typeof normalizeProduct>> = [];
+  if (missingImageSkus.length) {
+    try {
+      const productsResponse = await client.call({
+        action: 'GetProducts',
+        params: {
+          Filter: 'all',
+          Limit: Math.min(missingImageSkus.length, 1000),
+          Offset: 0,
+          SkuSellerList: JSON.stringify(missingImageSkus),
+        },
+        accept: 'application/json',
+      });
+      if (productsResponse.ok && !getFalabellaError(productsResponse.data)) {
+        products = normalizeGetProductsResult(productsResponse.data).products.map(normalizeProduct);
+      }
+    } catch {
+      products = [];
+    }
+  }
+  const productBySku = new Map(products.flatMap((product) => [product.sellerSku, product.shopSku]
+    .filter(Boolean)
+    .map((sku) => [sku.toLowerCase(), product] as const)));
+  const items = orderItems.map((item) => normalizeOrderItemDetail(item, productBySku.get(orderItemSku(item).toLowerCase())));
+  return { ok: response.ok, status: response.status, url: response.url, orderItems, items, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
 }
 
 export async function falabellaSetStatusToReadyToShip(payload: { companyId: number; orderId: string | number }) {

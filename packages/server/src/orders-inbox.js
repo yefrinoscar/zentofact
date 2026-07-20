@@ -85,6 +85,21 @@ function normalizeDeliveryMetrics(rows, windows) {
   });
 }
 
+function normalizeDeliveryDays(rows) {
+  const byDate = new Map();
+  for (const row of rows) {
+    if (!byDate.has(row.cycle_date)) byDate.set(row.cycle_date, { date: row.cycle_date, windows: [] });
+    byDate.get(row.cycle_date).windows.push({
+      key: row.window_key,
+      deliveries: Number(row.deliveries || 0),
+      preparation: durationMetric(row, 'preparation'),
+      handoff: durationMetric(row, 'handoff'),
+      total: durationMetric(row, 'total'),
+    });
+  }
+  return [...byDate.values()];
+}
+
 const BASE_CTE = `
   with base_orders as (
     select
@@ -187,7 +202,7 @@ export async function listOrdersInbox(input = {}, db) {
   const baseValues = [filters.companyId, filters.days, filters.search];
   const listValues = [...baseValues, filters.view, filters.stage, filters.limit, filters.offset];
 
-  const [ordersResult, summaryResult, syncResult, deliveryMetricsResult] = await Promise.all([
+  const [ordersResult, summaryResult, syncResult, deliveryMetricsResult, deliveryHistoryResult] = await Promise.all([
     target.query(
       `${BASE_CTE}
        select *,
@@ -259,6 +274,79 @@ export async function listOrdersInbox(input = {}, db) {
        group by window_key`,
       [filters.companyId, deliveryWindows[0].from, deliveryWindows[0].to, deliveryWindows[1].to],
     ),
+    target.query(
+      `with lifecycle as (
+         select *, shipped_at + interval '5 hours' as shipped_at_utc
+         from falabella_order_lifecycle
+         where shipped_at is not null
+           and ($1::int is null or company_id=$1)
+       ), localized as (
+         select *, shipped_at_utc at time zone 'America/Lima' as shipped_at_lima
+         from lifecycle
+       ), bucketed as (
+         select *,
+           case when shipped_at_lima::time >= time '17:00'
+             then shipped_at_lima::date + 1
+             else shipped_at_lima::date
+           end as cycle_date,
+           case when shipped_at_lima::time >= time '17:00' or shipped_at_lima::time < time '12:00'
+             then 'evening_to_noon'
+             else 'noon_to_evening'
+           end as window_key
+         from localized
+       ), clock as (
+         select case when (now() at time zone 'America/Lima')::time >= time '17:00'
+           then (now() at time zone 'America/Lima')::date + 1
+           else (now() at time zone 'America/Lima')::date
+         end as last_date
+       ), bounds as (
+         select
+           date_trunc('week', last_date)::date as first_date,
+           last_date
+         from clock
+       ), days as (
+         select generate_series(first_date, last_date, interval '1 day')::date as cycle_date
+         from bounds
+       ), shift_windows as (
+         select * from (values
+           ('evening_to_noon', 1),
+           ('noon_to_evening', 2)
+         ) as shifts(window_key, sort_order)
+       )
+       select
+         to_char(days.cycle_date, 'YYYY-MM-DD') as cycle_date,
+         shift_windows.window_key,
+         count(bucketed.order_id)::int as deliveries,
+         count(bucketed.order_id) filter (where ready_to_ship_at >= pending_at)::int as preparation_measured,
+         round(avg(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_avg,
+         round(min(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_min,
+         round(max(extract(epoch from (ready_to_ship_at - pending_at)) / 60)
+           filter (where ready_to_ship_at >= pending_at))::int as preparation_max,
+         count(bucketed.order_id) filter (where shipped_at >= ready_to_ship_at)::int as handoff_measured,
+         round(avg(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_avg,
+         round(min(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_min,
+         round(max(extract(epoch from (shipped_at - ready_to_ship_at)) / 60)
+           filter (where shipped_at >= ready_to_ship_at))::int as handoff_max,
+         count(bucketed.order_id) filter (where shipped_at >= pending_at)::int as total_measured,
+         round(avg(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_avg,
+         round(min(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_min,
+         round(max(extract(epoch from (shipped_at - pending_at)) / 60)
+           filter (where shipped_at >= pending_at))::int as total_max
+       from days
+       cross join shift_windows
+       left join bucketed
+         on bucketed.cycle_date = days.cycle_date
+         and bucketed.window_key = shift_windows.window_key
+       group by days.cycle_date, shift_windows.window_key, shift_windows.sort_order
+       order by days.cycle_date asc, shift_windows.sort_order asc`,
+      [filters.companyId],
+    ),
   ]);
 
   const companyResult = await target.query(
@@ -303,6 +391,7 @@ export async function listOrdersInbox(input = {}, db) {
     deliveryMetrics: {
       updatedAt: new Date().toISOString(),
       windows: normalizeDeliveryMetrics(deliveryMetricsResult.rows, deliveryWindows),
+      days: normalizeDeliveryDays(deliveryHistoryResult.rows),
     },
     filters,
   };
