@@ -448,24 +448,67 @@ export async function getFalabellaSyncStatus(companyId, db) {
   };
 }
 
+function uploadReadiness(estadoSunat, xmlPath, cdrPath, { allowAnnulled = false } = {}) {
+  const estado = String(estadoSunat || '').toUpperCase();
+  const accepted = estado === 'ACEPTADO' || (allowAnnulled && estado === 'ANULADO');
+  if (!accepted) {
+    return { canUploadPdf: false, uploadBlockedReason: 'El documento debe estar ACEPTADO por SUNAT para subirlo.' };
+  }
+  // Boletas por resumen: a menudo solo cdr_path (CDR del RC). Facturas individuales: xml+cdr.
+  if (xmlPath || cdrPath) return { canUploadPdf: true, uploadBlockedReason: '' };
+  return {
+    canUploadPdf: false,
+    uploadBlockedReason: 'Documento aceptado sin XML ni CDR guardados; no se puede generar/subir el PDF a Falabella.',
+  };
+}
+
+function boletaFalabellaUploadedAt(datosAdicionales) {
+  try {
+    const raw = typeof datosAdicionales === 'string' ? JSON.parse(datosAdicionales) : datosAdicionales;
+    if (!raw || typeof raw !== 'object') return '';
+    if (!Array.isArray(raw)) {
+      const at = raw?.falabellaPdfUpload?.uploadedAt || raw?.falabellaPdfUploadedAt;
+      return at ? String(at) : '';
+    }
+    for (const entry of raw) {
+      const at = entry?.falabellaPdfUpload?.uploadedAt || entry?.falabellaPdfUploadedAt;
+      if (at) return String(at);
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+function facturaFalabellaUploadedAt(respuestaFalabella, updatedAt) {
+  if (!respuestaFalabella) return '';
+  const raw = updatedAt;
+  const ms = raw ? Number(raw) * (Number(raw) < 1e12 ? 1000 : 1) : Date.now();
+  try { return new Date(ms).toISOString(); } catch { return new Date().toISOString(); }
+}
+
 function documentFromRow(row) {
   const options = [];
+  const boletaReady = uploadReadiness(row.boleta_estado, row.boleta_xml, row.boleta_cdr, { allowAnnulled: true });
+  const facturaReady = uploadReadiness(row.factura_estado, row.factura_xml, row.factura_cdr);
+  const creditReady = uploadReadiness(row.credit_note_estado, row.credit_note_xml, row.credit_note_cdr);
   const boleta = row.boleta_id ? {
     id: row.boleta_id, numeroCompleto: row.boleta_numero, fechaEmision: row.boleta_fecha,
     pdfPath: row.boleta_pdf, xmlPath: row.boleta_xml, cdrPath: row.boleta_cdr,
     estadoSunat: row.boleta_estado, respuestaSunat: row.boleta_respuesta || '',
-    canUploadPdf: String(row.boleta_estado).toUpperCase() === 'ACEPTADO', uploadBlockedReason: '',
+    falabellaPdfUploadedAt: boletaFalabellaUploadedAt(row.boleta_datos_adicionales),
+    ...boletaReady,
   } : null;
   const factura = row.factura_id ? {
     id: row.factura_id, numeroCompleto: row.factura_numero, fechaEmision: row.factura_fecha,
     pdfPath: row.factura_pdf, xmlPath: row.factura_xml, cdrPath: row.factura_cdr,
     estadoSunat: row.factura_estado, respuestaSunat: row.factura_respuesta || '',
-    canUploadPdf: String(row.factura_estado).toUpperCase() === 'ACEPTADO', uploadBlockedReason: '',
+    falabellaPdfUploadedAt: facturaFalabellaUploadedAt(row.factura_respuesta_falabella, row.factura_updated_at),
+    ...facturaReady,
   } : null;
   const creditNote = row.credit_note_id ? {
     id: row.credit_note_id, numeroCompleto: row.credit_note_numero, fechaEmision: row.credit_note_fecha,
-    pdfPath: row.credit_note_pdf, estadoSunat: row.credit_note_estado,
-    respuestaSunat: row.credit_note_respuesta || '',
+    pdfPath: row.credit_note_pdf, xmlPath: row.credit_note_xml, cdrPath: row.credit_note_cdr,
+    estadoSunat: row.credit_note_estado, respuestaSunat: row.credit_note_respuesta || '',
+    ...creditReady,
   } : null;
   if (boleta) options.push({ kind: 'BOLETA', source: 'local_boleta', boletaId: boleta.id, invoiceNumber: boleta.numeroCompleto, invoiceDate: boleta.fechaEmision, invoiceType: 'BOLETA', ...boleta });
   if (factura) options.push({ kind: 'FACTURA', source: 'local_factura', facturaId: factura.id, invoiceNumber: factura.numeroCompleto, invoiceDate: factura.fechaEmision, invoiceType: 'FACTURA', ...factura });
@@ -488,11 +531,14 @@ export async function listLocalFalabellaOrders(companyId, filters = {}, db) {
        b.id boleta_id, b.numero_completo boleta_numero, b.fecha_emision boleta_fecha,
        b.pdf_path boleta_pdf, b.xml_path boleta_xml, b.cdr_path boleta_cdr,
        b.estado_sunat boleta_estado, b.respuesta_sunat boleta_respuesta,
+       b.datos_adicionales boleta_datos_adicionales,
        f.id factura_id, f.numero_completo factura_numero, f.fecha_emision factura_fecha,
        f.pdf_path factura_pdf, f.xml_path factura_xml, f.cdr_path factura_cdr,
        f.estado_sunat factura_estado, f.respuesta_sunat factura_respuesta,
+       f.respuesta_falabella factura_respuesta_falabella, f.updated_at factura_updated_at,
        cn.id credit_note_id, cn.numero_completo credit_note_numero, cn.fecha_emision credit_note_fecha,
-       cn.pdf_path credit_note_pdf, cn.estado_sunat credit_note_estado, cn.respuesta_sunat credit_note_respuesta,
+       cn.pdf_path credit_note_pdf, cn.xml_path credit_note_xml, cn.cdr_path credit_note_cdr,
+       cn.estado_sunat credit_note_estado, cn.respuesta_sunat credit_note_respuesta,
        count(*) over()::int total_count
      from falabella_orders fo
      left join lateral (select * from boletas where company_id=fo.company_id and order_number=fo.order_number order by id desc limit 1) b on true

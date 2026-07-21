@@ -184,6 +184,11 @@ test('la lectura local resuelve documentos en una sola consulta SQL', async () =
           boleta_numero: 'B001-8',
           boleta_fecha: '2026-07-03',
           boleta_estado: 'ACEPTADO',
+          boleta_xml: 'boletas/xml/B001-8.xml',
+          boleta_cdr: 'boletas/cdr/R-B001-8.zip',
+          boleta_datos_adicionales: {
+            falabellaPdfUpload: { uploadedAt: '2026-07-03T12:30:00.000Z' },
+          },
           total_count: 1,
         }] };
       }
@@ -201,6 +206,9 @@ test('la lectura local resuelve documentos en una sola consulta SQL', async () =
   assert.equal(result.source, 'postgres');
   assert.equal(result.totalCount, 1);
   assert.equal(result.orders[0].__resolved.boleta.numeroCompleto, 'B001-8');
+  assert.equal(result.orders[0].__resolved.boleta.canUploadPdf, true);
+  assert.equal(result.orders[0].__resolved.boleta.falabellaPdfUploadedAt, '2026-07-03T12:30:00.000Z');
   assert.equal(queries.filter((query) => query.includes('from falabella_orders')).length, 1);
   assert.equal(queries.some((query) => query.includes('left join lateral')), true);
+  assert.equal(queries.some((query) => query.includes('boleta_datos_adicionales')), true);
 });

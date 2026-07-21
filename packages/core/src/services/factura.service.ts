@@ -642,12 +642,15 @@ export async function recordFacturaUpload(input: RecordFacturaUploadInput) {
   const existing = existingRows[0];
 
   if (existing) {
+    // No pisar ACEPTADO/ANULADO: el upload a Falabella no cambia el estado SUNAT.
+    const estadoActual = String(existing.estadoSunat || '').toUpperCase();
+    const keepSunatStatus = estadoActual === 'ACEPTADO' || estadoActual === 'ANULADO' || estadoActual === 'RECHAZADO';
     const updated = await db.update(facturas).set({
       branchId: input.branchId ?? existing.branchId ?? 0,
       fechaEmision: input.fechaEmision,
       pdfPath,
       fuente: input.source || existing.fuente || 'manual',
-      estadoSunat: 'REGISTRADO',
+      estadoSunat: keepSunatStatus ? existing.estadoSunat : 'REGISTRADO',
       orderItemIds: input.orderItemIds || existing.orderItemIds || null,
       respuestaFalabella: input.respuestaFalabella ? JSON.stringify(input.respuestaFalabella) : existing.respuestaFalabella,
       updatedAt: ts,

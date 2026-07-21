@@ -836,11 +836,15 @@ function facturaFalabellaUploadedAt(factura: any): string {
 function localDocumentUploadReadiness(document: any, allowAnnulledBoleta = false): { canUploadPdf: boolean; uploadBlockedReason: string } {
   const estado = String(document?.estadoSunat || '').toUpperCase();
   const accepted = estado === 'ACEPTADO' || (allowAnnulledBoleta && estado === 'ANULADO');
-  if (!accepted) return { canUploadPdf: false, uploadBlockedReason: 'El documento debe estar ACEPTADO por SUNAT para subirlo.' };
+  if (!accepted) {
+    return { canUploadPdf: false, uploadBlockedReason: 'El documento debe estar ACEPTADO por SUNAT para subirlo.' };
+  }
+  // Prueba de aceptación local: XML firmado y/o CDR. Con boletas por resumen diario
+  // suele haber solo cdr_path (CDR del RC), no xml individual — eso alcanza.
   if (document?.xmlPath || document?.cdrPath) return { canUploadPdf: true, uploadBlockedReason: '' };
   return {
     canUploadPdf: false,
-    uploadBlockedReason: 'Documento registrado localmente sin XML ni CDR; no se puede subir a Falabella.',
+    uploadBlockedReason: 'Documento aceptado sin XML ni CDR guardados; no se puede generar/subir el PDF a Falabella.',
   };
 }
 

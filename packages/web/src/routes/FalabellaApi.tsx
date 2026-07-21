@@ -110,7 +110,7 @@ function parseEmissionProgress(status: string) {
 
 // Celda de estado del documento local: ícono por estado + tooltip shadcn.
 // El refresh solo aparece si NO está aceptado (ya aceptado = estado final).
-function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { label: string; status: string; reason?: string; boletaId?: number; facturaId?: number }) {
+function DocumentStatusCell({ label, status, reason, boletaId, facturaId, onRefreshed }: { label: string; status: string; reason?: string; boletaId?: number; facturaId?: number; onRefreshed?: () => void | Promise<void> }) {
   const [current, setCurrent] = useState(status);
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => setCurrent(status), [status]);
@@ -129,6 +129,7 @@ function DocumentStatusCell({ label, status, reason, boletaId, facturaId }: { la
         ? await api.refreshBoletaStatus(boletaId)
         : await api.refreshFacturaStatus(facturaId as number);
       if (r?.estadoSunat) setCurrent(r.estadoSunat);
+      await onRefreshed?.();
     } catch { /* noop */ }
     setRefreshing(false);
   };
@@ -504,7 +505,10 @@ function formatDate(value?: string) {
 }
 
 function normalizeOrder(order: FalabellaOrderPayload): FalabellaOrder {
-  if (order?.Order && typeof order.Order === 'object') return order.Order;
+  if (order?.Order && typeof order.Order === 'object') {
+    // Conservar __resolved del listado local (va al top-level junto a Order).
+    return { ...order.Order, ...((order as any).__resolved ? { __resolved: (order as any).__resolved } : {}) };
+  }
   return order;
 }
 
@@ -1261,7 +1265,7 @@ export default function FalabellaApi() {
         continue;
       }
       if (row.documentCanUpload === false) {
-        skipped.push({ ...base, reason: row.documentUploadBlockedReason || 'El documento no tiene PDF/XML/CDR para subir' });
+        skipped.push({ ...base, reason: row.documentUploadBlockedReason || 'El documento no se puede subir a Falabella' });
         continue;
       }
       eligible.push(base);
@@ -2049,6 +2053,24 @@ export default function FalabellaApi() {
                 falabellaPdfUploadedAt: resolved.boleta.falabellaPdfUploadedAt,
                 canUploadPdf: resolved.boleta.canUploadPdf,
                 uploadBlockedReason: resolved.boleta.uploadBlockedReason,
+              }
+            : null)
+          || (resolved?.factura
+            ? {
+                kind: 'FACTURA' as InvoiceKind,
+                source: 'local_factura' as DocumentSource,
+                facturaId: resolved.factura.id,
+                invoiceNumber: resolved.factura.numeroCompleto,
+                invoiceDate: resolved.factura.fechaEmision,
+                invoiceType: 'FACTURA' as InvoiceKind,
+                pdfPath: resolved.factura.pdfPath,
+                xmlPath: resolved.factura.xmlPath,
+                cdrPath: resolved.factura.cdrPath,
+                estadoSunat: resolved.factura.estadoSunat,
+                respuestaSunat: resolved.factura.respuestaSunat,
+                falabellaPdfUploadedAt: resolved.factura.falabellaPdfUploadedAt,
+                canUploadPdf: resolved.factura.canUploadPdf,
+                uploadBlockedReason: resolved.factura.uploadBlockedReason,
               }
             : null)
           || (resolved?.creditNote
@@ -2842,7 +2864,7 @@ export default function FalabellaApi() {
                       const documentStatusAllowsPdf = ['ACEPTADO', 'ANULADO'].includes(String(row.documentStatus || '').toUpperCase());
                       const documentUploadDisabled = !documentStatusAllowsPdf || row.documentCanUpload === false;
                       const documentUploadDisabledReason = row.documentCanUpload === false
-                        ? row.documentUploadBlockedReason || 'El documento no tiene XML/CDR para subir'
+                        ? (row.documentUploadBlockedReason || 'No se puede subir este documento a Falabella')
                         : !documentStatusAllowsPdf
                           ? 'El documento no está aceptado por SUNAT'
                           : '';
@@ -2920,6 +2942,7 @@ export default function FalabellaApi() {
                                 reason={row.documentReason}
                                 boletaId={row.documentKind === 'BOLETA' ? row.documentId : undefined}
                                 facturaId={row.documentKind === 'FACTURA' ? row.documentId : undefined}
+                                onRefreshed={() => loadInvoiceFlowPrototype()}
                               />
                             </td>
                           )}
