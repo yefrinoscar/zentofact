@@ -1,8 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { authClient } from '../lib/authClient';
 import { clearClientStorageOnLogout, installSessionSecurityListeners } from '../lib/clearClientStorage';
-import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowLeft } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
+
+const PASSWORD_MIN_LENGTH = 12;
+
+type AuthView = 'login' | 'forgot' | 'reset';
+
+function readResetParams() {
+  if (typeof window === 'undefined') return { token: '', error: '' };
+  const search = new URLSearchParams(window.location.search);
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  const hashParams = new URLSearchParams(hashQuery);
+  return {
+    token: String(search.get('token') || hashParams.get('token') || '').trim(),
+    error: String(search.get('error') || hashParams.get('error') || '').trim(),
+  };
+}
+
+function clearResetParamsFromUrl() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('token');
+  url.searchParams.delete('error');
+  const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
+  if (hash.includes('?')) {
+    const [path, query = ''] = hash.split('?');
+    const params = new URLSearchParams(query);
+    params.delete('token');
+    params.delete('error');
+    const nextQuery = params.toString();
+    url.hash = nextQuery ? `#${path}?${nextQuery}` : `#${path}`;
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   return <WebAuthGate>{children}</WebAuthGate>;
@@ -67,7 +100,6 @@ function InvoiceFlowArt() {
 
       <ellipse cx="250" cy="200" rx="180" ry="150" fill="url(#glow)" opacity="0.5" filter="url(#soft)" />
 
-      {/* aristas + pulsos */}
       {edges.map((e, i) => (
         <g key={`e${i}`}>
           <path d={e.d} stroke="white" strokeOpacity="0.16" strokeWidth="2" fill="none" strokeLinecap="round" />
@@ -81,7 +113,6 @@ function InvoiceFlowArt() {
         </g>
       ))}
 
-      {/* nodos */}
       {nodes.map((n, i) => (
         <g key={`n${i}`}>
           <circle cx={n.x} cy={n.y} r="24" fill="url(#accent)" opacity="0.25">
@@ -110,23 +141,37 @@ function InvoiceFlowArt() {
   );
 }
 
-// (obsoleto) ilustración previa
+function fieldClassName() {
+  return 'h-11 w-full rounded-xl border border-border bg-background pl-10 pr-3 text-sm outline-none transition focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5';
+}
+
 function WebAuthGate({ children }: { children: React.ReactNode }) {
   const { data: session, isPending, refetch } = authClient.useSession();
+  const initialReset = useMemo(() => readResetParams(), []);
+  const [view, setView] = useState<AuthView>(() => (initialReset.token || initialReset.error ? 'reset' : 'login'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetToken, setResetToken] = useState(initialReset.token);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => (
+    initialReset.error
+      ? 'El enlace de restablecimiento no es válido o expiró. Solicita uno nuevo.'
+      : ''
+  ));
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Otras pestañas: si alguien cierra sesión, aquí también se limpia y se pide login.
   useEffect(() => installSessionSecurityListeners(), []);
 
-  // Sin sesión válida: no dejar datos de la app en localStorage (security).
   useEffect(() => {
     if (isPending) return;
     if (!session) clearClientStorageOnLogout();
   }, [isPending, session]);
+
+  useEffect(() => {
+    if (initialReset.token || initialReset.error) clearResetParamsFromUrl();
+  }, [initialReset.error, initialReset.token]);
 
   if (isPending) {
     return (
@@ -138,26 +183,109 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
 
   if (session) return <>{children}</>;
 
-  const submit = async (e: React.FormEvent) => {
+  const goLogin = () => {
+    setView('login');
+    setError('');
+    setInfo('');
+    setPassword('');
+    setConfirmPassword('');
+    setResetToken('');
+    setShowPassword(false);
+  };
+
+  const goForgot = () => {
+    setView('forgot');
+    setError('');
+    setInfo('');
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+  };
+
+  const submitLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfo('');
     setLoading(true);
-    // Antes de un login nuevo, vacía restos de sesiones anteriores en este navegador.
     clearClientStorageOnLogout();
-    const { data, error } = await authClient.signIn.email({
+    const { data, error: nextError } = await authClient.signIn.email({
       email,
       password,
       callbackURL: window.location.href,
     });
     setLoading(false);
-    if (error) setError(error.message || 'Credenciales inválidas.');
+    if (nextError) setError(nextError.message || 'Credenciales inválidas.');
     else if (data?.url) window.location.href = data.url;
     else await refetch();
   };
 
+  const submitForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    setLoading(true);
+    const redirectTo = `${window.location.origin}${window.location.pathname || '/'}#/reset-password`;
+    const { error: nextError } = await authClient.requestPasswordReset({
+      email: email.trim(),
+      redirectTo,
+    });
+    setLoading(false);
+    if (nextError) {
+      setError(nextError.message || 'No se pudo enviar el correo.');
+      return;
+    }
+    setInfo('Si el correo existe, te enviamos un enlace para restablecer la contraseña. Revisa tu bandeja (y spam).');
+  };
+
+  const submitReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    if (!resetToken) {
+      setError('Falta el token de restablecimiento. Solicita un enlace nuevo.');
+      return;
+    }
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      setError(`La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Las contraseñas no coinciden.');
+      return;
+    }
+    setLoading(true);
+    const { error: nextError } = await authClient.resetPassword({
+      newPassword: password,
+      token: resetToken,
+    });
+    setLoading(false);
+    if (nextError) {
+      setError(nextError.message || 'No se pudo restablecer la contraseña. El enlace puede haber expirado.');
+      return;
+    }
+    setPassword('');
+    setConfirmPassword('');
+    setResetToken('');
+    setView('login');
+    setInfo('Contraseña actualizada. Ya puedes iniciar sesión.');
+  };
+
+  const title = view === 'forgot'
+    ? '¿Olvidaste tu contraseña?'
+    : view === 'reset'
+      ? 'Nueva contraseña'
+      : 'Bienvenido de vuelta';
+
+  const subtitle = view === 'forgot'
+    ? 'Te enviaremos un enlace a tu correo para elegir una nueva.'
+    : view === 'reset'
+      ? `Elige una contraseña de al menos ${PASSWORD_MIN_LENGTH} caracteres.`
+      : 'Inicia sesión en tu cuenta para continuar.';
+
+  const onSubmit = view === 'forgot' ? submitForgot : view === 'reset' ? submitReset : submitLogin;
+
   return (
     <div className="flex h-screen w-full bg-background">
-      {/* Panel de marca (oscuro) — oculto en móvil */}
       <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-sidebar-primary p-12 text-sidebar-primary-foreground lg:flex">
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.15]"
@@ -189,63 +317,159 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      {/* Formulario */}
       <div className="flex flex-1 items-center justify-center p-6">
-        <form onSubmit={submit} className="w-full max-w-sm">
-          {/* Logo (visible en móvil, donde no está el panel) */}
+        <form onSubmit={onSubmit} className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary text-base font-black tracking-tighter text-sidebar-primary-foreground">Z</span>
             <span className="text-base font-semibold tracking-tight">ZentoFact</span>
           </div>
 
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Bienvenido de vuelta</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">Inicia sesión en tu cuenta para continuar.</p>
+          {(view === 'forgot' || view === 'reset') && (
+            <button
+              type="button"
+              onClick={goLogin}
+              className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Volver al login
+            </button>
+          )}
+
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
 
           <div className="mt-8 space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-foreground">Correo</label>
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                  placeholder="tu@correo.com" autoComplete="email" required
-                  className="h-11 w-full rounded-xl border border-border bg-background pl-10 pr-3 text-sm outline-none transition focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
-                />
+            {view !== 'reset' && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">Correo</label>
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="tu@correo.com"
+                    autoComplete="email"
+                    required
+                    className={fieldClassName()}
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-foreground">Contraseña</label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••" autoComplete="current-password" required
-                  className="h-11 w-full rounded-xl border border-border bg-background pl-10 pr-10 text-sm outline-none transition focus:border-foreground/40 focus:ring-4 focus:ring-foreground/5"
-                />
-                <button
-                  type="button" onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                  className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+            {view === 'login' && (
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium text-foreground">Contraseña</label>
+                  <button
+                    type="button"
+                    onClick={goForgot}
+                    className="text-xs font-medium text-muted-foreground transition hover:text-foreground"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="current-password"
+                    required
+                    className={`${fieldClassName()} pr-10`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
+
+            {view === 'reset' && (
+              <>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">Nueva contraseña</label>
+                  <div className="relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      autoComplete="new-password"
+                      required
+                      minLength={PASSWORD_MIN_LENGTH}
+                      className={`${fieldClassName()} pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                      className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-foreground">Confirmar contraseña</label>
+                  <div className="relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      autoComplete="new-password"
+                      required
+                      minLength={PASSWORD_MIN_LENGTH}
+                      className={fieldClassName()}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
                 {error}
               </div>
             )}
+            {info && (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+                {info}
+              </div>
+            )}
 
             <button
-              type="submit" disabled={loading}
+              type="submit"
+              disabled={loading || (view === 'reset' && !resetToken)}
               className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {loading ? 'Ingresando…' : 'Ingresar'}
+              {view === 'forgot'
+                ? (loading ? 'Enviando…' : 'Enviar enlace')
+                : view === 'reset'
+                  ? (loading ? 'Guardando…' : 'Guardar contraseña')
+                  : (loading ? 'Ingresando…' : 'Ingresar')}
             </button>
+
+            {view === 'reset' && !resetToken && (
+              <button
+                type="button"
+                onClick={goForgot}
+                className="w-full text-center text-sm font-medium text-muted-foreground transition hover:text-foreground"
+              >
+                Solicitar un enlace nuevo
+              </button>
+            )}
           </div>
 
           <p className="mt-8 text-center text-xs text-muted-foreground lg:hidden">

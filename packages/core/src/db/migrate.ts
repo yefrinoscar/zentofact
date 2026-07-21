@@ -25,7 +25,6 @@ const DDL = `
     falabella_api_user_id TEXT,
     falabella_api_key TEXT,
     logo_path TEXT,
-    modo_produccion BOOLEAN DEFAULT FALSE,
     activo BOOLEAN DEFAULT TRUE,
     created_at BIGINT,
     updated_at BIGINT
@@ -498,4 +497,6 @@ const DDL = `
 
 export async function runMigrations(pool: Pool): Promise<void> {
   await pool.query(DDL);
+  // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
+  await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
 }

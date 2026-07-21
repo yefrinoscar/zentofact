@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, bigint, text, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, serial, bigint, text, boolean } from 'drizzle-orm/pg-core';
 
 export const companies = pgTable('companies', {
   id: serial('id').primaryKey(),
@@ -22,7 +22,6 @@ export const companies = pgTable('companies', {
   falabellaApiUserId: text('falabella_api_user_id'),
   falabellaApiKey: text('falabella_api_key'),
   logoPath: text('logo_path'),
-  modoProduccion: boolean('modo_produccion').default(false),
   activo: boolean('activo').default(true),
   createdAt: bigint('created_at', { mode: 'number' }),
   updatedAt: bigint('updated_at', { mode: 'number' }),

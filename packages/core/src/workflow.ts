@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm';
 import { createBoleta, sendBoletaToSunat } from './services/boleta.service';
 import type { DetalleItem } from './utils/tax-calculator';
 import type { CoreConfig, VentaItem, WorkflowResult, WorkflowProgress } from './index';
+import { isSunatProduction } from './utils/sunat-env';
 
 /**
  * Resuelve empresa/sucursal solo desde la base de datos.
@@ -48,7 +49,6 @@ async function ensureSetup(config: CoreConfig) {
   return {
     companyId: company.id,
     branchId: branch.id,
-    modoProduccion: Boolean(company.modoProduccion),
   };
 }
 
@@ -58,10 +58,9 @@ export async function processWorkflow(
   onProgress?: WorkflowProgress,
 ): Promise<WorkflowResult> {
   process.env.STORAGE_PATH = config.outputDir || 'storage';
-  const { companyId, branchId, modoProduccion: companyModoProduccion } = await ensureSetup(config);
+  const { companyId, branchId } = await ensureSetup(config);
   const serie = config.serieBoleta || 'B001';
-  // Env force (via server) wins; otherwise use the company record — never trust client secrets.
-  const isProduction = config.modoProduccion ?? companyModoProduccion;
+  const isProduction = isSunatProduction();
 
   const results: WorkflowResult['boletas'] = [];
   let exitosas = 0;

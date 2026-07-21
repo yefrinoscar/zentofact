@@ -26,6 +26,63 @@ if (process.env.NODE_ENV === 'production' && !process.env.BETTER_AUTH_SECRET) {
   throw new Error('BETTER_AUTH_SECRET es obligatorio en producción');
 }
 
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
+// Sin dominio verificado: usar sandbox de Resend (solo envía al email de la cuenta Resend).
+const RESEND_FROM_EMAIL = String(process.env.RESEND_FROM_EMAIL || 'ZentoFact <onboarding@resend.dev>').trim();
+const PASSWORD_MIN_LENGTH = 12;
+
+async function sendPasswordResetEmail({ to, resetUrl, userName }) {
+  const subject = 'Restablecer contraseña · ZentoFact';
+  const safeName = String(userName || '').trim() || 'hola';
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#111">
+      <p style="font-size:16px;margin:0 0 12px">Hola ${safeName},</p>
+      <p style="font-size:14px;line-height:1.5;margin:0 0 20px;color:#444">
+        Recibimos una solicitud para restablecer tu contraseña de ZentoFact.
+        El enlace expira en 1 hora.
+      </p>
+      <p style="margin:0 0 24px">
+        <a href="${resetUrl}"
+           style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-size:14px;font-weight:600">
+          Elegir nueva contraseña
+        </a>
+      </p>
+      <p style="font-size:12px;line-height:1.5;color:#777;margin:0 0 8px">
+        Si el botón no funciona, copia y pega este enlace en tu navegador:
+      </p>
+      <p style="font-size:12px;word-break:break-all;color:#555;margin:0 0 20px">${resetUrl}</p>
+      <p style="font-size:12px;color:#999;margin:0">Si no pediste este cambio, ignora este correo.</p>
+    </div>
+  `.trim();
+
+  if (!RESEND_API_KEY) {
+    console.warn('[AUTH] RESEND_API_KEY no configurado. Link de reset (solo logs):');
+    console.warn(`[AUTH] to=${to}`);
+    console.warn(`[AUTH] url=${resetUrl}`);
+    return;
+  }
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: RESEND_FROM_EMAIL,
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[AUTH] Resend error', res.status, body);
+    throw new Error('No se pudo enviar el correo de restablecimiento');
+  }
+}
+
 export const auth = betterAuth({
   database: pool,
   baseURL,
@@ -34,6 +91,15 @@ export const auth = betterAuth({
     enabled: true,
     // Registro público deshabilitado: los usuarios se crean desde /users (admin).
     disableSignUp: process.env.AUTH_ALLOW_SIGNUP !== 'true',
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    revokeSessionsOnPasswordReset: true,
+    sendResetPassword: async ({ user, url }) => {
+      await sendPasswordResetEmail({
+        to: user.email,
+        resetUrl: url,
+        userName: user.name,
+      });
+    },
   },
   user: {
     additionalFields: {

@@ -12,6 +12,7 @@ import { calculateTotals } from '../utils/tax-calculator';
 import type { DetalleItem } from '../utils/tax-calculator';
 import { getCorrelativeBySerie } from './correlative-query.service';
 import { resolveIssueDate, withIssueDateTrace } from '../utils/issue-date';
+import { isSunatProduction } from '../utils/sunat-env';
 
 export interface CreateFacturaInput {
   company_id: number;
@@ -103,7 +104,6 @@ function buildCompanyConfig(company: any): CompanyConfig {
     claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '',
     certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: Boolean(company.modoProduccion),
   };
 }
 
@@ -115,8 +115,8 @@ function isBetaFalabellaEmission(factura: any): boolean {
   ));
 }
 
-function isProductionFacturaEmission(company: any, factura: any): boolean {
-  return Boolean(company.modoProduccion) && !isBetaFalabellaEmission(factura);
+function isProductionFacturaEmission(factura: any): boolean {
+  return isSunatProduction() && !isBetaFalabellaEmission(factura);
 }
 
 export async function createFactura(input: CreateFacturaInput) {
@@ -228,7 +228,6 @@ export async function sendFacturaToSunat(id: number) {
     direccion: company.direccion || '', ubigeo: company.ubigeo || '',
     usuarioSol: company.usuarioSol || 'MODDATOS', claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '', certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: isProductionFacturaEmission(company, factura),
     codigoLocal: branch.codigo || '0000',
   };
 
@@ -267,7 +266,7 @@ export async function sendFacturaToSunat(id: number) {
     return { success: true, message: 'Factura enviada exitosamente a SUNAT' };
   }
   const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
-  if (!isProductionFacturaEmission(company, factura)) {
+  if (!isProductionFacturaEmission(factura)) {
     if (isRemoteSunatRejection(errorData.code, errorData.message)) {
       await markCorrelativeUsed(factura.branchId, '01', factura.serie, factura.correlativo);
     }

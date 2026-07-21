@@ -30,13 +30,6 @@ const shippingLabelSheet = await import('./shipping-label-sheet.js');
 
 const app = new Hono();
 
-function resolveSunatProductionMode(fallback) {
-  const forced = String(process.env.SUNAT_FORCE_ENV || process.env.VITE_SUNAT_ENV || '').trim().toLowerCase();
-  if (forced.startsWith('prod')) return true;
-  if (['beta', 'dev', 'development', 'local'].includes(forced)) return false;
-  return fallback;
-}
-
 // CORS con credenciales (cookies de sesión) para el front web.
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
 const webOrigins = Array.from(new Set([
@@ -508,18 +501,16 @@ app.post('/workflow/validate-ventas', async (c) => { try { return ok(c, { errors
 app.post('/workflow/process', async (c) => {
   const { config: rawCfg, ventas } = await c.req.json();
   // Solo datos operativos del cliente. Secretos (cert/SOL) se cargan por companyId en el servidor.
-  const forcedMode = resolveSunatProductionMode(undefined);
+  // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no el cliente ni la empresa.
   const cfg = {
     companyId: rawCfg?.companyId,
     branchId: rawCfg?.branchId,
     branchCodigo: rawCfg?.branchCodigo,
     serieBoleta: rawCfg?.serieBoleta,
     outputDir: rawCfg?.outputDir || 'storage',
-    // undefined → workflow usa modoProduccion de la empresa en DB
-    ...(forcedMode !== undefined ? { modoProduccion: forcedMode } : {}),
   };
-  console.log('[WORKFLOW] companyId=%s ventas=%s modoProd=%s',
-    cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', cfg?.modoProduccion ?? 'empresa');
+  console.log('[WORKFLOW] companyId=%s ventas=%s sunatEnv=%s',
+    cfg?.companyId, Array.isArray(ventas) ? ventas.length : '?', process.env.SUNAT_FORCE_ENV || '(auto)');
   c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
   c.header('Cache-Control', 'no-cache, no-transform');
   c.header('X-Accel-Buffering', 'no'); // evita buffering de proxies (Railway/nginx)
@@ -618,7 +609,13 @@ if (serveWeb) {
 const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {
   const sunatForced = String(process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
-  const sunatEnv = sunatForced.startsWith('prod') ? 'PRODUCCIÓN (real)' : sunatForced === 'beta' ? 'BETA (pruebas)' : 'según empresa (modoProduccion)';
+  const sunatEnv = sunatForced.startsWith('prod')
+    ? 'PRODUCCIÓN (real)'
+    : sunatForced === 'beta'
+      ? 'BETA (pruebas)'
+      : (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.NODE_ENV === 'production')
+        ? 'PRODUCCIÓN (auto)'
+        : 'BETA (auto)';
   console.log(`ZentoFact en http://localhost:${info.port} (${serveWeb ? 'API + front estático' : 'solo API'})`);
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();

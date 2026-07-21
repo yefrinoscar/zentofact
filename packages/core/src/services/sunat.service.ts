@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { signXml, extractHashFromXml } from '../utils/xml-signer';
 import { parsePem, parsePfxToPem } from '../utils/certificate';
 import type { CertificateKeys } from '../utils/certificate';
+import { isSunatProduction } from '../utils/sunat-env';
 
 dotenv.config();
 
@@ -19,7 +20,6 @@ export interface CompanyConfig {
   claveSol: string;
   certificado: string;
   certificadoPassword: string;
-  modoProduccion: boolean;
   distrito?: string;
   provincia?: string;
   departamento?: string;
@@ -145,15 +145,7 @@ export class SunatService {
   private endpoint: string;
 
   constructor(private config: CompanyConfig) {
-    // Override por ambiente: SUNAT_FORCE_ENV=beta|produccion fuerza el endpoint sin importar
-    // la config de la empresa. Local => beta; Railway (prod) => sin flag o 'produccion'.
-    const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
-    const useProd = forced === 'produccion' || forced === 'produ' || forced === 'prod'
-      ? true
-      : forced === 'beta'
-        ? false
-        : config.modoProduccion;
-    this.endpoint = useProd ? SUNAT_PROD_ENDPOINT : SUNAT_BETA_ENDPOINT;
+    this.endpoint = isSunatProduction() ? SUNAT_PROD_ENDPOINT : SUNAT_BETA_ENDPOINT;
     this.parseCertificate();
   }
 

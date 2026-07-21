@@ -175,7 +175,6 @@ type Company = {
   direccion?: string | null;
   ubigeo?: string | null;
   usuarioSol?: string | null;
-  modoProduccion?: boolean | null;
   falabellaApiUserId?: string | null;
   hasSolCredentials?: boolean;
   hasCertificate?: boolean;
@@ -210,7 +209,6 @@ function writeCachedCompanies(companies: Company[]) {
       ruc: company.ruc,
       razonSocial: company.razonSocial,
       nombre: company.nombre,
-      modoProduccion: company.modoProduccion,
       hasSolCredentials: company.hasSolCredentials,
       hasCertificate: company.hasCertificate,
       hasFalabellaCredentials: company.hasFalabellaCredentials,
@@ -646,17 +644,7 @@ function companyHasApi(company?: Company | null) {
 }
 
 function sellerDisplayName(company?: Company | null) {
-  return String(company?.nombre || company?.razonSocial || '').trim() || 'Empresa';
-}
-
-function sellerDisplayDetail(company?: Company | null) {
-  const name = sellerDisplayName(company);
-  const legalName = String(company?.razonSocial || '').trim();
-  const ruc = String(company?.ruc || '').trim();
-  const parts = [];
-  if (legalName && legalName !== name) parts.push(legalName);
-  if (ruc) parts.push(ruc);
-  return parts.join(' · ');
+  return String(company?.razonSocial || company?.nombre || '').trim() || 'Empresa';
 }
 
 function isInvoiceRequired(value: FalabellaOrder['InvoiceRequired']) {
@@ -989,6 +977,7 @@ export default function FalabellaApi() {
   const [falabellaSyncing, setFalabellaSyncing] = useState(false);
 
   const autoLoadKeyRef = useRef('');
+  const invoiceFlowLoadIdRef = useRef(0);
   const uploadDocumentRefreshKeyRef = useRef('');
   const flowToolbarSentinelRef = useRef<HTMLDivElement | null>(null);
   const [flowToolbarStuck, setFlowToolbarStuck] = useState(false);
@@ -1462,7 +1451,6 @@ export default function FalabellaApi() {
       const result = await api.createAndSendCreditNote(row.affectedBoletaId, {
         codMotivo: '01',
         desMotivo: 'ANULACION DE LA OPERACION',
-        modoProduccion: falabellaProductionMode,
       });
       setCreditNoteAction(null);
       setCreditNoteModal((current) => ({
@@ -1986,6 +1974,10 @@ export default function FalabellaApi() {
 
   const loadInvoiceFlowPrototype = async (forceSync = false) => {
     if (!selectedCompanyId) return;
+    const companyId = selectedCompanyId;
+    const month = flowMonth;
+    const loadId = ++invoiceFlowLoadIdRef.current;
+    const isCurrent = () => invoiceFlowLoadIdRef.current === loadId;
     const initialLoadStartedAt = Date.now();
     const simulateInitialDelay = pageBootstrapping;
 
@@ -2004,14 +1996,13 @@ export default function FalabellaApi() {
     try {
       const collected = new Map<string, FalabellaOrder>();
       const limit = 1000;
-      let sync: InvoiceFlowState['sync'] = null;
       const loadLocalPages = async () => {
         collected.clear();
         let latestSync: InvoiceFlowState['sync'] = null;
         for (let offset = 0; offset < 100000; offset += limit) {
-          const response = await api.falabellaApiGetLocalOrders(selectedCompanyId, {
-            createdAfter: monthStart(flowMonth),
-            createdBefore: monthEnd(flowMonth),
+          const response = await api.falabellaApiGetLocalOrders(companyId, {
+            createdAfter: monthStart(month),
+            createdBefore: monthEnd(month),
             limit,
             offset,
           });
@@ -2029,33 +2020,7 @@ export default function FalabellaApi() {
         return latestSync;
       };
 
-      sync = await loadLocalPages();
-      const lastSuccessMs = sync?.monthLastSuccessfulSyncAt ? new Date(sync.monthLastSuccessfulSyncAt).getTime() : 0;
-      const stale = !lastSuccessMs || Date.now() - lastSuccessMs > 30 * 60_000;
-      if (forceSync || stale) {
-        setFalabellaSyncing(true);
-        try {
-          await api.falabellaApiSyncOrders(selectedCompanyId, { mode: 'month', month: flowMonth });
-          sync = await loadLocalPages();
-        } catch (syncError: any) {
-          sync = {
-            ...sync,
-            status: 'error',
-            lastError: syncError?.message || 'Falabella no respondió; se muestran los datos guardados.',
-          };
-        } finally {
-          setFalabellaSyncing(false);
-        }
-      }
-
-      const ordered = Array.from(collected.values()).sort((a, b) => String(b.CreatedAt || '').localeCompare(String(a.CreatedAt || '')));
-      setInvoiceFlow((current) => ({
-        ...current,
-        checkedOrders: 0,
-        totalOrders: ordered.length,
-      }));
-
-      const rows = await Promise.all(ordered.map(async (order): Promise<InvoiceFlowRow> => {
+      const buildRows = async (orders: FalabellaOrder[]) => Promise.all(orders.map(async (order): Promise<InvoiceFlowRow> => {
         const orderNumber = String(order.OrderNumber || '').trim();
         const orderId = String(order.OrderId || '').trim();
         const invoiceKind = getOrderInvoiceKind(order);
@@ -2065,7 +2030,7 @@ export default function FalabellaApi() {
         const requiresCreditNoteReview = needsCreditNoteReview(statusKey);
         const localResolved = (order as any).__resolved as ResolvedDocumentResponse | undefined;
         const resolved = localResolved || (orderNumber
-          ? await api.falabellaApiResolveDocument(selectedCompanyId, orderNumber) as ResolvedDocumentResponse
+          ? await api.falabellaApiResolveDocument(companyId, orderNumber) as ResolvedDocumentResponse
           : null);
         const existingOption = resolved?.options?.find((option) => option.invoiceNumber)
           || (resolved?.boleta
@@ -2168,18 +2133,59 @@ export default function FalabellaApi() {
         };
       }));
 
-      if (simulateInitialDelay) await waitForDevLoadingDelay(initialLoadStartedAt);
-      setInvoiceFlow({
-        loading: false,
-        error: '',
-        rows,
-        totalOrders: ordered.length,
-        checkedOrders: ordered.length,
-        sync,
-      });
-      setPageBootstrapping(false);
+      const publishLocal = async (sync: InvoiceFlowState['sync'], withBootDelay = false) => {
+        const ordered = Array.from(collected.values()).sort((a, b) => String(b.CreatedAt || '').localeCompare(String(a.CreatedAt || '')));
+        const rows = await buildRows(ordered);
+        if (!isCurrent()) return null;
+        if (withBootDelay) await waitForDevLoadingDelay(initialLoadStartedAt);
+        if (!isCurrent()) return null;
+        setInvoiceFlow({
+          loading: false,
+          error: '',
+          rows,
+          totalOrders: ordered.length,
+          checkedOrders: ordered.length,
+          sync,
+        });
+        setPageBootstrapping(false);
+        return sync;
+      };
+
+      // Siempre cargar y mostrar Postgres primero.
+      let sync = await loadLocalPages();
+      if (!isCurrent()) return;
+      await publishLocal(sync, simulateInitialDelay);
+      if (!isCurrent()) return;
+
+      const lastSuccessMs = sync?.monthLastSuccessfulSyncAt ? new Date(sync.monthLastSuccessfulSyncAt).getTime() : 0;
+      const stale = !lastSuccessMs || Date.now() - lastSuccessMs > 30 * 60_000;
+      if (!(forceSync || stale)) return;
+
+      // Sync con Falabella en background; al terminar refresca desde Postgres.
+      setFalabellaSyncing(true);
+      try {
+        await api.falabellaApiSyncOrders(companyId, { mode: 'month', month });
+        if (!isCurrent()) return;
+        sync = await loadLocalPages();
+        if (!isCurrent()) return;
+        await publishLocal(sync);
+      } catch (syncError: any) {
+        if (!isCurrent()) return;
+        setInvoiceFlow((current) => ({
+          ...current,
+          sync: {
+            ...(current.sync || sync),
+            status: 'error',
+            lastError: syncError?.message || 'Falabella no respondió; se muestran los datos guardados.',
+          },
+        }));
+      } finally {
+        if (isCurrent()) setFalabellaSyncing(false);
+      }
     } catch (nextError: any) {
+      if (!isCurrent()) return;
       if (simulateInitialDelay) await waitForDevLoadingDelay(initialLoadStartedAt);
+      if (!isCurrent()) return;
       setInvoiceFlow((current) => ({
         ...current,
         loading: false,
@@ -2518,7 +2524,7 @@ export default function FalabellaApi() {
                   <SelectTrigger
                     placeholder={companiesLoading ? 'Cargando empresa…' : 'Selecciona una empresa'}
                     value={selectedCompany
-                      ? `${sellerDisplayName(selectedCompany)}${sellerDisplayDetail(selectedCompany) ? ` · ${sellerDisplayDetail(selectedCompany)}` : ''}`
+                      ? sellerDisplayName(selectedCompany)
                       : companiesLoading ? 'Cargando empresa…' : undefined}
                   />
                   <Select.Portal>
@@ -2534,10 +2540,7 @@ export default function FalabellaApi() {
                             value={String(company.id)}
                             className="relative flex cursor-default select-none items-center rounded-lg px-3 py-2.5 pr-8 text-sm outline-none transition focus:bg-accent focus:text-accent-foreground"
                           >
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">{sellerDisplayName(company)}</div>
-                              <div className="truncate text-xs text-muted-foreground">{sellerDisplayDetail(company)}</div>
-                            </div>
+                            <div className="min-w-0 truncate font-medium">{sellerDisplayName(company)}</div>
                             <Select.ItemIndicator className="absolute right-2 inline-flex items-center">
                               <Check className="h-4 w-4" />
                             </Select.ItemIndicator>

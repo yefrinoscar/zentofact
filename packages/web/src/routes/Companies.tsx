@@ -59,7 +59,7 @@ type CompanyRow = {
   usuarioSol?: string | null;
   sellerUsername?: string | null;
   falabellaApiUserId?: string | null;
-  modoProduccion?: boolean | null;
+
   activo?: boolean | null;
   hasSolCredentials?: boolean;
   hasCertificate?: boolean;

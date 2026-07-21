@@ -155,7 +155,14 @@ function AppLayout() {
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella" {...permissionState}><FalabellaApi /></RequirePermission>} />
-              <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
+              <Route
+                path="/productos"
+                element={
+                  import.meta.env.PROD
+                    ? <Navigate to={firstAllowedPath(user)} replace />
+                    : <RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>
+                }
+              />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/documentos" element={<RequirePermission permission="documentos" {...permissionState}><Documentos /></RequirePermission>} />
               <Route path="/documentos/nuevo" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice /></RequirePermission>} />

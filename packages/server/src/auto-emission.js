@@ -197,9 +197,9 @@ function invoiceRequired(order) {
 
 function buildConfig(company) {
   // Solo companyId: processWorkflow carga certificado/SOL desde la DB.
+  // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV).
   return {
     companyId: company.id,
-    modoProduccion: true, // el automático SIEMPRE es producción real
     serieBoleta: 'B001',
     outputDir: process.env.STORAGE_PATH || 'storage',
   };
@@ -377,9 +377,15 @@ export async function getConfig() {
   const paused = await getPaused();
   const cron = await getCron();
   const dryRun = await getDryRun();
-  // A qué SUNAT emite realmente (lo decide el ambiente): local=beta, Railway=producción.
+  // A qué SUNAT emite realmente (lo decide el ambiente).
   const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
-  const sunatEnv = forced.startsWith('prod') ? 'produccion' : forced === 'beta' ? 'beta' : 'segun-empresa';
+  const sunatEnv = forced.startsWith('prod')
+    ? 'produccion'
+    : forced === 'beta'
+      ? 'beta'
+      : (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.NODE_ENV === 'production')
+        ? 'produccion'
+        : 'beta';
   // Conteo por estado (resumen del panel).
   const stats = Object.fromEntries((await pool.query(
     'select status, count(*)::int as n from emission_jobs group by status')).rows.map((r) => [r.status, r.n]));

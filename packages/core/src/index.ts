@@ -16,7 +16,6 @@ export interface CoreConfig {
   claveSol?: string;
   certificadoBase64?: string;
   certificadoPassword?: string;
-  modoProduccion?: boolean;
   branchCodigo?: string;
   branchNombre?: string;
   serieBoleta?: string;
@@ -138,6 +137,8 @@ export {
 } from './services/falabella.service';
 
 // ── Utilitarios ──
+
+export { isSunatProduction, sunatEnvironmentLabel } from './utils/sunat-env';
 
 export function validateConfig(config: CoreConfig): string[] {
   const errors: string[] = [];

@@ -75,7 +75,7 @@ const config = {
   claveSol: 'MODDATOS',
   certificadoBase64: '<archivo .pfx en base64>',
   certificadoPassword: '123456',
-  modoProduccion: false,   // true = produccion, false = beta
+  // El modo SUNAT lo define el ambiente: SUNAT_FORCE_ENV=beta|produccion
   outputDir: './output',
 };
 

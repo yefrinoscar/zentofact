@@ -24,7 +24,7 @@ type CompanyCfg = {
 };
 type CronCfg = { enabled: boolean; intervalMinutes: number; windowDays: number };
 type Config = {
-  globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion' | 'segun-empresa'; reconcileEnabled: boolean;
+  globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion'; reconcileEnabled: boolean;
   paused: boolean; stats: Record<string, number>; cron: CronCfg;
   companies: CompanyCfg[]; webhookBase: string;
 };
@@ -74,7 +74,7 @@ const WEBHOOK_EVENTS = [
 const DEFAULT_WEBHOOK_EVENTS = ['onOrderCreated', 'onOrderItemsStatusChanged'];
 
 function sunatLabel(env: string) {
-  return env === 'beta' ? 'SUNAT beta' : env === 'produccion' ? 'SUNAT producción' : 'SUNAT (según empresa)';
+  return env === 'beta' ? 'SUNAT beta' : 'SUNAT producción';
 }
 
 const STATUS_STYLES: Record<string, { cls: string; icon: any; label: string }> = {

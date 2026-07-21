@@ -14,7 +14,6 @@ export interface CreateCreditNoteFromBoletaOptions {
   desMotivo?: string;
   usuarioCreacion?: string;
   fechaEmision?: string;
-  modoProduccion?: boolean;
 }
 
 export async function createCreditNoteFromBoleta(
@@ -90,10 +89,7 @@ export async function createCreditNoteFromBoleta(
   return result[0].id;
 }
 
-export async function sendCreditNoteToSunat(
-  creditNoteId: number,
-  options: { modoProduccion?: boolean } = {},
-) {
+export async function sendCreditNoteToSunat(creditNoteId: number) {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, creditNoteId)).limit(1))[0];
   if (!note) throw new Error('Nota de crédito no encontrada');
   if (note.estadoSunat === 'ACEPTADO') throw new Error('La nota de crédito ya fue aceptada por SUNAT');
@@ -112,7 +108,6 @@ export async function sendCreditNoteToSunat(
     claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '',
     certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: options.modoProduccion ?? Boolean(company.modoProduccion),
   };
 
   const detalles = ((note.detalles as any[]) || []).map((d: any) => ({
@@ -212,7 +207,7 @@ export async function createAndSendCreditNoteFromBoleta(
   options: CreateCreditNoteFromBoletaOptions = {},
 ): Promise<CreditNoteSendOutcome> {
   const creditNoteId = await createCreditNoteFromBoleta(boletaId, options);
-  const result = await sendCreditNoteToSunat(creditNoteId, options);
+  const result = await sendCreditNoteToSunat(creditNoteId);
   return { boletaId, creditNoteId, ...result };
 }
 

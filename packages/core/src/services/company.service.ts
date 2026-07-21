@@ -25,7 +25,6 @@ export interface CreateCompanyInput {
   sellerPassword?: string;
   falabellaApiUserId?: string;
   falabellaApiKey?: string;
-  modoProduccion?: boolean;
 }
 
 export interface UpdateCompanyInput extends Partial<CreateCompanyInput> {}
@@ -50,7 +49,6 @@ export type PublicCompany = {
   sellerUsername: string | null;
   falabellaApiUserId: string | null;
   logoPath: string | null;
-  modoProduccion: boolean | null;
   activo: boolean | null;
   createdAt: number | null;
   updatedAt: number | null;
@@ -110,7 +108,6 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     sellerUsername: row.sellerUsername ?? null,
     falabellaApiUserId: row.falabellaApiUserId ?? null,
     logoPath: row.logoPath ?? null,
-    modoProduccion: row.modoProduccion ?? null,
     activo: row.activo ?? null,
     createdAt: row.createdAt ?? null,
     updatedAt: row.updatedAt ?? null,
@@ -164,7 +161,6 @@ export async function createCompany(data: CreateCompanyInput): Promise<PublicCom
     sellerPassword: data.sellerPassword,
     falabellaApiUserId: data.falabellaApiUserId,
     falabellaApiKey: data.falabellaApiKey,
-    modoProduccion: data.modoProduccion ?? false,
     activo: true,
     createdAt: now,
     updatedAt: now,
@@ -215,7 +211,6 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
   if (data.falabellaApiUserId !== undefined) updates.falabellaApiUserId = data.falabellaApiUserId;
   const falabellaApiKey = nonEmptySecret(data.falabellaApiKey);
   if (falabellaApiKey !== undefined) updates.falabellaApiKey = falabellaApiKey;
-  if (data.modoProduccion !== undefined) updates.modoProduccion = data.modoProduccion;
 
   const updated = await db.update(companies).set(updates).where(eq(companies.id, id)).returning();
   const row = updated[0];

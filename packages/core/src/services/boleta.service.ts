@@ -168,7 +168,6 @@ export async function sendBoletaToSunat(id: number) {
     direccion: company.direccion || '', ubigeo: company.ubigeo || '',
     usuarioSol: company.usuarioSol || 'MODDATOS', claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '', certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: Boolean(company.modoProduccion),
     codigoLocal: branch.codigo || '0000',
   };
 
@@ -598,6 +597,5 @@ function buildCompanyConfig(company: any): CompanyConfig {
     claveSol: company.claveSol || 'MODDATOS',
     certificado: company.certificado || '',
     certificadoPassword: company.certificadoPassword || '',
-    modoProduccion: Boolean(company.modoProduccion),
   };
 }

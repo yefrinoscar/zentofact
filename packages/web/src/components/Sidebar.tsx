@@ -60,8 +60,12 @@ export default function Sidebar() {
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggle = useAppStore((s) => s.toggleSidebar);
   const { can, loading } = usePermissions();
+  const isProd = Boolean((import.meta as any).env?.PROD);
 
-  const visibleItems = navItems.filter((item) => can(item.permission));
+  const visibleItems = navItems.filter((item) => {
+    if (isProd && item.to === '/productos') return false;
+    return can(item.permission);
+  });
 
   return (
     <aside
