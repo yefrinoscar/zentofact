@@ -1137,12 +1137,14 @@ export default function FalabellaApi() {
       boletaWithDocumentAmount: 0,
       boletaWithoutDocument: 0,
       boletaWithoutDocumentAmount: 0,
+      boletaPendingAmount: 0,
       totalFactura: 0,
       totalFacturaAmount: 0,
       facturaWithDocument: 0,
       facturaWithDocumentAmount: 0,
       facturaWithoutDocument: 0,
       facturaWithoutDocumentAmount: 0,
+      facturaPendingAmount: 0,
       readyToInvoice: 0,
       readyToInvoiceAmount: 0,
       hasDocument: 0,
@@ -1187,6 +1189,10 @@ export default function FalabellaApi() {
       } else {
         base.review += 1;
         base.reviewAmount += row.total;
+      }
+      if (row.bucket === 'not_ready') {
+        if (row.invoiceKind === 'BOLETA') base.boletaPendingAmount += row.total;
+        if (row.invoiceKind === 'FACTURA') base.facturaPendingAmount += row.total;
       }
     }
 
@@ -2635,7 +2641,7 @@ export default function FalabellaApi() {
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Pendiente</p>
                       <p className="text-muted-foreground">
-                        {money((flowStats.totalBoletaAmount + flowStats.totalFacturaAmount) - flowStats.hasDocumentAmount)}
+                        {money(flowStats.notReadyAmount)}
                       </p>
                     </div>
                   </div>
@@ -2667,7 +2673,7 @@ export default function FalabellaApi() {
                       </div>
                       <div>
                         <p className="text-[11px] font-medium text-muted-foreground">Pendiente</p>
-                        <p className="text-muted-foreground">{money(flowStats.boletaWithoutDocumentAmount)}</p>
+                        <p className="text-muted-foreground">{money(flowStats.boletaPendingAmount)}</p>
                       </div>
                     </div>
                   </div>
@@ -2697,7 +2703,7 @@ export default function FalabellaApi() {
                       </div>
                       <div>
                         <p className="text-[11px] font-medium text-muted-foreground">Pendiente</p>
-                        <p className="text-muted-foreground">{money(flowStats.facturaWithoutDocumentAmount)}</p>
+                        <p className="text-muted-foreground">{money(flowStats.facturaPendingAmount)}</p>
                       </div>
                     </div>
                   </div>
