@@ -63,6 +63,7 @@ function EstadoBadge({ d }: { d: Doc }) {
 
 const money = (v: any) => `S/ ${(parseFloat(v || '0') || 0).toFixed(2)}`;
 const DOCUMENT_PAGE_SIZE = 10;
+const ACCEPTED_OR_CANCELLED_STATUSES = ['ACEPTADO', 'ANULADO', 'REEMPLAZADO'];
 
 type PaginationEntry = number | 'start-ellipsis' | 'end-ellipsis';
 
@@ -167,7 +168,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     return rows.filter((d) => {
       if (d.fechaEmision && d.fechaEmision.slice(0, 10) < selectedRange.from) return false;
       const status = String(d.estadoSunat || d.estado || 'PENDIENTE').toUpperCase();
-      if (kind === 'facturas' && statusFilter !== 'all' && status !== statusFilter) return false;
+      if (kind === 'facturas' && statusFilter === 'NO_ACEPTADO' && ACCEPTED_OR_CANCELLED_STATUSES.includes(status)) return false;
+      if (kind === 'facturas' && statusFilter !== 'all' && statusFilter !== 'NO_ACEPTADO' && status !== statusFilter) return false;
       if (!q) return true;
       return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
     });
@@ -311,10 +313,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
             <SelectContent align="end">
               <SelectItem value="all">Todos los estados</SelectItem>
               <SelectItem value="ACEPTADO">Aceptado</SelectItem>
-              <SelectItem value="PENDIENTE">Pendiente</SelectItem>
-              <SelectItem value="RECHAZADO">Rechazado</SelectItem>
-              <SelectItem value="ANULADO">Anulado</SelectItem>
-              <SelectItem value="REEMPLAZADO">Reemplazado</SelectItem>
+              <SelectItem value="NO_ACEPTADO">No aceptado</SelectItem>
             </SelectContent>
           </Select>
         )}
