@@ -392,15 +392,15 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                 </div>
               </div>
             )}
-            <Table className="min-w-[820px]">
+            <Table className="min-w-[820px] table-fixed">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead>Número</TableHead>
-                  <TableHead>Fecha</TableHead>
+                  <TableHead className="w-[150px]">Número</TableHead>
+                  <TableHead className="w-[130px]">Fecha</TableHead>
                   <TableHead>Cliente</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  <TableHead className="w-[130px] text-right">Total</TableHead>
+                  <TableHead className="w-[150px]">Estado</TableHead>
+                  <TableHead className="w-[80px] text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -418,8 +418,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                     <TableRow key={d.id}>
                       <TableCell className="font-mono text-xs tabular-nums text-foreground">{d.numeroCompleto || '—'}</TableCell>
                       <TableCell className="text-muted-foreground">{d.fechaEmision || '—'}</TableCell>
-                      <TableCell>
-                        <div className="text-foreground">{d.clientRazonSocial || '—'}</div>
+                      <TableCell className="min-w-0">
+                        <div className="truncate text-foreground" title={d.clientRazonSocial || undefined}>{d.clientRazonSocial || '—'}</div>
                         <div className="text-sm text-muted-foreground">{d.clientNumeroDocumento || '—'}</div>
                       </TableCell>
                       <TableCell className="text-right font-medium text-foreground">{money(d.mtoImpVenta)}</TableCell>
