@@ -15,6 +15,10 @@ import {
 } from '../components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/tooltip';
+import {
+  Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink,
+  PaginationNext, PaginationPrevious,
+} from '../components/ui/pagination';
 import { buildDocumentStatsFromRows, hasCompleteDocumentStats, type DocumentStats } from '../lib/documentStats';
 import { documentDateRangeLabel, parseDocumentDateRange, type DocumentDateRange } from '../lib/documentDateRange';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
@@ -58,6 +62,16 @@ function EstadoBadge({ d }: { d: Doc }) {
 }
 
 const money = (v: any) => `S/ ${(parseFloat(v || '0') || 0).toFixed(2)}`;
+const DOCUMENT_PAGE_SIZE = 10;
+
+type PaginationEntry = number | 'start-ellipsis' | 'end-ellipsis';
+
+function paginationEntries(currentPage: number, totalPages: number): PaginationEntry[] {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (currentPage <= 4) return [1, 2, 3, 4, 5, 'end-ellipsis', totalPages];
+  if (currentPage >= totalPages - 3) return [1, 'start-ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  return [1, 'start-ellipsis', currentPage - 1, currentPage, currentPage + 1, 'end-ellipsis', totalPages];
+}
 
 const META: Record<DocumentKind, { singular: string; plural: string; createPath: string; label: string }> = {
   boletas: { singular: 'boleta', plural: 'boletas', createPath: '/boletas/new', label: 'Boletas' },
@@ -77,6 +91,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [selectedRange, setSelectedRange] = useState<DocumentDateRange>(() => parseDocumentDateRange(searchParams));
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [rows, setRows] = useState<Doc[]>([]);
   const [stats, setStats] = useState<DocumentStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -102,6 +118,10 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   useEffect(() => {
     setSelectedRange(parseDocumentDateRange(searchParams));
   }, [searchParams]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [kind, selectedCompanyId, selectedRange.from, selectedRange.to]);
 
   const updateRange = (range: DocumentDateRange) => {
     setSearchParams((current) => {
@@ -146,10 +166,18 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     const q = search.trim().toLowerCase();
     return rows.filter((d) => {
       if (d.fechaEmision && d.fechaEmision.slice(0, 10) < selectedRange.from) return false;
+      const status = String(d.estadoSunat || d.estado || 'PENDIENTE').toUpperCase();
+      if (kind === 'facturas' && statusFilter !== 'all' && status !== statusFilter) return false;
       if (!q) return true;
       return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
     });
-  }, [rows, search, selectedRange.from]);
+  }, [kind, rows, search, selectedRange.from, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / DOCUMENT_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * DOCUMENT_PAGE_SIZE;
+  const pageRows = filtered.slice(pageStart, pageStart + DOCUMENT_PAGE_SIZE);
+  const visiblePages = paginationEntries(currentPage, totalPages);
 
   const downloadPdf = async (d: Doc) => {
     setDownloadingId(d.id);
@@ -273,8 +301,23 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <div className="relative min-w-0 sm:w-[320px] lg:w-[360px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar número, orden o cliente" className="pl-9" />
+          <Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Buscar número, orden o cliente" className="pl-9" />
         </div>
+        {kind === 'facturas' && (
+          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
+            <SelectTrigger className="w-full sm:w-[220px]" aria-label="Filtrar facturas por estado">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="all">Todos los estados</SelectItem>
+              <SelectItem value="ACEPTADO">Aceptado</SelectItem>
+              <SelectItem value="PENDIENTE">Pendiente</SelectItem>
+              <SelectItem value="RECHAZADO">Rechazado</SelectItem>
+              <SelectItem value="ANULADO">Anulado</SelectItem>
+              <SelectItem value="REEMPLAZADO">Reemplazado</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <TablePanel aria-label={`Listado de ${meta.plural}`}>
@@ -313,7 +356,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((d) => {
+                {pageRows.map((d) => {
                   const est = String(d.estadoSunat || d.estado || '').toUpperCase();
                   return (
                     <TableRow key={d.id}>
@@ -360,8 +403,48 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
           </div>
         )}
         {!loading && rows.length > 0 && (
-          <TablePanelFooter>
-            <p className="text-sm text-muted-foreground">Mostrando {filtered.length} de {rows.length} {meta.plural} cargadas</p>
+          <TablePanelFooter className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <p>
+              Mostrando {filtered.length === 0 ? 0 : pageStart + 1} a {Math.min(pageStart + pageRows.length, filtered.length)} de {filtered.length} {meta.plural}
+            </p>
+            {totalPages > 1 && (
+              <Pagination className="mx-0 w-auto justify-end">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      aria-disabled={currentPage === 1}
+                      tabIndex={currentPage === 1 ? -1 : undefined}
+                      className={cn(currentPage === 1 && 'pointer-events-none opacity-50')}
+                      onClick={(event) => { event.preventDefault(); setPage(Math.max(1, currentPage - 1)); }}
+                    />
+                  </PaginationItem>
+                  {visiblePages.map((entry) => (
+                    <PaginationItem key={entry}>
+                      {typeof entry === 'number' ? (
+                        <PaginationLink
+                          href="#"
+                          isActive={entry === currentPage}
+                          aria-label={`Ir a la página ${entry}`}
+                          onClick={(event) => { event.preventDefault(); setPage(entry); }}
+                        >
+                          {entry}
+                        </PaginationLink>
+                      ) : <PaginationEllipsis />}
+                    </PaginationItem>
+                  ))}
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      aria-disabled={currentPage === totalPages}
+                      tabIndex={currentPage === totalPages ? -1 : undefined}
+                      className={cn(currentPage === totalPages && 'pointer-events-none opacity-50')}
+                      onClick={(event) => { event.preventDefault(); setPage(Math.min(totalPages, currentPage + 1)); }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
           </TablePanelFooter>
         )}
       </TablePanel>
