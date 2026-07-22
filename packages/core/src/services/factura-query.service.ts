@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, like, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, like, lte, or } from 'drizzle-orm';
 import { db } from '../db';
-import { facturas, clients, companies, branches } from '../db/schema';
+import { facturas, clients, companies, creditNotes } from '../db/schema';
 
 export interface FacturaFilter {
   companyId?: number;
@@ -38,7 +38,10 @@ export async function listFacturas(filter: FacturaFilter) {
     conditions.push(eq(facturas.estadoSunat, filter.estadoSunat));
   }
   if (filter.orderNumber) {
-    conditions.push(like(facturas.orderNumber, `%${filter.orderNumber}%`));
+    conditions.push(or(
+      like(facturas.orderNumber, `%${filter.orderNumber}%`),
+      like(creditNotes.numeroCompleto, `%${filter.orderNumber}%`),
+    )!);
   }
   if (filter.numeroCompleto) {
     conditions.push(like(facturas.numeroCompleto, `%${filter.numeroCompleto}%`));
@@ -80,9 +83,21 @@ export async function listFacturas(filter: FacturaFilter) {
     clientRazonSocial: clients.razonSocial,
     clientNumeroDocumento: clients.numeroDocumento,
     clientTipoDocumento: clients.tipoDocumento,
+    creditNoteId: creditNotes.id,
+    creditNoteNumeroCompleto: creditNotes.numeroCompleto,
+    creditNoteEstadoSunat: creditNotes.estadoSunat,
+    creditNoteFechaEmision: creditNotes.fechaEmision,
   }).from(facturas)
     .innerJoin(companies, eq(companies.id, facturas.companyId))
     .leftJoin(clients, eq(facturas.clientId, clients.id))
+    .leftJoin(creditNotes, or(
+      eq(creditNotes.affectedFacturaId, facturas.id),
+      and(
+        eq(creditNotes.companyId, facturas.companyId),
+        eq(creditNotes.tipoDocAfectado, '01'),
+        eq(creditNotes.numDocAfectado, facturas.numeroCompleto),
+      ),
+    ))
     .where(and(eq(companies.activo, true), ...conditions))
     .orderBy(desc(facturas.createdAt));
 

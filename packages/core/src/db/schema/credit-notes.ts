@@ -3,6 +3,7 @@ import { companies } from './companies';
 import { branches } from './branches';
 import { clients } from './clients';
 import { boletas } from './boletas';
+import { facturas } from './facturas';
 
 export const creditNotes = pgTable('credit_notes', {
   id: serial('id').primaryKey(),
@@ -10,6 +11,7 @@ export const creditNotes = pgTable('credit_notes', {
   branchId: integer('branch_id').notNull().references(() => branches.id, { onDelete: 'cascade' }),
   clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
   affectedBoletaId: integer('affected_boleta_id').references(() => boletas.id, { onDelete: 'cascade' }),
+  affectedFacturaId: integer('affected_factura_id').references(() => facturas.id, { onDelete: 'cascade' }),
 
   tipoDocumento: text('tipo_documento').default('07'),
   serie: text('serie').notNull(),
@@ -60,6 +62,7 @@ export const creditNotes = pgTable('credit_notes', {
 }, (table) => ({
   uniqueSerieCorr: uniqueIndex('idx_credit_notes_company_serie_corr').on(table.companyId, table.serie, table.correlativo),
   uniqueAffectedBoleta: uniqueIndex('idx_credit_notes_affected_boleta').on(table.affectedBoletaId),
+  uniqueAffectedFactura: uniqueIndex('idx_credit_notes_affected_factura').on(table.affectedFacturaId),
   companyBranchIdx: index('idx_credit_notes_company_branch').on(table.companyId, table.branchId),
   fechaIdx: index('idx_credit_notes_fecha_emision').on(table.fechaEmision),
   estadoIdx: index('idx_credit_notes_estado_sunat').on(table.estadoSunat),

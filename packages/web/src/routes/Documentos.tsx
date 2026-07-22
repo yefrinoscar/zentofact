@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2 } from 'lucide-react';
+import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2, RefreshCw, MoreHorizontal } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
@@ -15,6 +15,9 @@ import {
 } from '../components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/tooltip';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
 import {
   Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink,
   PaginationNext, PaginationPrevious,
@@ -49,6 +52,8 @@ function EstadoBadge({ d }: { d: Doc }) {
     ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'REEMPLAZADO'
     ? { label: 'Reemplazado', cls: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' }
+    : v === 'SIN_CDR'
+    ? { label: 'Sin CDR', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
   const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
@@ -102,6 +107,8 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  const [verifyingAll, setVerifyingAll] = useState(false);
   const [retryMsg, setRetryMsg] = useState('');
   const [loadError, setLoadError] = useState('');
   const [creditNoteTarget, setCreditNoteTarget] = useState<Doc | null>(null);
@@ -207,6 +214,41 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     } finally { setRetryingId(null); }
   };
 
+  const verifySunatStatus = async (d: Doc, reload = true) => {
+    setVerifyingId(d.id);
+    setRetryMsg('');
+    try {
+      const res: any = await api.refreshFacturaStatus(d.id);
+      if (res?.success === false) throw new Error(res.message || 'SUNAT no respondió la consulta.');
+      setRetryMsg(`${d.numeroCompleto}: SUNAT confirmó estado ${res?.estadoSunat || 'sin determinar'}${res?.message ? ` — ${res.message}` : ''}`);
+      if (reload) await load();
+      return res;
+    } catch (e: any) {
+      setRetryMsg(`${d.numeroCompleto}: ${e?.message || 'No se pudo consultar el estado en SUNAT.'}`);
+      return null;
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const verifyAllSunatStatuses = async () => {
+    const pending = filtered.filter((d) => !ACCEPTED_OR_CANCELLED_STATUSES.includes(String(d.estadoSunat || d.estado || '').toUpperCase()));
+    if (pending.length === 0) return;
+    setVerifyingAll(true);
+    setRetryMsg(`Consultando 0 de ${pending.length} facturas en SUNAT…`);
+    let verified = 0;
+    let failed = 0;
+    for (const document of pending) {
+      const result = await verifySunatStatus(document, false);
+      if (result) verified += 1;
+      else failed += 1;
+      setRetryMsg(`Consultando ${verified + failed} de ${pending.length} facturas en SUNAT…`);
+    }
+    await load();
+    setRetryMsg(`Consulta SUNAT terminada: ${verified} verificadas${failed ? `, ${failed} con error` : ''}.`);
+    setVerifyingAll(false);
+  };
+
   const openPreview = async (d: Doc) => {
     const requestId = ++previewRequestRef.current;
     setPreviewingId(d.id);
@@ -229,7 +271,9 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     setRetryMsg('');
     setCreditNoteError('');
     try {
-      const result = await api.createAndSendCreditNote(target.id);
+      const result = kind === 'facturas'
+        ? await api.createAndSendCreditNoteFromFactura(target.id)
+        : await api.createAndSendCreditNote(target.id);
       if (result?.success === false) {
         throw new Error(result?.error?.message || result?.error || 'SUNAT rechazó la nota de crédito.');
       }
@@ -317,6 +361,11 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
             </SelectContent>
           </Select>
         )}
+        {kind === 'facturas' && canMutate && (
+          <Button variant="outline" onClick={verifyAllSunatStatuses} disabled={verifyingAll || filtered.every((d) => ACCEPTED_OR_CANCELLED_STATUSES.includes(String(d.estadoSunat || d.estado || '').toUpperCase()))}>
+            {verifyingAll ? <Loader2 className="animate-spin" /> : <RefreshCw />} {verifyingAll ? 'Consultando SUNAT…' : 'Verificar en SUNAT'}
+          </Button>
+        )}
       </div>
 
       <TablePanel aria-label={`Listado de ${meta.plural}`}>
@@ -357,6 +406,14 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
               <TableBody>
                 {pageRows.map((d) => {
                   const est = String(d.estadoSunat || d.estado || '').toUpperCase();
+                  const canRetryDocument = canMutate && (
+                    est === 'RECHAZADO'
+                    || (kind === 'facturas' && (est === 'NO_ENCONTRADO' || est === 'SIN_CDR'))
+                  );
+                  const canVerifyDocument = kind === 'facturas' && canMutate && est !== 'ACEPTADO';
+                  const hasAcceptedActions = est === 'ACEPTADO';
+                  const hasRowActions = hasAcceptedActions || canVerifyDocument || canRetryDocument;
+                  const rowBusy = previewingId === d.id || downloadingId === d.id || retryingId === d.id || verifyingId === d.id || issuingCreditNoteId === d.id;
                   return (
                     <TableRow key={d.id}>
                       <TableCell className="font-mono text-xs tabular-nums text-foreground">{d.numeroCompleto || '—'}</TableCell>
@@ -367,32 +424,55 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                       </TableCell>
                       <TableCell className="text-right font-medium text-foreground">{money(d.mtoImpVenta)}</TableCell>
                       <TableCell>
-                        {retryingId === d.id
+                        {retryingId === d.id || verifyingId === d.id
                           ? <Badge variant="outline" className="rounded-md border-amber-200 bg-amber-50 text-amber-700"><Loader2 className="animate-spin" /> Procesando</Badge>
                           : <EstadoBadge d={d} />}
                       </TableCell>
                       <TableCell>
-                        {est === 'ACEPTADO' ? (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId !== null}>
-                              {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
-                              {downloadingId === d.id ? <Loader2 className="animate-spin" /> : <Download />} PDF
-                            </Button>
-                            {kind === 'boletas' && canIssueCreditNote && !d.creditNoteId && (
-                              <Button variant="outline" size="sm" onClick={() => { setCreditNoteError(''); setCreditNoteTarget(d); }} disabled={issuingCreditNoteId === d.id}>
-                                {issuingCreditNoteId === d.id ? <Loader2 className="animate-spin" /> : <FileMinus2 />} Emitir NC
+                        <div className="flex justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-sm" aria-label={`Acciones de ${d.numeroCompleto}`}>
+                                {rowBusy ? <Loader2 className="animate-spin" /> : <MoreHorizontal />}
                               </Button>
-                            )}
-                          </div>
-                        ) : est === 'RECHAZADO' && canMutate ? (
-                          <div className="flex justify-end">
-                            <Button variant="outline" size="sm" onClick={() => retry(d)} disabled={retryingId === d.id} className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900">
-                              {retryingId === d.id ? <Loader2 className="animate-spin" /> : <RotateCcw />} Reintentar
-                            </Button>
-                          </div>
-                        ) : <span className="block text-right text-xs text-muted-foreground">—</span>}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-48">
+                              {hasAcceptedActions && (
+                                <>
+                                  <DropdownMenuItem onClick={() => openPreview(d)} disabled={previewingId !== null}>
+                                    <Eye /> Ver comprobante
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
+                                    <Download /> Descargar PDF
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {hasAcceptedActions && canIssueCreditNote && <DropdownMenuSeparator />}
+                              {hasAcceptedActions && canIssueCreditNote && !d.creditNoteId && (
+                                <DropdownMenuItem onClick={() => { setCreditNoteError(''); setCreditNoteTarget(d); }}>
+                                  <FileMinus2 /> Emitir nota de crédito
+                                </DropdownMenuItem>
+                              )}
+                              {hasAcceptedActions && canIssueCreditNote && d.creditNoteId && (
+                                <DropdownMenuItem disabled>
+                                  <FileMinus2 /> NC {d.creditNoteNumeroCompleto || 'emitida'}
+                                </DropdownMenuItem>
+                              )}
+                              {canVerifyDocument && (
+                                <DropdownMenuItem onClick={() => verifySunatStatus(d)} disabled={verifyingId !== null || verifyingAll}>
+                                  <RefreshCw /> Verificar en SUNAT
+                                </DropdownMenuItem>
+                              )}
+                              {canVerifyDocument && canRetryDocument && <DropdownMenuSeparator />}
+                              {canRetryDocument && (
+                                <DropdownMenuItem onClick={() => retry(d)} disabled={retryingId === d.id}>
+                                  <RotateCcw /> Reintentar emisión
+                                </DropdownMenuItem>
+                              )}
+                              {!hasRowActions && <DropdownMenuItem disabled>Sin acciones disponibles</DropdownMenuItem>}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -462,7 +542,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
           <DialogHeader>
             <DialogTitle>Emitir nota de crédito</DialogTitle>
             <DialogDescription>
-              Se emitirá una nota de crédito que anula la boleta {creditNoteTarget?.numeroCompleto}. ¿Continuar?
+              Se emitirá una nota de crédito que anula la {meta.singular} {creditNoteTarget?.numeroCompleto}. ¿Continuar?
             </DialogDescription>
           </DialogHeader>
           {creditNoteError && (

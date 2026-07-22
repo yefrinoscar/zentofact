@@ -10,6 +10,7 @@ dotenv.config();
 
 const SUNAT_BETA_ENDPOINT = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
 const SUNAT_PROD_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
+const SUNAT_CDR_CONSULT_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService';
 
 export interface CompanyConfig {
   ruc: string;
@@ -545,6 +546,36 @@ export class SunatService {
     }
   }
 
+  async getStatusCdr(
+    ruc: string,
+    tipoComprobante: string,
+    serie: string,
+    numero: string,
+  ): Promise<StatusResult> {
+    try {
+      const response = await this.getStatusCdrSoap(ruc, tipoComprobante, serie, numero);
+      const rawContent = response.content?.trim();
+      const cdrZip = this.decodeStatusContent(rawContent);
+      const cdrResponse = cdrZip ? this.parseCdrResponse(cdrZip) : undefined;
+      return {
+        success: true,
+        cdrZip,
+        cdrResponse,
+        statusCode: response.statusCode,
+        statusMessage: response.statusMessage,
+        rawContent,
+      };
+    } catch (e: any) {
+      return {
+        success: false,
+        error: {
+          code: e.code || 'SOAP_ERROR',
+          message: `[Consultar CDR SUNAT] ${e.message}`,
+        },
+      };
+    }
+  }
+
   private decodeStatusContent(content?: string): Buffer | undefined {
     if (!content) return undefined;
 
@@ -666,6 +697,44 @@ export class SunatService {
     };
   }
 
+  private async getStatusCdrSoap(
+    ruc: string,
+    tipoComprobante: string,
+    serie: string,
+    numero: string,
+  ): Promise<{ content?: string; statusCode?: string; statusMessage?: string }> {
+    const response = await fetch(SUNAT_CDR_CONSULT_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset=utf-8',
+        'SOAPAction': 'urn:getStatusCdr',
+        'Accept': 'text/xml',
+      },
+      body: this.buildGetStatusCdrEnvelope(ruc, tipoComprobante, serie, numero),
+    });
+
+    const responseText = await response.text();
+    const fault = this.parseSoapFault(responseText);
+    if (fault) {
+      const error = new Error(fault.message);
+      (error as any).code = fault.code || 'SOAP_FAULT';
+      throw error;
+    }
+
+    if (!response.ok) {
+      const bodyPreview = responseText.replace(/\s+/g, ' ').trim().slice(0, 500);
+      const error = new Error(`HTTP ${response.status} ${response.statusText}${bodyPreview ? `: ${bodyPreview}` : ''}`);
+      (error as any).code = 'HTTP_ERROR';
+      throw error;
+    }
+
+    return {
+      content: this.extractXmlValue(responseText, 'content'),
+      statusCode: this.extractXmlValue(responseText, 'statusCode'),
+      statusMessage: this.extractXmlValue(responseText, 'statusMessage'),
+    };
+  }
+
   private buildSendBillEnvelope(fileName: string, contentFile: string): string {
     const now = new Date();
     const created = this.formatSoapDate(now);
@@ -754,6 +823,44 @@ export class SunatService {
     <ser:getStatus>
       <ticket>${this.escapeXml(ticket)}</ticket>
     </ser:getStatus>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+  }
+
+  private buildGetStatusCdrEnvelope(
+    ruc: string,
+    tipoComprobante: string,
+    serie: string,
+    numero: string,
+  ): string {
+    const now = new Date();
+    const created = this.formatSoapDate(now);
+    const expires = this.formatSoapDate(new Date(now.getTime() + 10 * 60 * 1000));
+    const username = this.buildSoapUsername();
+    const password = this.config.claveSol.trim();
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.sunat.gob.pe" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
+  <soapenv:Header>
+    <wsse:Security>
+      <wsu:Timestamp wsu:Id="Timestamp-${created}">
+        <wsu:Created>${created}</wsu:Created>
+        <wsu:Expires>${expires}</wsu:Expires>
+      </wsu:Timestamp>
+      <wsse:UsernameToken wsu:Id="SecurityToken-${created}">
+        <wsse:Username>${this.escapeXml(username)}</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">${this.escapeXml(password)}</wsse:Password>
+        <wsu:Created>${created}</wsu:Created>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </soapenv:Header>
+  <soapenv:Body>
+    <ser:getStatusCdr>
+      <rucComprobante>${this.escapeXml(ruc.trim())}</rucComprobante>
+      <tipoComprobante>${this.escapeXml(tipoComprobante.trim())}</tipoComprobante>
+      <serieComprobante>${this.escapeXml(serie.trim())}</serieComprobante>
+      <numeroComprobante>${this.escapeXml(numero.trim())}</numeroComprobante>
+    </ser:getStatusCdr>
   </soapenv:Body>
 </soapenv:Envelope>`;
   }

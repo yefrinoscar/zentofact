@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { db } from '../db';
-import { boletas, branches, clients, companies, creditNotes } from '../db/schema';
+import { boletas, branches, clients, companies, creditNotes, facturas } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
 import type { CompanyConfig, CreditNoteSunatData } from './sunat.service';
@@ -16,6 +16,8 @@ export interface CreateCreditNoteFromBoletaOptions {
   fechaEmision?: string;
 }
 
+export type CreateCreditNoteFromFacturaOptions = CreateCreditNoteFromBoletaOptions;
+
 export async function createCreditNoteFromBoleta(
   boletaId: number,
   options: CreateCreditNoteFromBoletaOptions = {},
@@ -28,57 +30,91 @@ export async function createCreditNoteFromBoleta(
   const existing = (await db.select().from(creditNotes).where(eq(creditNotes.affectedBoletaId, boletaId)).limit(1))[0];
   if (existing) throw new Error(`La boleta ${boleta.numeroCompleto} ya tiene nota de crédito ${existing.numeroCompleto}`);
 
-  const company = (await db.select().from(companies).where(eq(companies.id, boleta.companyId)).limit(1))[0];
+  return createCreditNoteFromDocument(boleta, '03', options);
+}
+
+export async function createCreditNoteFromFactura(
+  facturaId: number,
+  options: CreateCreditNoteFromFacturaOptions = {},
+) {
+  const factura = (await db.select().from(facturas).where(eq(facturas.id, facturaId)).limit(1))[0];
+  if (!factura) throw new Error('Factura no encontrada');
+  if (factura.tipoDocumento !== '01') throw new Error('Solo se puede crear nota de crédito para facturas');
+  if (factura.estadoSunat !== 'ACEPTADO') throw new Error('La factura afectada debe estar ACEPTADO');
+
+  const existing = (await db.select().from(creditNotes).where(or(
+    eq(creditNotes.affectedFacturaId, facturaId),
+    and(
+      eq(creditNotes.companyId, factura.companyId),
+      eq(creditNotes.tipoDocAfectado, '01'),
+      eq(creditNotes.numDocAfectado, factura.numeroCompleto),
+    ),
+  )).limit(1))[0];
+  if (existing) throw new Error(`La factura ${factura.numeroCompleto} ya tiene nota de crédito ${existing.numeroCompleto}`);
+
+  return createCreditNoteFromDocument(factura, '01', options);
+}
+
+async function createCreditNoteFromDocument(
+  document: typeof boletas.$inferSelect | typeof facturas.$inferSelect,
+  affectedType: '01' | '03',
+  options: CreateCreditNoteFromBoletaOptions,
+) {
+  const sourceName = affectedType === '01' ? 'Factura' : 'Boleta';
+
+  const company = (await db.select().from(companies).where(eq(companies.id, document.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
-  const branch = (await db.select().from(branches).where(and(eq(branches.id, boleta.branchId), eq(branches.companyId, boleta.companyId))).limit(1))[0];
+  const branch = (await db.select().from(branches).where(and(eq(branches.id, document.branchId), eq(branches.companyId, document.companyId))).limit(1))[0];
   if (!branch) throw new Error('Sucursal no encontrada');
-  const client = (await db.select().from(clients).where(eq(clients.id, boleta.clientId)).limit(1))[0];
+  const client = (await db.select().from(clients).where(eq(clients.id, document.clientId)).limit(1))[0];
   if (!client) throw new Error('Cliente no encontrado');
 
-  const serie = resolveCreditNoteSerie(branch.seriesNotaCredito, boleta.serie);
-  const correlativo = await getNextCorrelative(boleta.branchId, '07', serie);
+  const serie = resolveCreditNoteSerie(branch.seriesNotaCredito, document.serie, affectedType === '01' ? 'F' : undefined);
+  const correlativo = await getNextCorrelative(document.branchId, '07', serie);
   const numeroCompleto = `${serie}-${correlativo}`;
   const fechaEmision = options.fechaEmision || formatLocalDate();
   const ts = Math.floor(Date.now() / 1000);
-  const montoTotal = Number(boleta.mtoImpVenta || 0);
+  const montoTotal = Number(document.mtoImpVenta || 0);
   const leyendas = [{ code: '1000', value: `${numeroALetras(montoTotal).toUpperCase()} SOLES.` }];
 
   const result = await db.insert(creditNotes).values({
-    companyId: boleta.companyId,
-    branchId: boleta.branchId,
-    clientId: boleta.clientId,
-    affectedBoletaId: boleta.id,
+    companyId: document.companyId,
+    branchId: document.branchId,
+    clientId: document.clientId,
+    affectedBoletaId: affectedType === '03' ? document.id : null,
+    affectedFacturaId: affectedType === '01' ? document.id : null,
     tipoDocumento: '07',
     serie,
     correlativo,
     numeroCompleto,
-    tipoDocAfectado: boleta.tipoDocumento || '03',
-    numDocAfectado: boleta.numeroCompleto,
+    tipoDocAfectado: affectedType,
+    numDocAfectado: document.numeroCompleto,
     codMotivo: options.codMotivo || '01',
     desMotivo: options.desMotivo || 'ANULACION DE LA OPERACION',
     fechaEmision,
-    ublVersion: boleta.ublVersion || '2.1',
-    moneda: boleta.moneda || 'PEN',
+    ublVersion: document.ublVersion || '2.1',
+    moneda: document.moneda || 'PEN',
     formaPagoTipo: 'Contado',
-    valorVenta: boleta.valorVenta,
-    mtoOperGravadas: boleta.mtoOperGravadas,
-    mtoOperExoneradas: boleta.mtoOperExoneradas,
-    mtoOperInafectas: boleta.mtoOperInafectas,
-    mtoOperGratuitas: boleta.mtoOperGratuitas,
-    mtoIgvGratuitas: boleta.mtoIgvGratuitas,
-    mtoIgv: boleta.mtoIgv,
-    mtoBaseIvap: boleta.mtoBaseIvap,
-    mtoIvap: boleta.mtoIvap,
-    mtoIsc: boleta.mtoIsc,
-    mtoIcbper: boleta.mtoIcbper,
-    totalImpuestos: boleta.totalImpuestos,
-    subTotal: boleta.subTotal,
-    mtoImpVenta: boleta.mtoImpVenta,
-    detalles: boleta.detalles,
+    valorVenta: document.valorVenta,
+    mtoOperGravadas: document.mtoOperGravadas,
+    mtoOperExoneradas: document.mtoOperExoneradas,
+    mtoOperInafectas: document.mtoOperInafectas,
+    mtoOperGratuitas: document.mtoOperGratuitas,
+    mtoIgvGratuitas: document.mtoIgvGratuitas,
+    mtoIgv: document.mtoIgv,
+    mtoBaseIvap: document.mtoBaseIvap,
+    mtoIvap: document.mtoIvap,
+    mtoIsc: document.mtoIsc,
+    mtoIcbper: document.mtoIcbper,
+    totalImpuestos: document.totalImpuestos,
+    subTotal: document.subTotal,
+    mtoImpVenta: document.mtoImpVenta,
+    detalles: document.detalles,
     leyendas,
     datosAdicionales: {
-      affectedBoletaNumero: boleta.numeroCompleto,
-      affectedOrderNumber: boleta.orderNumber || null,
+      [`affected${sourceName}Numero`]: document.numeroCompleto,
+      affectedDocumentNumero: document.numeroCompleto,
+      affectedOrderNumber: document.orderNumber || null,
     },
     estadoSunat: 'PENDIENTE',
     usuarioCreacion: options.usuarioCreacion || 'sistema:nota-credito',
@@ -184,11 +220,17 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
         updatedAt: Math.floor(Date.now() / 1000),
       }).where(eq(boletas.id, note.affectedBoletaId));
     }
+    if (note.affectedFacturaId) {
+      await db.update(facturas).set({
+        estadoSunat: note.codMotivo === '01' ? 'ANULADO' : 'ACEPTADO',
+        updatedAt: Math.floor(Date.now() / 1000),
+      }).where(eq(facturas.id, note.affectedFacturaId));
+    }
     return { success: true, id: creditNoteId, numeroCompleto: note.numeroCompleto };
   }
 
-  // SUNAT la rechazó (o falló el envío): NO dejar nada registrado para que la
-  // boleta afectada siga anulable. El correlativo NO se libera: si SUNAT llegó
+  // SUNAT la rechazó (o falló el envío): NO dejar nada registrado para que el
+  // documento afectado siga anulable. El correlativo NO se libera: si SUNAT llegó
   // a recibir el documento, reutilizar el mismo número puede provocar el error
   // "El comprobante fue informado anteriormente".
   const errorData = result.error || { code: 'UNKNOWN', message: 'Error desconocido' };
@@ -211,12 +253,25 @@ export async function createAndSendCreditNoteFromBoleta(
   return { boletaId, creditNoteId, ...result };
 }
 
+export async function createAndSendCreditNoteFromFactura(
+  facturaId: number,
+  options: CreateCreditNoteFromFacturaOptions = {},
+): Promise<FacturaCreditNoteSendOutcome> {
+  const creditNoteId = await createCreditNoteFromFactura(facturaId, options);
+  const result = await sendCreditNoteToSunat(creditNoteId);
+  return { facturaId, creditNoteId, ...result };
+}
+
 export interface CreditNoteSendOutcome {
   boletaId: number;
   creditNoteId?: number;
   success: boolean;
   numeroCompleto?: string;
   error?: { code: string; message: string };
+}
+
+export interface FacturaCreditNoteSendOutcome extends Omit<CreditNoteSendOutcome, 'boletaId'> {
+  facturaId: number;
 }
 
 export interface CreditNoteBatchResult {
@@ -270,11 +325,27 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
   const companyData = (await db.select().from(companies).where(eq(companies.id, note.companyId)).limit(1))[0];
   const branchData = (await db.select().from(branches).where(eq(branches.id, note.branchId)).limit(1))[0];
   const clientData = (await db.select().from(clients).where(eq(clients.id, note.clientId)).limit(1))[0];
-  if (!note.affectedBoletaId) {
-    throw new Error('Esta nota de crédito no tiene boleta afectada para previsualizar');
+  const isFactura = Boolean(note.affectedFacturaId) || note.tipoDocAfectado === '01';
+  let affectedBoleta: typeof boletas.$inferSelect | undefined;
+  let affectedFactura: typeof facturas.$inferSelect | undefined;
+
+  if (isFactura) {
+    affectedFactura = note.affectedFacturaId
+      ? (await db.select().from(facturas).where(eq(facturas.id, note.affectedFacturaId)).limit(1))[0]
+      : (await db.select().from(facturas).where(and(
+          eq(facturas.companyId, note.companyId),
+          eq(facturas.numeroCompleto, note.numDocAfectado),
+        )).limit(1))[0];
+  } else {
+    affectedBoleta = note.affectedBoletaId
+      ? (await db.select().from(boletas).where(eq(boletas.id, note.affectedBoletaId)).limit(1))[0]
+      : (await db.select().from(boletas).where(and(
+          eq(boletas.companyId, note.companyId),
+          eq(boletas.numeroCompleto, note.numDocAfectado),
+        )).limit(1))[0];
   }
-  const affectedBoleta = (await db.select().from(boletas).where(eq(boletas.id, note.affectedBoletaId)).limit(1))[0];
-  if (!companyData || !branchData || !clientData || !affectedBoleta) {
+  const affectedDocument = affectedFactura || affectedBoleta;
+  if (!companyData || !branchData || !clientData || !affectedDocument) {
     throw new Error('Datos incompletos para previsualizar la nota de crédito');
   }
 
@@ -324,6 +395,14 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
     ],
   }, pdfFormat);
 
+  const affectedMetadata = {
+    id: affectedDocument.id,
+    tipoDocumento: affectedDocument.tipoDocumento,
+    numeroCompleto: affectedDocument.numeroCompleto,
+    orderNumber: affectedDocument.orderNumber,
+    estadoSunat: affectedDocument.estadoSunat,
+  };
+
   return {
     html,
     numeroCompleto: note.numeroCompleto,
@@ -332,25 +411,32 @@ export async function generatePreviewCreditNoteHtml(id: number, pdfFormat: PdfFo
       mtoIgv: Number(note.mtoIgv || 0),
       mtoOperGravadas: Number(note.mtoOperGravadas || 0),
     },
-    affectedBoleta: {
-      numeroCompleto: affectedBoleta.numeroCompleto,
-      orderNumber: affectedBoleta.orderNumber,
-      estadoSunat: affectedBoleta.estadoSunat,
-    },
+    affectedDocumentType: note.tipoDocAfectado,
+    affectedSource: isFactura ? 'factura' : 'boleta',
+    affectedDocument: affectedMetadata,
+    affectedBoleta: affectedBoleta ? affectedMetadata : undefined,
+    affectedFactura: affectedFactura ? affectedMetadata : undefined,
   };
 }
 
-function resolveCreditNoteSerie(rawSeries: unknown, affectedSerie: string): string {
+function resolveCreditNoteSerie(rawSeries: unknown, affectedSerie: string, requiredPrefix?: 'F'): string {
   const series = normalizeSeries(rawSeries);
   const normalizedAffectedSerie = String(affectedSerie || '').trim().toUpperCase();
   const fallbackSerie = inferCreditNoteSerieFromAffectedSerie(normalizedAffectedSerie);
 
-  const exactSerie = series.find(serie => serie.toUpperCase() === fallbackSerie);
+  const exactSerie = series.find(serie => (
+    serie.toUpperCase() === fallbackSerie
+    && (!requiredPrefix || serie.toUpperCase().startsWith(requiredPrefix))
+  ));
   if (exactSerie) return exactSerie;
 
-  const preferredPrefix = fallbackSerie?.startsWith('F') ? 'F' : 'B';
+  const preferredPrefix = requiredPrefix || (fallbackSerie?.startsWith('F') ? 'F' : 'B');
   const preferred = series.find(serie => serie.toUpperCase().startsWith(preferredPrefix));
   if (preferred) return preferred;
+  if (requiredPrefix) {
+    if (fallbackSerie?.startsWith(requiredPrefix)) return fallbackSerie;
+    throw new Error('La sucursal no tiene una serie F de nota de crédito configurada y no se pudo inferir una serie válida');
+  }
   if (series.length > 0) return series[0];
   if (fallbackSerie) return fallbackSerie;
   throw new Error('La sucursal no tiene serie de nota de crédito configurada y no se pudo inferir una serie válida');

@@ -147,6 +147,7 @@ const apiHttp = {
 
   // Notas de crédito (emitir)
   createAndSendCreditNote: (boletaId: number, options?: any) => req('/credit-notes', { method: 'POST', body: JSON.stringify({ boletaId, options }) }),
+  createAndSendCreditNoteFromFactura: (facturaId: number, options?: any) => req('/credit-notes', { method: 'POST', body: JSON.stringify({ facturaId, options }) }),
   createAndSendCreditNotesBatch: (boletaIds: number[], options?: any) => req('/credit-notes/batch', { method: 'POST', body: JSON.stringify({ boletaIds, options }) }),
 
   // Workflow (emisión en lote)

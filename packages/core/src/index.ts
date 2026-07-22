@@ -131,8 +131,14 @@ export {
   generatePreviewFacturaHtmlForVenta,
 } from './services/factura.service';
 export type { CreateFacturaInput } from './services/factura.service';
-export { createAndSendCreditNoteFromBoleta, createAndSendCreditNotesFromBoletas, generatePreviewCreditNoteHtml } from './services/credit-note.service';
-export type { CreateCreditNoteFromBoletaOptions } from './services/credit-note.service';
+export {
+  createCreditNoteFromFactura,
+  createAndSendCreditNoteFromBoleta,
+  createAndSendCreditNoteFromFactura,
+  createAndSendCreditNotesFromBoletas,
+  generatePreviewCreditNoteHtml,
+} from './services/credit-note.service';
+export type { CreateCreditNoteFromBoletaOptions, CreateCreditNoteFromFacturaOptions } from './services/credit-note.service';
 export { getCorrelatives } from './services/correlative-query.service';
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,

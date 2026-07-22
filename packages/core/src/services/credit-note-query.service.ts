@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, like, lte, or } from 'drizzle-orm';
+import { and, desc, eq, gte, like, lte, or, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { boletas, clients, creditNotes } from '../db/schema';
+import { boletas, clients, creditNotes, facturas } from '../db/schema';
 
 export interface CreditNoteFilter {
   companyId?: number;
@@ -36,6 +36,8 @@ export async function listCreditNotes(filter: CreditNoteFilter) {
     conditions.push(or(
       like(boletas.orderNumber, `%${filter.orderNumber}%`),
       like(boletas.numeroCompleto, `%${filter.orderNumber}%`),
+      like(facturas.orderNumber, `%${filter.orderNumber}%`),
+      like(facturas.numeroCompleto, `%${filter.orderNumber}%`),
       like(creditNotes.numeroCompleto, `%${filter.orderNumber}%`),
     )!);
   }
@@ -72,14 +74,37 @@ export async function listCreditNotes(filter: CreditNoteFilter) {
     updatedAt: creditNotes.updatedAt,
     clientRazonSocial: clients.razonSocial,
     clientNumeroDocumento: clients.numeroDocumento,
+    affectedFacturaId: creditNotes.affectedFacturaId,
+    affectedDocumentId: sql<number | null>`coalesce(${boletas.id}, ${facturas.id})`,
+    affectedDocumentType: creditNotes.tipoDocAfectado,
+    affectedDocumentNumeroCompleto: sql<string | null>`coalesce(${boletas.numeroCompleto}, ${facturas.numeroCompleto}, ${creditNotes.numDocAfectado})`,
+    affectedDocumentFechaEmision: sql<string | null>`coalesce(${boletas.fechaEmision}, ${facturas.fechaEmision})`,
+    affectedDocumentMtoImpVenta: sql<string | null>`coalesce(${boletas.mtoImpVenta}, ${facturas.mtoImpVenta})`,
+    affectedDocumentEstadoSunat: sql<string | null>`coalesce(${boletas.estadoSunat}, ${facturas.estadoSunat})`,
+    affectedDocumentOrderNumber: sql<string | null>`coalesce(${boletas.orderNumber}, ${facturas.orderNumber})`,
     affectedBoletaNumeroCompleto: boletas.numeroCompleto,
     affectedBoletaFechaEmision: boletas.fechaEmision,
     affectedBoletaMtoImpVenta: boletas.mtoImpVenta,
     affectedBoletaEstadoSunat: boletas.estadoSunat,
-    affectedOrderNumber: boletas.orderNumber,
+    affectedOrderNumber: sql<string | null>`coalesce(${boletas.orderNumber}, ${facturas.orderNumber})`,
   }).from(creditNotes)
     .innerJoin(clients, eq(clients.id, creditNotes.clientId))
-    .leftJoin(boletas, eq(boletas.id, creditNotes.affectedBoletaId))
+    .leftJoin(boletas, or(
+      eq(boletas.id, creditNotes.affectedBoletaId),
+      and(
+        eq(creditNotes.companyId, boletas.companyId),
+        eq(creditNotes.tipoDocAfectado, '03'),
+        eq(creditNotes.numDocAfectado, boletas.numeroCompleto),
+      ),
+    ))
+    .leftJoin(facturas, or(
+      eq(facturas.id, creditNotes.affectedFacturaId),
+      and(
+        eq(creditNotes.companyId, facturas.companyId),
+        eq(creditNotes.tipoDocAfectado, '01'),
+        eq(creditNotes.numDocAfectado, facturas.numeroCompleto),
+      ),
+    ))
     .where(and(...conditions))
     .orderBy(desc(creditNotes.createdAt));
 

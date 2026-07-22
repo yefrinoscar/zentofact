@@ -24,6 +24,8 @@ type Nc = {
   id: number;
   companyId: number;
   affectedBoletaId?: number | null;
+  affectedFacturaId?: number | null;
+  tipoDocAfectado?: string;
   numeroCompleto?: string;
   fechaEmision?: string;
   mtoImpVenta?: string;
@@ -33,6 +35,8 @@ type Nc = {
   codMotivo?: string;
   numDocAfectado?: string;
   affectedBoletaNumeroCompleto?: string;
+  affectedDocumentNumeroCompleto?: string;
+  affectedDocumentOrderNumber?: string | null;
   affectedOrderNumber?: string | null;
   clientRazonSocial?: string;
   clientNumeroDocumento?: string;
@@ -139,7 +143,9 @@ export default function CreditNotesList() {
       return [
         d.numeroCompleto,
         d.numDocAfectado,
+        d.affectedDocumentNumeroCompleto,
         d.affectedBoletaNumeroCompleto,
+        d.affectedDocumentOrderNumber,
         d.affectedOrderNumber,
         d.clientRazonSocial,
         d.clientNumeroDocumento,
@@ -209,7 +215,7 @@ export default function CreditNotesList() {
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="relative min-w-0 sm:w-[320px] lg:w-[360px]">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar NC, boleta, orden o cliente" className="pl-9" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar NC, comprobante, orden o cliente" className="pl-9" />
           </div>
         </div>
 
@@ -220,7 +226,7 @@ export default function CreditNotesList() {
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <FileMinus2 className="size-8 text-muted-foreground/50" />
               <p className="text-sm font-medium">No hay notas de crédito para mostrar</p>
-              <p className="text-sm text-muted-foreground">Se emiten al anular boletas aceptadas o con Anulación masiva.</p>
+              <p className="text-sm text-muted-foreground">Se emiten al anular boletas o facturas aceptadas.</p>
             </div>
           ) : (
             <div className="relative max-h-[calc(100vh-16rem)] overflow-auto">
@@ -246,15 +252,19 @@ export default function CreditNotesList() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((d) => {
-                    const affected = d.affectedBoletaNumeroCompleto || d.numDocAfectado || '—';
+                    const affected = d.affectedDocumentNumeroCompleto || d.affectedBoletaNumeroCompleto || d.numDocAfectado || '—';
+                    const affectedOrder = d.affectedDocumentOrderNumber || d.affectedOrderNumber;
                     return (
                       <TableRow key={d.id}>
                         <TableCell className="font-mono text-xs tabular-nums text-foreground">{d.numeroCompleto || '—'}</TableCell>
                         <TableCell className="text-muted-foreground">{d.fechaEmision || '—'}</TableCell>
                         <TableCell>
-                          <div className="font-mono text-xs text-foreground">{affected}</div>
-                          {d.affectedOrderNumber && (
-                            <div className="text-xs text-muted-foreground">Orden {d.affectedOrderNumber}</div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="rounded-md">{d.tipoDocAfectado === '01' ? 'Factura' : 'Boleta'}</Badge>
+                            <span className="font-mono text-xs text-foreground">{affected}</span>
+                          </div>
+                          {affectedOrder && (
+                            <div className="text-xs text-muted-foreground">Orden {affectedOrder}</div>
                           )}
                           {(d.desMotivo || d.codMotivo) && (
                             <div className="text-xs text-muted-foreground">{d.codMotivo ? `${d.codMotivo} · ` : ''}{d.desMotivo || ''}</div>
@@ -267,13 +277,11 @@ export default function CreditNotesList() {
                         <TableCell className="text-right font-medium text-foreground">{money(d.mtoImpVenta)}</TableCell>
                         <TableCell><EstadoBadge d={d} /></TableCell>
                         <TableCell>
-                          {d.affectedBoletaId ? (
-                            <div className="flex justify-end">
-                              <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId !== null}>
-                                {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
-                              </Button>
-                            </div>
-                          ) : <span className="block text-right text-xs text-muted-foreground">—</span>}
+                          <div className="flex justify-end">
+                            <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId !== null}>
+                              {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

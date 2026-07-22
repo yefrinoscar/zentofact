@@ -287,7 +287,7 @@ app.post('/facturas/preview', async (c) => {
 });
 app.get('/credit-notes', requireDocumentsOrCreditNotes, async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.post('/boletas/:id/refresh-status', requirePermission('documentos'), async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
-app.post('/facturas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshFacturaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/facturas/:id/refresh-status', requirePermission('documentos'), async (c) => { try { return ok(c, await core.refreshFacturaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 
 // ── Correlativos ──
 app.get('/branches/:id/correlatives', requireAnyPermission(['documentos', 'companies']), async (c) => { try { return ok(c, await core.getCorrelatives(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
@@ -307,7 +307,23 @@ app.post('/boletas/preview', requirePermission('documentos'), async (c) => {
 
 // ── Notas de crédito (emitir) ──
 app.post('/credit-notes', requirePermission('credit_notes'), async (c) => {
-  try { const { boletaId, options } = await c.req.json(); return ok(c, await core.createAndSendCreditNoteFromBoleta(boletaId, options), 201); }
+  try {
+    const { boletaId, facturaId, options } = await c.req.json();
+    const parsedBoletaId = Number.isInteger(Number(boletaId)) && Number(boletaId) > 0 ? Number(boletaId) : null;
+    const parsedFacturaId = Number.isInteger(Number(facturaId)) && Number(facturaId) > 0 ? Number(facturaId) : null;
+    if (Number(parsedBoletaId !== null) + Number(parsedFacturaId !== null) !== 1) {
+      throw new Error('Indica una boleta o una factura válida, no ambas');
+    }
+    const actor = c.get('user');
+    const auditedOptions = {
+      ...(options && typeof options === 'object' ? options : {}),
+      usuarioCreacion: actor?.email || actor?.id || 'sistema:nota-credito',
+    };
+    const result = parsedFacturaId !== null
+      ? await core.createAndSendCreditNoteFromFactura(parsedFacturaId, auditedOptions)
+      : await core.createAndSendCreditNoteFromBoleta(parsedBoletaId, auditedOptions);
+    return ok(c, result, 201);
+  }
   catch (e) {
     const message = String((e && e.message) || e);
     return fail(c, e, /ya tiene nota de crédito|unique/i.test(message) ? 409 : 400);

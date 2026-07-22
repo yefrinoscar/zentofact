@@ -272,6 +272,7 @@ const DDL = `
     branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
     client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
     affected_boleta_id INTEGER REFERENCES boletas(id) ON DELETE CASCADE,
+    affected_factura_id INTEGER REFERENCES facturas(id) ON DELETE CASCADE,
     tipo_documento TEXT DEFAULT '07',
     serie TEXT NOT NULL,
     correlativo TEXT NOT NULL,
@@ -313,13 +314,16 @@ const DDL = `
     updated_at BIGINT
   );
 
+  ALTER TABLE credit_notes ADD COLUMN IF NOT EXISTS affected_factura_id INTEGER REFERENCES facturas(id) ON DELETE CASCADE;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_notes_company_serie_corr ON credit_notes(company_id, serie, correlativo);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_notes_affected_boleta ON credit_notes(affected_boleta_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_notes_affected_factura ON credit_notes(affected_factura_id);
   CREATE INDEX IF NOT EXISTS idx_credit_notes_company_branch ON credit_notes(company_id, branch_id);
   CREATE INDEX IF NOT EXISTS idx_credit_notes_fecha_emision ON credit_notes(fecha_emision);
   CREATE INDEX IF NOT EXISTS idx_credit_notes_estado_sunat ON credit_notes(estado_sunat);
 
   ALTER TABLE credit_notes ALTER COLUMN affected_boleta_id DROP NOT NULL;
+  ALTER TABLE credit_notes ALTER COLUMN affected_factura_id DROP NOT NULL;
 
   -- Índices de lectura para analítica por empresa/sucursal y periodo.
   CREATE INDEX IF NOT EXISTS idx_boletas_company_fecha

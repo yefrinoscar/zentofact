@@ -336,31 +336,68 @@ export async function reEmitFactura(id: number) {
   return sendFacturaToSunat(inserted[0].id);
 }
 
-// Re-valida el estado SUNAT de una factura leyendo el CDR/respuesta ya guardada.
-// Útil para registros "reconstruidos" que quedaron en REGISTRADO pese a tener CDR aceptado.
+// Consulta a SUNAT por RUC, tipo, serie y correlativo y sincroniza el estado local
+// usando el CDR autoritativo. "REGISTRADO" solo significa que el documento existe
+// localmente; nunca se interpreta como aceptación tributaria.
 export async function refreshFacturaStatus(id: number) {
   const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
   if (!factura) throw new Error('Factura no encontrada');
   if (factura.estadoSunat === 'ACEPTADO') return { estadoSunat: 'ACEPTADO', changed: false };
 
-  let accepted = false;
-  const raw = (factura as any).respuestaSunat;
-  if (raw) {
-    try {
-      const r = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      const code = String(r?.code ?? r?.responseCode ?? r?.Code ?? '');
-      const desc = String(r?.description ?? r?.mensaje ?? '').toLowerCase();
-      accepted = code === '0' || desc.includes('aceptad');
-    } catch { /* respuesta no-JSON */ }
-  }
-  // Si tiene CDR guardado, SUNAT lo aceptó (el CDR solo existe en aceptación).
-  if (!accepted && (factura as any).cdrPath) accepted = true;
+  const company = (await db.select().from(companies).where(eq(companies.id, factura.companyId)).limit(1))[0];
+  if (!company) throw new Error('Empresa no encontrada');
 
-  if (accepted) {
-    await db.update(facturas).set({ estadoSunat: 'ACEPTADO', updatedAt: Math.floor(Date.now() / 1000) }).where(eq(facturas.id, id));
-    return { estadoSunat: 'ACEPTADO', changed: true };
+  const sunat = new SunatService(buildCompanyConfig(company));
+  const result = await sunat.getStatusCdr(
+    company.ruc,
+    factura.tipoDocumento || '01',
+    factura.serie,
+    factura.correlativo,
+  );
+
+  if (!result.success) {
+    const respuesta = result.error || { code: 'SUNAT_QUERY_ERROR', message: 'SUNAT no respondió la consulta.' };
+    await db.update(facturas).set({
+      respuestaSunat: JSON.stringify(respuesta),
+      updatedAt: now(),
+    }).where(eq(facturas.id, id));
+    return { estadoSunat: factura.estadoSunat, changed: false, success: false, ...respuesta };
   }
-  return { estadoSunat: factura.estadoSunat, changed: false };
+
+  const cdr = result.cdrResponse;
+  const responseCode = String(cdr?.code ?? '').trim();
+  const responseText = String(cdr?.description || result.statusMessage || '').trim();
+  let estadoSunat = String(factura.estadoSunat || 'REGISTRADO').toUpperCase();
+
+  if (responseCode === '0') estadoSunat = 'ACEPTADO';
+  else if (responseCode) estadoSunat = 'RECHAZADO';
+  else if (result.statusCode === '0125' || /no se pudo obtener la constancia/i.test(responseText)) estadoSunat = 'SIN_CDR';
+  else if (/no (?:existe|encontrad)|no est[aá] registrad/i.test(responseText)) estadoSunat = 'NO_ENCONTRADO';
+
+  const cdrPath = result.cdrZip ? await saveFacturaCdr(factura, result.cdrZip) : factura.cdrPath;
+  const respuestaSunat = JSON.stringify({
+    source: 'SUNAT_GET_STATUS_CDR',
+    statusCode: result.statusCode || null,
+    statusMessage: result.statusMessage || null,
+    code: responseCode || null,
+    description: responseText || null,
+    checkedAt: new Date().toISOString(),
+  });
+
+  await db.update(facturas).set({
+    estadoSunat,
+    respuestaSunat,
+    cdrPath,
+    updatedAt: now(),
+  }).where(eq(facturas.id, id));
+
+  return {
+    success: true,
+    estadoSunat,
+    changed: estadoSunat !== String(factura.estadoSunat || '').toUpperCase(),
+    statusCode: result.statusCode,
+    message: responseText || `SUNAT devolvió el estado ${estadoSunat}.`,
+  };
 }
 
 
