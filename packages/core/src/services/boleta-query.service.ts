@@ -1,9 +1,9 @@
 import { db } from '../db';
-import { boletas, clients, creditNotes, dailySummaries } from '../db/schema';
+import { boletas, clients, companies, creditNotes, dailySummaries } from '../db/schema';
 import { eq, and, gte, lte, desc, like, or } from 'drizzle-orm';
 
 export interface BoletaFilter {
-  companyId: number;
+  companyId?: number;
   branchId?: number;
   fechaDesde?: string;
   fechaHasta?: string;
@@ -17,7 +17,11 @@ export interface BoletaFilter {
 }
 
 export async function listBoletas(filter: BoletaFilter) {
-  const conditions = [eq(boletas.companyId, filter.companyId)];
+  const conditions = [];
+
+  if (filter.companyId) {
+    conditions.push(eq(boletas.companyId, filter.companyId));
+  }
 
   if (filter.branchId) {
     conditions.push(eq(boletas.branchId, filter.branchId));
@@ -120,10 +124,11 @@ export async function listBoletas(filter: BoletaFilter) {
     creditNoteEstadoSunat: creditNotes.estadoSunat,
     creditNoteFechaEmision: creditNotes.fechaEmision,
   }).from(boletas)
+    .innerJoin(companies, eq(companies.id, boletas.companyId))
     .innerJoin(clients, eq(clients.id, boletas.clientId))
     .leftJoin(dailySummaries, eq(dailySummaries.id, boletas.dailySummaryId))
     .leftJoin(creditNotes, eq(creditNotes.affectedBoletaId, boletas.id))
-    .where(and(...conditions))
+    .where(and(eq(companies.activo, true), ...conditions))
     .orderBy(desc(boletas.createdAt));
 
   const normalized = all.map(normalizeBoletaQueryRow);

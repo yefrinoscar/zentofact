@@ -43,10 +43,13 @@ async function req(path: string, init?: RequestInit) {
   const csrfHeaders = UNSAFE_METHODS.has(method)
     ? { 'x-csrf-token': await ensureCsrfToken() }
     : {};
+  const headers = new Headers(init?.headers);
+  if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+  for (const [key, value] of Object.entries(csrfHeaders)) headers.set(key, value);
   const res = await fetch(`${BASE}${path}`, {
-    credentials: 'include',
-    headers: { 'content-type': 'application/json', ...csrfHeaders, ...(init?.headers || {}) },
     ...init,
+    credentials: 'include',
+    headers,
   });
   const text = await res.text();
   let data: any;
@@ -117,6 +120,8 @@ const apiHttp = {
   // Listados
   listBoletas: (filter: any) => req(`/boletas${qs(filter)}`),
   listFacturas: (filter: any) => req(`/facturas${qs(filter)}`),
+  getDocumentStats: (filter: { days?: number; fechaDesde?: string; fechaHasta?: string } = {}) =>
+    req(`/documentos/stats${qs(filter)}`),
   listCreditNotes: (filter: any) => req(`/credit-notes${qs(filter)}`),
   refreshBoletaStatus: (id: number) => req(`/boletas/${id}/refresh-status`, { method: 'POST' }),
   refreshFacturaStatus: (id: number) => req(`/facturas/${id}/refresh-status`, { method: 'POST' }),

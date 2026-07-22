@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import {
   Send, Plus, Trash2, Loader2, AlertCircle, Eye,
   Calendar as CalendarIcon, ArrowLeft,
 } from 'lucide-react';
-import { DayPicker } from 'react-day-picker';
-import 'react-day-picker/dist/style.css';
 import { es } from 'date-fns/locale';
-import { format, parseISO } from 'date-fns';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
+import { usePermissions } from '../hooks/usePermissions';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Badge } from '../components/ui/badge';
+import { Calendar } from '../components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 
 type DocType = '03' | '01';
 
@@ -46,31 +47,31 @@ const errInput = 'border-red-400 focus:border-red-400';
 
 function DatePicker({ value, onChange }: { value: string; onChange: (d: string) => void }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = value ? parseISO(value) : undefined;
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
+  const selected = value ? new Date(`${value}T12:00:00`) : undefined;
   return (
-    <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((v) => !v)} className={cn(inputCls, 'flex items-center justify-between hover:bg-accent')}>
-        <span className={selected ? 'text-foreground' : 'text-muted-foreground'}>{selected ? format(selected, 'dd/MM/yyyy') : 'Seleccionar'}</span>
-        <CalendarIcon className="h-4 w-4 text-muted-foreground" />
-      </button>
-      {open && (
-        <div className="absolute z-50 mt-1 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
-          <DayPicker mode="single" selected={selected} onSelect={(d) => { if (d) { onChange(localDate(d)); setOpen(false); } }} locale={es} showOutsideDays className="text-sm" />
-        </div>
-      )}
-    </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" className={cn(inputCls, 'flex items-center justify-between hover:bg-accent')}>
+          <span className={selected ? 'text-foreground' : 'text-muted-foreground'}>{selected ? value.split('-').reverse().join('/') : 'Seleccionar'}</span>
+          <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto rounded-xl p-2">
+        <Calendar
+          mode="single"
+          selected={selected}
+          onSelect={(date) => { if (date) { onChange(localDate(date)); setOpen(false); } }}
+          locale={es}
+          autoFocus
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
-export default function IndividualInvoice() {
+export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocType }) {
   const navigate = useNavigate();
+  const { role, loading: permissionsLoading } = usePermissions();
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 
@@ -80,7 +81,6 @@ export default function IndividualInvoice() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
-  const [docType, setDocType] = useState<DocType>('03');
   const [companyId, setCompanyId] = useState<number | ''>(activeCompanyId || '');
   const [branchId, setBranchId] = useState<number | ''>('');
   const [fechaEmision, setFechaEmision] = useState(localDate());
@@ -100,14 +100,17 @@ export default function IndividualInvoice() {
   const [showErrors, setShowErrors] = useState(false);
   const [serverError, setServerError] = useState('');
 
+  const docType = fixedDocType;
   const isFactura = docType === '01';
+  const listPath = isFactura ? '/facturas' : '/boletas';
 
   useEffect(() => {
+    if (permissionsLoading || role === 'viewer') return;
     api.listCompanies()
       .then((list: any[]) => setCompanies(Array.isArray(list) ? list : []))
       .catch((e: any) => setLoadError(e?.message || 'No se pudieron cargar las empresas.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [permissionsLoading, role]);
 
   useEffect(() => {
     if (!companyId) { setBranches([]); setBranchId(''); setCorrelatives([]); return; }
@@ -219,28 +222,25 @@ export default function IndividualInvoice() {
       if (!id) throw new Error(`No se creó la ${isFactura ? 'factura' : 'boleta'}.`);
       await (isFactura ? api.sendFacturaToSunat(id) : api.sendBoletaToSunat(id));
       // Emitida → volver a la lista (que se recarga sola al montar) con el nuevo documento.
-      navigate('/documentos');
+      navigate(listPath);
     } catch (e: any) { setServerError(e?.message || 'Error al emitir.'); }
     finally { setEmitting(false); }
   }
 
-  if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  if (!permissionsLoading && role === 'viewer') return <Navigate to={listPath} replace />;
+  if (loading || permissionsLoading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (loadError) return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AlertCircle className="mr-2 inline h-4 w-4" />{loadError}</div>;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 pb-6">
-      {/* Volver + tipo de documento */}
+      {/* Volver + tipo de documento fijo por ruta */}
       <div className="flex items-center gap-4">
-        <button onClick={() => navigate('/documentos')} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Documentos
+        <button onClick={() => navigate(listPath)} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" /> {isFactura ? 'Facturas' : 'Boletas'}
         </button>
-        <div className="inline-flex rounded-lg bg-muted p-1">
-          {([['03', 'Boleta'], ['01', 'Factura']] as const).map(([v, label]) => (
-            <button key={v} onClick={() => setDocType(v)} className={cn('rounded-md px-5 py-2 text-sm font-medium transition', docType === v ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <Badge variant="outline" className="rounded-md bg-muted px-3 py-1.5 text-sm font-medium text-foreground">
+          {isFactura ? 'Factura electrónica' : 'Boleta electrónica'}
+        </Badge>
       </div>
 
       {/* Emisor */}

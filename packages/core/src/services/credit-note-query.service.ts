@@ -3,7 +3,7 @@ import { db } from '../db';
 import { boletas, clients, creditNotes } from '../db/schema';
 
 export interface CreditNoteFilter {
-  companyId: number;
+  companyId?: number;
   branchId?: number;
   fechaDesde?: string;
   fechaHasta?: string;
@@ -14,7 +14,11 @@ export interface CreditNoteFilter {
 }
 
 export async function listCreditNotes(filter: CreditNoteFilter) {
-  const conditions = [eq(creditNotes.companyId, filter.companyId)];
+  const conditions = [];
+
+  if (filter.companyId) {
+    conditions.push(eq(creditNotes.companyId, filter.companyId));
+  }
 
   if (filter.branchId) {
     conditions.push(eq(creditNotes.branchId, filter.branchId));

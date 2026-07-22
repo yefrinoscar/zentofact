@@ -5,6 +5,7 @@ export const PROTECTED_PATHS = [
   '/branches',
   '/boletas',
   '/facturas',
+  '/documentos',
   '/credit-notes',
   '/falabella',
   '/workflow',

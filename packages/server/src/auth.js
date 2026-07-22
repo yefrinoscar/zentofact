@@ -209,9 +209,16 @@ export function requireCsrf() {
 }
 
 export function requirePermission(permissionKey, options = {}) {
+  return requireAnyPermission([permissionKey], options);
+}
+
+export function requireAnyPermission(permissionKeys, options = {}) {
+  if (!Array.isArray(permissionKeys) || permissionKeys.length === 0) {
+    throw new TypeError('requireAnyPermission exige al menos un permiso');
+  }
   return async (c, next) => {
     const user = c.get('user');
-    if (!userHasPermission(user, permissionKey)) {
+    if (!permissionKeys.some((permissionKey) => userHasPermission(user, permissionKey))) {
       return c.json({ error: 'Sin permiso' }, 403);
     }
     if (!options.readOnly && String(user?.role || '') === 'viewer' && UNSAFE_METHODS.has(c.req.method)) {

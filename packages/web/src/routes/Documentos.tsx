@@ -1,29 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw } from 'lucide-react';
+import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
+import { usePermissions } from '../hooks/usePermissions';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
-  TablePanelHeader, TableRow,
+  TableRow,
 } from '../components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/tooltip';
+import { buildDocumentStatsFromRows, hasCompleteDocumentStats, type DocumentStats } from '../lib/documentStats';
+import { documentDateRangeLabel, parseDocumentDateRange, type DocumentDateRange } from '../lib/documentDateRange';
+import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
 
-type Kind = 'boletas' | 'facturas';
-type DayWindow = 7 | 15 | 30;
+const DocumentOverview = lazy(() => import('../components/DocumentOverview'));
+
+export type DocumentKind = 'boletas' | 'facturas';
 type Doc = {
-  id: number; numeroCompleto: string; fechaEmision: string; orderNumber?: string | null;
+  id: number; companyId: number; numeroCompleto: string; fechaEmision: string; orderNumber?: string | null;
   clientRazonSocial?: string; clientNumeroDocumento?: string; mtoImpVenta?: string;
   estadoSunat?: string; estado?: string; respuestaSunat?: string;
+  creditNoteId?: number | null; creditNoteNumeroCompleto?: string | null;
 };
 
-// Extrae el motivo legible del rechazo de SUNAT (respuestaSunat guardado como JSON).
 function sunatReason(d: Doc): string {
   const raw = d.respuestaSunat;
   if (!raw) return '';
@@ -51,34 +56,29 @@ function EstadoBadge({ d }: { d: Doc }) {
     </Tooltip>
   );
 }
+
 const money = (v: any) => `S/ ${(parseFloat(v || '0') || 0).toFixed(2)}`;
-const DAY_WINDOWS: DayWindow[] = [7, 15, 30];
 
-function parseKind(value: string | null): Kind {
-  return value === 'facturas' ? 'facturas' : 'boletas';
-}
+const META: Record<DocumentKind, { singular: string; plural: string; createPath: string; label: string }> = {
+  boletas: { singular: 'boleta', plural: 'boletas', createPath: '/boletas/new', label: 'Boletas' },
+  facturas: { singular: 'factura', plural: 'facturas', createPath: '/facturas/new', label: 'Facturas' },
+};
 
-function parseDays(value: string | null): DayWindow {
-  const parsed = Number(value);
-  return DAY_WINDOWS.includes(parsed as DayWindow) ? parsed as DayWindow : 7;
-}
-
-function dateValue(value?: string) {
-  const time = new Date(String(value || '')).getTime();
-  return Number.isNaN(time) ? 0 : time;
-}
-
-export default function Documentos() {
+export default function Documentos({ kind }: { kind: DocumentKind }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeId = useAppStore((s) => s.activeCompanyId);
   const setActiveId = useAppStore((s) => s.setActiveCompanyId);
+  const { can, role, loading: permissionsLoading } = usePermissions();
+  const meta = META[kind];
+  const canMutate = !permissionsLoading && role !== 'viewer';
+  const canIssueCreditNote = canMutate && can('credit_notes');
 
   const [companies, setCompanies] = useState<any[]>([]);
-  const [kind, setKind] = useState<Kind>(() => parseKind(searchParams.get('tab')));
-  const [dayWindow, setDayWindow] = useState<DayWindow>(() => parseDays(searchParams.get('days')));
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+  const [selectedRange, setSelectedRange] = useState<DocumentDateRange>(() => parseDocumentDateRange(searchParams));
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<Doc[]>([]);
+  const [stats, setStats] = useState<DocumentStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
@@ -86,58 +86,70 @@ export default function Documentos() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [retryMsg, setRetryMsg] = useState('');
-
-  useEffect(() => { api.listCompanies().then((c: any[]) => setCompanies(Array.isArray(c) ? c : [])).catch(() => {}); }, []);
+  const [loadError, setLoadError] = useState('');
+  const [creditNoteTarget, setCreditNoteTarget] = useState<Doc | null>(null);
+  const [issuingCreditNoteId, setIssuingCreditNoteId] = useState<number | null>(null);
+  const [creditNoteError, setCreditNoteError] = useState('');
+  const loadRequestRef = useRef(0);
+  const previewRequestRef = useRef(0);
 
   useEffect(() => {
-    const nextKind = parseKind(searchParams.get('tab'));
-    const nextDays = parseDays(searchParams.get('days'));
-    setKind(nextKind);
-    setDayWindow(nextDays);
+    api.listCompanies()
+      .then((c: any[]) => setCompanies(Array.isArray(c) ? c : []))
+      .catch((e: any) => setLoadError(e?.message || 'No se pudieron cargar las empresas.'));
+  }, []);
+
+  useEffect(() => {
+    setSelectedRange(parseDocumentDateRange(searchParams));
   }, [searchParams]);
 
-  const updateKind = (nextKind: Kind) => {
+  const updateRange = (range: DocumentDateRange) => {
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
-      next.set('tab', nextKind);
-      next.set('days', String(dayWindow));
-      return next;
-    });
-  };
-
-  const updateDays = (nextDays: DayWindow) => {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.set('tab', kind);
-      next.set('days', String(nextDays));
+      next.delete('days');
+      next.set('from', range.from);
+      next.set('to', range.to);
       return next;
     });
   };
 
   const load = useCallback(async () => {
-    if (!activeId) { setRows([]); return; }
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
+    setLoadError('');
     try {
-      const res = kind === 'boletas'
-        ? await api.listBoletas({ companyId: activeId, limit: 500 })
-        : await api.listFacturas({ companyId: activeId, limit: 500 });
-      setRows((kind === 'boletas' ? res?.boletas : res?.facturas) || []);
-    } catch { setRows([]); }
-    finally { setLoading(false); }
-  }, [activeId, kind]);
+      const range = { fechaDesde: selectedRange.from, fechaHasta: selectedRange.to };
+      const [res, nextStats] = await Promise.all([
+        kind === 'boletas'
+          ? api.listBoletas({ companyId: selectedCompanyId || undefined, ...range, limit: 500 })
+          : api.listFacturas({ companyId: selectedCompanyId || undefined, ...range, limit: 500 }),
+        api.getDocumentStats(range).catch(() => null),
+      ]);
+      if (requestId === loadRequestRef.current) {
+        const nextRows = (kind === 'boletas' ? res?.boletas : res?.facturas) || [];
+        setRows(nextRows);
+        setStats(hasCompleteDocumentStats(nextStats, kind) ? nextStats : buildDocumentStatsFromRows(kind, nextRows));
+      }
+    } catch (e: any) {
+      if (requestId === loadRequestRef.current) {
+        setRows([]);
+        setStats(null);
+        setLoadError(e?.message || `No se pudieron cargar las ${meta.plural}.`);
+      }
+    }
+    finally { if (requestId === loadRequestRef.current) setLoading(false); }
+  }, [kind, meta.plural, selectedCompanyId, selectedRange.from, selectedRange.to]);
 
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const from = Date.now() - dayWindow * 24 * 60 * 60 * 1000;
     return rows.filter((d) => {
-      const emittedAt = dateValue(d.fechaEmision);
-      if (emittedAt && emittedAt < from) return false;
+      if (d.fechaEmision && d.fechaEmision.slice(0, 10) < selectedRange.from) return false;
       if (!q) return true;
       return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
     });
-  }, [rows, search, dayWindow]);
+  }, [rows, search, selectedRange.from]);
 
   const downloadPdf = async (d: Doc) => {
     setDownloadingId(d.id);
@@ -146,17 +158,14 @@ export default function Documentos() {
       if (!res?.base64) return;
       const link = document.createElement('a');
       link.href = `data:application/pdf;base64,${res.base64}`; link.download = `${d.numeroCompleto}.pdf`; link.click();
-    } catch { /* noop */ }
+    } catch (e: any) { setRetryMsg(e?.message || 'No se pudo descargar el PDF.'); }
     finally { setDownloadingId(null); }
   };
 
-  // Reintenta la emisión a SUNAT de una RECHAZADA (mismo registro/número; el backend reconstruye el XML).
   const retry = async (d: Doc) => {
     setRetryingId(d.id); setRetryMsg('');
     try {
-      // reEmit: si el número quedó quemado (rechazo definitivo), toma el siguiente disponible.
       const res: any = await (kind === 'facturas' ? api.reEmitFactura(d.id) : api.reEmitBoleta(d.id));
-      // El backend devuelve { success:false, message } cuando SUNAT rechaza (sin lanzar). Mostrarlo.
       if (res && res.success === false) {
         setRetryMsg(`${d.numeroCompleto}: ${res.message || res.error || 'SUNAT rechazó el comprobante.'}`);
       } else {
@@ -169,76 +178,84 @@ export default function Documentos() {
   };
 
   const openPreview = async (d: Doc) => {
+    const requestId = ++previewRequestRef.current;
     setPreviewingId(d.id);
     try {
       const res = kind === 'boletas' ? await api.previewAcceptedBoletaHtml(d.id) : await api.previewAcceptedFacturaHtml(d.id);
-      setPreviewHtml(res?.html || String(res));
-      setPreviewOpen(true);
-    } catch { /* noop */ }
-    finally { setPreviewingId(null); }
+      if (requestId === previewRequestRef.current) {
+        setPreviewHtml(res?.html || String(res));
+        setPreviewOpen(true);
+      }
+    } catch (e: any) {
+      if (requestId === previewRequestRef.current) setRetryMsg(e?.message || 'No se pudo abrir la vista previa.');
+    }
+    finally { if (requestId === previewRequestRef.current) setPreviewingId(null); }
+  };
+
+  const issueCreditNote = async () => {
+    if (!creditNoteTarget) return;
+    const target = creditNoteTarget;
+    setIssuingCreditNoteId(target.id);
+    setRetryMsg('');
+    setCreditNoteError('');
+    try {
+      const result = await api.createAndSendCreditNote(target.id);
+      if (result?.success === false) {
+        throw new Error(result?.error?.message || result?.error || 'SUNAT rechazó la nota de crédito.');
+      }
+      setRetryMsg(`${target.numeroCompleto}: nota de crédito emitida correctamente ✓`);
+      setCreditNoteTarget(null);
+      await load();
+    } catch (e: any) {
+      const message = e?.message || 'No se pudo emitir la nota de crédito.';
+      setCreditNoteError(message);
+      setRetryMsg(`${target.numeroCompleto}: ${message}`);
+      await load();
+    } finally {
+      setIssuingCreditNoteId(null);
+    }
   };
 
   return (
    <TooltipProvider delayDuration={150}>
     <div className="space-y-4">
       <div className="space-y-3">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Select value={activeId ? String(activeId) : ''} onValueChange={(v) => { const id = Number(v); setActiveId(id); api.setActiveCompanyId(id); }}>
-            <SelectTrigger className="w-full sm:w-[360px]"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
-            <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre || c.razonSocial} — {c.ruc}</SelectItem>)}</SelectContent>
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <Select value={selectedCompanyId ? String(selectedCompanyId) : 'all'} onValueChange={(v) => {
+            const id = v === 'all' ? null : Number(v);
+            setSelectedCompanyId(id);
+            setActiveId(id);
+            api.setActiveCompanyId(id);
+          }}>
+            <SelectTrigger className="w-full sm:w-[360px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las empresas</SelectItem>
+              {companies.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nombre || c.razonSocial} — {c.ruc}</SelectItem>)}
+            </SelectContent>
           </Select>
 
-          <Button onClick={() => navigate('/documentos/nuevo')}>
-            <Plus data-icon="inline-start" /> Nuevo documento
-          </Button>
+          <DocumentDateRangePicker value={selectedRange} onChange={updateRange} />
+
+          {canMutate && (
+            <Button onClick={() => navigate(meta.createPath)} className="sm:ml-auto">
+              <Plus data-icon="inline-start" /> Nueva {meta.singular}
+            </Button>
+          )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="relative min-w-0 sm:w-[320px] lg:w-[360px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar número, orden o cliente" className="pl-9" />
-          </div>
-
-        <div className="relative grid h-9 w-full grid-cols-2 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground sm:w-[190px]">
-          <span
-            className={cn(
-              'absolute bottom-1 left-1 top-1 w-[calc(50%_-_4px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out',
-              kind === 'facturas' ? 'translate-x-full' : 'translate-x-0',
-            )}
-          />
-          <button
-            type="button"
-            onClick={() => updateKind('boletas')}
-            className={cn('relative z-10 rounded-lg transition-colors', kind === 'boletas' ? 'text-foreground' : 'hover:text-foreground')}
-          >
-            Boletas
-          </button>
-          <button
-            type="button"
-            onClick={() => updateKind('facturas')}
-            className={cn('relative z-10 rounded-lg transition-colors', kind === 'facturas' ? 'text-foreground' : 'hover:text-foreground')}
-          >
-            Facturas
-          </button>
-        </div>
-        <div className="relative grid h-9 w-full grid-cols-3 rounded-xl bg-muted p-1 text-xs font-medium text-muted-foreground sm:w-[210px]">
-          <span
-            className="absolute bottom-1 left-1 top-1 w-[calc(33.333333%_-_2.666667px)] rounded-lg bg-card shadow-sm transition-transform duration-200 ease-out"
-            style={{ transform: `translateX(${DAY_WINDOWS.indexOf(dayWindow) * 100}%)` }}
-          />
-          {DAY_WINDOWS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              onClick={() => updateDays(days)}
-              className={cn('relative z-10 rounded-lg transition-colors', dayWindow === days ? 'text-foreground' : 'hover:text-foreground')}
-            >
-              {days} días
-            </button>
-          ))}
-        </div>
-        </div>
       </div>
+
+      <Suspense fallback={<div className="h-64 animate-pulse rounded-2xl bg-muted" />}>
+        <DocumentOverview
+          kind={kind}
+          stats={stats}
+          companies={companies}
+          rows={rows}
+          selectedCompanyId={selectedCompanyId}
+          periodLabel={documentDateRangeLabel(selectedRange)}
+          loading={loading}
+        />
+      </Suspense>
 
       {retryMsg && (
         <div className={cn('flex items-start gap-2 rounded-lg px-3 py-2 text-sm', retryMsg.includes('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
@@ -246,32 +263,33 @@ export default function Documentos() {
         </div>
       )}
 
-      <TablePanel aria-label={`Listado de ${kind}`}>
-        <TablePanelHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">{filtered.length} {kind === 'boletas' ? 'boleta(s)' : 'factura(s)'}</p>
-            <p className="text-xs text-muted-foreground">
-              Últimos {dayWindow} días{search.trim() ? ` · Búsqueda: “${search.trim()}”` : ''}
-            </p>
-          </div>
-          <span className="text-xs font-medium text-muted-foreground">Máximo 500 registros</span>
-        </TablePanelHeader>
-        {!activeId ? (
-          <div className="flex flex-col items-center gap-2 py-14 text-center">
-            <FileText className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">Selecciona una empresa</p>
-            <p className="text-sm text-muted-foreground">Elige una empresa para consultar sus documentos.</p>
-          </div>
-        ) : loading && rows.length === 0 ? (
-          <p className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Cargando {kind === 'boletas' ? 'boletas' : 'facturas'}…</p>
+      {loadError && (
+        <div className="flex flex-col gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
+          <span className="flex items-start gap-2"><AlertCircle className="mt-0.5 size-4 shrink-0" /> {loadError}</span>
+          <Button variant="outline" size="sm" onClick={load}>Reintentar</Button>
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative min-w-0 sm:w-[320px] lg:w-[360px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar número, orden o cliente" className="pl-9" />
+        </div>
+      </div>
+
+      <TablePanel aria-label={`Listado de ${meta.plural}`}>
+        {loading && rows.length === 0 ? (
+          <p className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Cargando {meta.plural}…</p>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <FileText className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay {kind === 'boletas' ? 'boletas' : 'facturas'} para mostrar</p>
-            <p className="text-sm text-muted-foreground">Cambia los filtros o crea un nuevo documento.</p>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/documentos/nuevo')} className="mt-1 text-primary hover:text-primary">
-              <Plus /> Emitir una
-            </Button>
+            <p className="text-sm font-medium">No hay {meta.plural} para mostrar</p>
+            <p className="text-sm text-muted-foreground">{canMutate ? `Cambia los filtros o emite una nueva ${meta.singular}.` : 'Cambia los filtros para ampliar la consulta.'}</p>
+            {canMutate && (
+              <Button variant="ghost" size="sm" onClick={() => navigate(meta.createPath)} className="mt-1 text-primary hover:text-primary">
+                <Plus /> Emitir {meta.singular}
+              </Button>
+            )}
           </div>
         ) : (
           <div className="relative max-h-[calc(100vh-16rem)] overflow-auto">
@@ -314,14 +332,19 @@ export default function Documentos() {
                       <TableCell>
                         {est === 'ACEPTADO' ? (
                           <div className="flex items-center justify-end gap-1.5">
-                            <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId === d.id}>
+                            <Button variant="outline" size="sm" onClick={() => openPreview(d)} disabled={previewingId !== null}>
                               {previewingId === d.id ? <Loader2 className="animate-spin" /> : <Eye />} Ver
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
                               {downloadingId === d.id ? <Loader2 className="animate-spin" /> : <Download />} PDF
                             </Button>
+                            {kind === 'boletas' && canIssueCreditNote && !d.creditNoteId && (
+                              <Button variant="outline" size="sm" onClick={() => { setCreditNoteError(''); setCreditNoteTarget(d); }} disabled={issuingCreditNoteId === d.id}>
+                                {issuingCreditNoteId === d.id ? <Loader2 className="animate-spin" /> : <FileMinus2 />} Emitir NC
+                              </Button>
+                            )}
                           </div>
-                        ) : est === 'RECHAZADO' ? (
+                        ) : est === 'RECHAZADO' && canMutate ? (
                           <div className="flex justify-end">
                             <Button variant="outline" size="sm" onClick={() => retry(d)} disabled={retryingId === d.id} className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900">
                               {retryingId === d.id ? <Loader2 className="animate-spin" /> : <RotateCcw />} Reintentar
@@ -336,20 +359,41 @@ export default function Documentos() {
             </Table>
           </div>
         )}
-        {activeId && !loading && rows.length > 0 && (
+        {!loading && rows.length > 0 && (
           <TablePanelFooter>
-            <p className="text-sm text-muted-foreground">Mostrando {filtered.length} de {rows.length} documentos cargados</p>
+            <p className="text-sm text-muted-foreground">Mostrando {filtered.length} de {rows.length} {meta.plural} cargadas</p>
           </TablePanelFooter>
         )}
       </TablePanel>
 
-      {/* Vista previa en modal (iframe: aísla el CSS del documento y hace scroll interno) */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-3xl">
-          <DialogHeader><DialogTitle>Vista previa</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Vista previa — {meta.singular}</DialogTitle></DialogHeader>
           <div className="p-4">
             <iframe sandbox="" srcDoc={previewHtml} title="Vista previa" className="h-[75vh] w-full rounded-md border border-border bg-white" />
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(creditNoteTarget)} onOpenChange={(open) => { if (!open && !issuingCreditNoteId) { setCreditNoteTarget(null); setCreditNoteError(''); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Emitir nota de crédito</DialogTitle>
+            <DialogDescription>
+              Se emitirá una nota de crédito que anula la boleta {creditNoteTarget?.numeroCompleto}. ¿Continuar?
+            </DialogDescription>
+          </DialogHeader>
+          {creditNoteError && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" /> {creditNoteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreditNoteTarget(null)} disabled={Boolean(issuingCreditNoteId)}>Cancelar</Button>
+            <Button onClick={issueCreditNote} disabled={Boolean(issuingCreditNoteId)}>
+              {issuingCreditNoteId ? <Loader2 className="animate-spin" /> : <FileMinus2 />} Emitir NC
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

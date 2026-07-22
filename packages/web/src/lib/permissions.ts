@@ -20,11 +20,12 @@ export type PermissionDef = {
 
 export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard' },
-  { key: 'documentos', label: 'Documentos', description: 'Ver y emitir boletas/facturas', path: '/documentos' },
+  { key: 'documentos', label: 'Comprobantes', description: 'Ver y emitir boletas/facturas; ver notas de crédito', path: '/boletas' },
+
   { key: 'falabella', label: 'Falabella', description: 'Gestor de sellers y órdenes', path: '/falabella-api' },
   { key: 'productos', label: 'Productos', description: 'Catálogo de productos Falabella', path: '/productos' },
   { key: 'auto_emision', label: 'Automatización', description: 'Emisión automática y webhooks', path: '/auto-emision' },
-  { key: 'credit_notes', label: 'Notas de crédito', description: 'Anular boletas con NC', path: '/credit-notes' },
+  { key: 'credit_notes', label: 'Anulación masiva', description: 'Anular boletas en lote con notas de crédito', path: '/credit-notes/bulk' },
   { key: 'companies', label: 'Empresas', description: 'Alta y credenciales de empresas', path: '/companies' },
   { key: 'settings', label: 'Ajustes', description: 'Preferencias y apariencia', path: '/settings' },
   { key: 'users', label: 'Usuarios', description: 'Administrar usuarios y permisos', path: '/users' },
@@ -112,11 +113,13 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/pedidos')) return 'falabella';
+  if (pathname.startsWith('/boletas') || pathname.startsWith('/facturas')) return 'documentos';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella';
   if (pathname.startsWith('/productos')) return 'productos';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';
-  if (pathname.startsWith('/credit-notes')) return 'credit_notes';
+  if (pathname.startsWith('/credit-notes/bulk')) return 'credit_notes';
+  if (pathname.startsWith('/credit-notes')) return 'documentos';
   if (pathname.startsWith('/companies')) return 'companies';
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/users')) return 'users';

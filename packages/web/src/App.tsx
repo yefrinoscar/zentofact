@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import AuthGate from './components/AuthGate';
 import Companies from './routes/Companies';
 import CreditNotes from './routes/CreditNotes';
+import CreditNotesList from './routes/CreditNotesList';
 import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
@@ -15,7 +16,10 @@ import Pedidos from './routes/Pedidos';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
-import { firstAllowedPath, pathPermission, userHasPermission } from './lib/permissions';
+import { firstAllowedPath, pathPermission } from './lib/permissions';
+import { Button } from './components/ui/button';
+import { PanelLeft } from 'lucide-react';
+import { documentDateRangeForLastDays } from './lib/documentDateRange';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
 
@@ -37,8 +41,12 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Configura empresas, credenciales y certificados de emisión.',
   },
   '/credit-notes': {
-    title: 'Notas de Crédito',
-    subtitle: 'Anula boletas por mes y empresa emitiendo notas de crédito, individuales o en grupo.',
+    title: 'Notas de crédito',
+    subtitle: 'Consulta notas de crédito emitidas (anulación de boletas).',
+  },
+  '/credit-notes/bulk': {
+    title: 'Anulación masiva',
+    subtitle: 'Anula boletas por mes y empresa emitiendo NC en lote.',
   },
   '/falabella-api': {
     title: 'Gestor de Sellers',
@@ -52,13 +60,21 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Automatización',
     subtitle: 'Boletas en piloto automático desde las órdenes de Falabella.',
   },
-  '/documentos': {
-    title: 'Documentos',
-    subtitle: 'Boletas y facturas emitidas a SUNAT. Filtra, descarga su PDF o emite una nueva.',
+  '/boletas': {
+    title: 'Boletas',
+    subtitle: 'Gestiona las boletas emitidas y su estado en SUNAT.',
   },
-  '/documentos/nuevo': {
-    title: 'Nuevo documento',
-    subtitle: 'Crea y emite una boleta o factura a SUNAT.',
+  '/boletas/new': {
+    title: 'Nueva boleta',
+    subtitle: 'Emite una boleta electrónica a SUNAT.',
+  },
+  '/facturas': {
+    title: 'Facturas',
+    subtitle: 'Gestiona las facturas emitidas y su estado en SUNAT.',
+  },
+  '/facturas/new': {
+    title: 'Nueva factura',
+    subtitle: 'Emite una factura electrónica a SUNAT.',
   },
   '/users': {
     title: 'Usuarios',
@@ -98,10 +114,28 @@ function HomeRedirect({ user, loading }: Pick<ReturnType<typeof usePermissions>,
   return <Navigate to={firstAllowedPath(user)} replace />;
 }
 
+function LegacyDocumentsRedirect() {
+  const [searchParams] = useSearchParams();
+  const days = searchParams.get('days');
+  const target = searchParams.get('tab') === 'facturas' ? '/facturas' : '/boletas';
+  const legacyDays = days === '7' || days === '15' || days === '30' ? Number(days) : null;
+  const range = legacyDays ? documentDateRangeForLastDays(legacyDays) : null;
+  const query = range ? `?from=${range.from}&to=${range.to}` : '';
+  return <Navigate to={`${target}${query}`} replace />;
+}
+
+function LegacyNewDocumentRedirect() {
+  const [searchParams] = useSearchParams();
+  const target = searchParams.get('tipo') === 'factura' ? '/facturas/new' : '/boletas/new';
+  return <Navigate to={target} replace />;
+}
+
 function AppLayout() {
   const { pathname } = useLocation();
+  const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const { user, loading, can } = usePermissions();
 
   useEffect(() => {
@@ -119,16 +153,7 @@ function AppLayout() {
     };
   }, [activeCompanyId, setActiveCompanyId]);
 
-  // Si el usuario cae en una ruta sin permiso (bookmark), redirigir.
-  useEffect(() => {
-    if (loading || !user) return;
-    const perm = pathPermission(pathname);
-    if (perm && !userHasPermission(user, perm)) {
-      // handled by RequirePermission on routes; keep as safety no-op
-    }
-  }, [pathname, user, loading]);
-
-  const currentRoute = routeMeta[pathname] || routeMeta['/'];
+  const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can };
 
   return (
@@ -138,9 +163,14 @@ function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-6">
-            <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold text-foreground">{currentRoute.title}</h1>
-              <p className="truncate text-sm text-muted-foreground">{currentRoute.subtitle}</p>
+            <div className="flex min-w-0 items-center gap-3">
+              <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} className="hidden shrink-0 md:inline-flex" aria-label="Alternar menú lateral">
+                <PanelLeft />
+              </Button>
+              <div className="min-w-0">
+                <h1 className="truncate text-xl font-semibold text-foreground">{currentRoute.title}</h1>
+                <p className="truncate text-sm text-muted-foreground">{currentRoute.subtitle}</p>
+              </div>
             </div>
           </div>
         </header>
@@ -153,7 +183,8 @@ function AppLayout() {
               <Route path="/pedidos" element={<RequirePermission permission="falabella" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
-              <Route path="/credit-notes" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
+              <Route path="/credit-notes" element={<RequirePermission permission="documentos" {...permissionState}><CreditNotesList /></RequirePermission>} />
+              <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route
                 path="/productos"
@@ -164,11 +195,16 @@ function AppLayout() {
                 }
               />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
-              <Route path="/documentos" element={<RequirePermission permission="documentos" {...permissionState}><Documentos /></RequirePermission>} />
-              <Route path="/documentos/nuevo" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice /></RequirePermission>} />
-              <Route path="/individual-invoice" element={<Navigate to="/documentos/nuevo" replace />} />
+              <Route path="/boletas" element={<RequirePermission permission="documentos" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
+              <Route path="/boletas/new" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />
+              <Route path="/facturas" element={<RequirePermission permission="documentos" {...permissionState}><Documentos kind="facturas" /></RequirePermission>} />
+              <Route path="/facturas/new" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice fixedDocType="01" /></RequirePermission>} />
+              <Route path="/documentos" element={<LegacyDocumentsRedirect />} />
+              <Route path="/documentos/nuevo" element={<LegacyNewDocumentRedirect />} />
+              <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
+              <Route path="*" element={<Navigate to={firstAllowedPath(user)} replace />} />
             </Routes>
           </div>
         </main>

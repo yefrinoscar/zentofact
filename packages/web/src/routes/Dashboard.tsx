@@ -382,7 +382,7 @@ export default function Dashboard() {
     setSelectedRange({ from: dateFromKey(nextRange.from), to: dateFromKey(nextRange.to) });
   };
   const chooseRange = (next: DateRange | undefined) => {
-    setSelectedRange(next || {});
+    setSelectedRange(next || { from: undefined, to: undefined });
     if (!next?.from || !next?.to) return;
     setPeriod('custom');
     setFilters((current) => ({ ...current, from: dateKey(next.from!), to: dateKey(next.to!) }));

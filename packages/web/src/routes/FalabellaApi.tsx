@@ -21,6 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
+import { usePermissions } from '../hooks/usePermissions';
 import api from '../lib/api';
 import { waitForDevLoadingDelay } from '../config/dev';
 
@@ -937,6 +938,8 @@ function createEmptyEmitBoletaState(): EmitBoletaModalState {
 
 export default function FalabellaApi() {
   const navigate = useNavigate();
+  const { can, role } = usePermissions();
+  const canIssueCreditNotes = role !== 'viewer' && can('credit_notes');
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 
@@ -1859,7 +1862,7 @@ export default function FalabellaApi() {
         if (result.success) {
           setSelectedReadyOrders(new Set());
           await loadInvoiceFlowPrototype();
-          navigate('/documentos?tab=facturas&days=7');
+          navigate('/facturas');
         }
       } else {
         api.onProgress((data: any) => {
@@ -3043,7 +3046,7 @@ export default function FalabellaApi() {
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                                 Nota de crédito {row.creditNoteNumber}
                               </span>
-                            ) : row.bucket === 'review' && row.canCreateCreditNote ? (
+                            ) : row.bucket === 'review' && row.canCreateCreditNote && canIssueCreditNotes ? (
                               <div className="flex flex-col items-start gap-1">
                                 <button
                                   type="button"

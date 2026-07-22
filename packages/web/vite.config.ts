@@ -15,6 +15,7 @@ const apiPrefixes = [
   '/branches',
   '/boletas',
   '/facturas',
+  '/documentos',
   '/credit-notes',
   '/falabella',
   '/workflow',

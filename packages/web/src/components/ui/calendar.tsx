@@ -46,18 +46,18 @@ function Calendar({
         button_previous: cn(buttonVariants({ variant: buttonVariant }), "size-(--cell-size) p-0", defaults.button_previous),
         button_next: cn(buttonVariants({ variant: buttonVariant }), "size-(--cell-size) p-0", defaults.button_next),
         month_caption: cn("flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)", defaults.month_caption),
-        caption_label: cn("text-xs font-semibold capitalize select-none", defaults.caption_label),
+        caption_label: cn("text-sm font-medium capitalize select-none", defaults.caption_label),
         month_grid: cn("w-full border-collapse", defaults.month_grid),
         weekdays: cn("flex", defaults.weekdays),
-        weekday: cn("flex-1 text-[10px] font-medium text-muted-foreground select-none", defaults.weekday),
+        weekday: cn("flex-1 text-xs font-normal text-muted-foreground select-none", defaults.weekday),
         week: cn("mt-0.5 flex w-full", defaults.week),
         day: cn(
           "group/day relative aspect-square h-full w-full p-0 text-center select-none [&:last-child[data-selected=true]_button]:rounded-r-(--cell-radius) [&:first-child[data-selected=true]_button]:rounded-l-(--cell-radius)",
           defaults.day
         ),
-        range_start: cn("rounded-l-(--cell-radius) bg-primary/12", defaults.range_start),
-        range_middle: cn("rounded-none bg-primary/12", defaults.range_middle),
-        range_end: cn("rounded-r-(--cell-radius) bg-primary/12", defaults.range_end),
+        range_start: cn("rounded-l-(--cell-radius) bg-accent", defaults.range_start),
+        range_middle: cn("rounded-none bg-accent", defaults.range_middle),
+        range_end: cn("rounded-r-(--cell-radius) bg-accent", defaults.range_end),
         today: cn("rounded-(--cell-radius) bg-muted text-foreground", defaults.today),
         outside: cn("text-muted-foreground/55", defaults.outside),
         disabled: cn("text-muted-foreground opacity-35", defaults.disabled),
@@ -113,7 +113,7 @@ function CalendarDayButton({
       data-range-middle={modifiers.range_middle}
       data-selected-single={modifiers.selected && !modifiers.range_start && !modifiers.range_end && !modifiers.range_middle}
       className={cn(
-        "relative z-10 aspect-square size-auto w-full min-w-(--cell-size) border-0 text-xs font-normal data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-primary/12 data-[range-middle=true]:text-foreground data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground",
+        "relative z-10 aspect-square size-auto w-full min-w-(--cell-size) border-0 text-sm font-normal data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-foreground data-[range-end=true]:text-background data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-transparent data-[range-middle=true]:text-foreground data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-foreground data-[range-start=true]:text-background data-[selected-single=true]:bg-foreground data-[selected-single=true]:text-background",
         className
       )}
       {...props}

@@ -3,7 +3,7 @@ import { db } from '../db';
 import { facturas, clients, companies, branches } from '../db/schema';
 
 export interface FacturaFilter {
-  companyId: number;
+  companyId?: number;
   branchId?: number;
   serie?: string;
   fechaDesde?: string;
@@ -16,7 +16,11 @@ export interface FacturaFilter {
 }
 
 export async function listFacturas(filter: FacturaFilter) {
-  const conditions = [eq(facturas.companyId, filter.companyId)];
+  const conditions = [];
+
+  if (filter.companyId) {
+    conditions.push(eq(facturas.companyId, filter.companyId));
+  }
 
   if (filter.branchId) {
     conditions.push(eq(facturas.branchId, filter.branchId));
@@ -77,8 +81,9 @@ export async function listFacturas(filter: FacturaFilter) {
     clientNumeroDocumento: clients.numeroDocumento,
     clientTipoDocumento: clients.tipoDocumento,
   }).from(facturas)
+    .innerJoin(companies, eq(companies.id, facturas.companyId))
     .leftJoin(clients, eq(facturas.clientId, clients.id))
-    .where(and(...conditions))
+    .where(and(eq(companies.activo, true), ...conditions))
     .orderBy(desc(facturas.createdAt));
 
   const total = all.length;

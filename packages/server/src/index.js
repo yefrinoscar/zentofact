@@ -17,7 +17,7 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
-const { auth, requireAuth, requireCsrf, requirePermission, csrfTokenForSession } = await import('./auth.js');
+const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, csrfTokenForSession } = await import('./auth.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
@@ -88,14 +88,11 @@ app.use('*', requireCsrf());
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
   ['/orders-inbox', 'falabella'],
-  ['/companies', 'companies'],
-  ['/boletas', 'documentos'],
   ['/facturas', 'documentos'],
-  ['/credit-notes', 'credit_notes'],
+  ['/documentos', 'documentos'],
   ['/falabella', 'falabella'],
   ['/workflow', 'falabella'],
   ['/auto-emit', 'auto_emision'],
-  ['/branches', 'companies'],
 ];
 for (const [prefix, perm] of moduleGuards) {
   const permissionGuard = requirePermission(perm);
@@ -108,6 +105,8 @@ for (const [prefix, perm] of moduleGuards) {
   app.use(prefix, guard);
   app.use(`${prefix}/*`, guard);
 }
+
+const requireDocumentsOrCreditNotes = requireAnyPermission(['documentos', 'credit_notes']);
 
 const ok = (c, data, status = 200) => c.json(data, status);
 const fail = (c, e, status = 500) => {
@@ -202,31 +201,31 @@ app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──
 app.get('/companies', async (c) => { try { return ok(c, await core.listPublicCompanies()); } catch (e) { return fail(c, e); } });
-app.get('/companies/:id', async (c) => {
+app.get('/companies/:id', requirePermission('companies'), async (c) => {
   try {
     const company = await core.getPublicCompany(Number(c.req.param('id')));
     if (!company) return c.json({ error: 'Empresa no encontrada' }, 404);
     return ok(c, company);
   } catch (e) { return fail(c, e); }
 });
-app.post('/companies', async (c) => { try { return ok(c, await core.createCompany(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); } });
-app.patch('/companies/:id', async (c) => {
+app.post('/companies', requirePermission('companies'), async (c) => { try { return ok(c, await core.createCompany(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); } });
+app.patch('/companies/:id', requirePermission('companies'), async (c) => {
   try {
     const company = await core.updateCompany(Number(c.req.param('id')), await c.req.json());
     if (!company) return c.json({ error: 'Empresa no encontrada' }, 404);
     return ok(c, company);
   } catch (e) { return fail(c, e, 400); }
 });
-app.delete('/companies/:id', async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
-app.post('/companies/:id/test-sunat', async (c) => {
+app.delete('/companies/:id', requirePermission('companies'), async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
+app.post('/companies/:id/test-sunat', requirePermission('companies'), async (c) => {
   try { const { environment } = await c.req.json(); return ok(c, await core.testSunatConnection(Number(c.req.param('id')), environment)); }
   catch (e) { return fail(c, e); }
 });
 
 // ── Sucursales ──
-app.get('/companies/:id/branches', async (c) => { try { return ok(c, await core.listBranches(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
-app.post('/branches', async (c) => { try { return ok(c, await core.createBranch(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); } });
-app.patch('/branches/:id', async (c) => { try { return ok(c, await core.updateBranch(Number(c.req.param('id')), await c.req.json())); } catch (e) { return fail(c, e, 400); } });
+app.get('/companies/:id/branches', requireAnyPermission(['documentos', 'companies']), async (c) => { try { return ok(c, await core.listBranches(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/branches', requirePermission('companies'), async (c) => { try { return ok(c, await core.createBranch(await c.req.json()), 201); } catch (e) { return fail(c, e, 400); } });
+app.patch('/branches/:id', requirePermission('companies'), async (c) => { try { return ok(c, await core.updateBranch(Number(c.req.param('id')), await c.req.json())); } catch (e) { return fail(c, e, 400); } });
 
 // ── Listados (filtros por query) ──
 const parseFilter = (c) => {
@@ -239,8 +238,20 @@ const parseFilter = (c) => {
     offset: q.offset ? Number(q.offset) : undefined,
   };
 };
-app.get('/boletas', async (c) => { try { return ok(c, await core.listBoletas(parseFilter(c))); } catch (e) { return fail(c, e); } });
+app.get('/boletas', requireDocumentsOrCreditNotes, async (c) => { try { return ok(c, await core.listBoletas(parseFilter(c))); } catch (e) { return fail(c, e); } });
 app.get('/facturas', async (c) => { try { return ok(c, await core.listFacturas(parseFilter(c))); } catch (e) { return fail(c, e); } });
+// Conteos e importes consolidados, globales y por empresa.
+const documentStatsHandler = async (c) => {
+  try {
+    const q = c.req.query();
+    return ok(c, await core.getDocumentStats({
+      fechaDesde: q.fechaDesde || undefined,
+      fechaHasta: q.fechaHasta || undefined,
+    }));
+  } catch (e) { return fail(c, e); }
+};
+app.get('/documentos/stats', documentStatsHandler);
+app.get('/boletas/stats', requirePermission('documentos'), documentStatsHandler);
 app.post('/facturas', async (c) => {
   try { const { input } = await c.req.json(); return ok(c, await core.createFactura(input), 201); }
   catch (e) { return fail(c, e, 400); }
@@ -253,15 +264,15 @@ app.post('/facturas/:id/reemit', async (c) => {
   try { return ok(c, await core.reEmitFactura(Number(c.req.param('id')))); }
   catch (e) { return fail(c, e, 400); }
 });
-app.post('/boletas', async (c) => {
+app.post('/boletas', requirePermission('documentos'), async (c) => {
   try { const { input } = await c.req.json(); return ok(c, await core.createBoleta(input), 201); }
   catch (e) { return fail(c, e, 400); }
 });
-app.post('/boletas/:id/send', async (c) => {
+app.post('/boletas/:id/send', requirePermission('documentos'), async (c) => {
   try { return ok(c, await core.sendBoletaToSunat(Number(c.req.param('id')))); }
   catch (e) { return fail(c, e, 400); }
 });
-app.post('/boletas/:id/reemit', async (c) => {
+app.post('/boletas/:id/reemit', requirePermission('documentos'), async (c) => {
   try { return ok(c, await core.reEmitBoleta(Number(c.req.param('id')))); }
   catch (e) { return fail(c, e, 400); }
 });
@@ -274,32 +285,35 @@ app.post('/facturas/preview', async (c) => {
   try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewFacturaHtmlForVenta(companyId, venta)); }
   catch (e) { return fail(c, e); }
 });
-app.get('/credit-notes', async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
-app.post('/boletas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.get('/credit-notes', requireDocumentsOrCreditNotes, async (c) => { try { return ok(c, await core.listCreditNotes(parseFilter(c))); } catch (e) { return fail(c, e); } });
+app.post('/boletas/:id/refresh-status', requirePermission('documentos'), async (c) => { try { return ok(c, await core.refreshBoletaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/facturas/:id/refresh-status', async (c) => { try { return ok(c, await core.refreshFacturaStatus(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 
 // ── Correlativos ──
-app.get('/branches/:id/correlatives', async (c) => { try { return ok(c, await core.getCorrelatives(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.get('/branches/:id/correlatives', requireAnyPermission(['documentos', 'companies']), async (c) => { try { return ok(c, await core.getCorrelatives(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 
 // ── PDFs (en memoria, base64 — sin disco) ──
-app.get('/boletas/:id/pdf', async (c) => {
+app.get('/boletas/:id/pdf', requirePermission('documentos'), async (c) => {
   try { const b64 = await core.generateAcceptedBoletaPdfBase64(Number(c.req.param('id'))); return ok(c, { base64: b64 }); }
   catch (e) { return fail(c, e); }
 });
 // Los generadores del core devuelven un objeto { html, numeroCompleto, ... } → JSON, no c.html.
-app.get('/boletas/:id/preview', async (c) => { try { return ok(c, await core.generateAcceptedBoletaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
-app.get('/credit-notes/:id/preview', async (c) => { try { return ok(c, await core.generatePreviewCreditNoteHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
-app.post('/boletas/preview', async (c) => {
+app.get('/boletas/:id/preview', requirePermission('documentos'), async (c) => { try { return ok(c, await core.generateAcceptedBoletaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.get('/credit-notes/:id/preview', requireDocumentsOrCreditNotes, async (c) => { try { return ok(c, await core.generatePreviewCreditNoteHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
+app.post('/boletas/preview', requirePermission('documentos'), async (c) => {
   try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewBoletaHtmlForVenta(companyId, venta)); }
   catch (e) { return fail(c, e); }
 });
 
 // ── Notas de crédito (emitir) ──
-app.post('/credit-notes', async (c) => {
+app.post('/credit-notes', requirePermission('credit_notes'), async (c) => {
   try { const { boletaId, options } = await c.req.json(); return ok(c, await core.createAndSendCreditNoteFromBoleta(boletaId, options), 201); }
-  catch (e) { return fail(c, e, 400); }
+  catch (e) {
+    const message = String((e && e.message) || e);
+    return fail(c, e, /ya tiene nota de crédito|unique/i.test(message) ? 409 : 400);
+  }
 });
-app.post('/credit-notes/batch', async (c) => {
+app.post('/credit-notes/batch', requirePermission('credit_notes'), async (c) => {
   try { const { boletaIds, options } = await c.req.json(); return ok(c, await core.createAndSendCreditNotesFromBoletas(boletaIds, options), 201); }
   catch (e) { return fail(c, e, 400); }
 });

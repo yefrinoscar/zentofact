@@ -103,6 +103,12 @@ export { listBoletas } from './services/boleta-query.service';
 export type { BoletaFilter } from './services/boleta-query.service';
 export { listFacturas } from './services/factura-query.service';
 export type { FacturaFilter } from './services/factura-query.service';
+export { getDocumentStats, getCompanyDocumentStats } from './services/document-stats.service';
+export type {
+  DocumentStats,
+  DocumentStatsFilter,
+  CompanyDocumentStats,
+} from './services/document-stats.service';
 export { listCreditNotes } from './services/credit-note-query.service';
 export type { CreditNoteFilter } from './services/credit-note-query.service';
 export { refreshBoletaStatus } from './services/daily-summary-query.service';
