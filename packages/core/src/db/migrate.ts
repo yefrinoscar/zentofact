@@ -325,6 +325,172 @@ const DDL = `
   ALTER TABLE credit_notes ALTER COLUMN affected_boleta_id DROP NOT NULL;
   ALTER TABLE credit_notes ALTER COLUMN affected_factura_id DROP NOT NULL;
 
+  -- Repara documentos históricos que quedaron enlazados a una sucursal de otra
+  -- empresa. Se conserva el código de local cuando existe en la empresa correcta;
+  -- de lo contrario se usa primero la sede 0000 y luego cualquier sede activa.
+  WITH branch_repairs AS (
+    SELECT
+      document.id,
+      (
+        SELECT replacement.id
+        FROM branches replacement
+        WHERE replacement.company_id = document.company_id
+        ORDER BY
+          CASE
+            WHEN replacement.activo AND replacement.codigo = current_branch.codigo THEN 0
+            WHEN replacement.activo AND replacement.codigo = '0000' THEN 1
+            WHEN replacement.activo THEN 2
+            WHEN replacement.codigo = current_branch.codigo THEN 3
+            WHEN replacement.codigo = '0000' THEN 4
+            ELSE 5
+          END,
+          replacement.id
+        LIMIT 1
+      ) AS replacement_branch_id
+    FROM boletas document
+    JOIN branches current_branch ON current_branch.id = document.branch_id
+    WHERE current_branch.company_id <> document.company_id
+  )
+  UPDATE boletas document
+  SET
+    branch_id = repair.replacement_branch_id,
+    updated_at = FLOOR(EXTRACT(EPOCH FROM NOW()))::bigint
+  FROM branch_repairs repair
+  WHERE document.id = repair.id
+    AND repair.replacement_branch_id IS NOT NULL;
+
+  WITH branch_repairs AS (
+    SELECT
+      document.id,
+      (
+        SELECT replacement.id
+        FROM branches replacement
+        WHERE replacement.company_id = document.company_id
+        ORDER BY
+          CASE
+            WHEN replacement.activo AND replacement.codigo = current_branch.codigo THEN 0
+            WHEN replacement.activo AND replacement.codigo = '0000' THEN 1
+            WHEN replacement.activo THEN 2
+            WHEN replacement.codigo = current_branch.codigo THEN 3
+            WHEN replacement.codigo = '0000' THEN 4
+            ELSE 5
+          END,
+          replacement.id
+        LIMIT 1
+      ) AS replacement_branch_id
+    FROM facturas document
+    JOIN branches current_branch ON current_branch.id = document.branch_id
+    WHERE current_branch.company_id <> document.company_id
+  )
+  UPDATE facturas document
+  SET
+    branch_id = repair.replacement_branch_id,
+    updated_at = FLOOR(EXTRACT(EPOCH FROM NOW()))::bigint
+  FROM branch_repairs repair
+  WHERE document.id = repair.id
+    AND repair.replacement_branch_id IS NOT NULL;
+
+  WITH branch_repairs AS (
+    SELECT
+      document.id,
+      (
+        SELECT replacement.id
+        FROM branches replacement
+        WHERE replacement.company_id = document.company_id
+        ORDER BY
+          CASE
+            WHEN replacement.activo AND replacement.codigo = current_branch.codigo THEN 0
+            WHEN replacement.activo AND replacement.codigo = '0000' THEN 1
+            WHEN replacement.activo THEN 2
+            WHEN replacement.codigo = current_branch.codigo THEN 3
+            WHEN replacement.codigo = '0000' THEN 4
+            ELSE 5
+          END,
+          replacement.id
+        LIMIT 1
+      ) AS replacement_branch_id
+    FROM credit_notes document
+    JOIN branches current_branch ON current_branch.id = document.branch_id
+    WHERE current_branch.company_id <> document.company_id
+  )
+  UPDATE credit_notes document
+  SET
+    branch_id = repair.replacement_branch_id,
+    updated_at = FLOOR(EXTRACT(EPOCH FROM NOW()))::bigint
+  FROM branch_repairs repair
+  WHERE document.id = repair.id
+    AND repair.replacement_branch_id IS NOT NULL;
+
+  WITH branch_repairs AS (
+    SELECT
+      document.id,
+      (
+        SELECT replacement.id
+        FROM branches replacement
+        WHERE replacement.company_id = document.company_id
+        ORDER BY
+          CASE
+            WHEN replacement.activo AND replacement.codigo = current_branch.codigo THEN 0
+            WHEN replacement.activo AND replacement.codigo = '0000' THEN 1
+            WHEN replacement.activo THEN 2
+            WHEN replacement.codigo = current_branch.codigo THEN 3
+            WHEN replacement.codigo = '0000' THEN 4
+            ELSE 5
+          END,
+          replacement.id
+        LIMIT 1
+      ) AS replacement_branch_id
+    FROM daily_summaries document
+    JOIN branches current_branch ON current_branch.id = document.branch_id
+    WHERE current_branch.company_id <> document.company_id
+  )
+  UPDATE daily_summaries document
+  SET
+    branch_id = repair.replacement_branch_id,
+    updated_at = FLOOR(EXTRACT(EPOCH FROM NOW()))::bigint
+  FROM branch_repairs repair
+  WHERE document.id = repair.id
+    AND repair.replacement_branch_id IS NOT NULL;
+
+  -- Defensa en la base de datos: ninguna ruta de escritura puede volver a
+  -- guardar un documento con una sucursal que pertenezca a otra empresa.
+  CREATE OR REPLACE FUNCTION enforce_company_branch_ownership()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  AS $$
+  BEGIN
+    IF NEW.branch_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+      FROM branches branch
+      WHERE branch.id = NEW.branch_id
+        AND branch.company_id = NEW.company_id
+    ) THEN
+      RAISE EXCEPTION 'La sucursal seleccionada no pertenece a la empresa';
+    END IF;
+    RETURN NEW;
+  END;
+  $$;
+
+  DROP TRIGGER IF EXISTS trg_boletas_company_branch ON boletas;
+  CREATE TRIGGER trg_boletas_company_branch
+    BEFORE INSERT OR UPDATE OF company_id, branch_id ON boletas
+    FOR EACH ROW EXECUTE FUNCTION enforce_company_branch_ownership();
+
+  DROP TRIGGER IF EXISTS trg_facturas_company_branch ON facturas;
+  CREATE TRIGGER trg_facturas_company_branch
+    BEFORE INSERT OR UPDATE OF company_id, branch_id ON facturas
+    FOR EACH ROW EXECUTE FUNCTION enforce_company_branch_ownership();
+
+  DROP TRIGGER IF EXISTS trg_credit_notes_company_branch ON credit_notes;
+  CREATE TRIGGER trg_credit_notes_company_branch
+    BEFORE INSERT OR UPDATE OF company_id, branch_id ON credit_notes
+    FOR EACH ROW EXECUTE FUNCTION enforce_company_branch_ownership();
+
+  DROP TRIGGER IF EXISTS trg_daily_summaries_company_branch ON daily_summaries;
+  CREATE TRIGGER trg_daily_summaries_company_branch
+    BEFORE INSERT OR UPDATE OF company_id, branch_id ON daily_summaries
+    FOR EACH ROW EXECUTE FUNCTION enforce_company_branch_ownership();
+
   -- Índices de lectura para analítica por empresa/sucursal y periodo.
   CREATE INDEX IF NOT EXISTS idx_boletas_company_fecha
     ON boletas(company_id, fecha_emision);
