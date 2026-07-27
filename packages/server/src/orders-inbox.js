@@ -120,6 +120,10 @@ const BASE_CTE = `
       nullif(fo.raw_data->>'ShippingType', '') as shipping_type,
       concat_ws(' ', nullif(fo.raw_data->>'CustomerFirstName', ''), nullif(fo.raw_data->>'CustomerLastName', ''), nullif(fo.raw_data->>'CustomerLastName2', '')) as customer_name,
       nullif(fo.raw_data->>'ItemsCount', '') as items_count,
+      case when fo.raw_data->>'LabelCount' ~ '^[0-9]+$'
+        then greatest((fo.raw_data->>'LabelCount')::int, 1)
+        else 1
+      end as label_count,
       doc.document_id,
       doc.document_kind,
       doc.document_number,
@@ -184,6 +188,7 @@ function normalizeOrder(row) {
     currency: row.currency || 'PEN',
     customerName: row.customer_name || '',
     itemsCount: row.items_count === null ? null : Number(row.items_count),
+    labelCount: Number(row.label_count || 1),
     sameOrderCount: Number(row.same_order_count || 1),
     sameOrderIndex: Number(row.same_order_index || 1),
     stage: row.stage,

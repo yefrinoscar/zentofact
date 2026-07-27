@@ -59,6 +59,7 @@ type InboxOrder = {
   currency: string;
   customerName: string;
   itemsCount: number | null;
+  labelCount: number;
   sameOrderCount: number;
   sameOrderIndex: number;
 };
@@ -531,6 +532,25 @@ function orderKey(order: InboxOrder) {
   return `${order.companyId}:${order.orderId}`;
 }
 
+function labelCountFor(order: InboxOrder) {
+  return Math.max(1, Number(order.labelCount) || 1);
+}
+
+function countLabels(orders: InboxOrder[]) {
+  return orders.reduce((total, order) => total + labelCountFor(order), 0);
+}
+
+function expandOrdersAsLabels(orders: InboxOrder[]) {
+  return orders.flatMap((order) => {
+    const labelCount = labelCountFor(order);
+    return Array.from({ length: labelCount }, (_, index) => ({
+      ...order,
+      sameOrderCount: labelCount,
+      sameOrderIndex: index + 1,
+    }));
+  });
+}
+
 function base64Blob(base64: string, mimeType: string) {
   const binary = window.atob(base64.replace(/\s+/g, ''));
   const bytes = new Uint8Array(binary.length);
@@ -690,9 +710,9 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
           <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
             {order.orderNumber}
           </button>
-          {order.sameOrderCount > 1 && (
+          {labelCountFor(order) > 1 && (
             <Badge variant="outline" className="mt-1 w-fit rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
-              Mismo pedido · etiqueta {order.sameOrderIndex}/{order.sameOrderCount}
+              Mismo pedido · {labelCountFor(order)} etiquetas
             </Badge>
           )}
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.companyName}</p>
@@ -867,7 +887,7 @@ export default function Pedidos() {
   }, [data?.orders, now]);
   const flowOrders = flowGroups[flowStage];
   const globalDeadlineCounts = openOrders.reduce<Record<UrgencyKey, number>>((counts, order) => {
-    counts[urgencyFor(order, now)] += 1;
+    counts[urgencyFor(order, now)] += labelCountFor(order);
     return counts;
   }, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
   const flowTabs = [
@@ -876,8 +896,8 @@ export default function Pedidos() {
     { value: 'shipped' as const, label: 'Enviados', description: 'Flujo completado', activeClass: 'bg-emerald-50 text-emerald-900 shadow-sm', badgeClass: 'bg-emerald-100 text-emerald-800' },
   ];
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
-  const filteredFlowOrders = flowOrders;
-  const filteredCountLabel = `${flowOrders.length} etiqueta${flowOrders.length === 1 ? '' : 's'}`;
+  const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(flowOrders), [flowOrders]);
+  const filteredCountLabel = `${filteredFlowOrders.length} etiqueta${filteredFlowOrders.length === 1 ? '' : 's'}`;
 
   const deadlineGroups = useMemo(() => {
     const groups: Record<UrgencyKey, InboxOrder[]> = { today: [], tomorrow: [], later: [], overdue: [] };
@@ -925,10 +945,12 @@ export default function Pedidos() {
     () => labelOrders.filter((order) => selectedLabelKeys.has(orderKey(order))),
     [labelOrders, selectedLabelKeys],
   );
+  const selectedLabelCount = countLabels(selectedLabelOrders);
+  const availableLabelCount = countLabels(labelOrders);
   const allLabelsSelected = labelOrders.length > 0 && selectedLabelOrders.length === labelOrders.length;
 
-  const shippedTotal = data?.shippedCount ?? (data?.orders || []).filter(isShippedOrder).length;
-  const operationalTotal = data?.operationalCount ?? openOrders.length;
+  const shippedTotal = countLabels((data?.orders || []).filter(isShippedOrder));
+  const openLabelCount = countLabels(openOrders);
   const currentDeliveryWindow = data?.deliveryMetrics?.windows.find((window) => window.state === 'active') || null;
   const currentDeliveryDate = currentDeliveryWindow
     ? limaDateKey(parseDate(currentDeliveryWindow.to) || now)
@@ -1101,7 +1123,7 @@ export default function Pedidos() {
     const previewWindow = window.open('', '_blank');
     if (previewWindow) {
       previewWindow.opener = null;
-      renderShippingLabelsLoading(previewWindow, printableOrders.length);
+      renderShippingLabelsLoading(previewWindow, countLabels(printableOrders));
     }
     setBatchLabelsLoading(true);
     setPrintingColumn(column);
@@ -1196,8 +1218,8 @@ export default function Pedidos() {
       <section>
         <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <div className="flex items-baseline gap-2"><h2 className="text-sm font-semibold text-foreground">Prioridad global de entrega</h2><span className="text-xs text-muted-foreground">{openOrders.length} sin enviar</span></div>
-            <p className="mt-0.5 text-xs text-muted-foreground">Incluye todos los pedidos pendientes y listos para enviar.</p>
+            <div className="flex items-baseline gap-2"><h2 className="text-sm font-semibold text-foreground">Prioridad global de entrega</h2><span className="text-xs text-muted-foreground">{openLabelCount} sin enviar</span></div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Incluye todas las etiquetas pendientes y listas para enviar.</p>
           </div>
           <span className="text-[11px] text-muted-foreground/80">{data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronizar'}</span>
         </div>
@@ -1226,7 +1248,7 @@ export default function Pedidos() {
               className="mt-0.5"
             />
             <div>
-              <p className="text-sm font-semibold">{selectedLabelOrders.length} de {labelOrders.length} etiquetas seleccionadas</p>
+              <p className="text-sm font-semibold">{selectedLabelCount} de {availableLabelCount} etiquetas seleccionadas</p>
               <p className="text-xs text-sky-800">Se colocarán 4 por hoja A4; las etiquetas adicionales pasarán a la siguiente hoja.</p>
             </div>
           </div>
@@ -1241,8 +1263,8 @@ export default function Pedidos() {
               {batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />}
               {batchLabelsLoading
                 ? 'Preparando PDF…'
-                : selectedLabelOrders.length
-                  ? `Imprimir ${selectedLabelOrders.length} en A4`
+                : selectedLabelCount
+                  ? `Imprimir ${selectedLabelCount} en A4`
                   : 'Imprimir en A4'}
             </Button>
           </div>
@@ -1269,7 +1291,7 @@ export default function Pedidos() {
             {flowTabs.map((tab) => {
               const active = flowStage === tab.value;
               const orders = flowGroups[tab.value];
-              const count = tab.value === 'shipped' ? shippedTotal : orders.length;
+              const count = tab.value === 'shipped' ? shippedTotal : countLabels(orders);
               return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => setFlowStage(tab.value)} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
             })}
           </div>
@@ -1287,8 +1309,8 @@ export default function Pedidos() {
               <div><p className="text-sm font-medium">{activeFlow.label}</p><p className="text-xs text-muted-foreground">{activeFlow.description}</p></div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">Mostrando {filteredCountLabel}</span>
-                {flowStage === 'ready' && filteredFlowOrders.length > 0 && <Button size="sm" onClick={() => void printShippingLabels(filteredFlowOrders)} disabled={batchLabelsLoading}>{batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir etiquetas</Button>}
-                {flowStage === 'pending' && canDispatch && filteredFlowOrders.some(canMarkReadyToShip) && <Button size="sm" onClick={() => setBulkReadySelection({ columnKey: 'pending', columnTitle: activeFlow.label, orders: filteredFlowOrders.filter(canMarkReadyToShip) })}><PackageCheck /> Marcar todos listos para enviar</Button>}
+                {flowStage === 'ready' && flowOrders.length > 0 && <Button size="sm" onClick={() => void printShippingLabels(flowOrders)} disabled={batchLabelsLoading}>{batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir etiquetas</Button>}
+                {flowStage === 'pending' && canDispatch && flowOrders.some(canMarkReadyToShip) && <Button size="sm" onClick={() => setBulkReadySelection({ columnKey: 'pending', columnTitle: activeFlow.label, orders: flowOrders.filter(canMarkReadyToShip) })}><PackageCheck /> Marcar todos listos para enviar</Button>}
               </div>
             </div>
           </div>
@@ -1301,7 +1323,7 @@ export default function Pedidos() {
                   const urgency = urgencyFor(order, now);
                   const urgencyClass = urgency === 'overdue' ? 'bg-rose-100 text-rose-700' : urgency === 'today' ? 'bg-amber-100 text-amber-700' : urgency === 'tomorrow' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700';
                   return (
-                    <tr key={order.id} className="border-t border-border/70 transition-colors hover:bg-muted/30">
+                    <tr key={`${order.id}:${order.sameOrderIndex}`} className="border-t border-border/70 transition-colors hover:bg-muted/30">
                       <td className="p-3 align-middle">
                         <div className="flex flex-wrap items-center gap-2">
                           <button type="button" onClick={() => openOrder(order)} className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline">{order.orderNumber}</button>

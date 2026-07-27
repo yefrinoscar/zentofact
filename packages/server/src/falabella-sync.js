@@ -44,6 +44,15 @@ export function effectiveFalabellaItemStatus(items) {
   return [...new Set(statuses)].join('|');
 }
 
+export function falabellaLabelCount(items) {
+  const packageIds = (Array.isArray(items) ? items : [])
+    .map((item) => String(
+      item?.PackageId ?? item?.PackageID ?? item?.packageId ?? item?.packageID ?? '',
+    ).trim())
+    .filter(Boolean);
+  return Math.max(1, new Set(packageIds).size);
+}
+
 export function normalizeFalabellaOrder(order) {
   const raw = order?.Order && typeof order.Order === 'object' ? order.Order : order;
   const orderNumber = String(raw?.OrderNumber || '').trim();
@@ -224,7 +233,11 @@ function extractOrderItems(document) {
 async function reconcileActionableOrderStatuses(db, companyId, client) {
   if (typeof client?.call !== 'function') return { checked: 0, updated: 0, failed: 0 };
   const candidates = await db.query(
-    `select order_id, order_number, status, falabella_created_at, falabella_updated_at
+    `select order_id, order_number, status, falabella_created_at, falabella_updated_at,
+       case when raw_data->>'LabelCount' ~ '^[0-9]+$'
+         then greatest((raw_data->>'LabelCount')::int, 1)
+         else 1
+       end as label_count
      from falabella_orders
      where company_id=$1
        and lower(coalesce(status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)'
@@ -248,6 +261,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
       const items = extractOrderItems(response.data);
       const status = effectiveFalabellaItemStatus(items);
       if (!status) continue;
+      const labelCount = falabellaLabelCount(items);
       const updatedAt = items
         .map((item) => validDate(item?.UpdatedAt ?? item?.updatedAt))
         .filter(Boolean)
@@ -261,15 +275,18 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
         pendingAt: order.falabella_created_at,
         providerUpdatedAt: updatedAt,
       });
-      if (status === order.status) continue;
+      if (status === order.status && labelCount === Number(order.label_count || 1)) continue;
       await db.query(
         `update falabella_orders
          set status=$3,
-             raw_data=jsonb_set(coalesce(raw_data, '{}'::jsonb), '{Statuses}', to_jsonb($3::text), true),
+             raw_data=jsonb_set(
+               jsonb_set(coalesce(raw_data, '{}'::jsonb), '{Statuses}', to_jsonb($3::text), true),
+               '{LabelCount}', to_jsonb($5::int), true
+             ),
              falabella_updated_at=coalesce($4, falabella_updated_at),
              last_seen_at=now(), synchronized_at=now()
          where company_id=$1 and order_id=$2`,
-        [companyId, order.order_id, status, updatedAt],
+        [companyId, order.order_id, status, updatedAt, labelCount],
       );
       updated += 1;
     } catch {

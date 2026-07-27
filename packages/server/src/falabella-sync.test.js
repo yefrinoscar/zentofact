@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   effectiveFalabellaItemStatus,
+  falabellaLabelCount,
   fetchFalabellaPages,
   listLocalFalabellaOrders,
   normalizeFalabellaOrder,
@@ -30,6 +31,15 @@ test('prioriza el estado operativo actual de los items de una orden', () => {
   assert.equal(effectiveFalabellaItemStatus([{ Status: 'delivered' }, { Status: 'shipped' }]), 'shipped');
   assert.equal(effectiveFalabellaItemStatus([{ Status: 'shipped' }, { Status: 'ready_to_ship' }]), 'ready_to_ship');
   assert.equal(effectiveFalabellaItemStatus([{ Status: 'ready_to_ship' }, { Status: 'pending' }]), 'pending');
+});
+
+test('cuenta etiquetas por paquete y no por cantidad de productos', () => {
+  assert.equal(falabellaLabelCount([
+    { OrderItemId: '1', PackageId: 'A' },
+    { OrderItemId: '2', PackageId: 'A' },
+    { OrderItemId: '3', PackageId: 'B' },
+  ]), 2);
+  assert.equal(falabellaLabelCount([{ OrderItemId: '1' }, { OrderItemId: '2' }]), 1);
 });
 
 test('normaliza una orden y conserva el JSON original', () => {
