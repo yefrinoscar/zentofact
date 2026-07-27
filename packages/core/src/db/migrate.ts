@@ -402,8 +402,7 @@ const DDL = `
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (company_id, order_id),
-    UNIQUE (company_id, order_number)
+    UNIQUE (company_id, order_id)
   );
   CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_created
     ON falabella_orders(company_id, falabella_created_at DESC);
@@ -411,6 +410,8 @@ const DDL = `
     ON falabella_orders(company_id, falabella_updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_status
     ON falabella_orders(company_id, status);
+  CREATE INDEX IF NOT EXISTS idx_falabella_orders_company_number
+    ON falabella_orders(company_id, order_number);
 
   CREATE TABLE IF NOT EXISTS falabella_order_lifecycle (
     id BIGSERIAL PRIMARY KEY,
@@ -462,6 +463,23 @@ const DDL = `
     sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conrelid = 'falabella_orders'::regclass
+        AND conname = 'falabella_orders_company_id_order_number_key'
+    ) THEN
+      ALTER TABLE falabella_orders
+        DROP CONSTRAINT falabella_orders_company_id_order_number_key;
+      UPDATE falabella_sync_state
+      SET cursor_updated_at = LEAST(
+        COALESCE(cursor_updated_at, NOW()),
+        NOW() - INTERVAL '31 days'
+      );
+    END IF;
+  END $$;
   DO $$
   DECLARE sync_interval_default TEXT;
   BEGIN

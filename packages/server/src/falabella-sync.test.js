@@ -151,6 +151,10 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   assert.equal(result.status, 'success');
   assert.equal(result.received, 1);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
+  assert.match(
+    db.queries.find((query) => query.sql.startsWith('insert into falabella_orders')).sql,
+    /on conflict \(company_id, order_id\)/,
+  );
   const lifecycle = db.queries.find((query) => query.sql.startsWith('insert into falabella_order_lifecycle'));
   assert.equal(lifecycle.params[3], 'pending');
   assert.equal(lifecycle.params[4], '2026-07-03T10:00:00.000Z');

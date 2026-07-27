@@ -160,8 +160,8 @@ async function upsertOrders(db, companyId, orders) {
          status, invoice_required, grand_total, currency, raw_data,
          first_seen_at, last_seen_at, synchronized_at
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),now(),now())
-       on conflict (company_id, order_number) do update set
-         order_id=excluded.order_id,
+       on conflict (company_id, order_id) do update set
+         order_number=excluded.order_number,
          falabella_created_at=coalesce(excluded.falabella_created_at, falabella_orders.falabella_created_at),
          falabella_updated_at=coalesce(excluded.falabella_updated_at, falabella_orders.falabella_updated_at),
           status=case

@@ -54,6 +54,7 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         promised_shipping_time: '2026-07-15 21:00:00', shipping_type: 'Dropshipping',
         falabella_status: 'ready_to_ship', invoice_required: false, grand_total: '149.90', currency: 'PEN',
         customer_name: 'Ana Pérez', items_count: '2', stage: 'por_emitir', document_id: null, total_count: 4, shipped_count: 3,
+        same_order_count: 4, same_order_index: 2,
       }] };
       if (compact.includes('min(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
       if (compact.includes('generate_series')) return { rows: [{
@@ -97,6 +98,8 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(result.orders[0].orderNumber, 'ORD-900');
   assert.equal(result.orders[0].stage, 'por_emitir');
   assert.equal(result.orders[0].total, 149.9);
+  assert.equal(result.orders[0].sameOrderCount, 4);
+  assert.equal(result.orders[0].sameOrderIndex, 2);
   assert.equal(result.orders[0].promisedShippingAt, '2026-07-15T21:00:00.000Z');
   assert.equal(result.summary.open, 3);
   assert.equal(result.summary.byCompany[0].companyName, 'Tienda Centro');
@@ -127,6 +130,7 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
+  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /partition by company_id, order_number/);
   assert.match(calls.find((call) => call.sql.includes('shipped_at_utc >=')).sql, /shipped_at \+ interval '5 hours'/);
   assert.match(calls.find((call) => call.sql.includes('generate_series')).sql, /time '17:00'/);
   assert.match(calls.find((call) => call.sql.includes('generate_series')).sql, /cross join shift_windows/);

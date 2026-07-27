@@ -59,6 +59,8 @@ type InboxOrder = {
   currency: string;
   customerName: string;
   itemsCount: number | null;
+  sameOrderCount: number;
+  sameOrderIndex: number;
 };
 
 type InboxResponse = {
@@ -688,6 +690,11 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
           <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
             {order.orderNumber}
           </button>
+          {order.sameOrderCount > 1 && (
+            <Badge variant="outline" className="mt-1 w-fit rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
+              Mismo pedido · etiqueta {order.sameOrderIndex}/{order.sameOrderCount}
+            </Badge>
+          )}
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.companyName}</p>
         </div>
         <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatMoney(order.total, order.currency)}</p>
@@ -870,7 +877,7 @@ export default function Pedidos() {
   ];
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
   const filteredFlowOrders = flowOrders;
-  const filteredCountLabel = `${flowOrders.length} pedido${flowOrders.length === 1 ? '' : 's'}`;
+  const filteredCountLabel = `${flowOrders.length} etiqueta${flowOrders.length === 1 ? '' : 's'}`;
 
   const deadlineGroups = useMemo(() => {
     const groups: Record<UrgencyKey, InboxOrder[]> = { today: [], tomorrow: [], later: [], overdue: [] };
@@ -1295,7 +1302,16 @@ export default function Pedidos() {
                   const urgencyClass = urgency === 'overdue' ? 'bg-rose-100 text-rose-700' : urgency === 'today' ? 'bg-amber-100 text-amber-700' : urgency === 'tomorrow' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-700';
                   return (
                     <tr key={order.id} className="border-t border-border/70 transition-colors hover:bg-muted/30">
-                      <td className="p-3 align-middle"><button type="button" onClick={() => openOrder(order)} className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline">{order.orderNumber}</button></td>
+                      <td className="p-3 align-middle">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" onClick={() => openOrder(order)} className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline">{order.orderNumber}</button>
+                          {order.sameOrderCount > 1 && (
+                            <Badge variant="outline" className="rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
+                              Mismo pedido · etiqueta {order.sameOrderIndex}/{order.sameOrderCount}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
                       <td className="p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
                       <td className="p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
                       <td className="max-w-52 truncate p-3 align-middle text-xs text-muted-foreground">{order.companyName}</td>

@@ -184,6 +184,8 @@ function normalizeOrder(row) {
     currency: row.currency || 'PEN',
     customerName: row.customer_name || '',
     itemsCount: row.items_count === null ? null : Number(row.items_count),
+    sameOrderCount: Number(row.same_order_count || 1),
+    sameOrderIndex: Number(row.same_order_index || 1),
     stage: row.stage,
     document: row.document_id ? {
       id: Number(row.document_id),
@@ -207,7 +209,12 @@ export async function listOrdersInbox(input = {}, db) {
       `${BASE_CTE}
        select *,
          count(*) over()::int as total_count,
-         count(*) filter (where lower(falabella_status) ~ '(^|\\|)shipped(\\||$)') over()::int as shipped_count
+         count(*) filter (where lower(falabella_status) ~ '(^|\\|)shipped(\\||$)') over()::int as shipped_count,
+         count(*) over(partition by company_id, order_number)::int as same_order_count,
+         row_number() over(
+           partition by company_id, order_number
+           order by falabella_created_at, id
+         )::int as same_order_index
        from base_orders
        where (
          $4::text = 'all'
