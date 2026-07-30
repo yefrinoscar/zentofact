@@ -53,7 +53,12 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
         falabella_updated_at: '2026-07-14T10:02:00Z', first_seen_at: '2026-07-14T10:03:00Z',
         promised_shipping_time: '2026-07-15 21:00:00', shipping_type: 'Dropshipping',
         falabella_status: 'ready_to_ship', invoice_required: false, grand_total: '149.90', currency: 'PEN',
-        customer_name: 'Ana Pérez', items_count: '2', label_count: 4, stage: 'por_emitir', document_id: null, total_count: 4, shipped_count: 3,
+        customer_name: 'Ana Pérez', items_count: '2', label_count: 4,
+        label_prints: [{
+          labelIndex: 2, printCount: 2,
+          firstPrintedAt: '2026-07-14T11:00:00Z', lastPrintedAt: '2026-07-14T11:30:00Z',
+        }],
+        stage: 'por_emitir', document_id: null, total_count: 4, shipped_count: 3,
         same_order_count: 4, same_order_index: 2,
       }] };
       if (compact.includes('min(last_successful_sync_at)')) return { rows: [{ last_synced_at: '2026-07-14T10:05:00Z' }] };
@@ -99,6 +104,12 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   assert.equal(result.orders[0].stage, 'por_emitir');
   assert.equal(result.orders[0].total, 149.9);
   assert.equal(result.orders[0].labelCount, 4);
+  assert.deepEqual(result.orders[0].labelPrints, [{
+    labelIndex: 2,
+    printCount: 2,
+    firstPrintedAt: '2026-07-14T11:00:00Z',
+    lastPrintedAt: '2026-07-14T11:30:00Z',
+  }]);
   assert.equal(result.orders[0].sameOrderCount, 4);
   assert.equal(result.orders[0].sameOrderIndex, 2);
   assert.equal(result.orders[0].promisedShippingAt, '2026-07-15T21:00:00.000Z');

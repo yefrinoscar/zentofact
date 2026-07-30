@@ -11,6 +11,7 @@ import { listCreditNotes } from './credit-note-query.service';
 import { generateAcceptedBoletaPdfBase64, markBoletaFalabellaPdfUpload } from './boleta.service';
 import { recordFacturaUpload, generateAcceptedFacturaPdfBase64 } from './factura.service';
 import { areAllOrderItemsReadyToShip, groupReadyToShipPackages } from './falabella-ready-to-ship';
+import { recordFalabellaLabelPrint } from './falabella-label-print.service';
 
 async function requireCompanyWithFalabella(companyId: number) {
   const company = await getCompany(companyId);
@@ -771,12 +772,15 @@ export async function falabellaGetShippingLabel(payload: { companyId: number; or
 
   const mimeType = String(document?.MimeType || 'application/pdf').trim().toLowerCase();
   const extension = mimeType === 'application/pdf' ? 'pdf' : mimeType === 'text/html' ? 'html' : 'zpl';
+  const packageCount = Math.max(1, new Set(orderItems.map(getOrderItemPackageId).filter(Boolean)).size);
+  const prints = await recordFalabellaLabelPrint(payload.companyId, orderId, packageCount);
   return {
     ok: true,
     mimeType,
     base64,
     filename: `etiqueta-${orderId.replace(/[^a-zA-Z0-9_-]/g, '-')}.${extension}`,
     documentType: String(document?.DocumentType || 'shippingParcel'),
+    prints,
   };
 }
 

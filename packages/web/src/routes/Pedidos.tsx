@@ -40,6 +40,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '../components/ui/tooltip';
 
 type InboxOrder = {
   id: number;
@@ -60,6 +65,13 @@ type InboxOrder = {
   customerName: string;
   itemsCount: number | null;
   labelCount: number;
+  labelPrints: Array<{
+    labelIndex: number;
+    printCount: number;
+    firstPrintedAt: string | null;
+    lastPrintedAt: string | null;
+  }>;
+  labelIndex?: number;
   sameOrderCount: number;
   sameOrderIndex: number;
 };
@@ -243,6 +255,23 @@ function formatTime(value: string | null | undefined) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function labelPrintFor(order: InboxOrder) {
+  const labelIndex = order.labelIndex || 1;
+  return (order.labelPrints || []).find((print) => print.labelIndex === labelIndex) || null;
+}
+
+function labelWasPrinted(order: InboxOrder) {
+  return Number(labelPrintFor(order)?.printCount || 0) > 0;
+}
+
+function labelPrintTooltip(order: InboxOrder) {
+  if (!labelWasPrinted(order)) return 'Esta etiqueta todavía no ha sido impresa.';
+  const print = labelPrintFor(order);
+  const count = Number(print?.printCount || 0);
+  const when = print?.lastPrintedAt ? ` el ${formatDateTime(print.lastPrintedAt)}` : '';
+  return `Etiqueta impresa${when}. ${count === 1 ? 'Se imprimió 1 vez.' : `Se imprimió ${count} veces.`}`;
 }
 
 function formatMoney(value: number, currency = 'PEN') {
@@ -545,6 +574,7 @@ function expandOrdersAsLabels(orders: InboxOrder[]) {
     const labelCount = labelCountFor(order);
     return Array.from({ length: labelCount }, (_, index) => ({
       ...order,
+      labelIndex: index + 1,
       sameOrderCount: labelCount,
       sameOrderIndex: index + 1,
     }));
@@ -710,6 +740,16 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
           <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
             {order.orderNumber}
           </button>
+          {labelWasPrinted(order) && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge className="ml-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50">
+                  <CheckCircle2 className="size-3" /> Impresa
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+            </Tooltip>
+          )}
           {labelCountFor(order) > 1 && (
             <Badge variant="outline" className="mt-1 w-fit rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
               Mismo pedido · {labelCountFor(order)} etiquetas
@@ -732,17 +772,27 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
         <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
           Ver detalles <ArrowRight className="size-3" />
         </button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 px-2.5 text-xs"
-          onClick={canPrintShippingLabel(order) ? onViewLabel : onOpen}
-          disabled={labelLoading || (!canPrintShippingLabel(order) && !canDispatch)}
-          title={canPrintShippingLabel(order) ? 'Ver etiqueta de envío' : !canDispatch ? 'Tu perfil es de solo lectura' : fulfillment ? 'Revisar el flujo gestionado por Falabella' : 'Marcar pedido listo para envío'}
-        >
-          {labelLoading ? <Loader2 className="animate-spin" /> : canPrintShippingLabel(order) ? <Printer /> : <PackageCheck />}
-          {canPrintShippingLabel(order) ? 'Etiqueta' : !canDispatch ? 'Solo lectura' : fulfillment ? 'Ver flujo' : 'Listo para envío'}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={canPrintShippingLabel(order) ? onViewLabel : onOpen}
+              disabled={labelLoading || (!canPrintShippingLabel(order) && !canDispatch)}
+            >
+              {labelLoading ? <Loader2 className="animate-spin" /> : canPrintShippingLabel(order) ? <Printer /> : <PackageCheck />}
+              {canPrintShippingLabel(order)
+                ? labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'
+                : !canDispatch ? 'Solo lectura' : fulfillment ? 'Ver flujo' : 'Listo para envío'}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {canPrintShippingLabel(order)
+              ? labelPrintTooltip(order)
+              : !canDispatch ? 'Tu perfil es de solo lectura' : fulfillment ? 'Revisar el flujo gestionado por Falabella' : 'Marcar pedido listo para envío'}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </article>
   );
@@ -982,6 +1032,33 @@ export default function Pedidos() {
     setOrderActionMessage('');
   };
 
+  const markLabelsPrintedLocally = (
+    orders: InboxOrder[],
+    printedAt = new Date().toISOString(),
+    serverPrints?: InboxOrder['labelPrints'],
+  ) => {
+    const keys = new Set(orders.map(orderKey));
+    const update = (order: InboxOrder): InboxOrder => {
+      if (!keys.has(orderKey(order))) return order;
+      const prints = serverPrints || Array.from({ length: labelCountFor(order) }, (_, index) => {
+        const labelIndex = index + 1;
+        const current = (order.labelPrints || []).find((print) => print.labelIndex === labelIndex);
+        return {
+          labelIndex,
+          printCount: Number(current?.printCount || 0) + 1,
+          firstPrintedAt: current?.firstPrintedAt || printedAt,
+          lastPrintedAt: printedAt,
+        };
+      });
+      return {
+        ...order,
+        labelPrints: prints,
+      };
+    };
+    setData((current) => current ? { ...current, orders: current.orders.map(update) } : current);
+    setSelectedOrder((current) => current ? update(current) : current);
+  };
+
   const markReadyToShip = async (order: InboxOrder) => {
     if (!canDispatch || hasCompletedPreparation(order) || isFulfillmentOrder(order)) return;
     const key = `${order.companyId}:${order.orderId}`;
@@ -1082,6 +1159,11 @@ export default function Pedidos() {
         link.download = result.filename || `etiqueta-${order.orderNumber}.${mimeType === 'application/pdf' ? 'pdf' : 'zpl'}`;
         link.click();
       }
+      markLabelsPrintedLocally(
+        [order],
+        result.prints?.[0]?.lastPrintedAt || new Date().toISOString(),
+        Array.isArray(result.prints) ? result.prints : undefined,
+      );
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (nextError: any) {
       previewWindow?.close();
@@ -1143,6 +1225,7 @@ export default function Pedidos() {
         link.download = result.filename || 'etiquetas-falabella-a4.pdf';
         link.click();
       }
+      markLabelsPrintedLocally(printableOrders);
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
     } catch (nextError: any) {
       previewWindow?.close();
@@ -1332,13 +1415,33 @@ export default function Pedidos() {
                               Mismo pedido · etiqueta {order.sameOrderIndex}/{order.sameOrderCount}
                             </Badge>
                           )}
+                          {labelWasPrinted(order) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge className="rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50">
+                                  <CheckCircle2 className="size-3" /> Impresa
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
                       </td>
                       <td className="p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
                       <td className="p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
                       <td className="max-w-52 truncate p-3 align-middle text-xs text-muted-foreground">{order.companyName}</td>
                       <td className="p-3 align-middle">
-                        {flowStage === 'shipped' ? <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button> : ready ? <Button size="sm" onClick={() => void viewShippingLabel(order)} disabled={labelLoadingKey === orderKey(order)}>{labelLoadingKey === orderKey(order) ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir</Button> : canMarkReadyToShip(order) && canDispatch ? <Button size="sm" onClick={() => { openOrder(order); setConfirmReady(true); }}><PackageCheck /> Marcar listo para enviar</Button> : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
+                        {flowStage === 'shipped' ? <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button> : ready ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" onClick={() => void viewShippingLabel(order)} disabled={labelLoadingKey === orderKey(order)}>
+                                {labelLoadingKey === orderKey(order) ? <Loader2 className="animate-spin" /> : <Printer />}
+                                {labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+                          </Tooltip>
+                        ) : canMarkReadyToShip(order) && canDispatch ? <Button size="sm" onClick={() => { openOrder(order); setConfirmReady(true); }}><PackageCheck /> Marcar listo para enviar</Button> : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
                       </td>
                     </tr>
                   );
@@ -1532,13 +1635,18 @@ export default function Pedidos() {
               <DialogFooter>
                 <Button variant="outline" onClick={closeOrder}>Cerrar</Button>
                 {canPrintShippingLabel(selectedOrder) ? (
-                  <Button
-                    onClick={() => void viewShippingLabel(selectedOrder)}
-                    disabled={labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
-                  >
-                    {labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
-                    Ver etiqueta
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={() => void viewShippingLabel(selectedOrder)}
+                        disabled={labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
+                      >
+                        {labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
+                        {labelWasPrinted(selectedOrder) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{labelPrintTooltip(selectedOrder)}</TooltipContent>
+                  </Tooltip>
                 ) : !selectedShipped && !isFulfillmentOrder(selectedOrder) && canDispatch ? (
                   <Button onClick={() => { setOrderActionError(''); setConfirmReady(true); }}>
                     <PackageCheck /> Marcar listo para envío

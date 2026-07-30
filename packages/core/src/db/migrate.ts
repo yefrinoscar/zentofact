@@ -610,6 +610,25 @@ const DDL = `
   FROM falabella_orders
   ON CONFLICT (company_id, order_id) DO NOTHING;
 
+  CREATE TABLE IF NOT EXISTS falabella_label_prints (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    order_id TEXT NOT NULL,
+    order_number TEXT NOT NULL,
+    label_index INTEGER NOT NULL DEFAULT 1 CHECK (label_index > 0),
+    print_count INTEGER NOT NULL DEFAULT 1 CHECK (print_count > 0),
+    first_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  ALTER TABLE falabella_label_prints
+    ADD COLUMN IF NOT EXISTS label_index INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE falabella_label_prints
+    DROP CONSTRAINT IF EXISTS falabella_label_prints_company_id_order_id_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_falabella_label_prints_order_label
+    ON falabella_label_prints(company_id, order_id, label_index);
+  CREATE INDEX IF NOT EXISTS idx_falabella_label_prints_company_last
+    ON falabella_label_prints(company_id, last_printed_at DESC);
+
   CREATE TABLE IF NOT EXISTS falabella_sync_state (
     company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,

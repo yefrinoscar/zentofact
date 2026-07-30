@@ -124,6 +124,7 @@ const BASE_CTE = `
         then greatest((fo.raw_data->>'LabelCount')::int, 1)
         else 1
       end as label_count,
+      coalesce(label_print.prints, '[]'::jsonb) as label_prints,
       doc.document_id,
       doc.document_kind,
       doc.document_number,
@@ -139,6 +140,16 @@ const BASE_CTE = `
       end as stage
     from falabella_orders fo
     join companies c on c.id = fo.company_id and c.activo is not false
+    left join lateral (
+      select jsonb_agg(jsonb_build_object(
+        'labelIndex', prints.label_index,
+        'printCount', prints.print_count,
+        'firstPrintedAt', prints.first_printed_at,
+        'lastPrintedAt', prints.last_printed_at
+      ) order by prints.label_index) as prints
+      from falabella_label_prints prints
+      where prints.company_id = fo.company_id and prints.order_id = fo.order_id
+    ) label_print on true
     left join lateral (
       select document_id, document_kind, document_number, document_status, document_date
       from (
@@ -189,6 +200,12 @@ function normalizeOrder(row) {
     customerName: row.customer_name || '',
     itemsCount: row.items_count === null ? null : Number(row.items_count),
     labelCount: Number(row.label_count || 1),
+    labelPrints: Array.isArray(row.label_prints) ? row.label_prints.map((entry) => ({
+      labelIndex: Number(entry.labelIndex || 1),
+      printCount: Number(entry.printCount || 0),
+      firstPrintedAt: entry.firstPrintedAt || null,
+      lastPrintedAt: entry.lastPrintedAt || null,
+    })) : [],
     sameOrderCount: Number(row.same_order_count || 1),
     sameOrderIndex: Number(row.same_order_index || 1),
     stage: row.stage,
