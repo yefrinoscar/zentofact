@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "get-orders": "node ./dist/cli/get-orders.js"
+    "get-orders": "node ./dist/cli/get-orders.js",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

@@ -140,14 +140,13 @@ export class FalabellaApiClient {
     };
     parameters.Signature = signParameters(parameters, this.options.apiKey);
 
-    const url = this.baseUrl.replace(/\/$/, '');
+    const url = `${this.baseUrl.replace(/\/$/, '')}?${canonicalizeParameters(parameters)}`;
     const response = await this.fetchImpl(url, {
       method: 'POST',
       headers: {
         Accept: format === 'JSON' ? 'application/json' : 'application/xml',
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: canonicalizeParameters(parameters),
     });
     const rawText = await response.text();
     const contentType = response.headers.get('content-type') || '';
