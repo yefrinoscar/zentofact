@@ -702,7 +702,7 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
   };
 }
 
-export async function falabellaGetShippingLabel(payload: { companyId: number; orderId: string | number }) {
+export async function falabellaGetShippingLabel(payload: { companyId: number; orderId: string | number; recordPrint?: boolean }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { ok: false, error: found.error };
   const orderId = String(payload.orderId || '').trim();
@@ -773,7 +773,9 @@ export async function falabellaGetShippingLabel(payload: { companyId: number; or
   const mimeType = String(document?.MimeType || 'application/pdf').trim().toLowerCase();
   const extension = mimeType === 'application/pdf' ? 'pdf' : mimeType === 'text/html' ? 'html' : 'zpl';
   const packageCount = Math.max(1, new Set(orderItems.map(getOrderItemPackageId).filter(Boolean)).size);
-  const prints = await recordFalabellaLabelPrint(payload.companyId, orderId, packageCount);
+  const prints = payload.recordPrint === false
+    ? []
+    : await recordFalabellaLabelPrint(payload.companyId, orderId, packageCount);
   return {
     ok: true,
     mimeType,

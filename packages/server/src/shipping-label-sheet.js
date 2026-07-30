@@ -40,7 +40,7 @@ function withTimeout(promise, message) {
   ]).finally(() => clearTimeout(timeout));
 }
 
-export async function composeA4ShippingLabelSheet(pdfBuffers) {
+export async function composeA4ShippingLabelSheet(pdfBuffers, selectedLabelIndexes = []) {
   if (!Array.isArray(pdfBuffers) || pdfBuffers.length === 0) {
     throw new Error('Selecciona al menos una etiqueta para imprimir.');
   }
@@ -50,9 +50,14 @@ export async function composeA4ShippingLabelSheet(pdfBuffers) {
   const cellHeight = (A4_HEIGHT - PAGE_MARGIN * 2) / 2;
 
   let outputIndex = 0;
-  for (const pdfBuffer of pdfBuffers) {
+  for (let sourceIndex = 0; sourceIndex < pdfBuffers.length; sourceIndex += 1) {
+    const pdfBuffer = pdfBuffers[sourceIndex];
     const source = await PDFDocument.load(pdfBuffer);
-    const labels = await Promise.all(source.getPages().map((page) => (
+    const selected = selectedLabelIndexes[sourceIndex];
+    const pages = Array.isArray(selected)
+      ? selected.map((labelIndex) => source.getPage(labelIndex - 1))
+      : source.getPages();
+    const labels = await Promise.all(pages.map((page) => (
       output.embedPage(page, shippingLabelCropBox(page))
     )));
 
@@ -123,7 +128,18 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel) {
     const key = `${companyId}:${orderId}`;
     if (!seen.has(key)) {
       seen.add(key);
-      uniqueOrders.push({ companyId, orderId, orderNumber });
+      const labelIndex = Number(value?.labelIndex);
+      uniqueOrders.push({
+        companyId,
+        orderId,
+        orderNumber,
+        labelIndexes: Number.isInteger(labelIndex) && labelIndex > 0 ? new Set([labelIndex]) : null,
+      });
+    } else {
+      const order = uniqueOrders.find((entry) => `${entry.companyId}:${entry.orderId}` === key);
+      const labelIndex = Number(value?.labelIndex);
+      if (!Number.isInteger(labelIndex) || labelIndex <= 0) order.labelIndexes = null;
+      else if (order.labelIndexes) order.labelIndexes.add(labelIndex);
     }
   }
 
@@ -157,10 +173,27 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel) {
     }
   }));
 
-  const pdf = await composeA4ShippingLabelSheet(labels);
-  const labelCount = (await Promise.all(labels.map(async (label) => (
+  const pageCounts = await Promise.all(labels.map(async (label) => (
     await PDFDocument.load(label)
-  ).getPageCount()))).reduce((total, count) => total + count, 0);
+  ).getPageCount()));
+  const printedLabels = uniqueOrders.map((order, index) => {
+    const labelIndexes = order.labelIndexes
+      ? [...order.labelIndexes].sort((left, right) => left - right)
+      : Array.from({ length: pageCounts[index] }, (_, labelIndex) => labelIndex + 1);
+    const invalidIndex = labelIndexes.find((labelIndex) => labelIndex > pageCounts[index]);
+    if (invalidIndex) {
+      throw new Error(`La etiqueta ${invalidIndex} de ${order.orderNumber} no existe en el documento de Falabella.`);
+    }
+    return {
+      companyId: order.companyId,
+      orderId: order.orderId,
+      orderNumber: order.orderNumber,
+      labelIndexes,
+    };
+  });
+  const selectedIndexes = printedLabels.map((entry) => entry.labelIndexes);
+  const pdf = await composeA4ShippingLabelSheet(labels, selectedIndexes);
+  const labelCount = selectedIndexes.reduce((total, indexes) => total + indexes.length, 0);
   const pageCount = (await PDFDocument.load(pdf)).getPageCount();
   return {
     ok: true,
@@ -170,5 +203,6 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel) {
     orderCount: uniqueOrders.length,
     labelCount,
     pageCount,
+    printedLabels,
   };
 }

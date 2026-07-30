@@ -490,10 +490,23 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
     }
     const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
       orders,
-      ({ companyId, orderId }) => core.falabellaGetShippingLabel({ companyId, orderId }),
+      ({ companyId, orderId }) => core.falabellaGetShippingLabel({
+        companyId,
+        orderId,
+        recordPrint: false,
+      }),
     );
+    const prints = await Promise.all(result.printedLabels.map(async (entry) => ({
+      companyId: entry.companyId,
+      orderId: entry.orderId,
+      prints: await core.recordFalabellaLabelPrintIndexes(
+        entry.companyId,
+        entry.orderId,
+        entry.labelIndexes,
+      ),
+    })));
     c.header('Cache-Control', 'private, no-store');
-    return ok(c, result);
+    return ok(c, { ...result, prints });
   } catch (e) {
     const providerStatus = Number(e?.providerStatus || 0);
     const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : 400;

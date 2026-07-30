@@ -38,6 +38,42 @@ test('conserva todas las páginas cuando Falabella devuelve un PDF multipágina'
   assert.equal((await PDFDocument.load(result)).getPageCount(), 2);
 });
 
+test('incluye únicamente las etiquetas seleccionadas de un pedido multipágina', async () => {
+  const threeLabels = await sampleLabel(200, 320, 3);
+  const result = await buildA4ShippingLabelSheet([
+    { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 2 },
+  ], async () => ({
+    ok: true,
+    mimeType: 'application/pdf',
+    base64: Buffer.from(threeLabels).toString('base64'),
+  }));
+
+  assert.equal(result.labelCount, 1);
+  assert.deepEqual(result.printedLabels, [{
+    companyId: 2,
+    orderId: '10',
+    orderNumber: 'ORD-10',
+    labelIndexes: [2],
+  }]);
+});
+
+test('combina varios índices del mismo pedido sin duplicarlos', async () => {
+  const threeLabels = await sampleLabel(200, 320, 3);
+  const result = await buildA4ShippingLabelSheet([
+    { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 3 },
+    { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 1 },
+    { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 3 },
+  ], async () => ({
+    ok: true,
+    mimeType: 'application/pdf',
+    base64: Buffer.from(threeLabels).toString('base64'),
+  }));
+
+  assert.equal(result.orderCount, 1);
+  assert.equal(result.labelCount, 2);
+  assert.deepEqual(result.printedLabels[0].labelIndexes, [1, 3]);
+});
+
 test('recorta el cuadrante superior izquierdo de la hoja completa de Falabella', async () => {
   const source = await PDFDocument.create();
   const page = source.addPage([A4_WIDTH, A4_HEIGHT]);

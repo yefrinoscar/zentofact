@@ -147,6 +147,7 @@ export {
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
   falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook,
 } from './services/falabella.service';
+export { recordFalabellaLabelPrintIndexes } from './services/falabella-label-print.service';
 
 // ── Utilitarios ──
 

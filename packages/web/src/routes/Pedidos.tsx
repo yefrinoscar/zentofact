@@ -561,6 +561,10 @@ function orderKey(order: InboxOrder) {
   return `${order.companyId}:${order.orderId}`;
 }
 
+function labelKey(order: InboxOrder) {
+  return `${orderKey(order)}:${order.labelIndex || 1}`;
+}
+
 function labelCountFor(order: InboxOrder) {
   return Math.max(1, Number(order.labelCount) || 1);
 }
@@ -740,16 +744,6 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
           <button type="button" onClick={onOpen} className="font-mono text-sm font-semibold text-foreground hover:underline">
             {order.orderNumber}
           </button>
-          {labelWasPrinted(order) && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge className="ml-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50">
-                  <CheckCircle2 className="size-3" /> Impresa
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
-            </Tooltip>
-          )}
           {labelCountFor(order) > 1 && (
             <Badge variant="outline" className="mt-1 w-fit rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
               Mismo pedido · {labelCountFor(order)} etiquetas
@@ -772,27 +766,32 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
         <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
           Ver detalles <ArrowRight className="size-3" />
         </button>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2.5 text-xs"
-              onClick={canPrintShippingLabel(order) ? onViewLabel : onOpen}
-              disabled={labelLoading || (!canPrintShippingLabel(order) && !canDispatch)}
-            >
-              {labelLoading ? <Loader2 className="animate-spin" /> : canPrintShippingLabel(order) ? <Printer /> : <PackageCheck />}
+        <div className="flex flex-col items-end gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={`h-7 px-2.5 text-xs ${labelWasPrinted(order) ? 'opacity-60 hover:opacity-85' : ''}`}
+                onClick={canPrintShippingLabel(order) ? onViewLabel : onOpen}
+                disabled={labelLoading || (!canPrintShippingLabel(order) && !canDispatch)}
+              >
+                {labelLoading ? <Loader2 className="animate-spin" /> : canPrintShippingLabel(order) ? <Printer /> : <PackageCheck />}
+                {canPrintShippingLabel(order)
+                  ? labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'
+                  : !canDispatch ? 'Solo lectura' : fulfillment ? 'Ver flujo' : 'Listo para envío'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
               {canPrintShippingLabel(order)
-                ? labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'
-                : !canDispatch ? 'Solo lectura' : fulfillment ? 'Ver flujo' : 'Listo para envío'}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {canPrintShippingLabel(order)
-              ? labelPrintTooltip(order)
-              : !canDispatch ? 'Tu perfil es de solo lectura' : fulfillment ? 'Revisar el flujo gestionado por Falabella' : 'Marcar pedido listo para envío'}
-          </TooltipContent>
-        </Tooltip>
+                ? labelPrintTooltip(order)
+                : !canDispatch ? 'Tu perfil es de solo lectura' : fulfillment ? 'Revisar el flujo gestionado por Falabella' : 'Marcar pedido listo para envío'}
+            </TooltipContent>
+          </Tooltip>
+          {labelWasPrinted(order) && (
+            <span className="text-[10px] font-medium text-emerald-700">Impresa</span>
+          )}
+        </div>
       </div>
     </article>
   );
@@ -819,6 +818,7 @@ export default function Pedidos() {
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
+  const [printingLabelKey, setPrintingLabelKey] = useState('');
   const [printingColumn, setPrintingColumn] = useState<BoardColumnKey | null>(null);
   const [bulkReadySelection, setBulkReadySelection] = useState<BulkReadySelection | null>(null);
   const [bulkReadyRunning, setBulkReadyRunning] = useState(false);
@@ -988,15 +988,16 @@ export default function Pedidos() {
   };
 
   const labelOrders = useMemo(
-    () => (data?.orders || []).filter(canPrintShippingLabel),
+    () => expandOrdersAsLabels((data?.orders || []).filter(canPrintShippingLabel)),
     [data?.orders],
   );
   const selectedLabelOrders = useMemo(
-    () => labelOrders.filter((order) => selectedLabelKeys.has(orderKey(order))),
+    () => labelOrders.filter((order) => selectedLabelKeys.has(labelKey(order))),
     [labelOrders, selectedLabelKeys],
   );
-  const selectedLabelCount = countLabels(selectedLabelOrders);
-  const availableLabelCount = countLabels(labelOrders);
+  const selectedLabelCount = selectedLabelOrders.length;
+  const availableLabelCount = labelOrders.length;
+  const unprintedLabelCount = labelOrders.filter((order) => !labelWasPrinted(order)).length;
   const allLabelsSelected = labelOrders.length > 0 && selectedLabelOrders.length === labelOrders.length;
 
   const shippedTotal = countLabels((data?.orders || []).filter(isShippedOrder));
@@ -1034,25 +1035,48 @@ export default function Pedidos() {
 
   const markLabelsPrintedLocally = (
     orders: InboxOrder[],
-    printedAt = new Date().toISOString(),
-    serverPrints?: InboxOrder['labelPrints'],
+    serverUpdates?: Array<{
+      companyId: number;
+      orderId: string;
+      prints: InboxOrder['labelPrints'];
+    }>,
   ) => {
-    const keys = new Set(orders.map(orderKey));
+    const printedAt = new Date().toISOString();
+    const requestedIndexes = new Map<string, Set<number>>();
+    for (const order of orders) {
+      const key = orderKey(order);
+      const indexes = requestedIndexes.get(key) || new Set<number>();
+      if (order.labelIndex) indexes.add(order.labelIndex);
+      else {
+        for (let index = 1; index <= labelCountFor(order); index += 1) indexes.add(index);
+      }
+      requestedIndexes.set(key, indexes);
+    }
+    const returnedPrints = new Map(
+      (serverUpdates || []).map((entry) => [`${entry.companyId}:${entry.orderId}`, entry.prints]),
+    );
     const update = (order: InboxOrder): InboxOrder => {
-      if (!keys.has(orderKey(order))) return order;
-      const prints = serverPrints || Array.from({ length: labelCountFor(order) }, (_, index) => {
-        const labelIndex = index + 1;
-        const current = (order.labelPrints || []).find((print) => print.labelIndex === labelIndex);
-        return {
-          labelIndex,
-          printCount: Number(current?.printCount || 0) + 1,
-          firstPrintedAt: current?.firstPrintedAt || printedAt,
-          lastPrintedAt: printedAt,
-        };
-      });
+      const key = orderKey(order);
+      const indexes = requestedIndexes.get(key);
+      if (!indexes) return order;
+      const printsByIndex = new Map((order.labelPrints || []).map((print) => [print.labelIndex, print]));
+      const returned = returnedPrints.get(key);
+      if (returned?.length) {
+        for (const print of returned) printsByIndex.set(print.labelIndex, print);
+      } else {
+        for (const labelIndex of indexes) {
+          const current = printsByIndex.get(labelIndex);
+          printsByIndex.set(labelIndex, {
+            labelIndex,
+            printCount: Number(current?.printCount || 0) + 1,
+            firstPrintedAt: current?.firstPrintedAt || printedAt,
+            lastPrintedAt: printedAt,
+          });
+        }
+      }
       return {
         ...order,
-        labelPrints: prints,
+        labelPrints: [...printsByIndex.values()].sort((left, right) => left.labelIndex - right.labelIndex),
       };
     };
     setData((current) => current ? { ...current, orders: current.orders.map(update) } : current);
@@ -1161,8 +1185,11 @@ export default function Pedidos() {
       }
       markLabelsPrintedLocally(
         [order],
-        result.prints?.[0]?.lastPrintedAt || new Date().toISOString(),
-        Array.isArray(result.prints) ? result.prints : undefined,
+        Array.isArray(result.prints) ? [{
+          companyId: order.companyId,
+          orderId: order.orderId,
+          prints: result.prints,
+        }] : undefined,
       );
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (nextError: any) {
@@ -1179,7 +1206,7 @@ export default function Pedidos() {
   };
 
   const toggleLabelSelection = (order: InboxOrder) => {
-    const key = orderKey(order);
+    const key = labelKey(order);
     setSelectedLabelKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -1191,7 +1218,18 @@ export default function Pedidos() {
   const toggleAllLabels = () => {
     setSelectedLabelKeys(allLabelsSelected
       ? new Set()
-      : new Set(labelOrders.map(orderKey)));
+      : new Set(labelOrders.map(labelKey)));
+  };
+
+  const selectOnlyUnprintedLabels = () => {
+    setSelectedLabelKeys(new Set(
+      labelOrders.filter((order) => !labelWasPrinted(order)).map(labelKey),
+    ));
+  };
+
+  const startLabelSelection = () => {
+    setLabelSelectionMode(true);
+    selectOnlyUnprintedLabels();
   };
 
   const cancelLabelSelection = () => {
@@ -1202,12 +1240,17 @@ export default function Pedidos() {
   const printShippingLabels = async (orders: InboxOrder[], column: BoardColumnKey | null = null) => {
     const printableOrders = orders.filter(canPrintShippingLabel);
     if (!printableOrders.length || batchLabelsLoading) return;
+    const printableLabelCount = printableOrders.reduce(
+      (total, order) => total + (order.labelIndex ? 1 : labelCountFor(order)),
+      0,
+    );
     const previewWindow = window.open('', '_blank');
     if (previewWindow) {
       previewWindow.opener = null;
-      renderShippingLabelsLoading(previewWindow, countLabels(printableOrders));
+      renderShippingLabelsLoading(previewWindow, printableLabelCount);
     }
     setBatchLabelsLoading(true);
+    setPrintingLabelKey(printableOrders.length === 1 ? labelKey(printableOrders[0]) : '');
     setPrintingColumn(column);
     setError('');
     try {
@@ -1215,6 +1258,7 @@ export default function Pedidos() {
         companyId: order.companyId,
         orderId: order.orderId,
         orderNumber: order.orderNumber,
+        labelIndex: order.labelIndex,
       })));
       if (!result?.base64) throw new Error('No se pudo crear el PDF de etiquetas.');
       const objectUrl = URL.createObjectURL(base64Blob(result.base64, 'application/pdf'));
@@ -1225,13 +1269,18 @@ export default function Pedidos() {
         link.download = result.filename || 'etiquetas-falabella-a4.pdf';
         link.click();
       }
-      markLabelsPrintedLocally(printableOrders);
+      markLabelsPrintedLocally(
+        printableOrders,
+        Array.isArray(result.prints) ? result.prints : undefined,
+      );
+      if (labelSelectionMode) cancelLabelSelection();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
     } catch (nextError: any) {
       previewWindow?.close();
       setError(nextError?.message || 'No se pudieron agrupar las etiquetas de Falabella.');
     } finally {
       setBatchLabelsLoading(false);
+      setPrintingLabelKey('');
       setPrintingColumn(null);
     }
   };
@@ -1332,10 +1381,17 @@ export default function Pedidos() {
             />
             <div>
               <p className="text-sm font-semibold">{selectedLabelCount} de {availableLabelCount} etiquetas seleccionadas</p>
-              <p className="text-xs text-sky-800">Se colocarán 4 por hoja A4; las etiquetas adicionales pasarán a la siguiente hoja.</p>
+              <p className="text-xs text-sky-800">
+                {unprintedLabelCount
+                  ? `${unprintedLabelCount} sin imprimir marcadas por defecto. Las impresas quedan sin marcar.`
+                  : 'Todas ya fueron impresas. Marca únicamente las que quieras reimprimir.'}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={selectOnlyUnprintedLabels} disabled={batchLabelsLoading || !unprintedLabelCount}>
+              Solo no impresas
+            </Button>
             <Button type="button" variant="outline" size="sm" onClick={toggleAllLabels} disabled={batchLabelsLoading}>
               {allLabelsSelected ? 'Quitar todas' : 'Seleccionar todas'}
             </Button>
@@ -1392,14 +1448,18 @@ export default function Pedidos() {
               <div><p className="text-sm font-medium">{activeFlow.label}</p><p className="text-xs text-muted-foreground">{activeFlow.description}</p></div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">Mostrando {filteredCountLabel}</span>
-                {flowStage === 'ready' && flowOrders.length > 0 && <Button size="sm" onClick={() => void printShippingLabels(flowOrders)} disabled={batchLabelsLoading}>{batchLabelsLoading ? <Loader2 className="animate-spin" /> : <Printer />} Imprimir etiquetas</Button>}
+                {flowStage === 'ready' && flowOrders.length > 0 && (
+                  <Button size="sm" onClick={startLabelSelection} disabled={batchLabelsLoading}>
+                    <Printer /> Imprimir etiquetas
+                  </Button>
+                )}
                 {flowStage === 'pending' && canDispatch && flowOrders.some(canMarkReadyToShip) && <Button size="sm" onClick={() => setBulkReadySelection({ columnKey: 'pending', columnTitle: activeFlow.label, orders: flowOrders.filter(canMarkReadyToShip) })}><PackageCheck /> Marcar todos listos para enviar</Button>}
               </div>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="p-3 font-medium">Orden de venta</th><th className="p-3 font-medium">Ingresó</th><th className="p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="p-3 font-medium">Tienda</th><th className="p-3 font-medium">Siguiente paso</th></tr></thead>
+              <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="p-3 font-medium"><span className="inline-flex items-center gap-2">{labelSelectionMode && flowStage === 'ready' && <Checkbox checked={allLabelsSelected ? true : selectedLabelCount > 0 ? 'indeterminate' : false} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas" />} Orden de venta</span></th><th className="p-3 font-medium">Ingresó</th><th className="p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="p-3 font-medium">Tienda</th><th className="p-3 font-medium">Siguiente paso</th></tr></thead>
               <tbody>
                 {filteredFlowOrders.map((order) => {
                   const ready = canPrintShippingLabel(order);
@@ -1409,21 +1469,18 @@ export default function Pedidos() {
                     <tr key={`${order.id}:${order.sameOrderIndex}`} className="border-t border-border/70 transition-colors hover:bg-muted/30">
                       <td className="p-3 align-middle">
                         <div className="flex flex-wrap items-center gap-2">
+                          {labelSelectionMode && ready && (
+                            <Checkbox
+                              checked={selectedLabelKeys.has(labelKey(order))}
+                              onCheckedChange={() => toggleLabelSelection(order)}
+                              aria-label={`Seleccionar etiqueta ${order.sameOrderIndex} del pedido ${order.orderNumber}`}
+                            />
+                          )}
                           <button type="button" onClick={() => openOrder(order)} className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline">{order.orderNumber}</button>
                           {order.sameOrderCount > 1 && (
                             <Badge variant="outline" className="rounded-md border-sky-200 bg-sky-50 text-[10px] font-medium text-sky-800">
                               Mismo pedido · etiqueta {order.sameOrderIndex}/{order.sameOrderCount}
                             </Badge>
-                          )}
-                          {labelWasPrinted(order) && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge className="rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50">
-                                  <CheckCircle2 className="size-3" /> Impresa
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
-                            </Tooltip>
                           )}
                         </div>
                       </td>
@@ -1432,15 +1489,31 @@ export default function Pedidos() {
                       <td className="max-w-52 truncate p-3 align-middle text-xs text-muted-foreground">{order.companyName}</td>
                       <td className="p-3 align-middle">
                         {flowStage === 'shipped' ? <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button> : ready ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button size="sm" onClick={() => void viewShippingLabel(order)} disabled={labelLoadingKey === orderKey(order)}>
-                                {labelLoadingKey === orderKey(order) ? <Loader2 className="animate-spin" /> : <Printer />}
-                                {labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
-                          </Tooltip>
+                          <div className="inline-flex flex-col items-start gap-0.5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant={labelWasPrinted(order) ? 'outline' : 'default'}
+                                  className={labelWasPrinted(order) ? 'opacity-60 hover:opacity-85' : ''}
+                                  onClick={() => void printShippingLabels([order])}
+                                  disabled={batchLabelsLoading}
+                                >
+                                  {printingLabelKey === labelKey(order) ? <Loader2 className="animate-spin" /> : <Printer />}
+                                  {labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir'}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+                            </Tooltip>
+                            {labelWasPrinted(order) && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help text-[10px] font-medium text-emerald-700">Impresa</span>
+                                </TooltipTrigger>
+                                <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
                         ) : canMarkReadyToShip(order) && canDispatch ? <Button size="sm" onClick={() => { openOrder(order); setConfirmReady(true); }}><PackageCheck /> Marcar listo para enviar</Button> : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
                       </td>
                     </tr>
@@ -1638,10 +1711,14 @@ export default function Pedidos() {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        onClick={() => void viewShippingLabel(selectedOrder)}
-                        disabled={labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
+                        variant={labelWasPrinted(selectedOrder) ? 'outline' : 'default'}
+                        className={labelWasPrinted(selectedOrder) ? 'opacity-60 hover:opacity-85' : ''}
+                        onClick={() => void (selectedOrder.labelIndex
+                          ? printShippingLabels([selectedOrder])
+                          : viewShippingLabel(selectedOrder))}
+                        disabled={batchLabelsLoading || labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
                       >
-                        {labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
+                        {printingLabelKey === labelKey(selectedOrder) || labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
                         {labelWasPrinted(selectedOrder) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}
                       </Button>
                     </TooltipTrigger>
