@@ -10,6 +10,7 @@ import { listFacturas } from './factura-query.service';
 import { listCreditNotes } from './credit-note-query.service';
 import { generateAcceptedBoletaPdfBase64, markBoletaFalabellaPdfUpload } from './boleta.service';
 import { recordFacturaUpload, generateAcceptedFacturaPdfBase64 } from './factura.service';
+import { areAllOrderItemsReadyToShip, groupReadyToShipPackages } from './falabella-ready-to-ship';
 
 async function requireCompanyWithFalabella(companyId: number) {
   const company = await getCompany(companyId);
@@ -607,35 +608,96 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
   }
 
   const rawPackageIds = orderItems.map(getOrderItemPackageId);
-  const packageIds = Array.from(new Set(rawPackageIds.filter(Boolean)));
   if (rawPackageIds.some((packageId) => !packageId)) return { ok: false, error: 'Falabella no devolvió el PackageId de todos los artículos. Sincroniza y vuelve a intentarlo.' };
-  if (packageIds.length > 1) {
-    return { ok: false, error: 'El pedido tiene más de un paquete. Debe prepararse desde Falabella Seller Center para evitar un envío parcial.' };
+  const packages = groupReadyToShipPackages(orderItems);
+  if (!packages.length || packages.reduce((total, entry) => total + entry.orderItemIds.length, 0) !== orderItemIds.length) {
+    return { ok: false, error: 'Falabella devolvió paquetes incompletos. Sincroniza el pedido y vuelve a intentarlo.' };
   }
 
-  const readyResponse = await client.setStatusToReadyToShip({ orderItemIds, packageId: packageIds[0] });
-  const readyError = getFalabellaError(readyResponse.data);
-  const hasXmlError = /<ErrorResponse\b/i.test(readyResponse.rawText);
-  if (readyError || hasXmlError || !readyResponse.ok) {
-    return {
-      ok: false,
-      status: readyResponse.status,
-      error: readyToShipErrorMessage(readyError, readyResponse.rawText),
-    };
-  }
-  const hasSuccessResponse = Boolean((readyResponse.data as any)?.SuccessResponse) || /<SuccessResponse\b/i.test(readyResponse.rawText);
-  if (!hasSuccessResponse) {
-    return { ok: false, status: readyResponse.status, error: 'Falabella no confirmó el cambio de estado del pedido.' };
+  const packageResults: Array<{
+    packageId: string;
+    orderItemIds: string[];
+    purchaseOrderId: string;
+    purchaseOrderNumber: string;
+  }> = [];
+  const currentItems = async () => {
+    try {
+      const response = await client.call({
+        action: 'GetOrderItems',
+        params: { OrderId: orderId },
+        accept: 'application/json',
+      });
+      if (!response.ok || getFalabellaError(response.data)) return [];
+      return extractOrderItems(response.data);
+    } catch {
+      return [];
+    }
+  };
+
+  for (let index = 0; index < packages.length; index += 1) {
+    const currentPackage = packages[index];
+    const readyResponse = await client.setStatusToReadyToShip({
+      orderItemIds: currentPackage.orderItemIds,
+      packageId: currentPackage.packageId,
+    });
+    const readyError = getFalabellaError(readyResponse.data);
+    const hasXmlError = /<ErrorResponse\b/i.test(readyResponse.rawText);
+    if (readyError || hasXmlError || !readyResponse.ok) {
+      const refreshedItems = await currentItems();
+      if (areAllOrderItemsReadyToShip(refreshedItems)) {
+        return {
+          ok: true,
+          alreadyReady: false,
+          orderItemIds,
+          itemCount: orderItems.length,
+          packageIds: packages.map((entry) => entry.packageId),
+          packageCount: packages.length,
+          processedPackageCount: packageResults.length,
+        };
+      }
+      const providerError = readyToShipErrorMessage(readyError, readyResponse.rawText);
+      return {
+        ok: false,
+        status: readyResponse.status,
+        error: packageResults.length
+          ? `Falabella procesó ${packageResults.length} de ${packages.length} paquetes. ${providerError}`
+          : providerError,
+      };
+    }
+    const hasSuccessResponse = Boolean((readyResponse.data as any)?.SuccessResponse) || /<SuccessResponse\b/i.test(readyResponse.rawText);
+    if (!hasSuccessResponse) {
+      return {
+        ok: false,
+        status: readyResponse.status,
+        error: packageResults.length
+          ? `Falabella procesó ${packageResults.length} de ${packages.length} paquetes, pero no confirmó el siguiente. Sincroniza el pedido.`
+          : 'Falabella no confirmó el cambio de estado del pedido.',
+      };
+    }
+
+    packageResults.push({
+      packageId: currentPackage.packageId,
+      orderItemIds: currentPackage.orderItemIds,
+      ...extractReadyToShipResult(readyResponse.data, readyResponse.rawText),
+    });
+
+    if (index < packages.length - 1) {
+      const refreshedItems = await currentItems();
+      if (areAllOrderItemsReadyToShip(refreshedItems)) break;
+    }
   }
 
-  const result = extractReadyToShipResult(readyResponse.data, readyResponse.rawText);
   return {
     ok: true,
     alreadyReady: false,
     orderItemIds,
     itemCount: orderItems.length,
-    packageId: packageIds[0],
-    ...result,
+    packageId: packages.length === 1 ? packages[0].packageId : undefined,
+    packageIds: packages.map((entry) => entry.packageId),
+    packageCount: packages.length,
+    processedPackageCount: packageResults.length,
+    purchaseOrderId: packageResults[0]?.purchaseOrderId || '',
+    purchaseOrderNumber: packageResults[0]?.purchaseOrderNumber || '',
   };
 }
 
