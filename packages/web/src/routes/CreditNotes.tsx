@@ -20,7 +20,6 @@ import {
 import { useAppStore } from '../stores/app';
 import { Loading } from '../components/Loading';
 import api from '../lib/api';
-import SharedRucCreditNotes from './SharedRucCreditNotes';
 
 type PickMode = 'cantidad' | 'monto';
 type InfoTab = 'anuladas' | 'fuera_mes' | 'resumen';
@@ -130,16 +129,6 @@ function fiscalMonthOfBoleta(boleta: any) {
   // no cambia el mes al que pertenece la boleta. Asi, una boleta emitida en abril cuyo
   // resumen salio en mayo NO debe contarse en mayo.
   return monthFromDate(boleta?.fechaEmision) || monthFromDate(boleta?.summaryFechaResumen);
-}
-
-function companyText(company: any) {
-  return [
-    company?.nombre,
-    company?.nombreComercial,
-    company?.nombre_comercial,
-    company?.razonSocial,
-    company?.razon_social,
-  ].filter(Boolean).join(' ').toUpperCase();
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -622,11 +611,6 @@ export default function CreditNotes() {
   const acceptedCount = results?.filter((r) => r.success).length ?? 0;
   const rejectedCount = results ? results.length - acceptedCount : 0;
   const unselected = eligible.filter((b) => !selected.has(b.id));
-  const activeCompany = companies.find((company) => company.id === activeId);
-  const activeCompanyText = companyText(activeCompany);
-  const isSharedRucCreditNotes =
-    activeCompany?.ruc === '20607809136' &&
-    (activeCompanyText.includes('LIMBO') || activeCompanyText.includes('HIGHER'));
   const falabellaRows = falabellaMonth?.falabella?.rows || [];
   const falabellaMissingRows = falabellaRows.filter((row: any) => !row.hasAcceptedBoleta);
   const falabellaMustIssueRows = falabellaMissingRows.filter((row: any) => !row.hasBoleta && row.shouldHaveBoleta);
@@ -671,18 +655,6 @@ export default function CreditNotes() {
     0,
     sunatBoletasNoCruzadasFalabellaMes - sunatBoletasConContextoFalabella,
   );
-
-  if (isSharedRucCreditNotes) {
-    return (
-      <SharedRucCreditNotes
-        companies={companies}
-        activeCompanyId={activeId}
-        month={month}
-        onMonthChange={setMonth}
-        onSelectCompany={handleSelectCompany}
-      />
-    );
-  }
 
   return (
     <div className="space-y-6">
