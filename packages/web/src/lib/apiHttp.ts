@@ -139,6 +139,8 @@ const apiHttp = {
   // PDFs (base64) y previews (HTML)
   generateBoletaPdf: (id: number) => req(`/boletas/${id}/pdf`),
   generateFacturaPdf: (id: number) => req(`/facturas/${id}/pdf`),
+  downloadBoletaXml: (id: number) => req(`/boletas/${id}/xml`),
+  downloadFacturaXml: (id: number) => req(`/facturas/${id}/xml`),
   previewAcceptedBoletaHtml: (id: number) => req(`/boletas/${id}/preview`),
   previewAcceptedFacturaHtml: (id: number) => req(`/facturas/${id}/preview`),
   previewCreditNoteHtml: (id: number) => req(`/credit-notes/${id}/preview`),

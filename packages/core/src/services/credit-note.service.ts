@@ -216,13 +216,17 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
     await db.update(creditNotes).set(updates).where(eq(creditNotes.id, creditNoteId));
     if (note.affectedBoletaId) {
       await db.update(boletas).set({
-        estadoSunat: note.codMotivo === '01' ? 'ANULADO' : 'ACEPTADO',
+        // La boleta conserva el resultado de su propia emisión. La anulación
+        // se conoce por la nota de crédito aceptada que la referencia.
+        estadoSunat: 'ACEPTADO',
         updatedAt: Math.floor(Date.now() / 1000),
       }).where(eq(boletas.id, note.affectedBoletaId));
     }
     if (note.affectedFacturaId) {
       await db.update(facturas).set({
-        estadoSunat: note.codMotivo === '01' ? 'ANULADO' : 'ACEPTADO',
+        // La factura conserva el resultado de su propia emisión. La anulación
+        // se representa mediante la nota de crédito aceptada asociada.
+        estadoSunat: 'ACEPTADO',
         updatedAt: Math.floor(Date.now() / 1000),
       }).where(eq(facturas.id, note.affectedFacturaId));
     }

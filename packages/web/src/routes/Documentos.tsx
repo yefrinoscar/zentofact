@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Download, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2, RefreshCw, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Download, FileCode2, Loader2, FileText, CheckCircle2, AlertCircle, Eye, RotateCcw, FileMinus2, RefreshCw, MoreHorizontal } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { useAppStore } from '../stores/app';
@@ -33,7 +33,9 @@ type Doc = {
   id: number; companyId: number; numeroCompleto: string; fechaEmision: string; orderNumber?: string | null;
   clientRazonSocial?: string; clientNumeroDocumento?: string; mtoImpVenta?: string;
   estadoSunat?: string; estado?: string; respuestaSunat?: string;
+  xmlPath?: string | null; cdrPath?: string | null;
   creditNoteId?: number | null; creditNoteNumeroCompleto?: string | null;
+  creditNoteEstadoSunat?: string | null;
 };
 
 function sunatReason(d: Doc): string {
@@ -44,20 +46,25 @@ function sunatReason(d: Doc): string {
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
 
-function EstadoBadge({ d }: { d: Doc }) {
-  const v = String(d.estadoSunat || d.estado || '').toUpperCase();
+function effectiveDocumentStatus(d: Doc, kind: DocumentKind) {
+  if (d.creditNoteId) return 'ACEPTADO';
+  return String(d.estadoSunat || d.estado || '').toUpperCase();
+}
+
+function EstadoBadge({ d, kind }: { d: Doc; kind: DocumentKind }) {
+  const v = effectiveDocumentStatus(d, kind);
   const view = v === 'ACEPTADO'
     ? { label: 'Aceptado', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300' }
     : v === 'RECHAZADO'
     ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'REEMPLAZADO'
-    ? { label: 'Reemplazado', cls: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' }
+    ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'SIN_CDR'
     ? { label: 'Sin CDR', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
   const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
-  if (!reason) return badge;
+  if (v === 'ACEPTADO' || !reason) return badge;
   return (
     <Tooltip>
       <TooltipTrigger asChild><button type="button" className="inline-flex cursor-help">{badge}</button></TooltipTrigger>
@@ -131,6 +138,10 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     setPage(1);
   }, [kind, selectedCompanyId, selectedRange.from, selectedRange.to]);
 
+  useEffect(() => {
+    setStatusFilter('all');
+  }, [kind]);
+
   const updateRange = (range: DocumentDateRange) => {
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
@@ -174,9 +185,11 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     const q = search.trim().toLowerCase();
     return rows.filter((d) => {
       if (d.fechaEmision && d.fechaEmision.slice(0, 10) < selectedRange.from) return false;
-      const status = String(d.estadoSunat || d.estado || 'PENDIENTE').toUpperCase();
-      if (kind === 'facturas' && statusFilter === 'NO_ACEPTADO' && ACCEPTED_OR_CANCELLED_STATUSES.includes(status)) return false;
-      if (kind === 'facturas' && statusFilter !== 'all' && statusFilter !== 'NO_ACEPTADO' && status !== statusFilter) return false;
+      const status = effectiveDocumentStatus(d, kind) || 'PENDIENTE';
+      if (statusFilter === 'CREDIT_NOTE' && !d.creditNoteId) return false;
+      if (statusFilter === 'RECHAZADO' && !['RECHAZADO', 'REEMPLAZADO'].includes(status)) return false;
+      if (statusFilter === 'PENDIENTE' && ['ACEPTADO', 'RECHAZADO', 'REEMPLAZADO', 'ANULADO'].includes(status)) return false;
+      if (!['all', 'CREDIT_NOTE', 'RECHAZADO', 'PENDIENTE'].includes(statusFilter) && status !== statusFilter) return false;
       if (!q) return true;
       return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
     });
@@ -197,6 +210,22 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
       link.href = `data:application/pdf;base64,${res.base64}`; link.download = `${d.numeroCompleto}.pdf`; link.click();
     } catch (e: any) { setRetryMsg(e?.message || 'No se pudo descargar el PDF.'); }
     finally { setDownloadingId(null); }
+  };
+
+  const downloadXml = async (d: Doc) => {
+    setDownloadingId(d.id);
+    try {
+      const res = kind === 'boletas' ? await api.downloadBoletaXml(d.id) : await api.downloadFacturaXml(d.id);
+      if (!res?.base64) throw new Error('El servidor respondió sin el archivo XML.');
+      const link = document.createElement('a');
+      link.href = `data:application/xml;base64,${res.base64}`;
+      link.download = `${d.numeroCompleto}.xml`;
+      link.click();
+    } catch (e: any) {
+      setRetryMsg(e?.message || 'No se pudo descargar el XML.');
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const retry = async (d: Doc) => {
@@ -349,18 +378,19 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Buscar número, orden o cliente" className="pl-9" />
         </div>
-        {kind === 'facturas' && (
-          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
-            <SelectTrigger className="w-full sm:w-[220px]" aria-label="Filtrar facturas por estado">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectItem value="all">Todos los estados</SelectItem>
-              <SelectItem value="ACEPTADO">Aceptado</SelectItem>
-              <SelectItem value="NO_ACEPTADO">No aceptado</SelectItem>
-            </SelectContent>
-          </Select>
-        )}
+        <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }}>
+          <SelectTrigger className="w-full sm:w-[220px]" aria-label={`Filtrar ${meta.plural} por estado`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="end">
+            <SelectItem value="all">Todos los estados</SelectItem>
+            <SelectItem value="ACEPTADO">Aceptado</SelectItem>
+            <SelectItem value="RECHAZADO">Rechazado</SelectItem>
+            <SelectItem value="PENDIENTE">Pendiente</SelectItem>
+            <SelectItem value="ANULADO">Anulado</SelectItem>
+            <SelectItem value="CREDIT_NOTE">Con nota de crédito</SelectItem>
+          </SelectContent>
+        </Select>
         {kind === 'facturas' && canMutate && (
           <Button variant="outline" onClick={verifyAllSunatStatuses} disabled={verifyingAll || filtered.every((d) => ACCEPTED_OR_CANCELLED_STATUSES.includes(String(d.estadoSunat || d.estado || '').toUpperCase()))}>
             {verifyingAll ? <Loader2 className="animate-spin" /> : <RefreshCw />} {verifyingAll ? 'Consultando SUNAT…' : 'Verificar en SUNAT'}
@@ -399,20 +429,22 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                   <TableHead className="w-[130px]">Fecha</TableHead>
                   <TableHead>Cliente</TableHead>
                   <TableHead className="w-[130px] text-right">Total</TableHead>
-                  <TableHead className="w-[150px]">Estado</TableHead>
+                  <TableHead className="w-[230px]">Estado</TableHead>
                   <TableHead className="w-[80px] text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {pageRows.map((d) => {
-                  const est = String(d.estadoSunat || d.estado || '').toUpperCase();
+                  const est = effectiveDocumentStatus(d, kind);
                   const canRetryDocument = canMutate && (
                     est === 'RECHAZADO'
                     || (kind === 'facturas' && (est === 'NO_ENCONTRADO' || est === 'SIN_CDR'))
                   );
                   const canVerifyDocument = kind === 'facturas' && canMutate && est !== 'ACEPTADO';
                   const hasAcceptedActions = est === 'ACEPTADO';
-                  const hasRowActions = hasAcceptedActions || canVerifyDocument || canRetryDocument;
+                  const canDownloadPdf = hasAcceptedActions || (kind === 'boletas' && est === 'ANULADO' && Boolean(d.xmlPath || d.cdrPath));
+                  const canDownloadXml = Boolean(d.xmlPath);
+                  const hasRowActions = hasAcceptedActions || canDownloadPdf || canDownloadXml || canVerifyDocument || canRetryDocument;
                   const rowBusy = previewingId === d.id || downloadingId === d.id || retryingId === d.id || verifyingId === d.id || issuingCreditNoteId === d.id;
                   return (
                     <TableRow key={d.id}>
@@ -426,7 +458,24 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                       <TableCell>
                         {retryingId === d.id || verifyingId === d.id
                           ? <Badge variant="outline" className="rounded-md border-amber-200 bg-amber-50 text-amber-700"><Loader2 className="animate-spin" /> Procesando</Badge>
-                          : <EstadoBadge d={d} />}
+                          : (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <EstadoBadge d={d} kind={kind} />
+                              {d.creditNoteId && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="outline"
+                                      className="cursor-help rounded-md border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"
+                                    >
+                                      <FileMinus2 /> NC
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Nota de crédito {d.creditNoteNumeroCompleto || 'emitida'}</TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          )}
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end">
@@ -438,14 +487,19 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="min-w-48">
                               {hasAcceptedActions && (
-                                <>
-                                  <DropdownMenuItem onClick={() => openPreview(d)} disabled={previewingId !== null}>
-                                    <Eye /> Ver comprobante
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
-                                    <Download /> Descargar PDF
-                                  </DropdownMenuItem>
-                                </>
+                                <DropdownMenuItem onClick={() => openPreview(d)} disabled={previewingId !== null}>
+                                  <Eye /> Ver comprobante
+                                </DropdownMenuItem>
+                              )}
+                              {canDownloadPdf && (
+                                <DropdownMenuItem onClick={() => downloadPdf(d)} disabled={downloadingId === d.id}>
+                                  <Download /> Descargar PDF
+                                </DropdownMenuItem>
+                              )}
+                              {canDownloadXml && (
+                                <DropdownMenuItem onClick={() => downloadXml(d)} disabled={downloadingId === d.id}>
+                                  <FileCode2 /> Descargar XML
+                                </DropdownMenuItem>
                               )}
                               {hasAcceptedActions && canIssueCreditNote && <DropdownMenuSeparator />}
                               {hasAcceptedActions && canIssueCreditNote && !d.creditNoteId && (

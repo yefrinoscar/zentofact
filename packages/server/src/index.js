@@ -280,6 +280,10 @@ app.get('/facturas/:id/pdf', async (c) => {
   try { const b64 = await core.generateAcceptedFacturaPdfBase64(Number(c.req.param('id'))); return ok(c, { base64: b64 }); }
   catch (e) { return fail(c, e); }
 });
+app.get('/facturas/:id/xml', async (c) => {
+  try { const base64 = await core.getFacturaXmlBase64(Number(c.req.param('id'))); return ok(c, { base64 }); }
+  catch (e) { return fail(c, e); }
+});
 app.get('/facturas/:id/preview', async (c) => { try { return ok(c, await core.generateAcceptedFacturaPreviewHtml(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });
 app.post('/facturas/preview', async (c) => {
   try { const { companyId, venta } = await c.req.json(); return ok(c, await core.generatePreviewFacturaHtmlForVenta(companyId, venta)); }
@@ -295,6 +299,10 @@ app.get('/branches/:id/correlatives', requireAnyPermission(['documentos', 'compa
 // ── PDFs (en memoria, base64 — sin disco) ──
 app.get('/boletas/:id/pdf', requirePermission('documentos'), async (c) => {
   try { const b64 = await core.generateAcceptedBoletaPdfBase64(Number(c.req.param('id'))); return ok(c, { base64: b64 }); }
+  catch (e) { return fail(c, e); }
+});
+app.get('/boletas/:id/xml', requirePermission('documentos'), async (c) => {
+  try { const base64 = await core.getBoletaXmlBase64(Number(c.req.param('id'))); return ok(c, { base64 }); }
   catch (e) { return fail(c, e); }
 });
 // Los generadores del core devuelven un objeto { html, numeroCompleto, ... } → JSON, no c.html.

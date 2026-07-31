@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 // Cloudflare R2 (S3-compatible) storage for legal XML/CDR archives.
 // Enabled only when all R2_* env vars are present; otherwise callers fall back
@@ -44,4 +44,11 @@ export async function putObject(key: string, body: Buffer | string, contentType:
     Body: typeof body === 'string' ? Buffer.from(body, 'utf-8') : body,
     ContentType: contentType,
   }));
+}
+
+export async function getObject(key: string): Promise<Buffer> {
+  const { client, bucket } = getClient();
+  const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!response.Body) throw new Error(`Archivo no encontrado en R2: ${key}`);
+  return Buffer.from(await response.Body.transformToByteArray());
 }

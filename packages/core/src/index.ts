@@ -118,6 +118,7 @@ export {
   sendBoletaToSunat,
   reEmitBoleta,
   generateAcceptedBoletaPdfBase64,
+  getBoletaXmlBase64,
   generateAcceptedBoletaPreviewHtml,
   generatePreviewBoletaHtmlForVenta,
 } from './services/boleta.service';
@@ -127,6 +128,7 @@ export {
   sendFacturaToSunat,
   reEmitFactura,
   generateAcceptedFacturaPdfBase64,
+  getFacturaXmlBase64,
   generateAcceptedFacturaPreviewHtml,
   generatePreviewFacturaHtmlForVenta,
 } from './services/factura.service';

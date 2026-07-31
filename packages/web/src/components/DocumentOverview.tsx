@@ -18,20 +18,20 @@ const CONFIG = {
   boletas: {
     amountKey: 'boletasAmount',
     countKey: 'boletas',
-    notAcceptedKey: 'boletasNotAccepted',
+    issueKey: 'boletasRejected',
     countLabel: 'Boletas emitidas',
-    notAcceptedLabel: 'Boletas no aceptadas',
-    amountLabel: 'Monto de ventas',
+    issueLabel: 'Boletas rechazadas',
+    amountLabel: 'Monto aceptado',
     companyLabel: 'Empresas con ventas',
-    emptyLabel: 'Sin ventas aceptadas en el periodo',
+    emptyLabel: 'Sin boletas en el periodo',
     icon: ReceiptText,
   },
   facturas: {
     amountKey: 'facturasAmount',
     countKey: 'facturas',
-    notAcceptedKey: 'facturasNotAccepted',
+    issueKey: 'facturasRejected',
     countLabel: 'Facturas emitidas',
-    notAcceptedLabel: 'Facturas no aceptadas',
+    issueLabel: 'Facturas rechazadas',
     amountLabel: 'Monto facturado',
     companyLabel: 'Empresas con facturación',
     emptyLabel: 'Sin facturas aceptadas en el periodo',
@@ -40,9 +40,9 @@ const CONFIG = {
   'credit-notes': {
     amountKey: 'creditNotesAmount',
     countKey: 'creditNotes',
-    notAcceptedKey: 'creditNotesNotAccepted',
+    issueKey: 'creditNotesNotAccepted',
     countLabel: 'Notas emitidas',
-    notAcceptedLabel: 'Notas no aceptadas',
+    issueLabel: 'Notas no aceptadas',
     amountLabel: 'Monto anulado',
     companyLabel: 'Empresas con anulaciones',
     emptyLabel: 'Sin notas aceptadas en el periodo',
@@ -73,11 +73,32 @@ export default function DocumentOverview({
     : stats?.global;
   const totalAmount = Number(selectedStats?.[config.amountKey] || 0);
   const totalCount = Number(selectedStats?.[config.countKey] || 0);
-  const notAccepted = Number(selectedStats?.[config.notAcceptedKey] || 0);
+  const issueCount = Number(selectedStats?.[config.issueKey] || 0);
+  const creditNoteCount = Number(
+    kind === 'boletas' ? selectedStats?.boletasWithCreditNote : selectedStats?.facturasWithCreditNote,
+  ) || 0;
   const relevantCompanies = (stats?.byCompany || []).filter((row) => Number(row[config.amountKey]) > 0);
-  const chartData = buildAmountChart(rows, selectedCompanyId, companies);
+  const chartData = kind === 'boletas' ? [] : buildAmountChart(rows, selectedCompanyId, companies);
   const Icon = config.icon;
   const chartTitle = selectedCompanyId ? 'Monto por estado y fecha' : 'Monto por estado y empresa';
+
+  if (kind === 'boletas' || kind === 'facturas') {
+    return (
+      <section aria-label="Resumen del periodo">
+        {loading && !stats ? (
+          <div className="h-24 animate-pulse rounded-xl bg-muted" />
+        ) : (
+          <SalesDocumentSummary
+            kind={kind}
+            totalCount={totalCount}
+            totalAmount={totalAmount}
+            rejectedCount={issueCount}
+            creditNoteCount={creditNoteCount}
+          />
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.6fr)]" aria-label="Resumen del periodo">
@@ -114,11 +135,65 @@ export default function DocumentOverview({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <MetricCard icon={Icon} label={config.countLabel} value={integer.format(totalCount)} detail={periodLabel} loading={loading && !stats} />
-        <MetricCard icon={AlertCircle} label={config.notAcceptedLabel} value={integer.format(notAccepted)} detail={notAccepted ? 'Requieren revisión' : 'Sin observaciones'} loading={loading && !stats} tone={notAccepted ? 'warning' : 'default'} />
+        <MetricCard
+          icon={AlertCircle}
+          label={config.issueLabel}
+          value={integer.format(issueCount)}
+          detail={issueCount ? 'Requieren revisión' : 'Sin observaciones'}
+          loading={loading && !stats}
+          tone={issueCount ? 'warning' : 'default'}
+        />
         <MetricCard icon={Banknote} label={config.amountLabel} value={currency.format(totalAmount)} detail="Solo documentos aceptados" loading={loading && !stats} />
         <MetricCard icon={Building2} label={config.companyLabel} value={integer.format(selectedCompanyId ? (totalAmount ? 1 : 0) : relevantCompanies.length)} detail={selectedCompanyId ? 'Empresa seleccionada' : `${companies.length} configuradas`} loading={loading && !stats} />
       </div>
     </section>
+  );
+}
+
+function SalesDocumentSummary({
+  kind,
+  totalCount,
+  totalAmount,
+  rejectedCount,
+  creditNoteCount,
+}: {
+  kind: 'boletas' | 'facturas';
+  totalCount: number;
+  totalAmount: number;
+  rejectedCount: number;
+  creditNoteCount: number;
+}) {
+  const emittedLabel = kind === 'boletas'
+    ? totalCount === 1 ? 'boleta emitida' : 'boletas emitidas'
+    : totalCount === 1 ? 'factura emitida' : 'facturas emitidas';
+  const rejectedLabel = rejectedCount === 1 ? 'rechazada' : 'rechazadas';
+  const creditNoteLabel = creditNoteCount === 1 ? 'con nota de crédito' : 'con notas de crédito';
+
+  return (
+    <div className="rounded-xl bg-muted/70 px-5 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-2xl font-semibold tracking-tight">
+            <span className="tabular-nums">{integer.format(totalCount)}</span> {emittedLabel}
+          </p>
+          <p className="mt-1 text-sm font-medium tabular-nums text-foreground/70">
+            {currency.format(totalAmount)} soles
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs font-medium">
+          <span
+            className={`rounded-full bg-amber-500/15 px-3 py-1.5 text-amber-800 dark:text-amber-300 ${
+              rejectedCount === 0 ? 'opacity-45' : ''
+            }`}
+          >
+            {integer.format(rejectedCount)} {rejectedLabel}
+          </span>
+          <span className="rounded-full bg-violet-500/10 px-3 py-1.5 text-violet-700 dark:text-violet-300">
+            {integer.format(creditNoteCount)} {creditNoteLabel}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 

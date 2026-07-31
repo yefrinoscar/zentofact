@@ -26,3 +26,11 @@ export async function proxyPut(key: string, body: Buffer | string, contentType: 
     throw new Error(`R2 proxy PUT ${key} -> ${res.status} ${await res.text().catch(() => '')}`);
   }
 }
+
+export async function proxyGet(key: string): Promise<Buffer> {
+  const res = await fetch(endpoint(key), { method: 'GET', headers: authHeader() });
+  if (!res.ok) {
+    throw new Error(`R2 proxy GET ${key} -> ${res.status} ${await res.text().catch(() => '')}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}

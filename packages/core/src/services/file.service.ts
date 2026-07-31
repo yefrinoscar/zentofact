@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { isR2Enabled, putObject } from './r2';
-import { isProxyEnabled, proxyPut } from './r2-proxy';
+import { getObject, isR2Enabled, putObject } from './r2';
+import { isProxyEnabled, proxyGet, proxyPut } from './r2-proxy';
 
 const STORAGE_PATH = process.env.STORAGE_PATH || './storage';
 
@@ -33,6 +33,23 @@ async function saveArchive(relativeKey: string, body: Buffer | string, contentTy
   ensureDir(path.dirname(filepath));
   fs.writeFileSync(filepath, body);
   return relativeKey;
+}
+
+export async function readArchive(relativeKey: string): Promise<Buffer> {
+  const key = String(relativeKey || '').trim().replace(/\\/g, '/');
+  if (!key || key.startsWith('/') || key.split('/').includes('..')) {
+    throw new Error('Ruta de archivo inválida');
+  }
+  if (isProxyEnabled()) return proxyGet(key);
+  if (isR2Enabled()) return getObject(key);
+
+  const storageRoot = path.resolve(STORAGE_PATH);
+  const filepath = path.resolve(storageRoot, key);
+  if (filepath !== storageRoot && !filepath.startsWith(`${storageRoot}${path.sep}`)) {
+    throw new Error('Ruta de archivo fuera del almacenamiento permitido');
+  }
+  if (!fs.existsSync(filepath)) throw new Error('Archivo no encontrado');
+  return fs.readFileSync(filepath);
 }
 
 export async function saveXml(document: { serie: string; correlativo: string; fechaEmision: string }, xmlContent: string): Promise<string> {

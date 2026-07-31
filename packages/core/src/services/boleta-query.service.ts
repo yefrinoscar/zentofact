@@ -139,6 +139,15 @@ export async function listBoletas(filter: BoletaFilter) {
 }
 
 function normalizeBoletaQueryRow(row: any) {
+  if (
+    String(row.estadoSunat || '').toUpperCase() === 'ANULADO'
+    && row.creditNoteId
+    && String(row.creditNoteEstadoSunat || '').toUpperCase() === 'ACEPTADO'
+  ) {
+    // La boleta sí fue aceptada por SUNAT. La anulación fiscal se representa
+    // mediante la nota de crédito relacionada, no reemplazando su aceptación.
+    return { ...row, estadoSunat: 'ACEPTADO' };
+  }
   if (isAcceptedByStoredSunatResponse(row)) {
     return { ...row, estadoSunat: 'ACEPTADO' };
   }
@@ -146,9 +155,9 @@ function normalizeBoletaQueryRow(row: any) {
 }
 
 function isAcceptedByStoredSunatResponse(row: any) {
-  // ANULADO/REEMPLAZADO son estados finales del documento local. El código 0
-  // de la respuesta puede corresponder a la aceptación del resumen o de la
-  // nota de crédito, no a que la boleta siga vigente.
+  // Los ANULADO que quedan aquí corresponden a comunicaciones de baja; los que
+  // tienen una nota de crédito aceptada ya se normalizaron arriba. REEMPLAZADO
+  // sigue siendo el intento rechazado que fue sustituido por otro comprobante.
   const estado = String(row.estadoSunat || '').toUpperCase();
   if (estado === 'ACEPTADO' || estado === 'ANULADO' || estado === 'REEMPLAZADO') return false;
   const response = String(row.respuestaSunat || '');

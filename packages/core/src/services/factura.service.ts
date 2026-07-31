@@ -4,9 +4,8 @@ import { facturas, clients, companies, branches } from '../db/schema';
 import { getNextCorrelative, isRemoteSunatRejection, markCorrelativeUsed } from './correlative.service';
 import { SunatService } from './sunat.service';
 import type { CompanyConfig } from './sunat.service';
-import { saveFacturaXml, saveFacturaCdr } from './file.service';
+import { readArchive, saveFacturaCdr, saveFacturaPdf, saveFacturaXml } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
-import { saveFacturaPdf } from './file.service';
 import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
 import type { DetalleItem } from '../utils/tax-calculator';
@@ -455,6 +454,13 @@ export async function generateAcceptedFacturaPdfBase64(id: number, pdfFormat: Pd
   }, pdfFormat);
 
   return pdfBuffer.toString('base64');
+}
+
+export async function getFacturaXmlBase64(id: number) {
+  const factura = (await db.select().from(facturas).where(eq(facturas.id, id)).limit(1))[0];
+  if (!factura) throw new Error('Factura no encontrada');
+  if (!factura.xmlPath) throw new Error('La factura no tiene un XML disponible');
+  return (await readArchive(factura.xmlPath)).toString('base64');
 }
 
 export async function generateAcceptedFacturaPreviewHtml(id: number, pdfFormat: PdfFormat = 'A4') {

@@ -4,7 +4,7 @@ import { boletas, clients, companies, branches, dailySummaries } from '../db/sch
 import { getNextCorrelative } from './correlative.service';
 import { SunatService } from './sunat.service';
 import type { CompanyConfig, BoletaSunatData } from './sunat.service';
-import { saveSummaryCdr } from './file.service';
+import { readArchive, saveSummaryCdr } from './file.service';
 import { generateBoletaPdf, generateBoletaPreviewHtml } from './pdf.service';
 import type { PdfFormat } from './pdf.service';
 import { calculateTotals } from '../utils/tax-calculator';
@@ -397,6 +397,13 @@ export async function generateAcceptedBoletaPdfBase64(id: number, pdfFormat: Pdf
   }, pdfFormat);
 
   return pdfBuffer.toString('base64');
+}
+
+export async function getBoletaXmlBase64(id: number) {
+  const boleta = (await db.select().from(boletas).where(eq(boletas.id, id)).limit(1))[0];
+  if (!boleta) throw new Error('Boleta no encontrada');
+  if (!boleta.xmlPath) throw new Error('La boleta no tiene un XML disponible');
+  return (await readArchive(boleta.xmlPath)).toString('base64');
 }
 
 export async function generateAcceptedBoletaPreviewHtml(id: number, pdfFormat: PdfFormat = 'A4') {
