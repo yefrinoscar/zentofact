@@ -590,12 +590,18 @@ function canInvoiceFromStatus(statusKey: string) {
   return ['ready_to_ship', 'shipped', 'delivered'].some((status) => statusKey.includes(status));
 }
 
-function needsCreditNoteReview(statusKey: string) {
+function isCanceledStatus(statusKey: string) {
   return statusKey.includes('canceled')
     || statusKey.includes('cancelled')
-    || statusKey.includes('cancelada')
-    || statusKey.includes('returned')
-    || statusKey.includes('devuelta');
+    || statusKey.includes('cancelada');
+}
+
+function isReturnedStatus(statusKey: string) {
+  return statusKey.includes('returned') || statusKey.includes('devuelta');
+}
+
+function needsCreditNoteReview(statusKey: string) {
+  return isCanceledStatus(statusKey) || isReturnedStatus(statusKey);
 }
 
 function statusInfo(statusKey: string) {
@@ -1160,9 +1166,14 @@ export default function FalabellaApi() {
       review: 0,
       reviewAmount: 0,
       creditNoteAmount: 0,
+      canceledOrders: 0,
+      returnedOrders: 0,
     };
 
     for (const row of invoiceFlow.rows) {
+      if (isCanceledStatus(row.statusKey)) base.canceledOrders += 1;
+      if (isReturnedStatus(row.statusKey)) base.returnedOrders += 1;
+
       // El estado operativo (bucket) y la emisión del comprobante son dimensiones
       // distintas: una orden en revisión también puede tener un documento emitido.
       // Una cancelada/devuelta solo participa en el total si alcanzó a generar su
@@ -2645,6 +2656,9 @@ export default function FalabellaApi() {
                 <div>
                   <p className="text-sm text-muted-foreground">
                     {invoiceFlow.rows.length} orden{invoiceFlow.rows.length === 1 ? '' : 'es'} del mes
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {flowStats.canceledOrders} canceladas · {flowStats.returnedOrders} devueltas
                   </p>
                   {invoiceFlow.sync?.monthLastSuccessfulSyncAt && (
                     <p className="mt-1 text-[11px] text-muted-foreground/80">
