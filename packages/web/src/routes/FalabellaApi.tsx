@@ -457,6 +457,8 @@ type InvoiceFlowRow = {
   statusDescription: string;
   invoiceKind: 'BOLETA' | 'FACTURA';
   total: number;
+  hasDocument: boolean;
+  hasSalesDocument: boolean;
   bucket: InvoiceFlowBucket;
   actionLabel: string;
   documentLabel: string;
@@ -474,6 +476,7 @@ type InvoiceFlowRow = {
   creditNoteId?: number;
   creditNoteNumber?: string;
   creditNoteStatus?: string;
+  creditNoteAmount: number;
   canCreateCreditNote?: boolean;
 };
 
@@ -1156,30 +1159,45 @@ export default function FalabellaApi() {
       notReadyAmount: 0,
       review: 0,
       reviewAmount: 0,
+      creditNoteAmount: 0,
     };
 
     for (const row of invoiceFlow.rows) {
-      if (row.invoiceKind === 'BOLETA') {
-        base.totalBoleta += 1;
-        base.totalBoletaAmount += row.total;
-        if (row.bucket === 'has_document') {
-          base.boletaWithDocument += 1;
-          base.boletaWithDocumentAmount += row.total;
-        } else {
-          base.boletaWithoutDocument += 1;
-          base.boletaWithoutDocumentAmount += row.total;
-        }
-      } else if (row.invoiceKind === 'FACTURA') {
-        base.totalFactura += 1;
-        base.totalFacturaAmount += row.total;
-        if (row.bucket === 'has_document') {
-          base.facturaWithDocument += 1;
-          base.facturaWithDocumentAmount += row.total;
-        } else {
-          base.facturaWithoutDocument += 1;
-          base.facturaWithoutDocumentAmount += row.total;
+      // El estado operativo (bucket) y la emisión del comprobante son dimensiones
+      // distintas: una orden en revisión también puede tener un documento emitido.
+      // Una cancelada/devuelta solo participa en el total si alcanzó a generar su
+      // boleta o factura. Su nota de crédito se presenta aparte como reversión.
+      const includeInFinancialTotals = !needsCreditNoteReview(row.statusKey) || row.hasSalesDocument;
+      if (includeInFinancialTotals) {
+        if (row.invoiceKind === 'BOLETA') {
+          base.totalBoleta += 1;
+          base.totalBoletaAmount += row.total;
+          if (row.hasSalesDocument) {
+            base.boletaWithDocument += 1;
+            base.boletaWithDocumentAmount += row.total;
+          } else {
+            base.boletaWithoutDocument += 1;
+            base.boletaWithoutDocumentAmount += row.total;
+            base.boletaPendingAmount += row.total;
+          }
+        } else if (row.invoiceKind === 'FACTURA') {
+          base.totalFactura += 1;
+          base.totalFacturaAmount += row.total;
+          if (row.hasSalesDocument) {
+            base.facturaWithDocument += 1;
+            base.facturaWithDocumentAmount += row.total;
+          } else {
+            base.facturaWithoutDocument += 1;
+            base.facturaWithoutDocumentAmount += row.total;
+            base.facturaPendingAmount += row.total;
+          }
         }
       }
+
+      if (row.creditNoteId) {
+        base.creditNoteAmount += row.creditNoteAmount;
+      }
+
       if (row.bucket === 'ready_to_invoice') {
         base.readyToInvoice += 1;
         base.readyToInvoiceAmount += row.total;
@@ -1192,10 +1210,6 @@ export default function FalabellaApi() {
       } else {
         base.review += 1;
         base.reviewAmount += row.total;
-      }
-      if (row.bucket === 'not_ready') {
-        if (row.invoiceKind === 'BOLETA') base.boletaPendingAmount += row.total;
-        if (row.invoiceKind === 'FACTURA') base.facturaPendingAmount += row.total;
       }
     }
 
@@ -2096,6 +2110,12 @@ export default function FalabellaApi() {
               }
             : null);
         const hasDocument = Boolean(existingOption);
+        const hasSalesDocument = Boolean(
+          resolved?.boleta?.id
+          || resolved?.factura?.id
+          || existingOption?.boletaId
+          || existingOption?.facturaId,
+        );
         const documentLabel = existingOption?.invoiceNumber
           || resolved?.boleta?.numeroCompleto
           || resolved?.creditNote?.numeroCompleto
@@ -2143,6 +2163,8 @@ export default function FalabellaApi() {
           statusDescription: falabellaStatus.description,
           invoiceKind,
           total: orderTotal(order),
+          hasDocument,
+          hasSalesDocument,
           bucket,
           actionLabel,
           documentLabel,
@@ -2160,6 +2182,7 @@ export default function FalabellaApi() {
           creditNoteId: resolved?.creditNote?.id,
           creditNoteNumber,
           creditNoteStatus: resolved?.creditNote?.estadoSunat || '',
+          creditNoteAmount: resolved?.creditNote?.id ? orderTotal(order) : 0,
           canCreateCreditNote,
         };
       }));
@@ -2636,15 +2659,20 @@ export default function FalabellaApi() {
                   <p className="mt-2 text-5xl font-semibold tracking-normal text-foreground">
                     {money(flowStats.totalBoletaAmount + flowStats.totalFacturaAmount)}
                   </p>
+                  <p className="mt-1 text-xs text-red-700">
+                    {money(flowStats.creditNoteAmount)} en notas de crédito
+                  </p>
                   <div className="mt-2 grid max-w-xs grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-xs font-medium text-foreground/70">Emitido</p>
-                      <p className="font-medium text-foreground">{money(flowStats.hasDocumentAmount)}</p>
+                      <p className="font-medium text-foreground">
+                        {money(flowStats.boletaWithDocumentAmount + flowStats.facturaWithDocumentAmount)}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Pendiente</p>
                       <p className="text-muted-foreground">
-                        {money(flowStats.notReadyAmount)}
+                        {money(flowStats.boletaWithoutDocumentAmount + flowStats.facturaWithoutDocumentAmount)}
                       </p>
                     </div>
                   </div>
