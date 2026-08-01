@@ -629,6 +629,27 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_falabella_label_prints_company_last
     ON falabella_label_prints(company_id, last_printed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS falabella_ticket_items (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    order_id TEXT NOT NULL,
+    order_number TEXT NOT NULL,
+    order_item_id TEXT NOT NULL,
+    tracking_code TEXT NOT NULL DEFAULT '',
+    package_id TEXT NOT NULL DEFAULT '',
+    item_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (company_id, order_id, order_item_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_ticket_items_tracking
+    ON falabella_ticket_items(tracking_code)
+    WHERE tracking_code <> '';
+  CREATE INDEX IF NOT EXISTS idx_falabella_ticket_items_order_number
+    ON falabella_ticket_items(order_number);
+  CREATE INDEX IF NOT EXISTS idx_falabella_ticket_items_package
+    ON falabella_ticket_items(package_id)
+    WHERE package_id <> '';
+
   CREATE TABLE IF NOT EXISTS falabella_sync_state (
     company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,

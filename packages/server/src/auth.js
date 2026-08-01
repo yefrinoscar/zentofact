@@ -5,6 +5,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import { isAdminRole, userHasPermission } from './permissions.js';
 import { isProtectedPath } from './protected-paths.js';
+import { localWebOrigins } from './local-web-origins.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
@@ -16,6 +17,7 @@ const trustedOrigins = Array.from(new Set([
   'http://localhost:3011',
   'http://127.0.0.1:3011',
   'http://localhost:3000',
+  ...localWebOrigins(),
 ].filter(Boolean)));
 const trustedOriginSet = new Set([
   ...trustedOrigins,

@@ -22,6 +22,7 @@ import { PanelLeft } from 'lucide-react';
 import { documentDateRangeForLastDays } from './lib/documentDateRange';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
+const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
@@ -35,6 +36,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/pedidos': {
     title: 'Bandeja de pedidos',
     subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
+  },
+  '/scanner': {
+    title: 'Escáner de armado',
+    subtitle: 'Escanea una etiqueta y revisa el contenido exacto de cada bulto.',
   },
   '/companies': {
     title: 'Empresas',
@@ -155,13 +160,14 @@ function AppLayout() {
 
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can };
+  const scannerMode = normalizedPath === '/scanner';
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      <Sidebar />
+      <Sidebar hideOnMobile={scannerMode} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur">
+        <header className={`h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur ${scannerMode ? 'hidden md:flex' : 'flex'}`}>
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-6">
             <div className="flex min-w-0 items-center gap-3">
               <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} className="hidden shrink-0 md:inline-flex" aria-label="Alternar menú lateral">
@@ -175,12 +181,14 @@ function AppLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-6 lg:p-8">
-          <div className="mx-auto w-full max-w-7xl">
+        <main className={`flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-6 lg:p-8'}`}>
+          <div className={`mx-auto w-full ${scannerMode ? 'max-w-none md:max-w-7xl' : 'max-w-7xl'}`}>
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="falabella" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route path="/scanner" element={<RequirePermission permission="falabella" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
+              <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="documentos" {...permissionState}><CreditNotesList /></RequirePermission>} />

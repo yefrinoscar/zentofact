@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ReceiptText,
+  ScanLine,
   Settings,
   ShoppingBag,
   Shuffle,
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja de pedidos', permission: 'falabella' },
+      { to: '/scanner', icon: ScanLine, label: 'Escáner de armado', permission: 'falabella' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
     ],
@@ -106,7 +108,7 @@ function runtimeEnvironment() {
   return sunatEnv ? `${appEnv} · ${sunatEnv}` : appEnv;
 }
 
-export default function Sidebar() {
+export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boolean }) {
   const { pathname } = useLocation();
   const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
@@ -125,7 +127,7 @@ export default function Sidebar() {
     .filter((group) => group.items.length > 0);
 
   return (
-    <SidebarRoot collapsed={collapsed}>
+    <SidebarRoot collapsed={collapsed} className={hideOnMobile ? 'hidden md:flex' : undefined}>
       <button
         type="button"
         onClick={toggle}

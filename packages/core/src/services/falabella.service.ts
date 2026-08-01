@@ -138,6 +138,57 @@ function orderItemImages(item: any): string[] {
     .filter(Boolean);
 }
 
+function parseOrderItemVariation(value: any): any {
+  if (!value || typeof value !== 'string') return value || {};
+  const trimmed = value.trim();
+  if (!trimmed) return {};
+  try { return JSON.parse(trimmed); } catch { return { value: trimmed }; }
+}
+
+function variationText(value: any): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (!value || typeof value !== 'object') return '';
+  return String(value.name ?? value.Name ?? value.value ?? value.Value ?? value.label ?? value.Label ?? '').trim();
+}
+
+export function falabellaOrderItemVariation(item: any): string[] {
+  const variation = parseOrderItemVariation(item?.Variation ?? item?.variation ?? item?.Variant ?? item?.variant);
+  const color = variationText(variation?.color ?? variation?.Color ?? variation?.colour ?? variation?.Colour ?? variation?.colorName ?? variation?.ColorName);
+  const size = variationText(variation?.size ?? variation?.Size ?? variation?.talla ?? variation?.Talla);
+  const fallback = color || size ? '' : variationText(variation?.value);
+  return [...new Set([color, size, fallback].filter(Boolean))];
+}
+
+function normalizedNameWords(value: string): string {
+  return ` ${value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+}
+
+export function falabellaOrderItemName(item: any, catalogName = ''): string {
+  const baseName = [item?.Name, item?.name, item?.ProductName, item?.productName, item?.Product, item?.product, item?.ItemName, item?.Description, catalogName]
+    .map((value) => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
+    .find(Boolean) || '';
+  const normalizedBaseName = normalizedNameWords(baseName);
+  const missingVariation = falabellaOrderItemVariation(item)
+    .filter((value) => !normalizedBaseName.includes(normalizedNameWords(value)));
+  if (!missingVariation.length) return baseName;
+  return `${baseName}${baseName ? ' - ' : ''}${missingVariation.join(' ')}`;
+}
+
+export function falabellaOrderItemImageUrls(item: any, catalogImages: string[] = []): string[] {
+  const shopSku = String(item?.ShopSku ?? item?.ShopSKU ?? '').trim();
+  const mediaUrls = shopSku && /^[a-z0-9_-]+$/i.test(shopSku)
+    ? [
+        `https://media.falabella.com/falabellaPE/${shopSku}_01`,
+        `https://media.falabella.com/falabellaPE/${shopSku}_1`,
+      ]
+    : [];
+  return [...new Set([
+    ...orderItemImages(item),
+    ...catalogImages,
+    ...mediaUrls,
+  ].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
 export function falabellaOrderItemSellerSku(item: any): string {
   return String(item?.SellerSku ?? item?.SellerSKU ?? item?.sellerSku ?? item?.Sku ?? item?.SKU ?? item?.sku ?? item?.ShopSku ?? '').trim();
 }
@@ -145,19 +196,18 @@ export function falabellaOrderItemSellerSku(item: any): string {
 function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normalizeProduct>) {
   const quantity = Math.max(1, Number(item?.Quantity ?? item?.quantity ?? item?.Qty ?? item?.qty ?? 1) || 1);
   const unitPrice = Number(item?.PaidPrice ?? item?.paidPrice ?? item?.ItemPrice ?? item?.itemPrice ?? item?.UnitPrice ?? item?.unitPrice ?? item?.Price ?? item?.price ?? 0) || 0;
-  const name = [item?.Name, item?.name, item?.ProductName, item?.productName, item?.Product, item?.product, item?.ItemName, item?.Description, product?.name]
-    .map((value) => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
-    .find(Boolean) || '';
+  const imageUrls = falabellaOrderItemImageUrls(item, product?.images || []);
   return {
     orderItemId: getOrderItemId(item),
     sellerSku: falabellaOrderItemSellerSku(item),
     shopSku: String(item?.ShopSku ?? item?.ShopSKU ?? '').trim(),
     packageId: String(item?.PackageId ?? item?.PackageID ?? item?.packageId ?? '').trim(),
-    name,
+    name: falabellaOrderItemName(item, product?.name),
     quantity,
     unitPrice,
     status: getOrderItemStatus(item),
-    imageUrl: orderItemImages(item)[0] || product?.images?.[0] || '',
+    imageUrl: imageUrls[0] || '',
+    imageUrls,
   };
 }
 

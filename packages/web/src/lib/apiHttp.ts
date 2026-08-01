@@ -198,6 +198,7 @@ const apiHttp = {
   },
 
   // Falabella
+  scanPickingTicket: (code: string) => req(`/falabella/picking/scan${qs({ code })}`),
   falabellaApiGetOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ filters: JSON.stringify(filters) })}`),
   falabellaApiGetLocalOrders: (companyId: number, filters: any) => req(`/falabella/${companyId}/orders${qs({ source: 'postgres', filters: JSON.stringify(filters) })}`),
   falabellaApiSyncOrders: (companyId: number, options: { mode?: 'month' | 'incremental'; month?: string } = {}) => req(`/falabella/${companyId}/orders/sync`, { method: 'POST', body: JSON.stringify(options) }),

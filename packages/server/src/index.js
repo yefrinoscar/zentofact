@@ -18,6 +18,7 @@ const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, csrfTokenForSession } = await import('./auth.js');
+const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
@@ -27,6 +28,7 @@ const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
+const pickingScanner = await import('./picking-scanner.js');
 
 const app = new Hono();
 
@@ -38,6 +40,7 @@ const webOrigins = Array.from(new Set([
   'http://localhost:3011',
   'http://127.0.0.1:3011',
   'http://localhost:3000',
+  ...localWebOrigins(),
 ].filter(Boolean)));
 app.use('*', cors({ origin: webOrigins, credentials: true }));
 
@@ -343,6 +346,38 @@ app.post('/credit-notes/batch', requirePermission('credit_notes'), async (c) => 
 });
 
 // ── Falabella (lógica compartida en core) ──
+app.get('/falabella/picking/image', async (c) => {
+  try {
+    const imageUrl = new URL(c.req.query('url') || '');
+    if (imageUrl.protocol !== 'https:' || imageUrl.hostname !== 'media.falabella.com') {
+      return c.json({ error: 'La imagen solicitada no pertenece a Falabella.' }, 400);
+    }
+    const response = await fetch(imageUrl, {
+      headers: { accept: 'image/png,image/jpeg;q=0.9,*/*;q=0.1' },
+      redirect: 'follow',
+    });
+    const contentType = String(response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    if (!response.ok || !['image/png', 'image/jpeg', 'image/webp'].includes(contentType)) {
+      return c.json({ error: 'La fotografía no está disponible.' }, 404);
+    }
+    c.header('Content-Type', contentType);
+    c.header('Cache-Control', 'private, max-age=86400');
+    return c.body(await response.arrayBuffer());
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.get('/falabella/picking/scan', async (c) => {
+  try {
+    return ok(c, await pickingScanner.lookupPickingScan({
+      db: core.pool,
+      getOrderItems: core.falabellaGetOrderItems,
+      input: c.req.query('code') || '',
+    }));
+  } catch (e) {
+    return fail(c, e, Number(e?.status || 500));
+  }
+});
 app.get('/falabella/:companyId/orders', async (c) => {
   try {
     const companyId = Number(c.req.param('companyId'));
@@ -530,6 +565,13 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
         const stored = orderDetailsByKey.get(`${companyId}:${orderId}`) || {};
         const raw = stored.raw_data || {};
         const inventory = await core.falabellaGetOrderItems({ companyId, orderId });
+        await pickingScanner.saveFalabellaTicketSnapshot(core.pool, {
+          companyId,
+          orderId,
+          orderNumber: stored.order_number || orderNumber,
+        }, inventory).catch((error) => {
+          console.warn('[PICKING SNAPSHOT]', error?.message || error);
+        });
         return {
           ...inventory,
           orderNumber: stored.order_number || orderNumber,
