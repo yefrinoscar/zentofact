@@ -503,8 +503,24 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
       `${order.company_id}:${order.order_id}`,
       order,
     ]));
+    const ordersGroupedBySeller = orders.map((order) => {
+      const stored = orderDetailsByKey.get(`${Number(order.companyId)}:${String(order.orderId).trim()}`) || {};
+      const raw = stored.raw_data || {};
+      let warehouse = raw.Warehouse || {};
+      if (typeof warehouse === 'string') {
+        try { warehouse = JSON.parse(warehouse); } catch { warehouse = {}; }
+      }
+      const sellerKey = String(
+        warehouse?.FacilityId
+        || warehouse?.SellerWarehouseId
+        || raw.SellerId
+        || raw.SellerName
+        || `company:${Number(order.companyId)}`,
+      ).trim();
+      return { ...order, sellerKey };
+    });
     const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
-      orders,
+      ordersGroupedBySeller,
       ({ companyId, orderId }) => core.falabellaGetShippingLabel({
         companyId,
         orderId,

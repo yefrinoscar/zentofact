@@ -811,6 +811,7 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
 
   const uniqueOrders = [];
   const seen = new Set();
+  const sellerOrder = new Map();
   for (const value of orders) {
     const companyId = Number(value?.companyId);
     const orderId = String(value?.orderId || '').trim();
@@ -818,6 +819,8 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
     if (!Number.isInteger(companyId) || companyId <= 0 || !orderId) {
       throw new Error('La selección contiene un pedido inválido.');
     }
+    const sellerKey = String(value?.sellerKey || `company:${companyId}`).trim().toLowerCase();
+    if (!sellerOrder.has(sellerKey)) sellerOrder.set(sellerKey, sellerOrder.size);
     const key = `${companyId}:${orderId}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -826,6 +829,7 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
         companyId,
         orderId,
         orderNumber,
+        sellerKey,
         labelIndexes: Number.isInteger(labelIndex) && labelIndex > 0 ? new Set([labelIndex]) : null,
       });
     } else {
@@ -835,6 +839,7 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
       else if (order.labelIndexes) order.labelIndexes.add(labelIndex);
     }
   }
+  uniqueOrders.sort((left, right) => sellerOrder.get(left.sellerKey) - sellerOrder.get(right.sellerKey));
 
   const labels = new Array(uniqueOrders.length);
   const inventories = new Array(uniqueOrders.length);

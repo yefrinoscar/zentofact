@@ -109,6 +109,26 @@ test('combina varios índices del mismo pedido sin duplicarlos', async () => {
   assert.deepEqual(result.printedLabels[0].labelIndexes, [1, 3]);
 });
 
+test('agrupa las etiquetas por seller y conserva el orden interno de cada tienda', async () => {
+  const label = await sampleLabel();
+  const result = await buildA4ShippingLabelSheet([
+    { companyId: 2, sellerKey: 'MANTA-RAYA', orderId: 'A-1', orderNumber: 'SELLER-A-1' },
+    { companyId: 2, sellerKey: 'RUNA-PUMA', orderId: 'B-1', orderNumber: 'SELLER-B-1' },
+    { companyId: 2, sellerKey: 'MANTA-RAYA', orderId: 'A-2', orderNumber: 'SELLER-A-2' },
+    { companyId: 2, sellerKey: 'BEAUTY-HOME', orderId: 'C-1', orderNumber: 'SELLER-C-1' },
+    { companyId: 2, sellerKey: 'RUNA-PUMA', orderId: 'B-2', orderNumber: 'SELLER-B-2' },
+  ], async () => ({
+    ok: true,
+    mimeType: 'application/pdf',
+    base64: Buffer.from(label).toString('base64'),
+  }));
+
+  assert.deepEqual(
+    result.printedLabels.map((entry) => entry.orderId),
+    ['A-1', 'A-2', 'B-1', 'B-2', 'C-1'],
+  );
+});
+
 test('recorta el cuadrante superior izquierdo de la hoja completa de Falabella', async () => {
   const source = await PDFDocument.create();
   const page = source.addPage([A4_WIDTH, A4_HEIGHT]);
