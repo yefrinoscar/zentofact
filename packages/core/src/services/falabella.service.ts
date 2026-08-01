@@ -138,8 +138,8 @@ function orderItemImages(item: any): string[] {
     .filter(Boolean);
 }
 
-function orderItemSku(item: any): string {
-  return String(item?.SellerSku ?? item?.SellerSKU ?? item?.sellerSku ?? item?.ShopSku ?? item?.Sku ?? item?.SKU ?? item?.sku ?? '').trim();
+export function falabellaOrderItemSellerSku(item: any): string {
+  return String(item?.SellerSku ?? item?.SellerSKU ?? item?.sellerSku ?? item?.Sku ?? item?.SKU ?? item?.sku ?? item?.ShopSku ?? '').trim();
 }
 
 function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normalizeProduct>) {
@@ -150,7 +150,9 @@ function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normali
     .find(Boolean) || '';
   return {
     orderItemId: getOrderItemId(item),
-    sellerSku: orderItemSku(item),
+    sellerSku: falabellaOrderItemSellerSku(item),
+    shopSku: String(item?.ShopSku ?? item?.ShopSKU ?? '').trim(),
+    packageId: String(item?.PackageId ?? item?.PackageID ?? item?.packageId ?? '').trim(),
     name,
     quantity,
     unitPrice,
@@ -533,7 +535,7 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const error = getFalabellaError(response.data);
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const orderItems = extractOrderItems(response.data);
-  const missingImageSkus = [...new Set(orderItems.filter((item) => !orderItemImages(item).length).map(orderItemSku).filter(Boolean))];
+  const missingImageSkus = [...new Set(orderItems.filter((item) => !orderItemImages(item).length).map(falabellaOrderItemSellerSku).filter(Boolean))];
   let products: Array<ReturnType<typeof normalizeProduct>> = [];
   if (missingImageSkus.length) {
     try {
@@ -557,7 +559,7 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const productBySku = new Map(products.flatMap((product) => [product.sellerSku, product.shopSku]
     .filter(Boolean)
     .map((sku) => [sku.toLowerCase(), product] as const)));
-  const items = orderItems.map((item) => normalizeOrderItemDetail(item, productBySku.get(orderItemSku(item).toLowerCase())));
+  const items = orderItems.map((item) => normalizeOrderItemDetail(item, productBySku.get(falabellaOrderItemSellerSku(item).toLowerCase())));
   return { ok: response.ok, status: response.status, url: response.url, orderItems, items, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
 }
 

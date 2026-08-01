@@ -623,80 +623,17 @@ function renderShippingLabelsLoading(previewWindow: Window, labelCount: number) 
       <div class="summary">
         <span>${labelCount} etiqueta${labelCount === 1 ? '' : 's'}</span>
         <span>${pageCount} hoja${pageCount === 1 ? '' : 's'} A4</span>
-        <span>4 por hoja</span>
+        <span>Inventario al final</span>
       </div>
-      <div class="note">El diálogo de impresión se abrirá automáticamente cuando esté listo.</div>
+      <div class="note">Se abrirá el visor PDF completo para que puedas revisar todas las páginas y luego imprimir.</div>
     </main>
   </body>
 </html>`);
   previewWindow.document.close();
 }
 
-function renderShippingLabelsPrint(previewWindow: Window, pdfUrl: string) {
-  const doc = previewWindow.document;
-  doc.open();
-  doc.write(`<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Imprimir etiquetas Falabella</title>
-    <style>
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f5f4; color: #1c1917; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      main { width: min(92vw, 460px); padding: 40px; border: 1px solid #e7e5e4; border-radius: 20px; background: #fff; box-shadow: 0 24px 60px rgba(28, 25, 23, .10); text-align: center; }
-      .icon { display: grid; width: 56px; height: 56px; margin: 0 auto 22px; place-items: center; border-radius: 16px; background: #292524; color: #fff; font-size: 16px; font-weight: 750; letter-spacing: -.02em; }
-      h1 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: -.02em; }
-      p { margin: 12px auto 0; max-width: 350px; color: #78716c; font-size: 14px; line-height: 1.55; }
-      .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 26px; }
-      button { min-height: 42px; padding: 0 16px; border: 1px solid #d6d3d1; border-radius: 10px; background: #fff; color: #292524; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
-      button.primary { border-color: #292524; background: #292524; color: #fff; }
-      button:disabled { cursor: wait; opacity: .5; }
-      iframe { position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; border: 0; opacity: 0; pointer-events: none; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <div class="icon" aria-hidden="true">A4</div>
-      <h1>PDF listo para imprimir</h1>
-      <p id="status">Cargando el documento en el sistema de impresión…</p>
-      <div class="actions">
-        <button id="print-again" class="primary" type="button" disabled>Imprimir ahora</button>
-        <button id="open-pdf" type="button">Abrir visor PDF</button>
-      </div>
-    </main>
-  </body>
-</html>`);
-  doc.close();
-
-  const frame = doc.createElement('iframe');
-  frame.title = 'Documento de etiquetas';
-  const status = doc.getElementById('status');
-  const printAgain = doc.getElementById('print-again') as HTMLButtonElement | null;
-  const openPdf = doc.getElementById('open-pdf') as HTMLButtonElement | null;
-  let loaded = false;
-
-  const attemptPrint = () => {
-    try {
-      if (!loaded || !frame.contentWindow) throw new Error('PDF aún no disponible');
-      frame.contentWindow.focus();
-      frame.contentWindow.print();
-      if (status) status.textContent = 'Si el diálogo no apareció, pulsa “Imprimir ahora” o abre el visor PDF.';
-    } catch {
-      if (status) status.textContent = 'El navegador bloqueó la impresión automática. Usa uno de los botones siguientes.';
-    }
-  };
-
-  openPdf?.addEventListener('click', () => previewWindow.location.replace(pdfUrl));
-  printAgain?.addEventListener('click', attemptPrint);
-  frame.addEventListener('load', () => {
-    loaded = true;
-    if (printAgain) printAgain.disabled = false;
-    if (status) status.textContent = 'Abriendo el diálogo de impresión…';
-    previewWindow.setTimeout(attemptPrint, 500);
-  }, { once: true });
-  frame.src = pdfUrl;
-  doc.body.appendChild(frame);
+function openShippingLabelsPdf(previewWindow: Window, pdfUrl: string) {
+  previewWindow.location.replace(pdfUrl);
 }
 
 function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoading, labelSelectionMode, labelSelected, canDispatch }: {
@@ -814,7 +751,6 @@ export default function Pedidos() {
   const [error, setError] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<InboxOrder | null>(null);
-  const [labelLoadingKey, setLabelLoadingKey] = useState('');
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
@@ -1156,55 +1092,6 @@ export default function Pedidos() {
     }
   };
 
-  const viewShippingLabel = async (order: InboxOrder) => {
-    if (!canPrintShippingLabel(order)) return;
-    const key = `${order.companyId}:${order.orderId}`;
-    const previewWindow = window.open('', '_blank');
-    if (previewWindow) {
-      previewWindow.opener = null;
-      previewWindow.document.title = `Etiqueta ${order.orderNumber}`;
-      previewWindow.document.body.textContent = 'Cargando etiqueta…';
-    }
-    setLabelLoadingKey(key);
-    setError('');
-    setOrderActionError('');
-    setOrderActionErrorKey(key);
-    try {
-      const result = await api.falabellaApiGetShippingLabel(order.companyId, order.orderId);
-      if (!result?.base64) throw new Error('Falabella respondió sin el archivo de la etiqueta.');
-      const mimeType = String(result.mimeType || 'application/pdf').toLowerCase();
-      const objectUrl = URL.createObjectURL(base64Blob(result.base64, mimeType));
-      if (mimeType === 'application/pdf' && previewWindow) {
-        previewWindow.location.replace(objectUrl);
-      } else {
-        previewWindow?.close();
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = result.filename || `etiqueta-${order.orderNumber}.${mimeType === 'application/pdf' ? 'pdf' : 'zpl'}`;
-        link.click();
-      }
-      markLabelsPrintedLocally(
-        [order],
-        Array.isArray(result.prints) ? [{
-          companyId: order.companyId,
-          orderId: order.orderId,
-          prints: result.prints,
-        }] : undefined,
-      );
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (nextError: any) {
-      previewWindow?.close();
-      const message = nextError?.message || 'No se pudo obtener la etiqueta de Falabella.';
-      if (selectedOrder?.companyId === order.companyId && selectedOrder?.orderId === order.orderId) {
-        setOrderActionError(message);
-        setOrderActionErrorKey(key);
-      }
-      else setError(message);
-    } finally {
-      setLabelLoadingKey('');
-    }
-  };
-
   const toggleLabelSelection = (order: InboxOrder) => {
     const key = labelKey(order);
     setSelectedLabelKeys((current) => {
@@ -1261,8 +1148,12 @@ export default function Pedidos() {
         labelIndex: order.labelIndex,
       })));
       if (!result?.base64) throw new Error('No se pudo crear el PDF de etiquetas.');
+      const inventoryPageCount = Number(result.inventoryPageCount || 0);
+      if (result.inventoryIncluded !== true || inventoryPageCount < 1) {
+        throw new Error('El PDF llegó sin las fichas de pedidos. Reinicia o actualiza el servidor e intenta nuevamente.');
+      }
       const objectUrl = URL.createObjectURL(base64Blob(result.base64, 'application/pdf'));
-      if (previewWindow) renderShippingLabelsPrint(previewWindow, objectUrl);
+      if (previewWindow) openShippingLabelsPdf(previewWindow, objectUrl);
       else {
         const link = document.createElement('a');
         link.href = objectUrl;
@@ -1713,12 +1604,10 @@ export default function Pedidos() {
                       <Button
                         variant={labelWasPrinted(selectedOrder) ? 'outline' : 'default'}
                         className={labelWasPrinted(selectedOrder) ? 'opacity-60 hover:opacity-85' : ''}
-                        onClick={() => void (selectedOrder.labelIndex
-                          ? printShippingLabels([selectedOrder])
-                          : viewShippingLabel(selectedOrder))}
-                        disabled={batchLabelsLoading || labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}`}
+                        onClick={() => void printShippingLabels([selectedOrder])}
+                        disabled={batchLabelsLoading}
                       >
-                        {printingLabelKey === labelKey(selectedOrder) || labelLoadingKey === `${selectedOrder.companyId}:${selectedOrder.orderId}` ? <Loader2 className="animate-spin" /> : <Printer />}
+                        {printingLabelKey === labelKey(selectedOrder) ? <Loader2 className="animate-spin" /> : <Printer />}
                         {labelWasPrinted(selectedOrder) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}
                       </Button>
                     </TooltipTrigger>

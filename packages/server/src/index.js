@@ -483,9 +483,12 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
       tuples.push(`($${params.length - 1}::int,$${params.length}::text)`);
     }
     const printable = await core.pool.query(
-      `select company_id, order_id, status
-       from falabella_orders
-       where (company_id, order_id) in (${tuples.join(',')})`,
+      `select fo.company_id, fo.order_id, fo.order_number, fo.status,
+         fo.falabella_created_at, fo.raw_data,
+         coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Tienda') as company_name
+       from falabella_orders fo
+       join companies c on c.id=fo.company_id
+       where (fo.company_id, fo.order_id) in (${tuples.join(',')})`,
       params,
     );
     const printableByOrder = new Map(printable.rows.map((order) => [
@@ -496,6 +499,10 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
     if (invalidOrder) {
       return c.json({ error: `La orden ${invalidOrder.orderNumber || invalidOrder.orderId} ya fue enviada o todavía no está lista para imprimir.` }, 409);
     }
+    const orderDetailsByKey = new Map(printable.rows.map((order) => [
+      `${order.company_id}:${order.order_id}`,
+      order,
+    ]));
     const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
       orders,
       ({ companyId, orderId }) => core.falabellaGetShippingLabel({
@@ -503,6 +510,23 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
         orderId,
         recordPrint: false,
       }),
+      async ({ companyId, orderId, orderNumber }) => {
+        const stored = orderDetailsByKey.get(`${companyId}:${orderId}`) || {};
+        const raw = stored.raw_data || {};
+        const inventory = await core.falabellaGetOrderItems({ companyId, orderId });
+        return {
+          ...inventory,
+          orderNumber: stored.order_number || orderNumber,
+          companyName: stored.company_name || '',
+          customerName: [raw.CustomerFirstName, raw.CustomerLastName, raw.CustomerLastName2]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+            .join(' '),
+          orderedAt: stored.falabella_created_at || null,
+          shippingType: String(raw.ShippingType || '').trim(),
+          orderDescription: String(raw.OrderDescription || raw.Description || raw.Remarks || raw.Notes || '').trim(),
+        };
+      },
     );
     const prints = await Promise.all(result.printedLabels.map(async (entry) => ({
       companyId: entry.companyId,
