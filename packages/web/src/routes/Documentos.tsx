@@ -42,7 +42,10 @@ function sunatReason(d: Doc): string {
   const raw = d.respuestaSunat;
   if (!raw) return '';
   let msg = raw;
-  try { const p = JSON.parse(raw); msg = p.message || p.error || raw; } catch { /* texto plano */ }
+  try {
+    const p = JSON.parse(raw);
+    msg = p.message || p.description || p.statusMessage || p.error?.message || p.error || raw;
+  } catch { /* texto plano */ }
   return String(msg).replace(/&#243;/g, 'ó').replace(/&#[0-9]+;/g, '').replace(/\[Paso[^\]]*\]\s*/g, '').trim();
 }
 
@@ -61,6 +64,8 @@ function EstadoBadge({ d, kind }: { d: Doc; kind: DocumentKind }) {
     ? { label: 'Rechazado', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
     : v === 'SIN_CDR'
     ? { label: 'Sin CDR', cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300' }
+    : v === 'NO_ENVIADA'
+    ? { label: 'No enviada', cls: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300' }
     : { label: v || 'Pendiente', cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300' };
   const reason = sunatReason(d);
   const badge = <Badge variant="outline" className={cn('rounded-md', view.cls)}>{view.label}</Badge>;
@@ -188,7 +193,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
       const status = effectiveDocumentStatus(d, kind) || 'PENDIENTE';
       if (statusFilter === 'CREDIT_NOTE' && !d.creditNoteId) return false;
       if (statusFilter === 'RECHAZADO' && !['RECHAZADO', 'REEMPLAZADO'].includes(status)) return false;
-      if (statusFilter === 'PENDIENTE' && ['ACEPTADO', 'RECHAZADO', 'REEMPLAZADO', 'ANULADO'].includes(status)) return false;
+      if (statusFilter === 'PENDIENTE' && ['ACEPTADO', 'RECHAZADO', 'REEMPLAZADO', 'ANULADO', 'NO_ENVIADA'].includes(status)) return false;
       if (!['all', 'CREDIT_NOTE', 'RECHAZADO', 'PENDIENTE'].includes(statusFilter) && status !== statusFilter) return false;
       if (!q) return true;
       return [d.numeroCompleto, d.orderNumber, d.clientRazonSocial, d.clientNumeroDocumento].some((v) => String(v || '').toLowerCase().includes(q));
@@ -247,7 +252,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
     setVerifyingId(d.id);
     setRetryMsg('');
     try {
-      const res: any = await api.refreshFacturaStatus(d.id);
+      const res: any = kind === 'boletas' ? await api.refreshBoletaStatus(d.id) : await api.refreshFacturaStatus(d.id);
       if (res?.success === false) throw new Error(res.message || 'SUNAT no respondió la consulta.');
       setRetryMsg(`${d.numeroCompleto}: SUNAT confirmó estado ${res?.estadoSunat || 'sin determinar'}${res?.message ? ` — ${res.message}` : ''}`);
       if (reload) await load();
@@ -387,6 +392,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
             <SelectItem value="ACEPTADO">Aceptado</SelectItem>
             <SelectItem value="RECHAZADO">Rechazado</SelectItem>
             <SelectItem value="PENDIENTE">Pendiente</SelectItem>
+            <SelectItem value="NO_ENVIADA">No enviada</SelectItem>
             <SelectItem value="ANULADO">Anulado</SelectItem>
             <SelectItem value="CREDIT_NOTE">Con nota de crédito</SelectItem>
           </SelectContent>
@@ -440,7 +446,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                     est === 'RECHAZADO'
                     || (kind === 'facturas' && (est === 'NO_ENCONTRADO' || est === 'SIN_CDR'))
                   );
-                  const canVerifyDocument = kind === 'facturas' && canMutate && est !== 'ACEPTADO';
+                  const canVerifyDocument = canMutate && est !== 'ACEPTADO';
                   const hasAcceptedActions = est === 'ACEPTADO';
                   const canDownloadPdf = hasAcceptedActions || (kind === 'boletas' && est === 'ANULADO' && Boolean(d.xmlPath || d.cdrPath));
                   const canDownloadXml = Boolean(d.xmlPath);
