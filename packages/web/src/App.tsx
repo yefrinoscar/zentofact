@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
+import { MobileTopNavigation } from './components/MobileNavigation';
 import AuthGate from './components/AuthGate';
 import Companies from './routes/Companies';
 import CreditNotes from './routes/CreditNotes';
@@ -14,6 +15,7 @@ import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import PedidosMulticanal from './routes/PedidosMulticanal';
+import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
@@ -33,6 +35,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/dashboard': {
     title: 'Dashboard',
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
+  },
+  '/menu': {
+    title: 'Menú',
+    subtitle: 'Selecciona el módulo que necesitas usar.',
   },
   '/pedidos': {
     title: 'Recepción de pedidos',
@@ -101,12 +107,14 @@ function RequirePermission({
   user,
   loading,
   can,
+  isMobile,
   children,
 }: {
   permission?: ReturnType<typeof pathPermission>;
   user: ReturnType<typeof usePermissions>['user'];
   loading: boolean;
   can: ReturnType<typeof usePermissions>['can'];
+  isMobile: boolean;
   children: React.ReactNode;
 }) {
   // La sesión ya fue validada por AuthGate. Mientras llega el perfil completo,
@@ -114,14 +122,28 @@ function RequirePermission({
   if (loading) return <>{children}</>;
   if (!permission) return <>{children}</>;
   if (!can(permission)) {
-    return <Navigate to={firstAllowedPath(user)} replace />;
+    return <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />;
   }
   return <>{children}</>;
 }
 
-function HomeRedirect({ user, loading }: Pick<ReturnType<typeof usePermissions>, 'user' | 'loading'>) {
+function HomeRedirect({ user, loading, isMobile }: Pick<ReturnType<typeof usePermissions>, 'user' | 'loading'> & { isMobile: boolean }) {
   if (loading) return null;
-  return <Navigate to={firstAllowedPath(user)} replace />;
+  return <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />;
+}
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  return isMobile;
 }
 
 function LegacyDocumentsRedirect() {
@@ -147,6 +169,7 @@ function AppLayout() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const { user, loading, can } = usePermissions();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (activeCompanyId) return;
@@ -164,15 +187,16 @@ function AppLayout() {
   }, [activeCompanyId, setActiveCompanyId]);
 
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
-  const permissionState = { user, loading, can };
+  const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      <Sidebar hideOnMobile={scannerMode} />
+      <Sidebar hideOnMobile />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur ${scannerMode ? 'hidden md:flex' : 'flex'}`}>
+        <MobileTopNavigation title={currentRoute.title} />
+        <header className="hidden h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur md:flex">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-6">
             <div className="flex min-w-0 items-center gap-3">
               <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} className="hidden shrink-0 md:inline-flex" aria-label="Alternar menú lateral">
@@ -186,17 +210,18 @@ function AppLayout() {
           </div>
         </header>
 
-        <main className={`flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-6 lg:p-8'}`}>
+        <main className={`flex-1 overflow-auto ${scannerMode ? 'p-0 md:p-6 lg:p-8' : 'p-4 md:p-6 lg:p-8'}`}>
           <div className={`mx-auto w-full ${scannerMode ? 'max-w-none md:max-w-7xl' : 'max-w-7xl'}`}>
             <Routes>
-              <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
+              <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
+              <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route
                 path="/orders"
                 element={
                   import.meta.env.PROD
-                    ? <Navigate to={firstAllowedPath(user)} replace />
+                    ? <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
                     : <RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>
                 }
               />
@@ -211,7 +236,7 @@ function AppLayout() {
                 path="/productos"
                 element={
                   import.meta.env.PROD
-                    ? <Navigate to={firstAllowedPath(user)} replace />
+                    ? <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
                     : <RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>
                 }
               />
@@ -225,7 +250,7 @@ function AppLayout() {
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
-              <Route path="*" element={<Navigate to={firstAllowedPath(user)} replace />} />
+              <Route path="*" element={<Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />} />
             </Routes>
           </div>
         </main>

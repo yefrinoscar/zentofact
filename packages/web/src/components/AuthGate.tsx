@@ -208,15 +208,22 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
     setInfo('');
     setLoading(true);
     clearClientStorageOnLogout();
+    const mobileEntry = window.matchMedia('(max-width: 767px)').matches;
+    const callbackURL = mobileEntry
+      ? `${window.location.origin}${window.location.pathname}${window.location.search}#/menu`
+      : window.location.href;
     const { data, error: nextError } = await authClient.signIn.email({
       email,
       password,
-      callbackURL: window.location.href,
+      callbackURL,
     });
     setLoading(false);
     if (nextError) setError(nextError.message || 'Credenciales inválidas.');
     else if (data?.url) window.location.href = data.url;
-    else await refetch();
+    else {
+      if (mobileEntry) window.location.hash = '/menu';
+      await refetch();
+    }
   };
 
   const submitForgot = async (e: React.FormEvent) => {

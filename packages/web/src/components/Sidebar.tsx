@@ -1,33 +1,20 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Building2,
-  ChartNoAxesCombined,
   ChevronsUpDown,
-  FileMinus2,
-  FileText,
-  Inbox,
-  ListOrdered,
   LogOut,
-  PackageSearch,
   PanelLeftClose,
   PanelLeftOpen,
-  ReceiptText,
-  ScanLine,
   Settings,
-  ShoppingBag,
-  Shuffle,
-  Users,
-  Zap,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { authClient } from '../lib/authClient';
 import api from '../lib/api';
 import { clearClientStorageOnLogout, broadcastForceReauth } from '../lib/clearClientStorage';
-import falabellaIcon from '../assets/falabella.png';
 import webPackage from '../../package.json';
 import { usePermissions } from '../hooks/usePermissions';
-import { ROLE_PRESETS, normalizeRole, type PermissionKey } from '../lib/permissions';
+import { ROLE_PRESETS, normalizeRole } from '../lib/permissions';
+import { isNavItemActive, visibleNavigation } from '../lib/navigation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,62 +38,6 @@ import {
 } from './ui/sidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
-type NavItem = {
-  to: string;
-  icon: typeof Settings;
-  img?: string | null;
-  label: string;
-  permission: PermissionKey;
-  hiddenInProduction?: boolean;
-};
-
-type NavGroup = {
-  id: string;
-  label: string;
-  items: NavItem[];
-};
-
-const navGroups: NavGroup[] = [
-  {
-    id: 'ops',
-    label: 'Operación',
-    items: [
-      { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
-      { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
-      { to: '/orders', icon: ListOrdered, label: 'Seguimiento multicanal', permission: 'order_management', hiddenInProduction: true },
-      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
-    ],
-  },
-  {
-    id: 'orders',
-    label: 'Pedidos',
-    items: [
-      { to: '/pedidos', icon: Inbox, label: 'Recepción de pedidos', permission: 'orders_inbox' },
-      { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
-    ],
-  },
-  {
-    id: 'documents',
-    label: 'Comprobantes',
-    items: [
-      { to: '/boletas', icon: ReceiptText, label: 'Boletas', permission: 'boletas' },
-      { to: '/facturas', icon: FileText, label: 'Facturas', permission: 'facturas' },
-      { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito', permission: 'credit_notes_manage' },
-      { to: '/auto-emision', icon: Zap, label: 'Automatización', permission: 'auto_emision' },
-      { to: '/credit-notes/bulk', icon: Shuffle, label: 'Anulación masiva', permission: 'credit_notes_bulk' },
-    ],
-  },
-  {
-    id: 'config',
-    label: 'Configuración',
-    items: [
-      { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
-      { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
-      { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
-    ],
-  },
-];
-
 const APP_VERSION = webPackage.version;
 
 function runtimeEnvironment() {
@@ -125,15 +56,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
   const { can, loading } = usePermissions();
   const isProd = Boolean((import.meta as any).env?.PROD);
 
-  const visibleGroups = navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => {
-        if (isProd && item.hiddenInProduction) return false;
-        return can(item.permission);
-      }),
-    }))
-    .filter((group) => group.items.length > 0);
+  const visibleGroups = visibleNavigation(can, isProd);
 
   return (
     <SidebarRoot collapsed={collapsed} className={hideOnMobile ? 'hidden md:flex' : undefined}>
@@ -178,9 +101,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {group.items.map(({ to, icon: Icon, img, label }) => {
-                      const active = to === '/credit-notes'
-                        ? activePath === to
-                        : activePath === to || activePath.startsWith(to + '/');
+                      const active = isNavItemActive(activePath, to);
 
                       return (
                         <SidebarMenuItem key={to}>

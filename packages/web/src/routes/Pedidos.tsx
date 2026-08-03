@@ -1397,7 +1397,7 @@ export default function Pedidos() {
         <div className="grid gap-2 md:grid-cols-[220px_minmax(0,1fr)_160px]">
           <div>
             <Select value={companyId} onValueChange={setCompanyId}>
-              <SelectTrigger aria-label="Empresa" className="!h-10 w-full rounded-lg border-border bg-card px-3 py-0 shadow-none">
+              <SelectTrigger aria-label="Empresa" className="!h-12 w-full rounded-lg border-border bg-card px-3 py-0 shadow-none md:!h-10">
                 <Store className="size-4 text-muted-foreground" />
                 <SelectValue placeholder="Todas las tiendas" />
               </SelectTrigger>
@@ -1409,9 +1409,9 @@ export default function Pedidos() {
           </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Buscar pedido" className="h-10 rounded-lg border-border bg-card py-0 pl-10 pr-4 shadow-none" aria-label="Buscar pedidos" />
+            <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Buscar pedido" className="h-12 rounded-lg border-border bg-card py-0 pl-10 pr-4 shadow-none md:h-10" aria-label="Buscar pedidos" />
           </div>
-          <Button size="lg" className="w-full rounded-lg px-4 font-semibold" onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
+          <Button size="lg" className="h-12 w-full rounded-lg px-4 font-semibold md:h-10" onClick={() => void syncAll()} disabled={refreshing || batchLabelsLoading}>
             {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             {refreshing ? 'Sincronizando…' : 'Sincronizar'}
           </Button>
@@ -1461,7 +1461,7 @@ export default function Pedidos() {
           </div>
           <span className="text-[11px] text-muted-foreground/80">{data?.lastSyncedAt ? `Actualizado ${formatDateTime(data.lastSyncedAt)}` : 'Sin sincronizar'}</span>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           {([
             { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', count: globalDeadlineCounts.overdue, className: 'border-rose-100 bg-rose-50 text-rose-900' },
             { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', count: globalDeadlineCounts.today, className: 'border-amber-100 bg-amber-50 text-amber-900' },
@@ -1532,7 +1532,7 @@ export default function Pedidos() {
       <section>
         <div className="mb-2"><h2 className="text-sm font-semibold text-foreground">Estado del pedido</h2><p className="mt-0.5 text-xs text-muted-foreground">Selecciona la etapa operativa que quieres revisar.</p></div>
         <div className="rounded-xl bg-muted p-1">
-          <div role="tablist" aria-label="Flujo de pedidos" className="grid gap-1 md:grid-cols-3">
+          <div role="tablist" aria-label="Flujo de pedidos" className="grid grid-cols-3 gap-1">
             {flowTabs.map((tab) => {
               const active = flowStage === tab.value;
               const orders = flowGroups[tab.value];
@@ -1602,7 +1602,24 @@ export default function Pedidos() {
               </div>
             </div>
           )}
-          <div className="overflow-x-auto">
+          <div className="divide-y divide-border/70 md:hidden">
+            {filteredFlowOrders.map((order) => (
+              <OrderCard
+                key={`${order.id}:${order.sameOrderIndex}`}
+                order={order}
+                now={now}
+                onOpen={() => openOrder(order)}
+                onViewLabel={() => void printShippingLabels([order])}
+                onToggleLabel={() => toggleLabelSelection(order)}
+                labelLoading={printingLabelKey === labelKey(order)}
+                labelSelectionMode={labelSelectionMode && flowStage === 'ready'}
+                labelSelected={selectedLabelKeys.has(labelKey(order))}
+                canDispatch={canDispatch}
+              />
+            ))}
+            {filteredFlowOrders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</p>}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1260px] text-sm">
               <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="w-44 min-w-44 p-3 font-medium"><span className="inline-flex items-center gap-2">{labelSelectionMode && flowStage === 'ready' && <Checkbox checked={allLabelsSelected ? true : selectedLabelCount > 0 ? 'indeterminate' : false} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas" />} Orden de venta</span></th><th className="w-[360px] min-w-[360px] p-3 font-medium">Productos</th><th className="w-36 min-w-36 p-3 font-medium">Ingresó</th><th className="w-48 min-w-48 p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="w-64 min-w-64 p-3 font-medium">Tienda</th><th className="w-32 min-w-32 p-3 font-medium">Siguiente paso</th></tr></thead>
               <tbody>
