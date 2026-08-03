@@ -94,13 +94,14 @@ type InboxOrderProduct = {
   orderItemId: string;
   name: string;
   sellerSku: string;
+  packageId: string;
   quantity: number;
   imageUrl: string;
   imageUrls: string[];
 };
 
 type OrderProductsState = {
-  status: 'loading' | 'ready' | 'error';
+  status: 'loading' | 'ready' | 'error' | 'unmapped';
   items: InboxOrderProduct[];
 };
 
@@ -347,6 +348,7 @@ function OrderProducts({ state }: { state?: OrderProductsState }) {
     return <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Cargando…</span>;
   }
   if (state.status === 'error') return <span className="text-xs text-muted-foreground">No se pudieron cargar</span>;
+  if (state.status === 'unmapped') return <span className="text-xs text-muted-foreground">Sin producto asociado a este ticket</span>;
   if (!state.items.length) return <span className="text-xs text-muted-foreground">Sin productos informados</span>;
   return (
     <div className="space-y-2">
@@ -365,6 +367,22 @@ function OrderProducts({ state }: { state?: OrderProductsState }) {
       ))}
     </div>
   );
+}
+
+function productsForTicket(state: OrderProductsState | undefined, order: InboxOrder): OrderProductsState | undefined {
+  if (!state || state.status !== 'ready' || order.sameOrderCount <= 1) return state;
+  const packageIds = [...new Set(state.items.map((item) => item.packageId).filter(Boolean))];
+  const hasCompletePackageMapping = state.items.length > 0
+    && state.items.every((item) => item.packageId)
+    && packageIds.length === order.sameOrderCount;
+  if (hasCompletePackageMapping) {
+    const packageId = packageIds[order.sameOrderIndex - 1];
+    return { status: 'ready', items: state.items.filter((item) => item.packageId === packageId) };
+  }
+  if (state.items.length === order.sameOrderCount) {
+    return { status: 'ready', items: [state.items[order.sameOrderIndex - 1]] };
+  }
+  return { status: 'unmapped', items: [] };
 }
 
 function formatMoney(value: number, currency = 'PEN') {
@@ -1065,6 +1083,7 @@ export default function Pedidos() {
               orderItemId: String(item?.orderItemId || ''),
               name: String(item?.name || ''),
               sellerSku: String(item?.sellerSku || ''),
+              packageId: String(item?.packageId || ''),
               quantity: Math.max(1, Number(item?.quantity) || 1),
               imageUrl: String(item?.imageUrl || ''),
               imageUrls: Array.isArray(item?.imageUrls) ? item.imageUrls.map(String).filter(Boolean) : [],
@@ -1610,7 +1629,7 @@ export default function Pedidos() {
                           )}
                         </div>
                       </td>
-                      <td className="w-[360px] min-w-[360px] p-3 align-middle"><OrderProducts state={orderProducts[orderKey(order)]} /></td>
+                      <td className="w-[360px] min-w-[360px] p-3 align-middle"><OrderProducts state={productsForTicket(orderProducts[orderKey(order)], order)} /></td>
                       <td className="w-36 min-w-36 whitespace-nowrap p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
                       <td className="w-48 min-w-48 whitespace-nowrap p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
                       <td className="w-64 min-w-64 max-w-64 truncate p-3 align-middle text-xs text-muted-foreground" title={order.companyName}>{order.companyName}</td>
