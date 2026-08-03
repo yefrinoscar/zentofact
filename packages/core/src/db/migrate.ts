@@ -721,6 +721,427 @@ const DDL = `
     orders_received INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (company_id, month)
   );
+
+  -- Módulo de pedidos multicanal. Estas tablas son independientes de las
+  -- integraciones legacy para permitir una migración gradual por dual-write.
+  CREATE TABLE IF NOT EXISTS order_channels (
+    id SMALLSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    default_auto_create_orders BOOLEAN NOT NULL DEFAULT FALSE,
+    capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (code ~ '^[a-z][a-z0-9_-]{1,49}$')
+  );
+
+  INSERT INTO order_channels (code, name, default_auto_create_orders, capabilities)
+  VALUES
+    ('falabella', 'Falabella', TRUE, '{"ingestion":["polling","webhook"],"actions":["ready_to_ship","shipping_label"]}'::jsonb),
+    ('ripley', 'Ripley', FALSE, '{"ingestion":["api","manual"]}'::jsonb),
+    ('external', 'Pedido externo', FALSE, '{"ingestion":["api","manual","file"]}'::jsonb)
+  ON CONFLICT (code) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS order_channel_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    channel_id SMALLINT NOT NULL REFERENCES order_channels(id),
+    external_account_id TEXT NOT NULL DEFAULT 'default',
+    display_name TEXT NOT NULL,
+    auto_create_orders BOOLEAN NOT NULL DEFAULT FALSE,
+    document_requirement TEXT NOT NULL DEFAULT 'optional',
+    document_type_policy TEXT NOT NULL DEFAULT 'automatic',
+    credential_reference TEXT,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (company_id, channel_id, external_account_id),
+    UNIQUE (id, company_id),
+    CHECK (document_requirement IN ('disabled', 'optional', 'required')),
+    CHECK (document_type_policy IN ('automatic', 'boleta', 'factura', 'customer_choice'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_channel_accounts_company
+    ON order_channel_accounts(company_id, active);
+
+  INSERT INTO order_channel_accounts (
+    company_id, channel_id, external_account_id, display_name,
+    auto_create_orders, document_requirement, document_type_policy, settings
+  )
+  SELECT
+    c.id, ch.id, 'default',
+    coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Falabella'),
+    TRUE, 'optional', 'automatic', '{"origin":"legacy_falabella"}'::jsonb
+  FROM companies c
+  JOIN order_channels ch ON ch.code = 'falabella'
+  WHERE (
+    nullif(trim(c.falabella_api_user_id), '') IS NOT NULL
+    AND nullif(trim(c.falabella_api_key), '') IS NOT NULL
+  ) OR EXISTS (
+    SELECT 1 FROM falabella_orders fo WHERE fo.company_id = c.id
+  )
+  ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS orders (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    channel_account_id BIGINT NOT NULL,
+    external_order_id TEXT NOT NULL,
+    external_order_number TEXT NOT NULL,
+    order_status TEXT NOT NULL DEFAULT 'new',
+    payment_status TEXT NOT NULL DEFAULT 'unknown',
+    fulfillment_status TEXT NOT NULL DEFAULT 'pending',
+    document_status TEXT NOT NULL DEFAULT 'not_requested',
+    provider_status TEXT,
+    document_requirement TEXT NOT NULL,
+    document_type_policy TEXT NOT NULL,
+    requested_document_type TEXT,
+    currency TEXT NOT NULL DEFAULT 'PEN',
+    subtotal NUMERIC(14,2),
+    shipping_amount NUMERIC(14,2),
+    discount_amount NUMERIC(14,2),
+    total NUMERIC(14,2),
+    customer JSONB NOT NULL DEFAULT '{}'::jsonb,
+    shipping JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ordered_at TIMESTAMPTZ,
+    promised_shipping_at TIMESTAMPTZ,
+    provider_updated_at TIMESTAMPTZ,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (channel_account_id, company_id)
+      REFERENCES order_channel_accounts(id, company_id) ON DELETE CASCADE,
+    UNIQUE (channel_account_id, external_order_id),
+    CHECK (order_status IN ('new', 'confirmed', 'completed', 'cancelled', 'failed')),
+    CHECK (payment_status IN ('unknown', 'pending', 'paid', 'partially_refunded', 'refunded', 'failed')),
+    CHECK (fulfillment_status IN ('pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed')),
+    CHECK (document_status IN ('not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled')),
+    CHECK (document_requirement IN ('disabled', 'optional', 'required')),
+    CHECK (document_type_policy IN ('automatic', 'boleta', 'factura', 'customer_choice')),
+    CHECK (requested_document_type IS NULL OR requested_document_type IN ('boleta', 'factura'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_orders_company_ordered
+    ON orders(company_id, ordered_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_orders_account_status
+    ON orders(channel_account_id, order_status, fulfillment_status);
+  CREATE INDEX IF NOT EXISTS idx_orders_external_number
+    ON orders(company_id, external_order_number);
+  CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
+    ON orders(promised_shipping_at)
+    WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
+
+  CREATE TABLE IF NOT EXISTS order_items (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    external_item_id TEXT NOT NULL,
+    sku TEXT,
+    provider_sku TEXT,
+    description TEXT NOT NULL DEFAULT '',
+    quantity NUMERIC(14,4) NOT NULL DEFAULT 1,
+    unit_price NUMERIC(14,4),
+    discount_amount NUMERIC(14,2),
+    tax_amount NUMERIC(14,2),
+    total NUMERIC(14,2),
+    provider_status TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (order_id, external_item_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+  CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku);
+
+  CREATE TABLE IF NOT EXISTS order_events (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    actor_user_id TEXT,
+    idempotency_key TEXT,
+    correlation_id TEXT,
+    previous_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+    new_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    provider_occurred_at TIMESTAMPTZ,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (order_id, idempotency_key),
+    CHECK (source IN ('provider', 'webhook', 'sync', 'user', 'system', 'api', 'file', 'manual'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_events_timeline
+    ON order_events(order_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_order_events_correlation
+    ON order_events(correlation_id) WHERE correlation_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS order_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    payload_hash TEXT NOT NULL,
+    raw_payload JSONB NOT NULL,
+    provider_updated_at TIMESTAMPTZ,
+    correlation_id TEXT,
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (order_id, payload_hash)
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_snapshots_order_observed
+    ON order_snapshots(order_id, observed_at DESC);
+
+  CREATE TABLE IF NOT EXISTS order_documents (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    document_kind TEXT NOT NULL,
+    boleta_id INTEGER REFERENCES boletas(id) ON DELETE CASCADE,
+    factura_id INTEGER REFERENCES facturas(id) ON DELETE CASCADE,
+    credit_note_id INTEGER REFERENCES credit_notes(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (
+      (document_kind = 'boleta' AND boleta_id IS NOT NULL AND factura_id IS NULL AND credit_note_id IS NULL)
+      OR (document_kind = 'factura' AND factura_id IS NOT NULL AND boleta_id IS NULL AND credit_note_id IS NULL)
+      OR (document_kind = 'credit_note' AND credit_note_id IS NOT NULL AND boleta_id IS NULL AND factura_id IS NULL)
+    ),
+    UNIQUE (order_id, boleta_id),
+    UNIQUE (order_id, factura_id),
+    UNIQUE (order_id, credit_note_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_documents_order ON order_documents(order_id);
+
+  CREATE TABLE IF NOT EXISTS order_commands (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    command_type TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    requested_by TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    UNIQUE (order_id, idempotency_key),
+    CHECK (status IN ('pending', 'processing', 'succeeded', 'failed'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_commands_pending
+    ON order_commands(status, created_at) WHERE status IN ('pending', 'processing');
+
+  CREATE TABLE IF NOT EXISTS order_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    cursor_from TEXT,
+    cursor_to TEXT,
+    received_count INTEGER NOT NULL DEFAULT 0,
+    upserted_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    CHECK (status IN ('running', 'success', 'error', 'partial'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_sync_runs_account_started
+    ON order_sync_runs(channel_account_id, started_at DESC);
+
+  -- Backfill idempotente. Los items se completarán cuando el adaptador reciba
+  -- un payload que realmente los incluya.
+  INSERT INTO orders (
+    company_id, channel_account_id, external_order_id, external_order_number,
+    order_status, payment_status, fulfillment_status, document_status, provider_status,
+    document_requirement, document_type_policy, requested_document_type,
+    currency, total, customer, shipping, metadata,
+    ordered_at, provider_updated_at, first_seen_at, last_seen_at, created_at, updated_at
+  )
+  SELECT
+    fo.company_id,
+    account.id,
+    fo.order_id,
+    fo.order_number,
+    CASE
+      WHEN lower(coalesce(fo.status, '')) ~ '(canceled|cancelled)' THEN 'cancelled'
+      WHEN lower(coalesce(fo.status, '')) ~ 'failed' THEN 'failed'
+      WHEN lower(coalesce(fo.status, '')) ~ '(delivered|returned|return_)' THEN 'completed'
+      ELSE 'confirmed'
+    END,
+    'unknown',
+    CASE
+      WHEN lower(coalesce(fo.status, '')) ~ '(canceled|cancelled)' THEN 'cancelled'
+      WHEN lower(coalesce(fo.status, '')) ~ '(returned|return_)' THEN 'returned'
+      WHEN lower(coalesce(fo.status, '')) ~ 'failed' THEN 'failed'
+      WHEN lower(coalesce(fo.status, '')) ~ 'delivered' THEN 'delivered'
+      WHEN lower(coalesce(fo.status, '')) ~ 'shipped' THEN 'shipped'
+      WHEN lower(coalesce(fo.status, '')) ~ 'ready_to_ship' THEN 'ready_to_ship'
+      ELSE 'pending'
+    END,
+    CASE
+      WHEN account.document_requirement = 'disabled' THEN 'not_requested'
+      WHEN fo.invoice_required THEN 'pending'
+      WHEN account.document_requirement = 'required' THEN 'pending'
+      ELSE 'not_requested'
+    END,
+    fo.status,
+    account.document_requirement,
+    account.document_type_policy,
+    CASE
+      WHEN account.document_requirement <> 'disabled' AND fo.invoice_required THEN 'factura'
+      ELSE NULL
+    END,
+    coalesce(nullif(fo.currency, ''), 'PEN'),
+    fo.grand_total,
+    jsonb_build_object(
+      'name', trim(concat_ws(' ', fo.raw_data->>'CustomerFirstName', fo.raw_data->>'CustomerLastName', fo.raw_data->>'CustomerLastName2')),
+      'documentNumber', coalesce(
+        fo.raw_data->>'NationalRegistrationNumber',
+        fo.raw_data->>'CustomerNationalRegistrationNumber',
+        fo.raw_data->>'CustomerDocumentNumber',
+        ''
+      ),
+      'email', coalesce(fo.raw_data->>'CustomerEmail', fo.raw_data->>'Email', ''),
+      'phone', coalesce(fo.raw_data->>'CustomerPhone', fo.raw_data->>'Phone', '')
+    ),
+    jsonb_build_object(
+      'type', coalesce(fo.raw_data->>'ShippingType', ''),
+      'trackingCode', coalesce(fo.raw_data->>'TrackingCode', fo.raw_data->>'TrackingNumber', '')
+    ),
+    jsonb_build_object(
+      'origin', 'legacy_falabella',
+      'invoiceRequired', fo.invoice_required
+    ),
+    fo.falabella_created_at,
+    fo.falabella_updated_at,
+    fo.first_seen_at,
+    fo.last_seen_at,
+    fo.first_seen_at,
+    fo.synchronized_at
+  FROM falabella_orders fo
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = fo.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  ON CONFLICT (channel_account_id, external_order_id) DO NOTHING;
+
+  INSERT INTO order_snapshots (
+    order_id, payload_hash, raw_payload, provider_updated_at, correlation_id, observed_at
+  )
+  SELECT
+    o.id,
+    'legacy-md5:' || md5(fo.raw_data::text),
+    fo.raw_data,
+    fo.falabella_updated_at,
+    'falabella-backfill',
+    fo.synchronized_at
+  FROM falabella_orders fo
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = fo.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  JOIN orders o
+    ON o.channel_account_id = account.id
+    AND o.external_order_id = fo.order_id
+  ON CONFLICT (order_id, payload_hash) DO NOTHING;
+
+  INSERT INTO order_events (
+    order_id, event_type, source, idempotency_key, correlation_id,
+    previous_values, new_values, payload, provider_occurred_at, received_at, created_at
+  )
+  SELECT
+    o.id,
+    'order.created',
+    'system',
+    'legacy-backfill:' || fo.id,
+    'falabella-backfill',
+    '{}'::jsonb,
+    jsonb_build_object(
+      'orderStatus', o.order_status,
+      'fulfillmentStatus', o.fulfillment_status,
+      'providerStatus', o.provider_status
+    ),
+    '{"origin":"legacy_falabella"}'::jsonb,
+    fo.falabella_updated_at,
+    fo.first_seen_at,
+    fo.first_seen_at
+  FROM falabella_orders fo
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = fo.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  JOIN orders o
+    ON o.channel_account_id = account.id
+    AND o.external_order_id = fo.order_id
+  ON CONFLICT (order_id, idempotency_key) DO NOTHING;
+
+  INSERT INTO order_documents (order_id, document_kind, boleta_id)
+  SELECT o.id, 'boleta', b.id
+  FROM boletas b
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = b.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  JOIN orders o
+    ON o.channel_account_id = account.id
+    AND o.external_order_number = b.order_number
+  WHERE nullif(b.order_number, '') IS NOT NULL
+  ON CONFLICT (order_id, boleta_id) DO NOTHING;
+
+  INSERT INTO order_documents (order_id, document_kind, factura_id)
+  SELECT o.id, 'factura', f.id
+  FROM facturas f
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = f.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  JOIN orders o
+    ON o.channel_account_id = account.id
+    AND o.external_order_number = f.order_number
+  WHERE nullif(f.order_number, '') IS NOT NULL
+  ON CONFLICT (order_id, factura_id) DO NOTHING;
+
+  INSERT INTO order_documents (order_id, document_kind, credit_note_id)
+  SELECT DISTINCT o.id, 'credit_note', cn.id
+  FROM credit_notes cn
+  LEFT JOIN boletas b ON b.id = cn.affected_boleta_id
+  LEFT JOIN facturas f ON f.id = cn.affected_factura_id
+  JOIN order_channels channel ON channel.code = 'falabella'
+  JOIN order_channel_accounts account
+    ON account.company_id = cn.company_id
+    AND account.channel_id = channel.id
+    AND account.external_account_id = 'default'
+  JOIN orders o
+    ON o.channel_account_id = account.id
+    AND o.external_order_number = coalesce(b.order_number, f.order_number)
+  WHERE coalesce(nullif(b.order_number, ''), nullif(f.order_number, '')) IS NOT NULL
+  ON CONFLICT (order_id, credit_note_id) DO NOTHING;
+
+  UPDATE orders o
+  SET document_status = CASE
+      WHEN EXISTS (
+        SELECT 1 FROM order_documents od
+        LEFT JOIN boletas b ON b.id = od.boleta_id
+        LEFT JOIN facturas f ON f.id = od.factura_id
+        WHERE od.order_id = o.id
+          AND upper(coalesce(b.estado_sunat, f.estado_sunat, '')) = 'ACEPTADO'
+      ) THEN 'accepted'
+      WHEN EXISTS (
+        SELECT 1 FROM order_documents od
+        LEFT JOIN boletas b ON b.id = od.boleta_id
+        LEFT JOIN facturas f ON f.id = od.factura_id
+        WHERE od.order_id = o.id
+          AND upper(coalesce(b.estado_sunat, f.estado_sunat, '')) = 'RECHAZADO'
+      ) THEN 'rejected'
+      ELSE 'issued'
+    END,
+    updated_at = now()
+  WHERE EXISTS (
+    SELECT 1 FROM order_documents od
+    WHERE od.order_id = o.id AND od.document_kind IN ('boleta', 'factura')
+  );
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

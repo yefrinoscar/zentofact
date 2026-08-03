@@ -13,6 +13,7 @@ import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
+import PedidosMulticanal from './routes/PedidosMulticanal';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
 import { usePermissions } from './hooks/usePermissions';
@@ -36,6 +37,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/pedidos': {
     title: 'Bandeja de pedidos',
     subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
+  },
+  '/orders': {
+    title: 'Pedidos multicanal',
+    subtitle: 'Seguimiento unificado de pedidos, comprobantes y entregas por canal.',
   },
   '/scanner': {
     title: 'Escáner de armado',
@@ -187,6 +192,7 @@ function AppLayout() {
               <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="falabella" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route path="/orders" element={<RequirePermission permission="falabella" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="falabella" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />

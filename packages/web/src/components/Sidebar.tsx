@@ -7,6 +7,7 @@ import {
   FileMinus2,
   FileText,
   Inbox,
+  ListOrdered,
   LogOut,
   PackageSearch,
   PanelLeftClose,
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
+      { to: '/orders', icon: ListOrdered, label: 'Pedidos multicanal', permission: 'falabella' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja de pedidos', permission: 'falabella' },
       { to: '/scanner', icon: ScanLine, label: 'Escáner de armado', permission: 'falabella' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },

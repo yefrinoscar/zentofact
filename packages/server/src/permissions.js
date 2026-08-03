@@ -101,6 +101,7 @@ export function userHasPermission(user, key) {
 export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/orders')) return 'falabella';
   if (pathname.startsWith('/pedidos')) return 'falabella';
   if (pathname.startsWith('/boletas') || pathname.startsWith('/facturas')) return 'documentos';
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'documentos';

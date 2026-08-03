@@ -17,7 +17,7 @@ const INVENTORY_MARGIN = 28;
 const INVENTORY_HEADER_HEIGHT = 58;
 const INVENTORY_FOOTER_HEIGHT = 20;
 const INVENTORY_CARD_GAP = 12;
-const INVENTORY_CARDS_PER_PAGE = 4;
+const INVENTORY_GRID_ROWS = 4;
 const INVENTORY_ITEMS_PER_CARD = 3;
 const IMAGE_TIMEOUT_MS = 8_000;
 const INVENTORY_IMAGES_TOTAL_TIMEOUT_MS = 30_000;
@@ -245,16 +245,24 @@ export function inventoryForTicket(inventory, labelIndex, labelCount) {
   };
 }
 
+function inventoryItemImageUrls(item) {
+  return [...new Set([
+    item?.imageUrl,
+    ...(Array.isArray(item?.imageUrls) ? item.imageUrls : []),
+  ].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
 async function preloadInventoryImages(inventories, fetchProductImage) {
   const cache = new Map();
   const pending = [];
   for (const inventory of inventories) {
     for (const item of inventory?.items || []) {
       if (item?.imageBytes) continue;
-      const imageUrl = String(item?.imageUrl || '').trim();
-      if (imageUrl && !cache.has(imageUrl)) {
-        cache.set(imageUrl, null);
-        pending.push(imageUrl);
+      for (const imageUrl of inventoryItemImageUrls(item)) {
+        if (!cache.has(imageUrl)) {
+          cache.set(imageUrl, null);
+          pending.push(imageUrl);
+        }
       }
     }
   }
@@ -290,8 +298,12 @@ async function embedInventoryImage(pdf, item, remoteImages) {
     const bytes = item.imageBytes instanceof Uint8Array ? item.imageBytes : new Uint8Array(item.imageBytes);
     const mimeType = detectSupportedImageMime(bytes, item.imageMimeType);
     if (mimeType) asset = { bytes, mimeType };
-  } else if (item?.imageUrl) {
-    asset = remoteImages.get(String(item.imageUrl).trim()) || null;
+  }
+  if (!asset) {
+    for (const imageUrl of inventoryItemImageUrls(item)) {
+      asset = remoteImages.get(imageUrl) || null;
+      if (asset) break;
+    }
   }
   if (!asset) return null;
   try {
@@ -450,9 +462,10 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
   const customer = inventory.customerName || 'Cliente no informado';
   const allItems = card.allItems || [];
   const totalUnits = allItems.reduce((total, item) => total + (Number(item?.quantity) || 0), 0);
-  const headerHeight = 60;
-  const summaryHeight = 44;
-  const footerHeight = 28;
+  const compact = height < 250;
+  const headerHeight = compact ? 42 : 60;
+  const summaryHeight = compact ? 25 : 44;
+  const footerHeight = compact ? 22 : 28;
   const contentHeight = height - headerHeight - summaryHeight - footerHeight;
 
   page.drawRectangle({
@@ -471,38 +484,39 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
     color: INVENTORY_COLORS.ink,
   });
   page.drawText('CÓDIGO', {
-    x: x + 13,
-    y: y + height - 18,
-    size: 6.2,
+    x: x + (compact ? 10 : 13),
+    y: y + height - (compact ? 13 : 18),
+    size: compact ? 5.2 : 6.2,
     font: bold,
     color: INVENTORY_COLORS.muted,
   });
   page.drawText(code, {
-    x: x + 13,
-    y: y + height - 47,
-    size: 25,
+    x: x + (compact ? 10 : 13),
+    y: y + height - (compact ? 34 : 47),
+    size: compact ? 18 : 25,
     font: bold,
     color: INVENTORY_COLORS.ink,
   });
   page.drawLine({
-    start: { x: x + 78, y: y + height - 49 },
-    end: { x: x + 78, y: y + height - 11 },
+    start: { x: x + (compact ? 60 : 78), y: y + height - (compact ? 36 : 49) },
+    end: { x: x + (compact ? 60 : 78), y: y + height - (compact ? 8 : 11) },
     thickness: 0.55,
     color: INVENTORY_COLORS.line,
   });
-  const customerX = x + 91;
+  const customerX = x + (compact ? 70 : 91);
   page.drawText('CLIENTE', {
     x: customerX,
-    y: y + height - 19,
-    size: 6.5,
+    y: y + height - (compact ? 13 : 19),
+    size: compact ? 5.2 : 6.5,
     font: bold,
     color: INVENTORY_COLORS.muted,
   });
-  const customerLines = wrapPdfText(regular, customer, 8.3, width - 104, 2);
+  const customerSize = compact ? 7.2 : 8.3;
+  const customerLines = wrapPdfText(regular, customer, customerSize, width - (compact ? 80 : 104), 2);
   customerLines.forEach((line, index) => page.drawText(line, {
     x: customerX,
-    y: y + height - 35 - index * 10,
-    size: 8.3,
+    y: y + height - (compact ? 26 : 35) - index * (compact ? 8 : 10),
+    size: customerSize,
     font: regular,
     color: INVENTORY_COLORS.ink,
   }));
@@ -525,16 +539,16 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
       });
     }
     page.drawText(metric.label, {
-      x: metricX + 12,
-      y: summaryTop - 15,
-      size: 5.9,
+      x: metricX + (compact ? 9 : 12),
+      y: summaryTop - (compact ? 10 : 15),
+      size: compact ? 4.7 : 5.9,
       font: bold,
       color: INVENTORY_COLORS.muted,
     });
     page.drawText(metric.value, {
-      x: metricX + 12,
-      y: summaryTop - 34,
-      size: 13,
+      x: metricX + (compact ? 9 : 12),
+      y: summaryTop - (compact ? 21 : 34),
+      size: compact ? 8.8 : 13,
       font: bold,
       color: INVENTORY_COLORS.ink,
     });
@@ -546,7 +560,8 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
     color: INVENTORY_COLORS.line,
   });
 
-  const rowHeight = contentHeight / INVENTORY_ITEMS_PER_CARD;
+  const visibleRows = compact ? Math.max(1, card.items.length) : INVENTORY_ITEMS_PER_CARD;
+  const rowHeight = contentHeight / visibleRows;
   const contentBottom = y + footerHeight;
   if (!card.items.length) {
     page.drawRectangle({
@@ -592,10 +607,11 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
     color: INVENTORY_COLORS.line,
   });
   const footerAvailable = card.partCount > 1 ? width - 150 : width - 90;
-  page.drawText(wrapPdfText(bold, footerText, 6.5, footerAvailable, 1)[0] || '', {
+  const footerSize = compact ? 5.5 : 6.5;
+  page.drawText(wrapPdfText(bold, footerText, footerSize, footerAvailable, 1)[0] || '', {
     x: x + 10,
-    y: y + 10,
-    size: 6.5,
+    y: y + (compact ? 8 : 10),
+    size: footerSize,
     font: bold,
     color: INVENTORY_COLORS.muted,
   });
@@ -603,28 +619,58 @@ async function drawInventoryCard(page, pdf, fonts, card, bounds, remoteImages) {
     const partText = `PARTE ${card.partIndex}/${card.partCount}`;
     page.drawText(partText, {
       x: x + width - 132,
-      y: y + 10,
-      size: 6.5,
+      y: y + (compact ? 8 : 10),
+      size: footerSize,
       font: bold,
       color: INVENTORY_COLORS.ink,
     });
   }
   page.drawRectangle({
     x: x + width - 72,
-    y: y + 9,
-    width: 8,
-    height: 8,
+    y: y + (compact ? 7 : 9),
+    width: compact ? 7 : 8,
+    height: compact ? 7 : 8,
     color: INVENTORY_COLORS.white,
     borderColor: INVENTORY_COLORS.ink,
     borderWidth: 0.7,
   });
   page.drawText('REVISADO', {
     x: x + width - 59,
-    y: y + 10,
-    size: 6.2,
+    y: y + (compact ? 8 : 10),
+    size: compact ? 5.5 : 6.2,
     font: bold,
     color: INVENTORY_COLORS.muted,
   });
+}
+
+function paginateInventoryCards(cards) {
+  const pages = [];
+  let page = null;
+  for (const card of cards) {
+    const rowSpan = card.items.length <= 1 ? 1 : 2;
+    let placement = null;
+    while (!placement) {
+      if (!page) {
+        page = {
+          occupied: Array.from({ length: INVENTORY_GRID_ROWS }, () => [false, false]),
+          placements: [],
+        };
+        pages.push(page);
+      }
+      for (let row = 0; row <= INVENTORY_GRID_ROWS - rowSpan && !placement; row += 1) {
+        for (let column = 0; column < 2 && !placement; column += 1) {
+          const available = Array.from({ length: rowSpan }, (_, offset) => !page.occupied[row + offset][column]).every(Boolean);
+          if (available) placement = { card, row, column, rowSpan };
+        }
+      }
+      if (!placement) page = null;
+    }
+    for (let offset = 0; offset < placement.rowSpan; offset += 1) {
+      page.occupied[placement.row + offset][placement.column] = true;
+    }
+    page.placements.push(placement);
+  }
+  return pages;
 }
 
 export async function appendTicketInventoryPages(pdf, ticketInventories, options = {}) {
@@ -655,21 +701,20 @@ export async function appendTicketInventoryPages(pdf, ticketInventories, options
     }));
   });
 
-  const inventoryPageCount = Math.ceil(cards.length / INVENTORY_CARDS_PER_PAGE);
+  const inventoryPages = paginateInventoryCards(cards);
+  const inventoryPageCount = inventoryPages.length;
   const cardWidth = (A4_WIDTH - INVENTORY_MARGIN * 2 - INVENTORY_CARD_GAP) / 2;
-  const cardHeight = (
+  const gridRowHeight = (
     A4_HEIGHT
     - INVENTORY_MARGIN * 2
     - INVENTORY_HEADER_HEIGHT
     - INVENTORY_FOOTER_HEIGHT
-    - INVENTORY_CARD_GAP
-  ) / 2;
+    - INVENTORY_CARD_GAP * (INVENTORY_GRID_ROWS - 1)
+  ) / INVENTORY_GRID_ROWS;
 
   for (let pageIndex = 0; pageIndex < inventoryPageCount; pageIndex += 1) {
-    const pageCards = cards.slice(
-      pageIndex * INVENTORY_CARDS_PER_PAGE,
-      (pageIndex + 1) * INVENTORY_CARDS_PER_PAGE,
-    );
+    const placements = inventoryPages[pageIndex].placements;
+    const pageCards = placements.map((placement) => placement.card);
     const page = pdf.addPage([A4_WIDTH, A4_HEIGHT]);
     drawPickingPageHeader(
       page,
@@ -679,16 +724,16 @@ export async function appendTicketInventoryPages(pdf, ticketInventories, options
       pageIndex + 1,
       inventoryPageCount,
     );
-    for (let slot = 0; slot < pageCards.length; slot += 1) {
-      const column = slot % 2;
-      const row = Math.floor(slot / 2);
+    for (const placement of placements) {
+      const { column, row, rowSpan, card } = placement;
       const x = INVENTORY_MARGIN + column * (cardWidth + INVENTORY_CARD_GAP);
-      const top = A4_HEIGHT - INVENTORY_MARGIN - INVENTORY_HEADER_HEIGHT - row * (cardHeight + INVENTORY_CARD_GAP);
+      const top = A4_HEIGHT - INVENTORY_MARGIN - INVENTORY_HEADER_HEIGHT - row * (gridRowHeight + INVENTORY_CARD_GAP);
+      const cardHeight = gridRowHeight * rowSpan + INVENTORY_CARD_GAP * (rowSpan - 1);
       await drawInventoryCard(
         page,
         pdf,
         { regular, bold },
-        pageCards[slot],
+        card,
         { x, y: top - cardHeight, width: cardWidth, height: cardHeight },
         remoteImages,
       );
@@ -842,7 +887,6 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
   uniqueOrders.sort((left, right) => sellerOrder.get(left.sellerKey) - sellerOrder.get(right.sellerKey));
 
   const labels = new Array(uniqueOrders.length);
-  const inventories = new Array(uniqueOrders.length);
   const workerCount = Math.min(4, uniqueOrders.length);
   let nextIndex = 0;
   let stopped = false;
@@ -877,7 +921,6 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
             error.providerStatus = Number(inventory?.status || 0);
             throw error;
           }
-          inventories[index] = { ...inventory, orderNumber: inventory.orderNumber || order.orderNumber, orderId: order.orderId };
         }
       } catch (error) {
         stopped = true;
@@ -906,37 +949,23 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
   });
   const selectedIndexes = printedLabels.map((entry) => entry.labelIndexes);
   const labelCount = selectedIndexes.reduce((total, indexes) => total + indexes.length, 0);
-  let ticketNumber = 0;
-  const ticketReferences = printedLabels.map((entry, index) => entry.labelIndexes.map((labelIndex) => ({
-    ticketNumber: ++ticketNumber,
-    code: ticketCode(ticketNumber),
-    ticketTotal: labelCount,
-    orderNumber: entry.orderNumber,
-    labelIndex,
-    labelCount: pageCounts[index],
-  })));
-  const labelPdf = await composeA4ShippingLabelSheet(labels, selectedIndexes, ticketReferences);
-  const pdfDocument = await PDFDocument.load(labelPdf);
-  const ticketInventories = getOrderInventory ? printedLabels.flatMap((entry, index) => (
-    entry.labelIndexes.map((labelIndex, referenceIndex) => ({
-      ...ticketReferences[index][referenceIndex],
-      inventory: inventoryForTicket(inventories[index], labelIndex, pageCounts[index]),
-    }))
-  )) : [];
-  const inventoryStats = await appendTicketInventoryPages(pdfDocument, ticketInventories, options);
-  const pdf = await pdfDocument.save();
+  // La guía de armado y sus códigos se conservan disponibles en este módulo,
+  // pero la impresión operativa entrega únicamente las etiquetas de Falabella.
+  const pdf = await composeA4ShippingLabelSheet(labels, selectedIndexes);
   const pageCount = (await PDFDocument.load(pdf)).getPageCount();
   const labelPageCount = Math.ceil(labelCount / LABELS_PER_PAGE);
   return {
     ok: true,
     mimeType: 'application/pdf',
     base64: Buffer.from(pdf).toString('base64'),
-    filename: `etiquetas-inventario-a4-${new Date().toISOString().slice(0, 10)}.pdf`,
+    filename: `etiquetas-a4-${new Date().toISOString().slice(0, 10)}.pdf`,
     orderCount: uniqueOrders.length,
     labelCount,
     labelPageCount,
-    ...inventoryStats,
-    inventoryIncluded: inventoryStats.inventoryTicketCount > 0,
+    inventoryPageCount: 0,
+    inventoryTicketCount: 0,
+    inventoryCardCount: 0,
+    inventoryIncluded: false,
     pageCount,
     printedLabels,
   };

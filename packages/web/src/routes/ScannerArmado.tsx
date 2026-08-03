@@ -382,12 +382,6 @@ function PickingResultView({
         <Button className="shrink-0" onClick={onReset}><ScanLine />Escanear de nuevo</Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <ResultFact icon={Store} label="Seller" value={order.companyName || order.sellerFacilityId} className="col-span-2 sm:col-span-1" />
-        <ResultFact icon={Clock3} label="Entregar antes de" value={dateLabel(order.promisedShippingTime)} />
-        <ResultFact icon={UserRound} label="Cliente" value={order.customerName || 'No informado'} />
-      </div>
-
       <div>
         <h2 className="text-lg font-semibold">Productos del bulto</h2>
         <p className="text-sm text-muted-foreground">{result.itemCount} producto{result.itemCount === 1 ? '' : 's'} · {result.unitCount} unidad{result.unitCount === 1 ? '' : 'es'}</p>
@@ -398,6 +392,12 @@ function PickingResultView({
           {items.map((item) => <ProductRow key={item.orderItemId || item.sellerSku} item={item} />)}
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <ResultFact icon={Store} label="Seller" value={order.companyName || order.sellerFacilityId} className="col-span-2 sm:col-span-1" />
+        <ResultFact icon={Clock3} label="Entregar antes de" value={dateLabel(order.promisedShippingTime)} />
+        <ResultFact icon={UserRound} label="Cliente" value={order.customerName || 'No informado'} />
+      </div>
     </section>
   );
 }
@@ -427,14 +427,14 @@ function ProductRow({ item }: { item: PickingItem }) {
   const [imageIndex, setImageIndex] = useState(0);
   const imageUrl = candidates[imageIndex] || '';
   return (
-    <article className="grid grid-cols-[72px_minmax(0,1fr)_48px] items-center gap-3 p-3 sm:grid-cols-[88px_minmax(0,1fr)_88px] sm:gap-4 sm:p-5">
-      <div className="relative grid aspect-square place-items-center overflow-hidden rounded-2xl border bg-white">
+    <article className="grid grid-cols-[minmax(0,1fr)_56px] items-center gap-x-3 gap-y-3 p-3 sm:grid-cols-[132px_minmax(0,1fr)_88px] sm:gap-4 sm:p-5">
+      <div className="relative col-span-2 grid h-56 w-full place-items-center overflow-hidden rounded-2xl border bg-white sm:col-span-1 sm:aspect-square sm:h-auto">
         <ImageIcon className="size-6 text-neutral-300" />
         {imageUrl && (
           <img
             src={imageUrl}
             alt={item.name}
-            className="absolute inset-0 size-full object-contain p-1.5"
+            className="absolute inset-0 size-full object-contain p-2"
             onError={() => setImageIndex((current) => current + 1)}
           />
         )}

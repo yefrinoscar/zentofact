@@ -1,4 +1,8 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
+import {
+  ensureFalabellaOrderAccount,
+  ingestFalabellaOrder,
+} from './order-adapters/falabella.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -158,8 +162,9 @@ export async function fetchFalabellaPages(client, filters, onPage, pageSize = PA
   return { pages, received };
 }
 
-async function upsertOrders(db, companyId, orders) {
+async function upsertOrders(db, companyId, orders, context = {}) {
   let upserted = 0;
+  let canonicalAccount = context.account || null;
   for (const order of orders) {
     const normalized = normalizeFalabellaOrder(order);
     if (!normalized) continue;
@@ -203,6 +208,17 @@ async function upsertOrders(db, companyId, orders) {
       pendingAt: normalized.falabellaCreatedAt,
       providerUpdatedAt: normalized.falabellaUpdatedAt,
     });
+    if (context.canonical !== false) {
+      canonicalAccount ||= await ensureFalabellaOrderAccount(db, companyId);
+      await ingestFalabellaOrder({
+        companyId,
+        normalized,
+        account: canonicalAccount,
+        source: context.source || 'sync',
+        correlationId: context.correlationId,
+        eventId: context.eventId,
+      }, db);
+    }
     upserted += 1;
   }
   return upserted;
@@ -370,7 +386,10 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
 
     let upserted = 0;
     const stats = await fetchFalabellaPages(client, filters, async (orders) => {
-      upserted += await upsertOrders(db, companyId, orders);
+      upserted += await upsertOrders(db, companyId, orders, {
+        source: 'sync',
+        correlationId: `falabella-sync:${runId}`,
+      });
     });
     const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient);
 
@@ -416,13 +435,13 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
 }
 
 export async function upsertFalabellaWebhookOrder(companyId, order, db) {
-  if (db) return upsertOrders(db, Number(companyId), [order]);
+  if (db) return upsertOrders(db, Number(companyId), [order], { source: 'webhook' });
   const { pool } = await loadCore();
   const client = await pool.connect();
   try {
     await client.query('begin');
     await client.query('select pg_advisory_xact_lock($1,$2)', [LOCK_NAMESPACE, Number(companyId)]);
-    const result = await upsertOrders(client, Number(companyId), [order]);
+    const result = await upsertOrders(client, Number(companyId), [order], { source: 'webhook' });
     await client.query('commit');
     return result;
   } catch (error) {

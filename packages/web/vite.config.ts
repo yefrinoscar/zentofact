@@ -10,6 +10,7 @@ const apiPrefixes = [
   '/me',
   '/dashboard',
   '/orders-inbox',
+  '/order-management',
   '/users',
   '/companies',
   '/branches',

@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import {
   A4_HEIGHT,
   A4_WIDTH,
+  appendTicketInventoryPages,
   buildA4ShippingLabelSheet,
   composeA4ShippingLabelSheet,
   inventoryForTicket,
@@ -40,6 +41,17 @@ function sampleInventory(itemCount = 1) {
       imageBytes: SAMPLE_PNG,
       imageMimeType: 'image/png',
     })),
+  };
+}
+
+async function appendSampleInventoryPages(ticketInventories, options = {}) {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([A4_WIDTH, A4_HEIGHT]);
+  const stats = await appendTicketInventoryPages(pdf, ticketInventories, options);
+  const bytes = await pdf.save();
+  return {
+    ...stats,
+    pageCount: (await PDFDocument.load(bytes)).getPageCount(),
   };
 }
 
@@ -171,8 +183,9 @@ test('obtiene cada etiqueta y devuelve un único PDF imprimible', async () => {
   assert.equal((await PDFDocument.load(Buffer.from(result.base64, 'base64'))).getPageCount(), 1);
 });
 
-test('agrega al final una ficha de inventario por cada ticket seleccionado', async () => {
+test('imprime únicamente las etiquetas aunque se consulte el inventario para el escáner', async () => {
   const twoLabels = await sampleLabel(200, 320, 2);
+  let inventoryCalls = 0;
   const result = await buildA4ShippingLabelSheet([
     { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 1 },
     { companyId: 2, orderId: '10', orderNumber: 'ORD-10', labelIndex: 2 },
@@ -180,40 +193,51 @@ test('agrega al final una ficha de inventario por cada ticket seleccionado', asy
     ok: true,
     mimeType: 'application/pdf',
     base64: Buffer.from(twoLabels).toString('base64'),
-  }), async () => sampleInventory(2));
+  }), async () => {
+    inventoryCalls += 1;
+    return sampleInventory(2);
+  });
 
+  assert.equal(inventoryCalls, 1);
   assert.equal(result.labelPageCount, 1);
-  assert.equal(result.inventoryTicketCount, 2);
-  assert.equal(result.inventoryCardCount, 2);
-  assert.equal(result.inventoryPageCount, 1);
-  assert.equal(result.inventoryIncluded, true);
-  assert.equal(result.pageCount, 2);
-  assert.equal((await PDFDocument.load(Buffer.from(result.base64, 'base64'))).getPageCount(), 2);
+  assert.equal(result.inventoryTicketCount, 0);
+  assert.equal(result.inventoryCardCount, 0);
+  assert.equal(result.inventoryPageCount, 0);
+  assert.equal(result.inventoryIncluded, false);
+  assert.equal(result.pageCount, 1);
+  assert.match(result.filename, /^etiquetas-a4-/);
+  assert.equal((await PDFDocument.load(Buffer.from(result.base64, 'base64'))).getPageCount(), 1);
 });
 
-test('distribuye lotes grandes en cuatro fichas de inventario por hoja', async () => {
-  const label = await sampleLabel();
-  const orders = Array.from({ length: 8 }, (_, index) => ({
-    companyId: 2,
-    orderId: String(index + 1),
-    orderNumber: `ORD-${index + 1}`,
-  }));
-  const result = await buildA4ShippingLabelSheet(
-    orders,
-    async () => ({
-      ok: true,
-      mimeType: 'application/pdf',
-      base64: Buffer.from(label).toString('base64'),
-    }),
-    async (order) => ({ ...sampleInventory(), orderNumber: order.orderNumber }),
-  );
+test('distribuye hasta ocho tickets simples por hoja de inventario', async () => {
+  const result = await appendSampleInventoryPages(Array.from({ length: 8 }, (_, index) => ({
+    ticketNumber: index + 1,
+    labelIndex: 1,
+    labelCount: 1,
+    inventory: { ...sampleInventory(), orderNumber: `ORD-${index + 1}` },
+  })));
 
-  assert.equal(result.labelCount, 8);
-  assert.equal(result.labelPageCount, 2);
   assert.equal(result.inventoryTicketCount, 8);
   assert.equal(result.inventoryCardCount, 8);
-  assert.equal(result.inventoryPageCount, 2);
-  assert.equal(result.pageCount, 4);
+  assert.equal(result.inventoryPageCount, 1);
+  assert.equal(result.pageCount, 2);
+});
+
+test('combina un ticket doble y seis simples en una sola hoja de inventario', async () => {
+  const result = await appendSampleInventoryPages(Array.from({ length: 7 }, (_, index) => ({
+    ticketNumber: index + 1,
+    labelIndex: 1,
+    labelCount: 1,
+    inventory: {
+      ...sampleInventory(index === 0 ? 2 : 1),
+      orderNumber: `ORD-${index + 1}`,
+    },
+  })));
+
+  assert.equal(result.inventoryTicketCount, 7);
+  assert.equal(result.inventoryCardCount, 7);
+  assert.equal(result.inventoryPageCount, 1);
+  assert.equal(result.pageCount, 2);
 });
 
 test('asigna a cada ticket únicamente los productos de su PackageId', () => {
@@ -234,14 +258,12 @@ test('asigna a cada ticket únicamente los productos de su PackageId', () => {
 });
 
 test('divide un inventario largo en varias páginas sin perder las etiquetas', async () => {
-  const label = await sampleLabel();
-  const result = await buildA4ShippingLabelSheet([
-    { companyId: 2, orderId: '10', orderNumber: 'ORD-10' },
-  ], async () => ({
-    ok: true,
-    mimeType: 'application/pdf',
-    base64: Buffer.from(label).toString('base64'),
-  }), async () => sampleInventory(13));
+  const result = await appendSampleInventoryPages([{
+    ticketNumber: 1,
+    labelIndex: 1,
+    labelCount: 1,
+    inventory: sampleInventory(13),
+  }]);
 
   assert.equal(result.inventoryTicketCount, 1);
   assert.equal(result.inventoryCardCount, 5);
@@ -250,20 +272,48 @@ test('divide un inventario largo en varias páginas sin perder las etiquetas', a
 });
 
 test('mantiene el PDF aunque una foto remota no se pueda descargar', async () => {
-  const label = await sampleLabel();
   const inventory = sampleInventory();
   delete inventory.items[0].imageBytes;
   inventory.items[0].imageUrl = 'https://imagenes.example.test/producto.jpg';
-  const result = await buildA4ShippingLabelSheet([
-    { companyId: 2, orderId: '10', orderNumber: 'ORD-10' },
-  ], async () => ({
-    ok: true,
-    mimeType: 'application/pdf',
-    base64: Buffer.from(label).toString('base64'),
-  }), async () => inventory, {
+  const result = await appendSampleInventoryPages([{
+    ticketNumber: 1,
+    labelIndex: 1,
+    labelCount: 1,
+    inventory,
+  }], {
     fetchProductImage: async () => { throw new Error('sin imagen'); },
   });
 
+  assert.equal(result.inventoryPageCount, 1);
+  assert.equal(result.pageCount, 2);
+});
+
+test('usa otra foto candidata cuando la primera URL falla', async () => {
+  const inventory = sampleInventory();
+  delete inventory.items[0].imageBytes;
+  inventory.items[0].imageUrl = 'https://imagenes.example.test/fallida.jpg';
+  inventory.items[0].imageUrls = [
+    'https://imagenes.example.test/fallida.jpg',
+    'https://imagenes.example.test/correcta.jpg',
+  ];
+  const attempted = [];
+  const result = await appendSampleInventoryPages([{
+    ticketNumber: 1,
+    labelIndex: 1,
+    labelCount: 1,
+    inventory,
+  }], {
+    fetchProductImage: async (imageUrl) => {
+      attempted.push(imageUrl);
+      if (imageUrl.endsWith('/fallida.jpg')) throw new Error('sin imagen');
+      return { bytes: SAMPLE_PNG, mimeType: 'image/png' };
+    },
+  });
+
+  assert.deepEqual(attempted.sort(), [
+    'https://imagenes.example.test/correcta.jpg',
+    'https://imagenes.example.test/fallida.jpg',
+  ]);
   assert.equal(result.inventoryPageCount, 1);
   assert.equal(result.pageCount, 2);
 });

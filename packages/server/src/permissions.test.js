@@ -40,6 +40,7 @@ test('el catálogo publica los accesos de comprobantes y anulación masiva', () 
 });
 
 test('pathPermission separa el listado de notas de la anulación masiva', () => {
+  assert.equal(pathPermission('/orders'), 'falabella');
   assert.equal(pathPermission('/boletas'), 'documentos');
   assert.equal(pathPermission('/boletas/new'), 'documentos');
   assert.equal(pathPermission('/facturas'), 'documentos');

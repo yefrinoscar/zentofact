@@ -1,0 +1,34 @@
+{
+  "output": "/Users/ylaurach/Documents/repos/p/boletas-sunat/outputs/reporte_mensual_julio_2026_20260731/reporte_empresas_julio_2026.xlsx",
+  "period": {
+    "start": "2026-07-01",
+    "end": "2026-07-31"
+  },
+  "data_cutoff": "2026-07-09",
+  "companies": 10,
+  "documents": 28,
+  "currencies": [
+    "PEN"
+  ],
+  "totals": {
+    "active": 10.0,
+    "boletas_total": 20.0,
+    "boletas_accepted": 19.0,
+    "boletas_rejected": 0.0,
+    "boletas_other": 1.0,
+    "boletas_amount": 1621.58,
+    "facturas_total": 3.0,
+    "facturas_accepted": 3.0,
+    "facturas_rejected": 0.0,
+    "facturas_other": 0.0,
+    "facturas_amount": 565.7,
+    "notes_total": 5.0,
+    "notes_accepted": 5.0,
+    "notes_rejected": 0.0,
+    "notes_other": 0.0,
+    "notes_amount": 523.46,
+    "net_amount": 1663.82,
+    "companies": 10,
+    "rejected_total": 0.0
+  }
+}

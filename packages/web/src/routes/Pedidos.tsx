@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  ImageIcon,
   Inbox,
   Loader2,
   Moon,
@@ -87,6 +88,20 @@ type InboxResponse = {
     windows: DeliveryWindow[];
     days: DeliveryDay[];
   };
+};
+
+type InboxOrderProduct = {
+  orderItemId: string;
+  name: string;
+  sellerSku: string;
+  quantity: number;
+  imageUrl: string;
+  imageUrls: string[];
+};
+
+type OrderProductsState = {
+  status: 'loading' | 'ready' | 'error';
+  items: InboxOrderProduct[];
 };
 
 type DurationMetric = {
@@ -272,6 +287,84 @@ function labelPrintTooltip(order: InboxOrder) {
   const count = Number(print?.printCount || 0);
   const when = print?.lastPrintedAt ? ` el ${formatDateTime(print.lastPrintedAt)}` : '';
   return `Etiqueta impresa${when}. ${count === 1 ? 'Se imprimió 1 vez.' : `Se imprimió ${count} veces.`}`;
+}
+
+function OrderProductImage({ product }: { product: InboxOrderProduct }) {
+  const candidates = [...new Set([product.imageUrl, ...(product.imageUrls || [])].filter(Boolean))];
+  const [imageIndex, setImageIndex] = useState(0);
+  const [viewerImageIndex, setViewerImageIndex] = useState(0);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const imageUrl = candidates[imageIndex] || '';
+  const viewerImageUrl = candidates[viewerImageIndex] || '';
+  return (
+    <>
+      <button
+        type="button"
+        className="relative grid size-14 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-lg border border-border bg-white transition hover:border-primary/50 hover:ring-2 hover:ring-primary/10"
+        onClick={() => { setViewerImageIndex(0); setViewerOpen(true); }}
+        aria-label={`Ampliar imagen de ${product.name || product.sellerSku || 'producto'}`}
+      >
+        <ImageIcon className="size-5 text-muted-foreground/40" />
+        {imageUrl && (
+          <img
+            src={imageUrl}
+            alt=""
+            className="absolute inset-0 size-full object-contain p-0.5"
+            loading="lazy"
+            onError={() => setImageIndex((current) => current + 1)}
+          />
+        )}
+      </button>
+      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{product.name || product.sellerSku || 'Producto'}</DialogTitle>
+            <DialogDescription>{product.quantity > 1 ? `${product.quantity} unidades` : '1 unidad'}</DialogDescription>
+          </DialogHeader>
+          <div className="grid min-h-80 place-items-center overflow-hidden rounded-lg border border-border bg-white p-4">
+            {viewerImageUrl ? (
+              <img
+                src={viewerImageUrl}
+                alt={product.name || 'Producto'}
+                className="max-h-[70vh] max-w-full object-contain"
+                onError={() => setViewerImageIndex((current) => current + 1)}
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                <ImageIcon className="size-12 opacity-30" />
+                Imagen no disponible
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function OrderProducts({ state }: { state?: OrderProductsState }) {
+  if (!state || state.status === 'loading') {
+    return <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> Cargando…</span>;
+  }
+  if (state.status === 'error') return <span className="text-xs text-muted-foreground">No se pudieron cargar</span>;
+  if (!state.items.length) return <span className="text-xs text-muted-foreground">Sin productos informados</span>;
+  return (
+    <div className="space-y-2">
+      {state.items.map((product, index) => (
+        <div key={product.orderItemId || `${product.sellerSku}:${index}`} className="flex min-w-0 items-center gap-3">
+          <OrderProductImage product={product} />
+          <div className="min-w-0">
+            <p className="max-w-48 truncate text-xs font-medium text-foreground">
+              {product.name || product.sellerSku || 'Producto sin nombre'}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {product.quantity > 1 ? `${product.quantity} unidades` : '1 unidad'}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatMoney(value: number, currency = 'PEN') {
@@ -488,6 +581,32 @@ function urgencyFor(order: InboxOrder, now: Date): UrgencyKey {
   if (deadlineDay === limaDateKey(now)) return 'today';
   if (deadlineDay === tomorrowKey(now)) return 'tomorrow';
   return 'later';
+}
+
+function isDueToday(order: InboxOrder, now: Date) {
+  const deadline = parseDate(order.promisedShippingAt);
+  return Boolean(deadline && limaDateKey(deadline) === limaDateKey(now));
+}
+
+function pendingDeadlineKey(order: InboxOrder, now: Date) {
+  const deadline = parseDate(order.promisedShippingAt);
+  if (!deadline) return 'no-date';
+  return isDueToday(order, now) ? 'today' : limaDateKey(deadline);
+}
+
+function pendingDeadlineTabLabel(key: string, now: Date) {
+  if (key === 'today') return 'Vencen hoy';
+  if (key === 'all') return 'Todos';
+  if (key === 'no-date') return 'Sin fecha';
+  if (key === tomorrowKey(now)) return 'Vencen mañana';
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return key;
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
 function deadlineLabel(order: InboxOrder, now: Date) {
@@ -744,6 +863,7 @@ export default function Pedidos() {
   const [companyId, setCompanyId] = useState('all');
   const [boardView, setBoardView] = useState<BoardView>('deadline');
   const [flowStage, setFlowStage] = useState<OrderFlowStage>('pending');
+  const [pendingDeadlineTab, setPendingDeadlineTab] = useState('today');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -751,6 +871,7 @@ export default function Pedidos() {
   const [error, setError] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<InboxOrder | null>(null);
+  const [orderProducts, setOrderProducts] = useState<Record<string, OrderProductsState>>({});
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
@@ -872,6 +993,41 @@ export default function Pedidos() {
     return groups;
   }, [data?.orders, now]);
   const flowOrders = flowGroups[flowStage];
+  const pendingDeadlineGroups = useMemo(() => {
+    const groups: Record<string, InboxOrder[]> = { today: [] };
+    for (const order of flowGroups.pending) {
+      const key = pendingDeadlineKey(order, now);
+      (groups[key] ||= []).push(order);
+    }
+    return groups;
+  }, [flowGroups.pending, now]);
+  const pendingDeadlineTabs = useMemo(() => {
+    const todayKey = limaDateKey(now);
+    const datedKeys = Object.keys(pendingDeadlineGroups)
+      .filter((key) => key !== 'today' && key !== 'no-date')
+      .sort((left, right) => {
+        const leftIsPast = left < todayKey;
+        const rightIsPast = right < todayKey;
+        if (leftIsPast !== rightIsPast) return leftIsPast ? 1 : -1;
+        return leftIsPast ? right.localeCompare(left) : left.localeCompare(right);
+      });
+    const keys = ['today', ...datedKeys];
+    if (pendingDeadlineGroups['no-date']?.length) keys.push('no-date');
+    return [{
+      value: 'all',
+      label: 'Todos',
+      orders: flowGroups.pending,
+    }, ...keys.map((key) => ({
+      value: key,
+      label: pendingDeadlineTabLabel(key, now),
+      orders: pendingDeadlineGroups[key] || [],
+    }))];
+  }, [flowGroups.pending, pendingDeadlineGroups, now]);
+  const displayedFlowOrders = flowStage === 'pending'
+    ? pendingDeadlineTab === 'all'
+      ? flowGroups.pending
+      : pendingDeadlineGroups[pendingDeadlineTab] || []
+    : flowOrders;
   const globalDeadlineCounts = openOrders.reduce<Record<UrgencyKey, number>>((counts, order) => {
     counts[urgencyFor(order, now)] += labelCountFor(order);
     return counts;
@@ -882,8 +1038,52 @@ export default function Pedidos() {
     { value: 'shipped' as const, label: 'Enviados', description: 'Flujo completado', activeClass: 'bg-emerald-50 text-emerald-900 shadow-sm', badgeClass: 'bg-emerald-100 text-emerald-800' },
   ];
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
-  const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(flowOrders), [flowOrders]);
+  const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(displayedFlowOrders), [displayedFlowOrders]);
   const filteredCountLabel = `${filteredFlowOrders.length} etiqueta${filteredFlowOrders.length === 1 ? '' : 's'}`;
+  const visiblePendingCandidates = displayedFlowOrders.filter(canMarkReadyToShip);
+
+  useEffect(() => {
+    const uniqueOrders = [...new Map(displayedFlowOrders.map((order) => [orderKey(order), order])).values()];
+    const pendingOrders = uniqueOrders.filter((order) => !orderProducts[orderKey(order)]);
+    if (!pendingOrders.length) return;
+
+    setOrderProducts((current) => {
+      const next = { ...current };
+      for (const order of pendingOrders) next[orderKey(order)] = { status: 'loading', items: [] };
+      return next;
+    });
+
+    void (async () => {
+      for (let index = 0; index < pendingOrders.length; index += 4) {
+        const chunk = pendingOrders.slice(index, index + 4);
+        const results = await Promise.all(chunk.map(async (order) => {
+          const key = orderKey(order);
+          try {
+            const response = await api.falabellaApiGetOrderItems(order.companyId, order.orderId);
+            if (response?.error || response?.ok === false) throw new Error('Falabella no devolvió los productos.');
+            const items = (Array.isArray(response?.items) ? response.items : []).map((item: any) => ({
+              orderItemId: String(item?.orderItemId || ''),
+              name: String(item?.name || ''),
+              sellerSku: String(item?.sellerSku || ''),
+              quantity: Math.max(1, Number(item?.quantity) || 1),
+              imageUrl: String(item?.imageUrl || ''),
+              imageUrls: Array.isArray(item?.imageUrls) ? item.imageUrls.map(String).filter(Boolean) : [],
+            }));
+            return [key, { status: 'ready', items } satisfies OrderProductsState] as const;
+          } catch {
+            return [key, { status: 'error', items: [] } satisfies OrderProductsState] as const;
+          }
+        }));
+        setOrderProducts((current) => {
+          const next = { ...current };
+          for (const [key, state] of results) next[key] = state;
+          return next;
+        });
+      }
+    })();
+    // Los resultados quedan en caché; solo se solicitan órdenes nuevas al cambiar el tab visible.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedFlowOrders]);
 
   const deadlineGroups = useMemo(() => {
     const groups: Record<UrgencyKey, InboxOrder[]> = { today: [], tomorrow: [], later: [], overdue: [] };
@@ -1148,10 +1348,6 @@ export default function Pedidos() {
         labelIndex: order.labelIndex,
       })));
       if (!result?.base64) throw new Error('No se pudo crear el PDF de etiquetas.');
-      const inventoryPageCount = Number(result.inventoryPageCount || 0);
-      if (result.inventoryIncluded !== true || inventoryPageCount < 1) {
-        throw new Error('El PDF llegó sin las fichas de pedidos. Reinicia o actualiza el servidor e intenta nuevamente.');
-      }
       const objectUrl = URL.createObjectURL(base64Blob(result.base64, 'application/pdf'));
       if (previewWindow) openShippingLabelsPdf(previewWindow, objectUrl);
       else {
@@ -1322,7 +1518,7 @@ export default function Pedidos() {
               const active = flowStage === tab.value;
               const orders = flowGroups[tab.value];
               const count = tab.value === 'shipped' ? shippedTotal : countLabels(orders);
-              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => setFlowStage(tab.value)} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
+              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => { setFlowStage(tab.value); if (tab.value === 'pending') setPendingDeadlineTab('today'); }} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
             })}
           </div>
         </div>
@@ -1344,13 +1540,52 @@ export default function Pedidos() {
                     <Printer /> Imprimir etiquetas
                   </Button>
                 )}
-                {flowStage === 'pending' && canDispatch && flowOrders.some(canMarkReadyToShip) && <Button size="sm" onClick={() => setBulkReadySelection({ columnKey: 'pending', columnTitle: activeFlow.label, orders: flowOrders.filter(canMarkReadyToShip) })}><PackageCheck /> Marcar todos listos para enviar</Button>}
+                {flowStage === 'pending' && canDispatch && visiblePendingCandidates.length > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        onClick={() => setBulkReadySelection({
+                          columnKey: 'pending',
+                          columnTitle: pendingDeadlineTabLabel(pendingDeadlineTab, now),
+                          orders: visiblePendingCandidates,
+                        })}
+                      >
+                        <PackageCheck /> Marcar todos
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Marcar como listos para enviar todos los pedidos del tab activo.</TooltipContent>
+                  </Tooltip>
+                )}
               </div>
             </div>
           </div>
+          {flowStage === 'pending' && (
+            <div className="border-b border-border bg-background px-4 py-2.5">
+              <div role="tablist" aria-label="Pendientes por fecha de entrega" className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1">
+                {pendingDeadlineTabs.map((tab) => {
+                  const active = pendingDeadlineTab === tab.value;
+                  const count = countLabels(tab.orders);
+                  return (
+                    <button
+                      key={tab.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setPendingDeadlineTab(tab.value)}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition ${active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                      {tab.label}
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${active ? 'bg-amber-100 text-amber-800' : 'bg-background text-muted-foreground'}`}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="p-3 font-medium"><span className="inline-flex items-center gap-2">{labelSelectionMode && flowStage === 'ready' && <Checkbox checked={allLabelsSelected ? true : selectedLabelCount > 0 ? 'indeterminate' : false} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas" />} Orden de venta</span></th><th className="p-3 font-medium">Ingresó</th><th className="p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="p-3 font-medium">Tienda</th><th className="p-3 font-medium">Siguiente paso</th></tr></thead>
+            <table className="w-full min-w-[1260px] text-sm">
+              <thead className="bg-background"><tr className="text-left text-muted-foreground"><th className="w-44 min-w-44 p-3 font-medium"><span className="inline-flex items-center gap-2">{labelSelectionMode && flowStage === 'ready' && <Checkbox checked={allLabelsSelected ? true : selectedLabelCount > 0 ? 'indeterminate' : false} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas" />} Orden de venta</span></th><th className="w-[360px] min-w-[360px] p-3 font-medium">Productos</th><th className="w-36 min-w-36 p-3 font-medium">Ingresó</th><th className="w-48 min-w-48 p-3 font-medium">{flowStage === 'shipped' ? 'Enviado' : 'Entrega'}</th><th className="w-64 min-w-64 p-3 font-medium">Tienda</th><th className="w-32 min-w-32 p-3 font-medium">Siguiente paso</th></tr></thead>
               <tbody>
                 {filteredFlowOrders.map((order) => {
                   const ready = canPrintShippingLabel(order);
@@ -1375,9 +1610,10 @@ export default function Pedidos() {
                           )}
                         </div>
                       </td>
-                      <td className="p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
-                      <td className="p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
-                      <td className="max-w-52 truncate p-3 align-middle text-xs text-muted-foreground">{order.companyName}</td>
+                      <td className="w-[360px] min-w-[360px] p-3 align-middle"><OrderProducts state={orderProducts[orderKey(order)]} /></td>
+                      <td className="w-36 min-w-36 whitespace-nowrap p-3 align-middle text-xs"><span className="font-medium text-foreground">{elapsedLabel(order.createdAt, now) || 'Sin fecha'}</span><span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(order.createdAt)}</span></td>
+                      <td className="w-48 min-w-48 whitespace-nowrap p-3 align-middle text-xs">{flowStage === 'shipped' ? formatDateTime(order.updatedAt) : <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${urgencyClass}`}>{deadlineLabel(order, now)}</span>}</td>
+                      <td className="w-64 min-w-64 max-w-64 truncate p-3 align-middle text-xs text-muted-foreground" title={order.companyName}>{order.companyName}</td>
                       <td className="p-3 align-middle">
                         {flowStage === 'shipped' ? <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button> : ready ? (
                           <div className="inline-flex flex-col items-start gap-0.5">
@@ -1405,12 +1641,25 @@ export default function Pedidos() {
                               </Tooltip>
                             )}
                           </div>
-                        ) : canMarkReadyToShip(order) && canDispatch ? <Button size="sm" onClick={() => { openOrder(order); setConfirmReady(true); }}><PackageCheck /> Marcar listo para enviar</Button> : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
+                        ) : canMarkReadyToShip(order) && canDispatch ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="icon-sm"
+                                aria-label="Marcar listo para enviar"
+                                onClick={() => { openOrder(order); setConfirmReady(true); }}
+                              >
+                                <PackageCheck />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Marcar listo para enviar</TooltipContent>
+                          </Tooltip>
+                        ) : <Button size="sm" variant="outline" onClick={() => openOrder(order)}>Ver detalle</Button>}
                       </td>
                     </tr>
                   );
                 })}
-                {filteredFlowOrders.length === 0 && <tr><td colSpan={5} className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</td></tr>}
+                {filteredFlowOrders.length === 0 && <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1423,7 +1672,7 @@ export default function Pedidos() {
             <DialogTitle>Marcar todos listos para enviar</DialogTitle>
             <DialogDescription>
               {bulkReadySelection
-                ? `${bulkReadySelection.orders.filter(canMarkReadyToShip).length} pedidos visibles en “${bulkReadySelection.columnTitle}”.`
+                ? `${bulkReadySelection.orders.filter(canMarkReadyToShip).length} pedidos seleccionados en “${bulkReadySelection.columnTitle}”.`
                 : ''}
             </DialogDescription>
           </DialogHeader>

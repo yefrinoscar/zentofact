@@ -26,6 +26,7 @@ const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
+const orderManagement = await import('./order-management.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
@@ -91,6 +92,7 @@ app.use('*', requireCsrf());
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
   ['/orders-inbox', 'falabella'],
+  ['/order-management', 'falabella'],
   ['/facturas', 'documentos'],
   ['/documentos', 'documentos'],
   ['/falabella', 'falabella'],
@@ -180,6 +182,61 @@ app.post('/orders-inbox/sync', async (c) => {
     return ok(c, result);
   }
   catch (e) { return fail(c, e, 400); }
+});
+
+// ── Pedidos multicanal (backend nuevo; no reemplaza la bandeja actual) ──
+app.get('/order-management/channels', async (c) => {
+  try { return ok(c, await orderManagement.listOrderChannels()); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/order-management/channels', requirePermission('companies'), async (c) => {
+  try { return ok(c, await orderManagement.createOrderChannel(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/accounts', async (c) => {
+  try { return ok(c, await orderManagement.listOrderChannelAccounts(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/accounts', requirePermission('companies'), async (c) => {
+  try { return ok(c, await orderManagement.configureOrderChannelAccount(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.patch('/order-management/accounts/:id', requirePermission('companies'), async (c) => {
+  try {
+    return ok(c, await orderManagement.updateOrderChannelAccount(
+      Number(c.req.param('id')),
+      await c.req.json(),
+    ));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/orders', async (c) => {
+  try { return ok(c, await orderManagement.listOrders(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/orders/ingest', async (c) => {
+  try {
+    const body = await c.req.json();
+    const idempotencyKey = String(
+      c.req.header('idempotency-key') || body.idempotencyKey || '',
+    ).trim();
+    if (!idempotencyKey) {
+      return c.json({ error: 'Idempotency-Key es obligatorio para ingresar pedidos.' }, 400);
+    }
+    return ok(c, await orderManagement.ingestOrder({
+      ...body,
+      source: 'api',
+      automatic: false,
+      actorUserId: c.get('user')?.id,
+      idempotencyKey,
+      rawPayload: body.rawPayload ?? body,
+    }), 201);
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/orders/:id', async (c) => {
+  try {
+    const order = await orderManagement.getOrder(Number(c.req.param('id')));
+    return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
+  } catch (e) { return fail(c, e, 400); }
 });
 
 // ── Usuarios (solo admin / permiso users) ──

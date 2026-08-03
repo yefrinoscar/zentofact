@@ -100,6 +100,23 @@ const apiHttp = {
   getOrdersInboxCompanies: () => req('/orders-inbox/companies'),
   syncOrdersInbox: () => req('/orders-inbox/sync', { method: 'POST' }),
 
+  // Pedidos multicanal
+  listOrderChannels: () => req('/order-management/channels'),
+  listOrderChannelAccounts: (filter: { companyId?: number; channelCode?: string; active?: boolean } = {}) =>
+    req(`/order-management/accounts${qs(filter)}`),
+  listManagedOrders: (filter: {
+    companyId?: number;
+    channelAccountId?: number;
+    channelCode?: string;
+    orderStatus?: string;
+    fulfillmentStatus?: string;
+    documentStatus?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/order-management/orders${qs(filter)}`),
+  getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),

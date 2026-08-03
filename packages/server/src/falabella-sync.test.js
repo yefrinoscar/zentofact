@@ -118,6 +118,42 @@ class FakeDb {
     if (compact.startsWith('select * from falabella_sync_state')) return { rows: [this.state] };
     if (compact.startsWith('insert into falabella_sync_runs')) return { rows: [{ id: 55 }] };
     if (compact.startsWith('select company_id, enabled, status')) return { rows: [this.state] };
+    if (compact.startsWith('select id, code, name, default_auto_create_orders')) {
+      return { rows: [{ id: 1, code: 'falabella', name: 'Falabella', default_auto_create_orders: true, active: true }] };
+    }
+    if (compact.startsWith('insert into order_channel_accounts')) {
+      return { rows: [{
+        id: 70, company_id: 7, channel_id: 1, external_account_id: 'default',
+        display_name: 'Falabella', auto_create_orders: true,
+        document_requirement: 'optional', document_type_policy: 'automatic',
+        credential_reference: null, settings: {}, active: true,
+      }] };
+    }
+    if (compact.startsWith('select a.*, ch.code as channel_code')) {
+      return { rows: [{
+        id: 70, company_id: 7, channel_id: 1, external_account_id: 'default',
+        display_name: 'Falabella', auto_create_orders: true,
+        document_requirement: 'optional', document_type_policy: 'automatic',
+        credential_reference: null, settings: {}, active: true,
+        channel_code: 'falabella', channel_name: 'Falabella',
+      }] };
+    }
+    if (compact.startsWith('select * from orders')) return { rows: [] };
+    if (compact.startsWith('insert into orders')) {
+      return { rows: [{
+        id: 700, company_id: 7, channel_account_id: 70,
+        external_order_id: params[2], external_order_number: params[3],
+        order_status: params[4], payment_status: params[5], fulfillment_status: params[6],
+        document_status: params[7], provider_status: params[8],
+        document_requirement: params[9], document_type_policy: params[10],
+        requested_document_type: params[11], currency: params[12],
+        subtotal: params[13], shipping_amount: params[14], discount_amount: params[15],
+        total: params[16], customer: JSON.parse(params[17]), shipping: JSON.parse(params[18]),
+        metadata: JSON.parse(params[19]), ordered_at: params[20],
+        promised_shipping_at: params[21], provider_updated_at: params[22],
+      }] };
+    }
+    if (compact.startsWith('insert into order_snapshots')) return { rows: [{ id: 701 }] };
     return { rows: [] };
   }
 
@@ -161,6 +197,8 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   assert.equal(result.status, 'success');
   assert.equal(result.received, 1);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
+  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);
+  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_events')), true);
   assert.match(
     db.queries.find((query) => query.sql.startsWith('insert into falabella_orders')).sql,
     /on conflict \(company_id, order_id\)/,
