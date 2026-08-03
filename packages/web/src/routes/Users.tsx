@@ -7,7 +7,9 @@ import api from '../lib/api';
 import {
   ALL_PERMISSION_KEYS,
   PERMISSIONS,
+  PERMISSION_SECTIONS,
   ROLE_PRESETS,
+  SELECTABLE_ROLES,
   type AppRole,
   type PermissionKey,
   isAdminRole,
@@ -102,6 +104,10 @@ function roleBadgeClass(role: string) {
       return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300';
     case 'operator':
       return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300';
+    case 'billing':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300';
+    case 'falabella_manager':
+      return 'border-lime-200 bg-lime-50 text-lime-700 dark:border-lime-900 dark:bg-lime-950/40 dark:text-lime-300';
     case 'viewer':
       return 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300';
     default:
@@ -187,17 +193,30 @@ export default function UsersPage() {
     setForm((f) => ({
       ...f,
       role,
-      permissions: role === 'admin' ? [...ALL_PERMISSION_KEYS] : [...ROLE_PRESETS[role].permissions],
+      permissions: isAdminRole(role) ? [...ALL_PERMISSION_KEYS] : [...ROLE_PRESETS[role].permissions],
     }));
   };
 
   const togglePermission = (key: PermissionKey) => {
-    if (form.role === 'admin') return;
+    if (isAdminRole(form.role)) return;
     setForm((f) => {
       const has = f.permissions.includes(key);
       return {
         ...f,
         permissions: has ? f.permissions.filter((k) => k !== key) : [...f.permissions, key],
+      };
+    });
+  };
+
+  const togglePermissionSection = (keys: PermissionKey[]) => {
+    if (isAdminRole(form.role)) return;
+    setForm((current) => {
+      const allChecked = keys.every((key) => current.permissions.includes(key));
+      return {
+        ...current,
+        permissions: allChecked
+          ? current.permissions.filter((key) => !keys.includes(key))
+          : [...new Set([...current.permissions, ...keys])],
       };
     });
   };
@@ -215,7 +234,7 @@ export default function UsersPage() {
         await api.updateUser(editing.id, {
           name: form.name.trim(),
           role: form.role,
-          permissions: form.role === 'admin' ? ALL_PERMISSION_KEYS : form.permissions,
+          permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
           active: form.active,
           ...(form.password ? { password: form.password } : {}),
         });
@@ -225,7 +244,7 @@ export default function UsersPage() {
           email: form.email.trim(),
           password: form.password,
           role: form.role,
-          permissions: form.role === 'admin' ? ALL_PERMISSION_KEYS : form.permissions,
+          permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
           active: form.active,
         });
       }
@@ -266,11 +285,18 @@ export default function UsersPage() {
     return isSuperadmin || !isAdminRole(row.role);
   };
 
-  const editableRoles = (Object.keys(ROLE_PRESETS) as AppRole[])
+  const editableRoles = SELECTABLE_ROLES
     .filter((role) => isSuperadmin || !isAdminRole(role));
-  const visiblePermissions = PERMISSIONS.filter(
-    (permission) => isAdminRole(form.role) || permission.key !== 'users',
-  );
+  const visiblePermissions = PERMISSIONS.filter((permission) => {
+    if (import.meta.env.PROD && permission.hiddenInProduction) return false;
+    return isAdminRole(form.role) || !['dashboard', 'users'].includes(permission.key);
+  });
+  const permissionGroups = PERMISSION_SECTIONS
+    .map((section) => ({
+      ...section,
+      permissions: visiblePermissions.filter((permission) => permission.section === section.key),
+    }))
+    .filter((section) => section.permissions.length > 0);
 
   const filteredUsers = useMemo(() => {
     const text = search.trim().toLowerCase();
@@ -353,7 +379,7 @@ export default function UsersPage() {
             </SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="all">Todos los roles</SelectItem>
-              {(Object.keys(ROLE_PRESETS) as AppRole[]).map((role) => (
+              {SELECTABLE_ROLES.map((role) => (
                 <SelectItem key={role} value={role}>{roleLabel(role)}</SelectItem>
               ))}
             </SelectContent>
@@ -415,7 +441,7 @@ export default function UsersPage() {
                       <TableCell className="hidden md:table-cell">
                         <Badge variant="outline" className={roleBadgeClass(row.role)}>{roleLabel(row.role)}</Badge>
                       </TableCell>
-                      <TableCell className="hidden lg:table-cell text-muted-foreground">{row.permissions.length} módulos</TableCell>
+                      <TableCell className="hidden lg:table-cell text-muted-foreground">{row.permissions.length} accesos</TableCell>
                       <TableCell>
                         <Badge variant={row.active ? 'secondary' : 'outline'} className={row.active ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : ''}>
                           {row.active ? 'Activo' : 'Inactivo'}
@@ -472,7 +498,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle>
             <DialogDescription>
-              Elige un rol predefinido o personaliza los módulos visibles en el menú.
+              Elige un rol predefinido o personaliza cada sección y subsección del menú.
             </DialogDescription>
           </DialogHeader>
 
@@ -525,7 +551,7 @@ export default function UsersPage() {
 
             <div className="grid gap-2">
               <Label>Rol</Label>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {editableRoles.map((role) => {
                   const preset = ROLE_PRESETS[role];
                   const active = form.role === role;
@@ -547,39 +573,69 @@ export default function UsersPage() {
                   );
                 })}
               </div>
+              {!SELECTABLE_ROLES.includes(form.role) && (
+                <p className="text-xs text-muted-foreground">
+                  Esta cuenta usa un perfil anterior. Elige Operador o Facturación para actualizarla.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <Label>Módulos del menú</Label>
-              <div className="rounded-lg border border-border">
-                {visiblePermissions.map((perm, i) => {
-                  const checked = form.role === 'admin' || form.permissions.includes(perm.key);
-                  const locked = form.role === 'admin';
-                  return (
-                    <div key={perm.key}>
-                      {i > 0 && <Separator />}
-                      <label
-                        className={cn(
-                          'flex cursor-pointer items-start gap-3 px-3 py-2.5 transition hover:bg-muted/40',
-                          locked && 'cursor-default opacity-80',
-                        )}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          disabled={locked}
-                          onCheckedChange={() => togglePermission(perm.key)}
-                          className="mt-0.5"
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">{perm.label}</span>
-                          <span className="block text-xs text-muted-foreground">{perm.description}</span>
-                        </span>
-                      </label>
-                    </div>
-                  );
-                })}
+              <Label>Accesos del menú</Label>
+              <div className="grid gap-3">
+                {permissionGroups.map((section) => (
+                  <div key={section.key} className="overflow-hidden rounded-lg border border-border">
+                    {(() => {
+                      const keys = section.permissions.map((permission) => permission.key);
+                      const checkedCount = keys.filter((key) => form.permissions.includes(key)).length;
+                      const locked = isAdminRole(form.role);
+                      const sectionChecked = locked || checkedCount === keys.length
+                        ? true
+                        : checkedCount > 0 ? 'indeterminate' : false;
+                      return (
+                        <label className={cn(
+                          'flex items-center gap-3 bg-muted/40 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground',
+                          locked ? 'cursor-default' : 'cursor-pointer',
+                        )}>
+                          <Checkbox
+                            checked={sectionChecked}
+                            disabled={locked}
+                            onCheckedChange={() => togglePermissionSection(keys)}
+                          />
+                          {section.label}
+                        </label>
+                      );
+                    })()}
+                    {section.permissions.map((perm, index) => {
+                      const locked = isAdminRole(form.role);
+                      const checked = locked || form.permissions.includes(perm.key);
+                      return (
+                        <div key={perm.key}>
+                          {index > 0 && <Separator />}
+                          <label
+                            className={cn(
+                              'flex cursor-pointer items-start gap-3 px-3 py-2.5 transition hover:bg-muted/40',
+                              locked && 'cursor-default opacity-80',
+                            )}
+                          >
+                            <Checkbox
+                              checked={checked}
+                              disabled={locked}
+                              onCheckedChange={() => togglePermission(perm.key)}
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">{perm.label}</span>
+                              <span className="block text-xs text-muted-foreground">{perm.description}</span>
+                            </span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
-              {form.role === 'admin' && (
+              {isAdminRole(form.role) && (
                 <p className="text-xs text-muted-foreground">El administrador siempre tiene todos los módulos.</p>
               )}
             </div>

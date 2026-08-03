@@ -55,7 +55,8 @@ function normalizeRequestedRole(role, fallback = 'operator') {
 
 function normalizeRequestedPermissions(input, role, fallback) {
   if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
-  return normalizePermissions(input != null ? input : fallback, role).filter((key) => key !== 'users');
+  return normalizePermissions(input != null ? input : fallback, role)
+    .filter((key) => key !== 'users' && key !== 'dashboard');
 }
 
 function validatePassword(password) {
@@ -257,7 +258,10 @@ export async function updateUser(id, patch = {}, actorId) {
     assertCanManageTarget(actor, current, role, patch);
     const name = patch.name != null ? String(patch.name).trim() : current.name;
     if (!name) throw new Error('Nombre requerido');
-    const permissions = normalizeRequestedPermissions(patch.permissions, role, current.permissions);
+    const permissionFallback = patch.role != null && role !== current.role
+      ? permissionsForRole(role)
+      : current.permissions;
+    const permissions = normalizeRequestedPermissions(patch.permissions, role, permissionFallback);
     const active = patch.active != null ? !!patch.active : current.active;
     const passwordChanged = patch.password != null && String(patch.password) !== '';
     if (passwordChanged) validatePassword(patch.password);

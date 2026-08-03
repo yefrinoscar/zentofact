@@ -35,15 +35,15 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
   '/pedidos': {
-    title: 'Bandeja de pedidos',
+    title: 'Recepción de pedidos',
     subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
   },
   '/orders': {
-    title: 'Pedidos multicanal',
+    title: 'Seguimiento multicanal',
     subtitle: 'Seguimiento unificado de pedidos, comprobantes y entregas por canal.',
   },
   '/scanner': {
-    title: 'Escáner de armado',
+    title: 'Preparación y escaneo',
     subtitle: 'Escanea una etiqueta y revisa el contenido exacto de cada bulto.',
   },
   '/companies': {
@@ -191,15 +191,22 @@ function AppLayout() {
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
-              <Route path="/pedidos" element={<RequirePermission permission="falabella" {...permissionState}><Pedidos /></RequirePermission>} />
-              <Route path="/orders" element={<RequirePermission permission="falabella" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
-              <Route path="/scanner" element={<RequirePermission permission="falabella" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
+              <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route
+                path="/orders"
+                element={
+                  import.meta.env.PROD
+                    ? <Navigate to={firstAllowedPath(user)} replace />
+                    : <RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>
+                }
+              />
+              <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
-              <Route path="/credit-notes" element={<RequirePermission permission="documentos" {...permissionState}><CreditNotesList /></RequirePermission>} />
-              <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes" {...permissionState}><CreditNotes /></RequirePermission>} />
-              <Route path="/falabella-api" element={<RequirePermission permission="falabella" {...permissionState}><FalabellaApi /></RequirePermission>} />
+              <Route path="/credit-notes" element={<RequirePermission permission="credit_notes_manage" {...permissionState}><CreditNotesList /></RequirePermission>} />
+              <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
+              <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route
                 path="/productos"
                 element={
@@ -209,10 +216,10 @@ function AppLayout() {
                 }
               />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
-              <Route path="/boletas" element={<RequirePermission permission="documentos" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
-              <Route path="/boletas/new" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />
-              <Route path="/facturas" element={<RequirePermission permission="documentos" {...permissionState}><Documentos kind="facturas" /></RequirePermission>} />
-              <Route path="/facturas/new" element={<RequirePermission permission="documentos" {...permissionState}><IndividualInvoice fixedDocType="01" /></RequirePermission>} />
+              <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
+              <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />
+              <Route path="/facturas" element={<RequirePermission permission="facturas" {...permissionState}><Documentos kind="facturas" /></RequirePermission>} />
+              <Route path="/facturas/new" element={<RequirePermission permission="facturas" {...permissionState}><IndividualInvoice fixedDocType="01" /></RequirePermission>} />
               <Route path="/documentos" element={<LegacyDocumentsRedirect />} />
               <Route path="/documentos/nuevo" element={<LegacyNewDocumentRedirect />} />
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />

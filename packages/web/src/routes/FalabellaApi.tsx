@@ -948,7 +948,7 @@ function createEmptyEmitBoletaState(): EmitBoletaModalState {
 export default function FalabellaApi() {
   const navigate = useNavigate();
   const { can, role } = usePermissions();
-  const canIssueCreditNotes = role !== 'viewer' && can('credit_notes');
+  const canIssueCreditNotes = role !== 'viewer' && can('credit_notes_manage');
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
 

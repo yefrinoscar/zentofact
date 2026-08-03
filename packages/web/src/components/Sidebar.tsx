@@ -27,7 +27,7 @@ import { clearClientStorageOnLogout, broadcastForceReauth } from '../lib/clearCl
 import falabellaIcon from '../assets/falabella.png';
 import webPackage from '../../package.json';
 import { usePermissions } from '../hooks/usePermissions';
-import type { PermissionKey } from '../lib/permissions';
+import { ROLE_PRESETS, normalizeRole, type PermissionKey } from '../lib/permissions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,6 +57,7 @@ type NavItem = {
   img?: string | null;
   label: string;
   permission: PermissionKey;
+  hiddenInProduction?: boolean;
 };
 
 type NavGroup = {
@@ -71,22 +72,28 @@ const navGroups: NavGroup[] = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
-      { to: '/orders', icon: ListOrdered, label: 'Pedidos multicanal', permission: 'falabella' },
-      { to: '/pedidos', icon: Inbox, label: 'Bandeja de pedidos', permission: 'falabella' },
-      { to: '/scanner', icon: ScanLine, label: 'Escáner de armado', permission: 'falabella' },
-      { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella' },
-      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
+      { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
+      { to: '/orders', icon: ListOrdered, label: 'Seguimiento multicanal', permission: 'order_management', hiddenInProduction: true },
+      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
+    ],
+  },
+  {
+    id: 'orders',
+    label: 'Pedidos',
+    items: [
+      { to: '/pedidos', icon: Inbox, label: 'Recepción de pedidos', permission: 'orders_inbox' },
+      { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
     ],
   },
   {
     id: 'documents',
     label: 'Comprobantes',
     items: [
-      { to: '/boletas', icon: ReceiptText, label: 'Boletas', permission: 'documentos' },
-      { to: '/facturas', icon: FileText, label: 'Facturas', permission: 'documentos' },
-      { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito', permission: 'documentos' },
+      { to: '/boletas', icon: ReceiptText, label: 'Boletas', permission: 'boletas' },
+      { to: '/facturas', icon: FileText, label: 'Facturas', permission: 'facturas' },
+      { to: '/credit-notes', icon: FileMinus2, label: 'Notas de crédito', permission: 'credit_notes_manage' },
       { to: '/auto-emision', icon: Zap, label: 'Automatización', permission: 'auto_emision' },
-      { to: '/credit-notes/bulk', icon: Shuffle, label: 'Anulación masiva', permission: 'credit_notes' },
+      { to: '/credit-notes/bulk', icon: Shuffle, label: 'Anulación masiva', permission: 'credit_notes_bulk' },
     ],
   },
   {
@@ -122,7 +129,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        if (isProd && item.to === '/productos') return false;
+        if (isProd && item.hiddenInProduction) return false;
         return can(item.permission);
       }),
     }))
@@ -226,11 +233,11 @@ function RuntimeVersion({ collapsed }: { collapsed: boolean }) {
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { data: session } = authClient.useSession();
-  const { role } = usePermissions();
+  const { role, can } = usePermissions();
   const [signingOut, setSigningOut] = useState(false);
   const email = session?.user?.email || '';
   const name = session?.user?.name || email.split('@')[0] || 'Cuenta';
-  const roleLabel = role === 'admin' ? 'Admin' : role === 'viewer' ? 'Consulta' : role === 'operator' ? 'Operador' : role;
+  const roleLabel = ROLE_PRESETS[normalizeRole(role)].label;
   const initial = (name || email || 'Z').trim().charAt(0).toUpperCase();
 
   const logout = async () => {
@@ -269,9 +276,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link to="/settings"><Settings /> Ajustes y tema</Link>
-            </DropdownMenuItem>
+            {can('settings') && (
+              <DropdownMenuItem asChild>
+                <Link to="/settings"><Settings /> Ajustes y tema</Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem variant="destructive" disabled={signingOut} onSelect={logout}>
               <LogOut /> {signingOut ? 'Saliendo…' : 'Cerrar sesión'}
             </DropdownMenuItem>
