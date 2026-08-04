@@ -55,6 +55,11 @@ test('resuelve un tracking guardado y devuelve solo el bulto escaneado', async (
       sellerSku: 'TRI65748392',
       shopSku: '129633448',
       quantity: 1,
+      variation: { color: 'Negro', size: 'XL', label: 'Negro · XL', source: 'catalog-name' },
+      color: 'Negro',
+      size: 'XL',
+      variantLabel: 'Negro · XL',
+      variantSource: 'catalog-name',
       imageUrl: 'https://media.example/producto.jpg',
     }],
   });
@@ -71,4 +76,7 @@ test('resuelve un tracking guardado y devuelve solo el bulto escaneado', async (
   assert.equal(result.packages.length, 1);
   assert.equal(result.packages[0].packageId, 'PKG00000JV2GA');
   assert.equal(result.packages[0].items[0].sellerSku, 'TRI65748392');
+  assert.equal(result.packages[0].items[0].color, 'Negro');
+  assert.equal(result.packages[0].items[0].size, 'XL');
+  assert.equal(result.packages[0].items[0].variantLabel, 'Negro · XL');
 });

@@ -4,9 +4,11 @@ const test = require('node:test');
 process.env.DATABASE_URL_POSTGRES ||= 'postgresql://test:test@127.0.0.1:5432/test';
 
 const {
+  falabellaCatalogVariant,
   falabellaOrderItemImageUrls,
   falabellaOrderItemName,
   falabellaOrderItemSellerSku,
+  falabellaOrderItemVariant,
 } = require('../dist/services/falabella.service.js');
 
 test('prioriza el nombre exacto comprado sobre el nombre genérico del catálogo', () => {
@@ -36,6 +38,71 @@ test('no duplica la variante cuando Falabella ya la incluyo en el nombre', () =>
       Variation: '{"color":{"name":"Blanco","code":"#FFFFFF"},"size":"M"}',
     }),
     'Camiseta Faja Remodela Abdomen Hombres Bvd - Blanco M',
+  );
+});
+
+test('recupera color y talla desde el nombre completo del catálogo por SKU', () => {
+  const product = {
+    SellerSku: 'CM22111211',
+    ShopSku: '140704198',
+    Name: 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd / Negro / XL',
+  };
+  assert.deepEqual(falabellaCatalogVariant(product), {
+    color: 'Negro',
+    size: 'XL',
+    label: 'Negro · XL',
+    source: 'catalog-name',
+  });
+  assert.deepEqual(falabellaOrderItemVariant({ Sku: 'CM22111211' }, product), {
+    color: 'Negro',
+    size: 'XL',
+    label: 'Negro · XL',
+    source: 'catalog-name',
+  });
+  assert.equal(
+    falabellaOrderItemName(
+      { Name: 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd' },
+      product.Name,
+    ),
+    'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd - Negro XL',
+  );
+});
+
+test('ignora marcadores vacíos de Falabella y usa la variante al final del nombre', () => {
+  assert.deepEqual(
+    falabellaCatalogVariant({
+      SellerSku: 'CAM42123111',
+      Name: 'Camiseta Faja Remodela Abdomen Hombres Bvd - Blanco M',
+      Variation: '...',
+    }),
+    { color: 'Blanco', size: 'M', label: 'Blanco · M', source: 'catalog-name' },
+  );
+});
+
+test('prioriza la variante exacta de la orden sobre el fallback del catálogo', () => {
+  assert.deepEqual(
+    falabellaOrderItemVariant(
+      { Variation: { Color: 'Azul', Talla: 'M' } },
+      { Name: 'Camiseta / Negro / XL' },
+    ),
+    { color: 'Azul', size: 'M', label: 'Azul · M', source: 'order' },
+  );
+});
+
+test('lee atributos de catálogo representados como una lista nombre-valor', () => {
+  assert.deepEqual(
+    falabellaCatalogVariant({
+      Name: 'Polo deportivo',
+      ProductData: {
+        Attributes: {
+          Attribute: [
+            { Name: 'Color', Value: 'Verde' },
+            { Name: 'Talla', Value: 'L' },
+          ],
+        },
+      },
+    }),
+    { color: 'Verde', size: 'L', label: 'Verde · L', source: 'catalog' },
   );
 });
 

@@ -146,16 +146,168 @@ function parseOrderItemVariation(value: any): any {
 }
 
 function variationText(value: any): string {
-  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  if (typeof value === 'string' || typeof value === 'number') {
+    const text = String(value).trim();
+    return /^(?:\.{2,}|-+|n\/?a|null|undefined|sin variaci[oó]n)$/i.test(text) ? '' : text;
+  }
   if (!value || typeof value !== 'object') return '';
   return String(value.name ?? value.Name ?? value.value ?? value.Value ?? value.label ?? value.Label ?? '').trim();
 }
 
+type FalabellaVariant = {
+  color: string;
+  size: string;
+  label: string;
+  source: 'order' | 'catalog' | 'catalog-name' | '';
+};
+
+function normalizedAttributeKey(value: any): string {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function variantFromObject(value: any): { color: string; size: string; fallback: string } {
+  const parsed = parseOrderItemVariation(value);
+  const found = { color: '', size: '', fallback: '' };
+  const visited = new Set<any>();
+
+  const visit = (current: any, depth = 0) => {
+    if (current == null || depth > 5 || (found.color && found.size)) return;
+    if (typeof current === 'string') {
+      const trimmed = current.trim();
+      if ((trimmed.startsWith('{') || trimmed.startsWith('['))) {
+        const reparsed = parseOrderItemVariation(trimmed);
+        if (reparsed && typeof reparsed === 'object') visit(reparsed, depth + 1);
+      } else if (!found.fallback) found.fallback = variationText(current);
+      return;
+    }
+    if (typeof current !== 'object' || visited.has(current)) return;
+    visited.add(current);
+    if (Array.isArray(current)) {
+      current.forEach((entry) => visit(entry, depth + 1));
+      return;
+    }
+
+    const attributeName = normalizedAttributeKey(
+      current.AttributeName ?? current.attributeName ?? current.Name ?? current.name ?? current.Key ?? current.key ?? current.Label ?? current.label,
+    );
+    const attributeValue = current.Value ?? current.value ?? current.ValueName ?? current.valueName ?? current.Option ?? current.option;
+    if (attributeName.includes('color') || attributeName.includes('colour')) {
+      found.color ||= variationText(attributeValue);
+    } else if (attributeName === 'size' || attributeName.includes('talla')) {
+      found.size ||= variationText(attributeValue);
+    }
+
+    for (const [key, entry] of Object.entries(current)) {
+      const normalizedKey = normalizedAttributeKey(key);
+      if (normalizedKey.includes('color') || normalizedKey.includes('colour')) {
+        found.color ||= variationText(entry);
+      } else if (normalizedKey === 'size' || normalizedKey.includes('talla') || normalizedKey === 'sizename') {
+        found.size ||= variationText(entry);
+      } else if ((normalizedKey === 'value' || normalizedKey === 'option') && !found.fallback) {
+        found.fallback = variationText(entry);
+      }
+    }
+    for (const entry of Object.values(current)) visit(entry, depth + 1);
+  };
+
+  visit(parsed);
+  return found;
+}
+
+function catalogNameVariant(name: any): { color: string; size: string } {
+  const parts = String(name || '').split('/').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    return {
+      color: variationText(parts.at(-2)),
+      size: variationText(parts.at(-1)),
+    };
+  }
+
+  // Seller Center también suele guardar la variante al final del nombre:
+  // "Producto - Blanco M". Solo lo interpretamos cuando la última palabra
+  // tiene forma de talla para no recortar nombres de producto comunes.
+  const hyphenParts = String(name || '').split(/\s[-–—]\s/).map((part) => part.trim()).filter(Boolean);
+  const suffix = hyphenParts.length >= 2 ? hyphenParts.at(-1) || '' : '';
+  const suffixParts = suffix.split(/\s+/).filter(Boolean);
+  const possibleSize = suffixParts.at(-1) || '';
+  const isSize = /^(?:x{0,4}s|s|m|l|x{1,4}l|\d{1,3}(?:[.,]\d)?|\d{1,2}[-/]\d{1,2}|u(?:nica)?|[a-z]\d{1,2})$/i.test(possibleSize);
+  if (!isSize || suffixParts.length < 2) return { color: '', size: '' };
+  return {
+    color: variationText(suffixParts.slice(0, -1).join(' ')),
+    size: variationText(possibleSize),
+  };
+}
+
+function variantLabel(color: string, size: string, fallback = ''): string {
+  return [...new Set([color, size, fallback].map((value) => String(value || '').trim()).filter(Boolean))].join(' · ');
+}
+
+export function falabellaCatalogVariant(product: any): FalabellaVariant {
+  const productData = product?.ProductData || {};
+  const structuredSources = [
+    product?.Variation,
+    product?.Variations,
+    product?.Variant,
+    product?.Attributes,
+    product?.ProductAttributes,
+    productData?.Variation,
+    productData?.Variations,
+    productData?.Attributes,
+    productData?.ProductAttributes,
+    {
+      Color: product?.Color ?? product?.ColorName ?? productData?.Color ?? productData?.ColorName,
+      Size: product?.Size ?? product?.SizeName ?? product?.Talla ?? productData?.Size ?? productData?.SizeName ?? productData?.Talla,
+    },
+  ];
+  let color = '';
+  let size = '';
+  let fallback = '';
+  for (const source of structuredSources) {
+    const current = variantFromObject(source);
+    color ||= current.color;
+    size ||= current.size;
+    fallback ||= current.fallback;
+    if (color && size) break;
+  }
+  const fromName = catalogNameVariant(product?.Name ?? product?.ProductName ?? productData?.Name ?? productData?.ProductName);
+  const structured = Boolean(color || size || fallback);
+  color ||= fromName.color;
+  size ||= fromName.size;
+  return {
+    color,
+    size,
+    label: variantLabel(color, size, fallback),
+    source: structured ? 'catalog' : color || size ? 'catalog-name' : '',
+  };
+}
+
+export function falabellaOrderItemVariant(item: any, product?: any): FalabellaVariant {
+  const direct = variantFromObject([
+    item?.Variation,
+    item?.variation,
+    item?.Variant,
+    item?.variant,
+    item?.Attributes,
+    {
+      Color: item?.Color ?? item?.ColorName,
+      Size: item?.Size ?? item?.SizeName ?? item?.Talla,
+    },
+  ]);
+  const catalog = product ? falabellaCatalogVariant(product?.raw || product) : { color: '', size: '', label: '', source: '' as const };
+  const color = direct.color || catalog.color;
+  const size = direct.size || catalog.size;
+  const directLabel = variantLabel(direct.color, direct.size, direct.fallback);
+  return {
+    color,
+    size,
+    label: variantLabel(color, size, color || size ? '' : directLabel || catalog.label),
+    source: directLabel ? 'order' : catalog.source,
+  };
+}
+
 export function falabellaOrderItemVariation(item: any): string[] {
-  const variation = parseOrderItemVariation(item?.Variation ?? item?.variation ?? item?.Variant ?? item?.variant);
-  const color = variationText(variation?.color ?? variation?.Color ?? variation?.colour ?? variation?.Colour ?? variation?.colorName ?? variation?.ColorName);
-  const size = variationText(variation?.size ?? variation?.Size ?? variation?.talla ?? variation?.Talla);
-  const fallback = color || size ? '' : variationText(variation?.value);
+  const variation = variantFromObject(item?.Variation ?? item?.variation ?? item?.Variant ?? item?.variant);
+  const { color, size, fallback } = variation;
   return [...new Set([color, size, fallback].filter(Boolean))];
 }
 
@@ -168,7 +320,12 @@ export function falabellaOrderItemName(item: any, catalogName = ''): string {
     .map((value) => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
     .find(Boolean) || '';
   const normalizedBaseName = normalizedNameWords(baseName);
-  const missingVariation = falabellaOrderItemVariation(item)
+  const directVariation = falabellaOrderItemVariation(item);
+  const catalogVariation = catalogNameVariant(catalogName);
+  const variation = directVariation.length
+    ? directVariation
+    : [catalogVariation.color, catalogVariation.size].filter(Boolean);
+  const missingVariation = variation
     .filter((value) => !normalizedBaseName.includes(normalizedNameWords(value)));
   if (!missingVariation.length) return baseName;
   return `${baseName}${baseName ? ' - ' : ''}${missingVariation.join(' ')}`;
@@ -197,6 +354,7 @@ function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normali
   const quantity = Math.max(1, Number(item?.Quantity ?? item?.quantity ?? item?.Qty ?? item?.qty ?? 1) || 1);
   const unitPrice = Number(item?.PaidPrice ?? item?.paidPrice ?? item?.ItemPrice ?? item?.itemPrice ?? item?.UnitPrice ?? item?.unitPrice ?? item?.Price ?? item?.price ?? 0) || 0;
   const imageUrls = falabellaOrderItemImageUrls(item, product?.images || []);
+  const variant = falabellaOrderItemVariant(item, product);
   return {
     orderItemId: getOrderItemId(item),
     sellerSku: falabellaOrderItemSellerSku(item),
@@ -206,6 +364,11 @@ function normalizeOrderItemDetail(item: any, product?: ReturnType<typeof normali
     quantity,
     unitPrice,
     status: getOrderItemStatus(item),
+    variation: variant,
+    color: variant.color,
+    size: variant.size,
+    variantLabel: variant.label,
+    variantSource: variant.source,
     imageUrl: imageUrls[0] || '',
     imageUrls,
   };
@@ -238,6 +401,7 @@ function normalizeProduct(product: any) {
   const price = product?.Price ?? product?.ProductData?.Price ?? product?.SpecialPrice ?? primaryUnit.price ?? null;
   const salePrice = product?.SalePrice ?? product?.SpecialPrice ?? product?.ProductData?.SalePrice ?? primaryUnit.specialPrice ?? null;
   const variations = asArray(product?.Variations?.Variation ?? product?.Variations ?? product?.Variation);
+  const variant = falabellaCatalogVariant(product);
   return {
     sellerSku,
     shopSku,
@@ -256,6 +420,10 @@ function normalizeProduct(product: any) {
     createdAt: String(product?.CreatedAt ?? product?.Created ?? '').trim(),
     updatedAt: String(product?.UpdatedAt ?? product?.Updated ?? '').trim(),
     variationsCount: variations.length,
+    variation: variant,
+    color: variant.color,
+    size: variant.size,
+    variantLabel: variant.label,
     businessUnits,
     raw: product,
   };
@@ -585,17 +753,20 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const error = getFalabellaError(response.data);
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const orderItems = extractOrderItems(response.data);
-  const missingImageSkus = [...new Set(orderItems.filter((item) => !orderItemImages(item).length).map(falabellaOrderItemSellerSku).filter(Boolean))];
+  const catalogLookupItems = orderItems.filter((item) => (
+    !orderItemImages(item).length || !falabellaOrderItemVariant(item).label
+  ));
+  const catalogLookupSkus = [...new Set(catalogLookupItems.map(falabellaOrderItemSellerSku).filter(Boolean))];
   let products: Array<ReturnType<typeof normalizeProduct>> = [];
-  if (missingImageSkus.length) {
+  if (catalogLookupSkus.length) {
     try {
       const productsResponse = await client.call({
         action: 'GetProducts',
         params: {
           Filter: 'all',
-          Limit: Math.min(missingImageSkus.length, 1000),
+          Limit: Math.min(Math.max(catalogLookupSkus.length, 10), 1000),
           Offset: 0,
-          SkuSellerList: JSON.stringify(missingImageSkus),
+          SkuSellerList: JSON.stringify(catalogLookupSkus),
         },
         accept: 'application/json',
       });
@@ -606,10 +777,50 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
       products = [];
     }
   }
-  const productBySku = new Map(products.flatMap((product) => [product.sellerSku, product.shopSku]
+
+  const productMap = () => new Map(products.flatMap((product) => [product.sellerSku, product.shopSku]
     .filter(Boolean)
     .map((sku) => [sku.toLowerCase(), product] as const)));
-  const items = orderItems.map((item) => normalizeOrderItemDetail(item, productBySku.get(falabellaOrderItemSellerSku(item).toLowerCase())));
+  let productBySku = productMap();
+  const unresolvedSearches = [...new Set(catalogLookupItems
+    .filter((item) => {
+      const sellerSku = falabellaOrderItemSellerSku(item).toLowerCase();
+      const shopSku = String(item?.ShopSku ?? item?.ShopSKU ?? '').trim().toLowerCase();
+      return !(sellerSku && productBySku.has(sellerSku)) && !(shopSku && productBySku.has(shopSku));
+    })
+    .flatMap((item) => [falabellaOrderItemSellerSku(item), String(item?.ShopSku ?? item?.ShopSKU ?? '').trim()])
+    .filter(Boolean))];
+
+  if (unresolvedSearches.length) {
+    const fallbackResponses = await Promise.all(unresolvedSearches.map(async (search) => {
+      try {
+        const fallbackResponse = await client.call({
+          action: 'GetProducts',
+          params: { Search: search, Filter: 'all', Limit: 20, Offset: 0 },
+          accept: 'application/json',
+        });
+        if (!fallbackResponse.ok || getFalabellaError(fallbackResponse.data)) return [];
+        return normalizeGetProductsResult(fallbackResponse.data).products.map(normalizeProduct);
+      } catch {
+        return [];
+      }
+    }));
+    const known = new Set(products.map((product) => `${product.sellerSku.toLowerCase()}|${product.shopSku.toLowerCase()}|${product.name.toLowerCase()}`));
+    for (const product of fallbackResponses.flat()) {
+      const key = `${product.sellerSku.toLowerCase()}|${product.shopSku.toLowerCase()}|${product.name.toLowerCase()}`;
+      if (!known.has(key)) {
+        known.add(key);
+        products.push(product);
+      }
+    }
+    productBySku = productMap();
+  }
+
+  const items = orderItems.map((item) => {
+    const sellerSku = falabellaOrderItemSellerSku(item).toLowerCase();
+    const shopSku = String(item?.ShopSku ?? item?.ShopSKU ?? '').trim().toLowerCase();
+    return normalizeOrderItemDetail(item, productBySku.get(sellerSku) || productBySku.get(shopSku));
+  });
   return { ok: response.ok, status: response.status, url: response.url, orderItems, items, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
 }
 

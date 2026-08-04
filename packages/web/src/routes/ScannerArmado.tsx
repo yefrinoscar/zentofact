@@ -30,6 +30,10 @@ type PickingItem = {
   trackingCode: string;
   packageId: string;
   variation: Record<string, unknown>;
+  color: string;
+  size: string;
+  variantLabel: string;
+  variantSource: string;
   imageUrl: string;
   imageUrls: string[];
 };
@@ -441,6 +445,25 @@ function ProductRow({ item }: { item: PickingItem }) {
       </div>
       <div className="min-w-0">
         <h3 className="text-sm font-semibold leading-snug sm:text-base">{item.name || 'Producto sin nombre'}</h3>
+        {(item.color || item.size || item.variantLabel) && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {item.color && (
+              <span className="inline-flex min-h-8 items-center rounded-lg bg-sky-50 px-3 text-xs font-semibold text-sky-800 ring-1 ring-inset ring-sky-200">
+                Color: {item.color}
+              </span>
+            )}
+            {item.size && (
+              <span className="inline-flex min-h-8 items-center rounded-lg bg-violet-50 px-3 text-xs font-semibold text-violet-800 ring-1 ring-inset ring-violet-200">
+                Talla: {item.size}
+              </span>
+            )}
+            {!item.color && !item.size && item.variantLabel && (
+              <span className="inline-flex min-h-8 items-center rounded-lg bg-muted px-3 text-xs font-semibold text-foreground">
+                Variante: {item.variantLabel}
+              </span>
+            )}
+          </div>
+        )}
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground sm:mt-2 sm:text-xs">
           <span>SKU: <strong className="font-mono font-medium text-foreground">{item.sellerSku || 'No informado'}</strong></span>
           {item.shopSku && <span>ShopSku: <strong className="font-mono font-medium text-foreground">{item.shopSku}</strong></span>}
