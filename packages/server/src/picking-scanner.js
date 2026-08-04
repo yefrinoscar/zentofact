@@ -53,8 +53,66 @@ function normalizedItems(inventory) {
 }
 
 export async function saveFalabellaTicketSnapshot(db, order, inventory) {
-  const items = normalizedItems(inventory);
-  await Promise.all(items.filter((item) => item.orderItemId).map((item) => db.query(
+  let items = normalizedItems(inventory);
+  const missingVariants = items.filter((item) => !item.color || !item.size);
+  if (missingVariants.length) {
+    const sellerSkus = [...new Set(missingVariants.map((item) => item.sellerSku).filter(Boolean))];
+    const shopSkus = [...new Set(missingVariants.map((item) => item.shopSku).filter(Boolean))];
+    try {
+      const cached = await db.query(
+        `select seller_sku, shop_sku, color, size, variant_label, source
+         from falabella_product_variants
+         where company_id=$1
+           and (seller_sku=any($2::text[]) or shop_sku=any($3::text[]))
+         order by updated_at desc`,
+        [Number(order.companyId), sellerSkus, shopSkus],
+      );
+      items = items.map((item) => {
+        if (item.color && item.size) return item;
+        const variant = cached.rows.find((row) => (
+          (item.sellerSku && text(row.seller_sku) === item.sellerSku)
+          || (item.shopSku && text(row.shop_sku) === item.shopSku)
+        ));
+        if (!variant) return item;
+        const color = item.color || text(variant.color);
+        const size = item.size || text(variant.size);
+        const variantLabel = item.variantLabel || text(variant.variant_label)
+          || [color, size].filter(Boolean).join(' · ');
+        return {
+          ...item,
+          color,
+          size,
+          variantLabel,
+          variantSource: item.variantSource || text(variant.source) || 'sku-cache',
+          variation: { color, size, label: variantLabel, source: item.variantSource || text(variant.source) || 'sku-cache' },
+        };
+      });
+    } catch {
+      // El caché es un respaldo; una lectura fallida no debe bloquear el escaneo.
+    }
+  }
+
+  inventory.items = items;
+  const variantWrites = items
+    .filter((item) => (item.sellerSku || item.shopSku) && (item.color || item.size))
+    .map((item) => db.query(
+      `insert into falabella_product_variants (
+         company_id, seller_sku, shop_sku, product_name,
+         color, size, variant_label, source, updated_at
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,now())
+       on conflict (company_id, seller_sku, shop_sku) do update set
+         product_name=excluded.product_name,
+         color=case when excluded.color <> '' then excluded.color else falabella_product_variants.color end,
+         size=case when excluded.size <> '' then excluded.size else falabella_product_variants.size end,
+         variant_label=case when excluded.variant_label <> '' then excluded.variant_label else falabella_product_variants.variant_label end,
+         source=case when excluded.source <> '' then excluded.source else falabella_product_variants.source end,
+         updated_at=now()`,
+      [
+        Number(order.companyId), item.sellerSku, item.shopSku, item.name,
+        item.color, item.size, item.variantLabel, item.variantSource,
+      ],
+    ));
+  const snapshotWrites = items.filter((item) => item.orderItemId).map((item) => db.query(
     `insert into falabella_ticket_items (
        company_id, order_id, order_number, order_item_id,
        tracking_code, package_id, item_data, captured_at
@@ -80,7 +138,8 @@ export async function saveFalabellaTicketSnapshot(db, order, inventory) {
         },
       }),
     ],
-  )));
+  ));
+  await Promise.all([...variantWrites, ...snapshotWrites]);
   return items;
 }
 

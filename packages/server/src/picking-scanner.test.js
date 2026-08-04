@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lookupPickingScan, normalizeScannedCode } from './picking-scanner.js';
+import { lookupPickingScan, normalizeScannedCode, saveFalabellaTicketSnapshot } from './picking-scanner.js';
 
 test('extrae un tracking desde texto o una URL escaneada', () => {
   assert.equal(normalizeScannedCode('240121000011723360'), '240121000011723360');
@@ -34,6 +34,7 @@ test('resuelve un tracking guardado y devuelve solo el bulto escaneado', async (
         return { rows: [{ company_id: 3, order_id: '5004148908', match_type: 'tracking' }] };
       }
       if (sql.includes('where fo.company_id=$1')) return { rows: [stored] };
+      if (sql.includes('insert into falabella_product_variants')) return { rows: [] };
       if (sql.includes('insert into falabella_ticket_items')) return { rows: [] };
       throw new Error(`Consulta inesperada: ${sql}`);
     },
@@ -79,4 +80,65 @@ test('resuelve un tracking guardado y devuelve solo el bulto escaneado', async (
   assert.equal(result.packages[0].items[0].color, 'Negro');
   assert.equal(result.packages[0].items[0].size, 'XL');
   assert.equal(result.packages[0].items[0].variantLabel, 'Negro · XL');
+});
+
+test('recupera color y talla del caché por SKU cuando Falabella responde sin variante', async () => {
+  let savedItem = null;
+  const db = {
+    async query(sql, params) {
+      if (sql.includes('from falabella_product_variants')) {
+        assert.deepEqual(params, [2, ['CM22121111'], ['140704030']]);
+        return {
+          rows: [{
+            seller_sku: 'CM22121111',
+            shop_sku: '140704030',
+            color: 'Negro',
+            size: 'M',
+            variant_label: 'Negro · M',
+            source: 'catalog',
+          }],
+        };
+      }
+      if (sql.includes('insert into falabella_product_variants')) return { rows: [] };
+      if (sql.includes('insert into falabella_ticket_items')) {
+        savedItem = JSON.parse(params[6]).item;
+        return { rows: [] };
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  };
+  const inventory = {
+    ok: true,
+    orderItems: [{
+      OrderItemId: '56749999',
+      Name: 'Camiseta Faja Reductora',
+      Sku: 'CM22121111',
+      ShopSku: '140704030',
+      TrackingCode: '240121000011760976',
+      PackageId: 'PKG-1',
+    }],
+    items: [{
+      orderItemId: '56749999',
+      name: 'Camiseta Faja Reductora',
+      sellerSku: 'CM22121111',
+      shopSku: '140704030',
+      quantity: 1,
+      color: '',
+      size: '',
+      variantLabel: '',
+      variantSource: '',
+    }],
+  };
+
+  const items = await saveFalabellaTicketSnapshot(db, {
+    companyId: 2,
+    orderId: '5004241698',
+    orderNumber: '3247341646',
+  }, inventory);
+
+  assert.equal(items[0].color, 'Negro');
+  assert.equal(items[0].size, 'M');
+  assert.equal(items[0].variantLabel, 'Negro · M');
+  assert.equal(savedItem.color, 'Negro');
+  assert.equal(savedItem.size, 'M');
 });

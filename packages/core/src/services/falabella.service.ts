@@ -759,60 +759,80 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   const catalogLookupSkus = [...new Set(catalogLookupItems.map(falabellaOrderItemSellerSku).filter(Boolean))];
   let products: Array<ReturnType<typeof normalizeProduct>> = [];
   if (catalogLookupSkus.length) {
-    try {
-      const productsResponse = await client.call({
-        action: 'GetProducts',
-        params: {
-          Filter: 'all',
-          Limit: Math.min(Math.max(catalogLookupSkus.length, 10), 1000),
-          Offset: 0,
-          SkuSellerList: JSON.stringify(catalogLookupSkus),
-        },
-        accept: 'application/json',
-      });
-      if (productsResponse.ok && !getFalabellaError(productsResponse.data)) {
-        products = normalizeGetProductsResult(productsResponse.data).products.map(normalizeProduct);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const productsResponse = await client.call({
+          action: 'GetProducts',
+          params: {
+            Filter: 'all',
+            Limit: Math.min(Math.max(catalogLookupSkus.length, 10), 1000),
+            Offset: 0,
+            SkuSellerList: JSON.stringify(catalogLookupSkus),
+          },
+          accept: 'application/json',
+        });
+        if (productsResponse.ok && !getFalabellaError(productsResponse.data)) {
+          const batchProducts = normalizeGetProductsResult(productsResponse.data).products.map(normalizeProduct);
+          products.push(...batchProducts);
+          if (batchProducts.length && batchProducts.every((product) => product.color && product.size)) break;
+        }
+      } catch {
+        // El siguiente intento todavía puede recuperar el catálogo.
       }
-    } catch {
-      products = [];
     }
   }
 
-  const productMap = () => new Map(products.flatMap((product) => [product.sellerSku, product.shopSku]
-    .filter(Boolean)
-    .map((sku) => [sku.toLowerCase(), product] as const)));
+  const productCompleteness = (product: ReturnType<typeof normalizeProduct>) => (
+    Number(Boolean(product.color)) * 4
+    + Number(Boolean(product.size)) * 4
+    + Number(Boolean(product.variantLabel)) * 2
+    + Math.min(product.images.length, 2)
+  );
+  const productMap = () => {
+    const mapped = new Map<string, ReturnType<typeof normalizeProduct>>();
+    for (const product of products) {
+      for (const sku of [product.sellerSku, product.shopSku].filter(Boolean)) {
+        const key = sku.toLowerCase();
+        const current = mapped.get(key);
+        if (!current || productCompleteness(product) > productCompleteness(current)) mapped.set(key, product);
+      }
+    }
+    return mapped;
+  };
   let productBySku = productMap();
   const unresolvedSearches = [...new Set(catalogLookupItems
     .filter((item) => {
       const sellerSku = falabellaOrderItemSellerSku(item).toLowerCase();
       const shopSku = String(item?.ShopSku ?? item?.ShopSKU ?? '').trim().toLowerCase();
-      return !(sellerSku && productBySku.has(sellerSku)) && !(shopSku && productBySku.has(shopSku));
+      const matched = (sellerSku && productBySku.get(sellerSku)) || (shopSku && productBySku.get(shopSku));
+      return !matched || !matched.color || !matched.size;
     })
     .flatMap((item) => [falabellaOrderItemSellerSku(item), String(item?.ShopSku ?? item?.ShopSKU ?? '').trim()])
     .filter(Boolean))];
 
   if (unresolvedSearches.length) {
     const fallbackResponses = await Promise.all(unresolvedSearches.map(async (search) => {
-      try {
-        const fallbackResponse = await client.call({
-          action: 'GetProducts',
-          params: { Search: search, Filter: 'all', Limit: 20, Offset: 0 },
-          accept: 'application/json',
-        });
-        if (!fallbackResponse.ok || getFalabellaError(fallbackResponse.data)) return [];
-        return normalizeGetProductsResult(fallbackResponse.data).products.map(normalizeProduct);
-      } catch {
-        return [];
+      let bestAttempt: Array<ReturnType<typeof normalizeProduct>> = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const fallbackResponse = await client.call({
+            action: 'GetProducts',
+            params: { Search: search, Filter: 'all', Limit: 20, Offset: 0 },
+            accept: 'application/json',
+          });
+          if (!fallbackResponse.ok || getFalabellaError(fallbackResponse.data)) continue;
+          const foundProducts = normalizeGetProductsResult(fallbackResponse.data).products.map(normalizeProduct);
+          if (foundProducts.length) {
+            bestAttempt = foundProducts;
+            if (foundProducts.some((product) => product.color && product.size)) return foundProducts;
+          }
+        } catch {}
       }
+      return bestAttempt;
     }));
-    const known = new Set(products.map((product) => `${product.sellerSku.toLowerCase()}|${product.shopSku.toLowerCase()}|${product.name.toLowerCase()}`));
-    for (const product of fallbackResponses.flat()) {
-      const key = `${product.sellerSku.toLowerCase()}|${product.shopSku.toLowerCase()}|${product.name.toLowerCase()}`;
-      if (!known.has(key)) {
-        known.add(key);
-        products.push(product);
-      }
-    }
+    // Conservamos también respuestas repetidas: Search puede devolver una
+    // ficha más completa que SkuSellerList aun para el mismo SKU y nombre.
+    products.push(...fallbackResponses.flat());
     productBySku = productMap();
   }
 

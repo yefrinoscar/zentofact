@@ -650,6 +650,26 @@ const DDL = `
     ON falabella_ticket_items(package_id)
     WHERE package_id <> '';
 
+  CREATE TABLE IF NOT EXISTS falabella_product_variants (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    seller_sku TEXT NOT NULL DEFAULT '',
+    shop_sku TEXT NOT NULL DEFAULT '',
+    product_name TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '',
+    size TEXT NOT NULL DEFAULT '',
+    variant_label TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (company_id, seller_sku, shop_sku),
+    CHECK (seller_sku <> '' OR shop_sku <> '')
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_product_variants_seller_sku
+    ON falabella_product_variants(company_id, seller_sku)
+    WHERE seller_sku <> '';
+  CREATE INDEX IF NOT EXISTS idx_falabella_product_variants_shop_sku
+    ON falabella_product_variants(company_id, shop_sku)
+    WHERE shop_sku <> '';
+
   CREATE TABLE IF NOT EXISTS falabella_sync_state (
     company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
