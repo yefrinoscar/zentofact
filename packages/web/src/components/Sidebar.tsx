@@ -3,8 +3,6 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   ChevronsUpDown,
   LogOut,
-  PanelLeftClose,
-  PanelLeftOpen,
   Settings,
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
@@ -60,15 +58,6 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
 
   return (
     <SidebarRoot collapsed={collapsed} className={hideOnMobile ? 'hidden md:flex' : undefined}>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label={collapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'}
-        title={collapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'}
-        className="absolute -right-3 top-5 z-30 hidden size-7 place-items-center rounded-full border border-sidebar-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground md:grid"
-      >
-        {collapsed ? <PanelLeftOpen className="size-3.5" /> : <PanelLeftClose className="size-3.5" />}
-      </button>
       <SidebarHeader className="h-16 justify-center border-b border-sidebar-border/70">
         <SidebarMenu>
           <SidebarMenuItem>
@@ -79,7 +68,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
                 </span>
                 <span className="hidden min-w-0 flex-1 leading-tight md:grid md:group-data-[collapsed=true]/sidebar:hidden">
                   <span className="truncate font-semibold text-sidebar-foreground">ZentoFact</span>
-                  <span className="truncate text-xs font-normal text-sidebar-foreground/50">Comprobantes SUNAT</span>
+                  <span className="truncate text-xs font-normal text-sidebar-foreground/50">Ventas y facturación</span>
                 </span>
               </Link>
             </SidebarMenuButton>

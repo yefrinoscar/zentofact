@@ -167,6 +167,7 @@ function AppLayout() {
   const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const { user, loading, can } = usePermissions();
   const isMobile = useIsMobile();
@@ -196,10 +197,18 @@ function AppLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileTopNavigation title={currentRoute.title} />
-        <header className="hidden h-20 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur md:flex">
+        <header className="hidden h-16 shrink-0 items-center border-b border-border/80 bg-background/90 px-6 backdrop-blur md:flex">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-6">
             <div className="flex min-w-0 items-center gap-3">
-              <Button variant="ghost" size="icon-sm" onClick={toggleSidebar} className="hidden shrink-0 md:inline-flex" aria-label="Alternar menú lateral">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleSidebar}
+                className="-ml-2 hidden shrink-0 md:inline-flex"
+                aria-label={sidebarCollapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'}
+                title={sidebarCollapsed ? 'Expandir menú lateral' : 'Colapsar menú lateral'}
+                aria-pressed={sidebarCollapsed}
+              >
                 <PanelLeft />
               </Button>
               <div className="min-w-0">
