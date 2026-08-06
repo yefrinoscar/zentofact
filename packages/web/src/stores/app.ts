@@ -5,6 +5,7 @@ interface AppState {
   activeCompanyId: number | null;
   setActiveCompanyId: (id: number | null) => void;
   sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebar: () => void;
 }
 
@@ -14,6 +15,7 @@ export const useAppStore = create<AppState>()(
       activeCompanyId: null,
       setActiveCompanyId: (id) => set({ activeCompanyId: id }),
       sidebarCollapsed: false,
+      setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
     }),
     {

@@ -7,10 +7,13 @@ import {
   isDevLoadingDelayEnabled,
   setDevLoadingDelayEnabled,
 } from '../config/dev';
+import { useAppStore } from '../stores/app';
 
 export default function Settings() {
   const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
   const [simulateLoading, setSimulateLoading] = useState(() => isDevLoadingDelayEnabled());
+  const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useAppStore((state) => state.setSidebarCollapsed);
 
   const changeTheme = (value: string) => {
     const nextTheme = value === 'dark' ? 'dark' : 'light';
@@ -34,16 +37,35 @@ export default function Settings() {
             </p>
           </div>
 
-          <div className="pt-1">
-            <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Tema
-            </label>
-            <Tabs value={theme} onValueChange={changeTheme}>
-              <TabsList>
-                <TabsTrigger value="light">Light theme</TabsTrigger>
-                <TabsTrigger value="dark">Dark theme</TabsTrigger>
-              </TabsList>
-            </Tabs>
+          <div className="space-y-6 pt-1">
+            <div>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Tema
+              </label>
+              <Tabs value={theme} onValueChange={changeTheme}>
+                <TabsList>
+                  <TabsTrigger value="light">Light theme</TabsTrigger>
+                  <TabsTrigger value="dark">Dark theme</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            <div className="flex items-start justify-between gap-6 rounded-xl border border-border p-4">
+              <div>
+                <label htmlFor="collapse-sidebar" className="text-sm font-medium text-foreground">
+                  Colapsar menú lateral
+                </label>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Muestra solo los iconos para dejar más espacio al contenido.
+                </p>
+              </div>
+              <Switch
+                id="collapse-sidebar"
+                checked={sidebarCollapsed}
+                onCheckedChange={setSidebarCollapsed}
+                aria-label="Colapsar menú lateral"
+              />
+            </div>
           </div>
         </div>
       </section>
