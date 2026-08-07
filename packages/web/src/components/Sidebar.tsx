@@ -62,10 +62,12 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" className="hover:bg-transparent">
-              <Link to="/" title="ZentoFact">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sidebar-primary text-sm font-bold tracking-tight text-sidebar-primary-foreground">
-                  Z
-                </span>
+              <Link to="/" aria-label="ZentoFact">
+                <img
+                  src="/favicon.svg"
+                  alt=""
+                  className="size-8 shrink-0 rounded-md bg-white p-0.5 object-contain"
+                />
                 <span className="hidden min-w-0 flex-1 leading-tight md:grid md:group-data-[collapsed=true]/sidebar:hidden">
                   <span className="truncate font-semibold text-sidebar-foreground">ZentoFact</span>
                   <span className="truncate text-xs font-normal text-sidebar-foreground/50">Ventas y facturación</span>
@@ -97,7 +99,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <SidebarMenuButton asChild isActive={active}>
-                                <Link to={to} title={label}>
+                                <Link to={to}>
                                   {img
                                     ? <img src={img} alt="" className="size-4 shrink-0 rounded-[3px]" />
                                     : <Icon />}
