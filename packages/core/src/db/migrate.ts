@@ -629,6 +629,136 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_falabella_label_prints_company_last
     ON falabella_label_prints(company_id, last_printed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS falabella_manifests (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    manifest_id TEXT NOT NULL,
+    manifest_code TEXT NOT NULL DEFAULT '',
+    shipment_provider TEXT NOT NULL DEFAULT '',
+    tracking_code TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0),
+    provider_created_at TIMESTAMPTZ,
+    created_by_app BOOLEAN NOT NULL DEFAULT FALSE,
+    source TEXT NOT NULL DEFAULT 'seller_center',
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    download_count INTEGER NOT NULL DEFAULT 0 CHECK (download_count >= 0),
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    first_downloaded_at TIMESTAMPTZ,
+    last_downloaded_at TIMESTAMPTZ,
+    PRIMARY KEY (company_id, manifest_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifests_company_created
+    ON falabella_manifests(company_id, provider_created_at DESC NULLS LAST);
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS manifest_code TEXT NOT NULL DEFAULT '';
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'seller_center';
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS created_by_app BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS pdf_data BYTEA;
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS pdf_filename TEXT;
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS pdf_cached_at TIMESTAMPTZ;
+  ALTER TABLE falabella_manifests
+    ADD COLUMN IF NOT EXISTS pdf_byte_size INTEGER;
+  UPDATE falabella_manifests
+    SET manifest_code=tracking_code
+    WHERE manifest_code='' AND tracking_code<>'';
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_falabella_manifests_company_code
+    ON falabella_manifests(company_id, manifest_code)
+    WHERE manifest_code <> '';
+
+  CREATE TABLE IF NOT EXISTS falabella_manifest_items (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    manifest_id TEXT NOT NULL,
+    order_item_id TEXT NOT NULL,
+    order_id TEXT,
+    order_number TEXT,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (company_id, order_item_id),
+    FOREIGN KEY (company_id, manifest_id)
+      REFERENCES falabella_manifests(company_id, manifest_id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_items_manifest
+    ON falabella_manifest_items(company_id, manifest_id);
+
+  CREATE TABLE IF NOT EXISTS falabella_manifest_orders (
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    manifest_id TEXT NOT NULL,
+    local_order_id TEXT NOT NULL,
+    order_number TEXT NOT NULL DEFAULT '',
+    delivery_order_number TEXT NOT NULL DEFAULT '',
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (company_id, local_order_id),
+    FOREIGN KEY (company_id, manifest_id)
+      REFERENCES falabella_manifests(company_id, manifest_id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_orders_manifest
+    ON falabella_manifest_orders(company_id, manifest_id);
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_orders_number
+    ON falabella_manifest_orders(company_id, order_number)
+    WHERE order_number <> '';
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_orders_delivery
+    ON falabella_manifest_orders(company_id, delivery_order_number)
+    WHERE delivery_order_number <> '';
+
+  CREATE TABLE IF NOT EXISTS falabella_manifest_runs (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_name TEXT NOT NULL DEFAULT '',
+    operation TEXT NOT NULL DEFAULT 'create',
+    status TEXT NOT NULL DEFAULT 'success',
+    requested_orders INTEGER NOT NULL DEFAULT 0,
+    provider_orders INTEGER NOT NULL DEFAULT 0,
+    eligible_orders INTEGER NOT NULL DEFAULT 0,
+    already_manifested_orders INTEGER NOT NULL DEFAULT 0,
+    created_manifests INTEGER NOT NULL DEFAULT 0,
+    created_orders INTEGER NOT NULL DEFAULT 0,
+    stage TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    events JSONB NOT NULL DEFAULT '[]'::jsonb,
+    page_url TEXT,
+    page_title TEXT,
+    page_text TEXT,
+    screenshot_mime_type TEXT,
+    screenshot_base64 TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_runs_company_created
+    ON falabella_manifest_runs(company_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_runs_created
+    ON falabella_manifest_runs(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_manifest_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    orders JSONB NOT NULL DEFAULT '[]'::jsonb,
+    stage TEXT NOT NULL DEFAULT 'en cola',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    result JSONB,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_manifest_jobs_status_created
+    ON falabella_manifest_jobs(status, created_at);
+  ALTER TABLE falabella_manifest_jobs
+    DROP CONSTRAINT IF EXISTS falabella_manifest_jobs_fingerprint_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_falabella_manifest_jobs_active_fingerprint
+    ON falabella_manifest_jobs(fingerprint)
+    WHERE status IN ('pending', 'processing');
+
   CREATE TABLE IF NOT EXISTS falabella_ticket_items (
     id BIGSERIAL PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
