@@ -710,6 +710,16 @@ function countLabels(orders: InboxOrder[]) {
   return orders.reduce((total, order) => total + labelCountFor(order), 0);
 }
 
+function shortSellerName(value: string) {
+  const shortName = value
+    .trim()
+    .replace(/\s+(?:E\.?\s*I\.?\s*R\.?\s*L\.?|S\.?\s*R\.?\s*L\.?|S\.?\s*A\.?\s*C\.?|S\.?\s*A\.?)$/i, '')
+    .replace(/^(?:INVERSIONES|IMPORTACIONES|TIENDAS)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return shortName || value.trim() || 'Seller';
+}
+
 function expandOrdersAsLabels(orders: InboxOrder[]) {
   return orders.flatMap((order) => {
     const labelCount = labelCountFor(order);
@@ -1058,6 +1068,26 @@ export default function Pedidos() {
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
   const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(displayedFlowOrders), [displayedFlowOrders]);
   const filteredCountLabel = `${filteredFlowOrders.length} etiqueta${filteredFlowOrders.length === 1 ? '' : 's'}`;
+  const sellerOrderCounts = useMemo(() => {
+    const uniqueOrders = new Map(displayedFlowOrders.map((order) => [orderKey(order), order]));
+    const counts = new Map<number, { companyId: number; name: string; count: number }>();
+
+    for (const order of uniqueOrders.values()) {
+      const current = counts.get(order.companyId);
+      if (current) current.count += 1;
+      else {
+        counts.set(order.companyId, {
+          companyId: order.companyId,
+          name: shortSellerName(order.companyName) || `Seller ${order.companyId}`,
+          count: 1,
+        });
+      }
+    }
+
+    return [...counts.values()].sort((left, right) => (
+      right.count - left.count || left.name.localeCompare(right.name, 'es')
+    ));
+  }, [displayedFlowOrders]);
   const visiblePendingCandidates = displayedFlowOrders.filter(canMarkReadyToShip);
 
   useEffect(() => {
@@ -1600,6 +1630,23 @@ export default function Pedidos() {
                   );
                 })}
               </div>
+              {sellerOrderCounts.length > 0 && (
+                <div className="mt-2 flex min-w-0" aria-label="Pedidos por seller">
+                  <div key={pendingDeadlineTab} className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
+                    {sellerOrderCounts.map((seller) => (
+                      <span
+                        key={seller.companyId}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5 text-[10px] leading-4"
+                        title={`${seller.name}: ${seller.count} pedido${seller.count === 1 ? '' : 's'}`}
+                        aria-label={`${seller.name}: ${seller.count} pedido${seller.count === 1 ? '' : 's'}`}
+                      >
+                        <span className="max-w-28 truncate text-muted-foreground">{seller.name.toLocaleLowerCase('es')}</span>
+                        <span className="font-semibold tabular-nums text-foreground/70">{seller.count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div className="divide-y divide-border/70 md:hidden">
