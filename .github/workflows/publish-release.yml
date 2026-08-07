@@ -1,0 +1,65 @@
+name: Publish release
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: publish-main-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: GitHub Release
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out merged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Revalidate merged version
+        env:
+          ALLOW_EXISTING_TAG_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          BASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}^1
+          RELEASE_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node scripts/validate-release-version.mjs
+
+      - name: Create Git tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/web/package.json').version")"
+          tag="v${version}"
+
+          existing_tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null || true)"
+          if [[ -n "$existing_tag_sha" && "$existing_tag_sha" != "$MERGE_SHA" ]]; then
+            echo "::error::Tag $tag already points to $existing_tag_sha instead of $MERGE_SHA."
+            exit 1
+          fi
+
+          if gh release view "$tag" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists for $MERGE_SHA; nothing to do."
+            exit 0
+          fi
+
+          if [[ -n "$existing_tag_sha" ]]; then
+            gh release create "$tag" --repo "$REPOSITORY" --verify-tag --title "$tag" --generate-notes
+          else
+            gh release create "$tag" --repo "$REPOSITORY" --target "$MERGE_SHA" --title "$tag" --generate-notes
+          fi
+
+          echo "Published $tag from pull request #$PR_NUMBER."
