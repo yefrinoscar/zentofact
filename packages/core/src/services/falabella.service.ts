@@ -1,6 +1,7 @@
 // Servicio Falabella compartido entre core y server.
 // Orquesta el cliente Falabella (@zentofact/falabella-api) + queries/servicios del core.
 import { readFileSync } from 'fs';
+import { DOMParser } from '@xmldom/xmldom';
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult, buildIsoUtcTimestamp, signParameters, canonicalizeParameters } from '@zentofact/falabella-api';
 import type { GetOrdersV2Filters } from '@zentofact/falabella-api';
 import type { VentaItem } from '../index';
@@ -99,6 +100,53 @@ function readPath(value: any, path: string[]) {
     current = current[segment];
   }
   return current;
+}
+
+function xmlElementValue(element: Element): any {
+  const children = Array.from(element.childNodes).filter((node): node is Element => node.nodeType === 1);
+  if (!children.length) return String(element.textContent || '').trim();
+
+  const value: Record<string, any> = {};
+  for (const child of children) {
+    const childValue = xmlElementValue(child);
+    const current = value[child.tagName];
+    if (current === undefined) value[child.tagName] = childValue;
+    else if (Array.isArray(current)) current.push(childValue);
+    else value[child.tagName] = [current, childValue];
+  }
+  return value;
+}
+
+/** Convierte la respuesta XML de Seller Center a la misma forma usada por JSON. */
+export function parseFalabellaXmlResponse(rawText: string): any {
+  const text = String(rawText || '').trim();
+  if (!text) throw new Error('Falabella devolvió una respuesta vacía. Intenta actualizar nuevamente.');
+  if (/^(?:<!doctype\s+html|<html\b)/i.test(text)) {
+    throw new Error('Falabella devolvió una página web en lugar del catálogo. Intenta actualizar nuevamente en unos segundos.');
+  }
+
+  const document = new DOMParser().parseFromString(text, 'application/xml');
+  const root = document.documentElement;
+  if (!root
+    || root.tagName === 'parsererror'
+    || document.getElementsByTagName('parsererror').length
+    || !['SuccessResponse', 'ErrorResponse'].includes(root.tagName)) {
+    throw new Error('Falabella devolvió una respuesta de catálogo inválida. Intenta actualizar nuevamente.');
+  }
+  return { [root.tagName]: xmlElementValue(root) };
+}
+
+async function getFalabellaProductsPage(
+  client: FalabellaApiClient,
+  params: Record<string, string | number | boolean | undefined>,
+) {
+  const response = await client.call<string>({
+    action: 'GetProducts',
+    format: 'XML',
+    accept: 'application/xml',
+    params,
+  });
+  return { ...response, data: parseFalabellaXmlResponse(response.rawText) };
 }
 
 function normalizeGetProductsResult(data: any): { totalCount: number | null; products: any[] } {
@@ -571,46 +619,42 @@ export async function falabellaGetProducts(payload: {
   const { company } = found;
   const filters = payload.filters || {};
   const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 1000);
+  const requestLimit = filters.countOnly ? 1000 : limit;
   const offset = Math.max(Number(filters.offset || 0), 0);
   const skuSellerList = (filters.skuSellerList || []).map((sku) => String(sku).trim()).filter(Boolean);
-  const client = new FalabellaApiClient({ userId: company.falabellaApiUserId!, apiKey: company.falabellaApiKey!, version: '1.0', defaultFormat: 'JSON' });
-  const response = await client.call({
-    action: 'GetProducts',
-    params: {
-      Search: filters.search?.trim() || undefined,
-      Filter: filters.filter || 'all',
-      Limit: limit,
-      Offset: offset,
-      SkuSellerList: skuSellerList.length ? JSON.stringify(skuSellerList) : undefined,
-      CreatedAfter: filters.createdAfter || undefined,
-      CreatedBefore: filters.createdBefore || undefined,
-      UpdatedAfter: filters.updatedAfter || undefined,
-      UpdatedBefore: filters.updatedBefore || undefined,
-      GlobalIdentifier: filters.globalIdentifier,
-    },
+  const client = new FalabellaApiClient({
+    userId: company.falabellaApiUserId!.trim(),
+    apiKey: company.falabellaApiKey!.trim(),
+    version: '1.0',
+    defaultFormat: 'XML',
+  });
+  const productParams = {
+    Search: filters.search?.trim() || undefined,
+    Filter: filters.filter || 'all',
+    SkuSellerList: skuSellerList.length ? JSON.stringify(skuSellerList) : undefined,
+    CreatedAfter: filters.createdAfter || undefined,
+    CreatedBefore: filters.createdBefore || undefined,
+    UpdatedAfter: filters.updatedAfter || undefined,
+    UpdatedBefore: filters.updatedBefore || undefined,
+    GlobalIdentifier: filters.globalIdentifier,
+  };
+  const response = await getFalabellaProductsPage(client, {
+    ...productParams,
+    Limit: requestLimit,
+    Offset: filters.countOnly ? 0 : offset,
   });
   const error = getFalabellaError(response.data);
   if (error) return { ok: response.ok, status: response.status, url: response.url, error };
   const normalized = normalizeGetProductsResult(response.data);
   let totalCount = normalized.totalCount;
-  if (filters.includeTotal || filters.countOnly) {
-    totalCount = 0;
-    const countLimit = 1000;
-    for (let countOffset = 0; countOffset < 20000; countOffset += countLimit) {
-      const countResponse = await client.call({
-        action: 'GetProducts',
-        params: {
-          Search: filters.search?.trim() || undefined,
-          Filter: filters.filter || 'all',
-          Limit: countLimit,
-          Offset: countOffset,
-          SkuSellerList: skuSellerList.length ? JSON.stringify(skuSellerList) : undefined,
-          CreatedAfter: filters.createdAfter || undefined,
-          CreatedBefore: filters.createdBefore || undefined,
-          UpdatedAfter: filters.updatedAfter || undefined,
-          UpdatedBefore: filters.updatedBefore || undefined,
-          GlobalIdentifier: filters.globalIdentifier,
-        },
+  if ((filters.includeTotal || filters.countOnly) && totalCount == null) {
+    const countLimit = requestLimit;
+    totalCount = normalized.products.length;
+    for (let countOffset = countLimit; normalized.products.length === countLimit && countOffset < 20000; countOffset += countLimit) {
+      const countResponse = await getFalabellaProductsPage(client, {
+        ...productParams,
+        Limit: countLimit,
+        Offset: countOffset,
       });
       const countError = getFalabellaError(countResponse.data);
       if (countError) break;
