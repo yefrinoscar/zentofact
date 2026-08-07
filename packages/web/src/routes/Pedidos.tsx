@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -6,6 +6,9 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  Coffee,
+  FileCheck2,
+  FileText,
   ImageIcon,
   Inbox,
   Loader2,
@@ -35,6 +38,19 @@ import {
   DialogTitle,
 } from '../components/ui/dialog';
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '../components/ui/sheet';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '../components/ui/tabs';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -46,6 +62,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '../components/ui/tooltip';
+import { TablePanel, TablePanelHeader } from '../components/ui/table';
 
 type InboxOrder = {
   id: number;
@@ -88,6 +105,96 @@ type InboxResponse = {
     windows: DeliveryWindow[];
     days: DeliveryDay[];
   };
+};
+
+type ReadyManifestOrder = {
+  orderId: string;
+  orderNumber: string;
+  deliveryOrderNumber: string;
+};
+
+type ReadyManifest = {
+  id: string;
+  code: string;
+  carrier: string;
+  numberOfItems: number;
+  status: string;
+  createdAt: string;
+  orders: ReadyManifestOrder[];
+  createdByApp?: boolean;
+};
+
+type ReadyManifestCompany = {
+  companyId: number;
+  companyName: string;
+  ok: boolean;
+  requestedOrders: number;
+  providerOrders: number;
+  manifestedOrders: number;
+  manifests: ReadyManifest[];
+  source: 'seller_center' | 'local_cache';
+  syncedAt: string;
+  error?: string;
+};
+
+type ReadyManifestList = {
+  companies: number;
+  failedCompanies: number;
+  manifestedOrders: number;
+  manifests: number;
+  source: 'seller_center' | 'local_cache' | 'mixed';
+  syncedAt: string;
+  results: ReadyManifestCompany[];
+};
+
+type ReadyManifestActivityEvent = {
+  at: string;
+  kind: 'step' | 'http' | 'error';
+  stage: string;
+  message: string;
+  method?: string;
+  endpoint?: string;
+  status?: number;
+  durationMs?: number;
+};
+
+type ReadyManifestActivity = {
+  id: string;
+  companyId: number;
+  companyName: string;
+  status: 'created' | 'skipped' | 'error';
+  requestedOrders: number;
+  providerOrders: number;
+  eligibleOrders: number;
+  alreadyManifestedOrders: number;
+  createdManifests: number;
+  createdOrders: number;
+  stage: string;
+  error?: string | null;
+  events: ReadyManifestActivityEvent[];
+  durationMs?: number;
+  pageUrl?: string | null;
+  pageTitle?: string | null;
+  pageText?: string | null;
+  hasScreenshot: boolean;
+  createdAt: string;
+};
+
+type ManifestOperationNotice = {
+  status: 'running' | 'created' | 'already-exists' | 'no-new' | 'error';
+  createdManifests?: number;
+  createdOrders?: number;
+  message?: string;
+};
+
+type ManifestJob = {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  stage: string;
+  error: string | null;
+  result: any | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type InboxOrderProduct = {
@@ -154,6 +261,39 @@ type BoardColumn = {
 
 const LIMA_TIME_ZONE = 'America/Lima';
 const BOARD_LIMIT = 500;
+const MANIFEST_PRINT_LIMIT = 50;
+const MANIFEST_JOB_POLL_INTERVAL_MS = 2_000;
+const MANIFEST_JOB_SESSION_KEY = 'zentofact:falabella-manifest-job';
+const MANIFEST_JOB_SAVED_EVENT = 'zentofact:falabella-manifest-job-saved';
+
+function saveManifestJobForResume(jobId: string) {
+  window.sessionStorage.setItem(MANIFEST_JOB_SESSION_KEY, jobId);
+  window.dispatchEvent(new CustomEvent(MANIFEST_JOB_SAVED_EVENT, { detail: { jobId } }));
+}
+
+function throwIfManifestPollAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Polling cancelado.', 'AbortError');
+}
+
+function waitForManifestPoll(ms: number, signal?: AbortSignal) {
+  throwIfManifestPollAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(signal?.reason instanceof Error
+        ? signal.reason
+        : new DOMException('Polling cancelado.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
 
 const DEADLINE_COLUMNS: BoardColumn[] = [
   {
@@ -261,6 +401,39 @@ function formatDateTime(value: string | null | undefined) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function formatManifestDateTime(value: string | null | undefined) {
+  if (!value) return 'Fecha no informada';
+  const date = parseDate(value);
+  return date ? formatDateTime(date.toISOString()) : value;
+}
+
+function manifestRunDurationMs(run: ReadyManifestActivity) {
+  if (Number.isFinite(run.durationMs) && Number(run.durationMs) >= 0) return Number(run.durationMs);
+  const timestamps = run.events
+    .map((event) => new Date(event.at).getTime())
+    .filter(Number.isFinite);
+  const timelineDuration = timestamps.length > 1
+    ? Math.max(...timestamps) - Math.min(...timestamps)
+    : 0;
+  const measuredDuration = run.events.reduce((total, event) => (
+    total + (Number.isFinite(event.durationMs) ? Math.max(0, Number(event.durationMs)) : 0)
+  ), 0);
+  return Math.max(timelineDuration, measuredDuration);
+}
+
+function formatManifestDuration(durationMs: number) {
+  if (!durationMs) return 'Sin medición';
+  if (durationMs < 1_000) return `${Math.round(durationMs)} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1_000);
+  return `${minutes} min ${seconds} s`;
+}
+
+function manifestHttpEvents(run: ReadyManifestActivity) {
+  return run.events.filter((event) => event.kind === 'http' || event.method || event.endpoint);
 }
 
 function formatTime(value: string | null | undefined) {
@@ -783,6 +956,37 @@ function openShippingLabelsPdf(previewWindow: Window, pdfUrl: string) {
   previewWindow.location.replace(pdfUrl);
 }
 
+function renderManifestDocumentLoading(previewWindow: Window, manifestCode: string) {
+  previewWindow.document.open();
+  previewWindow.document.write(`<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Abriendo manifiesto Falabella</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f5f4; color: #1c1917; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(92vw, 440px); padding: 40px; border: 1px solid #e7e5e4; border-radius: 20px; background: #fff; box-shadow: 0 24px 60px rgba(28, 25, 23, .10); text-align: center; }
+      .loader { width: 50px; height: 50px; margin: 0 auto 22px; border: 5px solid #e7e5e4; border-top-color: #292524; border-radius: 50%; animation: spin .8s linear infinite; }
+      h1 { margin: 0; font-size: 23px; line-height: 1.2; }
+      p { margin: 12px auto 0; color: #78716c; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="loader" aria-hidden="true"></div>
+      <h1>Abriendo manifiesto</h1>
+      <p id="manifest-code"></p>
+    </main>
+  </body>
+</html>`);
+  previewWindow.document.close();
+  const code = previewWindow.document.getElementById('manifest-code');
+  if (code) code.textContent = manifestCode;
+}
+
 function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoading, labelSelectionMode, labelSelected, canDispatch }: {
   order: InboxOrder;
   now: Date;
@@ -894,6 +1098,18 @@ export default function Pedidos() {
   const [pendingDeadlineTab, setPendingDeadlineTab] = useState('today');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const manifestScopeKey = `${companyId}:${search.trim().toLowerCase()}`;
+  const manifestScopeKeyRef = useRef(manifestScopeKey);
+  manifestScopeKeyRef.current = manifestScopeKey;
+  const manifestOrdersKeyRef = useRef('');
+  const inboxRequestSequenceRef = useRef(0);
+  const manifestListRequestSequenceRef = useRef(0);
+  const manifestListInFlightRef = useRef<{ key: string; sequence: number } | null>(null);
+  const manifestListLoadedKeyRef = useRef('');
+  const manualManifestJobPollControllerRef = useRef<AbortController | null>(null);
+  const loadManifestActivityRef = useRef<() => void>(() => undefined);
+  const applyManifestJobResultRef = useRef<(result: any) => void>(() => undefined);
+  const [loadedInboxScopeKey, setLoadedInboxScopeKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -903,6 +1119,23 @@ export default function Pedidos() {
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
+  const [manifestLoading, setManifestLoading] = useState(false);
+  const [activeManifestScope, setActiveManifestScope] = useState<{ orders: number; companies: number } | null>(null);
+  const [activeManifestStage, setActiveManifestStage] = useState('');
+  const [manifestDrawerOpen, setManifestDrawerOpen] = useState(false);
+  const [manifestDrawerTab, setManifestDrawerTab] = useState<'manifests' | 'logs'>('manifests');
+  const [manifestError, setManifestError] = useState('');
+  const [manifestOperationNotice, setManifestOperationNotice] = useState<ManifestOperationNotice | null>(null);
+  const [manifestListLoading, setManifestListLoading] = useState(false);
+  const [manifestListError, setManifestListError] = useState('');
+  const [manifestList, setManifestList] = useState<ReadyManifestList | null>(null);
+  const [manifestActivityLoading, setManifestActivityLoading] = useState(false);
+  const [manifestActivityError, setManifestActivityError] = useState('');
+  const [manifestActivity, setManifestActivity] = useState<ReadyManifestActivity[]>([]);
+  const [manifestScreenshot, setManifestScreenshot] = useState<{ id: string; src: string } | null>(null);
+  const [manifestScreenshotLoadingId, setManifestScreenshotLoadingId] = useState('');
+  const [manifestDocumentLoadingId, setManifestDocumentLoadingId] = useState('');
+  const [manifestPrintAllLoading, setManifestPrintAllLoading] = useState(false);
   const [printingLabelKey, setPrintingLabelKey] = useState('');
   const [printingColumn, setPrintingColumn] = useState<BoardColumnKey | null>(null);
   const [bulkReadySelection, setBulkReadySelection] = useState<BulkReadySelection | null>(null);
@@ -937,6 +1170,8 @@ export default function Pedidos() {
   }, []);
 
   const load = async (quiet = false, silent = false) => {
+    const requestSequence = ++inboxRequestSequenceRef.current;
+    const requestedScopeKey = manifestScopeKey;
     if (!silent && quiet) setRefreshing(true);
     else if (!silent) setLoading(true);
     setError('');
@@ -948,11 +1183,14 @@ export default function Pedidos() {
         limit: BOARD_LIMIT,
         offset: 0,
       }) as InboxResponse;
+      if (requestSequence !== inboxRequestSequenceRef.current) return;
       setData(response);
+      setLoadedInboxScopeKey(requestedScopeKey);
     } catch (nextError: any) {
+      if (requestSequence !== inboxRequestSequenceRef.current) return;
       setError(nextError?.message || 'No se pudieron cargar los pedidos pendientes.');
     } finally {
-      if (!silent) {
+      if (requestSequence === inboxRequestSequenceRef.current) {
         setLoading(false);
         setRefreshing(false);
       }
@@ -1021,6 +1259,95 @@ export default function Pedidos() {
     return groups;
   }, [data?.orders, now]);
   const flowOrders = flowGroups[flowStage];
+  const manifestReadyOrders = useMemo(
+    () => loadedInboxScopeKey === manifestScopeKey && searchInput.trim() === search
+      ? [...new Map(flowGroups.ready.map((order) => [orderKey(order), order])).values()]
+      : [],
+    [flowGroups.ready, loadedInboxScopeKey, manifestScopeKey, search, searchInput],
+  );
+  const manifestReadyCompanyCount = useMemo(
+    () => new Set(manifestReadyOrders.map((order) => order.companyId)).size,
+    [manifestReadyOrders],
+  );
+  const manifestCompaniesWithDocuments = useMemo(
+    () => (manifestList?.results || []).filter((company) => company.ok && company.manifests.length > 0),
+    [manifestList],
+  );
+  const manifestCompaniesWithoutDocuments = useMemo(
+    () => (manifestList?.results || []).filter((company) => company.ok && company.manifests.length === 0),
+    [manifestList],
+  );
+  const manifestCompaniesWithErrors = useMemo(
+    () => (manifestList?.results || []).filter((company) => !company.ok),
+    [manifestList],
+  );
+  const visibleManifestDocuments = useMemo(() => {
+    const documents = new Map<string, { companyId: number; manifest: ReadyManifest }>();
+    for (const company of manifestCompaniesWithDocuments) {
+      for (const manifest of company.manifests) {
+        const key = `${company.companyId}:${manifest.id || manifest.code}`;
+        if (!documents.has(key)) documents.set(key, { companyId: company.companyId, manifest });
+      }
+    }
+    return [...documents.values()];
+  }, [manifestCompaniesWithDocuments]);
+  const manifestOrdersKey = useMemo(() => manifestReadyOrders
+    .map((order) => `${order.companyId}:${order.orderId}:${order.orderNumber}`)
+    .sort()
+    .join('|'), [manifestReadyOrders]);
+  const manifestListRequestKey = `${manifestScopeKey}::${manifestOrdersKey}`;
+  manifestOrdersKeyRef.current = manifestOrdersKey;
+
+  useEffect(() => {
+    manifestListRequestSequenceRef.current += 1;
+    manifestListInFlightRef.current = null;
+    manifestListLoadedKeyRef.current = '';
+    setManifestList(null);
+    setManifestListError('');
+    setManifestListLoading(false);
+    setManifestError('');
+  }, [manifestOrdersKey, manifestScopeKey]);
+  const manifestScopeIsFiltered = companyId !== 'all' || Boolean(search);
+  const manifestScopeCompany = companyId === 'all'
+    ? ''
+    : companies.find((company) => String(company.id) === companyId)?.name || `Tienda ${companyId}`;
+  const manifestScopeDescription = manifestScopeIsFiltered
+    ? `Se procesará el filtro actual${manifestScopeCompany ? `: ${manifestScopeCompany}` : ''}${search ? `${manifestScopeCompany ? ' y' : ':'} búsqueda “${search}”` : ''}.`
+    : 'Se procesarán todas las tiendas cargadas en esta bandeja.';
+  const manifestInboxIsTruncated = Number(data?.totalCount || 0) > (data?.orders?.length || 0);
+  const successfulManifestRuns = useMemo(
+    () => manifestActivity.filter((run) => run.status !== 'error'),
+    [manifestActivity],
+  );
+  const historicalManifestErrors = useMemo(() => {
+    const successesByCompany = new Map<number, ReadyManifestActivity[]>();
+    for (const run of successfulManifestRuns) {
+      const companyRuns = successesByCompany.get(run.companyId) || [];
+      companyRuns.push(run);
+      successesByCompany.set(run.companyId, companyRuns);
+    }
+    for (const companyRuns of successesByCompany.values()) {
+      companyRuns.sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+    }
+    return manifestActivity
+      .filter((run) => run.status === 'error')
+      .map((run) => {
+        const errorAt = new Date(run.createdAt).getTime();
+        const resolvingRun = (successesByCompany.get(run.companyId) || [])
+          .find((candidate) => new Date(candidate.createdAt).getTime() > errorAt);
+        return {
+          run,
+          resolved: Boolean(resolvingRun),
+          resolvedAt: resolvingRun?.createdAt || null,
+        };
+      });
+  }, [manifestActivity, successfulManifestRuns]);
+  const latestManifestRun = manifestActivity[0] || null;
+  const manifestLogSummary = useMemo(() => ({
+    requests: latestManifestRun ? manifestHttpEvents(latestManifestRun).length : 0,
+    durationMs: latestManifestRun ? manifestRunDurationMs(latestManifestRun) : 0,
+    unresolvedErrors: historicalManifestErrors.filter(({ resolved }) => !resolved).length,
+  }), [historicalManifestErrors, latestManifestRun]);
   const pendingDeadlineGroups = useMemo(() => {
     const groups: Record<string, InboxOrder[]> = { today: [] };
     for (const order of flowGroups.pending) {
@@ -1421,6 +1748,463 @@ export default function Pedidos() {
     }
   };
 
+  const readyOrdersForManifestRequest = () => (
+    manifestReadyOrders
+  );
+
+  const loadManifestActivity = async () => {
+    if (manifestActivityLoading) return;
+    setManifestActivityLoading(true);
+    setManifestActivityError('');
+    try {
+      const result = await api.falabellaApiListManifestActivity(20);
+      setManifestActivity(Array.isArray(result?.runs) ? result.runs : []);
+    } catch (nextError: any) {
+      setManifestActivityError(nextError?.message || 'No se pudo cargar la actividad de manifiestos.');
+    } finally {
+      setManifestActivityLoading(false);
+    }
+  };
+  loadManifestActivityRef.current = loadManifestActivity;
+
+  const loadReadyManifests = async (force = false) => {
+    const orders = readyOrdersForManifestRequest();
+    if (!orders.length) return;
+    if (!force && (
+      manifestListLoadedKeyRef.current === manifestListRequestKey
+      || manifestListInFlightRef.current?.key === manifestListRequestKey
+    )) return;
+    const requestSequence = ++manifestListRequestSequenceRef.current;
+    const requestedScopeKey = manifestScopeKey;
+    const requestedOrdersKey = manifestOrdersKey;
+    const requestedListKey = manifestListRequestKey;
+    manifestListInFlightRef.current = { key: requestedListKey, sequence: requestSequence };
+    setManifestListLoading(true);
+    setManifestListError('');
+    try {
+      const result = await api.falabellaApiListManifests(orders.map((order) => ({
+        companyId: order.companyId,
+        orderId: order.orderId,
+        orderNumber: order.orderNumber,
+      }))) as ReadyManifestList;
+      if (requestSequence !== manifestListRequestSequenceRef.current || requestedScopeKey !== manifestScopeKeyRef.current || requestedOrdersKey !== manifestOrdersKeyRef.current) return;
+      manifestListLoadedKeyRef.current = requestedListKey;
+      setManifestList(result);
+    } catch (nextError: any) {
+      if (requestSequence !== manifestListRequestSequenceRef.current || requestedScopeKey !== manifestScopeKeyRef.current || requestedOrdersKey !== manifestOrdersKeyRef.current) return;
+      setManifestListError(nextError?.message || 'No se pudieron cargar los manifiestos asociados.');
+    } finally {
+      if (manifestListInFlightRef.current?.sequence === requestSequence) manifestListInFlightRef.current = null;
+      if (requestSequence === manifestListRequestSequenceRef.current && requestedScopeKey === manifestScopeKeyRef.current && requestedOrdersKey === manifestOrdersKeyRef.current) {
+        setManifestListLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!manifestOrdersKey || loadedInboxScopeKey !== manifestScopeKey || searchInput.trim() !== search) return;
+    void loadReadyManifests();
+    // Precarga local al estabilizarse el conjunto listo; el token interno evita duplicados.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestListRequestKey]);
+
+  const openManifestDrawer = () => {
+    setManifestDrawerTab('manifests');
+    setManifestDrawerOpen(true);
+    void loadReadyManifests();
+    void loadManifestActivity();
+  };
+
+  const toggleManifestScreenshot = async (runId: string) => {
+    if (manifestScreenshot?.id === runId) {
+      setManifestScreenshot(null);
+      return;
+    }
+    if (manifestScreenshotLoadingId) return;
+    setManifestScreenshotLoadingId(runId);
+    setManifestActivityError('');
+    try {
+      const result = await api.falabellaApiGetManifestActivityScreenshot(runId);
+      if (!result?.base64) throw new Error('La captura guardada está vacía.');
+      setManifestScreenshot({
+        id: runId,
+        src: `data:${result.mimeType || 'image/jpeg'};base64,${result.base64}`,
+      });
+    } catch (nextError: any) {
+      setManifestActivityError(nextError?.message || 'No se pudo abrir la captura.');
+    } finally {
+      setManifestScreenshotLoadingId('');
+    }
+  };
+
+  const openManifestDocument = async (companyId: number, manifest: ReadyManifest) => {
+    if (!manifest.id || manifestDocumentLoadingId) return;
+    const loadingKey = `${companyId}:${manifest.id}`;
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.opener = null;
+      renderManifestDocumentLoading(previewWindow, manifest.code || manifest.id);
+    }
+    setManifestDocumentLoadingId(loadingKey);
+    setManifestListError('');
+    try {
+      const document = await api.falabellaApiGetManifestDocument(companyId, manifest.id);
+      if (!document?.base64) throw new Error('Falabella no devolvió el PDF del manifiesto.');
+      const objectUrl = URL.createObjectURL(base64Blob(document.base64, document.mimeType || 'application/pdf'));
+      if (previewWindow) previewWindow.location.replace(objectUrl);
+      else {
+        const link = window.document.createElement('a');
+        link.href = objectUrl;
+        link.download = document.filename || `manifiesto-${manifest.code || manifest.id}.pdf`;
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
+    } catch (nextError: any) {
+      previewWindow?.close();
+      setManifestListError(nextError?.message || 'No se pudo abrir el manifiesto.');
+    } finally {
+      setManifestDocumentLoadingId('');
+    }
+  };
+
+  const printAllManifestDocuments = async () => {
+    if (!visibleManifestDocuments.length || manifestPrintAllLoading) return;
+    if (visibleManifestDocuments.length > MANIFEST_PRINT_LIMIT) {
+      setManifestListError(`Puedes imprimir hasta ${MANIFEST_PRINT_LIMIT} manifiestos por vez. Reduce el alcance con los filtros de la bandeja.`);
+      return;
+    }
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.opener = null;
+      renderManifestDocumentLoading(previewWindow, `${visibleManifestDocuments.length} manifiesto${visibleManifestDocuments.length === 1 ? '' : 's'}`);
+    }
+    setManifestPrintAllLoading(true);
+    setManifestListError('');
+    try {
+      const document = await api.falabellaApiGetManifestDocuments(visibleManifestDocuments.map(({ companyId, manifest }) => ({
+        companyId,
+        manifestId: manifest.id,
+      })));
+      if (!document?.base64) throw new Error('No se pudo preparar el PDF de manifiestos.');
+      const objectUrl = URL.createObjectURL(base64Blob(document.base64, document.mimeType || 'application/pdf'));
+      if (previewWindow) previewWindow.location.replace(objectUrl);
+      else {
+        const link = window.document.createElement('a');
+        link.href = objectUrl;
+        link.download = document.filename || 'manifiestos-falabella.pdf';
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
+    } catch (nextError: any) {
+      previewWindow?.close();
+      setManifestListError(nextError?.message || 'No se pudieron abrir los manifiestos.');
+    } finally {
+      setManifestPrintAllLoading(false);
+    }
+  };
+
+  const applyManifestJobResult = (result: any) => {
+    const createdManifests = Number(result?.createdManifests || 0);
+    const createdOrders = Number(result?.createdOrders || 0);
+    const companyResults = Array.isArray(result?.results) ? result.results : [];
+    const failed = companyResults.filter((company: any) => !company?.ok);
+    if (failed.length) {
+      const message = failed.map((company: any) => `${company.companyName}: ${company.error || 'No se pudo procesar la tienda.'}`).join(' · ');
+      setManifestError(message);
+      setManifestOperationNotice({ status: 'error', message });
+    } else {
+      const requestedOrders = companyResults.reduce((total: number, company: any) => total + Number(company?.requestedOrders || 0), 0);
+      const alreadyManifestedOrders = companyResults.reduce((total: number, company: any) => total + Number(company?.alreadyManifestedOrders || 0), 0);
+      const notReadyOrders = companyResults.reduce((total: number, company: any) => total + Number(company?.notReadyOrders || 0), 0);
+      const missingOrders = companyResults.reduce((total: number, company: any) => total + Number(company?.missingOrders || 0), 0);
+      const allAlreadyExisted = createdManifests === 0
+        && requestedOrders > 0
+        && alreadyManifestedOrders >= requestedOrders
+        && notReadyOrders === 0
+        && missingOrders === 0;
+      setManifestOperationNotice(createdManifests > 0
+        ? { status: 'created', createdManifests, createdOrders }
+        : allAlreadyExisted
+          ? { status: 'already-exists' }
+          : { status: 'no-new' });
+    }
+    void loadManifestActivity();
+    if (!failed.length) void loadReadyManifests(true);
+  };
+  applyManifestJobResultRef.current = applyManifestJobResult;
+
+  const pollManifestJob = async (jobId: string, initialJob?: ManifestJob, signal?: AbortSignal): Promise<any> => {
+    throwIfManifestPollAborted(signal);
+    let job = initialJob;
+    let failedPolls = 0;
+    while (true) {
+      throwIfManifestPollAborted(signal);
+      if (!job) {
+        try {
+          const response = await api.falabellaApiGetManifestJob(jobId, signal);
+          throwIfManifestPollAborted(signal);
+          job = response?.job as ManifestJob | undefined;
+          failedPolls = 0;
+        } catch (nextError) {
+          throwIfManifestPollAborted(signal);
+          failedPolls += 1;
+          if (failedPolls >= 5) throw nextError;
+          setActiveManifestStage('Reconectando con la operación…');
+          await waitForManifestPoll(MANIFEST_JOB_POLL_INTERVAL_MS, signal);
+          throwIfManifestPollAborted(signal);
+          continue;
+        }
+      }
+      throwIfManifestPollAborted(signal);
+      if (!job?.id) throw new Error('El servidor no devolvió una operación de manifiestos válida.');
+      setActiveManifestStage(job.stage || (job.status === 'pending' ? 'En cola' : 'Procesando tiendas'));
+      if (job.status === 'completed' || job.status === 'failed') {
+        if (window.sessionStorage.getItem(MANIFEST_JOB_SESSION_KEY) === jobId) {
+          window.sessionStorage.removeItem(MANIFEST_JOB_SESSION_KEY);
+        }
+        if (job.status === 'failed') throw new Error(job.error || 'No se pudieron crear los manifiestos de Falabella.');
+        if (!job.result) throw new Error('La operación terminó sin un resultado de manifiestos.');
+        return job.result;
+      }
+      await waitForManifestPoll(MANIFEST_JOB_POLL_INTERVAL_MS, signal);
+      throwIfManifestPollAborted(signal);
+      job = undefined;
+    }
+  };
+
+  const createManifests = async () => {
+    if (!canDispatch) return;
+    if (manifestLoading) {
+      setManifestDrawerTab('logs');
+      setManifestDrawerOpen(true);
+      void loadManifestActivity();
+      return;
+    }
+    const orders = readyOrdersForManifestRequest();
+    if (!orders.length) {
+      setManifestError('No hay pedidos listos para manifestar.');
+      setManifestDrawerTab('manifests');
+      setManifestDrawerOpen(true);
+      return;
+    }
+
+    setManifestLoading(true);
+    setManifestOperationNotice({ status: 'running' });
+    setActiveManifestStage('Iniciando la operación…');
+    setActiveManifestScope({
+      orders: orders.length,
+      companies: new Set(orders.map((order) => order.companyId)).size,
+    });
+    setManifestError('');
+    setManifestListError('');
+    manualManifestJobPollControllerRef.current?.abort();
+    const pollController = new AbortController();
+    manualManifestJobPollControllerRef.current = pollController;
+    try {
+      const submission = await api.falabellaApiCreateManifestJob(orders.map((order) => ({
+        companyId: order.companyId,
+        orderId: order.orderId,
+        orderNumber: order.orderNumber,
+      })));
+      const job = submission?.job as ManifestJob | undefined;
+      if (!job?.id) throw new Error('El servidor no pudo iniciar la operación de manifiestos.');
+      saveManifestJobForResume(job.id);
+      const result = await pollManifestJob(job.id, job, pollController.signal);
+      throwIfManifestPollAborted(pollController.signal);
+      applyManifestJobResult(result);
+    } catch (nextError: any) {
+      if (pollController.signal.aborted) return;
+      const message = nextError?.message || 'No se pudieron crear los manifiestos de Falabella.';
+      setManifestError(message);
+      setManifestOperationNotice({ status: 'error', message });
+      void loadManifestActivity();
+    } finally {
+      if (manualManifestJobPollControllerRef.current === pollController) {
+        manualManifestJobPollControllerRef.current = null;
+      }
+      if (!pollController.signal.aborted) {
+        setManifestLoading(false);
+        setActiveManifestScope(null);
+        setActiveManifestStage('');
+      }
+    }
+  };
+
+  useEffect(() => () => {
+    manualManifestJobPollControllerRef.current?.abort();
+    manualManifestJobPollControllerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    let activePoll: { jobId: string; controller: AbortController } | null = null;
+    const startResumePoll = (value: unknown) => {
+      const jobId = String(value || '').trim();
+      if (!jobId || manualManifestJobPollControllerRef.current) return;
+      if (activePoll?.jobId === jobId && !activePoll.controller.signal.aborted) return;
+      activePoll?.controller.abort();
+      const pollController = new AbortController();
+      activePoll = { jobId, controller: pollController };
+      setManifestLoading(true);
+      setManifestOperationNotice({ status: 'running' });
+      setActiveManifestStage('Recuperando la operación…');
+      setManifestError('');
+      void pollManifestJob(jobId, undefined, pollController.signal)
+        .then((result) => {
+          throwIfManifestPollAborted(pollController.signal);
+          applyManifestJobResultRef.current(result);
+        })
+        .catch((nextError: any) => {
+          if (pollController.signal.aborted) return;
+          const message = nextError?.message || 'No se pudo consultar la operación de manifiestos.';
+          setManifestError(message);
+          setManifestOperationNotice({ status: 'error', message });
+          loadManifestActivityRef.current();
+        })
+        .finally(() => {
+          if (activePoll?.controller === pollController) activePoll = null;
+          if (pollController.signal.aborted) return;
+          setManifestLoading(false);
+          setActiveManifestScope(null);
+          setActiveManifestStage('');
+        });
+    };
+    const handleSavedJob = (event: Event) => {
+      const jobId = event instanceof CustomEvent ? event.detail?.jobId : '';
+      startResumePoll(jobId || window.sessionStorage.getItem(MANIFEST_JOB_SESSION_KEY));
+    };
+    window.addEventListener(MANIFEST_JOB_SAVED_EVENT, handleSavedJob);
+    startResumePoll(window.sessionStorage.getItem(MANIFEST_JOB_SESSION_KEY));
+    return () => {
+      window.removeEventListener(MANIFEST_JOB_SAVED_EVENT, handleSavedJob);
+      activePoll?.controller.abort();
+      activePoll = null;
+    };
+    // React StrictMode aborts the first setup; the second setup restarts from sessionStorage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const renderManifestRun = (run: ReadyManifestActivity, resolved = false, resolvedAt: string | null = null) => {
+    const failed = run.status === 'error';
+    const created = run.status === 'created';
+    const httpEvents = manifestHttpEvents(run);
+    const stepEvents = run.events.filter((event) => !httpEvents.includes(event));
+    const statusLabel = created ? 'Creado' : 'Sin pedidos nuevos';
+    const statusClass = created
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : 'bg-muted text-muted-foreground';
+
+    return (
+      <section key={run.id} className={`px-4 py-4 sm:px-5 ${failed && !resolved ? 'bg-destructive/[0.025]' : 'bg-card'}`}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{run.companyName}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{formatManifestDateTime(run.createdAt)} · {run.stage || 'Etapa no informada'}</p>
+          </div>
+          <div className="flex max-w-full flex-wrap gap-1.5">
+            {failed ? (
+              <>
+                <Badge variant="outline" className={resolved ? 'bg-muted text-muted-foreground' : 'border-destructive/30 bg-destructive/5 text-destructive'}>Error</Badge>
+                {resolved && <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">Resuelto</Badge>}
+              </>
+            ) : (
+              <Badge variant="outline" className={`w-fit max-w-full whitespace-normal text-left ${statusClass}`}>{statusLabel}</Badge>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span><strong className="font-medium text-foreground">Duración total:</strong> {formatManifestDuration(manifestRunDurationMs(run))}</span>
+          <span><strong className="font-medium text-foreground">Solicitudes:</strong> {httpEvents.length}</span>
+          <span><strong className="font-medium text-foreground">Pedidos:</strong> {run.requestedOrders} solicitados · {run.alreadyManifestedOrders} existentes · {run.createdOrders} creados</span>
+        </div>
+
+        {run.error && (
+          <p className={`mt-3 rounded-md px-3 py-2 text-xs leading-relaxed ${resolved ? 'bg-muted text-muted-foreground' : 'bg-destructive/5 text-destructive'}`}>
+            {run.error}
+          </p>
+        )}
+
+        {resolved && (
+          <p className="mt-2 text-[11px] font-medium text-sky-700">Resuelto por la ejecución exitosa de {formatManifestDateTime(resolvedAt)}</p>
+        )}
+
+        {(run.pageTitle || run.pageUrl) && (
+          <div className="mt-3 text-[11px] text-muted-foreground">
+            {run.pageTitle && <span className="font-medium text-foreground">{run.pageTitle}</span>}
+            {run.pageUrl && <span className="ml-2 break-all font-mono">{run.pageUrl}</span>}
+          </div>
+        )}
+
+        {httpEvents.length > 0 && (
+          <details className="mt-3 border-t border-border pt-2">
+            <summary className="cursor-pointer text-xs font-medium text-foreground">Detalle HTTP ({httpEvents.length})</summary>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[470px] text-left text-[11px]">
+                <caption className="sr-only">Solicitudes HTTP de la ejecución de {run.companyName}</caption>
+                <thead className="text-muted-foreground">
+                  <tr>
+                    <th className="pb-1.5 pr-3 font-medium">Método</th>
+                    <th className="pb-1.5 pr-3 font-medium">Endpoint</th>
+                    <th className="pb-1.5 pr-3 text-right font-medium">Estado</th>
+                    <th className="pb-1.5 text-right font-medium">Duración</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/70">
+                  {httpEvents.map((event, index) => (
+                    <tr key={`${event.at}:${event.endpoint}:${index}`}>
+                      <td className="py-1.5 pr-3 font-mono font-medium">{event.method || '—'}</td>
+                      <td className="max-w-64 break-all py-1.5 pr-3 font-mono text-muted-foreground">{event.endpoint || event.message || '—'}</td>
+                      <td className={`py-1.5 pr-3 text-right font-mono ${Number(event.status) >= 400 ? 'text-destructive' : Number(event.status) > 0 ? 'text-emerald-700' : 'text-muted-foreground'}`}>
+                        {event.status || '—'}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-muted-foreground">{event.durationMs != null ? formatManifestDuration(event.durationMs) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {httpEvents.some((event) => event.durationMs == null) && (
+              <p className="mt-1.5 text-[10px] text-muted-foreground">— = duración no disponible en este registro histórico.</p>
+            )}
+          </details>
+        )}
+
+        {stepEvents.length > 0 && (
+          <details className="mt-2 border-t border-border pt-2">
+            <summary className="cursor-pointer text-xs font-medium text-foreground">Etapas de la ejecución ({stepEvents.length})</summary>
+            <ol className="mt-2 space-y-2">
+              {stepEvents.map((event, index) => (
+                <li key={`${event.at}:${index}`} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-[11px]">
+                  <span className="text-muted-foreground">{index + 1}.</span>
+                  <span><strong className="font-medium text-foreground">{event.stage}:</strong> <span className="text-muted-foreground">{event.message}</span></span>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+
+        {run.pageText && failed && (
+          <details className="mt-2 border-t border-border pt-2">
+            <summary className="cursor-pointer text-xs font-medium text-foreground">Texto visible donde falló</summary>
+            <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">{run.pageText}</p>
+          </details>
+        )}
+
+        {run.hasScreenshot && (
+          <div className="mt-3">
+            <Button type="button" size="sm" variant="outline" onClick={() => void toggleManifestScreenshot(run.id)} disabled={Boolean(manifestScreenshotLoadingId)}>
+              {manifestScreenshotLoadingId === run.id ? <Loader2 className="animate-spin" /> : <ImageIcon />}
+              {manifestScreenshot?.id === run.id ? 'Ocultar captura' : 'Ver captura del error'}
+            </Button>
+            {manifestScreenshot?.id === run.id && (
+              <img src={manifestScreenshot.src} alt={`Captura del error de ${run.companyName}`} className="mt-3 w-full rounded-lg bg-muted object-contain" />
+            )}
+          </div>
+        )}
+      </section>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <section aria-label="Filtros de pedidos">
@@ -1585,9 +2369,21 @@ export default function Pedidos() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">Mostrando {filteredCountLabel}</span>
                 {flowStage === 'ready' && flowOrders.length > 0 && (
-                  <Button size="sm" onClick={startLabelSelection} disabled={batchLabelsLoading}>
-                    <Printer /> Imprimir etiquetas
-                  </Button>
+                  <>
+                    <Button size="sm" variant="outline" onClick={openManifestDrawer}>
+                      <FileText />
+                      Ver manifiestos
+                    </Button>
+                    {canDispatch && (
+                      <Button size="sm" variant="outline" onClick={() => void createManifests()} disabled={batchLabelsLoading || (!manifestLoading && manifestReadyOrders.length === 0)}>
+                        {manifestLoading ? <Loader2 className="animate-spin" /> : <FileCheck2 />}
+                        {manifestLoading ? 'Ver progreso' : `Crear manifiestos (${manifestReadyOrders.length})`}
+                      </Button>
+                    )}
+                    <Button size="sm" onClick={startLabelSelection} disabled={batchLabelsLoading}>
+                      <Printer /> Imprimir etiquetas
+                    </Button>
+                  </>
                 )}
                 {flowStage === 'pending' && canDispatch && visiblePendingCandidates.length > 0 && (
                   <Tooltip>
@@ -1748,6 +2544,344 @@ export default function Pedidos() {
           </div>
         </section>
       )}
+
+      <Sheet open={manifestDrawerOpen} onOpenChange={setManifestDrawerOpen}>
+        <SheetContent className="sm:max-w-2xl">
+          <SheetHeader className="border-b border-border px-5 py-4 pr-16">
+            <div className="flex items-center gap-2">
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-sidebar-primary text-sm font-bold tracking-tight text-sidebar-primary-foreground">Z</span>
+              <div>
+                <SheetTitle>Manifiestos asociados</SheetTitle>
+                <SheetDescription className="mt-1">Documentos guardados para los pedidos listos del alcance actual.</SheetDescription>
+              </div>
+            </div>
+          </SheetHeader>
+
+          <Tabs value={manifestDrawerTab} onValueChange={(value) => setManifestDrawerTab(value as 'manifests' | 'logs')} className="min-h-0 flex-1 gap-0 overflow-hidden">
+            <div className="shrink-0 border-b border-border px-5 py-3">
+              <TabsList className="w-full sm:w-auto">
+                <TabsTrigger value="manifests">Manifiestos ({visibleManifestDocuments.length})</TabsTrigger>
+                <TabsTrigger value="logs">
+                  Actividad ({manifestActivity.length})
+                  {manifestLogSummary.unresolvedErrors > 0 && (
+                    <span className="grid min-w-5 place-items-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground">{manifestLogSummary.unresolvedErrors}</span>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="manifests" className="min-h-0 overflow-y-auto">
+              <div className="space-y-3 px-4 py-3 sm:px-5">
+                <section className="rounded-lg bg-muted/50 px-3 py-3" aria-label="Resumen y alcance de manifiestos">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{visibleManifestDocuments.length} manifiesto{visibleManifestDocuments.length === 1 ? '' : 's'} · {manifestList?.manifestedOrders ?? 0} pedido{(manifestList?.manifestedOrders ?? 0) === 1 ? '' : 's'} vinculado{(manifestList?.manifestedOrders ?? 0) === 1 ? '' : 's'}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{manifestScopeDescription}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">Lista guardada · {manifestList?.syncedAt ? formatDateTime(manifestList.syncedAt) : 'aún sin datos'}</p>
+                    </div>
+                    <Button type="button" size="icon-sm" variant="outline" className="shrink-0" onClick={() => void loadReadyManifests(true)} disabled={manifestListLoading} aria-label="Recargar lista guardada" title="Recargar lista guardada">
+                      <RefreshCw className={manifestListLoading ? 'animate-spin' : ''} />
+                    </Button>
+                  </div>
+                  {manifestInboxIsTruncated && (
+                    <p className="mt-2 border-t border-border pt-2 text-[11px] leading-relaxed text-amber-800">
+                      La bandeja tiene {data?.totalCount} resultados y solo cargó {data?.orders?.length || 0} por el límite de {BOARD_LIMIT}. Este lote incluye únicamente los pedidos listos visibles; reduce el filtro para procesar los restantes.
+                    </p>
+                  )}
+                </section>
+
+                {manifestLoading && (
+                  <div className="rounded-lg bg-sky-50 px-3 py-2.5 text-sky-950">
+                    <div className="flex items-start gap-3">
+                      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-sky-700" />
+                      <div>
+                        <p className="text-sm font-semibold">Procesando tiendas en Seller Center</p>
+                        <p className="mt-1 text-xs leading-relaxed text-sky-800">Revisando {activeManifestScope?.orders ?? manifestReadyOrders.length} pedido{(activeManifestScope?.orders ?? manifestReadyOrders.length) === 1 ? '' : 's'} de {activeManifestScope?.companies ?? manifestReadyCompanyCount} tienda{(activeManifestScope?.companies ?? manifestReadyCompanyCount) === 1 ? '' : 's'}. Los pedidos con manifiesto se omiten y solo se crean los nuevos.</p>
+                        {activeManifestStage && <p className="mt-1 text-[11px] font-medium text-sky-700">Etapa actual: {activeManifestStage}</p>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!manifestLoading && manifestError && (
+                  <div className="flex items-start gap-2 rounded-lg bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{manifestError} Revisa la pestaña Logs para ver el diagnóstico.</span>
+                  </div>
+                )}
+
+                {manifestListError && (
+                  <div className="flex items-start gap-2 rounded-lg bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{manifestListError}</span>
+                  </div>
+                )}
+
+                {manifestListLoading && !manifestList && (
+                  <div className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground" role="status" aria-live="polite">
+                    <Loader2 className="size-4 shrink-0 animate-spin" />
+                    Cargando lista local…
+                  </div>
+                )}
+
+                {!manifestListLoading && manifestList && manifestList.manifests === 0 && manifestList.failedCompanies === 0 && (
+                  <div className="rounded-lg bg-muted/30 px-4 py-8 text-center">
+                    <div>
+                      <FileText className="mx-auto size-7 text-muted-foreground/50" />
+                      <p className="mt-3 text-sm font-medium">No hay manifiestos asociados</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Ninguno de los pedidos listos de este alcance tiene manifiesto asociado.</p>
+                    </div>
+                  </div>
+                )}
+
+                {manifestCompaniesWithDocuments.map((company) => {
+                  const linkedOrders = new Set(company.manifests.flatMap((manifest) => manifest.orders.map((order) => order.orderId || order.orderNumber))).size;
+                  return (
+                    <TablePanel key={company.companyId} aria-labelledby={`manifest-company-${company.companyId}`}>
+                      <TablePanelHeader className="flex items-center justify-between gap-3 px-3 py-2.5 sm:px-4">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Store className="size-4 shrink-0 text-muted-foreground" />
+                          <h3 id={`manifest-company-${company.companyId}`} className="truncate text-sm font-semibold">{company.companyName}</h3>
+                        </div>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">{company.manifests.length} manifiesto{company.manifests.length === 1 ? '' : 's'} · {linkedOrders} pedido{linkedOrders === 1 ? '' : 's'}</span>
+                      </TablePanelHeader>
+                      <div className="divide-y divide-border">
+                        {company.manifests.map((manifest) => {
+                          const loadingKey = `${company.companyId}:${manifest.id}`;
+                          const opening = manifestDocumentLoadingId === loadingKey;
+                          return (
+                            <article key={manifest.id || manifest.code} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-4">
+                              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-sidebar-primary text-xs font-bold tracking-tight text-sidebar-primary-foreground" aria-hidden="true">Z</span>
+                              <div className="min-w-0">
+                                <p className="break-all font-mono text-[11px] font-semibold text-foreground">{manifest.code || manifest.id}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{manifest.orders.length} pedido{manifest.orders.length === 1 ? '' : 's'} · {manifest.numberOfItems} artículo{manifest.numberOfItems === 1 ? '' : 's'} · {formatManifestDateTime(manifest.createdAt)}</p>
+                                <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{manifest.orders.map((order) => order.orderNumber || order.deliveryOrderNumber || order.orderId).join(', ')}</p>
+                              </div>
+                              <Button type="button" size="sm" variant="outline" className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={() => void openManifestDocument(company.companyId, manifest)} disabled={!manifest.id || Boolean(manifestDocumentLoadingId) || manifestPrintAllLoading}>
+                                {opening ? <Loader2 className="animate-spin" /> : <Printer />}
+                                {opening ? 'Abriendo…' : 'Abrir / imprimir'}
+                              </Button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </TablePanel>
+                  );
+                })}
+
+                {manifestCompaniesWithoutDocuments.length > 0 && (
+                  <div className="rounded-lg bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Sin manifiestos asociados ({manifestCompaniesWithoutDocuments.length} tienda{manifestCompaniesWithoutDocuments.length === 1 ? '' : 's'}):</span>{' '}
+                    {manifestCompaniesWithoutDocuments.map((company) => company.companyName).join(', ')}
+                  </div>
+                )}
+
+                {manifestCompaniesWithErrors.length > 0 && (
+                  <div className="rounded-lg bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
+                    <p className="font-medium">No se pudo cargar {manifestCompaniesWithErrors.length} tienda{manifestCompaniesWithErrors.length === 1 ? '' : 's'}</p>
+                    <ul className="mt-1 space-y-1">
+                      {manifestCompaniesWithErrors.map((company) => <li key={company.companyId}>{company.companyName}: {company.error || 'Error no informado.'}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="logs" className="min-h-0 overflow-y-auto">
+              <div className="space-y-5 px-4 py-4 sm:px-6">
+                <p className="text-xs text-muted-foreground">Historial global de todas las tiendas. No cambia con los filtros de la bandeja.</p>
+                <section className={`rounded-lg px-4 py-3 ${manifestLoading ? 'bg-sky-50 text-sky-900' : latestManifestRun?.status === 'error' ? 'bg-destructive/5 text-destructive' : latestManifestRun ? 'bg-emerald-50 text-emerald-900' : 'bg-muted/50 text-foreground'}`} aria-live="polite">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-2.5">
+                      {manifestLoading ? <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" /> : latestManifestRun?.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : latestManifestRun ? <CheckCircle2 className="mt-0.5 size-4 shrink-0" /> : <FileText className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+                      <div>
+                        <p className="text-sm font-semibold">
+                          {manifestLoading
+                            ? 'Ejecución en curso'
+                            : latestManifestRun?.status === 'error'
+                              ? 'Última ejecución: error'
+                              : latestManifestRun?.status === 'created'
+                                ? 'Última ejecución: manifiesto creado'
+                                : latestManifestRun
+                                  ? 'Última ejecución: sin pedidos nuevos'
+                                  : 'Sin ejecuciones registradas'}
+                        </p>
+                        {manifestLoading ? (
+                          <p className="mt-1 text-xs opacity-80">{activeManifestStage ? `Etapa actual: ${activeManifestStage}. ` : ''}La duración y las solicitudes aparecerán cuando finalice.</p>
+                        ) : latestManifestRun ? (
+                          <p className="mt-1 text-xs opacity-80">
+                            {latestManifestRun.companyName} · {formatManifestDateTime(latestManifestRun.createdAt)} · {formatManifestDuration(manifestLogSummary.durationMs)} · {manifestLogSummary.requests} solicitud{manifestLogSummary.requests === 1 ? '' : 'es'} HTTP
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs opacity-80">Actualiza los logs después de la primera ejecución.</p>
+                        )}
+                        {manifestLogSummary.unresolvedErrors > 0 && (
+                          <p className="mt-1 text-xs font-medium">{manifestLogSummary.unresolvedErrors} error{manifestLogSummary.unresolvedErrors === 1 ? '' : 'es'} histórico{manifestLogSummary.unresolvedErrors === 1 ? '' : 's'} por revisar.</p>
+                        )}
+                      </div>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void loadManifestActivity()} disabled={manifestActivityLoading}>
+                      <RefreshCw className={manifestActivityLoading ? 'animate-spin' : ''} />
+                      {manifestActivityLoading ? 'Actualizando…' : 'Actualizar logs'}
+                    </Button>
+                  </div>
+                </section>
+
+                {!manifestLoading && manifestError && (
+                  <div className="flex items-start gap-2 rounded-lg bg-destructive/5 px-3 py-3 text-sm text-destructive">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{manifestError}</span>
+                  </div>
+                )}
+
+                {manifestActivityError && <div className="rounded-lg bg-destructive/5 px-3 py-2 text-xs text-destructive">{manifestActivityError}</div>}
+
+                {manifestActivityLoading && manifestActivity.length === 0 && (
+                  <div className="grid min-h-40 place-items-center rounded-xl bg-muted/30 text-center">
+                    <div><Loader2 className="mx-auto size-6 animate-spin text-primary" /><p className="mt-2 text-xs text-muted-foreground">Cargando registros locales…</p></div>
+                  </div>
+                )}
+
+                {!manifestActivityLoading && manifestActivity.length === 0 && (
+                  <div className="rounded-xl bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">Todavía no hay ejecuciones registradas.</div>
+                )}
+
+                {successfulManifestRuns.length > 0 && (
+                  <section aria-labelledby="successful-manifest-runs">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <h3 id="successful-manifest-runs" className="text-sm font-semibold">Ejecuciones vigentes y exitosas</h3>
+                        <p className="text-xs text-muted-foreground">Creaciones completadas y revisiones sin pedidos nuevos.</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{successfulManifestRuns.length}</span>
+                    </div>
+                    <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+                      {successfulManifestRuns.map((run) => renderManifestRun(run))}
+                    </div>
+                  </section>
+                )}
+
+                {historicalManifestErrors.length > 0 && (
+                  <section aria-labelledby="historical-manifest-errors">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <h3 id="historical-manifest-errors" className="text-sm font-semibold">Errores históricos</h3>
+                        <p className="text-xs text-muted-foreground">Los resueltos conservan el diagnóstico para auditoría.</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground">{historicalManifestErrors.length}</span>
+                    </div>
+                    <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+                      {historicalManifestErrors.map(({ run, resolved, resolvedAt }) => renderManifestRun(run, resolved, resolvedAt))}
+                    </div>
+                  </section>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {manifestDrawerTab === 'manifests' && (
+            <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-foreground">
+                    {visibleManifestDocuments.length} manifiesto{visibleManifestDocuments.length === 1 ? '' : 's'} en el alcance actual
+                  </p>
+                  <p className={`mt-0.5 text-[11px] ${visibleManifestDocuments.length > MANIFEST_PRINT_LIMIT ? 'text-amber-700' : 'text-muted-foreground'}`}>
+                    {visibleManifestDocuments.length > MANIFEST_PRINT_LIMIT
+                      ? `Máximo ${MANIFEST_PRINT_LIMIT} por impresión; reduce el alcance con los filtros.`
+                      : 'Se abrirá un único PDF para revisar e imprimir.'}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full shrink-0 sm:w-auto"
+                  onClick={() => void printAllManifestDocuments()}
+                  disabled={visibleManifestDocuments.length === 0 || visibleManifestDocuments.length > MANIFEST_PRINT_LIMIT || manifestPrintAllLoading || manifestListLoading}
+                >
+                  {manifestPrintAllLoading ? <Loader2 className="animate-spin" /> : <Printer />}
+                  {manifestPrintAllLoading ? 'Preparando PDF…' : `Imprimir todos (${visibleManifestDocuments.length})`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={Boolean(manifestOperationNotice)} onOpenChange={(open) => { if (!open) setManifestOperationNotice(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mb-1 flex items-center gap-3">
+              <span className={`grid size-10 shrink-0 place-items-center rounded-xl ${manifestOperationNotice?.status === 'error' ? 'bg-destructive/10 text-destructive' : manifestOperationNotice?.status === 'running' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                {manifestOperationNotice?.status === 'running'
+                  ? <Loader2 className="size-5 animate-spin" />
+                  : manifestOperationNotice?.status === 'error'
+                    ? <AlertCircle className="size-5" />
+                    : <CheckCircle2 className="size-5" />}
+              </span>
+              <DialogTitle>
+                {manifestOperationNotice?.status === 'running'
+                  ? 'Estamos creando los manifiestos'
+                  : manifestOperationNotice?.status === 'already-exists'
+                    ? 'Estos pedidos ya tienen manifiesto'
+                    : manifestOperationNotice?.status === 'created'
+                      ? 'Manifiestos creados'
+                      : manifestOperationNotice?.status === 'no-new'
+                        ? 'No había pedidos nuevos'
+                        : 'No pudimos completar la creación'}
+              </DialogTitle>
+            </div>
+            <DialogDescription className="leading-relaxed">
+              {manifestOperationNotice?.status === 'running'
+                ? `Revisaremos ${activeManifestScope?.orders ?? manifestReadyOrders.length} pedido${(activeManifestScope?.orders ?? manifestReadyOrders.length) === 1 ? '' : 's'} en ${activeManifestScope?.companies ?? manifestReadyCompanyCount} tienda${(activeManifestScope?.companies ?? manifestReadyCompanyCount) === 1 ? '' : 's'}. El proceso puede tardar varios minutos.`
+                : manifestOperationNotice?.status === 'already-exists'
+                  ? 'No se creó ningún documento duplicado. Puedes abrir los manifiestos que ya están asociados a estos pedidos.'
+                  : manifestOperationNotice?.status === 'created'
+                    ? `${manifestOperationNotice.createdManifests ?? 0} manifiesto${manifestOperationNotice.createdManifests === 1 ? '' : 's'} creado${manifestOperationNotice.createdManifests === 1 ? '' : 's'} para ${manifestOperationNotice.createdOrders ?? 0} pedido${manifestOperationNotice.createdOrders === 1 ? '' : 's'}.`
+                    : manifestOperationNotice?.status === 'no-new'
+                      ? 'Los pedidos ya tenían manifiesto o dejaron de estar listos para enviar durante la revisión.'
+                      : manifestOperationNotice?.message || 'Revisa la actividad para ver el diagnóstico de cada tienda.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {manifestOperationNotice?.status === 'running' && (
+            <div className="rounded-lg bg-muted/60 px-3 py-3 text-sm text-muted-foreground">
+              <div className="flex items-start gap-3">
+                <Coffee className="mt-0.5 size-4 shrink-0 text-foreground" />
+                <p>Puedes tomarte un café y seguir trabajando. Te avisaremos en esta pantalla cuando termine.</p>
+              </div>
+              {activeManifestStage && <p className="mt-2 border-t border-border pt-2 text-xs font-medium text-foreground">Etapa actual: {activeManifestStage}</p>}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            {manifestOperationNotice?.status === 'running' ? (
+              <>
+                <Button type="button" variant="link" onClick={() => {
+                  setManifestOperationNotice(null);
+                  setManifestDrawerTab('logs');
+                  setManifestDrawerOpen(true);
+                  void loadManifestActivity();
+                }}>Ver progreso</Button>
+                <Button type="button" onClick={() => setManifestOperationNotice(null)}>Seguir trabajando</Button>
+              </>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={() => setManifestOperationNotice(null)}>Cerrar</Button>
+                <Button type="button" onClick={() => {
+                  const showLogs = manifestOperationNotice?.status === 'error';
+                  setManifestOperationNotice(null);
+                  setManifestDrawerTab(showLogs ? 'logs' : 'manifests');
+                  setManifestDrawerOpen(true);
+                  if (showLogs) void loadManifestActivity();
+                  else void loadReadyManifests();
+                }}>
+                  {manifestOperationNotice?.status === 'error' ? 'Ver actividad' : 'Ver manifiestos'}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(bulkReadySelection)} onOpenChange={(open) => !open && !bulkReadyRunning && setBulkReadySelection(null)}>
         <DialogContent className="sm:max-w-md" showCloseButton={!bulkReadyRunning}>

@@ -30,6 +30,13 @@ const orderManagement = await import('./order-management.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
+const {
+  normalizeFalabellaManifestDocumentRequests,
+  normalizeFalabellaManifestOrders,
+} = await import('./falabella-manifest-request.js');
+const { combineFalabellaManifestPdfDocuments } = await import('./falabella-manifest-pdf.js');
+// Cola persistente: el request HTTP sólo encola y el worker procesa fuera del ciclo de respuesta.
+const manifestJobs = await import('./falabella-manifest-jobs.js');
 
 const app = new Hono();
 
@@ -125,11 +132,18 @@ const falabellaAccessGuard = (c, next) => {
     return requireAnyPermission(['productos', 'falabella_sellers'])(c, next);
   }
   const sharedWithInbox = path === '/falabella/shipping-labels/a4'
+    || path === '/falabella/manifests'
+    || path.startsWith('/falabella/manifests/')
     || /^\/falabella\/[^/]+\/orders\/[^/]+\/(items|ready-to-ship|shipping-label)$/.test(path);
   if (sharedWithInbox) {
     return requireAnyPermission(
       ['orders_inbox', 'falabella_sellers'],
-      { readOnly: path === '/falabella/shipping-labels/a4' },
+      {
+        readOnly: path === '/falabella/shipping-labels/a4'
+          || path === '/falabella/manifests/list'
+          || path === '/falabella/manifests/document'
+          || path === '/falabella/manifests/documents',
+      },
     )(c, next);
   }
   return requirePermission('falabella_sellers')(c, next);
@@ -142,6 +156,12 @@ const fail = (c, e, status = 500) => {
   console.error('[API ERROR]', c.req.method, c.req.path, '→', (e && e.stack) || e);
   return c.json({ error: String((e && e.message) || e) }, status);
 };
+
+function publicFalabellaManifestJob(job) {
+  if (!job) return null;
+  const { fingerprint: _fingerprint, orders: _orders, ...publicJob } = job;
+  return publicJob;
+}
 
 function canPrintFalabellaShippingLabel(status) {
   const value = String(status || '').toLowerCase();
@@ -684,6 +704,318 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
     return fail(c, e, status);
   }
 });
+async function persistFalabellaManifestRuns(results) {
+  for (const company of results || []) {
+    const diagnostic = company?.diagnostic || {};
+    const status = !company?.ok
+      ? 'error'
+      : Number(company?.createdManifests || 0) > 0
+        ? 'created'
+        : 'skipped';
+    await core.pool.query(
+      `INSERT INTO falabella_manifest_runs (
+        company_id, company_name, operation, status, requested_orders, provider_orders,
+        eligible_orders, already_manifested_orders, created_manifests, created_orders,
+        stage, error, events, page_url, page_title, page_text,
+        screenshot_mime_type, screenshot_base64
+      ) VALUES (
+        $1, $2, 'create', $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12::jsonb, $13, $14, $15, $16, $17
+      )`,
+      [
+        Number(company?.companyId),
+        String(company?.companyName || ''),
+        status,
+        Number(company?.requestedOrders || 0),
+        Number(company?.providerOrders || 0),
+        Number(company?.eligibleOrders || 0),
+        Number(company?.alreadyManifestedOrders || 0),
+        Number(company?.createdManifests || 0),
+        Number(company?.createdOrders || 0),
+        String(diagnostic?.stage || ''),
+        company?.error ? String(company.error) : null,
+        JSON.stringify(Array.isArray(diagnostic?.events) ? diagnostic.events : []),
+        diagnostic?.pageUrl ? String(diagnostic.pageUrl) : null,
+        diagnostic?.pageTitle ? String(diagnostic.pageTitle) : null,
+        diagnostic?.pageText ? String(diagnostic.pageText) : null,
+        diagnostic?.screenshotMimeType ? String(diagnostic.screenshotMimeType) : null,
+        diagnostic?.screenshotBase64 ? String(diagnostic.screenshotBase64) : null,
+      ],
+    );
+  }
+}
+
+const FALABELLA_MANIFEST_JOB_STALE_MS = 20 * 60 * 1000;
+const FALABELLA_MANIFEST_JOB_HEARTBEAT_MS = 15 * 1000;
+let falabellaManifestJobPumpPromise = null;
+
+function falabellaManifestJobFailureMessage(result) {
+  const failures = (result?.results || [])
+    .filter((company) => !company?.ok)
+    .map((company) => `${company.companyName || `Tienda ${company.companyId}`}: ${company.error || 'falló'}`);
+  if (failures.length) return failures.join(' | ');
+  if (!Number(result?.companies || 0)) return 'No se encontró ninguna tienda válida para procesar.';
+  return 'No se pudieron crear todos los manifiestos solicitados.';
+}
+
+async function processFalabellaManifestJob(job) {
+  const heartbeat = setInterval(() => {
+    manifestJobs.heartbeatFalabellaManifestJob(job, 'procesando pedidos en Falabella', core.pool)
+      .catch((error) => console.warn('[FALABELLA MANIFEST JOB HEARTBEAT]', error?.message || error));
+  }, FALABELLA_MANIFEST_JOB_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  try {
+    await manifestJobs.heartbeatFalabellaManifestJob(
+      job,
+      'procesando pedidos en Falabella',
+      core.pool,
+    );
+    const result = await core.createFalabellaWebManifests({ orders: job.orders });
+    await persistFalabellaManifestRuns(result.results).catch((error) => {
+      console.warn('[FALABELLA MANIFEST ACTIVITY]', error?.message || error);
+    });
+    if (Number(result.failedCompanies || 0) > 0 || !Number(result.companies || 0)) {
+      await manifestJobs.failFalabellaManifestJob(
+        job,
+        falabellaManifestJobFailureMessage(result),
+        result,
+        core.pool,
+      );
+      return;
+    }
+    await manifestJobs.completeFalabellaManifestJob(job, result, core.pool);
+  } catch (error) {
+    await manifestJobs.failFalabellaManifestJob(job, error, null, core.pool).catch((persistError) => {
+      console.error('[FALABELLA MANIFEST JOB FAIL]', persistError?.stack || persistError);
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+async function drainFalabellaManifestJobs() {
+  if (falabellaManifestJobPumpPromise) return falabellaManifestJobPumpPromise;
+  const pump = (async () => {
+    while (true) {
+      const [job] = await manifestJobs.claimFalabellaManifestJobs(1, core.pool);
+      if (!job) break;
+      await processFalabellaManifestJob(job);
+    }
+  })();
+  falabellaManifestJobPumpPromise = pump;
+  try {
+    await pump;
+  } finally {
+    if (falabellaManifestJobPumpPromise === pump) falabellaManifestJobPumpPromise = null;
+  }
+}
+
+function scheduleFalabellaManifestJobs() {
+  const timer = setTimeout(() => {
+    drainFalabellaManifestJobs().catch((error) => {
+      console.error('[FALABELLA MANIFEST JOB WORKER]', error?.stack || error);
+    });
+  }, 0);
+  timer.unref?.();
+}
+
+app.post('/falabella/manifests', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const selection = normalizeFalabellaManifestOrders(body?.orders);
+    if (!selection.ok || !selection.orders.length) {
+      return c.json({ error: selection.error || 'No hay pedidos válidos para manifestar.' }, 400);
+    }
+
+    const result = await core.createFalabellaWebManifests({ orders: selection.orders });
+    await persistFalabellaManifestRuns(result.results).catch((error) => {
+      console.warn('[FALABELLA MANIFEST ACTIVITY]', error?.message || error);
+    });
+    const documents = result.results
+      .map((company) => company.document)
+      .filter((document) => Boolean(document?.base64));
+    const combined = documents.length
+      ? await combineFalabellaManifestPdfDocuments(
+        documents,
+        `manifiestos-falabella-${new Date().toISOString().slice(0, 10)}.pdf`,
+      )
+      : { base64: '', filename: '', mimeType: 'application/pdf' };
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, {
+      ...result,
+      results: result.results.map((company) => ({
+        ...company,
+        diagnostic: company.diagnostic
+          ? { ...company.diagnostic, screenshotBase64: undefined }
+          : undefined,
+        document: company.document
+          ? { ...company.document, base64: undefined }
+          : undefined,
+      })),
+      base64: combined.base64,
+      filename: combined.filename,
+    });
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.post('/falabella/manifests/jobs', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const selection = normalizeFalabellaManifestOrders(body?.orders);
+    if (!selection.ok || !selection.orders.length) {
+      return c.json({ error: selection.error || 'No hay pedidos válidos para manifestar.' }, 400);
+    }
+    const queued = await manifestJobs.enqueueFalabellaManifestJob(selection.orders, core.pool);
+    scheduleFalabellaManifestJobs();
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, {
+      job: publicFalabellaManifestJob(queued.job),
+      reused: queued.reused,
+    }, 202);
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.get('/falabella/manifests/jobs/:id', async (c) => {
+  try {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) {
+      return c.json({ error: 'Trabajo de manifiestos inválido.' }, 400);
+    }
+    const job = await manifestJobs.getFalabellaManifestJob(id, core.pool);
+    if (!job) return c.json({ error: 'Trabajo de manifiestos no encontrado.' }, 404);
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, { job: publicFalabellaManifestJob(job) });
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.get('/falabella/manifests/activity', async (c) => {
+  try {
+    const requestedLimit = Number(c.req.query('limit') || 20);
+    const limit = Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+    const { rows } = await core.pool.query(
+      `SELECT id, company_id, company_name, operation, status, requested_orders,
+        provider_orders, eligible_orders, already_manifested_orders,
+        created_manifests, created_orders, stage, error, events,
+        page_url, page_title, page_text,
+        (screenshot_base64 IS NOT NULL AND screenshot_base64 <> '') AS has_screenshot,
+        created_at
+      FROM falabella_manifest_runs
+      ORDER BY created_at DESC, id DESC
+      LIMIT $1`,
+      [limit],
+    );
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, {
+      runs: rows.map((row) => {
+        const events = Array.isArray(row.events) ? row.events : [];
+        return {
+          id: String(row.id),
+          companyId: Number(row.company_id),
+          companyName: row.company_name,
+          operation: row.operation,
+          status: row.status,
+          requestedOrders: Number(row.requested_orders || 0),
+          providerOrders: Number(row.provider_orders || 0),
+          eligibleOrders: Number(row.eligible_orders || 0),
+          alreadyManifestedOrders: Number(row.already_manifested_orders || 0),
+          createdManifests: Number(row.created_manifests || 0),
+          createdOrders: Number(row.created_orders || 0),
+          stage: row.stage,
+          error: row.error,
+          events,
+          durationMs: core.falabellaManifestDurationMs(events),
+          pageUrl: row.page_url,
+          pageTitle: row.page_title,
+          pageText: row.page_text,
+          hasScreenshot: Boolean(row.has_screenshot),
+          createdAt: row.created_at,
+        };
+      }),
+    });
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.get('/falabella/manifests/activity/:id/screenshot', async (c) => {
+  try {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'Registro de actividad inválido.' }, 400);
+    const { rows } = await core.pool.query(
+      `SELECT screenshot_mime_type, screenshot_base64
+       FROM falabella_manifest_runs WHERE id=$1 LIMIT 1`,
+      [id],
+    );
+    if (!rows[0]?.screenshot_base64) return c.json({ error: 'Este registro no tiene una captura.' }, 404);
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, {
+      mimeType: rows[0].screenshot_mime_type || 'image/jpeg',
+      base64: rows[0].screenshot_base64,
+    });
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.post('/falabella/manifests/list', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const selection = normalizeFalabellaManifestOrders(body?.orders, 500, 'consultar');
+    if (!selection.ok || !selection.orders.length) {
+      return c.json({ error: selection.error || 'No hay pedidos válidos para consultar.' }, 400);
+    }
+    const result = await core.listFalabellaWebManifests({ orders: selection.orders });
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, result);
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.post('/falabella/manifests/document', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const companyId = Number(body?.companyId);
+    const manifestId = String(body?.manifestId || '').trim();
+    if (!Number.isInteger(companyId) || companyId <= 0 || !manifestId) {
+      return c.json({ error: 'Selecciona un manifiesto válido.' }, 400);
+    }
+    const document = await core.getFalabellaWebManifestDocument({ companyId, manifestId });
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, document);
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
+app.post('/falabella/manifests/documents', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const selection = normalizeFalabellaManifestDocumentRequests(body?.manifests);
+    if (!selection.ok || !selection.manifests.length) {
+      return c.json({ error: selection.error || 'No hay manifiestos válidos para imprimir.' }, 400);
+    }
+    const result = await core.getFalabellaWebManifestDocuments(selection.manifests);
+    const combined = await combineFalabellaManifestPdfDocuments(
+      result.documents,
+      `manifiestos-falabella-${new Date().toISOString().slice(0, 10)}.pdf`,
+    );
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, {
+      requested: result.requested,
+      downloaded: result.downloaded,
+      companies: result.companies,
+      documents: result.documents.map((document) => ({
+        companyId: document.companyId,
+        companyName: document.companyName,
+        manifestIds: document.manifestIds,
+        manifestCodes: document.manifestCodes,
+      })),
+      ...combined,
+    });
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+});
 app.post('/falabella/:companyId/build-boleta-venta', async (c) => {
   try { const { order } = await c.req.json(); return ok(c, await core.falabellaBuildBoletaVenta({ companyId: Number(c.req.param('companyId')), order })); }
   catch (e) { return fail(c, e); }
@@ -819,6 +1151,28 @@ if (serveWeb) {
   app.get('*', serveStatic({ root: WEB_ROOT }));
   app.get('*', serveStatic({ path: `${WEB_ROOT}/index.html` }));
 }
+
+const recoveredManifestJobs = await manifestJobs.recoverStaleFalabellaManifestJobs(
+  FALABELLA_MANIFEST_JOB_STALE_MS,
+  core.pool,
+).catch((error) => {
+  console.error('[FALABELLA MANIFEST JOB RECOVERY]', error?.stack || error);
+  return [];
+});
+if (recoveredManifestJobs.length) {
+  console.warn(`[FALABELLA MANIFEST JOB RECOVERY] ${recoveredManifestJobs.length} trabajo(s) recuperado(s).`);
+}
+scheduleFalabellaManifestJobs();
+const falabellaManifestJobPoll = setInterval(scheduleFalabellaManifestJobs, 3_000);
+falabellaManifestJobPoll.unref?.();
+const falabellaManifestJobRecoveryPoll = setInterval(() => {
+  manifestJobs.recoverStaleFalabellaManifestJobs(FALABELLA_MANIFEST_JOB_STALE_MS, core.pool)
+    .then((jobs) => {
+      if (jobs.length) scheduleFalabellaManifestJobs();
+    })
+    .catch((error) => console.error('[FALABELLA MANIFEST JOB RECOVERY]', error?.stack || error));
+}, 60_000);
+falabellaManifestJobRecoveryPoll.unref?.();
 
 const port = Number(process.env.PORT || 3010);
 serve({ fetch: app.fetch, port }, (info) => {

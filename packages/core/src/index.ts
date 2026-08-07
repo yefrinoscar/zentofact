@@ -150,6 +150,47 @@ export {
   falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook,
 } from './services/falabella.service';
 export { recordFalabellaLabelPrintIndexes } from './services/falabella-label-print.service';
+export {
+  createFalabellaWebManifests,
+  cacheFalabellaManifestDocument,
+  falabellaDiagnosticEndpoint,
+  falabellaIsStaleDomError,
+  falabellaLoginValidationMode,
+  falabellaProviderOrderMatchesRequest,
+  falabellaManifestNeedsRemote,
+  falabellaManifestDurationMs,
+  falabellaManifestErrorMessage,
+  findNewFalabellaManifests,
+  getFalabellaWebManifestDocument,
+  getFalabellaWebManifestDocuments,
+  listFalabellaWebManifests,
+  matchFalabellaReadyOrderManifests,
+  mergeFalabellaManifestSummaries,
+  readCachedFalabellaManifests,
+  readCachedFalabellaManifest,
+  readCachedFalabellaManifestDocument,
+  recordCachedFalabellaManifestDownload,
+  resolveCachedFalabellaManifestDocumentRequests,
+  selectFalabellaManifestOrders,
+  upsertCachedFalabellaManifests,
+} from './services/falabella-manifest-scraper.service';
+export type {
+  CreateFalabellaWebManifestsInput,
+  CreateFalabellaWebManifestsResult,
+  CompanyDocument,
+  FalabellaManifestCompanyResult,
+  FalabellaManifestCacheLookup,
+  FalabellaManifestDiagnostic,
+  FalabellaManifestDiagnosticEvent,
+  FalabellaManifestDocumentRequest,
+  FalabellaManifestDocumentsResult,
+  FalabellaManifestListCompanyResult,
+  FalabellaManifestOrderInput,
+  FalabellaManifestOrderReference,
+  FalabellaManifestSummary,
+  ListFalabellaWebManifestsResult,
+  ResolvedFalabellaManifestDocumentRequest,
+} from './services/falabella-manifest-scraper.service';
 
 // ── Utilitarios ──
 
