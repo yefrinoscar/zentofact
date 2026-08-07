@@ -1,0 +1,33 @@
+name: Validate release version
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Release version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate label and version increment
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node scripts/validate-release-version.mjs
