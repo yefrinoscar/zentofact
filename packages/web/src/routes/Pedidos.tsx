@@ -64,6 +64,10 @@ import {
 } from '../components/ui/tooltip';
 import { TablePanel, TablePanelHeader } from '../components/ui/table';
 
+// Temporary operational switch while Falabella blocks the production scraper.
+// Keep this client-side only: orders, labels, and the rest of the API remain available.
+const MANIFEST_FEATURE_ENABLED = false;
+
 type InboxOrder = {
   id: number;
   companyId: number;
@@ -1120,6 +1124,7 @@ export default function Pedidos() {
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
   const [manifestLoading, setManifestLoading] = useState(false);
+  const [manifestDisabledNoticeOpen, setManifestDisabledNoticeOpen] = useState(false);
   const [activeManifestScope, setActiveManifestScope] = useState<{ orders: number; companies: number } | null>(null);
   const [activeManifestStage, setActiveManifestStage] = useState('');
   const [manifestDrawerOpen, setManifestDrawerOpen] = useState(false);
@@ -1269,6 +1274,14 @@ export default function Pedidos() {
     () => new Set(manifestReadyOrders.map((order) => order.companyId)).size,
     [manifestReadyOrders],
   );
+  const manifestDisabledNoticeShownRef = useRef(false);
+
+  useEffect(() => {
+    if (MANIFEST_FEATURE_ENABLED || manifestDisabledNoticeShownRef.current) return;
+    if (!loadedInboxScopeKey || !manifestReadyOrders.length) return;
+    manifestDisabledNoticeShownRef.current = true;
+    setManifestDisabledNoticeOpen(true);
+  }, [loadedInboxScopeKey, manifestReadyOrders.length]);
   const manifestCompaniesWithDocuments = useMemo(
     () => (manifestList?.results || []).filter((company) => company.ok && company.manifests.length > 0),
     [manifestList],
@@ -1753,6 +1766,7 @@ export default function Pedidos() {
   );
 
   const loadManifestActivity = async () => {
+    if (!MANIFEST_FEATURE_ENABLED) return;
     if (manifestActivityLoading) return;
     setManifestActivityLoading(true);
     setManifestActivityError('');
@@ -1768,6 +1782,7 @@ export default function Pedidos() {
   loadManifestActivityRef.current = loadManifestActivity;
 
   const loadReadyManifests = async (force = false) => {
+    if (!MANIFEST_FEATURE_ENABLED) return;
     const orders = readyOrdersForManifestRequest();
     if (!orders.length) return;
     if (!force && (
@@ -1802,6 +1817,7 @@ export default function Pedidos() {
   };
 
   useEffect(() => {
+    if (!MANIFEST_FEATURE_ENABLED) return;
     if (!manifestOrdersKey || loadedInboxScopeKey !== manifestScopeKey || searchInput.trim() !== search) return;
     void loadReadyManifests();
     // Precarga local al estabilizarse el conjunto listo; el token interno evita duplicados.
@@ -1809,6 +1825,7 @@ export default function Pedidos() {
   }, [manifestListRequestKey]);
 
   const openManifestDrawer = () => {
+    if (!MANIFEST_FEATURE_ENABLED) return;
     setManifestDrawerTab('manifests');
     setManifestDrawerOpen(true);
     void loadReadyManifests();
@@ -1973,7 +1990,7 @@ export default function Pedidos() {
   };
 
   const createManifests = async () => {
-    if (!canDispatch) return;
+    if (!MANIFEST_FEATURE_ENABLED || !canDispatch) return;
     if (manifestLoading) {
       setManifestDrawerTab('logs');
       setManifestDrawerOpen(true);
@@ -2036,6 +2053,7 @@ export default function Pedidos() {
   }, []);
 
   useEffect(() => {
+    if (!MANIFEST_FEATURE_ENABLED) return;
     let activePoll: { jobId: string; controller: AbortController } | null = null;
     const startResumePoll = (value: unknown) => {
       const jobId = String(value || '').trim();
@@ -2370,15 +2388,19 @@ export default function Pedidos() {
                 <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">Mostrando {filteredCountLabel}</span>
                 {flowStage === 'ready' && flowOrders.length > 0 && (
                   <>
-                    <Button size="sm" variant="outline" onClick={openManifestDrawer}>
-                      <FileText />
-                      Ver manifiestos
-                    </Button>
-                    {canDispatch && (
-                      <Button size="sm" variant="outline" onClick={() => void createManifests()} disabled={batchLabelsLoading || (!manifestLoading && manifestReadyOrders.length === 0)}>
-                        {manifestLoading ? <Loader2 className="animate-spin" /> : <FileCheck2 />}
-                        {manifestLoading ? 'Ver progreso' : `Crear manifiestos (${manifestReadyOrders.length})`}
-                      </Button>
+                    {MANIFEST_FEATURE_ENABLED && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={openManifestDrawer}>
+                          <FileText />
+                          Ver manifiestos
+                        </Button>
+                        {canDispatch && (
+                          <Button size="sm" variant="outline" onClick={() => void createManifests()} disabled={batchLabelsLoading || (!manifestLoading && manifestReadyOrders.length === 0)}>
+                            {manifestLoading ? <Loader2 className="animate-spin" /> : <FileCheck2 />}
+                            {manifestLoading ? 'Ver progreso' : `Crear manifiestos (${manifestReadyOrders.length})`}
+                          </Button>
+                        )}
+                      </>
                     )}
                     <Button size="sm" onClick={startLabelSelection} disabled={batchLabelsLoading}>
                       <Printer /> Imprimir etiquetas
@@ -2806,6 +2828,25 @@ export default function Pedidos() {
           )}
         </SheetContent>
       </Sheet>
+
+      <Dialog open={manifestDisabledNoticeOpen} onOpenChange={setManifestDisabledNoticeOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mb-1 flex items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700">
+                <AlertCircle className="size-5" />
+              </span>
+              <DialogTitle>Manifiestos temporalmente deshabilitados</DialogTitle>
+            </div>
+            <DialogDescription className="leading-relaxed">
+              Estamos revisando una incidencia de acceso con Seller Center. Puedes continuar sincronizando pedidos e imprimiendo etiquetas; la creación de manifiestos volverá a estar disponible pronto.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" onClick={() => setManifestDisabledNoticeOpen(false)}>Entendido</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(manifestOperationNotice)} onOpenChange={(open) => { if (!open) setManifestOperationNotice(null); }}>
         <DialogContent className="sm:max-w-md">
