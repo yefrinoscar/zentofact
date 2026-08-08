@@ -1124,7 +1124,6 @@ export default function Pedidos() {
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(() => new Set());
   const [batchLabelsLoading, setBatchLabelsLoading] = useState(false);
   const [manifestLoading, setManifestLoading] = useState(false);
-  const [manifestDisabledNoticeOpen, setManifestDisabledNoticeOpen] = useState(false);
   const [activeManifestScope, setActiveManifestScope] = useState<{ orders: number; companies: number } | null>(null);
   const [activeManifestStage, setActiveManifestStage] = useState('');
   const [manifestDrawerOpen, setManifestDrawerOpen] = useState(false);
@@ -1274,14 +1273,6 @@ export default function Pedidos() {
     () => new Set(manifestReadyOrders.map((order) => order.companyId)).size,
     [manifestReadyOrders],
   );
-  const manifestDisabledNoticeShownRef = useRef(false);
-
-  useEffect(() => {
-    if (MANIFEST_FEATURE_ENABLED || manifestDisabledNoticeShownRef.current) return;
-    if (!loadedInboxScopeKey || !manifestReadyOrders.length) return;
-    manifestDisabledNoticeShownRef.current = true;
-    setManifestDisabledNoticeOpen(true);
-  }, [loadedInboxScopeKey, manifestReadyOrders.length]);
   const manifestCompaniesWithDocuments = useMemo(
     () => (manifestList?.results || []).filter((company) => company.ok && company.manifests.length > 0),
     [manifestList],
@@ -2828,25 +2819,6 @@ export default function Pedidos() {
           )}
         </SheetContent>
       </Sheet>
-
-      <Dialog open={manifestDisabledNoticeOpen} onOpenChange={setManifestDisabledNoticeOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <div className="mb-1 flex items-center gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700">
-                <AlertCircle className="size-5" />
-              </span>
-              <DialogTitle>Manifiestos temporalmente deshabilitados</DialogTitle>
-            </div>
-            <DialogDescription className="leading-relaxed">
-              Estamos revisando una incidencia de acceso con Seller Center. Puedes continuar sincronizando pedidos e imprimiendo etiquetas; la creación de manifiestos volverá a estar disponible pronto.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" onClick={() => setManifestDisabledNoticeOpen(false)}>Entendido</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={Boolean(manifestOperationNotice)} onOpenChange={(open) => { if (!open) setManifestOperationNotice(null); }}>
         <DialogContent className="sm:max-w-md">
