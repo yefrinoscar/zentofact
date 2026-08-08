@@ -33,3 +33,6 @@ packages/web/dist/
 # Respaldos de entorno (nunca commitear)
 .env.production.bak
 *.bak
+
+# graphify-axet
+.graphify/

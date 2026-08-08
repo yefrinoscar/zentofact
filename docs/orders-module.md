@@ -1,215 +1,572 @@
-# Módulo de pedidos multicanal
+# Arquitectura general del módulo de pedidos
+
+## Estado del documento
+
+Este documento reemplaza el planteamiento anterior de “pedidos multicanal”.
+La decisión de producto es que **Pedidos sea un módulo comercial y operativo de
+pedidos**, no una extensión del proceso de emisión de comprobantes ni una
+pantalla para configurar canales.
+
+El comprobante electrónico, cuando corresponda, pertenece al módulo de
+documentos. Puede referenciar un pedido, pero no define el estado ni la
+experiencia principal de Pedidos.
 
 ## Objetivo
 
-Incorporar pedidos de Falabella, Ripley y fuentes externas sin acoplar el dominio
-de pedidos a un marketplace. El módulo se agrega en paralelo al flujo actual:
-las pantallas existentes continúan leyendo `falabella_orders` y los endpoints
-legacy no cambian.
+Centralizar pedidos recibidos desde Falabella, Ripley, integraciones externas y
+creación manual, conservando su origen, sus importes, sus productos y su
+historial operacional.
 
-Falabella hace dual-write durante su sincronización y sus webhooks:
+El módulo debe permitir:
 
-1. Actualiza las tablas legacy usadas por las pantallas actuales.
-2. Normaliza el pedido.
-3. Lo ingresa en `orders`.
-4. Guarda un snapshot del payload y un evento auditable.
+- Encontrar rápidamente un pedido.
+- Ver el monto total y su situación actual.
+- Crear pedidos manualmente.
+- Consultar productos, cliente, pago y entrega.
+- Seguir el historial completo del pedido.
+- Recibir pedidos automáticos de Falabella sin intervención de un operador.
+- Incorporar nuevos marketplaces mediante adaptadores, sin cambiar el dominio.
 
-## Límites del módulo
+## Decisiones de alcance
 
-El módulo es dueño de:
+### Pedidos sí incluye
 
-- Canales y cuentas de venta.
-- Configuración de creación automática.
-- Política de comprobantes por cuenta.
-- Identidad canónica del pedido.
-- Items, estados normalizados y datos actuales.
-- Timeline inmutable y snapshots del proveedor.
-- Asociación con boletas, facturas y notas de crédito.
-- Comandos idempotentes hacia los canales.
-- Ejecuciones de sincronización de adaptadores nuevos.
+- Listado general de pedidos.
+- Búsqueda, filtros, ordenamiento y paginación.
+- Creación manual y borradores.
+- Detalle de productos, cliente, pago y entrega.
+- Estados comercial, de pago y de entrega separados.
+- Origen del pedido como dato y filtro.
+- Auditoría de cambios e integraciones.
+- Ingesta idempotente desde marketplaces y APIs externas.
 
-El módulo no es dueño de:
+### Pedidos no incluye
 
-- Credenciales en texto plano.
-- La emisión SUNAT.
-- El cliente HTTP específico de cada marketplace.
-- Las pantallas actuales de Falabella.
+- Emisión de boletas o facturas.
+- Bandeja “Por emitir”.
+- Estados SUNAT.
+- Políticas de comprobantes por canal.
+- Configuración de canales o credenciales.
+- Indicadores como “Pedidos encontrados” o “En operación”.
 
-## Modelo
+El conteo de resultados pertenece al pie de la tabla, por ejemplo
+`1–10 de 126`; no es un indicador de negocio.
+
+## Auditoría de lo que existe actualmente en `main`
+
+La implementación actual es una base técnica parcial, no el módulo terminado.
+
+### Implementado
+
+- Migraciones para un modelo inicial de pedidos multicanal.
+- Servicio genérico de ingesta con idempotencia.
+- Adaptador inicial y dual-write de Falabella.
+- Backfill desde `falabella_orders`.
+- API para listar pedidos y obtener un detalle básico.
+- Pantalla experimental `/orders` con filtros, tabla, paginación y diálogo de
+  detalle.
+- Pruebas de ingesta y sincronización.
+
+### Incompleto o incorrecto respecto a esta arquitectura
+
+- `/orders` está oculto en producción y redirige a otra pantalla.
+- No existe creación manual desde la interfaz.
+- No existen operaciones normales para editar, confirmar, duplicar o cancelar.
+- Ripley está declarado, pero no tiene una integración real.
+- Los marketplaces externos solo disponen de un endpoint genérico de ingesta.
+- La pantalla presenta configuración de canales y comprobantes, que no forman
+  parte de Pedidos.
+- El detalle es un diálogo de consulta, no una pantalla operativa completa.
+- No existen entidades completas para pagos, direcciones, envíos y paquetes.
+- La identidad inicial `(channel_account_id, external_order_id)` no resuelve
+  adecuadamente proveedores que entregan varios IDs o paquetes para un mismo
+  número comercial.
+- Conviven `/pedidos` (bandeja operativa Falabella) y `/orders` (prototipo
+  multicanal); todavía no existe un único módulo general.
+
+## Experiencia de usuario objetivo
+
+### Navegación
+
+El módulo definitivo usa rutas en español:
 
 ```text
-order_channels
-  └── order_channel_accounts
-        ├── orders
-        │     ├── order_items
-        │     ├── order_events
-        │     ├── order_snapshots
-        │     ├── order_documents
-        │     └── order_commands
-        └── order_sync_runs
+/pedidos
+/pedidos/nuevo
+/pedidos/:id
 ```
 
-La identidad externa es:
+Debe existir una sola entrada principal **Pedidos**. Las tareas de recepción,
+preparación o escaneo pueden continuar como vistas o acciones relacionadas, sin
+crear dos conceptos distintos de pedido.
+
+## Listado general
+
+La pantalla comienza con una barra operativa, sin tarjetas de métricas:
 
 ```text
-(channel_account_id, external_order_id)
+[Empresa] [Buscar pedido, cliente o producto] [Estado] [Origen] [Fecha]
+                                                               [+ Crear pedido]
 ```
 
-El número visible del pedido no se usa como identidad porque puede repetirse
-entre sellers o marketplaces.
+### Tabla
 
-## Configuración de comprobantes
-
-La configuración vive en `order_channel_accounts` y tiene dos dimensiones.
-
-### Obligatoriedad
-
-| Valor | Comportamiento |
+| Columna | Contenido |
 | --- | --- |
-| `disabled` | El canal no permite ni requiere comprobante desde este módulo. |
-| `optional` | El pedido puede terminar sin comprobante. |
-| `required` | El pedido queda pendiente hasta asociar un comprobante. |
+| Pedido | Número interno y referencia externa secundaria |
+| Fecha | Fecha real de compra |
+| Cliente | Nombre y documento o contacto secundario |
+| Origen | Manual, Falabella, Ripley o integración externa |
+| Productos | Cantidad de líneas o unidades |
+| Total | Importe total y moneda, siempre visible |
+| Pago | Pendiente, parcial, pagado, reembolsado o fallido |
+| Entrega | Por preparar, preparando, listo, enviado o entregado |
+| Acciones | Ver, editar cuando corresponda, duplicar o cancelar |
 
-### Selección de tipo
+Reglas:
 
-| Valor | Comportamiento |
-| --- | --- |
-| `automatic` | Usa la solicitud del pedido; si no existe, propone boleta. |
-| `boleta` | Solo propone boleta. |
-| `factura` | Solo propone factura. |
-| `customer_choice` | Espera que el pedido o el operador elijan. |
+- Orden inicial por fecha de compra descendente.
+- El total se alinea a la derecha y usa formato monetario.
+- La fila completa abre `/pedidos/:id`.
+- La búsqueda cubre número interno, referencia externa, cliente, documento,
+  correo, teléfono, SKU y nombre de producto.
+- Los filtros y el orden se guardan en la URL.
+- Búsqueda, filtros, ordenamiento y paginación se ejecutan en el servidor.
+- El pie muestra `X–Y de Z` y controles Anterior/Siguiente.
+- No se muestran checkboxes hasta que exista una acción masiva real.
+- En móvil se priorizan Pedido, Cliente, Total y Entrega.
 
-La política se copia al pedido al momento de crearlo. Cambiar la cuenta afecta
-pedidos futuros, pero no modifica silenciosamente la regla histórica de pedidos
-ya recibidos.
+No debe existir una columna genérica que mezcle estados. El estado comercial,
+el pago y la entrega avanzan de forma independiente.
 
-En Falabella, `InvoiceRequired=true` se normaliza como una solicitud de factura.
-Si es falso y la política es `automatic`, el tipo propuesto es boleta, pero la
-emisión sigue siendo opcional mientras `document_requirement=optional`.
+## Creación manual
+
+`/pedidos/nuevo` debe ser una página, no un diálogo pequeño.
+
+### Flujo
+
+```text
+Datos generales
+      ↓
+Cliente
+      ↓
+Productos y cantidades
+      ↓
+Entrega y pago
+      ↓
+Revisión de totales
+      ↓
+Guardar borrador o Crear pedido
+```
+
+### Datos del formulario
+
+- Empresa.
+- Fecha del pedido.
+- Cliente existente o cliente nuevo.
+- Productos del catálogo.
+- Ítem libre para casos excepcionales.
+- Cantidad y precio unitario.
+- Descuento por línea o por pedido.
+- Costo de envío.
+- Dirección y método de entrega.
+- Estado inicial del pago.
+- Nota interna.
+- Resumen de subtotal, descuentos, envío, impuestos y total.
+
+El origen se asigna automáticamente como `manual`. La interfaz puede calcular
+un preview, pero el servidor siempre valida y vuelve a calcular los totales
+antes de guardar.
+
+Acciones:
+
+- **Guardar borrador:** permite continuar después.
+- **Crear pedido:** confirma el pedido y fija su fotografía comercial.
+
+## Detalle del pedido
+
+`/pedidos/:id` contiene:
+
+1. Cabecera con número, origen, fecha, total y estado comercial.
+2. Productos con SKU, descripción, cantidad, precio, descuento y total.
+3. Cliente con nombre, documento, correo y teléfono.
+4. Entrega con dirección, método, fecha prometida y tracking.
+5. Pago con estado, medio, monto pagado y saldo.
+6. Historial con fecha, actor y descripción de cada cambio.
+
+La pantalla no muestra estados fiscales, políticas de comprobantes ni una cola
+“Por emitir”.
+
+## Arquitectura general
+
+Se mantiene un monolito modular dentro del repositorio actual:
+
+```text
+Falabella webhook/polling ─▶ Adaptador Falabella ─┐
+Ripley/API futura ─────────▶ Adaptador Ripley ────┤
+Marketplace externo ──────▶ Adaptador externo ───┤
+Usuario ──────────────────▶ API de Pedidos ───────┤
+                                                  ▼
+                                         Servicio de pedidos
+                                                  │
+                         ┌────────────────────────┼─────────────────────┐
+                         ▼                        ▼                     ▼
+                  Modelo canónico          Eventos/auditoría     Consulta tabla
+                         │
+                         ▼
+                     PostgreSQL
+```
+
+### Capas
+
+```text
+packages/web/src/
+  routes/Pedidos.tsx
+  routes/PedidoNuevo.tsx
+  routes/PedidoDetalle.tsx
+  components/orders/
+
+packages/server/src/orders/
+  order-controller.js
+  order-service.js
+  order-repository.js
+  order-validator.js
+  order-totals.js
+  adapters/falabella.js
+  adapters/external.js
+
+packages/core/src/
+  dominio, migraciones y tipos compartidos
+```
+
+Los adaptadores transforman formatos externos al modelo canónico. Las reglas de
+pedido no deben conocer detalles de Falabella, Ripley u otro proveedor.
+
+## Modelo de datos objetivo
+
+### `orders`
+
+Cabecera comercial:
+
+```text
+id
+company_id
+number
+source_code
+external_order_number
+customer_id
+customer_snapshot
+currency
+subtotal
+discount_total
+shipping_total
+tax_total
+grand_total
+order_status
+payment_status
+fulfillment_status
+ordered_at
+promised_at
+confirmed_at
+cancelled_at
+created_by
+created_at
+updated_at
+version
+```
+
+`number` es el identificador interno único. `external_order_number` es la
+referencia comercial mostrada por el proveedor y puede ser nula en pedidos
+manuales.
+
+Los importes deben almacenarse en `numeric`, no en punto flotante.
+
+### `order_items`
+
+```text
+id
+order_id
+product_id
+external_item_id
+sku
+name
+quantity
+unit_price
+discount_total
+tax_total
+line_total
+product_snapshot
+```
+
+Nombre, SKU, precio e impuestos se guardan como fotografía histórica. Cambiar
+el producto del catálogo no modifica pedidos ya confirmados.
+
+### `order_source_refs`
+
+```text
+order_id
+source_code
+reference_type
+reference_value
+```
+
+Permite asociar varios identificadores a un pedido, por ejemplo `order_id`,
+`package_id`, `shipment_id` y `seller_id`. Esto evita duplicados cuando un
+marketplace divide una misma compra en paquetes.
+
+Restricción recomendada:
+
+```text
+unique(source_code, reference_type, reference_value, company_id)
+```
+
+### `order_addresses`
+
+Fotografías de las direcciones de entrega y facturación. No deben depender de
+que el cliente edite posteriormente su dirección principal.
+
+### `order_payments`
+
+```text
+order_id
+provider
+method
+external_reference
+amount
+currency
+status
+paid_at
+created_at
+updated_at
+```
+
+### `order_shipments`
+
+```text
+order_id
+external_reference
+carrier
+service
+tracking_number
+status
+promised_at
+shipped_at
+delivered_at
+```
+
+Una tabla relacionada `order_shipment_items` identifica qué cantidades viajan
+en cada paquete.
+
+### `order_events`
+
+Historial append-only:
+
+```text
+id
+order_id
+event_type
+source
+actor_user_id
+idempotency_key
+old_values
+new_values
+occurred_at
+created_at
+```
+
+Eventos principales:
+
+```text
+order.created
+order.updated
+order.confirmed
+order.cancelled
+payment.updated
+fulfillment.preparing
+fulfillment.ready
+shipment.created
+shipment.shipped
+shipment.delivered
+integration.received
+integration.rejected
+```
+
+### `order_ingestions`
+
+Controla la recepción e idempotencia de integraciones:
+
+```text
+source_code
+company_id
+idempotency_key
+external_reference
+payload_hash
+received_at
+processed_at
+status
+error
+```
 
 ## Estados
 
-No existe un único estado que mezcle conceptos distintos:
-
-- `order_status`: vida comercial del pedido.
-- `payment_status`: cobro y devolución.
-- `fulfillment_status`: preparación y entrega.
-- `document_status`: emisión y respuesta SUNAT.
-- `provider_status`: valor original del marketplace.
-
-Cada adaptador traduce el estado externo a los estados canónicos y conserva
-siempre `provider_status` y el payload original.
-
-## Auditoría e idempotencia
-
-`order_events` es append-only. Cada cambio registra:
-
-- Fuente: API, webhook, sincronización, usuario o sistema.
-- Valores anteriores y nuevos.
-- Usuario, correlación y fecha reportada por el proveedor.
-- Idempotency key cuando existe.
-
-`order_snapshots` conserva una versión del payload únicamente cuando cambia su
-SHA-256. El backfill inicial identifica sus snapshots con `legacy-md5:` porque
-PostgreSQL ofrece MD5 sin extensiones; la ingesta normal usa SHA-256. Esto evita
-duplicar payloads idénticos sin perder evidencia.
-
-El endpoint de ingreso exige `Idempotency-Key`. Repetir la misma solicitud
-devuelve el pedido existente sin crear otro evento.
-
-Actualizaciones con `provider_updated_at` anterior al dato actual no hacen
-retroceder el pedido. El payload se conserva y se registra
-`order.stale_observed`.
-
-## Adaptadores
-
-Un adaptador debe:
-
-1. Obtener o recibir datos externos.
-2. Normalizar identidad, estados, cliente, montos, despacho e items.
-3. Llamar a `ingestOrder`.
-4. Implementar solamente las acciones soportadas por el canal.
-
-Falabella tiene un adaptador inicial en
-`packages/server/src/order-adapters/falabella.js`. Ripley queda registrado como
-canal, pero su integración API se implementará como un adaptador separado cuando
-se definan sus credenciales, contrato y mecanismo de sincronización.
-
-`auto_create_orders` se configura por cuenta. Falabella lo activa por defecto;
-un canal manual o externo lo mantiene apagado salvo configuración explícita.
-
-## API backend
-
-Todas las rutas nuevas usan el prefijo `/order-management` y conservan
-temporalmente el permiso `falabella` para no modificar roles o pantallas.
+### Comercial
 
 ```text
-GET    /order-management/channels
-POST   /order-management/channels
-GET    /order-management/accounts
-POST   /order-management/accounts
-PATCH  /order-management/accounts/:id
-GET    /order-management/orders
-GET    /order-management/orders/:id
-POST   /order-management/orders/ingest
+draft | confirmed | completed | cancelled
 ```
 
-Crear o modificar canales/cuentas también requiere el permiso `companies`.
+### Pago
 
-Ejemplo de cuenta:
-
-```json
-{
-  "companyId": 7,
-  "channelCode": "external",
-  "externalAccountId": "tienda-web",
-  "displayName": "Tienda web",
-  "autoCreateOrders": false,
-  "documentRequirement": "optional",
-  "documentTypePolicy": "customer_choice"
-}
+```text
+pending | partial | paid | refunded | failed
 ```
 
-Ejemplo de ingreso:
+### Entrega
+
+```text
+unfulfilled | preparing | ready | partially_shipped | shipped | delivered | cancelled
+```
+
+Los estados originales del proveedor se conservan como datos de integración,
+pero no se muestran como si fueran el estado canónico.
+
+## Orígenes e integraciones
+
+El origen es un atributo del pedido y un filtro, no una entidad que el operador
+deba configurar dentro de Pedidos:
+
+```text
+manual | falabella | ripley | external_api | other
+```
+
+Las credenciales permanecen en la configuración técnica existente.
+
+### Falabella
+
+```text
+Webhook o polling
+      ↓
+Validar autenticidad y payload
+      ↓
+Comprobar idempotencia
+      ↓
+Normalizar pedido, referencias, cliente, productos, total y entrega
+      ↓
+Crear o actualizar el pedido en una transacción
+      ↓
+Registrar snapshot y evento
+```
+
+Falabella crea y actualiza pedidos automáticamente. El operador no aprueba cada
+ingreso.
+
+### Pedido manual
+
+```text
+Formulario
+   ↓
+Validación
+   ↓
+Cálculo autoritativo de totales
+   ↓
+Transacción
+   ↓
+Pedido + productos + direcciones + evento
+```
+
+### API o marketplace externo
+
+La ingesta exige una clave de idempotencia:
 
 ```http
-POST /order-management/orders/ingest
-Idempotency-Key: tienda-web:pedido-100
+POST /api/orders/import
+Idempotency-Key: marketplace-x:12345
 ```
 
-```json
-{
-  "companyId": 7,
-  "channelAccountId": 25,
-  "externalOrderId": "pedido-100",
-  "externalOrderNumber": "WEB-100",
-  "orderStatus": "confirmed",
-  "fulfillmentStatus": "pending",
-  "requestedDocumentType": "factura",
-  "currency": "PEN",
-  "total": 149.9,
-  "customer": {
-    "name": "Cliente"
-  },
-  "items": [
-    {
-      "externalItemId": "linea-1",
-      "sku": "SKU-1",
-      "description": "Producto",
-      "quantity": 1,
-      "unitPrice": 149.9,
-      "total": 149.9
-    }
-  ],
-  "itemsComplete": true
-}
+Repetir una solicitud equivalente devuelve el pedido existente y no duplica
+productos ni eventos.
+
+## API objetivo
+
+```text
+GET    /api/orders
+POST   /api/orders
+GET    /api/orders/:id
+PATCH  /api/orders/:id
+POST   /api/orders/:id/confirm
+POST   /api/orders/:id/cancel
+POST   /api/orders/:id/duplicate
+
+POST   /api/orders/import
+POST   /api/integrations/falabella/orders/sync
+POST   /api/integrations/falabella/webhook
 ```
 
-## Evolución prevista
+Ejemplo de consulta:
 
-1. Mantener dual-write de Falabella y comparar conteos/estados.
-2. Implementar el adaptador Ripley sin modificar el dominio.
-3. Asociar la emisión SUNAT mediante `order_documents`.
-4. Crear una pantalla nueva que lea exclusivamente `/order-management`.
-5. Migrar acciones Falabella a `order_commands`.
-6. Retirar el modelo legacy solo después de verificar paridad.
+```http
+GET /api/orders
+  ?companyId=1
+  &search=juan
+  &source=falabella
+  &orderStatus=confirmed
+  &paymentStatus=paid
+  &fulfillmentStatus=preparing
+  &dateFrom=2026-07-01
+  &dateTo=2026-07-30
+  &sort=orderedAt
+  &direction=desc
+  &limit=10
+  &cursor=...
+```
+
+## Relación con documentos electrónicos
+
+La dirección de dependencia es:
+
+```text
+Documento ── puede referenciar ──▶ Pedido
+```
+
+Pedidos no depende de la emisión. El módulo de documentos puede usar
+`order_id` para precargar información o asociar una boleta o factura, sin
+agregar estados fiscales a la tabla ni al flujo de Pedidos.
+
+## Estrategia de migración
+
+1. Mantener `main` estable y desarrollar la reformulación en una rama nueva
+   creada desde el `main` actualizado.
+2. Crear el modelo objetivo y migrar/backfillear Falabella de forma idempotente.
+3. Implementar primero `GET /api/orders`, `GET /api/orders/:id` y
+   `POST /api/orders`.
+4. Construir la tabla general, la creación manual y el detalle.
+5. Conectar Falabella al servicio canónico y verificar paridad con
+   `falabella_orders`.
+6. Incorporar edición, confirmación, cancelación y duplicación.
+7. Mover recepción y preparación existentes a vistas del pedido canónico.
+8. Habilitar el módulo en producción solo después de pruebas de migración,
+   permisos, paginación, idempotencia y concurrencia.
+9. Retirar `/orders`, las políticas de comprobantes y las tablas iniciales que
+   queden obsoletas únicamente después de validar la nueva ruta `/pedidos`.
+
+## Criterios de aceptación de la primera versión
+
+- Existe una sola entrada visible llamada **Pedidos**.
+- La tabla muestra número, fecha, cliente, origen, productos, total, pago y
+  entrega.
+- El monto total siempre es visible.
+- Se puede buscar y filtrar sin cargar todos los pedidos en el navegador.
+- Se puede crear un pedido manual con uno o más productos.
+- Los totales son recalculados por el servidor.
+- El detalle muestra cliente, productos, pago, entrega e historial.
+- Falabella crea pedidos automáticamente sin duplicarlos.
+- No se muestran comprobantes, estados SUNAT ni configuración de canales.
+- Las pantallas actuales continúan funcionando durante la migración.
+
+## Referencias de diseño investigadas
+
+- [Shopify: búsqueda y vistas de pedidos](https://help.shopify.com/en/manual/fulfillment/managing-orders/viewing-orders/searching-orders)
+- [Shopify: creación de pedidos manuales](https://help.shopify.com/en/manual/fulfillment/managing-orders/create-orders/create-draft)
+- [commercetools: estados comercial, de pago y envío](https://docs.commercetools.com/api/projects/orders)
+- [Material Design: tablas de datos](https://m2.material.io/design/components/data-tables.html)
+- [Carbon Design System: data table](https://v10.carbondesignsystem.com/components/data-table/usage/)
