@@ -63,11 +63,7 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" className="hover:bg-transparent">
               <Link to="/" aria-label="ZentoFact">
-                <img
-                  src="/favicon.svg"
-                  alt=""
-                  className="size-8 shrink-0 rounded-md bg-white p-0.5 object-contain"
-                />
+                <ZentoFactMark />
                 <span className="hidden min-w-0 flex-1 leading-tight md:grid md:group-data-[collapsed=true]/sidebar:hidden">
                   <span className="truncate font-semibold text-sidebar-foreground">ZentoFact</span>
                   <span className="truncate text-xs font-normal text-sidebar-foreground/50">Ventas y facturación</span>
@@ -126,6 +122,17 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
       </SidebarFooter>
       <SidebarRail onClick={toggle} />
     </SidebarRoot>
+  );
+}
+
+function ZentoFactMark() {
+  return (
+    <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-white p-0.5" aria-hidden="true">
+      <svg viewBox="0 0 512 512" className="size-full" role="img">
+        <path d="M32 72h284v96L152 376h164v104H32v-96l164-208H32z" fill="#132238" />
+        <path d="M340 72h140v104h-56v48h44v100h-44v156h-84z" fill="#2864F0" />
+      </svg>
+    </span>
   );
 }
 
