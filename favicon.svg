@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">ZentoFact</title>
+  <desc id="desc">Monograma geométrico ZF de ZentoFact, con una Z oscura y una F azul.</desc>
+  <path d="M32 72h284v96L152 376h164v104H32v-96l164-208H32z" fill="#132238"/>
+  <path d="M340 72h140v104h-56v48h44v100h-44v156h-84z" fill="#2864F0"/>
+</svg>
