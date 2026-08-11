@@ -24,3 +24,14 @@
 - The pull request description must state the selected release type and why it applies.
 - After merge, the release workflow tags the merged commit as `vX.Y.Z` and creates the corresponding GitHub Release. If it fails, rerun the same workflow for the same commit.
 - When the user says "commit and push", apply the appropriate release label, wait for the version validation to pass, merge the pull request, and verify that the GitHub Release was created.
+
+## Git worktrees
+
+Cuando trabajes dentro de un Git worktree:
+
+- Identifica el worktree principal usando `git worktree list --porcelain`.
+- Si `.env` no existe en el nuevo worktree y sí existe en el principal, crea un symlink hacia el `.env` principal.
+- Si `node_modules` no existe y el archivo lock (`package-lock.json`, `pnpm-lock.yaml` o `yarn.lock`) es idéntico al del worktree principal, crea un symlink hacia `node_modules`.
+- Si los archivos lock son diferentes, instala las dependencias en el worktree y no compartas `node_modules`.
+- Nunca reemplaces archivos o directorios existentes.
+- Verifica que los symlinks funcionen antes de continuar.
