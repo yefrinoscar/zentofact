@@ -40,7 +40,8 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
   assert.equal(keys.has('credit_notes_bulk'), true);
   assert.equal(keys.has('salidas'), true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'salidas')?.section, 'operation');
-  assert.notEqual(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
+  assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
+  assert.equal(PERMISSIONS.find(({ key }) => key === 'productos')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.section, 'orders');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.section, 'orders');
 });
