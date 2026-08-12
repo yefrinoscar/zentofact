@@ -8,6 +8,7 @@
 - Production releases use a pull request from `dev` to `main`. Do not merge another branch directly into `main` unless the user explicitly authorizes an emergency hotfix; immediately merge any such hotfix back into `dev`.
 - When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, open a pull request targeting `dev`, and merge it into `dev` after the permitted required checks pass.
 - Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
+- The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
