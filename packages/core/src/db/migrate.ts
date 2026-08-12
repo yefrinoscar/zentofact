@@ -889,9 +889,15 @@ const DDL = `
   INSERT INTO order_channels (code, name, default_auto_create_orders, capabilities)
   VALUES
     ('falabella', 'Falabella', TRUE, '{"ingestion":["polling","webhook"],"actions":["ready_to_ship","shipping_label"]}'::jsonb),
-    ('ripley', 'Ripley', FALSE, '{"ingestion":["api","manual"]}'::jsonb),
+    ('mercado_libre', 'Mercado Libre', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
+    ('ripley', 'Ripley', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
+    ('manual', 'Venta manual', FALSE, '{"ingestion":["manual"]}'::jsonb),
     ('external', 'Pedido externo', FALSE, '{"ingestion":["api","manual","file"]}'::jsonb)
-  ON CONFLICT (code) DO NOTHING;
+  ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    default_auto_create_orders = EXCLUDED.default_auto_create_orders,
+    capabilities = EXCLUDED.capabilities,
+    updated_at = NOW();
 
   CREATE TABLE IF NOT EXISTS order_channel_accounts (
     id BIGSERIAL PRIMARY KEY,
@@ -931,6 +937,20 @@ const DDL = `
   ) OR EXISTS (
     SELECT 1 FROM falabella_orders fo WHERE fo.company_id = c.id
   )
+  ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
+
+  -- Toda empresa puede registrar ventas desde la interfaz sin depender de
+  -- credenciales de un marketplace ni de una integración externa.
+  INSERT INTO order_channel_accounts (
+    company_id, channel_id, external_account_id, display_name,
+    auto_create_orders, document_requirement, document_type_policy, settings
+  )
+  SELECT
+    c.id, ch.id, 'default',
+    'Ventas manuales · ' || coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Empresa'),
+    FALSE, 'optional', 'automatic', '{"origin":"manual_ui"}'::jsonb
+  FROM companies c
+  JOIN order_channels ch ON ch.code = 'manual'
   ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
 
   CREATE TABLE IF NOT EXISTS orders (

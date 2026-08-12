@@ -44,7 +44,7 @@ export const PERMISSION_SECTIONS: Array<{ key: PermissionSectionKey; label: stri
 export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
-  { key: 'order_management', label: 'Seguimiento multicanal', description: 'Consultar el seguimiento unificado de pedidos por canal', path: '/orders', section: 'operation', hiddenInProduction: true },
+  { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Consultar el catálogo de productos Falabella', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
@@ -79,7 +79,7 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
   operator: {
     label: 'Operador',
     description: 'Recibe pedidos y realiza la preparación y el escaneo',
-    permissions: ['orders_inbox', 'orders_scanner'],
+    permissions: ['order_management', 'orders_inbox', 'orders_scanner'],
   },
   billing: {
     label: 'Facturación',
@@ -122,6 +122,7 @@ const INTERIM_OPERATOR_PRESET: PermissionKey[] = [
   'facturas', 'credit_notes_manage', 'settings',
 ];
 const RECENT_OPERATOR_PRESET: PermissionKey[] = ['falabella_sellers', 'orders_inbox', 'orders_scanner'];
+const PREVIOUS_OPERATOR_PRESET: PermissionKey[] = ['orders_inbox', 'orders_scanner'];
 const INTERIM_BILLING_PRESET: PermissionKey[] = ['boletas', 'facturas', 'credit_notes_manage'];
 const INTERIM_VIEWER_PRESET: PermissionKey[] = [
   'falabella_sellers', 'orders_inbox', 'boletas', 'facturas',
@@ -176,6 +177,7 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
     samePermissionSet(list, LEGACY_OPERATOR_PRESET)
     || samePermissionSet(list, INTERIM_OPERATOR_PRESET)
     || samePermissionSet(list, RECENT_OPERATOR_PRESET)
+    || samePermissionSet(list, PREVIOUS_OPERATOR_PRESET)
   )) return [...ROLE_PRESETS.operator.permissions];
   if (normalizedRole === 'billing' && samePermissionSet(list, INTERIM_BILLING_PRESET)) {
     return [...ROLE_PRESETS.billing.permissions];
