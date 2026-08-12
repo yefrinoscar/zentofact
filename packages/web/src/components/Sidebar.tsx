@@ -41,7 +41,7 @@ const APP_VERSION = webPackage.version;
 function runtimeEnvironment() {
   const env = (import.meta as any).env || {};
   const forcedSunat = String(env.VITE_SUNAT_ENV || '').trim().toLowerCase();
-  const appEnv = env.PROD ? 'Producción' : 'Local';
+  const appEnv = env.VITE_APP_ENV === 'production' ? 'Producción' : env.DEV ? 'Local' : 'Desarrollo';
   const sunatEnv = forcedSunat === 'produccion' ? 'SUNAT prod.' : forcedSunat === 'beta' ? 'SUNAT beta' : '';
   return sunatEnv ? `${appEnv} · ${sunatEnv}` : appEnv;
 }
@@ -52,9 +52,8 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggle = useAppStore((s) => s.toggleSidebar);
   const { can, loading } = usePermissions();
-  const isProd = Boolean((import.meta as any).env?.PROD);
 
-  const visibleGroups = visibleNavigation(can, isProd);
+  const visibleGroups = visibleNavigation(can);
 
   return (
     <SidebarRoot collapsed={collapsed} className={hideOnMobile ? 'hidden md:flex' : undefined}>
