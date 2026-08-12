@@ -6,6 +6,7 @@ import {
   FileText,
   Inbox,
   ListOrdered,
+  PackageMinus,
   PackageSearch,
   ReceiptText,
   ScanLine,
@@ -41,6 +42,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
+      { to: '/salidas', icon: PackageMinus, label: 'Salidas de hoy', permission: 'salidas' },
     ],
   },
   {
@@ -84,7 +86,11 @@ export function visibleNavigation(can: (permission: PermissionKey) => boolean, i
   return NAV_GROUPS
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !(isProd && item.hiddenInProduction) && can(item.permission)),
+      items: group.items.filter((item) => {
+        if (isProd && item.hiddenInProduction) return false;
+        if (item.to === '/salidas') return can('salidas') || can('productos');
+        return can(item.permission);
+      }),
     }))
     .filter((group) => group.items.length > 0);
 }

@@ -10,7 +10,8 @@ import {
   sanitizeMainSku,
 } from './catalog/catalog-import.js';
 import { falabellaPublicationSnapshot } from './catalog/listing-snapshot-service.js';
-import { listProducts } from './catalog/product-service.js';
+import { listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { hydrateProductActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
   groupFalabellaCatalogRecords,
@@ -509,6 +510,87 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   await listProducts({ sellerCoverage: 'single', status: 'active' }, db);
   assert.match(statements[0].sql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 1/);
   await assert.rejects(() => listProducts({ sellerCoverage: 'unknown' }, db), /sellerCoverage inválido/);
+});
+
+test('las salidas del día agregan pedidos locales por producto y fecha de Lima', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('jsonb_agg')) {
+        return {
+          rows: [{
+            product_key: 'p:5',
+            product_id: 5,
+            sku: 'AG3',
+            name: 'Agua 3L',
+            image_url: null,
+            brand: null,
+            quantity_on_hand: 12,
+            available: 10,
+            units_sold: 4,
+            orders_count: 3,
+            sellers_count: 1,
+            revenue: 40,
+            sellers: [{ companyId: 8, companyName: 'LIMBO', unitsSold: 4, ordersCount: 3 }],
+          }],
+        };
+      }
+      return { rows: [{ products_count: 1, units_sold: 4, orders_count: 3 }] };
+    },
+  };
+  const result = await listTodayProductSales({ date: '2026-08-12', search: 'AG3', companyId: 8 }, db);
+  assert.equal(result.date, '2026-08-12');
+  assert.equal(result.timezone, 'America/Lima');
+  assert.equal(result.products[0].unitsSold, 4);
+  assert.equal(result.products[0].mapped, true);
+  assert.equal(result.totals.ordersCount, 3);
+  assert.match(statements[0].sql, /timezone\('America\/Lima', \$1::date\)/);
+  assert.match(statements[0].sql, /o\.company_id=\$2/);
+  assert.match(statements[0].sql, /left join product_listings linked on linked\.id=oi\.listing_id/);
+  assert.match(statements[0].sql, /left join lateral/);
+  assert.match(statements[0].sql, /lower\(l\.title\)=lower\(oi\.description\)/);
+  assert.match(statements[0].sql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
+  assert.equal(statements[0].params[0], '2026-08-12');
+  await assert.rejects(() => listTodayProductSales({ date: 'no-es-fecha' }, db), /date inválida/);
+});
+
+test('la hidratación de ventas solo pide a Falabella la ventana de 2 días', async () => {
+  const requested = [];
+  const db = {
+    query: async (sql, params = []) => {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.startsWith('update order_items set')) return { rows: [] };
+      if (compact.includes('from product_listings') && compact.includes('distinct company_id')) {
+        return { rows: [{ company_id: 8 }] };
+      }
+      if (compact.includes('from falabella_sync_state')) {
+        return { rows: [{ company_id: 8, cursor_updated_at: '2026-08-11T12:00:00.000Z', sellers: 1, successful_sellers: 1, data_updated_through: '2026-08-11T12:00:00.000Z', last_successful_sync_at: '2026-08-11T12:00:00.000Z' }] };
+      }
+      if (compact.includes('from falabella_orders fo') && compact.includes('not exists')) {
+        assert.equal(params[1], LIVE_WINDOW_DAYS);
+        return { rows: [] };
+      }
+      if (compact.includes('from falabella_orders fo')) {
+        return { rows: [{ order_headers: 2, order_details: 2 }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const result = await hydrateProductActivity(5, { range: '365', kind: 'sales' }, db, {
+    core: { getCompany: async () => ({ id: 8, falabellaApiUserId: 'user', falabellaApiKey: 'key' }) },
+    orderClientFactory: () => ({
+      getOrdersV2: async (query) => {
+        requested.push(query);
+        return { ok: true, status: 200, data: { orders: [] } };
+      },
+    }),
+  });
+  assert.equal(requested.length, 1);
+  const windowStart = Date.parse(requested[0].updatedAfter || requested[0].createdAfter);
+  assert.equal(Number.isNaN(windowStart), false);
+  assert.ok(Date.now() - windowStart <= (LIVE_WINDOW_DAYS * 86_400_000) + (10 * 60_000) + 5_000);
+  assert.equal(result.live.windowDays, 2);
 });
 
 test('import con SKU sanitizado colisionado reutiliza el producto y crea el listing', async () => {

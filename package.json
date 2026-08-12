@@ -26,7 +26,8 @@
     "check:net": "node scripts/check-connectivity.mjs",
     "r2:backfill": "node scripts/upload-archives-to-r2.mjs",
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
-    "r2:pull": "node scripts/pull-r2-to-minio.mjs"
+    "r2:pull": "node scripts/pull-r2-to-minio.mjs",
+    "worktree:setup": "bash scripts/setup-worktree.sh"
   },
   "devDependencies": {
     "pg": "^8.21.0"
