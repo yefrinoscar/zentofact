@@ -116,6 +116,14 @@ const apiHttp = {
     offset?: number;
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  createManagedOrder: (data: any) => {
+    const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return req('/order-management/orders/manual', {
+      method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
+      body: JSON.stringify({ ...data, idempotencyKey }),
+    });
+  },
 
   // Catálogo canónico e inventario compartido
   listCatalogProducts: (filter: {
@@ -126,6 +134,20 @@ const apiHttp = {
   } = {}) => req(`/products${qs(filter)}`),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
+  listTodayProductSales: (filter: {
+    date?: string;
+    search?: string;
+    companyId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/catalog/sales/today${qs(filter)}`),
+  refreshTodayProductSales: (filter: {
+    date?: string;
+    search?: string;
+    companyId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) => req('/catalog/sales/today/refresh', { method: 'POST', body: JSON.stringify(filter) }),
   createCatalogProduct: (data: any) => req('/products', { method: 'POST', body: JSON.stringify(data) }),
   updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),

@@ -111,21 +111,44 @@ fuente y una cobertura explícita (`orderHeaders`, `orderDetails`,
 empresas que tienen listings activos del producto, consulta hasta ocho pedidos
 en paralelo y omite pedidos que ya tienen líneas cacheadas.
 
-La base local es la fuente de lectura para el histórico. Cada llamada hace una
-verificación incremental de cabeceras en Falabella usando
-`UpdatedAfter = cursor_updated_at - 10 minutos` y `UpdatedBefore = ahora`. Ese
-solapamiento evita perder cambios en los límites del cursor sin volver a pedir
-todo el periodo. Solo un seller que todavía no tiene cursor realiza el bootstrap
-del rango solicitado. Para `returns` se consulta únicamente el estado
-`returned`; `sales` ejecuta su propia consulta y no se descarga al abrir
-Devoluciones. Después solo se solicita `GetOrderItems` para las órdenes cuyos
-detalles todavía no existen localmente.
+La base local es la fuente de lectura para el histórico y para el módulo
+`/salidas`. Falabella solo se consulta como ventana corta de 2 días: cabeceras
+incrementales con `UpdatedAfter = cursor_updated_at - 10 minutos` y, si el
+seller aún no tiene cursor, un bootstrap de esos mismos 2 días. No se vuelve a
+pedir el periodo 30/90/365. Después solo se solicita `GetOrderItems` para las
+órdenes recientes cuyos detalles todavía no existen localmente.
 
 La UI no presenta “caché” como prueba suficiente. Indica que Falabella fue
-consultado, cuántas cabeceras del periodo tienen detalle revisado y cuánto tomó.
-Solo afirma que no existen ventas o devoluciones cuando la consulta live terminó
-para todos los sellers y `coverage.complete` es verdadero; de lo contrario
-muestra que la consulta está incompleta.
+consultado, cuántas cabeceras del periodo local tienen detalle revisado y cuánto
+tomó. Solo afirma que no existen ventas o devoluciones cuando la consulta live
+de la ventana corta terminó para todos los sellers y `coverage.complete` es
+verdadero; de lo contrario muestra que la consulta está incompleta.
+
+### Salidas de hoy
+
+`/salidas` agrega desde `orders` y `order_items` los productos que salen el
+día de Lima. La fecha operativa es `PromisedShippingTime` (o
+`promised_shipping_at`), no la fecha de compra. Muestra la cantidad de cada
+producto y el saldo de almacén cuando el SKU ya está en el catálogo. La
+lectura inicial no llama a Falabella.
+
+```http
+GET /catalog/sales/today?date=2026-08-12
+POST /catalog/sales/today/refresh
+```
+
+El POST refresca solo los últimos 2 días de cabeceras e hidrata las líneas
+faltantes; luego vuelve a agregar desde la base local. Incluye líneas todavía
+no asociadas a un producto maestro. El permiso `salidas` abre el módulo;
+quienes ya tienen `productos` también pueden consultar la API.
+
+Los títulos de Falabella cambian por seller. La agregación no agrupa por ese
+nombre: usa la relación `order_items.listing_id → product_listings.product_id`,
+luego `order_items.product_id` y, si ambos faltan, el listing activo de la
+empresa por seller SKU, shop SKU o título. Varias publicaciones del mismo
+producto maestro cuentan como una sola fila; cada seller conserva su título
+propio en el desglose. No hay una tabla aparte de “product relations”; el
+vínculo canónico es `product_listings`.
 
 El sync periódico también usa el cursor con diez minutos de solapamiento y un
 minuto de margen de seguridad: normalmente descarga únicamente pedidos creados

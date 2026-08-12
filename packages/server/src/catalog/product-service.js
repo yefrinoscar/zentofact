@@ -11,6 +11,26 @@ import {
 } from './utils.js';
 
 const PRODUCT_STATUSES = ['active', 'inactive', 'archived'];
+const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Lima',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+export function limaToday() {
+  return LIMA_DATE.format(new Date());
+}
+
+export function limaDate(value) {
+  const today = limaToday();
+  const date = String(value || today).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T12:00:00`).getTime())) {
+    throw httpError('date inválida.');
+  }
+  if (date > today) throw httpError('date no puede ser futura.');
+  return date;
+}
 
 function productStatus(value, fallback = 'active') {
   const normalized = String(value ?? fallback).trim().toLowerCase();
@@ -332,6 +352,250 @@ export async function getProductReturns(id, filters = {}, db) {
       amount: Number(row.amount || 0),
       reason: row.reason || null,
     })),
+  };
+}
+
+const TODAY_SALES_ELIGIBLE = `(o.id is null or o.order_status in ('new','confirmed','completed'))
+    and coalesce(o.fulfillment_status, '') not in ('returned','cancelled','failed')
+    and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
+    and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'`;
+
+export function limaDaySql(expr, param = 1) {
+  return `(${expr} is not null and ${expr} >= timezone('America/Lima', $${param}::date) and ${expr} < timezone('America/Lima', ($${param}::date + 1)))`;
+}
+
+export const PROMISED_SHIPPING_SQL = `coalesce(
+  o.promised_shipping_at,
+  case
+    when fo.raw_data->>'PromisedShippingTime' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      and fo.raw_data->>'PromisedShippingTime' ~* '(t|z|[+-][0-9]{2})'
+      then (fo.raw_data->>'PromisedShippingTime')::timestamptz
+    when fo.raw_data->>'PromisedShippingTime' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      then ((fo.raw_data->>'PromisedShippingTime') || '+00')::timestamptz
+    else null
+  end
+)`;
+
+export async function listTodayProductSales(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const { limit, offset } = limitOffset({ ...filters, limit: filters.limit || 50 });
+  const date = limaDate(filters.date);
+  const values = [date];
+  const where = [
+    limaDaySql(PROMISED_SHIPPING_SQL),
+    TODAY_SALES_ELIGIBLE,
+  ];
+  if (filters.companyId) {
+    values.push(positiveInt(filters.companyId, 'companyId'));
+    where.push(`o.company_id=$${values.length}`);
+  }
+  const search = String(filters.search || '').trim();
+  if (search) {
+    values.push(`%${search}%`);
+    where.push(`(
+      p.main_sku ilike $${values.length}
+      or p.name ilike $${values.length}
+      or listing.title ilike $${values.length}
+      or listing.seller_sku ilike $${values.length}
+      or listing.shop_sku ilike $${values.length}
+      or oi.sku ilike $${values.length}
+      or oi.provider_sku ilike $${values.length}
+      or oi.main_sku ilike $${values.length}
+      or oi.description ilike $${values.length}
+      or exists (
+        select 1 from product_listings search_listing
+        where search_listing.product_id=coalesce(oi.product_id, linked.product_id, listing.product_id)
+          and search_listing.status='active'
+          and (
+            search_listing.title ilike $${values.length}
+            or search_listing.seller_sku ilike $${values.length}
+            or search_listing.shop_sku ilike $${values.length}
+          )
+      )
+    )`);
+  }
+  const eligibleCte = `eligible as (
+      select
+        case
+          when coalesce(oi.product_id, linked.product_id, listing.product_id) is not null
+            then 'p:' || coalesce(oi.product_id, linked.product_id, listing.product_id)::text
+          else 's:' || lower(coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''), 'sin-sku'))
+        end as product_key,
+        coalesce(oi.product_id, linked.product_id, listing.product_id) as product_id,
+        coalesce(nullif(p.main_sku, ''), nullif(oi.main_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, ''), 'SIN-SKU') as sku,
+        coalesce(nullif(p.name, ''), nullif(linked.title, ''), nullif(listing.title, ''), nullif(oi.description, ''), nullif(oi.sku, ''), 'Producto sin nombre') as name,
+        coalesce(
+          nullif(p.image_url, ''),
+          nullif(listing.metadata->'images'->>0, ''),
+          nullif(listing.metadata->>'imageUrl', ''),
+          nullif(listing.metadata->>'fingerprintImageUrl', ''),
+          nullif(linked.metadata->'images'->>0, ''),
+          nullif(linked.metadata->>'imageUrl', ''),
+          nullif(oi.raw_data->>'Image', ''),
+          nullif(oi.raw_data->>'ProductImage', ''),
+          nullif(oi.raw_data->>'MainImage', ''),
+          (
+            select coalesce(nullif(photo.metadata->'images'->>0, ''), nullif(photo.metadata->>'imageUrl', ''))
+            from product_listings photo
+            where photo.product_id=coalesce(oi.product_id, linked.product_id, listing.product_id)
+              and photo.status='active'
+              and (
+                nullif(photo.metadata->'images'->>0, '') is not null
+                or nullif(photo.metadata->>'imageUrl', '') is not null
+              )
+            order by photo.id
+            limit 1
+          )
+        ) as image_url,
+        p.brand,
+        i.quantity_on_hand,
+        coalesce(i.quantity_on_hand, 0) - coalesce(i.quantity_reserved, 0) as available,
+        o.id as order_id,
+        o.company_id,
+        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+        coalesce(nullif(linked.title, ''), nullif(listing.title, ''), nullif(oi.description, '')) as seller_title,
+        coalesce(nullif(linked.seller_sku, ''), nullif(listing.seller_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, '')) as seller_sku,
+        oi.quantity,
+        coalesce(oi.total, oi.unit_price * oi.quantity, 0) as line_total
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      left join falabella_orders fo
+        on fo.company_id=o.company_id and fo.order_id=o.external_order_id
+      left join companies c on c.id=o.company_id
+      left join product_listings linked on linked.id=oi.listing_id
+      left join lateral (
+        select l.product_id, l.title, l.seller_sku, l.shop_sku, l.metadata
+        from product_listings l
+        where l.company_id=o.company_id
+          and l.status='active'
+          and (
+            (nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku)
+            or (nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku)
+            or (nullif(trim(oi.sku), '') is not null and l.shop_sku=oi.sku)
+            or (
+              nullif(trim(oi.description), '') is not null
+              and lower(l.title)=lower(oi.description)
+            )
+          )
+        order by
+          case
+            when nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku then 0
+            when nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku then 1
+            when nullif(trim(oi.sku), '') is not null and l.shop_sku=oi.sku then 2
+            else 3
+          end,
+          l.id
+        limit 1
+      ) listing on true
+      left join products p on p.id=coalesce(oi.product_id, linked.product_id, listing.product_id)
+      left join product_inventory i on i.product_id=p.id
+      where ${where.join(' and ')}
+    )`;
+  const totalsValues = [...values];
+  const pendingValues = [date];
+  if (filters.companyId) pendingValues.push(positiveInt(filters.companyId, 'companyId'));
+  values.push(limit, offset);
+  const [pageResult, totalsResult, pendingResult] = await Promise.all([
+    target.query(
+      `with ${eligibleCte},
+       seller_rows as (
+         select product_key, product_id, sku, name, image_url, brand, quantity_on_hand, available,
+           company_id, company_name, seller_title, seller_sku,
+           sum(quantity) as units_sold,
+           count(distinct order_id) as orders_count,
+           sum(line_total) as revenue
+         from eligible
+         group by 1,2,3,4,5,6,7,8,9,10,11,12
+       )
+       select
+         product_key,
+         min(product_id) as product_id,
+         min(sku) as sku,
+         min(name) as name,
+         min(image_url) as image_url,
+         min(brand) as brand,
+         min(quantity_on_hand) as quantity_on_hand,
+         min(available) as available,
+         sum(units_sold) as units_sold,
+         sum(orders_count) as orders_count,
+         count(distinct company_id)::int as sellers_count,
+         sum(revenue) as revenue,
+         jsonb_agg(jsonb_build_object(
+           'companyId', company_id,
+           'companyName', company_name,
+           'title', seller_title,
+           'sellerSku', seller_sku,
+           'unitsSold', units_sold,
+           'ordersCount', orders_count
+         ) order by units_sold desc, company_name, seller_title) as sellers
+       from seller_rows
+       group by product_key
+       order by sum(units_sold) desc, min(name), min(sku)
+       limit $${values.length - 1} offset $${values.length}`,
+      values,
+    ),
+    target.query(
+      `with ${eligibleCte}
+       select
+         count(distinct product_key)::int as products_count,
+         coalesce(sum(quantity), 0) as units_sold,
+         count(distinct order_id)::int as orders_count
+       from eligible`,
+      totalsValues,
+    ),
+    target.query(
+      `select count(*)::int as pending_orders
+       from falabella_orders fo
+       left join orders o
+         on o.company_id=fo.company_id and o.external_order_id=fo.order_id
+       where lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
+         ${filters.companyId ? 'and fo.company_id=$2' : ''}
+         and ${limaDaySql(PROMISED_SHIPPING_SQL)}
+         and not exists (
+           select 1 from orders matched
+           join order_items item on item.order_id=matched.id
+           where matched.company_id=fo.company_id and matched.external_order_id=fo.order_id
+         )`,
+      pendingValues,
+    ),
+  ]);
+  const totals = totalsResult.rows[0] || {};
+  const pendingOrders = Number(pendingResult.rows[0]?.pending_orders || 0);
+  return {
+    date,
+    timezone: 'America/Lima',
+    products: pageResult.rows.map((row) => ({
+      productKey: row.product_key,
+      productId: row.product_id == null ? null : Number(row.product_id),
+      sku: row.sku,
+      name: row.name,
+      imageUrl: row.image_url || null,
+      brand: row.brand || null,
+      mapped: row.product_id != null,
+      quantityOnHand: row.quantity_on_hand == null ? null : Number(row.quantity_on_hand),
+      available: row.available == null ? null : Number(row.available),
+      unitsSold: Number(row.units_sold || 0),
+      ordersCount: Number(row.orders_count || 0),
+      sellersCount: Number(row.sellers_count || 0),
+      revenue: Number(row.revenue || 0),
+      sellers: (Array.isArray(row.sellers) ? row.sellers : []).map((seller) => ({
+        companyId: seller.companyId == null ? null : Number(seller.companyId),
+        companyName: seller.companyName || null,
+        title: seller.title || null,
+        sellerSku: seller.sellerSku || null,
+        unitsSold: Number(seller.unitsSold || 0),
+        ordersCount: Number(seller.ordersCount || 0),
+      })),
+    })),
+    totalCount: Number(totals.products_count || 0),
+    totals: {
+      productsCount: Number(totals.products_count || 0),
+      unitsSold: Number(totals.units_sold || 0),
+      ordersCount: Number(totals.orders_count || 0),
+      pendingDetailOrders: pendingOrders,
+    },
+    limit,
+    offset,
   };
 }
 

@@ -10,6 +10,7 @@ import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
+import ProductosHoy from './routes/ProductosHoy';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
@@ -41,12 +42,12 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Selecciona el módulo que necesitas usar.',
   },
   '/pedidos': {
-    title: 'Recepción de pedidos',
-    subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
+    title: 'Bandeja Falabella',
+    subtitle: 'Pedidos de Falabella que debes preparar y despachar.',
   },
   '/orders': {
-    title: 'Seguimiento multicanal',
-    subtitle: 'Seguimiento unificado de pedidos, comprobantes y entregas por canal.',
+    title: 'Pedidos',
+    subtitle: 'Todas tus ventas y pedidos en un solo lugar, sin importar el canal.',
   },
   '/scanner': {
     title: 'Preparación y escaneo',
@@ -71,6 +72,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/productos': {
     title: 'Catálogo de productos',
     subtitle: 'Productos, stock y publicaciones de cada empresa.',
+  },
+  '/salidas': {
+    title: 'Salidas de hoy',
+    subtitle: 'Productos que salen hoy según PromisedShippingTime.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -104,6 +109,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
 
 function RequirePermission({
   permission,
+  permissions,
   user,
   loading,
   can,
@@ -111,6 +117,7 @@ function RequirePermission({
   children,
 }: {
   permission?: ReturnType<typeof pathPermission>;
+  permissions?: Array<NonNullable<ReturnType<typeof pathPermission>>>;
   user: ReturnType<typeof usePermissions>['user'];
   loading: boolean;
   can: ReturnType<typeof usePermissions>['can'];
@@ -120,8 +127,11 @@ function RequirePermission({
   // La sesión ya fue validada por AuthGate. Mientras llega el perfil completo,
   // dejamos que la ruta pinte su propio skeleton para evitar loaders sucesivos.
   if (loading) return <>{children}</>;
-  if (!permission) return <>{children}</>;
-  if (!can(permission)) {
+  const allowed = permission
+    ? can(permission)
+    : Array.isArray(permissions) && permissions.some((key) => can(key));
+  if (permission == null && !permissions) return <>{children}</>;
+  if (!allowed) {
     return <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />;
   }
   return <>{children}</>;
@@ -226,14 +236,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
-              <Route
-                path="/orders"
-                element={
-                  import.meta.env.PROD
-                    ? <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
-                    : <RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>
-                }
-              />
+              <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
@@ -242,6 +245,7 @@ function AppLayout() {
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
+              <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
               <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />
