@@ -51,6 +51,7 @@ type TodaySalesResponse = {
     productsCount: number;
     unitsSold: number;
     ordersCount: number;
+    pendingDetailOrders?: number;
   };
   limit: number;
   offset: number;
@@ -125,7 +126,8 @@ export default function ProductosHoy() {
   const payload = salesQuery.data as TodaySalesResponse | undefined;
   const products = payload?.products || [];
   const totalCount = Number(payload?.totalCount || 0);
-  const totals = payload?.totals || { productsCount: 0, unitsSold: 0, ordersCount: 0 };
+  const totals = payload?.totals || { productsCount: 0, unitsSold: 0, ordersCount: 0, pendingDetailOrders: 0 };
+  const pendingDetailOrders = Number(totals.pendingDetailOrders || 0);
   const queryError = salesQuery.error || companiesQuery.error;
   const visibleError = queryError instanceof Error ? queryError.message : queryError ? 'No se pudieron cargar las salidas.' : '';
 
@@ -312,10 +314,17 @@ export default function ProductosHoy() {
       <section className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <p className="text-sm font-semibold">{formatNumber(totals.productsCount, 0)} productos · {formatNumber(totals.unitsSold, 0)} u · {formatNumber(totals.ordersCount, 0)} pedidos</p>
-          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Lectura local{date === limaToday ? ' de hoy' : ''}</span>
+          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Entregas y ventas del día{date === limaToday ? '' : ''}</span>
         </div>
         {salesQuery.isPending ? <div className="grid h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-          : products.length === 0 ? <div className="px-5 py-14 text-center"><p className="text-sm font-medium">Sin salidas en esta fecha</p><p className="mt-1 text-xs text-muted-foreground">Los totales salen de pedidos locales. Actualiza Falabella si faltan ventas recientes.</p></div>
+          : products.length === 0 ? <div className="px-5 py-14 text-center">
+            <p className="text-sm font-medium">{pendingDetailOrders > 0 ? 'Faltan detalles de pedidos de hoy' : 'Sin salidas en esta fecha'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {pendingDetailOrders > 0
+                ? `Hay ${formatNumber(pendingDetailOrders, 0)} pedidos de hoy sin líneas. Pulsa actualizar para traer el detalle de Falabella.`
+                : 'Suma pedidos a entregar hoy (plazo Falabella) y pedidos creados hoy. Pulsa actualizar si la bandeja tiene pedidos nuevos.'}
+            </p>
+          </div>
             : <div className="min-w-0" aria-busy={salesQuery.isFetching}>
               <Table className="table-fixed">
                 <TableHeader>

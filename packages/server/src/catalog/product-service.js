@@ -355,10 +355,26 @@ export async function getProductReturns(id, filters = {}, db) {
   };
 }
 
-const TODAY_SALES_ELIGIBLE = `o.order_status in ('confirmed','completed')
-    and coalesce(o.fulfillment_status, '') <> 'returned'
+const TODAY_SALES_ELIGIBLE = `(o.id is null or o.order_status in ('new','confirmed','completed'))
+    and coalesce(o.fulfillment_status, '') not in ('returned','cancelled','failed')
     and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
     and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'`;
+
+function limaDaySql(expr) {
+  return `(${expr} is not null and ${expr} >= timezone('America/Lima', $1::date) and ${expr} < timezone('America/Lima', ($1::date + 1)))`;
+}
+
+const PROMISED_SHIPPING_SQL = `coalesce(
+  o.promised_shipping_at,
+  case
+    when fo.raw_data->>'PromisedShippingTime' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      and fo.raw_data->>'PromisedShippingTime' ~* '(t|z|[+-][0-9]{2})'
+      then (fo.raw_data->>'PromisedShippingTime')::timestamptz
+    when fo.raw_data->>'PromisedShippingTime' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      then ((fo.raw_data->>'PromisedShippingTime') || '+00')::timestamptz
+    else null
+  end
+)`;
 
 export async function listTodayProductSales(filters = {}, db) {
   const target = db || (await loadCore()).pool;
@@ -366,8 +382,11 @@ export async function listTodayProductSales(filters = {}, db) {
   const date = limaDate(filters.date);
   const values = [date];
   const where = [
-    `o.ordered_at >= timezone('America/Lima', $1::date)`,
-    `o.ordered_at < timezone('America/Lima', ($1::date + 1))`,
+    `(
+      ${limaDaySql(PROMISED_SHIPPING_SQL)}
+      or ${limaDaySql('o.ordered_at')}
+      or ${limaDaySql('fo.falabella_created_at')}
+    )`,
     TODAY_SALES_ELIGIBLE,
   ];
   if (filters.companyId) {
@@ -455,8 +474,10 @@ export async function listTodayProductSales(filters = {}, db) {
       where ${where.join(' and ')}
     )`;
   const totalsValues = [...values];
+  const pendingValues = [date];
+  if (filters.companyId) pendingValues.push(positiveInt(filters.companyId, 'companyId'));
   values.push(limit, offset);
-  const [pageResult, totalsResult] = await Promise.all([
+  const [pageResult, totalsResult, pendingResult] = await Promise.all([
     target.query(
       `with ${eligibleCte},
        seller_rows as (
@@ -504,8 +525,28 @@ export async function listTodayProductSales(filters = {}, db) {
        from eligible`,
       totalsValues,
     ),
+    target.query(
+      `select count(*)::int as pending_orders
+       from falabella_orders fo
+       left join orders o
+         on o.company_id=fo.company_id and o.external_order_id=fo.order_id
+       where lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
+         ${filters.companyId ? 'and fo.company_id=$2' : ''}
+         and (
+           ${limaDaySql(PROMISED_SHIPPING_SQL)}
+           or ${limaDaySql('o.ordered_at')}
+           or ${limaDaySql('fo.falabella_created_at')}
+         )
+         and not exists (
+           select 1 from orders matched
+           join order_items item on item.order_id=matched.id
+           where matched.company_id=fo.company_id and matched.external_order_id=fo.order_id
+         )`,
+      pendingValues,
+    ),
   ]);
   const totals = totalsResult.rows[0] || {};
+  const pendingOrders = Number(pendingResult.rows[0]?.pending_orders || 0);
   return {
     date,
     timezone: 'America/Lima',
@@ -537,6 +578,7 @@ export async function listTodayProductSales(filters = {}, db) {
       productsCount: Number(totals.products_count || 0),
       unitsSold: Number(totals.units_sold || 0),
       ordersCount: Number(totals.orders_count || 0),
+      pendingDetailOrders: pendingOrders,
     },
     limit,
     offset,

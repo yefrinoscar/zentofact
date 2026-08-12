@@ -75,7 +75,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/salidas': {
     title: 'Salidas de hoy',
-    subtitle: 'Productos vendidos hoy y la cantidad que salió del almacén.',
+    subtitle: 'Suma de productos de los pedidos a entregar hoy.',
   },
   '/auto-emision': {
     title: 'Automatización',
