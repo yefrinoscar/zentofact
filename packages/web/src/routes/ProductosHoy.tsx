@@ -5,6 +5,7 @@ import { Boxes, Check, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, Sear
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { todayInLima } from '../lib/documentDateRange';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 
@@ -80,6 +81,20 @@ function formatNumber(value: unknown, digits = 4) {
   return number.toLocaleString('es-PE', { maximumFractionDigits: digits });
 }
 
+function productImageSrc(url?: string | null) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' && /(^|\.)falabella\.com$/i.test(parsed.hostname)) {
+      return `/catalog/image?url=${encodeURIComponent(value)}`;
+    }
+  } catch {
+    return value;
+  }
+  return value;
+}
+
 export default function ProductosHoy() {
   const queryClient = useQueryClient();
   const limaToday = todayInLima();
@@ -89,6 +104,7 @@ export default function ProductosHoy() {
   const [date, setDate] = useState(limaToday);
   const [companyId, setCompanyId] = useState('all');
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState('');
 
@@ -193,8 +209,16 @@ export default function ProductosHoy() {
         const product = row.original;
         return <div className="flex items-center gap-3">
           {product.imageUrl
-            ? <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
-            : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
+            ? <button
+                type="button"
+                onClick={() => setPreview({ url: productImageSrc(product.imageUrl), name: product.name })}
+                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-muted"
+                aria-label={`Ver foto de ${product.name}`}
+                title="Ver foto grande"
+              >
+                <img src={productImageSrc(product.imageUrl)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover transition group-hover:scale-105" />
+              </button>
+            : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
           <span className="min-w-0 flex-1">
             <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
             <button
@@ -352,6 +376,18 @@ export default function ProductosHoy() {
           </div>
         </div>
       </section>
+
+      <Dialog open={preview != null} onOpenChange={(open) => { if (!open) setPreview(null); }}>
+        <DialogContent className="max-w-3xl gap-3 p-4 sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="pr-8">{preview?.name || 'Foto del producto'}</DialogTitle>
+            <DialogDescription>Foto del producto que sale hoy.</DialogDescription>
+          </DialogHeader>
+          {preview?.url ? (
+            <img src={preview.url} alt={preview.name} className="max-h-[75vh] w-full rounded-lg object-contain bg-muted" />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

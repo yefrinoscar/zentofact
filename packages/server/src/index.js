@@ -119,7 +119,11 @@ for (const [prefix, perm] of moduleGuards) {
 }
 
 const catalogGuard = (c, next) => {
-  if (c.req.path === '/catalog/sales/today' || c.req.path === '/catalog/sales/today/refresh') {
+  if (
+    c.req.path === '/catalog/sales/today'
+    || c.req.path === '/catalog/sales/today/refresh'
+    || c.req.path === '/catalog/image'
+  ) {
     return requireAnyPermission(['productos', 'salidas'])(c, next);
   }
   return requirePermission('productos')(c, next);
@@ -432,6 +436,27 @@ app.post('/catalog/refresh-listing-snapshots', async (c) => {
 app.get('/catalog/unmapped-skus', async (c) => {
   try { return ok(c, await catalogOperations.listUnmappedSkus(c.req.query())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/catalog/image', async (c) => {
+  try {
+    const imageUrl = new URL(c.req.query('url') || '');
+    if (imageUrl.protocol !== 'https:' || !/(^|\.)falabella\.com$/i.test(imageUrl.hostname)) {
+      return c.json({ error: 'La imagen solicitada no pertenece a Falabella.' }, 400);
+    }
+    const response = await fetch(imageUrl, {
+      headers: { accept: 'image/png,image/jpeg,image/webp;q=0.9,*/*;q=0.1' },
+      redirect: 'follow',
+    });
+    const contentType = String(response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    if (!response.ok || !['image/png', 'image/jpeg', 'image/webp'].includes(contentType)) {
+      return c.json({ error: 'La fotografía no está disponible.' }, 404);
+    }
+    c.header('Content-Type', contentType);
+    c.header('Cache-Control', 'private, max-age=86400');
+    return c.body(await response.arrayBuffer());
+  } catch (e) {
+    return fail(c, e, 400);
+  }
 });
 app.get('/catalog/sales/today', async (c) => {
   const startedAt = performance.now();
