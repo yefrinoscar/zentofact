@@ -535,12 +535,37 @@ export async function listTodayProductSales(filters = {}, db) {
       values,
     ),
     target.query(
-      `with ${eligibleCte}
+      `with ${eligibleCte},
+       totals as (
+         select
+           count(distinct product_key)::int as products_count,
+           coalesce(sum(quantity), 0) as units_sold,
+           count(distinct order_id)::int as orders_count,
+           count(distinct company_id)::int as sellers_count
+         from eligible
+       )
        select
-         count(distinct product_key)::int as products_count,
-         coalesce(sum(quantity), 0) as units_sold,
-         count(distinct order_id)::int as orders_count
-       from eligible`,
+         totals.*,
+         coalesce((
+           select jsonb_agg(jsonb_build_object(
+             'companyId', seller.company_id,
+             'companyName', seller.company_name,
+             'unitsSold', seller.units_sold,
+             'ordersCount', seller.orders_count,
+             'productsCount', seller.products_count
+           ) order by seller.units_sold desc, seller.company_name)
+           from (
+             select
+               company_id,
+               min(company_name) as company_name,
+               coalesce(sum(quantity), 0) as units_sold,
+               count(distinct order_id)::int as orders_count,
+               count(distinct product_key)::int as products_count
+             from eligible
+             group by company_id
+           ) seller
+         ), '[]'::jsonb) as sellers
+       from totals`,
       totalsValues,
     ),
     target.query(
@@ -592,7 +617,15 @@ export async function listTodayProductSales(filters = {}, db) {
       productsCount: Number(totals.products_count || 0),
       unitsSold: Number(totals.units_sold || 0),
       ordersCount: Number(totals.orders_count || 0),
+      sellersCount: Number(totals.sellers_count || 0),
       pendingDetailOrders: pendingOrders,
+      sellers: (Array.isArray(totals.sellers) ? totals.sellers : []).map((seller) => ({
+        companyId: seller.companyId == null ? null : Number(seller.companyId),
+        companyName: seller.companyName || null,
+        unitsSold: Number(seller.unitsSold || 0),
+        ordersCount: Number(seller.ordersCount || 0),
+        productsCount: Number(seller.productsCount || 0),
+      })),
     },
     limit,
     offset,
