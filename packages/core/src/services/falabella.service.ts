@@ -436,12 +436,14 @@ function normalizeProduct(product: any) {
     operatorCode: String(unit?.OperatorCode ?? '').trim(),
     price: unit?.Price ?? null,
     specialPrice: unit?.SpecialPrice ?? null,
+    specialFromDate: unit?.SpecialFromDate ?? null,
+    specialToDate: unit?.SpecialToDate ?? null,
     stock: unit?.Stock ?? null,
     status: String(unit?.Status ?? '').trim(),
     isPublished: String(unit?.IsPublished ?? '').trim(),
     raw: unit,
   }));
-  const primaryUnit = businessUnits[0] || {};
+  const primaryUnit = businessUnits.find((unit) => unit.operatorCode.toLowerCase() === 'fape') || businessUnits[0] || {};
   const sellerSku = String(product?.SellerSku ?? product?.SellerSKU ?? product?.SkuSeller ?? product?.SkuSellerList ?? productData?.SellerSku ?? '').trim();
   const shopSku = String(product?.ShopSku ?? product?.ShopSKU ?? product?.Sku ?? productData?.ShopSku ?? '').trim();
   const name = String(product?.Name ?? product?.ProductName ?? productData?.Name ?? productData?.ProductName ?? sellerSku ?? '').trim();
@@ -475,6 +477,69 @@ function normalizeProduct(product: any) {
     businessUnits,
     raw: product,
   };
+}
+
+function stockQuantity(value: unknown): number {
+  const quantity = Number(value);
+  return Number.isFinite(quantity) ? quantity : 0;
+}
+
+function normalizeFalabellaStock(data: any) {
+  const stocks = data?.SuccessResponse?.Body?.Stocks ?? data?.Stocks ?? data?.stocks ?? {};
+  const sellerWarehouses = asArray(
+    stocks?.SellerWarehouses?.SellerWarehouse
+    ?? stocks?.SellerWarehouses
+    ?? stocks?.SellerWarehouse,
+  );
+  const fulfillmentWarehouses = asArray(
+    stocks?.FulfillmentWarehouses?.FulfillmentWarehouse
+    ?? stocks?.FulfillmentWarehouses
+    ?? stocks?.FulfillmentWarehouse,
+  );
+  const grouped = new Map<string, any>();
+  const entryFor = (skuValue: unknown) => {
+    const sellerSku = String(skuValue ?? '').trim();
+    if (!sellerSku) return null;
+    let entry = grouped.get(sellerSku);
+    if (!entry) {
+      entry = {
+        sellerSku,
+        sellerWarehouseQuantity: 0,
+        fulfillmentQuantity: 0,
+        availableQuantity: 0,
+        sellerWarehouses: [],
+        fulfillmentWarehouses: [],
+      };
+      grouped.set(sellerSku, entry);
+    }
+    return entry;
+  };
+  for (const warehouse of sellerWarehouses) {
+    const entry = entryFor(warehouse?.Sku ?? warehouse?.SellerSku);
+    if (!entry) continue;
+    const quantity = stockQuantity(warehouse?.Quantity);
+    entry.sellerWarehouseQuantity += quantity;
+    entry.sellerWarehouses.push({
+      facilityId: String(warehouse?.FacilityID ?? '').trim() || null,
+      sellerWarehouseId: String(warehouse?.SellerWarehouseId ?? '').trim() || null,
+      quantity,
+    });
+  }
+  for (const warehouse of fulfillmentWarehouses) {
+    const entry = entryFor(warehouse?.Sku ?? warehouse?.SellerSku);
+    if (!entry) continue;
+    const quantity = stockQuantity(warehouse?.Quantity);
+    entry.fulfillmentQuantity += quantity;
+    entry.fulfillmentWarehouses.push({
+      warehouseId: String(warehouse?.WarehouseId ?? '').trim() || null,
+      warehouseName: String(warehouse?.WarehouseName ?? '').trim() || null,
+      quantity,
+    });
+  }
+  return [...grouped.values()].map((entry) => ({
+    ...entry,
+    availableQuantity: entry.sellerWarehouseQuantity + entry.fulfillmentQuantity,
+  }));
 }
 
 function normalizeFeed(feed: any) {
@@ -678,6 +743,43 @@ export async function falabellaGetProducts(payload: {
     url: response.url,
     totalCount,
     products: normalized.products.map(normalizeProduct),
+  };
+}
+
+export async function falabellaGetStock(payload: {
+  companyId: number;
+  sellerSkus?: string[];
+  limit?: number;
+  offset?: number;
+}) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { error: found.error };
+  const { company } = found;
+  const sellerSkus = Array.from(new Set((payload.sellerSkus || [])
+    .map((sku) => String(sku).trim())
+    .filter(Boolean)));
+  const client = new FalabellaApiClient({
+    userId: company.falabellaApiUserId!.trim(),
+    apiKey: company.falabellaApiKey!.trim(),
+    version: '1.0',
+    defaultFormat: 'JSON',
+  });
+  const response = await client.call({
+    action: 'GetStock',
+    params: {
+      SellerSku: sellerSkus.length ? JSON.stringify(sellerSkus) : undefined,
+      Limit: Math.min(Math.max(Number(payload.limit || 1000), 1), 1000),
+      Offset: Math.max(Number(payload.offset || 0), 0),
+    },
+    accept: 'application/json',
+  });
+  const error = getFalabellaError(response.data);
+  if (error) return { ok: response.ok, status: response.status, url: response.url, error };
+  return {
+    ok: response.ok,
+    status: response.status,
+    url: response.url,
+    stocks: normalizeFalabellaStock(response.data),
   };
 }
 

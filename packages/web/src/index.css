@@ -159,6 +159,35 @@
 }
 
 @layer components {
+  .primary-button {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .secondary-button {
+    @apply inline-flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium transition hover:bg-accent disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .icon-button {
+    @apply grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground;
+  }
+
+  .field {
+    @apply w-full rounded-md border border-input bg-background px-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20;
+    min-height: 2.5rem;
+  }
+
+  .label {
+    @apply flex flex-col gap-1.5 text-xs font-medium text-muted-foreground;
+  }
+
+  .detail-tab {
+    @apply inline-flex flex-1 items-center justify-center gap-2 border-b-2 border-transparent px-3 py-3 text-xs font-medium text-muted-foreground transition hover:bg-accent;
+  }
+
+  .detail-tab-active {
+    @apply border-primary text-foreground;
+  }
+
   html.app-modal-open,
   body.app-modal-open,
   body.app-modal-open #root {

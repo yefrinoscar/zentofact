@@ -5,7 +5,9 @@ function text(value) {
 }
 
 function number(value, fallback = null) {
-  const parsed = Number(String(value ?? '').replace(/,/g, ''));
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw.replace(/,/g, ''));
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -76,7 +78,7 @@ function shippingFrom(raw) {
   };
 }
 
-function orderItemsFrom(raw) {
+export function mapFalabellaOrderItems(raw) {
   const candidate = raw?.OrderItems?.OrderItem || raw?.OrderItems || raw?.Items?.Item || raw?.Items;
   const items = Array.isArray(candidate) ? candidate : candidate && typeof candidate === 'object' ? [candidate] : [];
   return items.map((item, index) => ({
@@ -110,7 +112,7 @@ export async function ingestFalabellaOrder(input, db) {
   const raw = normalized?.raw || {};
   const account = input.account || await ensureFalabellaOrderAccount(db, input.companyId, input.displayName);
   const statuses = mapFalabellaCanonicalStatus(normalized?.status);
-  const items = orderItemsFrom(raw);
+  const items = mapFalabellaOrderItems(raw);
   return ingestOrder({
     companyId: input.companyId,
     channelAccountId: account.id,
@@ -140,6 +142,7 @@ export async function ingestFalabellaOrder(input, db) {
     source: input.source || 'sync',
     correlationId: input.correlationId,
     eventId: input.eventId,
+    catalogInventoryEnabled: input.catalogInventoryEnabled,
     providerOccurredAt: normalized?.falabellaUpdatedAt,
   }, db);
 }

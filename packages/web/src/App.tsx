@@ -69,8 +69,8 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Consulta órdenes por empresa usando las credenciales Seller API guardadas.',
   },
   '/productos': {
-    title: 'Productos',
-    subtitle: 'Consulta productos publicados en Falabella por seller, SKU y estado.',
+    title: 'Catálogo de productos',
+    subtitle: 'Productos, stock y publicaciones de cada empresa.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -234,14 +234,7 @@ function AppLayout() {
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes_manage" {...permissionState}><CreditNotesList /></RequirePermission>} />
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
-              <Route
-                path="/productos"
-                element={
-                  import.meta.env.PROD
-                    ? <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
-                    : <RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>
-                }
-              />
+              <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
               <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />

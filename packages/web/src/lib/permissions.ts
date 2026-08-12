@@ -45,7 +45,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
-  { key: 'productos', label: 'Productos', description: 'Consultar el catálogo de productos Falabella', path: '/productos', section: 'operation', hiddenInProduction: true },
+  { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation' },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'boletas', label: 'Boletas', description: 'Ver, emitir y reenviar boletas electrónicas', path: '/boletas', section: 'documents' },

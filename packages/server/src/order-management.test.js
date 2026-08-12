@@ -4,7 +4,7 @@ import {
   ingestOrder,
   resolveDocumentDecision,
 } from './order-management.js';
-import { mapFalabellaCanonicalStatus } from './order-adapters/falabella.js';
+import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from './order-adapters/falabella.js';
 
 function account(overrides = {}) {
   return {
@@ -136,7 +136,10 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   assert.equal(result.order.documentTypePolicy, 'customer_choice');
   assert.equal(result.order.documentStatus, 'pending');
   assert.equal(result.order.documentDecision.type, 'factura');
-  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_items')), true);
+  const itemUpsert = db.queries.find((query) => query.sql.startsWith('insert into order_items'));
+  assert.ok(itemUpsert);
+  assert.equal(itemUpsert.sql.split(' values ')[0].includes('product_id'), false);
+  assert.match(itemUpsert.sql, /returning id, external_item_id.*stock_revision/);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_snapshots')), true);
   const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
   assert.equal(event.params[1], 'order.created');
@@ -176,4 +179,16 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
     orderStatus: 'cancelled',
     fulfillmentStatus: 'cancelled',
   });
+});
+
+test('cada OrderItem de Falabella cuenta como una unidad cuando Quantity no viene informado', () => {
+  const items = mapFalabellaOrderItems({
+    OrderItems: {
+      OrderItem: [
+        { OrderItemId: '1', SellerSku: 'SILLA-1', PaidPrice: '178.90' },
+        { OrderItemId: '2', SellerSku: 'SILLA-1', PaidPrice: '178.90' },
+      ],
+    },
+  });
+  assert.deepEqual(items.map((item) => item.quantity), [1, 1]);
 });

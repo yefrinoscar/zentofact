@@ -27,6 +27,14 @@ await autoEmit.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const orderManagement = await import('./order-management.js');
+const productService = await import('./catalog/product-service.js');
+const listingService = await import('./catalog/listing-service.js');
+const inventoryService = await import('./catalog/inventory-service.js');
+const skuResolver = await import('./catalog/sku-resolver.js');
+const catalogImport = await import('./catalog/catalog-import.js');
+const catalogOperations = await import('./catalog/catalog-operations.js');
+const catalogSales = await import('./catalog/catalog-sales.js');
+const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
@@ -108,6 +116,12 @@ for (const [prefix, perm] of moduleGuards) {
   const permissionGuard = requirePermission(perm);
   app.use(prefix, permissionGuard);
   app.use(`${prefix}/*`, permissionGuard);
+}
+
+for (const prefix of ['/products', '/product-listings', '/inventory', '/catalog']) {
+  const catalogGuard = requirePermission('productos');
+  app.use(prefix, catalogGuard);
+  app.use(`${prefix}/*`, catalogGuard);
 }
 
 const boletasAccessGuard = (c, next) => (
@@ -300,6 +314,119 @@ app.get('/order-management/orders/:id', async (c) => {
     const order = await orderManagement.getOrder(Number(c.req.param('id')));
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
+});
+
+// ── Catálogo canónico e inventario compartido ──
+app.get('/products', async (c) => {
+  try { return ok(c, await productService.listProducts(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/products', async (c) => {
+  try { return ok(c, await productService.createProduct(await c.req.json(), c.get('user')?.id), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/:id', async (c) => {
+  try {
+    const product = await productService.getProduct(Number(c.req.param('id')));
+    return product ? ok(c, product) : c.json({ error: 'Producto no encontrado.' }, 404);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/products/:id/activity', async (c) => {
+  const startedAt = performance.now();
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const kind = String(body.kind || 'sales').trim().toLowerCase();
+    if (!['sales', 'returns'].includes(kind)) throw new Error('kind inválido.');
+    const hydration = await catalogSales.hydrateProductActivity(c.req.param('id'), { ...body, kind });
+    const activity = kind === 'returns'
+      ? await productService.getProductReturns(c.req.param('id'), body)
+      : await productService.getProductSales(c.req.param('id'), body);
+    return ok(c, {
+      kind,
+      ...activity,
+      hydration,
+      durationMs: Math.round(performance.now() - startedAt),
+      source: hydration.coverage.liveVerified ? 'falabella_live' : 'local_fallback',
+    });
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/products/:id', async (c) => {
+  try { return ok(c, await productService.updateProduct(c.req.param('id'), await c.req.json(), c.get('user')?.id)); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/products/:id/archive', async (c) => {
+  try { return ok(c, await productService.archiveProduct(c.req.param('id'), c.get('user')?.id)); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/:id/listings', async (c) => {
+  try { return ok(c, await listingService.listProductListings(c.req.param('id'))); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/products/:id/listings', async (c) => {
+  try { return ok(c, await listingService.createListing(c.req.param('id'), await c.req.json()), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/product-listings/:id', async (c) => {
+  try { return ok(c, await listingService.updateListing(c.req.param('id'), await c.req.json())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/:id/unlink', async (c) => {
+  try { return ok(c, await listingService.unlinkListing(c.req.param('id'))); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/link', async (c) => {
+  try { return ok(c, await listingService.linkListing(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await catalogOperations.applyStockToOpenOrders(c.req.param('id'), {
+      ...body,
+      actorUserId: c.get('user')?.id,
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/:id/inventory', async (c) => {
+  try { return ok(c, await inventoryService.getInventory(c.req.param('id'))); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/:id/movements', async (c) => {
+  try { return ok(c, await inventoryService.listMovements(c.req.param('id'), c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/products/:id/inventory/adjust', async (c) => {
+  try {
+    const body = await c.req.json();
+    return ok(c, await inventoryService.adjustInventory(c.req.param('id'), {
+      ...body,
+      idempotencyKey: c.req.header('idempotency-key') || body.idempotencyKey,
+    }, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/inventory/resolve-sku', async (c) => {
+  try { return ok(c, await skuResolver.previewResolveSku(await c.req.json())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/import/falabella', async (c) => {
+  try { return ok(c, await catalogImport.importFalabellaCatalog(await c.req.json(), c.get('user')?.id)); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/sync/falabella', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await catalogImport.syncAllFalabellaCatalog(body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/refresh-listing-snapshots', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await listingSnapshotService.refreshFalabellaListingSnapshots(body));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/catalog/unmapped-skus', async (c) => {
+  try { return ok(c, await catalogOperations.listUnmappedSkus(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Usuarios (solo admin / permiso users) ──

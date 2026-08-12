@@ -125,6 +125,32 @@ const apiHttp = {
     });
   },
 
+  // Catálogo canónico e inventario compartido
+  listCatalogProducts: (filter: {
+    search?: string; status?: string; channelCode?: string;
+    companyId?: number;
+    sellerCoverage?: 'all' | 'single' | 'multiple';
+    includeArchived?: boolean; limit?: number; offset?: number;
+  } = {}) => req(`/products${qs(filter)}`),
+  getCatalogProduct: (id: number) => req(`/products/${id}`),
+  getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
+  createCatalogProduct: (data: any) => req('/products', { method: 'POST', body: JSON.stringify(data) }),
+  updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),
+  listProductListings: (id: number) => req(`/products/${id}/listings`),
+  createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
+  updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),
+  applyListingStockToOpenOrders: (id: number) => req(`/product-listings/${id}/apply-stock-to-open-orders`, { method: 'POST', body: '{}' }),
+  getProductInventory: (id: number) => req(`/products/${id}/inventory`),
+  listProductMovements: (id: number, filter: { limit?: number; offset?: number } = {}) => req(`/products/${id}/movements${qs(filter)}`),
+  adjustProductInventory: (id: number, data: any) => req(`/products/${id}/inventory/adjust`, { method: 'POST', body: JSON.stringify(data) }),
+  resolveCatalogSku: (data: any) => req('/inventory/resolve-sku', { method: 'POST', body: JSON.stringify(data) }),
+  importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
+  syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
+  refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
+  listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),
