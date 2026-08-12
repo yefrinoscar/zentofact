@@ -8,8 +8,7 @@ const descriptions = new Map(PERMISSIONS.map((permission) => [permission.key, pe
 
 export default function MobileMenu({ isMobile }: { isMobile: boolean }) {
   const { user, can, loading } = usePermissions();
-  const isProd = Boolean((import.meta as any).env?.PROD);
-  const groups = visibleNavigation(can, isProd);
+  const groups = visibleNavigation(can);
 
   if (!isMobile) return <Navigate to={firstAllowedPath(user)} replace />;
 

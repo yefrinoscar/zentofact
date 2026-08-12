@@ -19,8 +19,7 @@ import {
 export function MobileTopNavigation({ title }: { title: string }) {
   const { pathname } = useLocation();
   const { can } = usePermissions();
-  const isProd = Boolean((import.meta as any).env?.PROD);
-  const groups = visibleNavigation(can, isProd);
+  const groups = visibleNavigation(can);
   const activeGroup = groups.find((group) => group.items.some((item) => isNavItemActive(pathname, item.to)));
   const onMenu = pathname === '/menu';
 
