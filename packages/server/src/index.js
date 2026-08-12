@@ -290,6 +290,25 @@ app.post('/order-management/orders/ingest', async (c) => {
     }), 201);
   } catch (e) { return fail(c, e, 400); }
 });
+app.post('/order-management/orders/manual', async (c) => {
+  try {
+    const body = await c.req.json();
+    const idempotencyKey = String(
+      c.req.header('idempotency-key') || body.idempotencyKey || '',
+    ).trim();
+    if (!idempotencyKey) {
+      return c.json({ error: 'Idempotency-Key es obligatorio para registrar la venta.' }, 400);
+    }
+    return ok(c, await orderManagement.ingestOrder({
+      ...body,
+      source: 'manual',
+      automatic: false,
+      actorUserId: c.get('user')?.id,
+      idempotencyKey,
+      rawPayload: body.rawPayload ?? body,
+    }), 201);
+  } catch (e) { return fail(c, e, 400); }
+});
 app.get('/order-management/orders/:id', async (c) => {
   try {
     const order = await orderManagement.getOrder(Number(c.req.param('id')));

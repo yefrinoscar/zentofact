@@ -41,12 +41,12 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Selecciona el módulo que necesitas usar.',
   },
   '/pedidos': {
-    title: 'Recepción de pedidos',
-    subtitle: 'Qué debes despachar ahora y cuánto tiempo tienes para entregarlo.',
+    title: 'Bandeja Falabella',
+    subtitle: 'Pedidos de Falabella que debes preparar y despachar.',
   },
   '/orders': {
-    title: 'Seguimiento multicanal',
-    subtitle: 'Seguimiento unificado de pedidos, comprobantes y entregas por canal.',
+    title: 'Pedidos',
+    subtitle: 'Todas tus ventas y pedidos en un solo lugar, sin importar el canal.',
   },
   '/scanner': {
     title: 'Preparación y escaneo',
@@ -226,14 +226,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
-              <Route
-                path="/orders"
-                element={
-                  import.meta.env.PROD
-                    ? <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
-                    : <RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>
-                }
-              />
+              <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />

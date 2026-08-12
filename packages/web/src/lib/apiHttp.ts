@@ -116,6 +116,14 @@ const apiHttp = {
     offset?: number;
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  createManagedOrder: (data: any) => {
+    const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return req('/order-management/orders/manual', {
+      method: 'POST',
+      headers: { 'idempotency-key': idempotencyKey },
+      body: JSON.stringify({ ...data, idempotencyKey }),
+    });
+  },
 
   // Catálogo canónico e inventario compartido
   listCatalogProducts: (filter: {
