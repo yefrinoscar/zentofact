@@ -52,7 +52,15 @@ type TodaySalesResponse = {
     productsCount: number;
     unitsSold: number;
     ordersCount: number;
+    sellersCount?: number;
     pendingDetailOrders?: number;
+    sellers?: Array<{
+      companyId: number | null;
+      companyName?: string | null;
+      unitsSold: number;
+      ordersCount: number;
+      productsCount: number;
+    }>;
   };
   limit: number;
   offset: number;
@@ -142,8 +150,23 @@ export default function ProductosHoy() {
   const payload = salesQuery.data as TodaySalesResponse | undefined;
   const products = payload?.products || [];
   const totalCount = Number(payload?.totalCount || 0);
-  const totals = payload?.totals || { productsCount: 0, unitsSold: 0, ordersCount: 0, pendingDetailOrders: 0 };
+  const totals = payload?.totals || {
+    productsCount: 0,
+    unitsSold: 0,
+    ordersCount: 0,
+    sellersCount: 0,
+    pendingDetailOrders: 0,
+    sellers: [],
+  };
   const pendingDetailOrders = Number(totals.pendingDetailOrders || 0);
+  const sellerTotals = totals.sellers || [];
+  const sellersCount = Number(totals.sellersCount ?? sellerTotals.length);
+  const topSellerNames = sellerTotals
+    .map((seller) => sellerShortName(seller.companyName))
+    .filter(Boolean);
+  const sellersDetail = topSellerNames.length
+    ? `${topSellerNames.slice(0, 3).join(' · ')}${topSellerNames.length > 3 ? ` +${topSellerNames.length - 3}` : ''}`
+    : 'Sin sellers en esta fecha';
   const queryError = salesQuery.error || companiesQuery.error;
   const visibleError = queryError instanceof Error ? queryError.message : queryError ? 'No se pudieron cargar las salidas.' : '';
 
@@ -299,6 +322,62 @@ export default function ProductosHoy() {
 
   return (
     <div className="space-y-5">
+      <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Indicadores de salidas">
+        <div className="grid grid-cols-2 md:grid-cols-4">
+          <SaleMetric
+            index={0}
+            label="Unidades vendidas"
+            value={formatNumber(totals.unitsSold, 0)}
+            detail="Según plazo de envío"
+            loading={salesQuery.isPending}
+          />
+          <SaleMetric
+            index={1}
+            label="Pedidos"
+            value={formatNumber(totals.ordersCount, 0)}
+            detail={pendingDetailOrders > 0 ? `${formatNumber(pendingDetailOrders, 0)} sin detalle` : 'Con salida en esta fecha'}
+            loading={salesQuery.isPending}
+            warning={pendingDetailOrders > 0}
+          />
+          <SaleMetric
+            index={2}
+            label="Productos"
+            value={formatNumber(totals.productsCount, 0)}
+            detail={totals.productsCount === 1 ? 'SKU con venta' : 'SKUs con venta'}
+            loading={salesQuery.isPending}
+          />
+          <SaleMetric
+            index={3}
+            label="Sellers"
+            value={formatNumber(sellersCount, 0)}
+            detail={sellersDetail}
+            loading={salesQuery.isPending}
+          />
+        </div>
+        {sellerTotals.length > 1 && (
+          <ul className="flex gap-2 overflow-x-auto border-t border-border px-4 py-2.5" aria-label="Unidades por seller">
+            {sellerTotals.map((seller) => {
+              const id = seller.companyId == null ? '' : String(seller.companyId);
+              return (
+                <li key={id || seller.companyName || 'seller'}>
+                  <button
+                    type="button"
+                    disabled={!id}
+                    onClick={() => { setCompanyId(id); setOffset(0); }}
+                    className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground disabled:cursor-default"
+                    aria-label={`Ver solo ${sellerShortName(seller.companyName)}`}
+                  >
+                    <span className="text-foreground">{sellerShortName(seller.companyName)}</span>
+                    {' · '}
+                    {formatNumber(seller.unitsSold, 0)} u
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
       <div className="space-y-3 border-b border-border pb-4">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <form onSubmit={applySearch} className="flex min-w-0 flex-1 gap-2">
@@ -336,10 +415,6 @@ export default function ProductosHoy() {
       {visibleError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{visibleError}</div>}
 
       <section className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <p className="text-sm font-semibold">{formatNumber(totals.productsCount, 0)} productos · {formatNumber(totals.unitsSold, 0)} u · {formatNumber(totals.ordersCount, 0)} pedidos</p>
-          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Salida = plazo de envío Falabella</span>
-        </div>
         {salesQuery.isPending ? <div className="grid h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
           : products.length === 0 ? <div className="px-5 py-14 text-center">
             <p className="text-sm font-medium">{pendingDetailOrders > 0 ? 'Faltan detalles de pedidos de hoy' : 'Sin salidas en esta fecha'}</p>
@@ -369,7 +444,7 @@ export default function ProductosHoy() {
               </Table>
             </div>}
         <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-3">
-          <span className="text-xs text-muted-foreground">Mostrando {products.length} de {totalCount}</span>
+          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Mostrando {products.length} de {totalCount}</span>
           <div className="flex gap-2">
             <button disabled={offset === 0} onMouseEnter={() => prefetchPage(Math.max(0, offset - PAGE_SIZE))} onFocus={() => prefetchPage(Math.max(0, offset - PAGE_SIZE))} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="secondary-button"><ChevronLeft className="h-4 w-4" /> Anterior</button>
             <button disabled={offset + PAGE_SIZE >= totalCount} onMouseEnter={() => prefetchPage(offset + PAGE_SIZE)} onFocus={() => prefetchPage(offset + PAGE_SIZE)} onClick={() => setOffset(offset + PAGE_SIZE)} className="secondary-button">Siguiente <ChevronRight className="h-4 w-4" /></button>
@@ -388,6 +463,39 @@ export default function ProductosHoy() {
           ) : null}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function SaleMetric({
+  index,
+  label,
+  value,
+  detail,
+  loading = false,
+  warning = false,
+}: {
+  index: number;
+  label: string;
+  value: string;
+  detail?: string;
+  loading?: boolean;
+  warning?: boolean;
+}) {
+  return (
+    <div className={cn(
+      'min-w-0 px-4 py-3 sm:px-5',
+      index % 2 === 0 && 'border-r border-border',
+      index < 2 && 'border-b border-border md:border-b-0',
+      'md:border-r md:last:border-r-0',
+    )}>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      {loading
+        ? <div className="mt-2 h-7 w-16 animate-pulse rounded-md bg-muted" />
+        : <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>}
+      {detail
+        ? <p className={cn('mt-1 truncate text-xs', warning ? 'font-medium text-amber-700' : 'text-muted-foreground')}>{detail}</p>
+        : null}
     </div>
   );
 }

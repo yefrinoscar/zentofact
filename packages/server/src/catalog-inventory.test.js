@@ -517,7 +517,7 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   const db = {
     query: async (sql, params) => {
       statements.push({ sql, params });
-      if (sql.includes('jsonb_agg')) {
+      if (sql.includes('seller_rows as')) {
         return {
           rows: [{
             product_key: 'p:5',
@@ -536,7 +536,15 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
           }],
         };
       }
-      return { rows: [{ products_count: 1, units_sold: 4, orders_count: 3 }] };
+      return {
+        rows: [{
+          products_count: 1,
+          units_sold: 4,
+          orders_count: 3,
+          sellers_count: 1,
+          sellers: [{ companyId: 8, companyName: 'LIMBO', unitsSold: 4, ordersCount: 3, productsCount: 1 }],
+        }],
+      };
     },
   };
   const result = await listTodayProductSales({ date: '2026-08-12', search: 'AG3', companyId: 8 }, db);
@@ -545,6 +553,9 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.equal(result.products[0].unitsSold, 4);
   assert.equal(result.products[0].mapped, true);
   assert.equal(result.totals.ordersCount, 3);
+  assert.equal(result.totals.sellersCount, 1);
+  assert.equal(result.totals.sellers[0].companyName, 'LIMBO');
+  assert.match(statements[1].sql, /count\(distinct company_id\)/);
   assert.match(statements[0].sql, /timezone\('America\/Lima', \$1::date\)/);
   assert.match(statements[0].sql, /promised_shipping_at/);
   assert.match(statements[0].sql, /PromisedShippingTime/);
