@@ -18,11 +18,11 @@ const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-function limaToday() {
+export function limaToday() {
   return LIMA_DATE.format(new Date());
 }
 
-function limaDate(value) {
+export function limaDate(value) {
   const today = limaToday();
   const date = String(value || today).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(new Date(`${date}T12:00:00`).getTime())) {
@@ -360,11 +360,11 @@ const TODAY_SALES_ELIGIBLE = `(o.id is null or o.order_status in ('new','confirm
     and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
     and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'`;
 
-function limaDaySql(expr) {
-  return `(${expr} is not null and ${expr} >= timezone('America/Lima', $1::date) and ${expr} < timezone('America/Lima', ($1::date + 1)))`;
+export function limaDaySql(expr, param = 1) {
+  return `(${expr} is not null and ${expr} >= timezone('America/Lima', $${param}::date) and ${expr} < timezone('America/Lima', ($${param}::date + 1)))`;
 }
 
-const PROMISED_SHIPPING_SQL = `coalesce(
+export const PROMISED_SHIPPING_SQL = `coalesce(
   o.promised_shipping_at,
   case
     when fo.raw_data->>'PromisedShippingTime' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'

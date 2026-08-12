@@ -1,6 +1,7 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { ingestFalabellaOrder } from '../order-adapters/falabella.js';
 import { normalizeFalabellaOrder } from '../falabella-sync.js';
+import { limaDate, limaDaySql, PROMISED_SHIPPING_SQL } from './product-service.js';
 import { httpError, loadCore, positiveInt } from './utils.js';
 
 const SALES_RANGES = new Set(['30', '90', '365', 'all']);
@@ -291,21 +292,40 @@ async function hydrateMissingRecentOrders(target, companies, kind, dependencies 
   const statusClause = kind === 'returns'
     ? `lower(coalesce(fo.status, '')) ~ '(return)'`
     : `lower(coalesce(fo.status, '')) !~ '(cancel|return|failed)'`;
-  const candidates = (await target.query(
-    `select fo.company_id, fo.order_id, fo.raw_data
-     from falabella_orders fo
-     where fo.company_id=any($1::int[])
-       and ${statusClause}
-       and fo.falabella_created_at >= now() - ($2 * interval '1 day')
-       and not exists (
-         select 1 from orders o
-         join order_items oi on oi.order_id=o.id
-         where o.company_id=fo.company_id and o.external_order_id=fo.order_id
-       )
-     order by fo.falabella_created_at desc
-     limit $3`,
-    [companyIds, LIVE_WINDOW_DAYS, MAX_REMOTE_ORDERS + 1],
-  )).rows;
+  const promisedDate = dependencies.promisedDate ? limaDate(dependencies.promisedDate) : null;
+  const candidates = promisedDate
+    ? (await target.query(
+      `select fo.company_id, fo.order_id, fo.raw_data
+       from falabella_orders fo
+       left join orders o
+         on o.company_id=fo.company_id and o.external_order_id=fo.order_id
+       where fo.company_id=any($1::int[])
+         and ${statusClause}
+         and ${limaDaySql(PROMISED_SHIPPING_SQL, 2)}
+         and not exists (
+           select 1 from orders matched
+           join order_items oi on oi.order_id=matched.id
+           where matched.company_id=fo.company_id and matched.external_order_id=fo.order_id
+         )
+       order by fo.falabella_updated_at desc nulls last
+       limit $3`,
+      [companyIds, promisedDate, MAX_REMOTE_ORDERS + 1],
+    )).rows
+    : (await target.query(
+      `select fo.company_id, fo.order_id, fo.raw_data
+       from falabella_orders fo
+       where fo.company_id=any($1::int[])
+         and ${statusClause}
+         and fo.falabella_created_at >= now() - ($2 * interval '1 day')
+         and not exists (
+           select 1 from orders o
+           join order_items oi on oi.order_id=o.id
+           where o.company_id=fo.company_id and o.external_order_id=fo.order_id
+         )
+       order by fo.falabella_created_at desc
+       limit $3`,
+      [companyIds, LIVE_WINDOW_DAYS, MAX_REMOTE_ORDERS + 1],
+    )).rows;
   const truncated = candidates.length > MAX_REMOTE_ORDERS;
   const pending = candidates.slice(0, MAX_REMOTE_ORDERS);
   if (!pending.length) return { candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, failed: 0, truncated: false };
@@ -435,6 +455,7 @@ export async function hydrateRecentSalesActivity(filters = {}, db, dependencies 
   const live = await refreshLiveOrderHeaders(target, companies, 'sales', dependencies);
   const hydration = await hydrateMissingRecentOrders(target, companies, 'sales', {
     ...dependencies,
+    promisedDate: filters.date || limaDate(),
     correlationId: 'catalog-sales:today',
   });
   return {

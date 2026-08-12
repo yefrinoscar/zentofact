@@ -434,8 +434,18 @@ app.get('/catalog/unmapped-skus', async (c) => {
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/catalog/sales/today', async (c) => {
-  try { return ok(c, await productService.listTodayProductSales(c.req.query())); }
-  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  const startedAt = performance.now();
+  try {
+    const query = c.req.query();
+    const hydration = await catalogSales.hydrateRecentSalesActivity(query);
+    const sales = await productService.listTodayProductSales(query);
+    return ok(c, {
+      ...sales,
+      hydration,
+      durationMs: Math.round(performance.now() - startedAt),
+      source: hydration.coverage.liveVerified ? 'falabella_live' : 'local_fallback',
+    });
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/catalog/sales/today/refresh', async (c) => {
   const startedAt = performance.now();
