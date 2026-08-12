@@ -1,29 +1,33 @@
 # Repository workflow
 
-- `main` is the canonical branch and the production branch.
-- Every new feature must be developed on its own branch created from the latest `main`. Do not implement a new feature directly on `main`.
-- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, open a pull request targeting `main`, and merge it into `main`. Approve the pull request when the hosting platform permits it; if authors cannot approve their own pull requests, merge it without self-approval once the permitted required checks pass.
-- Railway production services must deploy from `main`, not from a feature branch.
+- `main` is the canonical production branch. Railway production services must deploy from `main` only.
+- `dev` is the permanent development and integration branch. Do not delete it or configure production deployments from it.
+- Keep `dev` synchronized with `main`. After every merge or hotfix on `main`, merge `main` back into `dev` before starting more work.
+- Every new feature or fix must be developed on its own short-lived branch created from the latest `dev`. Do not implement regular work directly on `dev` or `main`.
+- All feature and fix pull requests must target `dev`. Merging a pull request into `dev` does not create a production release.
+- Production releases use a pull request from `dev` to `main`. Do not merge another branch directly into `main` unless the user explicitly authorizes an emergency hotfix; immediately merge any such hotfix back into `dev`.
+- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, open a pull request targeting `dev`, and merge it into `dev` after the permitted required checks pass.
+- Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
 
 - `packages/web/package.json` is the source of truth for the application version. Keep its matching entry in `package-lock.json` synchronized.
-- Every pull request merged into `main` must contain exactly one Semantic Versioning increment and produce exactly one GitHub Release. Pull requests closed without merging do not create a release.
-- Apply exactly one release label to every pull request before merging:
+- Every release pull request from `dev` to `main` must contain exactly one Semantic Versioning increment and produce exactly one GitHub Release. Pull requests merged only into `dev`, or closed without merging, do not create a release.
+- Apply exactly one release label to every release pull request before merging into `main`:
   - `release:patch` for fixes and internal changes that preserve existing behavior, including bug fixes, refactors, tests, documentation, dependency updates, performance improvements, and minor UI corrections.
   - `release:minor` for new backward-compatible functionality that does not require existing users or integrations to change.
   - `release:major` for breaking changes that require users, integrations, configuration, or stored data to change.
 - When a pull request contains more than one change type, use the highest-impact increment: `release:major` over `release:minor` over `release:patch`.
-- Compare the version on the feature branch with the current version on `main` and update it as follows:
+- Compare the version on `dev` with the current version on `main` before opening the release pull request and update it as follows:
   - Patch: `X.Y.Z` becomes `X.Y.(Z+1)`.
   - Minor: `X.Y.Z` becomes `X.(Y+1).0`.
   - Major: `X.Y.Z` becomes `(X+1).0.0`.
-- Update the feature branch from the latest `main` immediately before final validation. Recalculate the version if `main` changed while the pull request was open.
+- Update `dev` from the latest `main` immediately before final release validation. Recalculate the version if `main` changed while the release pull request was open.
 - Never reuse an existing version, create a release tag from a feature branch, or manually create an additional version after a release job fails.
-- The pull request description must state the selected release type and why it applies.
+- The release pull request description must state the selected release type and why it applies.
 - After merge, the release workflow tags the merged commit as `vX.Y.Z` and creates the corresponding GitHub Release. If it fails, rerun the same workflow for the same commit.
-- When the user says "commit and push", apply the appropriate release label, wait for the version validation to pass, merge the pull request, and verify that the GitHub Release was created.
+- When the user explicitly asks to release or merge `dev` into `main`, apply the appropriate release label, wait for version validation to pass, merge the release pull request, verify that the GitHub Release was created, and confirm Railway production deployed the merged `main` commit successfully.
 
 ## UI composition
 
@@ -40,3 +44,14 @@
 - Do not use `useEffect` in the product catalog screen. Fetch and cache with React Query, derive defaults during render, and perform selection resets or prefetching from explicit user events.
 - Open product details in a right-side drawer with concise tabs for overview, seller publications, inventory, and on-demand sales. Do not reintroduce inline row expansion for full product details.
 - Until marketplace mutation is explicitly enabled, publication and unpublication controls must remain visual-only. Protect unpublication previews with an explicit typed confirmation and never call a seller API from a visual prototype.
+
+## Git worktrees
+
+Cuando trabajes dentro de un Git worktree:
+
+- Identifica el worktree principal usando `git worktree list --porcelain`.
+- Si `.env` no existe en el nuevo worktree y sí existe en el principal, crea un symlink hacia el `.env` principal.
+- Si `node_modules` no existe y el archivo lock (`package-lock.json`, `pnpm-lock.yaml` o `yarn.lock`) es idéntico al del worktree principal, crea un symlink hacia `node_modules`.
+- Si los archivos lock son diferentes, instala las dependencias en el worktree y no compartas `node_modules`.
+- Nunca reemplaces archivos o directorios existentes.
+- Verifica que los symlinks funcionen antes de continuar.
