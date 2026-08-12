@@ -11,7 +11,7 @@ import {
 } from './catalog/catalog-import.js';
 import { falabellaPublicationSnapshot } from './catalog/listing-snapshot-service.js';
 import { listProducts, listTodayProductSales } from './catalog/product-service.js';
-import { hydrateProductActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
+import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
   groupFalabellaCatalogRecords,
@@ -594,6 +594,36 @@ test('la hidratación de ventas solo pide a Falabella la ventana de 2 días', as
   assert.equal(Number.isNaN(windowStart), false);
   assert.ok(Date.now() - windowStart <= (LIVE_WINDOW_DAYS * 86_400_000) + (10 * 60_000) + 5_000);
   assert.equal(result.live.windowDays, 2);
+});
+
+test('Salidas hidrata pedidos del plazo de envío, no solo los creados hace 2 días', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params = []) => {
+      statements.push({ sql, params });
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.startsWith('select id from companies')) return { rows: [{ id: 8 }] };
+      if (compact.includes('from falabella_sync_state')) {
+        return { rows: [{ company_id: 8, cursor_updated_at: '2026-08-11T12:00:00.000Z', sellers: 1, successful_sellers: 1 }] };
+      }
+      if (compact.includes('not exists')) {
+        assert.match(sql, /PromisedShippingTime/);
+        assert.equal(params[1], '2026-08-12');
+        assert.equal(sql.includes("falabella_created_at >= now() - ($2 * interval '1 day')"), false);
+        return { rows: [] };
+      }
+      if (compact.includes('from falabella_orders fo')) return { rows: [{ order_headers: 76, order_details: 0 }] };
+      return { rows: [] };
+    },
+  };
+  const result = await hydrateRecentSalesActivity({ date: '2026-08-12' }, db, {
+    core: { getCompany: async () => ({ id: 8, falabellaApiUserId: 'user', falabellaApiKey: 'key' }) },
+    orderClientFactory: () => ({
+      getOrdersV2: async () => ({ ok: true, status: 200, data: { orders: [] } }),
+    }),
+  });
+  assert.equal(result.candidates, 0);
+  assert.equal(statements.some(({ sql }) => sql.includes('PromisedShippingTime')), true);
 });
 
 test('import con SKU sanitizado colisionado reutiliza el producto y crea el listing', async () => {
