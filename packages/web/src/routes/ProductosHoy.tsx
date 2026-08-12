@@ -314,7 +314,7 @@ export default function ProductosHoy() {
       <section className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <p className="text-sm font-semibold">{formatNumber(totals.productsCount, 0)} productos · {formatNumber(totals.unitsSold, 0)} u · {formatNumber(totals.ordersCount, 0)} pedidos</p>
-          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Entregas y ventas del día{date === limaToday ? '' : ''}</span>
+          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Salida = plazo de envío Falabella</span>
         </div>
         {salesQuery.isPending ? <div className="grid h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
           : products.length === 0 ? <div className="px-5 py-14 text-center">
@@ -322,7 +322,7 @@ export default function ProductosHoy() {
             <p className="mt-1 text-xs text-muted-foreground">
               {pendingDetailOrders > 0
                 ? `Hay ${formatNumber(pendingDetailOrders, 0)} pedidos de hoy sin líneas. Pulsa actualizar para traer el detalle de Falabella.`
-                : 'Suma pedidos a entregar hoy (plazo Falabella) y pedidos creados hoy. Pulsa actualizar si la bandeja tiene pedidos nuevos.'}
+                : 'Solo cuenta pedidos cuyo PromisedShippingTime cae en este día. Pulsa actualizar si faltan líneas.'}
             </p>
           </div>
             : <div className="min-w-0" aria-busy={salesQuery.isFetching}>

@@ -126,9 +126,11 @@ verdadero; de lo contrario muestra que la consulta está incompleta.
 
 ### Salidas de hoy
 
-`/salidas` agrega desde `orders` y `order_items` los productos vendidos en el
-día de Lima y la cantidad de cada uno, con el saldo de almacén cuando el SKU
-ya está en el catálogo. La lectura inicial no llama a Falabella.
+`/salidas` agrega desde `orders` y `order_items` los productos que salen el
+día de Lima. La fecha operativa es `PromisedShippingTime` (o
+`promised_shipping_at`), no la fecha de compra. Muestra la cantidad de cada
+producto y el saldo de almacén cuando el SKU ya está en el catálogo. La
+lectura inicial no llama a Falabella.
 
 ```http
 GET /catalog/sales/today?date=2026-08-12
