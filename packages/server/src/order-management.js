@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { stockPhase } from './catalog/stock-phase.js';
 
 export const DOCUMENT_REQUIREMENTS = ['disabled', 'optional', 'required'];
 export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'customer_choice'];
@@ -667,9 +668,10 @@ async function ingestOrderInTransaction(input, db) {
   if (!isStale) {
     const items = Array.isArray(input.items) ? input.items.map(normalizeItem) : [];
     const seenIds = [];
+    const upsertedItems = [];
     for (const item of items) {
       seenIds.push(item.externalItemId);
-      await db.query(
+      const itemResult = await db.query(
         `insert into order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
            unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data
@@ -686,7 +688,10 @@ async function ingestOrderInTransaction(input, db) {
            provider_status=excluded.provider_status,
            metadata=order_items.metadata || excluded.metadata,
            raw_data=excluded.raw_data,
-           updated_at=now()`,
+           updated_at=now()
+         returning id, external_item_id, sku, provider_sku, quantity,
+           product_id, listing_id, main_sku, stock_state,
+           stock_applied_quantity, stock_revision`,
         [
           persisted.id,
           item.externalItemId,
@@ -703,16 +708,42 @@ async function ingestOrderInTransaction(input, db) {
           JSON.stringify(item.rawData),
         ],
       );
+      if (itemResult.rows[0]) upsertedItems.push(itemResult.rows[0]);
     }
+    let doomedItems = [];
     if (input.itemsComplete === true) {
       if (seenIds.length) {
-        await db.query(
-          'delete from order_items where order_id=$1 and not (external_item_id = any($2::text[]))',
+        doomedItems = (await db.query(
+          `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+             main_sku, stock_state, stock_applied_quantity, stock_revision
+           from order_items
+           where order_id=$1 and not (external_item_id = any($2::text[]))
+           for update`,
           [persisted.id, seenIds],
-        );
+        )).rows;
       } else {
-        await db.query('delete from order_items where order_id=$1', [persisted.id]);
+        doomedItems = (await db.query(
+          `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+             main_sku, stock_state, stock_applied_quantity, stock_revision
+           from order_items where order_id=$1 for update`,
+          [persisted.id],
+        )).rows;
       }
+    }
+    await stockPhase({
+      db,
+      existing,
+      persisted,
+      account,
+      upsertedItems,
+      doomedItems,
+      source: enumValue(input.source, ['provider', 'webhook', 'sync', 'user', 'system', 'api', 'file', 'manual'], 'source', 'api'),
+      actorUserId: optionalText(input.actorUserId, 300),
+      enabled: input.catalogInventoryEnabled,
+      allowNegative: input.catalogAllowNegative,
+    });
+    if (input.itemsComplete === true && doomedItems.length) {
+      await db.query('delete from order_items where id = any($1::bigint[])', [doomedItems.map((item) => item.id)]);
     }
   }
 
@@ -851,6 +882,7 @@ export async function getOrder(orderId, db) {
     target.query(
       `select id, external_item_id, sku, provider_sku, description, quantity,
          unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data,
+         product_id, listing_id, main_sku, stock_state, stock_applied_quantity, stock_revision,
          created_at, updated_at
        from order_items where order_id=$1 order by id`,
       [id],
@@ -890,6 +922,12 @@ export async function getOrder(orderId, db) {
       taxAmount: row.tax_amount == null ? null : Number(row.tax_amount),
       total: row.total == null ? null : Number(row.total),
       providerStatus: row.provider_status,
+      productId: row.product_id == null ? null : Number(row.product_id),
+      listingId: row.listing_id == null ? null : Number(row.listing_id),
+      mainSku: row.main_sku,
+      stockState: row.stock_state,
+      stockAppliedQuantity: Number(row.stock_applied_quantity || 0),
+      stockRevision: Number(row.stock_revision || 0),
       metadata: row.metadata || {},
       rawData: row.raw_data || {},
       createdAt: row.created_at,

@@ -84,6 +84,34 @@ Directrices visuales:
 - El menú puede tener scroll, pero no debe crecer fuera del viewport.
 - Evitar sobrescribir el radio con valores mayores que `rounded-xl`.
 
+## Tabs
+
+Usar exclusivamente `Tabs`, `TabsList`, `TabsTrigger` y `TabsContent` compartidos.
+
+- El patrón estándar de ZentoFact es segmentado: `TabsList` con fondo muted y cada selección dentro de un trigger compacto.
+- No usar tabs subrayados (`variant="line"`) para drawers o diálogos operativos.
+- En drawers, alinear el grupo a la izquierda con `className="w-full sm:w-auto"`; no repartir los tabs en columnas iguales ni forzar que ocupen todo el ancho en escritorio.
+- El contenido del tab usa la misma superficie del drawer o diálogo, separado mediante espacio o un borde simple. No envolver cada tab en una tarjeta nueva.
+- Los contadores cortos pueden aparecer dentro del trigger, junto a la etiqueta.
+- Cuando un diálogo modal está abierto sobre un drawer, los tabs del fondo quedan bloqueados y no deben responder a clics ni recibir foco.
+
+### Resumen de publicaciones en el drawer
+
+- Agrupar primero por canal y representar cada canal con una sola superficie secundaria sobria.
+- Dentro del canal, mostrar los sellers como una lista o cuadrícula compacta de elementos sin bordes individuales.
+- Cada seller muestra el nombre comercial corto y un dato secundario útil, como el SKU del seller o la cantidad de publicaciones.
+- No concatenar todos los sellers en una sola línea separada por puntos, ni crear una tarjeta dentro de otra por cada seller.
+- Reservar la tabla detallada, precios, stock y controles de publicación para el tab `Publicaciones`.
+
+### Detalle de publicaciones y producto
+
+- El tab `Publicaciones` separa cada seller con una franja de espacio o fondo perceptible; un borde fino entre bloques altos no es suficiente.
+- Dentro de cada publicación, etiquetar explícitamente `SKU del seller` y `Shop SKU`; no mostrarlos como una cadena ambigua.
+- En la cabecera del drawer, anteponer `SKU interno` al código canónico para diferenciarlo de los códigos de marketplace.
+- La navegación entre registros del drawer es secundaria: usar un único control segmentado compacto `‹ N / total ›` a la derecha de la identidad y debajo de ella en móvil. No añadir otra franja, botones grandes ni texto que compita con el título o el cierre.
+- La foto principal se edita desde la miniatura de la cabecera. Las fotos preparadas para una publicación pertenecen al formulario de ese seller y no modifican otras publicaciones.
+- Al seleccionar un seller para una nueva publicación, sugerir un SKU basado en su nombre corto, ID de empresa y SKU interno. El operador siempre puede editar SKU y precio antes de continuar.
+
 ## Botones
 
 Usar `Button` y sus variantes.
@@ -153,9 +181,20 @@ No debe repetir el título y descripción de la página.
 ### Paginación
 
 - Las tablas administrativas muestran 10 filas por defecto.
+- El catálogo de productos muestra 20 productos por página porque su navegación es operativa y server-side.
 - El pie indica “Mostrando X de Y”.
 - `Anterior` y `Siguiente` usan botones compactos.
 - No renderizar paginación falsa cuando todos los resultados caben en una página.
+
+### Expansión compacta por fila
+
+- La fila maestra puede incluir un chevron para mostrar un resumen operativo directamente debajo del producto.
+- El nombre del producto se muestra completo; no se trunca en la fila maestra ni en el encabezado del drawer.
+- En la tabla del catálogo, `Stock` suma el stock API de todas las publicaciones activas y aprobadas; el inventario interno se muestra por separado en el tab `Inventario`.
+- En catálogo, la expansión carga bajo demanda las publicaciones por seller con canal, SKU, precio y stock.
+- La expansión no replica el detalle completo, formularios ni acciones sensibles; esas funciones permanecen en el drawer.
+- El chevron no abre el drawer y el clic sobre el resto de la fila sí lo abre.
+- Cambiar búsqueda, filtros o página contrae las filas abiertas.
 
 ## Estados y etiquetas
 
@@ -197,6 +236,9 @@ Estado vacío estándar:
 ## Formularios y diálogos
 
 - Usar `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle` y `DialogFooter`.
+- No implementar overlays con `div` fijos manuales. El `Dialog` compartido debe controlar portal, foco, Escape, cierre y bloqueo del contenido de fondo.
+- Un diálogo abierto desde un `Sheet` se renderiza por encima del drawer; su overlay debe cubrir y bloquear también el drawer.
+- La X del componente compartido siempre cierra el diálogo mediante `DialogClose`. Verificar también cierre con Escape y que el fondo no acepte interacción.
 - Usar `Input`, `Label`, `Select`, `Switch` y `Checkbox` compartidos.
 - Radio de campos y diálogo moderado.
 - Formularios extensos pueden usar grid de dos columnas en escritorio y una en móvil.

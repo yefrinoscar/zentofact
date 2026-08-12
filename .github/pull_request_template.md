@@ -6,9 +6,16 @@
 
 <!-- Summarize the net change. -->
 
-## Release type
+## Pull request target
 
-<!-- Select one option and apply the matching release label to the pull request. -->
+<!-- Regular feature and fix pull requests target dev. Production releases use dev -> main. -->
+
+- [ ] Integration — feature or fix targeting `dev`; no release label or version increment
+- [ ] Production release — `dev` targeting `main`; complete the release section below
+
+## Release type (dev -> main only)
+
+<!-- For a production release, select one option and apply exactly one matching release label. -->
 
 - [ ] Patch — fixes or maintenance that preserve existing behavior (`release:patch`)
 - [ ] Minor — new backward-compatible functionality (`release:minor`)

@@ -1005,6 +1005,138 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku);
 
+  -- Catálogo canónico multi-seller. El producto representa la unidad física y
+  -- su inventario es compartido por todos los listings de la instancia.
+  CREATE TABLE IF NOT EXISTS products (
+    id BIGSERIAL PRIMARY KEY,
+    main_sku TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    brand TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    barcode TEXT,
+    image_url TEXT,
+    reference_price NUMERIC(14,2),
+    unit TEXT NOT NULL DEFAULT 'each',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by TEXT,
+    updated_by TEXT,
+    CHECK (char_length(trim(main_sku)) BETWEEN 1 AND 64),
+    CHECK (status IN ('active', 'inactive', 'archived')),
+    CHECK (unit IN ('each'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_products_status_updated
+    ON products(status, updated_at DESC, id DESC);
+
+  -- Búsqueda operacional del catálogo. Trigram mantiene rápidas las búsquedas
+  -- parciales por SKU/nombre cuando la tabla crece.
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  CREATE INDEX IF NOT EXISTS idx_products_main_sku_trgm
+    ON products USING GIN (main_sku gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_products_name_trgm
+    ON products USING GIN (name gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_products_brand_trgm
+    ON products USING GIN (brand gin_trgm_ops);
+
+  CREATE TABLE IF NOT EXISTS product_listings (
+    id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    channel_code TEXT NOT NULL,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    channel_account_id BIGINT REFERENCES order_channel_accounts(id) ON DELETE SET NULL,
+    seller_sku TEXT NOT NULL,
+    shop_sku TEXT,
+    external_product_id TEXT,
+    title TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    marketplace_quantity NUMERIC(14,4),
+    marketplace_synced_at TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (channel_code, company_id, seller_sku),
+    CHECK (channel_code ~ '^[a-z][a-z0-9_-]{1,49}$'),
+    CHECK (status IN ('active', 'inactive', 'unlinked'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_product_listings_product ON product_listings(product_id);
+  CREATE INDEX IF NOT EXISTS idx_product_listings_company_channel
+    ON product_listings(company_id, channel_code);
+  CREATE INDEX IF NOT EXISTS idx_product_listings_active_shop_sku
+    ON product_listings(channel_code, company_id, shop_sku)
+    WHERE shop_sku IS NOT NULL AND shop_sku <> '' AND status = 'active';
+  CREATE INDEX IF NOT EXISTS idx_product_listings_seller_sku_trgm
+    ON product_listings USING GIN (seller_sku gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_product_listings_shop_sku_trgm
+    ON product_listings USING GIN (shop_sku gin_trgm_ops)
+    WHERE shop_sku IS NOT NULL AND shop_sku <> '';
+
+  CREATE TABLE IF NOT EXISTS product_inventory (
+    product_id BIGINT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+    quantity_on_hand NUMERIC(14,4) NOT NULL DEFAULT 0,
+    quantity_reserved NUMERIC(14,4) NOT NULL DEFAULT 0,
+    reorder_point NUMERIC(14,4),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (quantity_reserved >= 0)
+  );
+
+  ALTER TABLE order_items
+    ADD COLUMN IF NOT EXISTS product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS listing_id BIGINT REFERENCES product_listings(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS main_sku TEXT,
+    ADD COLUMN IF NOT EXISTS stock_state TEXT NOT NULL DEFAULT 'none',
+    ADD COLUMN IF NOT EXISTS stock_applied_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS stock_revision INTEGER NOT NULL DEFAULT 0;
+  CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
+  CREATE INDEX IF NOT EXISTS idx_order_items_stock_queue
+    ON order_items(stock_state, updated_at DESC)
+    WHERE stock_state IN ('skipped_unmapped', 'skipped_insufficient');
+
+  DO $$ BEGIN
+    ALTER TABLE order_items ADD CONSTRAINT order_items_stock_state_check
+      CHECK (stock_state IN (
+        'none', 'pending', 'applied', 'reversed', 'skipped_unmapped',
+        'skipped_policy', 'skipped_insufficient'
+      ));
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+  DO $$ BEGIN
+    ALTER TABLE order_items ADD CONSTRAINT order_items_stock_revision_check
+      CHECK (stock_revision >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+  DO $$ BEGIN
+    ALTER TABLE order_items ADD CONSTRAINT order_items_stock_applied_quantity_check
+      CHECK (stock_applied_quantity >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+  CREATE TABLE IF NOT EXISTS inventory_movements (
+    id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    movement_type TEXT NOT NULL,
+    quantity_delta NUMERIC(14,4) NOT NULL,
+    quantity_after NUMERIC(14,4) NOT NULL,
+    reason TEXT,
+    actor_user_id TEXT,
+    source TEXT NOT NULL,
+    order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+    order_item_id BIGINT REFERENCES order_items(id) ON DELETE SET NULL,
+    listing_id BIGINT REFERENCES product_listings(id) ON DELETE SET NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (movement_type IN (
+      'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
+      'return', 'initial', 'import'
+    )),
+    CHECK (quantity_delta <> 0)
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_created
+    ON inventory_movements(product_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_order
+    ON inventory_movements(order_id) WHERE order_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
+    ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
+
   CREATE TABLE IF NOT EXISTS order_events (
     id BIGSERIAL PRIMARY KEY,
     order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,

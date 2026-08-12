@@ -208,6 +208,9 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   assert.equal(lifecycle.params[4], '2026-07-03T10:00:00.000Z');
   const coverage = db.queries.find((query) => query.sql.startsWith('insert into falabella_sync_windows'));
   assert.deepEqual(coverage.params.slice(0, 2), [7, '2026-07']);
+  const detailHydration = db.queries.find((query) => query.sql.includes('fo.synchronized_at >= $3'));
+  assert.ok(detailHydration, 'el sync debe limitar los detalles a órdenes observadas en esta ejecución');
+  assert.equal(Number.isNaN(Date.parse(detailHydration.params[2])), false);
   assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'month'), true);
 });
 
