@@ -551,6 +551,7 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.doesNotMatch(statements[0].sql, /falabella_created_at/);
   assert.match(statements[0].sql, /o\.company_id=\$2/);
   assert.match(statements[0].sql, /left join product_listings linked on linked\.id=oi\.listing_id/);
+  assert.match(statements[0].sql, /metadata->'images'->>0/);
   assert.match(statements[0].sql, /left join lateral/);
   assert.match(statements[0].sql, /lower\(l\.title\)=lower\(oi\.description\)/);
   assert.match(statements[0].sql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);

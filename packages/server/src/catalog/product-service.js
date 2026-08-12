@@ -424,7 +424,29 @@ export async function listTodayProductSales(filters = {}, db) {
         coalesce(oi.product_id, linked.product_id, listing.product_id) as product_id,
         coalesce(nullif(p.main_sku, ''), nullif(oi.main_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, ''), 'SIN-SKU') as sku,
         coalesce(nullif(p.name, ''), nullif(linked.title, ''), nullif(listing.title, ''), nullif(oi.description, ''), nullif(oi.sku, ''), 'Producto sin nombre') as name,
-        p.image_url,
+        coalesce(
+          nullif(p.image_url, ''),
+          nullif(listing.metadata->'images'->>0, ''),
+          nullif(listing.metadata->>'imageUrl', ''),
+          nullif(listing.metadata->>'fingerprintImageUrl', ''),
+          nullif(linked.metadata->'images'->>0, ''),
+          nullif(linked.metadata->>'imageUrl', ''),
+          nullif(oi.raw_data->>'Image', ''),
+          nullif(oi.raw_data->>'ProductImage', ''),
+          nullif(oi.raw_data->>'MainImage', ''),
+          (
+            select coalesce(nullif(photo.metadata->'images'->>0, ''), nullif(photo.metadata->>'imageUrl', ''))
+            from product_listings photo
+            where photo.product_id=coalesce(oi.product_id, linked.product_id, listing.product_id)
+              and photo.status='active'
+              and (
+                nullif(photo.metadata->'images'->>0, '') is not null
+                or nullif(photo.metadata->>'imageUrl', '') is not null
+              )
+            order by photo.id
+            limit 1
+          )
+        ) as image_url,
         p.brand,
         i.quantity_on_hand,
         coalesce(i.quantity_on_hand, 0) - coalesce(i.quantity_reserved, 0) as available,
@@ -442,7 +464,7 @@ export async function listTodayProductSales(filters = {}, db) {
       left join companies c on c.id=o.company_id
       left join product_listings linked on linked.id=oi.listing_id
       left join lateral (
-        select l.product_id, l.title, l.seller_sku, l.shop_sku
+        select l.product_id, l.title, l.seller_sku, l.shop_sku, l.metadata
         from product_listings l
         where l.company_id=o.company_id
           and l.status='active'
