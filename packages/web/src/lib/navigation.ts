@@ -41,7 +41,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/orders', icon: ListOrdered, label: 'Seguimiento multicanal', permission: 'order_management', hiddenInProduction: true },
-      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
+      { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos' },
     ],
   },
   {

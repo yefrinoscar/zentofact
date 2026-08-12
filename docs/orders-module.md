@@ -283,6 +283,13 @@ Los importes deben almacenarse en `numeric`, no en punto flotante.
 
 ### `order_items`
 
+> Este bloque describe el modelo objetivo de la épica de pedidos manuales. El
+> esquema multicanal que existe hoy conserva `description`, `provider_sku` y
+> los importes actuales. El catálogo ya agrega `product_id`, `listing_id`,
+> `main_sku`, `stock_state`, `stock_applied_quantity` y `stock_revision`; ver
+> [Catálogo e inventario multi-seller](catalog-inventory.md). La futura
+> migración de pedidos no debe reemplazar ni reinicializar esas columnas.
+
 ```text
 id
 order_id
@@ -562,6 +569,8 @@ agregar estados fiscales a la tabla ni al flujo de Pedidos.
 - Falabella crea pedidos automáticamente sin duplicarlos.
 - No se muestran comprobantes, estados SUNAT ni configuración de canales.
 - Las pantallas actuales continúan funcionando durante la migración.
+- Confirmar o cancelar un pedido debe reutilizar el hook transaccional de stock
+  del catálogo; no debe implementar un segundo descuento de inventario.
 
 ## Referencias de diseño investigadas
 

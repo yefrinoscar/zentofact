@@ -144,7 +144,7 @@ export type { CreateCreditNoteFromBoletaOptions, CreateCreditNoteFromFacturaOpti
 export { getCorrelatives } from './services/correlative-query.service';
 export {
   falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
-  falabellaGetProducts, falabellaCreateProduct,
+  falabellaGetProducts, falabellaGetStock, falabellaCreateProduct,
   falabellaGetFeeds, falabellaGetFeedStatus,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
   falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook,
