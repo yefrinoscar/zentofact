@@ -382,11 +382,7 @@ export async function listTodayProductSales(filters = {}, db) {
   const date = limaDate(filters.date);
   const values = [date];
   const where = [
-    `(
-      ${limaDaySql(PROMISED_SHIPPING_SQL)}
-      or ${limaDaySql('o.ordered_at')}
-      or ${limaDaySql('fo.falabella_created_at')}
-    )`,
+    limaDaySql(PROMISED_SHIPPING_SQL),
     TODAY_SALES_ELIGIBLE,
   ];
   if (filters.companyId) {
@@ -532,11 +528,7 @@ export async function listTodayProductSales(filters = {}, db) {
          on o.company_id=fo.company_id and o.external_order_id=fo.order_id
        where lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
          ${filters.companyId ? 'and fo.company_id=$2' : ''}
-         and (
-           ${limaDaySql(PROMISED_SHIPPING_SQL)}
-           or ${limaDaySql('o.ordered_at')}
-           or ${limaDaySql('fo.falabella_created_at')}
-         )
+         and ${limaDaySql(PROMISED_SHIPPING_SQL)}
          and not exists (
            select 1 from orders matched
            join order_items item on item.order_id=matched.id

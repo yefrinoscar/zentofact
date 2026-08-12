@@ -547,7 +547,8 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.equal(result.totals.ordersCount, 3);
   assert.match(statements[0].sql, /timezone\('America\/Lima', \$1::date\)/);
   assert.match(statements[0].sql, /promised_shipping_at/);
-  assert.match(statements[0].sql, /falabella_created_at/);
+  assert.match(statements[0].sql, /PromisedShippingTime/);
+  assert.doesNotMatch(statements[0].sql, /falabella_created_at/);
   assert.match(statements[0].sql, /o\.company_id=\$2/);
   assert.match(statements[0].sql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(statements[0].sql, /left join lateral/);
