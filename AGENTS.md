@@ -48,11 +48,17 @@
 
 ## Git worktrees
 
-Cuando trabajes dentro de un Git worktree:
+Cuando trabajes dentro de un Git worktree, o al crear una rama/worktree nueva, ejecuta primero:
 
-- Identifica el worktree principal usando `git worktree list --porcelain`.
-- Si `.env` no existe en el nuevo worktree y sí existe en el principal, crea un symlink hacia el `.env` principal.
-- Si `node_modules` no existe y el archivo lock (`package-lock.json`, `pnpm-lock.yaml` o `yarn.lock`) es idéntico al del worktree principal, crea un symlink hacia `node_modules`.
+```bash
+npm run worktree:setup
+```
+
+Ese script (`scripts/setup-worktree.sh`) hace el arranque y no reemplaza nada que ya exista:
+
+- Identifica el worktree principal con `git worktree list --porcelain`.
+- Si `.env` no existe aquí y sí existe en el principal, crea un symlink hacia ese `.env`. Si el principal todavía no lo tiene, usa el primer worktree hermano que sí lo tenga.
+- Si `node_modules` no existe y el lock (`package-lock.json`, `pnpm-lock.yaml` o `yarn.lock`) es idéntico al del origen, crea un symlink hacia esos `node_modules`.
 - Si los archivos lock son diferentes, instala las dependencias en el worktree y no compartas `node_modules`.
 - Nunca reemplaces archivos o directorios existentes.
 - Verifica que los symlinks funcionen antes de continuar.

@@ -9,6 +9,7 @@ const MAX_REMOTE_ORDERS = 500;
 const LIVE_PAGE_SIZE = 100;
 const MAX_LIVE_PAGES = 5;
 const LIVE_OVERLAP_MS = 10 * 60_000;
+export const LIVE_WINDOW_DAYS = 2;
 
 function extractOrderItems(document) {
   const candidate = document?.SuccessResponse?.Body?.OrderItems?.OrderItem
@@ -115,12 +116,11 @@ async function upsertLiveOrderHeaders(target, companyId, orders) {
   return rows.length;
 }
 
-function liveRangeStart(range) {
-  const days = range === 'all' ? 365 : Number(range);
-  return new Date(Date.now() - days * 86_400_000).toISOString();
+function liveWindowStart() {
+  return new Date(Date.now() - LIVE_WINDOW_DAYS * 86_400_000).toISOString();
 }
 
-async function refreshLiveOrderHeaders(target, companies, range, kind, dependencies) {
+async function refreshLiveOrderHeaders(target, companies, kind, dependencies) {
   const orderClientFactory = dependencies.orderClientFactory || ((company) => new FalabellaApiClient({
     userId: company.falabellaApiUserId,
     apiKey: company.falabellaApiKey,
@@ -136,9 +136,10 @@ async function refreshLiveOrderHeaders(target, companies, range, kind, dependenc
     truncated: false,
     incrementalSellers: 0,
     bootstrapSellers: 0,
+    windowDays: LIVE_WINDOW_DAYS,
     queriedAt: new Date().toISOString(),
   };
-  const rangeFloor = new Date(liveRangeStart(range)).getTime();
+  const rangeFloor = new Date(liveWindowStart()).getTime();
   const syncStates = companies.length ? (await target.query(
     `select company_id, cursor_updated_at
      from falabella_sync_state where company_id=any($1::int[]) and enabled=true`,
@@ -265,58 +266,49 @@ async function activityCoverage(target, companyIds, range, kind) {
   };
 }
 
-/**
- * Recupera líneas históricas solo cuando el operador abre Ventas o Devoluciones. La lectura
- * remota se cachea en order_items y se marca skipped_policy para no backfillear stock.
- */
-export async function hydrateProductActivity(id, filters = {}, db, dependencies = {}) {
-  const core = dependencies.core || await loadCore();
-  const target = db || core.pool;
-  const productId = positiveInt(id, 'productId');
-  const range = String(filters.range || '30').trim().toLowerCase();
-  const kind = String(filters.kind || 'sales').trim().toLowerCase();
-  if (!SALES_RANGES.has(range)) throw httpError('range inválido.');
-  if (!ACTIVITY_KINDS.has(kind)) throw httpError('kind inválido.');
-  const repairedItems = await repairHydratedQuantities(target, productId);
-
-  const listings = (await target.query(
-    `select distinct company_id
-     from product_listings
-     where product_id=$1 and channel_code='falabella' and status='active'`,
-    [productId],
-  )).rows;
-  const companyIds = listings.map((row) => Number(row.company_id));
+async function loadCompaniesById(companyIds, dependencies, core) {
   const getCompany = dependencies.getCompany || core.getCompany;
-  const companies = (await Promise.all(companyIds.map((companyId) => getCompany(companyId)))).filter(Boolean);
-  const live = await refreshLiveOrderHeaders(target, companies, range, kind, dependencies);
-  if (!companyIds.length) return { candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, repairedItems, failed: 0, truncated: false, live, coverage: coverageWithLive(await activityCoverage(target, [], range, kind), live) };
+  return (await Promise.all(companyIds.map((companyId) => getCompany(companyId)))).filter(Boolean);
+}
 
-  const values = [companyIds];
-  const rangeClause = range === 'all'
-    ? ''
-    : (values.push(Number(range)), `and fo.falabella_created_at >= now() - ($${values.length} * interval '1 day')`);
+async function listFalabellaCompanyIds(target, companyId) {
+  if (companyId) return [companyId];
+  const rows = (await target.query(
+    `select id from companies
+     where coalesce(activo, true) = true
+       and nullif(trim(falabella_api_user_id), '') is not null
+       and nullif(trim(falabella_api_key), '') is not null
+     order by id`,
+  )).rows;
+  return rows.map((row) => Number(row.id));
+}
+
+async function hydrateMissingRecentOrders(target, companies, kind, dependencies = {}) {
+  const companyIds = companies.map((company) => Number(company.id)).filter((id) => id > 0);
+  if (!companyIds.length) {
+    return { candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, failed: 0, truncated: false };
+  }
   const statusClause = kind === 'returns'
     ? `lower(coalesce(fo.status, '')) ~ '(return)'`
     : `lower(coalesce(fo.status, '')) !~ '(cancel|return|failed)'`;
-  values.push(MAX_REMOTE_ORDERS + 1);
   const candidates = (await target.query(
     `select fo.company_id, fo.order_id, fo.raw_data
      from falabella_orders fo
      where fo.company_id=any($1::int[])
        and ${statusClause}
-       ${rangeClause}
+       and fo.falabella_created_at >= now() - ($2 * interval '1 day')
        and not exists (
          select 1 from orders o
          join order_items oi on oi.order_id=o.id
          where o.company_id=fo.company_id and o.external_order_id=fo.order_id
        )
      order by fo.falabella_created_at desc
-     limit $${values.length}`,
-    values,
+     limit $3`,
+    [companyIds, LIVE_WINDOW_DAYS, MAX_REMOTE_ORDERS + 1],
   )).rows;
   const truncated = candidates.length > MAX_REMOTE_ORDERS;
   const pending = candidates.slice(0, MAX_REMOTE_ORDERS);
-  if (!pending.length) return { candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, repairedItems, failed: 0, truncated: false, live, coverage: coverageWithLive(await activityCoverage(target, companyIds, range, kind), live) };
+  if (!pending.length) return { candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, failed: 0, truncated: false };
 
   const detailClientFactory = dependencies.detailClientFactory || dependencies.clientFactory || ((company) => new FalabellaApiClient({
     userId: company.falabellaApiUserId,
@@ -331,6 +323,7 @@ export async function hydrateProductActivity(id, filters = {}, db, dependencies 
     clients.set(companyId, detailClientFactory(company));
   }
 
+  const correlationId = dependencies.correlationId || 'catalog-sales:recent';
   let checked = 0;
   let hydrated = 0;
   let resolvedItems = 0;
@@ -364,7 +357,7 @@ export async function hydrateProductActivity(id, filters = {}, db, dependencies 
         companyId,
         normalized,
         source: 'system',
-        correlationId: `catalog-sales:${productId}`,
+        correlationId,
         catalogInventoryEnabled: false,
       });
       hydrated += 1;
@@ -373,7 +366,6 @@ export async function hydrateProductActivity(id, filters = {}, db, dependencies 
       failed += 1;
       console.warn(JSON.stringify({
         event: 'catalog.sales.hydration_failed',
-        productId,
         companyId,
         orderId: order.order_id,
         message: String(error?.message || error),
@@ -386,10 +378,68 @@ export async function hydrateProductActivity(id, filters = {}, db, dependencies 
     checked,
     hydrated,
     resolvedItems,
-    repairedItems,
     failed,
     truncated,
+  };
+}
+
+/**
+ * Recupera líneas recientes solo cuando el operador abre Ventas, Devoluciones
+ * o actualiza Salidas de hoy. Falabella se consulta como máximo 2 días; el
+ * histórico se lee de orders/order_items. Las líneas se marcan skipped_policy
+ * para no backfillear stock.
+ */
+export async function hydrateProductActivity(id, filters = {}, db, dependencies = {}) {
+  const core = dependencies.core || await loadCore();
+  const target = db || core.pool;
+  const productId = positiveInt(id, 'productId');
+  const range = String(filters.range || '30').trim().toLowerCase();
+  const kind = String(filters.kind || 'sales').trim().toLowerCase();
+  if (!SALES_RANGES.has(range)) throw httpError('range inválido.');
+  if (!ACTIVITY_KINDS.has(kind)) throw httpError('kind inválido.');
+  const repairedItems = await repairHydratedQuantities(target, productId);
+
+  const listings = (await target.query(
+    `select distinct company_id
+     from product_listings
+     where product_id=$1 and channel_code='falabella' and status='active'`,
+    [productId],
+  )).rows;
+  const companyIds = listings.map((row) => Number(row.company_id));
+  const companies = await loadCompaniesById(companyIds, dependencies, core);
+  const live = await refreshLiveOrderHeaders(target, companies, kind, dependencies);
+  if (!companyIds.length) {
+    return {
+      candidates: 0, checked: 0, hydrated: 0, resolvedItems: 0, repairedItems, failed: 0, truncated: false,
+      live, coverage: coverageWithLive(await activityCoverage(target, [], range, kind), live),
+    };
+  }
+  const hydration = await hydrateMissingRecentOrders(target, companies, kind, {
+    ...dependencies,
+    correlationId: `catalog-sales:${productId}`,
+  });
+  return {
+    ...hydration,
+    repairedItems,
     live,
     coverage: coverageWithLive(await activityCoverage(target, companyIds, range, kind), live),
+  };
+}
+
+export async function hydrateRecentSalesActivity(filters = {}, db, dependencies = {}) {
+  const core = dependencies.core || await loadCore();
+  const target = db || core.pool;
+  const companyId = filters.companyId ? positiveInt(filters.companyId, 'companyId') : null;
+  const companyIds = await listFalabellaCompanyIds(target, companyId);
+  const companies = await loadCompaniesById(companyIds, dependencies, core);
+  const live = await refreshLiveOrderHeaders(target, companies, 'sales', dependencies);
+  const hydration = await hydrateMissingRecentOrders(target, companies, 'sales', {
+    ...dependencies,
+    correlationId: 'catalog-sales:today',
+  });
+  return {
+    ...hydration,
+    live,
+    coverage: coverageWithLive(await activityCoverage(target, companyIds, String(LIVE_WINDOW_DAYS), 'sales'), live),
   };
 }

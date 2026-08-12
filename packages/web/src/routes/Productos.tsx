@@ -108,6 +108,7 @@ type ActivityResponse = {
       truncated: boolean;
       incrementalSellers: number;
       bootstrapSellers: number;
+      windowDays?: number;
       queriedAt: string;
     };
     coverage: {
@@ -229,7 +230,7 @@ function activityCaption(activity: ActivityResponse, ordersLabel: string) {
     : `${coverage.orderDetails} de ${coverage.orderHeaders} ${ordersLabel} revisados`;
   const sourceText = coverage.liveVerified
     ? live.bootstrapSellers > 0
-      ? `Falabella inicializado ${formatDate(coverage.liveQueriedAt)}`
+      ? `Falabella consultado ${live.windowDays || 2} días ${formatDate(coverage.liveQueriedAt)}`
       : `Cambios recientes verificados ${formatDate(coverage.liveQueriedAt)}`
     : `verificación en vivo incompleta${coverage.dataUpdatedThrough ? ` · datos locales hasta ${formatDate(coverage.dataUpdatedThrough)}` : ''}`;
   return `${sourceText} · ${reviewed} · ${formatDuration(activity.durationMs)}`;

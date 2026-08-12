@@ -118,8 +118,13 @@ for (const [prefix, perm] of moduleGuards) {
   app.use(`${prefix}/*`, permissionGuard);
 }
 
+const catalogGuard = (c, next) => {
+  if (c.req.path === '/catalog/sales/today' || c.req.path === '/catalog/sales/today/refresh') {
+    return requireAnyPermission(['productos', 'salidas'])(c, next);
+  }
+  return requirePermission('productos')(c, next);
+};
 for (const prefix of ['/products', '/product-listings', '/inventory', '/catalog']) {
-  const catalogGuard = requirePermission('productos');
   app.use(prefix, catalogGuard);
   app.use(`${prefix}/*`, catalogGuard);
 }
@@ -427,6 +432,24 @@ app.post('/catalog/refresh-listing-snapshots', async (c) => {
 app.get('/catalog/unmapped-skus', async (c) => {
   try { return ok(c, await catalogOperations.listUnmappedSkus(c.req.query())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/catalog/sales/today', async (c) => {
+  try { return ok(c, await productService.listTodayProductSales(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/sales/today/refresh', async (c) => {
+  const startedAt = performance.now();
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const hydration = await catalogSales.hydrateRecentSalesActivity(body);
+    const sales = await productService.listTodayProductSales(body);
+    return ok(c, {
+      ...sales,
+      hydration,
+      durationMs: Math.round(performance.now() - startedAt),
+      source: hydration.coverage.liveVerified ? 'falabella_live' : 'local_fallback',
+    });
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Usuarios (solo admin / permiso users) ──
