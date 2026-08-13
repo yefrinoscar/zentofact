@@ -60,6 +60,30 @@ function withTimeout(promise, message) {
   ]).finally(() => clearTimeout(timeout));
 }
 
+export async function extractShippingLabelTrackingCodes(pdfBuffer) {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const document = await getDocument({
+    data: new Uint8Array(pdfBuffer),
+    disableWorker: true,
+    verbosity: 0,
+  }).promise;
+  const codes = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const fragments = content.items.map((item) => String(item?.str || '').trim()).filter(Boolean);
+      const candidates = [...fragments, fragments.join(' ')]
+        .flatMap((value) => value.match(/\d{15,30}/g) || []);
+      codes.push(candidates.sort((left, right) => right.length - left.length)[0] || '');
+      page.cleanup();
+    }
+  } finally {
+    await document.destroy();
+  }
+  return codes;
+}
+
 function isPrivateIp(address) {
   const normalized = String(address || '').toLowerCase().split('%')[0];
   if (!normalized) return true;
@@ -921,6 +945,9 @@ export async function buildA4ShippingLabelSheet(orders, getShippingLabel, getOrd
             error.providerStatus = Number(inventory?.status || 0);
             throw error;
           }
+        }
+        if (options.onOrderLoaded) {
+          await options.onOrderLoaded({ order, label: labels[index], inventory });
         }
       } catch (error) {
         stopped = true;

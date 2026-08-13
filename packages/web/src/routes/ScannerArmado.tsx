@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
 import {
+  AlertTriangle,
   Camera,
   Clock3,
   Hash,
@@ -385,6 +386,16 @@ function PickingResultView({
         </div>
         <Button className="shrink-0" onClick={onReset}><ScanLine />Escanear de nuevo</Button>
       </div>
+
+      {String(order.status || '').toLowerCase().includes('pending') && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
+          <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">Pedido todavía pendiente en Falabella</p>
+            <p className="mt-0.5 text-xs leading-relaxed">Verifica que el tracking y los productos coincidan antes de despachar. Este flujo de etiquetas pendientes debe revisarse nuevamente.</p>
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="text-lg font-semibold">Productos del bulto</h2>

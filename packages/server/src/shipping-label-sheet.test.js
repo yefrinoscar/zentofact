@@ -7,6 +7,7 @@ import {
   appendTicketInventoryPages,
   buildA4ShippingLabelSheet,
   composeA4ShippingLabelSheet,
+  extractShippingLabelTrackingCodes,
   inventoryForTicket,
   shippingLabelCropBox,
   ticketCode,
@@ -20,6 +21,20 @@ async function sampleLabel(width = 200, height = 320, pages = 1) {
   }
   return pdf.save();
 }
+
+test('extrae el tracking largo del texto de cada página de Falabella', async () => {
+  const pdf = await PDFDocument.create();
+  const first = pdf.addPage([300, 400]);
+  first.drawText('Orden 3248342012');
+  first.drawText('240121000011894785', { y: 200 });
+  const second = pdf.addPage([300, 400]);
+  second.drawText('240111000011900534');
+
+  assert.deepEqual(
+    await extractShippingLabelTrackingCodes(await pdf.save()),
+    ['240121000011894785', '240111000011900534'],
+  );
+});
 
 const SAMPLE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nS8AAAAASUVORK5CYII=',

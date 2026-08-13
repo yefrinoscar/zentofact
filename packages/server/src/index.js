@@ -675,6 +675,7 @@ app.get('/falabella/picking/scan', async (c) => {
     return ok(c, await pickingScanner.lookupPickingScan({
       db: core.pool,
       getOrderItems: core.falabellaGetOrderItems,
+      getShippingLabel: core.falabellaGetShippingLabel,
       input: c.req.query('code') || '',
     }));
   } catch (e) {
@@ -855,7 +856,7 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
         || raw.SellerName
         || `company:${Number(order.companyId)}`,
       ).trim();
-      return { ...order, sellerKey };
+      return { ...order, sellerKey, status: stored.status };
     });
     const result = await shippingLabelSheet.buildA4ShippingLabelSheet(
       ordersGroupedBySeller,
@@ -868,13 +869,6 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
         const stored = orderDetailsByKey.get(`${companyId}:${orderId}`) || {};
         const raw = stored.raw_data || {};
         const inventory = await core.falabellaGetOrderItems({ companyId, orderId });
-        await pickingScanner.saveFalabellaTicketSnapshot(core.pool, {
-          companyId,
-          orderId,
-          orderNumber: stored.order_number || orderNumber,
-        }, inventory).catch((error) => {
-          console.warn('[PICKING SNAPSHOT]', error?.message || error);
-        });
         return {
           ...inventory,
           orderNumber: stored.order_number || orderNumber,
@@ -887,6 +881,23 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
           shippingType: String(raw.ShippingType || '').trim(),
           orderDescription: String(raw.OrderDescription || raw.Description || raw.Remarks || raw.Notes || '').trim(),
         };
+      },
+      {
+        onOrderLoaded: async ({ order, label, inventory }) => {
+          const pending = String(order.status || '').toLowerCase().includes('pending');
+          let trackingCodes = [];
+          try {
+            trackingCodes = await shippingLabelSheet.extractShippingLabelTrackingCodes(label);
+          } catch (error) {
+            if (pending) throw error;
+            console.warn('[SHIPPING LABEL TRACKING]', error?.message || error);
+          }
+          if (pending && !trackingCodes.some(Boolean)) {
+            throw new Error(`No se pudo leer el tracking de la etiqueta pendiente ${order.orderNumber}.`);
+          }
+          const trackedInventory = pickingScanner.attachShippingLabelTrackingCodes(inventory, trackingCodes);
+          await pickingScanner.saveFalabellaTicketSnapshot(core.pool, order, trackedInventory);
+        },
       },
     );
     const prints = await Promise.all(result.printedLabels.map(async (entry) => ({

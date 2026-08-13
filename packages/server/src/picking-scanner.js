@@ -1,3 +1,5 @@
+import { extractShippingLabelTrackingCodes } from './shipping-label-sheet.js';
+
 function text(value) {
   return String(value ?? '').trim();
 }
@@ -50,6 +52,31 @@ function normalizedItems(inventory) {
       raw,
     };
   });
+}
+
+export function attachShippingLabelTrackingCodes(inventory, values) {
+  const trackingCodes = [...new Set((values || [])
+    .map(text)
+    .filter((value) => /^\d{15,30}$/.test(value)))];
+  if (!trackingCodes.length || !Array.isArray(inventory?.orderItems)) return inventory;
+
+  const packageIds = [...new Set(inventory.orderItems
+    .map((item) => text(item?.PackageId || item?.PackageID || item?.packageId))
+    .filter(Boolean))];
+  const trackingByPackage = new Map(packageIds.map((packageId, index) => [
+    packageId,
+    trackingCodes[Math.min(index, trackingCodes.length - 1)],
+  ]));
+  return {
+    ...inventory,
+    orderItems: inventory.orderItems.map((item) => {
+      if (text(item?.TrackingCode || item?.TrackingNumber)) return item;
+      const packageId = text(item?.PackageId || item?.PackageID || item?.packageId);
+      const trackingCode = trackingByPackage.get(packageId)
+        || (trackingCodes.length === 1 ? trackingCodes[0] : '');
+      return trackingCode ? { ...item, TrackingCode: trackingCode } : item;
+    }),
+  };
 }
 
 export async function saveFalabellaTicketSnapshot(db, order, inventory) {
@@ -208,7 +235,7 @@ function itemMatchesCode(item, code) {
   return item.trackingCode === code || item.packageId === code;
 }
 
-async function findLegacyPrintedTicket({ db, getOrderItems, code }) {
+async function findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, code }) {
   if (!/^\d{15,30}$/.test(code)) return null;
   const result = await db.query(
     `select company_id, order_id, order_number, last_printed_at
@@ -226,11 +253,24 @@ async function findLegacyPrintedTicket({ db, getOrderItems, code }) {
     const batch = candidates.slice(offset, offset + 4);
     const loaded = await Promise.all(batch.map(async (candidate) => {
       try {
-        const inventory = await getOrderItems({
+        let inventory = await getOrderItems({
           companyId: Number(candidate.company_id),
           orderId: candidate.order_id,
         });
         if (inventory?.error || inventory?.ok === false) return null;
+        if (getShippingLabel && !normalizedItems(inventory).some((item) => itemMatchesCode(item, code))) {
+          const label = await getShippingLabel({
+            companyId: Number(candidate.company_id),
+            orderId: candidate.order_id,
+            recordPrint: false,
+          });
+          if (label?.ok && label?.base64) {
+            const trackingCodes = await extractShippingLabelTrackingCodes(
+              Buffer.from(String(label.base64).replace(/\s+/g, ''), 'base64'),
+            );
+            inventory = attachShippingLabelTrackingCodes(inventory, trackingCodes);
+          }
+        }
         await saveFalabellaTicketSnapshot(db, {
           companyId: candidate.company_id,
           orderId: candidate.order_id,
@@ -317,7 +357,7 @@ function buildPickingResult({ code, matchType, stored, inventory }) {
   };
 }
 
-export async function lookupPickingScan({ db, getOrderItems, input }) {
+export async function lookupPickingScan({ db, getOrderItems, getShippingLabel, input }) {
   const code = normalizeScannedCode(input);
   if (!code) {
     const error = new Error('Escanea un QR o ingresa un código válido.');
@@ -340,7 +380,7 @@ export async function lookupPickingScan({ db, getOrderItems, input }) {
   }
 
   if (!stored) {
-    const legacy = await findLegacyPrintedTicket({ db, getOrderItems, code });
+    const legacy = await findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, code });
     if (legacy) {
       stored = await orderRow(db, legacy.candidate.company_id, legacy.candidate.order_id);
       inventory = legacy.inventory;
