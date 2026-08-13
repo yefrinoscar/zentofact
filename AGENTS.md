@@ -1,14 +1,14 @@
 # Repository workflow
 
-- `main` is the canonical production branch. Railway production services must deploy from `main` only.
-- `dev` is the permanent development and integration branch. Do not delete it or configure production deployments from it.
+- `main` is the canonical production branch. Railway **production** (`zentofact-web` and `zentofact-api` in the `production` environment) must deploy from `main` only.
+- `dev` is the permanent development and integration branch. Railway **development** (`zentofact-web` and `zentofact-api` in the `development` environment) deploys from `dev` only. Do not delete `dev` or point production services at it.
 - Keep `dev` synchronized with `main`. After every merge or hotfix on `main`, merge `main` back into `dev` before starting more work.
 - Every new feature or fix must be developed on its own short-lived branch created from the latest `dev`. Do not implement regular work directly on `dev` or `main`.
 - All feature and fix pull requests must target `dev`. Merging a pull request into `dev` does not create a production release.
 - Production releases use a pull request from `dev` to `main`. Do not merge another branch directly into `main` unless the user explicitly authorizes an emergency hotfix; immediately merge any such hotfix back into `dev`.
-- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, open a pull request targeting `dev`, and merge it into `dev` after the permitted required checks pass.
+- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, and open a pull request targeting `dev`. Do **not** merge that pull request. Merging into `dev` is manual and only happens when the user explicitly asks to merge it.
 - Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
-- The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment.
+- The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment from `main`.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
