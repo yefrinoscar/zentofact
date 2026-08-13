@@ -20,6 +20,7 @@ import {
   TableHead,
   TableHeader,
   TablePanel,
+  TablePanelHeader,
   TablePanelFooter,
   TableRow,
 } from '@/components/ui/table';
@@ -65,6 +66,7 @@ export function DataTable<TData>({
   empty,
   loading = false,
   fetching = false,
+  header,
   footer,
   columnClassNames,
   cellClassNames,
@@ -74,6 +76,7 @@ export function DataTable<TData>({
   empty: ReactNode;
   loading?: boolean;
   fetching?: boolean;
+  header?: ReactNode;
   footer?: ReactNode;
   columnClassNames?: Record<string, string>;
   cellClassNames?: Record<string, string>;
@@ -83,6 +86,7 @@ export function DataTable<TData>({
 
   return (
     <TablePanel aria-label={ariaLabel} aria-busy={loading || fetching}>
+      {header ? <TablePanelHeader>{header}</TablePanelHeader> : null}
       {loading ? (
         <DataTableSkeleton columnCount={table.getAllColumns().length || 4} />
       ) : rows.length === 0 ? empty : (
