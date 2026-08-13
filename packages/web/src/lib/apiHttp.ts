@@ -120,10 +120,14 @@ const apiHttp = {
     orderStatus?: string;
     fulfillmentStatus?: string;
     documentStatus?: string;
+    from?: string;
+    to?: string;
     search?: string;
     limit?: number;
     offset?: number;
   } = {}) => req(`/order-management/orders${qs(filter)}`),
+  getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
+    req(`/order-management/sales-pulse${qs(filter)}`),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
   createManagedOrder: (data: any) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;

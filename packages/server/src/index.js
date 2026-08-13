@@ -280,6 +280,10 @@ app.get('/order-management/orders', async (c) => {
   try { return ok(c, await orderManagement.listOrders(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/sales-pulse', async (c) => {
+  try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
 app.post('/order-management/orders/ingest', async (c) => {
   try {
     const body = await c.req.json();
