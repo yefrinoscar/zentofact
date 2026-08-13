@@ -156,6 +156,26 @@ export function isTrustedOrigin(origin) {
   return trustedOriginSet.has(String(origin || '').replace(/\/$/, ''));
 }
 
+export function originMatchesRequestHost(origin, hostHeader, forwardedHost) {
+  const normalized = String(origin || '').replace(/\/$/, '');
+  if (!normalized) return false;
+  let originHost = '';
+  try { originHost = new URL(normalized).host; } catch { return false; }
+  const hosts = [hostHeader, forwardedHost]
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return hosts.some((host) => host === originHost);
+}
+
+function requestOrigin(c) {
+  const origin = String(c.req.header('origin') || '').replace(/\/$/, '');
+  if (origin) return origin;
+  const referer = c.req.header('referer');
+  if (!referer) return '';
+  try { return new URL(referer).origin; } catch { return ''; }
+}
+
 export function csrfTokenForSession(session) {
   const sessionId = session?.id || session?.token;
   if (!sessionId) return null;
@@ -195,10 +215,12 @@ export function requireCsrf() {
     const path = c.req.path;
     const needsAuth = isProtectedPath(path);
     if (!needsAuth || !UNSAFE_METHODS.has(c.req.method)) return next();
-    const origin = c.req.header('origin');
+    const origin = requestOrigin(c);
     const token = c.req.header('x-csrf-token');
     const expected = csrfTokenForSession(c.get('session'));
-    if (!origin || !isTrustedOrigin(origin) || !token || !expected) {
+    const originOk = isTrustedOrigin(origin)
+      || originMatchesRequestHost(origin, c.req.header('host'), c.req.header('x-forwarded-host'));
+    if (!originOk || !token || !expected) {
       return c.json({ error: 'CSRF inválido' }, 403);
     }
     const received = Buffer.from(token);

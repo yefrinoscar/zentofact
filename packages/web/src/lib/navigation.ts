@@ -82,7 +82,10 @@ export function isNavItemActive(pathname: string, to: string) {
   return activePath === to || activePath.startsWith(`${to}/`);
 }
 
-export function visibleNavigation(can: (permission: PermissionKey) => boolean, isProd: boolean) {
+export function visibleNavigation(
+  can: (permission: PermissionKey) => boolean,
+  isProd = import.meta.env.VITE_APP_ENV === 'production',
+) {
   return NAV_GROUPS
     .map((group) => ({
       ...group,

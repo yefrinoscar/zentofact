@@ -62,8 +62,11 @@ Reglas:
 - Los filtros compactos conservan su ancho natural; nunca deben estirarse en columnas iguales solo para llenar el espacio disponible.
 - Los controles segmentados usan contenedor `rounded-xl` y selección `rounded-lg`, manteniendo altura `h-9`.
 - No mostrar un botón “Actualizar” cuando los cambios de contexto y filtros ya recargan los datos automáticamente.
-- No mostrar selectores de cantidad por página salvo que exista una necesidad demostrable. La cantidad predeterminada de tablas administrativas es 10.
+- No mostrar selectores de cantidad por página salvo que exista una necesidad demostrable. La cantidad predeterminada de tablas administrativas es 10; las tablas operativas de catálogo y salidas usan 20.
 - No mostrar chips como “2 resultados” en la barra. El conteo pertenece a la cabecera o pie del panel.
+- En pantallas de un solo día, el selector de fecha va **encima** de la búsqueda y ocupa todo el ancho disponible. Usar `DayStrip`: días horizontales como botones, flechas para el día anterior/siguiente y un calendario para saltos largos. No usar `<input type="date">` nativo.
+- La franja de días no se recentra al elegir un día ya visible. Si la fecha sale de la ventana, el carril se desliza hacia atrás o adelante; no remountar los días ni usar `scrollIntoView`.
+- No poner una línea decorativa debajo de la toolbar. El siguiente bloque (tabla o feedback) ya marca la separación.
 
 ## Selectores
 
@@ -129,17 +132,17 @@ Usar `Button` y sus variantes.
 
 ## Tablas
 
-Toda tabla nueva debe usar:
+Toda tabla operativa o administrativa nueva debe ser un **data table de shadcn**, no una lista custom ni un `<table>` suelto.
 
-- `TablePanel`
-- `TablePanelHeader` cuando exista información contextual útil.
-- `Table`
-- `TableHeader`
-- `TableBody`
-- `TableRow`
-- `TableHead`
-- `TableCell`
-- `TablePanelFooter` para conteo o paginación.
+Usar:
+
+- `DataTable` y `DataTablePagination` de `components/ui/data-table.tsx` para el modelo de filas, pie y estados.
+- `DataTableColumnHeader` en cada columna ordenable.
+- Debajo, los primitivos compartidos: `TablePanel`, `Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`, `TablePanelFooter`.
+- React Table (`useReactTable`) para columnas, paginación y orden.
+- React Query para fetch, caché e invalidación. Nunca cargar un catálogo ilimitado en estado del navegador.
+
+La pantalla **Salidas de hoy** es la referencia de una tabla operativa bien hecha.
 
 ### Panel
 
@@ -148,6 +151,7 @@ Toda tabla nueva debe usar:
 - Radio `rounded-md`.
 - Sin sombras grandes.
 - `overflow-hidden` para que cabecera y filas respeten el radio.
+- Ancho mínimo de tabla (`min-w-[720px]`) y scroll horizontal en móvil. No aplastar columnas.
 
 ### Cabecera informativa
 
@@ -167,7 +171,8 @@ No debe repetir el título y descripción de la página.
 - Texto `text-muted-foreground` y `font-medium`.
 - Altura consistente mediante `TableHead`.
 - Las columnas numéricas y de acciones se alinean a la derecha.
-- Una columna ordenable muestra el indicador junto al nombre.
+- Toda columna con dato comparable debe poder ordenarse. El encabezado es un botón con `DataTableColumnHeader` e indicador `↑` / `↓` / `↕`.
+- El orden de tablas paginadas en servidor es **manual** (`manualSorting`) y se envía a la API (`sortBy`, `sortDir`). No ordenar solo la página visible.
 
 ### Filas
 
@@ -176,15 +181,15 @@ No debe repetir el título y descripción de la página.
 - Padding proporcionado por `TableCell`.
 - El contenido principal usa `font-medium`; el dato secundario usa `text-sm text-muted-foreground`.
 - Usar `font-mono tabular-nums` para RUC, correlativos y códigos cuando facilite la lectura.
+- Si el producto tiene foto, mostrarla en la primera columna. No dejar un icono genérico cuando la URL o el Shop SKU existen.
 - No usar checkbox si la pantalla no ofrece una acción masiva.
 
 ### Paginación
 
 - Las tablas administrativas muestran 10 filas por defecto.
-- El catálogo de productos muestra 20 productos por página porque su navegación es operativa y server-side.
-- El pie indica “Mostrando X de Y”.
-- `Anterior` y `Siguiente` usan botones compactos.
-- No renderizar paginación falsa cuando todos los resultados caben en una página.
+- El catálogo y las salidas muestran 20 filas por página.
+- El pie usa `DataTablePagination`: “Mostrando X a Y de Z” y números de página, no solo Anterior/Siguiente.
+- No renderizar paginación cuando todos los resultados caben en una página.
 
 ### Expansión compacta por fila
 
@@ -229,9 +234,11 @@ Estado vacío estándar:
 
 - Evitar paneles vacíos con alturas enormes.
 - Si hay una acción natural, mostrar un `Button` compacto.
-- La carga usa `Loader2` y texto corto.
+- La **primera carga** de una tabla usa `DataTableSkeleton` (`components/ui/skeleton.tsx`), no un spinner centrado. El esqueleto replica foto + texto + columnas numéricas.
+- Cambiar la **fecha** (u otro contexto que sustituye el conjunto de trabajo) también muestra skeleton en indicadores y tabla. No dejar visibles las filas del día anterior.
+- Paginar, buscar o reordenar el mismo conjunto puede conservar las filas previas con `keepPreviousData` y un indicador discreto de fetching.
+- `Loader2` queda para botones y acciones puntuales, no para reemplazar el cuerpo de una tabla.
 - Los errores usan un bloque compacto con borde y fondo destructivo suave.
-- Una actualización con datos existentes puede usar overlay sin borrar la tabla.
 
 ## Formularios y diálogos
 
@@ -275,15 +282,17 @@ Estado vacío estándar:
 ## Checklist para una tabla nueva
 
 - [ ] No repite título ni descripción del layout.
-- [ ] Usa componentes de `components/ui`.
-- [ ] Filtros encima de la tabla.
+- [ ] Usa `DataTable` / `DataTablePagination` de `components/ui`.
+- [ ] Filtros encima de la tabla; selector de día a ancho completo si aplica.
 - [ ] Acción principal a la derecha.
-- [ ] `TablePanel` con radio moderado.
+- [ ] `TablePanel` con radio moderado y sin tarjeta extra alrededor.
 - [ ] Cabecera de columnas con fondo muted.
+- [ ] Columnas ordenables con `DataTableColumnHeader` y sort en servidor si hay paginación.
+- [ ] 10 filas (admin) o 20 (catálogo/salidas), nunca un listado ilimitado.
 - [ ] Estados con texto y color semántico.
 - [ ] Conteo en cabecera o pie, no como chip suelto.
 - [ ] Estado vacío compacto.
-- [ ] Loading, error y sin resultados contemplados.
+- [ ] Skeleton en primera carga y al cambiar de fecha/contexto; error y sin resultados contemplados.
 - [ ] Responsive y scroll horizontal.
 - [ ] Acciones accesibles.
 - [ ] Sin secretos en estado persistente del navegador.

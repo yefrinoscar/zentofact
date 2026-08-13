@@ -461,6 +461,67 @@ test('la misma imagen binaria confirma duplicados del mismo seller sin mezclar t
   assert.equal(numberedModelGroups.length, 2);
 });
 
+test('asocia las mantas Mylar confirmadas aunque una publicación destaque 140x210', () => {
+  const groups = groupFalabellaCatalogRecords([
+    {
+      company: { id: 2, name: 'DOLPHIN' },
+      remote: {
+        name: 'Manta Térmica Aluminizada Mylar Emergencia Trekking Camping',
+        color: 'Plateado', sellerSku: 'MTC12309843', price: 7.99,
+      },
+    },
+    {
+      company: { id: 3, name: 'MANTA RAYA' },
+      remote: {
+        name: 'Manta Térmica Emergencia Desastres Supervivencia 140x210',
+        color: 'plateado', sellerSku: 'MAN66332781', price: 8.98,
+      },
+    },
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 2);
+  assert.match(groups[0].records[1].association.signals.join(' '), /verified_family:manta-termica-mylar-140x210/);
+});
+
+test('asocia los adornos por sus tres diseños físicos aunque los títulos intercambien N°1/N°2/N°3', () => {
+  const groups = groupFalabellaCatalogRecords([
+    {
+      company: { id: 1, name: 'LIMBO' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°3', sellerSku: 'G-L', shopSku: '140437519' },
+    },
+    {
+      company: { id: 2, name: 'DOLPHIN' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°1', sellerSku: 'G-D', shopSku: '140681420' },
+    },
+    {
+      company: { id: 3, name: 'MANTA RAYA' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°3', sellerSku: 'A-M', shopSku: '140716049' },
+    },
+    {
+      company: { id: 7, name: 'YAKURUNA' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°1', sellerSku: 'A-Y', shopSku: '140377163' },
+    },
+    {
+      company: { id: 7, name: 'YAKURUNA' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°3', sellerSku: 'R-Y', shopSku: '140377491' },
+    },
+    {
+      company: { id: 7, name: 'YAKURUNA' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°2', sellerSku: 'G-Y', shopSku: '140377407' },
+    },
+    {
+      company: { id: 1, name: 'LIMBO' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°2', sellerSku: 'R-L', shopSku: '140432973' },
+    },
+  ]);
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.map((group) => group.records.map(({ remote }) => remote.sellerSku).sort()).sort(), [
+    ['A-M', 'A-Y'],
+    ['G-D', 'G-L', 'G-Y'],
+    ['R-L', 'R-Y'],
+  ]);
+});
+
 test('el grupo usa las huellas de todos sus sellers y no solo la primera imagen', () => {
   const groups = groupFalabellaCatalogRecords([
     { company: { id: 2 }, remote: { name: 'Adorno de Pared Elegante N°1', sellerSku: 'A', imageFingerprint: 'imagen-a' } },
@@ -517,7 +578,7 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   const db = {
     query: async (sql, params) => {
       statements.push({ sql, params });
-      if (sql.includes('jsonb_agg')) {
+      if (sql.includes('seller_rows as')) {
         return {
           rows: [{
             product_key: 'p:5',
@@ -525,6 +586,7 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
             sku: 'AG3',
             name: 'Agua 3L',
             image_url: null,
+            shop_sku: '12345678',
             brand: null,
             quantity_on_hand: 12,
             available: 10,
@@ -536,7 +598,15 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
           }],
         };
       }
-      return { rows: [{ products_count: 1, units_sold: 4, orders_count: 3 }] };
+      return {
+        rows: [{
+          products_count: 1,
+          units_sold: 4,
+          orders_count: 3,
+          sellers_count: 1,
+          sellers: [{ companyId: 8, companyName: 'LIMBO', unitsSold: 4, ordersCount: 3, productsCount: 1 }],
+        }],
+      };
     },
   };
   const result = await listTodayProductSales({ date: '2026-08-12', search: 'AG3', companyId: 8 }, db);
@@ -545,6 +615,9 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.equal(result.products[0].unitsSold, 4);
   assert.equal(result.products[0].mapped, true);
   assert.equal(result.totals.ordersCount, 3);
+  assert.equal(result.totals.sellersCount, 1);
+  assert.equal(result.totals.sellers[0].companyName, 'LIMBO');
+  assert.match(statements[1].sql, /count\(distinct company_id\)/);
   assert.match(statements[0].sql, /timezone\('America\/Lima', \$1::date\)/);
   assert.match(statements[0].sql, /promised_shipping_at/);
   assert.match(statements[0].sql, /PromisedShippingTime/);
@@ -552,10 +625,15 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.match(statements[0].sql, /o\.company_id=\$2/);
   assert.match(statements[0].sql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(statements[0].sql, /metadata->'images'->>0/);
+  assert.match(statements[0].sql, /media\.falabella\.com/);
   assert.match(statements[0].sql, /left join lateral/);
   assert.match(statements[0].sql, /lower\(l\.title\)=lower\(oi\.description\)/);
   assert.match(statements[0].sql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
+  assert.match(statements[0].sql, /order by sum\(units_sold\) desc nulls last/);
   assert.equal(statements[0].params[0], '2026-08-12');
+  const named = await listTodayProductSales({ date: '2026-08-12', sortBy: 'product', sortDir: 'asc' }, db);
+  assert.equal(named.products[0].sku, 'AG3');
+  assert.match(statements[3].sql, /order by min\(name\) asc nulls last/);
   await assert.rejects(() => listTodayProductSales({ date: 'no-es-fecha' }, db), /date inválida/);
 });
 

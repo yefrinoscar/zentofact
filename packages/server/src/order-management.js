@@ -61,6 +61,17 @@ function jsonValue(value, fallback = {}) {
   return value;
 }
 
+function shortSellerName(row) {
+  const candidates = [row.nombre_comercial, row.nombre, row.razon_social]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .map((value) => value
+      .replace(/^(?:importaciones|inversiones|tiendas|la tienda del)\s+/i, '')
+      .replace(/\s+(?:per[uú]|e\.?i\.?r\.?l\.?|s\.?r\.?l\.?|s\.?a\.?c\.?)$/i, '')
+      .trim());
+  return candidates.sort((left, right) => left.length - right.length)[0] || `Empresa ${row.company_id}`;
+}
+
 function nullableNumber(value, field) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
@@ -841,7 +852,15 @@ export async function listOrders(filters = {}, db) {
       o.external_order_id ilike '%' || $${values.length} || '%'
       or o.external_order_number ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'name', '') ilike '%' || $${values.length} || '%'
+      or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
     )`);
+  }
+  for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
+    const value = String(filters[filterName] || '').trim();
+    if (!value) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${filterName} inválido.`);
+    values.push(value);
+    where.push(`(coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date ${operator} $${values.length}::date`);
   }
   const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 500);
   const offset = Math.max(Number(filters.offset || 0), 0);
@@ -863,6 +882,114 @@ export async function listOrders(filters = {}, db) {
     totalCount: Number(result.rows[0]?.total_count || 0),
     limit,
     offset,
+  };
+}
+
+export async function getSalesPulse(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const date = String(filters.date || '').trim();
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date inválida.');
+
+  const [sellerResult, productResult, channelResult] = await Promise.all([
+    target.query(
+    `select c.id as company_id, c.nombre_comercial, c.nombre, c.razon_social,
+       count(o.id)::int as orders_count,
+       coalesce(sum(o.total), 0)::numeric as sales_total,
+       count(o.id) filter (where o.channel_account_id in (
+         select a.id from order_channel_accounts a
+         join order_channels ch on ch.id=a.channel_id
+         where ch.code='manual'
+       ))::int as manual_orders_count,
+       max(coalesce(o.ordered_at, o.created_at)) as last_sale_at
+     from companies c
+     left join orders o on o.company_id=c.id
+       and o.order_status not in ('cancelled', 'failed')
+       and o.payment_status not in ('refunded', 'failed')
+       and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+       and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+         = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
+     where c.activo is true
+     group by c.id, c.nombre_comercial, c.nombre, c.razon_social
+     order by count(o.id) desc, coalesce(sum(o.total), 0) desc, c.nombre`,
+    [date],
+    ),
+    target.query(
+      `select coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, ''), 'Sin SKU') as sku,
+         coalesce(nullif(p.name, ''), nullif(oi.description, ''), 'Producto sin nombre') as product_name,
+         sum(coalesce(oi.quantity, 0))::numeric as units_sold,
+         sum(sum(coalesce(oi.quantity, 0))) over()::numeric as total_units_sold,
+         count(distinct o.id)::int as orders_count,
+         coalesce(sum(coalesce(oi.total, oi.unit_price * oi.quantity, 0)), 0)::numeric as sales_total,
+         count(distinct o.company_id)::int as sellers_count,
+         array_agg(distinct ch.code order by ch.code) as channel_codes
+       from orders o
+       join order_items oi on oi.order_id=o.id
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       left join products p on p.id=oi.product_id
+       where o.order_status not in ('cancelled', 'failed')
+         and o.payment_status not in ('refunded', 'failed')
+         and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+         and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+           = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
+       group by 1, 2
+       order by units_sold desc, sales_total desc, product_name
+       limit 8`,
+      [date],
+    ),
+    target.query(
+      `select ch.code, ch.name,
+         count(o.id)::int as orders_count,
+         coalesce(sum(o.total), 0)::numeric as sales_total
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       where o.order_status not in ('cancelled', 'failed')
+         and o.payment_status not in ('refunded', 'failed')
+         and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+         and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+           = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
+       group by ch.code, ch.name
+       order by orders_count desc, sales_total desc`,
+      [date],
+    ),
+  ]);
+
+  const sellers = sellerResult.rows.map((row) => ({
+    companyId: Number(row.company_id),
+    companyName: shortSellerName(row),
+    ordersCount: Number(row.orders_count || 0),
+    salesTotal: Number(row.sales_total || 0),
+    manualOrdersCount: Number(row.manual_orders_count || 0),
+    lastSaleAt: row.last_sale_at || null,
+  }));
+  const sellersWithSales = sellers.filter((seller) => seller.ordersCount > 0).length;
+  const topProducts = productResult.rows.map((row) => ({
+    sku: row.sku,
+    name: row.product_name,
+    unitsSold: Number(row.units_sold || 0),
+    ordersCount: Number(row.orders_count || 0),
+    salesTotal: Number(row.sales_total || 0),
+    sellersCount: Number(row.sellers_count || 0),
+    channelCodes: Array.isArray(row.channel_codes) ? row.channel_codes : [],
+  }));
+  const channels = channelResult.rows.map((row) => ({
+    code: row.code,
+    name: row.name,
+    ordersCount: Number(row.orders_count || 0),
+    salesTotal: Number(row.sales_total || 0),
+  }));
+
+  return {
+    date: date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date()),
+    ordersCount: sellers.reduce((sum, seller) => sum + seller.ordersCount, 0),
+    salesTotal: sellers.reduce((sum, seller) => sum + seller.salesTotal, 0),
+    unitsSold: Number(productResult.rows[0]?.total_units_sold || 0),
+    sellersWithSales,
+    sellersWithoutSales: sellers.length - sellersWithSales,
+    sellers,
+    topProducts,
+    channels,
   };
 }
 

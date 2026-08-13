@@ -227,9 +227,12 @@ export function pathPermission(pathname: string): PermissionKey | null {
   return null;
 }
 
-export function firstAllowedPath(user: AppUser | null | undefined): string {
+export function firstAllowedPath(
+  user: AppUser | null | undefined,
+  isProd = import.meta.env.VITE_APP_ENV === 'production',
+): string {
   for (const permission of PERMISSIONS) {
-    if (permission.hiddenInProduction && import.meta.env.PROD) continue;
+    if (permission.hiddenInProduction && isProd) continue;
     if (userHasPermission(user, permission.key)) return permission.path;
   }
   return '/settings';

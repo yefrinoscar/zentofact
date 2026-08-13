@@ -1,6 +1,6 @@
-import { FormEvent, Fragment, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
+import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, getSortedRowModel, SortingState, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
   BarChart3,
@@ -22,13 +22,16 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { DataTable, DataTableColumnHeader, DataTablePagination } from '../components/ui/data-table';
+import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelHeader, TableRow } from '../components/ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
+import falabellaIcon from '../assets/falabella.png';
 
 type Company = {
   id: number;
@@ -168,6 +171,7 @@ type ReturnsSummary = ActivityResponse & {
 };
 
 const PAGE_SIZE = 20;
+const SEARCH_DELAY_MS = 300;
 
 const initialCreate = { mainSku: '', name: '', brand: '', description: '', referencePrice: '', imageUrl: '' };
 const initialAdjust = { mode: 'delta', value: '', reason: '' };
@@ -303,6 +307,20 @@ export default function Productos() {
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
+  const searchTimer = useRef(0);
+
+  const applySearch = (value: string, immediate = false) => {
+    setSearch(value);
+    window.clearTimeout(searchTimer.current);
+    const commit = () => {
+      setSelectedId(null);
+      setExpandedRows({});
+      setSubmittedSearch(value.trim());
+      setOffset(0);
+    };
+    if (immediate) commit();
+    else searchTimer.current = window.setTimeout(commit, SEARCH_DELAY_MS);
+  };
 
   const productFilters = useMemo(() => ({ submittedSearch, status, sellerCoverage, offset }), [submittedSearch, status, sellerCoverage, offset]);
   const productsQuery = useQuery({
@@ -470,11 +488,11 @@ export default function Productos() {
     if (result) setModal(null);
   };
 
-  const openProduct = (productId: number) => {
+  const openProduct = useCallback((productId: number) => {
     setSelectedId(productId);
     setDetailTab('overview');
     setSalesRange('30');
-  };
+  }, []);
 
   const navigateProduct = async (direction: 'previous' | 'next') => {
     if (selectedId == null || productNavigationBusy) return;
@@ -548,8 +566,14 @@ export default function Productos() {
           <button
             type="button"
             onClick={(event) => {
+              event.preventDefault();
               event.stopPropagation();
-              row.toggleExpanded();
+              setExpandedRows((current) => {
+                const next = typeof current === 'object' ? { ...current } : {};
+                if (next[row.id]) delete next[row.id];
+                else next[row.id] = true;
+                return next;
+              });
             }}
             className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label={`${row.getIsExpanded() ? 'Contraer' : 'Expandir'} ${product.name}`}
@@ -626,14 +650,14 @@ export default function Productos() {
       && String(listing.companyId) === publishVisual.companyId
   )));
 
-  const renderCatalogTable = () => <section className="overflow-hidden rounded-xl border border-border bg-card">
-    <div className="flex items-center justify-between border-b border-border px-5 py-3">
+  const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
+    <TablePanelHeader className="flex items-center justify-between py-3">
       <p className="text-sm font-semibold">{totalCount} productos</p>
       <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{productsQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Página {Math.floor(offset / PAGE_SIZE) + 1}</span>
-    </div>
+    </TablePanelHeader>
     {loading ? <LoadingBlock /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
-        <Table className="table-fixed">
+        <Table className="min-w-[720px] table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
               {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
@@ -654,33 +678,52 @@ export default function Productos() {
             </TableRow>
             {row.getIsExpanded() && <TableRow className="hover:bg-transparent">
               <TableCell colSpan={row.getVisibleCells().length} className="border-b-4 border-muted bg-muted/20 p-0">
-                <ExpandedProductPublications productId={row.original.id} productName={row.original.name} onOpenDetail={() => openProduct(row.original.id)} />
+                <ExpandedProductPublications productId={row.original.id} productName={row.original.name} onOpenDetail={openProduct} />
               </TableCell>
             </TableRow>}
           </Fragment>)}</TableBody>
         </Table>
       </div>
     )}
-    <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-3">
-      <span className="text-xs text-muted-foreground">Mostrando {products.length} de {totalCount}</span>
-      <div className="flex gap-2"><button disabled={offset === 0} onMouseEnter={() => prefetchProductsPage(Math.max(0, offset - PAGE_SIZE))} onFocus={() => prefetchProductsPage(Math.max(0, offset - PAGE_SIZE))} onClick={() => { setSelectedId(null); setExpandedRows({}); setOffset(Math.max(0, offset - PAGE_SIZE)); }} className="secondary-button"><ChevronLeft className="h-4 w-4" /> Anterior</button><button disabled={offset + PAGE_SIZE >= totalCount} onMouseEnter={() => prefetchProductsPage(offset + PAGE_SIZE)} onFocus={() => prefetchProductsPage(offset + PAGE_SIZE)} onClick={() => { setSelectedId(null); setExpandedRows({}); setOffset(offset + PAGE_SIZE); }} className="secondary-button">Siguiente <ChevronRight className="h-4 w-4" /></button></div>
-    </div>
-  </section>;
+    {totalCount > 0 ? <DataTablePagination
+      pageIndex={Math.floor(offset / PAGE_SIZE)}
+      pageSize={PAGE_SIZE}
+      totalCount={totalCount}
+      fetching={productsQuery.isFetching}
+      onPageChange={(nextPage) => {
+        setSelectedId(null);
+        setExpandedRows({});
+        setOffset(nextPage * PAGE_SIZE);
+      }}
+      onPrefetch={(nextPage) => prefetchProductsPage(nextPage * PAGE_SIZE)}
+    /> : null}
+  </TablePanel>;
 
   return (
     <div className="space-y-5">
       <div className="space-y-3 border-b border-border pb-4">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <form onSubmit={(event) => { event.preventDefault(); setSelectedId(null); setExpandedRows({}); setOffset(0); setSubmittedSearch(search.trim()); }} className="flex min-w-0 flex-1 gap-2">
+          <div className="flex min-w-0 flex-1 gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar SKU interno, producto o SKU de seller" className="field h-9 pl-9" />
+            <Input
+              value={search}
+              onChange={(event) => applySearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  applySearch(search, true);
+                }
+              }}
+              placeholder="Buscar SKU, producto o seller"
+              className="h-9 pl-9"
+              aria-label="Buscar SKU, producto o seller"
+            />
           </div>
-          <button type="submit" className="secondary-button"><Search className="h-4 w-4" /> Buscar</button>
-          <button type="button" onClick={refreshMarketplaceSnapshots} disabled={refreshing} className="secondary-button px-2.5" aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
-            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-          </button>
-          </form>
+          <Button type="button" variant="outline" size="icon" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
+            <RefreshCw className={cn(refreshing && 'animate-spin')} />
+          </Button>
+          </div>
           <button onClick={() => openModal('create')} className="primary-button"><PackagePlus className="h-4 w-4" /> Nuevo producto</button>
         </div>
 
@@ -698,7 +741,8 @@ export default function Productos() {
               <SelectItem value="multiple">2 o más sellers</SelectItem>
             </SelectContent>
           </Select>
-          {(status !== 'active' || sellerCoverage !== 'all' || submittedSearch) && <button type="button" onClick={() => {
+          {(status !== 'active' || sellerCoverage !== 'all' || submittedSearch) && <Button type="button" variant="outline" onClick={() => {
+            window.clearTimeout(searchTimer.current);
             setSelectedId(null);
             setExpandedRows({});
             setSearch('');
@@ -706,7 +750,7 @@ export default function Productos() {
             setStatus('active');
             setSellerCoverage('all');
             setOffset(0);
-          }} className="secondary-button"><X className="h-4 w-4" /> Limpiar</button>}
+          }}><X /> Limpiar</Button>}
         </div>
       </div>
 
@@ -1008,7 +1052,7 @@ function ProductDrawer({
           <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Ventas del producto</p><p className="mt-0.5 text-xs text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p></div><Select value={salesRange} onValueChange={(value) => onSalesRangeChange(value as typeof salesRange)}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">30 días</SelectItem><SelectItem value="90">90 días</SelectItem><SelectItem value="365">12 meses</SelectItem><SelectItem value="all">Todo</SelectItem></SelectContent></Select></div>
           {salesLoading || !sales ? <LoadingBlock /> : <>
             <div className="grid grid-cols-2 border-b border-border md:grid-cols-4"><Metric label="Unidades" value={formatNumber(sales.summary.unitsSold)} /><Metric label="Pedidos" value={formatNumber(sales.summary.ordersCount)} /><Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} /><Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} /></div>
-            {sales.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <section><div className="border-b border-border px-5 py-3"><h3 className="text-sm font-semibold">Ventas recientes</h3></div>{sales.recent.map((sale) => <div key={sale.orderId} className="flex items-center justify-between gap-4 border-b border-border px-5 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {sale.orderNumber || sale.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(sale.companyName)} · {formatDate(sale.orderedAt)}</p></div><div className="text-right"><p className="text-sm font-semibold">{formatMoney(sale.total)}</p><p className="text-xs text-muted-foreground">{formatNumber(sale.quantity)} u</p></div></div>)}</section>}
+            {sales.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
             {sales.hydration?.failed ? <p className="px-5 py-3 text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </>}
         </TabsContent>
@@ -1026,33 +1070,147 @@ function ProductDrawer({
   </Sheet>;
 }
 
-function ExpandedProductPublications({ productId, productName, onOpenDetail }: { productId: number; productName: string; onOpenDetail: () => void }) {
+function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
+  return <section aria-labelledby="recent-product-sales-title">
+    <div className="border-b border-border px-5 py-3">
+      <h3 id="recent-product-sales-title" className="text-sm font-semibold">Ventas recientes</h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">Detalle por pedido, vendedor y fecha.</p>
+    </div>
+
+    <div className="hidden sm:block">
+      <Table className="table-fixed">
+        <colgroup>
+          <col className="w-[24%]" />
+          <col className="w-[22%]" />
+          <col className="w-[26%]" />
+          <col className="w-[12%]" />
+          <col className="w-[16%]" />
+        </colgroup>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="h-10 px-5 text-[11px] uppercase tracking-wide">Pedido</TableHead>
+            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Vendedor</TableHead>
+            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Fecha y hora</TableHead>
+            <TableHead className="h-10 px-3 text-right text-[11px] uppercase tracking-wide">Unidades</TableHead>
+            <TableHead className="h-10 px-5 text-right text-[11px] uppercase tracking-wide">Importe</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sales.map((sale) => <TableRow key={sale.orderId}>
+            <TableCell className="px-5 py-3 font-medium tabular-nums">{sale.orderNumber || sale.orderId}</TableCell>
+            <TableCell className="px-3 py-3 whitespace-normal font-medium leading-5">{sellerShortName(sale.companyName)}</TableCell>
+            <TableCell className="px-3 py-3 whitespace-normal text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</TableCell>
+            <TableCell className="px-3 py-3 text-right tabular-nums">{formatNumber(sale.quantity)}</TableCell>
+            <TableCell className="px-5 py-3 text-right font-semibold tabular-nums">{formatMoney(sale.total)}</TableCell>
+          </TableRow>)}
+        </TableBody>
+      </Table>
+    </div>
+
+    <div className="divide-y divide-border sm:hidden">
+      {sales.map((sale) => <article key={sale.orderId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 px-5 py-4">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pedido</p>
+          <p className="mt-1 truncate text-sm font-semibold tabular-nums">{sale.orderNumber || sale.orderId}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Importe</p>
+          <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(sale.total)}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="line-clamp-2 text-sm font-medium leading-5">{sellerShortName(sale.companyName)}</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</p>
+        </div>
+        <div className="self-end text-right">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Unidades</p>
+          <p className="mt-1 text-sm tabular-nums">{formatNumber(sale.quantity)}</p>
+        </div>
+      </article>)}
+    </div>
+  </section>;
+}
+
+const ExpandedProductPublications = memo(function ExpandedProductPublications({ productId, productName, onOpenDetail }: { productId: number; productName: string; onOpenDetail: (productId: number) => void }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
   const detailQuery = useQuery({
     queryKey: ['catalog-product-detail', productId],
     queryFn: () => api.getCatalogProduct(productId),
     staleTime: 30_000,
     retry: 1,
   });
-  const listings = (((detailQuery.data as Product | undefined)?.listings || []) as Listing[]).filter(isActivelyPublished);
+  const detailListings = (detailQuery.data as Product | undefined)?.listings;
+  const listings = useMemo(
+    () => ((detailListings || []) as Listing[]).filter(isActivelyPublished),
+    [detailListings],
+  );
+  const columns = useMemo<ColumnDef<Listing>[]>(() => [
+    {
+      id: 'publishedName',
+      accessorFn: (listing) => listing.title || productName,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre publicado" />,
+      cell: ({ row }) => <p className="whitespace-normal break-words font-medium leading-5">{row.original.title || productName}</p>,
+    },
+    {
+      accessorKey: 'channelCode',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Canal" />,
+      cell: ({ row }) => <ChannelBadge value={row.original.channelCode} />,
+    },
+    {
+      id: 'seller',
+      accessorFn: (listing) => sellerShortName(listing.companyName || `Empresa ${listing.companyId}`),
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Seller" />,
+      cell: ({ row }) => <span className="inline-flex rounded-md border border-border bg-muted/70 px-2 py-1 text-xs font-semibold leading-none" title={row.original.companyName || undefined}>
+        {sellerShortName(row.original.companyName || `Empresa ${row.original.companyId}`)}
+      </span>,
+    },
+    {
+      accessorKey: 'sellerSku',
+      header: ({ column }) => <DataTableColumnHeader column={column} title="SKU del seller" />,
+      cell: ({ row }) => <span className="break-all font-mono text-sm tabular-nums">{row.original.sellerSku}</span>,
+    },
+    {
+      id: 'price',
+      accessorFn: (listing) => metadataNumber(listing, 'effectivePrice') ?? metadataNumber(listing, 'regularPrice') ?? 0,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Precio" className="ml-auto" />,
+      cell: ({ row }) => <SellerPrice listing={row.original} />,
+    },
+    {
+      id: 'stock',
+      accessorFn: (listing) => listing.marketplaceQuantity ?? 0,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Stock seller" className="ml-auto" />,
+      cell: ({ row }) => <SellerStock listing={row.original} />,
+    },
+  ], [productName]);
+  const table = useReactTable({
+    data: listings,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
 
   return <div className="px-5 py-4 md:pl-[5.5rem]">
     <div className="flex items-center justify-between gap-3">
       <div><p className="text-sm font-semibold">Sellers</p><p className="mt-0.5 text-xs text-muted-foreground">{listings.length ? `${listings.length} publicaciones asociadas` : `Publicaciones de ${productName}`}</p></div>
-      <button type="button" onClick={onOpenDetail} className="secondary-button h-8 px-3">Ver detalle</button>
+      <Button type="button" variant="outline" size="sm" onClick={() => onOpenDetail(productId)}>Ver detalle</Button>
     </div>
-    {detailQuery.isPending ? <div className="grid h-20 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-      : detailQuery.isError ? <p className="py-5 text-sm text-red-700">No se pudieron cargar las publicaciones.</p>
-        : !listings.length ? <p className="py-5 text-sm text-muted-foreground">Este producto todavía no tiene publicaciones asociadas.</p>
-          : <div className="mt-3 divide-y divide-border/70 border-y border-border/70">
-            {listings.map((listing) => <div key={listing.id} className="grid gap-3 py-3 sm:grid-cols-[minmax(140px,1.1fr)_minmax(150px,1fr)_110px_130px] sm:items-center">
-              <div className="min-w-0"><p className="text-sm font-semibold leading-5">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</p><div className="mt-1"><ChannelBadge value={listing.channelCode} /></div></div>
-              <div className="min-w-0"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">SKU del seller</p><p className="mt-1 break-all font-mono text-sm">{listing.sellerSku}</p></div>
-              <div><p className="text-[11px] uppercase tracking-wide text-muted-foreground">Precio</p><div className="mt-1"><SellerPrice listing={listing} /></div></div>
-              <div><p className="text-[11px] uppercase tracking-wide text-muted-foreground">Stock seller</p><div className="mt-1"><SellerStock listing={listing} /></div></div>
-            </div>)}
-          </div>}
+    <div className="mt-3">
+      {detailQuery.isError
+        ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">No se pudieron cargar las publicaciones.</div>
+        : <DataTable
+          table={table}
+          loading={detailQuery.isPending}
+          fetching={detailQuery.isFetching && !detailQuery.isPending}
+          aria-label={`Publicaciones de ${productName}`}
+          header={<div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{listings.length} publicaciones</p><span className="text-xs text-muted-foreground">Página 1</span></div>}
+          empty={<div className="py-10 text-center"><p className="text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-sm text-muted-foreground">Este producto todavía no tiene publicaciones activas.</p></div>}
+          columnClassNames={{ publishedName: 'w-[34%]', channelCode: 'w-[8%]', seller: 'w-[14%]', sellerSku: 'w-[16%]', price: 'w-[13%] text-right', stock: 'w-[15%] text-right' }}
+          cellClassNames={{ publishedName: 'whitespace-normal align-top', channelCode: 'align-top', seller: 'align-top', sellerSku: 'align-top', price: 'text-right align-top', stock: 'text-right align-top' }}
+        />}
+    </div>
   </div>;
-}
+});
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0 border-r border-border px-4 py-4 last:border-r-0"><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate text-base font-semibold">{value}</p></div>;
@@ -1092,13 +1250,14 @@ function SellerStock({ listing }: { listing: Listing }) {
 
 function ChannelBadge({ value }: { value: string }) {
   const normalized = String(value || 'externo').toLowerCase();
-  const classes = normalized === 'falabella'
-    ? 'bg-emerald-50 text-emerald-700'
-    : normalized === 'ripley'
-      ? 'bg-fuchsia-50 text-fuchsia-700'
-      : normalized === 'mercadolibre'
-        ? 'bg-amber-50 text-amber-800'
-        : 'bg-slate-100 text-slate-700';
+  if (normalized === 'falabella') {
+    return <span className="inline-flex rounded-md bg-muted p-0.5" title="Falabella"><img src={falabellaIcon} alt="Falabella" className="h-5 w-5 rounded-[3px]" /></span>;
+  }
+  const classes = normalized === 'ripley'
+    ? 'bg-fuchsia-50 text-fuchsia-700'
+    : normalized === 'mercadolibre'
+      ? 'bg-amber-50 text-amber-800'
+      : 'bg-slate-100 text-slate-700';
   return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', classes)}>{channelLabel(normalized)}</span>;
 }
 

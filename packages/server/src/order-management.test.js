@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  getSalesPulse,
   ingestOrder,
+  listOrders,
   resolveDocumentDecision,
 } from './order-management.js';
 import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from './order-adapters/falabella.js';
@@ -191,4 +193,73 @@ test('cada OrderItem de Falabella cuenta como una unidad cuando Quantity no vien
     },
   });
   assert.deepEqual(items.map((item) => item.quantity), [1, 1]);
+});
+
+test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas', async () => {
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /America\/Lima/);
+      assert.deepEqual(params, ['2026-08-12']);
+      if (sql.includes('left join orders')) return { rows: [
+          {
+            company_id: 8,
+            nombre: 'LIMBO PERU S.R.L.',
+            nombre_comercial: 'LIMBO',
+            razon_social: 'LIMBO PERU S.R.L.',
+            orders_count: 3,
+            sales_total: '480.50',
+            manual_orders_count: 2,
+            last_sale_at: '2026-08-12T18:30:00.000Z',
+          },
+          {
+            company_id: 9,
+            nombre: 'INVERSIONES MANTA RAYA E.I.R.L.',
+            nombre_comercial: 'MANTA RAYA EIRL',
+            razon_social: 'INVERSIONES MANTA RAYA E.I.R.L.',
+            orders_count: 0,
+            sales_total: '0',
+            manual_orders_count: 0,
+            last_sale_at: null,
+          },
+        ] };
+      if (sql.includes('join order_items')) return { rows: [{
+        sku: 'SKU-1',
+        product_name: 'Producto principal',
+        units_sold: '5',
+        total_units_sold: '5',
+        orders_count: 3,
+        sales_total: '480.50',
+        sellers_count: 1,
+        channel_codes: ['falabella'],
+      }] };
+      return { rows: [{ code: 'falabella', name: 'Falabella', orders_count: 3, sales_total: '480.50' }] };
+    },
+  };
+
+  const result = await getSalesPulse({ date: '2026-08-12' }, db);
+  assert.equal(result.ordersCount, 3);
+  assert.equal(result.salesTotal, 480.5);
+  assert.equal(result.unitsSold, 5);
+  assert.equal(result.sellersWithSales, 1);
+  assert.equal(result.sellersWithoutSales, 1);
+  assert.equal(result.sellers[1].companyName, 'MANTA RAYA');
+  assert.equal(result.sellers[1].ordersCount, 0);
+  assert.equal(result.topProducts[0].name, 'Producto principal');
+  assert.deepEqual(result.topProducts[0].channelCodes, ['falabella']);
+  assert.equal(result.channels[0].ordersCount, 3);
+});
+
+test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () => {
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /at time zone 'America\/Lima'/);
+      assert.match(sql, /::date >= \$1::date/);
+      assert.match(sql, /::date <= \$2::date/);
+      assert.deepEqual(params, ['2026-08-12', '2026-08-12', 10, 0]);
+      return { rows: [] };
+    },
+  };
+  const result = await listOrders({ from: '2026-08-12', to: '2026-08-12', limit: 10 }, db);
+  assert.equal(result.totalCount, 0);
+  assert.deepEqual(result.orders, []);
 });

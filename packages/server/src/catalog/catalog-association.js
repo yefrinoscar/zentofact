@@ -41,6 +41,32 @@ const SIZE_ALIASES = new Map([
   ['talla unica', 'UNICA'], ['unica', 'UNICA'], ['unico', 'UNICA'], ['one size', 'UNICA'],
 ]);
 
+// Excepciones verificadas visualmente en el catálogo real. Falabella mantiene
+// publicaciones con nombres distintos para la misma unidad física; estas
+// reglas eliminan solo los descriptores que el seller usa como título/modelo.
+const VERIFIED_EQUIVALENT_FAMILIES = [
+  {
+    key: 'manta-termica-mylar-140x210',
+    requiredTokens: ['manta', 'termica', 'emergencia'],
+    anyTokens: ['mylar', '140x210'],
+    ignoredTokens: new Set([
+      '140x210', 'aluminizada', 'camping', 'desastres', 'mylar', 'supervivencia', 'trekking',
+    ]),
+  },
+];
+
+// La numeración N°1/N°2/N°3 no identifica de forma fiable estos adornos entre
+// sellers. Las 21 fotos verificadas forman tres diseños físicos; ShopSku fija
+// esa identidad incluso cuando el título publicado usa otro número.
+const VERIFIED_LISTING_FAMILIES = new Map([
+  ...['140437519', '140681420', '140716029', '140714631', '140377407', '140546534', '140743807']
+    .map((shopSku) => [shopSku, 'adorno-pared-ginkgo']),
+  ...['140430971', '140681536', '140716049', '140714723', '140377163', '140546071', '140743698']
+    .map((shopSku) => [shopSku, 'adorno-pared-hojas-alargadas']),
+  ...['140432973', '140681492', '140716042', '140714636', '140377491', '140546464', '140743749']
+    .map((shopSku) => [shopSku, 'adorno-pared-ramas-finas']),
+]);
+
 export function normalizeCatalogText(value) {
   return String(value || '')
     .normalize('NFKD')
@@ -101,13 +127,38 @@ function comparableCategory(value) {
   return normalizeCatalogText(value).split(' ').filter((token) => token && !STOP_WORDS.has(token));
 }
 
+function verifiedEquivalentFamily(tokens, modelTokens) {
+  const tokenSet = new Set(tokens);
+  return VERIFIED_EQUIVALENT_FAMILIES.find((family) => {
+    if (!family.requiredTokens.every((token) => tokenSet.has(token))) return false;
+    if (family.anyTokens && !family.anyTokens.some((token) => tokenSet.has(token))) return false;
+    if (family.modelTokens && (
+      modelTokens.length !== 1 || !family.modelTokens.has(modelTokens[0])
+    )) return false;
+    return true;
+  }) || null;
+}
+
 export function falabellaAssociationProfile(remote = {}) {
   const title = String(remote.name || remote.title || '').trim();
   const color = normalizeColor(remote.color, title);
   const size = normalizeSize(remote.size, title);
-  const tokens = normalizedTokens(title, color, size);
+  let tokens = normalizedTokens(title, color, size);
   const images = (Array.isArray(remote.images) ? remote.images : [remote.imageUrl || remote.image_url])
     .map((value) => String(value || '').trim()).filter(Boolean);
+  let modelTokens = [...new Set(normalizeCatalogText(title).split(' ')
+    .filter((token) => /\d/.test(token))
+    .map((token) => /^n(\d+)$/.exec(token)?.[1] || token))];
+  const verifiedListingFamily = VERIFIED_LISTING_FAMILIES.get(String(remote.shopSku || '').trim()) || '';
+  const verifiedSemanticFamily = verifiedEquivalentFamily(tokens, modelTokens);
+  const verifiedFamily = verifiedListingFamily || verifiedSemanticFamily?.key || '';
+  const ignoredTokens = verifiedListingFamily
+    ? new Set(['1', '2', '3'])
+    : verifiedSemanticFamily?.ignoredTokens;
+  if (verifiedFamily) {
+    tokens = tokens.filter((token) => !ignoredTokens?.has(token));
+    modelTokens = modelTokens.filter((token) => !ignoredTokens?.has(token));
+  }
   return {
     title,
     normalizedTitle: normalizeCatalogText(title),
@@ -116,9 +167,8 @@ export function falabellaAssociationProfile(remote = {}) {
     tokens,
     brand: normalizeCatalogText(remote.brand),
     categoryTokens: comparableCategory(remote.primaryCategory || remote.category),
-    modelTokens: [...new Set(normalizeCatalogText(title).split(' ')
-      .filter((token) => /\d/.test(token))
-      .map((token) => /^n(\d+)$/.exec(token)?.[1] || token))],
+    modelTokens,
+    verifiedFamily,
     price: finitePrice(remote.effectivePrice ?? remote.salePrice ?? remote.price),
     images,
     imageFingerprints: (Array.isArray(remote.imageFingerprints) ? remote.imageFingerprints : [remote.imageFingerprint])
@@ -143,13 +193,18 @@ export function scoreFalabellaAssociation(leftInput, rightInput) {
     return { eligible: false, confidence: 0, reason: 'variant_conflict', signals: [] };
   }
 
+  const verifiedEquivalent = left.verifiedFamily && left.verifiedFamily === right.verifiedFamily;
+  if (left.verifiedFamily !== right.verifiedFamily && (left.verifiedFamily || right.verifiedFamily)) {
+    return { eligible: false, confidence: 0, reason: 'verified_family_conflict', signals: [] };
+  }
+
   const exactImageUrl = left.images.some((image) => right.images.includes(image));
   const exactImageContent = left.imageFingerprints.some((fingerprint) => right.imageFingerprints.includes(fingerprint));
   const exactImage = exactImageUrl || exactImageContent;
   const exactSellerSku = left.sellerSkus.some((sellerSku) => right.sellerSkus.includes(sellerSku));
   const title = tokenMetrics(left.tokens, right.tokens);
   const titleSimilarity = Number(((title.containment + title.jaccard) / 2).toFixed(4));
-  if (!exactSellerSku && left.modelTokens.length && right.modelTokens.length
+  if (!verifiedEquivalent && !exactSellerSku && left.modelTokens.length && right.modelTokens.length
     && !left.modelTokens.some((token) => right.modelTokens.includes(token))) {
     return { eligible: false, confidence: 0, reason: 'model_conflict', signals: [] };
   }
@@ -165,6 +220,11 @@ export function scoreFalabellaAssociation(leftInput, rightInput) {
     `title:${title.intersection}/${Math.min(new Set(left.tokens).size, new Set(right.tokens).size)}`,
   ];
   let confidence = (title.containment * 0.72) + (title.jaccard * 0.28);
+
+  if (verifiedEquivalent) {
+    confidence = Math.max(confidence, 0.99);
+    signals.push(`verified_family:${left.verifiedFamily}`);
+  }
 
   if (left.color && right.color) {
     confidence += 0.06;
@@ -217,7 +277,10 @@ export function scoreFalabellaAssociation(leftInput, rightInput) {
 }
 
 function semanticKey(profile) {
-  return `${[...new Set(profile.tokens)].sort().join(' ')}|${profile.color}|${profile.size}`;
+  const family = profile.verifiedFamily
+    ? `verified:${profile.verifiedFamily}`
+    : [...new Set(profile.tokens)].sort().join(' ');
+  return `${family}|${profile.color}|${profile.size}`;
 }
 
 /**
@@ -228,12 +291,17 @@ export function groupFalabellaCatalogRecords(records, { threshold = 0.82, ambigu
   const exact = new Map();
   for (const record of records) {
     const profile = falabellaAssociationProfile(record.remote);
-    const key = `${profile.normalizedTitle}|${profile.color}|${profile.size}`;
+    const identity = profile.verifiedFamily
+      ? `verified:${profile.verifiedFamily}`
+      : profile.normalizedTitle;
+    const key = `${identity}|${profile.color}|${profile.size}`;
     if (!exact.has(key)) exact.set(key, {
       key, profile, profiles: [], records: [], sourceGroups: [], companyIds: new Set(),
     });
     exact.get(key).profiles.push(profile);
-    exact.get(key).records.push({ ...record, association: { method: 'exact', confidence: 1, signals: ['exact_identity'] } });
+    const signals = ['exact_identity'];
+    if (profile.verifiedFamily) signals.push(`verified_family:${profile.verifiedFamily}`);
+    exact.get(key).records.push({ ...record, association: { method: 'exact', confidence: 1, signals } });
     exact.get(key).companyIds.add(Number(record.company?.id));
   }
   for (const group of exact.values()) {
