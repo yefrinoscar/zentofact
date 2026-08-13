@@ -11,7 +11,11 @@ import { listFacturas } from './factura-query.service';
 import { listCreditNotes } from './credit-note-query.service';
 import { generateAcceptedBoletaPdfBase64, markBoletaFalabellaPdfUpload } from './boleta.service';
 import { recordFacturaUpload, generateAcceptedFacturaPdfBase64 } from './factura.service';
-import { areAllOrderItemsReadyToShip, groupReadyToShipPackages } from './falabella-ready-to-ship';
+import {
+  areAllOrderItemsReadyToShip,
+  canPrintFalabellaShippingLabel,
+  groupReadyToShipPackages,
+} from './falabella-ready-to-ship';
 import { recordFalabellaLabelPrint } from './falabella-label-print.service';
 
 async function requireCompanyWithFalabella(companyId: number) {
@@ -1164,10 +1168,10 @@ export async function falabellaGetShippingLabel(payload: { companyId: number; or
     return { ok: false, error: 'Falabella devolvió artículos incompletos o inválidos para generar la etiqueta.' };
   }
   const itemStatuses = orderItems.map(getOrderItemStatus);
-  if (itemStatuses.some((status) => status !== 'ready_to_ship')) {
+  if (itemStatuses.some((status) => !canPrintFalabellaShippingLabel(status))) {
     return {
       ok: false,
-      error: 'Falabella indica que el pedido todavía no está listo para enviar o que ya fue enviado. Sincroniza la bandeja antes de imprimir.',
+      error: 'Falabella indica que el pedido ya no está pendiente ni listo para enviar. Sincroniza la bandeja antes de imprimir.',
     };
   }
 

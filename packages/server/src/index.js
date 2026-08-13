@@ -186,12 +186,6 @@ function publicFalabellaManifestJob(job) {
   return publicJob;
 }
 
-function canPrintFalabellaShippingLabel(status) {
-  const value = String(status || '').toLowerCase();
-  return /(^|\|)ready_to_ship(\||$)/.test(value)
-    && !/(^|\|)(pending|shipped)(\||$)/.test(value);
-}
-
 app.get('/health', (c) => ok(c, { ok: true, service: 'zentofact-api', ts: new Date().toISOString() }));
 
 // ── Sesión / catálogo de permisos ──
@@ -793,8 +787,8 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
       'select status from falabella_orders where company_id=$1 and order_id=$2',
       [companyId, orderId],
     )).rows[0];
-    if (!order || !canPrintFalabellaShippingLabel(order.status)) {
-      return c.json({ error: 'Solo se pueden imprimir etiquetas de pedidos listos para enviar.' }, 409);
+    if (!order || !core.canPrintFalabellaShippingLabel(order.status)) {
+      return c.json({ error: 'Solo se pueden imprimir etiquetas de pedidos pendientes o listos para enviar.' }, 409);
     }
     const result = await core.falabellaGetShippingLabel({ companyId, orderId });
     if (result?.error) {
@@ -837,7 +831,7 @@ app.post('/falabella/shipping-labels/a4', async (c) => {
     );
     const printableByOrder = new Map(printable.rows.map((order) => [
       `${order.company_id}:${order.order_id}`,
-      canPrintFalabellaShippingLabel(order.status),
+      core.canPrintFalabellaShippingLabel(order.status),
     ]));
     const invalidOrder = orders.find((order) => !printableByOrder.get(`${Number(order.companyId)}:${String(order.orderId).trim()}`));
     if (invalidOrder) {

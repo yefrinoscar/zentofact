@@ -149,6 +149,7 @@ export {
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,
   falabellaGetWebhooks, falabellaCreateWebhook, falabellaDeleteWebhook,
 } from './services/falabella.service';
+export { canPrintFalabellaShippingLabel } from './services/falabella-ready-to-ship';
 export { recordFalabellaLabelPrintIndexes } from './services/falabella-label-print.service';
 export {
   createFalabellaWebManifests,
