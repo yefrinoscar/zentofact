@@ -3,8 +3,23 @@ const test = require('node:test');
 
 const {
   areAllOrderItemsReadyToShip,
+  canPrintFalabellaShippingLabel,
   groupReadyToShipPackages,
 } = require('../dist/services/falabella-ready-to-ship.js');
+
+test('permite imprimir etiquetas pendientes o listas para enviar', () => {
+  assert.equal(canPrintFalabellaShippingLabel('pending'), true);
+  assert.equal(canPrintFalabellaShippingLabel('ready_to_ship'), true);
+  assert.equal(canPrintFalabellaShippingLabel('pending|ready_to_ship'), true);
+});
+
+test('impide imprimir etiquetas de pedidos terminales o sin estado', () => {
+  assert.equal(canPrintFalabellaShippingLabel('shipped'), false);
+  assert.equal(canPrintFalabellaShippingLabel('delivered'), false);
+  assert.equal(canPrintFalabellaShippingLabel('canceled'), false);
+  assert.equal(canPrintFalabellaShippingLabel('ready_to_ship|shipped'), false);
+  assert.equal(canPrintFalabellaShippingLabel(''), false);
+});
 
 test('agrupa cada etiqueta por PackageId con sus propios productos', () => {
   const packages = groupReadyToShipPackages([
