@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requireAnyPermission, requirePermission } from './auth.js';
+import { originMatchesRequestHost, requireAnyPermission, requirePermission } from './auth.js';
 
 function context(user, method = 'GET') {
   return {
@@ -42,6 +42,13 @@ test('los guards conservan el bloqueo de métodos unsafe para viewer', async () 
       status: 403,
     });
   }
+});
+
+test('el origen CSRF coincide con el host de la petición o el forwarded host', () => {
+  assert.equal(originMatchesRequestHost('http://localhost:3011', 'localhost:3011'), true);
+  assert.equal(originMatchesRequestHost('https://preview.example', 'localhost:3011', 'preview.example'), true);
+  assert.equal(originMatchesRequestHost('https://evil.example', 'localhost:3011'), false);
+  assert.equal(originMatchesRequestHost('', 'localhost:3011'), false);
 });
 
 test('requireAnyPermission exige una lista no vacía', () => {

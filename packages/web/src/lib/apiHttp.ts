@@ -38,7 +38,7 @@ async function ensureCsrfToken() {
   return csrfToken;
 }
 
-async function req(path: string, init?: RequestInit) {
+async function req(path: string, init?: RequestInit, attempt = 0) {
   const method = String(init?.method || 'GET').toUpperCase();
   const csrfHeaders = UNSAFE_METHODS.has(method)
     ? { 'x-csrf-token': await ensureCsrfToken() }
@@ -64,6 +64,15 @@ async function req(path: string, init?: RequestInit) {
   if (res.status === 401) {
     handleUnauthorized(path);
     throw new Error((data && data.error) || 'Sesión expirada. Inicia sesión de nuevo.');
+  }
+  if (
+    res.status === 403
+    && attempt === 0
+    && UNSAFE_METHODS.has(method)
+    && String(data?.error || '').toLowerCase().includes('csrf')
+  ) {
+    clearCsrfToken();
+    return req(path, init, 1);
   }
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
   return data;
@@ -138,6 +147,8 @@ const apiHttp = {
     date?: string;
     search?: string;
     companyId?: number;
+    sortBy?: string;
+    sortDir?: string;
     limit?: number;
     offset?: number;
   } = {}) => req(`/catalog/sales/today${qs(filter)}`),
@@ -145,6 +156,8 @@ const apiHttp = {
     date?: string;
     search?: string;
     companyId?: number;
+    sortBy?: string;
+    sortDir?: string;
     limit?: number;
     offset?: number;
   } = {}) => req('/catalog/sales/today/refresh', { method: 'POST', body: JSON.stringify(filter) }),

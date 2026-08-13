@@ -525,6 +525,7 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
             sku: 'AG3',
             name: 'Agua 3L',
             image_url: null,
+            shop_sku: '12345678',
             brand: null,
             quantity_on_hand: 12,
             available: 10,
@@ -563,10 +564,15 @@ test('las salidas del día agregan pedidos locales por producto y fecha de Lima'
   assert.match(statements[0].sql, /o\.company_id=\$2/);
   assert.match(statements[0].sql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(statements[0].sql, /metadata->'images'->>0/);
+  assert.match(statements[0].sql, /media\.falabella\.com/);
   assert.match(statements[0].sql, /left join lateral/);
   assert.match(statements[0].sql, /lower\(l\.title\)=lower\(oi\.description\)/);
   assert.match(statements[0].sql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
+  assert.match(statements[0].sql, /order by sum\(units_sold\) desc nulls last/);
   assert.equal(statements[0].params[0], '2026-08-12');
+  const named = await listTodayProductSales({ date: '2026-08-12', sortBy: 'product', sortDir: 'asc' }, db);
+  assert.equal(named.products[0].sku, 'AG3');
+  assert.match(statements[3].sql, /order by min\(name\) asc nulls last/);
   await assert.rejects(() => listTodayProductSales({ date: 'no-es-fecha' }, db), /date inválida/);
 });
 

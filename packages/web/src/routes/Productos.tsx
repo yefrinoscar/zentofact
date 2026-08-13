@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, Fragment, ReactNode, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
@@ -22,8 +22,10 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { DataTablePagination } from '../components/ui/data-table';
+import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
@@ -168,6 +170,7 @@ type ReturnsSummary = ActivityResponse & {
 };
 
 const PAGE_SIZE = 20;
+const SEARCH_DELAY_MS = 300;
 
 const initialCreate = { mainSku: '', name: '', brand: '', description: '', referencePrice: '', imageUrl: '' };
 const initialAdjust = { mode: 'delta', value: '', reason: '' };
@@ -303,6 +306,20 @@ export default function Productos() {
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
+  const searchTimer = useRef(0);
+
+  const applySearch = (value: string, immediate = false) => {
+    setSearch(value);
+    window.clearTimeout(searchTimer.current);
+    const commit = () => {
+      setSelectedId(null);
+      setExpandedRows({});
+      setSubmittedSearch(value.trim());
+      setOffset(0);
+    };
+    if (immediate) commit();
+    else searchTimer.current = window.setTimeout(commit, SEARCH_DELAY_MS);
+  };
 
   const productFilters = useMemo(() => ({ submittedSearch, status, sellerCoverage, offset }), [submittedSearch, status, sellerCoverage, offset]);
   const productsQuery = useQuery({
@@ -626,14 +643,14 @@ export default function Productos() {
       && String(listing.companyId) === publishVisual.companyId
   )));
 
-  const renderCatalogTable = () => <section className="overflow-hidden rounded-xl border border-border bg-card">
+  const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
     <div className="flex items-center justify-between border-b border-border px-5 py-3">
       <p className="text-sm font-semibold">{totalCount} productos</p>
       <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{productsQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Página {Math.floor(offset / PAGE_SIZE) + 1}</span>
     </div>
     {loading ? <LoadingBlock /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
-        <Table className="table-fixed">
+        <Table className="min-w-[720px] table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
               {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
@@ -661,26 +678,45 @@ export default function Productos() {
         </Table>
       </div>
     )}
-    <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-3">
-      <span className="text-xs text-muted-foreground">Mostrando {products.length} de {totalCount}</span>
-      <div className="flex gap-2"><button disabled={offset === 0} onMouseEnter={() => prefetchProductsPage(Math.max(0, offset - PAGE_SIZE))} onFocus={() => prefetchProductsPage(Math.max(0, offset - PAGE_SIZE))} onClick={() => { setSelectedId(null); setExpandedRows({}); setOffset(Math.max(0, offset - PAGE_SIZE)); }} className="secondary-button"><ChevronLeft className="h-4 w-4" /> Anterior</button><button disabled={offset + PAGE_SIZE >= totalCount} onMouseEnter={() => prefetchProductsPage(offset + PAGE_SIZE)} onFocus={() => prefetchProductsPage(offset + PAGE_SIZE)} onClick={() => { setSelectedId(null); setExpandedRows({}); setOffset(offset + PAGE_SIZE); }} className="secondary-button">Siguiente <ChevronRight className="h-4 w-4" /></button></div>
-    </div>
-  </section>;
+    {totalCount > 0 ? <DataTablePagination
+      pageIndex={Math.floor(offset / PAGE_SIZE)}
+      pageSize={PAGE_SIZE}
+      totalCount={totalCount}
+      fetching={productsQuery.isFetching}
+      onPageChange={(nextPage) => {
+        setSelectedId(null);
+        setExpandedRows({});
+        setOffset(nextPage * PAGE_SIZE);
+      }}
+      onPrefetch={(nextPage) => prefetchProductsPage(nextPage * PAGE_SIZE)}
+    /> : null}
+  </TablePanel>;
 
   return (
     <div className="space-y-5">
       <div className="space-y-3 border-b border-border pb-4">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <form onSubmit={(event) => { event.preventDefault(); setSelectedId(null); setExpandedRows({}); setOffset(0); setSubmittedSearch(search.trim()); }} className="flex min-w-0 flex-1 gap-2">
+          <div className="flex min-w-0 flex-1 gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar SKU interno, producto o SKU de seller" className="field h-9 pl-9" />
+            <Input
+              value={search}
+              onChange={(event) => applySearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  applySearch(search, true);
+                }
+              }}
+              placeholder="Buscar SKU, producto o seller"
+              className="h-9 pl-9"
+              aria-label="Buscar SKU, producto o seller"
+            />
           </div>
-          <button type="submit" className="secondary-button"><Search className="h-4 w-4" /> Buscar</button>
-          <button type="button" onClick={refreshMarketplaceSnapshots} disabled={refreshing} className="secondary-button px-2.5" aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
-            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-          </button>
-          </form>
+          <Button type="button" variant="outline" size="icon" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
+            <RefreshCw className={cn(refreshing && 'animate-spin')} />
+          </Button>
+          </div>
           <button onClick={() => openModal('create')} className="primary-button"><PackagePlus className="h-4 w-4" /> Nuevo producto</button>
         </div>
 
@@ -698,7 +734,8 @@ export default function Productos() {
               <SelectItem value="multiple">2 o más sellers</SelectItem>
             </SelectContent>
           </Select>
-          {(status !== 'active' || sellerCoverage !== 'all' || submittedSearch) && <button type="button" onClick={() => {
+          {(status !== 'active' || sellerCoverage !== 'all' || submittedSearch) && <Button type="button" variant="outline" onClick={() => {
+            window.clearTimeout(searchTimer.current);
             setSelectedId(null);
             setExpandedRows({});
             setSearch('');
@@ -706,7 +743,7 @@ export default function Productos() {
             setStatus('active');
             setSellerCoverage('all');
             setOffset(0);
-          }} className="secondary-button"><X className="h-4 w-4" /> Limpiar</button>}
+          }}><X /> Limpiar</Button>}
         </div>
       </div>
 

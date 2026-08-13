@@ -36,6 +36,12 @@ export function dateKey(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
+export function addDaysToDateKey(value: string, days: number) {
+  const next = dateFromKey(value);
+  next.setDate(next.getDate() + days);
+  return dateKey(next);
+}
+
 export function documentDateRangeLabel(range: DocumentDateRange) {
   const from = dateFromKey(range.from);
   const to = dateFromKey(range.to);

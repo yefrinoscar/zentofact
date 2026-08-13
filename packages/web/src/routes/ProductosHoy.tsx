@@ -1,13 +1,16 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Boxes, Check, ChevronLeft, ChevronRight, Copy, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { ColumnDef, getCoreRowModel, type SortingState, useReactTable } from '@tanstack/react-table';
+import { Boxes, Check, Copy, RefreshCw, Search } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { todayInLima } from '../lib/documentDateRange';
+import DayStrip from '../components/DayStrip';
+import { Button } from '../components/ui/button';
+import { DataTable, DataTableColumnHeader, DataTablePagination } from '../components/ui/data-table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 
 type Company = {
   id: number;
@@ -32,6 +35,7 @@ type TodaySaleProduct = {
   sku: string;
   name: string;
   imageUrl?: string | null;
+  shopSku?: string | null;
   brand?: string | null;
   mapped: boolean;
   quantityOnHand: number | null;
@@ -66,7 +70,8 @@ type TodaySalesResponse = {
   offset: number;
 };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
+const SEARCH_DELAY_MS = 300;
 
 function sellerShortName(value?: string | null) {
   const fallback = String(value || '').trim();
@@ -89,8 +94,14 @@ function formatNumber(value: unknown, digits = 4) {
   return number.toLocaleString('es-PE', { maximumFractionDigits: digits });
 }
 
-function productImageSrc(url?: string | null) {
-  const value = String(url || '').trim();
+function falabellaMediaUrl(shopSku?: string | null) {
+  const sku = String(shopSku || '').trim();
+  if (!sku || !/^[A-Za-z0-9_-]+$/.test(sku)) return '';
+  return `https://media.falabella.com/falabellaPE/${sku}_01`;
+}
+
+function productImageSrc(url?: string | null, shopSku?: string | null) {
+  const value = String(url || '').trim() || falabellaMediaUrl(shopSku);
   if (!value) return '';
   try {
     const parsed = new URL(value);
@@ -101,6 +112,42 @@ function productImageSrc(url?: string | null) {
     return value;
   }
   return value;
+}
+
+function ProductThumb({
+  url,
+  shopSku,
+  name,
+  onOpen,
+}: {
+  url?: string | null;
+  shopSku?: string | null;
+  name: string;
+  onOpen: (src: string, name: string) => void;
+}) {
+  const [failedSrc, setFailedSrc] = useState('');
+  const src = productImageSrc(url, shopSku);
+  if (!src || failedSrc === src) {
+    return <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(src, name)}
+      className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted"
+      aria-label={`Ver foto de ${name}`}
+      title="Ver foto grande"
+    >
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailedSrc(src)}
+        className="h-full w-full object-cover transition group-hover:scale-105"
+      />
+    </button>
+  );
 }
 
 export default function ProductosHoy() {
@@ -115,13 +162,19 @@ export default function ProductosHoy() {
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState('');
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'units', desc: true }]);
+  const searchTimer = useRef(0);
+  const sortBy = sorting[0]?.id || 'units';
+  const sortDir = sorting[0]?.desc === false ? 'asc' : 'desc';
 
   const filters = useMemo(() => ({
     date,
     search: submittedSearch,
     companyId: companyId === 'all' ? undefined : Number(companyId),
+    sortBy,
+    sortDir,
     offset,
-  }), [date, submittedSearch, companyId, offset]);
+  }), [date, submittedSearch, companyId, sortBy, sortDir, offset]);
 
   const salesQuery = useQuery({
     queryKey: ['today-product-sales', filters],
@@ -129,6 +182,8 @@ export default function ProductosHoy() {
       date: filters.date,
       search: filters.search,
       companyId: filters.companyId,
+      sortBy: filters.sortBy,
+      sortDir: filters.sortDir,
       limit: PAGE_SIZE,
       offset: filters.offset,
     }),
@@ -161,27 +216,20 @@ export default function ProductosHoy() {
   const pendingDetailOrders = Number(totals.pendingDetailOrders || 0);
   const sellerTotals = totals.sellers || [];
   const sellersCount = Number(totals.sellersCount ?? sellerTotals.length);
-  const topSellerNames = sellerTotals
-    .map((seller) => sellerShortName(seller.companyName))
-    .filter(Boolean);
-  const sellersDetail = topSellerNames.length
-    ? `${topSellerNames.slice(0, 3).join(' · ')}${topSellerNames.length > 3 ? ` +${topSellerNames.length - 3}` : ''}`
-    : 'Sin sellers en esta fecha';
   const queryError = salesQuery.error || companiesQuery.error;
   const visibleError = queryError instanceof Error ? queryError.message : queryError ? 'No se pudieron cargar las salidas.' : '';
+  const pageIndex = Math.floor(offset / PAGE_SIZE);
+  const dataLoading = salesQuery.isPending || (salesQuery.isFetching && payload?.date !== date);
 
-  const applySearch = (event: FormEvent) => {
-    event.preventDefault();
-    setOffset(0);
-    setSubmittedSearch(search.trim());
-  };
-
-  const clearFilters = () => {
-    setSearch('');
-    setSubmittedSearch('');
-    setCompanyId('all');
-    setDate(limaToday);
-    setOffset(0);
+  const applySearch = (value: string, immediate = false) => {
+    setSearch(value);
+    window.clearTimeout(searchTimer.current);
+    const commit = () => {
+      setSubmittedSearch(value.trim());
+      setOffset(0);
+    };
+    if (immediate) commit();
+    else searchTimer.current = window.setTimeout(commit, SEARCH_DELAY_MS);
   };
 
   const prefetchPage = (nextOffset: number) => {
@@ -192,6 +240,8 @@ export default function ProductosHoy() {
         date: filters.date,
         search: filters.search,
         companyId: filters.companyId,
+        sortBy: filters.sortBy,
+        sortDir: filters.sortDir,
         limit: PAGE_SIZE,
         offset: nextOffset,
       }),
@@ -207,6 +257,8 @@ export default function ProductosHoy() {
         date: filters.date,
         search: filters.search,
         companyId: filters.companyId,
+        sortBy: filters.sortBy,
+        sortDir: filters.sortDir,
         limit: PAGE_SIZE,
         offset: filters.offset,
       });
@@ -218,7 +270,10 @@ export default function ProductosHoy() {
         ? `Falabella incompleto · ${hydrated} pedidos nuevos en la base local.`
         : `Falabella ${live?.windowDays || 2} días · ${hydrated} pedidos hidratados.`);
     } catch (error) {
-      setRefreshNote(error instanceof Error ? error.message : 'No se pudo actualizar Falabella.');
+      const message = error instanceof Error ? error.message : 'No se pudo actualizar Falabella.';
+      setRefreshNote(message.toLowerCase().includes('csrf')
+        ? 'No se pudo actualizar. Recarga la página e inténtalo de nuevo.'
+        : message);
     } finally {
       setRefreshing(false);
     }
@@ -227,21 +282,17 @@ export default function ProductosHoy() {
   const columns = useMemo<ColumnDef<TodaySaleProduct>[]>(() => [
     {
       id: 'product',
-      header: 'Producto',
+      accessorFn: (product) => product.name,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Producto" />,
       cell: ({ row }) => {
         const product = row.original;
         return <div className="flex items-center gap-3">
-          {product.imageUrl
-            ? <button
-                type="button"
-                onClick={() => setPreview({ url: productImageSrc(product.imageUrl), name: product.name })}
-                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-muted"
-                aria-label={`Ver foto de ${product.name}`}
-                title="Ver foto grande"
-              >
-                <img src={productImageSrc(product.imageUrl)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover transition group-hover:scale-105" />
-              </button>
-            : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
+          <ProductThumb
+            url={product.imageUrl}
+            shopSku={product.shopSku}
+            name={product.name}
+            onOpen={(src, name) => setPreview({ url: src, name })}
+          />
           <span className="min-w-0 flex-1">
             <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
             <button
@@ -261,7 +312,8 @@ export default function ProductosHoy() {
     },
     {
       id: 'units',
-      header: 'Vendidas',
+      accessorFn: (product) => product.unitsSold,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Vendidas" />,
       cell: ({ row }) => <div>
         <p className="text-lg font-semibold leading-none tabular-nums">{formatNumber(row.original.unitsSold, 0)}</p>
         <p className="mt-1 text-xs text-muted-foreground">{formatNumber(row.original.ordersCount, 0)} pedidos</p>
@@ -269,7 +321,8 @@ export default function ProductosHoy() {
     },
     {
       id: 'stock',
-      header: 'En almacén',
+      accessorFn: (product) => product.quantityOnHand,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="En almacén" />,
       cell: ({ row }) => {
         const product = row.original;
         if (!product.mapped || product.quantityOnHand == null) {
@@ -284,7 +337,8 @@ export default function ProductosHoy() {
     },
     {
       id: 'sellers',
-      header: 'Sellers',
+      accessorFn: (product) => product.sellersCount,
+      header: ({ column }) => <DataTableColumnHeader column={column} title="Sellers" />,
       cell: ({ row }) => {
         const sellers = row.original.sellers;
         if (!sellers.length) return <span className="text-sm text-muted-foreground">—</span>;
@@ -309,16 +363,21 @@ export default function ProductosHoy() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (product) => product.productKey,
     manualPagination: true,
+    manualSorting: true,
+    enableMultiSort: false,
     rowCount: totalCount,
+    onSortingChange: (updater) => {
+      setOffset(0);
+      setSorting(updater);
+    },
     state: {
+      sorting,
       pagination: {
         pageIndex: Math.floor(offset / PAGE_SIZE),
         pageSize: PAGE_SIZE,
       },
     },
   });
-
-  const filtersActive = submittedSearch || companyId !== 'all' || date !== limaToday;
 
   return (
     <div className="space-y-5">
@@ -329,14 +388,14 @@ export default function ProductosHoy() {
             label="Unidades vendidas"
             value={formatNumber(totals.unitsSold, 0)}
             detail="Según plazo de envío"
-            loading={salesQuery.isPending}
+            loading={dataLoading}
           />
           <SaleMetric
             index={1}
             label="Pedidos"
             value={formatNumber(totals.ordersCount, 0)}
             detail={pendingDetailOrders > 0 ? `${formatNumber(pendingDetailOrders, 0)} sin detalle` : 'Con salida en esta fecha'}
-            loading={salesQuery.isPending}
+            loading={dataLoading}
             warning={pendingDetailOrders > 0}
           />
           <SaleMetric
@@ -344,113 +403,95 @@ export default function ProductosHoy() {
             label="Productos"
             value={formatNumber(totals.productsCount, 0)}
             detail={totals.productsCount === 1 ? 'SKU con venta' : 'SKUs con venta'}
-            loading={salesQuery.isPending}
+            loading={dataLoading}
           />
           <SaleMetric
             index={3}
             label="Sellers"
             value={formatNumber(sellersCount, 0)}
-            detail={sellersDetail}
-            loading={salesQuery.isPending}
+            detail={sellersCount === 1 ? 'Seller con venta' : 'Sellers con venta'}
+            loading={dataLoading}
           />
         </div>
-        {sellerTotals.length > 1 && (
-          <ul className="flex gap-2 overflow-x-auto border-t border-border px-4 py-2.5" aria-label="Unidades por seller">
-            {sellerTotals.map((seller) => {
-              const id = seller.companyId == null ? '' : String(seller.companyId);
-              return (
-                <li key={id || seller.companyName || 'seller'}>
-                  <button
-                    type="button"
-                    disabled={!id}
-                    onClick={() => { setCompanyId(id); setOffset(0); }}
-                    className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground disabled:cursor-default"
-                    aria-label={`Ver solo ${sellerShortName(seller.companyName)}`}
-                  >
-                    <span className="text-foreground">{sellerShortName(seller.companyName)}</span>
-                    {' · '}
-                    {formatNumber(seller.unitsSold, 0)} u
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </section>
 
-      <div className="space-y-3 border-b border-border pb-4">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <form onSubmit={applySearch} className="flex min-w-0 flex-1 gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar SKU, producto o nombre del seller" className="field h-9 pl-9" />
-            </div>
-            <button type="submit" className="secondary-button"><Search className="h-4 w-4" /> Buscar</button>
-            <button type="button" onClick={() => void refreshFromFalabella()} disabled={refreshing} className="secondary-button px-2.5" aria-label="Actualizar pedidos recientes de Falabella" title="Consulta Falabella solo de los últimos 2 días y lee el resto desde la base local">
-              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-            </button>
-          </form>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="date"
-            value={date}
-            max={limaToday}
-            onChange={(event) => { setDate(event.target.value || limaToday); setOffset(0); }}
-            className="field h-9 w-40"
-            aria-label="Fecha de salida"
-          />
-          <Select value={companyId} onValueChange={(value) => { setCompanyId(value); setOffset(0); }}>
-            <SelectTrigger className="w-52 border-border bg-background"><SelectValue placeholder="Todos los sellers" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los sellers</SelectItem>
-              {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {filtersActive && <button type="button" onClick={clearFilters} className="secondary-button"><X className="h-4 w-4" /> Limpiar</button>}
+      <div className="space-y-3">
+        <DayStrip value={date} onChange={(next) => { setDate(next); setOffset(0); }} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => applySearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  applySearch(search, true);
+                }
+              }}
+              placeholder="Buscar SKU, producto o seller"
+              className="h-9 pl-9"
+              aria-label="Buscar SKU, producto o seller"
+            />
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Select value={companyId} onValueChange={(value) => { setCompanyId(value); setOffset(0); }}>
+              <SelectTrigger className="w-44 border-border bg-background"><SelectValue placeholder="Todos los sellers" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los sellers</SelectItem>
+                {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => void refreshFromFalabella()}
+              disabled={refreshing}
+              aria-label="Actualizar pedidos recientes de Falabella"
+              title="Consulta Falabella solo de los últimos 2 días y lee el resto desde la base local"
+            >
+              <RefreshCw className={cn(refreshing && 'animate-spin')} />
+            </Button>
+          </div>
         </div>
         {refreshNote && <p className="text-xs text-muted-foreground">{refreshNote}</p>}
       </div>
 
       {visibleError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{visibleError}</div>}
 
-      <section className="overflow-hidden rounded-xl border border-border bg-card">
-        {salesQuery.isPending ? <div className="grid h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-          : products.length === 0 ? <div className="px-5 py-14 text-center">
-            <p className="text-sm font-medium">{pendingDetailOrders > 0 ? 'Faltan detalles de pedidos de hoy' : 'Sin salidas en esta fecha'}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {pendingDetailOrders > 0
-                ? `Hay ${formatNumber(pendingDetailOrders, 0)} pedidos de hoy sin líneas. Pulsa actualizar para traer el detalle de Falabella.`
-                : 'Solo cuenta pedidos cuyo PromisedShippingTime cae en este día. Pulsa actualizar si faltan líneas.'}
-            </p>
-          </div>
-            : <div className="min-w-0" aria-busy={salesQuery.isFetching}>
-              <Table className="table-fixed">
-                <TableHeader>
-                  {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
-                    {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                      header.column.id === 'product' && 'w-[46%]',
-                      header.column.id === 'units' && 'w-[16%]',
-                      header.column.id === 'stock' && 'w-[16%]',
-                      header.column.id === 'sellers' && 'w-[22%]',
-                    )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
-                  </TableRow>)}
-                </TableHeader>
-                <TableBody>{table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} className="align-middle">
-                    {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' || cell.column.id === 'sellers' ? 'whitespace-normal' : undefined}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
-                  </TableRow>
-                ))}</TableBody>
-              </Table>
-            </div>}
-        <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-3">
-          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{salesQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Mostrando {products.length} de {totalCount}</span>
-          <div className="flex gap-2">
-            <button disabled={offset === 0} onMouseEnter={() => prefetchPage(Math.max(0, offset - PAGE_SIZE))} onFocus={() => prefetchPage(Math.max(0, offset - PAGE_SIZE))} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="secondary-button"><ChevronLeft className="h-4 w-4" /> Anterior</button>
-            <button disabled={offset + PAGE_SIZE >= totalCount} onMouseEnter={() => prefetchPage(offset + PAGE_SIZE)} onFocus={() => prefetchPage(offset + PAGE_SIZE)} onClick={() => setOffset(offset + PAGE_SIZE)} className="secondary-button">Siguiente <ChevronRight className="h-4 w-4" /></button>
-          </div>
-        </div>
-      </section>
+      <DataTable
+        table={table}
+        aria-label="Productos con salida en esta fecha"
+        loading={dataLoading}
+        fetching={salesQuery.isFetching}
+        columnClassNames={{
+          product: 'w-[46%]',
+          units: 'w-[16%]',
+          stock: 'w-[16%]',
+          sellers: 'w-[22%]',
+        }}
+        cellClassNames={{
+          product: 'whitespace-normal',
+          sellers: 'whitespace-normal',
+        }}
+        empty={<div className="px-5 py-14 text-center">
+          <p className="text-sm font-medium">{pendingDetailOrders > 0 ? 'Faltan detalles de pedidos de hoy' : 'Sin salidas en esta fecha'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {pendingDetailOrders > 0
+              ? `Hay ${formatNumber(pendingDetailOrders, 0)} pedidos de hoy sin líneas. Pulsa actualizar para traer el detalle de Falabella.`
+              : 'Solo cuenta pedidos cuyo PromisedShippingTime cae en este día. Pulsa actualizar si faltan líneas.'}
+          </p>
+        </div>}
+        footer={!dataLoading && totalCount > 0 ? <DataTablePagination
+          pageIndex={pageIndex}
+          pageSize={PAGE_SIZE}
+          totalCount={totalCount}
+          fetching={salesQuery.isFetching}
+          onPageChange={(nextPage) => setOffset(nextPage * PAGE_SIZE)}
+          onPrefetch={(nextPage) => prefetchPage(nextPage * PAGE_SIZE)}
+        /> : undefined}
+      />
 
       <Dialog open={preview != null} onOpenChange={(open) => { if (!open) setPreview(null); }}>
         <DialogContent className="max-w-3xl gap-3 p-4 sm:max-w-3xl">

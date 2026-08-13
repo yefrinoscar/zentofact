@@ -44,6 +44,19 @@ function limitOffset(input = {}) {
   return { limit, offset };
 }
 
+const TODAY_SALES_SORTS = {
+  product: 'min(name)',
+  units: 'sum(units_sold)',
+  stock: 'min(quantity_on_hand)',
+  sellers: 'count(distinct company_id)',
+};
+
+function todaySalesOrderSql(filters = {}) {
+  const sortBy = TODAY_SALES_SORTS[String(filters.sortBy || 'units')] || TODAY_SALES_SORTS.units;
+  const sortDir = String(filters.sortDir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  return `${sortBy} ${sortDir} nulls last, min(name), min(sku)`;
+}
+
 export async function listProducts(filters = {}, db) {
   const target = db || (await loadCore()).pool;
   const values = [];
@@ -378,7 +391,7 @@ export const PROMISED_SHIPPING_SQL = `coalesce(
 
 export async function listTodayProductSales(filters = {}, db) {
   const target = db || (await loadCore()).pool;
-  const { limit, offset } = limitOffset({ ...filters, limit: filters.limit || 50 });
+  const { limit, offset } = limitOffset({ ...filters, limit: filters.limit || 20 });
   const date = limaDate(filters.date);
   const values = [date];
   const where = [
@@ -427,26 +440,62 @@ export async function listTodayProductSales(filters = {}, db) {
         coalesce(
           nullif(p.image_url, ''),
           nullif(listing.metadata->'images'->>0, ''),
+          nullif(listing.metadata->'images'->0->>'Url', ''),
+          nullif(listing.metadata->'images'->0->>'url', ''),
           nullif(listing.metadata->>'imageUrl', ''),
           nullif(listing.metadata->>'fingerprintImageUrl', ''),
           nullif(linked.metadata->'images'->>0, ''),
+          nullif(linked.metadata->'images'->0->>'Url', ''),
           nullif(linked.metadata->>'imageUrl', ''),
           nullif(oi.raw_data->>'Image', ''),
+          nullif(oi.raw_data->>'ImageUrl', ''),
+          nullif(oi.raw_data->>'ImageURL', ''),
           nullif(oi.raw_data->>'ProductImage', ''),
           nullif(oi.raw_data->>'MainImage', ''),
+          nullif(oi.raw_data#>>'{Images,Image,0}', ''),
+          nullif(oi.raw_data#>>'{Images,0}', ''),
           (
-            select coalesce(nullif(photo.metadata->'images'->>0, ''), nullif(photo.metadata->>'imageUrl', ''))
+            select coalesce(
+              nullif(photo.metadata->'images'->>0, ''),
+              nullif(photo.metadata->'images'->0->>'Url', ''),
+              nullif(photo.metadata->>'imageUrl', '')
+            )
             from product_listings photo
             where photo.product_id=coalesce(oi.product_id, linked.product_id, listing.product_id)
               and photo.status='active'
               and (
                 nullif(photo.metadata->'images'->>0, '') is not null
+                or nullif(photo.metadata->'images'->0->>'Url', '') is not null
                 or nullif(photo.metadata->>'imageUrl', '') is not null
               )
             order by photo.id
             limit 1
-          )
+          ),
+          case
+            when coalesce(
+              nullif(trim(listing.shop_sku), ''),
+              nullif(trim(linked.shop_sku), ''),
+              nullif(trim(oi.provider_sku), ''),
+              nullif(trim(oi.raw_data->>'ShopSku'), ''),
+              nullif(trim(oi.raw_data->>'ShopSKU'), '')
+            ) ~ '^[A-Za-z0-9_-]+$'
+            then 'https://media.falabella.com/falabellaPE/' || coalesce(
+              nullif(trim(listing.shop_sku), ''),
+              nullif(trim(linked.shop_sku), ''),
+              nullif(trim(oi.provider_sku), ''),
+              nullif(trim(oi.raw_data->>'ShopSku'), ''),
+              nullif(trim(oi.raw_data->>'ShopSKU'), '')
+            ) || '_01'
+            else null
+          end
         ) as image_url,
+        coalesce(
+          nullif(trim(listing.shop_sku), ''),
+          nullif(trim(linked.shop_sku), ''),
+          nullif(trim(oi.provider_sku), ''),
+          nullif(trim(oi.raw_data->>'ShopSku'), ''),
+          nullif(trim(oi.raw_data->>'ShopSKU'), '')
+        ) as shop_sku,
         p.brand,
         i.quantity_on_hand,
         coalesce(i.quantity_on_hand, 0) - coalesce(i.quantity_reserved, 0) as available,
@@ -499,13 +548,13 @@ export async function listTodayProductSales(filters = {}, db) {
     target.query(
       `with ${eligibleCte},
        seller_rows as (
-         select product_key, product_id, sku, name, image_url, brand, quantity_on_hand, available,
+         select product_key, product_id, sku, name, image_url, shop_sku, brand, quantity_on_hand, available,
            company_id, company_name, seller_title, seller_sku,
            sum(quantity) as units_sold,
            count(distinct order_id) as orders_count,
            sum(line_total) as revenue
          from eligible
-         group by 1,2,3,4,5,6,7,8,9,10,11,12
+         group by 1,2,3,4,5,6,7,8,9,10,11,12,13
        )
        select
          product_key,
@@ -513,6 +562,7 @@ export async function listTodayProductSales(filters = {}, db) {
          min(sku) as sku,
          min(name) as name,
          min(image_url) as image_url,
+         min(shop_sku) as shop_sku,
          min(brand) as brand,
          min(quantity_on_hand) as quantity_on_hand,
          min(available) as available,
@@ -530,7 +580,7 @@ export async function listTodayProductSales(filters = {}, db) {
          ) order by units_sold desc, company_name, seller_title) as sellers
        from seller_rows
        group by product_key
-       order by sum(units_sold) desc, min(name), min(sku)
+       order by ${todaySalesOrderSql(filters)}
        limit $${values.length - 1} offset $${values.length}`,
       values,
     ),
@@ -595,6 +645,7 @@ export async function listTodayProductSales(filters = {}, db) {
       sku: row.sku,
       name: row.name,
       imageUrl: row.image_url || null,
+      shopSku: row.shop_sku || null,
       brand: row.brand || null,
       mapped: row.product_id != null,
       quantityOnHand: row.quantity_on_hand == null ? null : Number(row.quantity_on_hand),
