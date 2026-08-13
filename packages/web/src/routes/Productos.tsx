@@ -1045,7 +1045,7 @@ function ProductDrawer({
           <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Ventas del producto</p><p className="mt-0.5 text-xs text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p></div><Select value={salesRange} onValueChange={(value) => onSalesRangeChange(value as typeof salesRange)}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">30 días</SelectItem><SelectItem value="90">90 días</SelectItem><SelectItem value="365">12 meses</SelectItem><SelectItem value="all">Todo</SelectItem></SelectContent></Select></div>
           {salesLoading || !sales ? <LoadingBlock /> : <>
             <div className="grid grid-cols-2 border-b border-border md:grid-cols-4"><Metric label="Unidades" value={formatNumber(sales.summary.unitsSold)} /><Metric label="Pedidos" value={formatNumber(sales.summary.ordersCount)} /><Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} /><Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} /></div>
-            {sales.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <section><div className="border-b border-border px-5 py-3"><h3 className="text-sm font-semibold">Ventas recientes</h3></div>{sales.recent.map((sale) => <div key={sale.orderId} className="flex items-center justify-between gap-4 border-b border-border px-5 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {sale.orderNumber || sale.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(sale.companyName)} · {formatDate(sale.orderedAt)}</p></div><div className="text-right"><p className="text-sm font-semibold">{formatMoney(sale.total)}</p><p className="text-xs text-muted-foreground">{formatNumber(sale.quantity)} u</p></div></div>)}</section>}
+            {sales.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
             {sales.hydration?.failed ? <p className="px-5 py-3 text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </>}
         </TabsContent>
@@ -1061,6 +1061,66 @@ function ProductDrawer({
       </Tabs>}
     </SheetContent>
   </Sheet>;
+}
+
+function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
+  return <section aria-labelledby="recent-product-sales-title">
+    <div className="border-b border-border px-5 py-3">
+      <h3 id="recent-product-sales-title" className="text-sm font-semibold">Ventas recientes</h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">Detalle por pedido, vendedor y fecha.</p>
+    </div>
+
+    <div className="hidden sm:block">
+      <Table className="table-fixed">
+        <colgroup>
+          <col className="w-[24%]" />
+          <col className="w-[22%]" />
+          <col className="w-[26%]" />
+          <col className="w-[12%]" />
+          <col className="w-[16%]" />
+        </colgroup>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="h-10 px-5 text-[11px] uppercase tracking-wide">Pedido</TableHead>
+            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Vendedor</TableHead>
+            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Fecha y hora</TableHead>
+            <TableHead className="h-10 px-3 text-right text-[11px] uppercase tracking-wide">Unidades</TableHead>
+            <TableHead className="h-10 px-5 text-right text-[11px] uppercase tracking-wide">Importe</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sales.map((sale) => <TableRow key={sale.orderId}>
+            <TableCell className="px-5 py-3 font-medium tabular-nums">{sale.orderNumber || sale.orderId}</TableCell>
+            <TableCell className="px-3 py-3 whitespace-normal font-medium leading-5">{sellerShortName(sale.companyName)}</TableCell>
+            <TableCell className="px-3 py-3 whitespace-normal text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</TableCell>
+            <TableCell className="px-3 py-3 text-right tabular-nums">{formatNumber(sale.quantity)}</TableCell>
+            <TableCell className="px-5 py-3 text-right font-semibold tabular-nums">{formatMoney(sale.total)}</TableCell>
+          </TableRow>)}
+        </TableBody>
+      </Table>
+    </div>
+
+    <div className="divide-y divide-border sm:hidden">
+      {sales.map((sale) => <article key={sale.orderId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 px-5 py-4">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pedido</p>
+          <p className="mt-1 truncate text-sm font-semibold tabular-nums">{sale.orderNumber || sale.orderId}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Importe</p>
+          <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(sale.total)}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="line-clamp-2 text-sm font-medium leading-5">{sellerShortName(sale.companyName)}</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</p>
+        </div>
+        <div className="self-end text-right">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Unidades</p>
+          <p className="mt-1 text-sm tabular-nums">{formatNumber(sale.quantity)}</p>
+        </div>
+      </article>)}
+    </div>
+  </section>;
 }
 
 function ExpandedProductPublications({ productId, productName, onOpenDetail }: { productId: number; productName: string; onOpenDetail: () => void }) {
