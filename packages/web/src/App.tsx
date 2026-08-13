@@ -47,7 +47,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/orders': {
     title: 'Pedidos',
-    subtitle: 'Todas tus ventas y pedidos en un solo lugar, sin importar el canal.',
+    subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
   },
   '/scanner': {
     title: 'Preparación y escaneo',
