@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, type SortingState, useReactTable } from '@tanstack/react-table';
-import { Boxes, Check, Copy, RefreshCw, Search } from 'lucide-react';
+import { Boxes, Check, Copy, Eye, RefreshCw, Search, Store } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { todayInLima } from '../lib/documentDateRange';
@@ -160,6 +160,7 @@ export default function ProductosHoy() {
   const [companyId, setCompanyId] = useState('all');
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [detailProduct, setDetailProduct] = useState<TodaySaleProduct | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState('');
   const [sorting, setSorting] = useState<SortingState>([{ id: 'units', desc: true }]);
@@ -336,23 +337,27 @@ export default function ProductosHoy() {
       },
     },
     {
-      id: 'sellers',
-      accessorFn: (product) => product.sellersCount,
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Sellers" />,
+      id: 'detail',
+      enableSorting: false,
+      header: () => <span>Detalle</span>,
       cell: ({ row }) => {
-        const sellers = row.original.sellers;
-        if (!sellers.length) return <span className="text-sm text-muted-foreground">—</span>;
-        return <ul className="space-y-2">
-          {sellers.map((seller) => (
-            <li key={`${seller.companyId || 'x'}-${seller.sellerSku || seller.title || ''}`} className="min-w-0">
-              <p className="line-clamp-2 text-sm font-medium leading-5">{sellerShortName(seller.companyName)}</p>
-              <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
-                {formatNumber(seller.unitsSold, 0)} u
-                {seller.title && seller.title !== row.original.name ? ` · ${seller.title}` : ''}
-              </p>
-            </li>
-          ))}
-        </ul>;
+        const product = row.original;
+        return <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted-foreground">
+            {product.sellersCount} {product.sellersCount === 1 ? 'seller' : 'sellers'}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 rounded-full"
+            onClick={() => setDetailProduct(product)}
+            aria-label={`Ver detalle de sellers de ${product.name}`}
+            title="Ver detalle"
+          >
+            <Eye className="size-4.5" />
+          </Button>
+        </div>;
       },
     },
   ], [copiedSku]);
@@ -466,14 +471,13 @@ export default function ProductosHoy() {
         loading={dataLoading}
         fetching={salesQuery.isFetching}
         columnClassNames={{
-          product: 'w-[46%]',
+          product: 'w-[52%]',
           units: 'w-[16%]',
           stock: 'w-[16%]',
-          sellers: 'w-[22%]',
+          detail: 'w-[16%]',
         }}
         cellClassNames={{
           product: 'whitespace-normal',
-          sellers: 'whitespace-normal',
         }}
         empty={<div className="px-5 py-14 text-center">
           <p className="text-sm font-medium">{pendingDetailOrders > 0 ? 'Faltan detalles de pedidos de hoy' : 'Sin salidas en esta fecha'}</p>
@@ -493,6 +497,11 @@ export default function ProductosHoy() {
         /> : undefined}
       />
 
+      <SellerDetailDialog
+        product={detailProduct}
+        onClose={() => setDetailProduct(null)}
+      />
+
       <Dialog open={preview != null} onOpenChange={(open) => { if (!open) setPreview(null); }}>
         <DialogContent className="max-w-3xl gap-3 p-4 sm:max-w-3xl">
           <DialogHeader>
@@ -505,6 +514,95 @@ export default function ProductosHoy() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function SellerDetailDialog({
+  product,
+  onClose,
+}: {
+  product: TodaySaleProduct | null;
+  onClose: () => void;
+}) {
+  const sellers = useMemo(() => [...(product?.sellers || [])].sort((left, right) => {
+    const unitsDifference = Number(right.unitsSold) - Number(left.unitsSold);
+    if (unitsDifference !== 0) return unitsDifference;
+    return sellerShortName(left.companyName).localeCompare(sellerShortName(right.companyName), 'es');
+  }), [product]);
+
+  return (
+    <Dialog open={product != null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[min(82vh,760px)] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="border-b border-border px-5 py-5 pr-16 sm:px-6">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+              <Boxes className="size-4.5" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="text-base leading-6">{product?.name || 'Detalle del producto'}</DialogTitle>
+              <DialogDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-mono text-xs font-semibold tracking-wide">{product?.sku}</span>
+                <span aria-hidden="true">·</span>
+                <span>{formatNumber(product?.unitsSold, 0)} unidades</span>
+                <span aria-hidden="true">·</span>
+                <span>{formatNumber(product?.ordersCount, 0)} pedidos</span>
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <section className="min-h-0 overflow-y-auto" aria-label="Sellers con ventas">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-popover/95 px-5 py-3 backdrop-blur sm:px-6">
+            <div>
+              <h3 className="text-sm font-semibold">Sellers con ventas</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">Ordenados por unidades vendidas</p>
+            </div>
+            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold tabular-nums text-muted-foreground">
+              {sellers.length}
+            </span>
+          </div>
+
+          {sellers.length ? (
+            <ol className="divide-y divide-border">
+              {sellers.map((seller) => {
+                const name = sellerShortName(seller.companyName);
+                const sellerTitle = seller.title && seller.title !== product?.name ? seller.title : '';
+                return (
+                  <li
+                    key={`${seller.companyId || 'x'}-${seller.sellerSku || seller.title || ''}`}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 px-5 py-4 sm:px-6"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-secondary-foreground">
+                        <Store className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold leading-5">{name}</p>
+                        {sellerTitle ? <p className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">{sellerTitle}</p> : null}
+                        {seller.sellerSku ? (
+                          <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground">SKU {seller.sellerSku}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-base font-semibold tabular-nums">{formatNumber(seller.unitsSold, 0)} u</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatNumber(seller.ordersCount, 0)} {seller.ordersCount === 1 ? 'pedido' : 'pedidos'}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <div className="px-6 py-12 text-center">
+              <Store className="mx-auto size-6 text-muted-foreground" />
+              <p className="mt-3 text-sm font-medium">Sin sellers para mostrar</p>
+            </div>
+          )}
+        </section>
+      </DialogContent>
+    </Dialog>
   );
 }
 
