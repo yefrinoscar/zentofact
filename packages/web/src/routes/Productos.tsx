@@ -1303,7 +1303,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     const isLast = index === listings.length - 1;
     return <TableRow
       key={listing.id}
-      className={cn('bg-muted/15 hover:bg-muted/30', isLast && 'border-b-4 border-b-muted')}
+      className={cn(
+        'bg-muted/15 hover:bg-muted/30',
+        isLast ? 'border-b-4 border-b-muted' : 'border-b-0',
+      )}
     >
       <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
         <div className="relative min-w-0 pl-[4.5rem]">
