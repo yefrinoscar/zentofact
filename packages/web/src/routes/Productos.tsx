@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
 import { DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -1294,7 +1295,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
   </TableRow>;
 
-  if (!listings.length) return <TableRow className="border-b-4 border-b-muted bg-muted/15 hover:bg-muted/15">
+  if (!listings.length) return <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones activas.</TableCell>
   </TableRow>;
 
@@ -1303,7 +1304,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     const isLast = index === listings.length - 1;
     return <TableRow
       key={listing.id}
-      className={cn('bg-muted/15 hover:bg-muted/30', isLast && 'border-b-4 border-b-muted')}
+      className={cn(
+        'bg-muted/15 hover:bg-muted/30',
+        sellerPublicationRowBorderClass(isLast),
+      )}
     >
       <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
         <div className="relative min-w-0 pl-[4.5rem]">
