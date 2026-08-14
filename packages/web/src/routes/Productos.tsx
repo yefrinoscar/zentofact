@@ -16,7 +16,6 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
-  SlidersHorizontal,
   Store,
   X,
 } from 'lucide-react';
@@ -25,7 +24,7 @@ import { cn } from '../lib/cn';
 import { DataTable, DataTableColumnHeader, DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelHeader, TableRow } from '../components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
@@ -78,6 +77,34 @@ type Product = {
   channels?: string[];
   listings?: Listing[];
   updatedAt?: string;
+};
+
+type SellerCoverage = 'all' | 'single' | 'multiple';
+type SpecialFilter = 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
+type StatusFilter = 'active' | 'inactive' | 'archived' | 'all';
+
+type CatalogSummary = {
+  total: number;
+  active: number;
+  inactive: number;
+  archived: number;
+  singleSeller: number;
+  multipleSellers: number;
+  outOfStock: number;
+  unpublished: number;
+  lowStock: number;
+};
+
+const emptySummary: CatalogSummary = {
+  total: 0,
+  active: 0,
+  inactive: 0,
+  archived: 0,
+  singleSeller: 0,
+  multipleSellers: 0,
+  outOfStock: 0,
+  unpublished: 0,
+  lowStock: 0,
 };
 
 type Movement = {
@@ -287,8 +314,10 @@ export default function Productos() {
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
-  const [status, setStatus] = useState('active');
-  const [sellerCoverage, setSellerCoverage] = useState<'all' | 'single' | 'multiple'>('all');
+  const [status, setStatus] = useState<StatusFilter>('active');
+  const [sellerCoverage, setSellerCoverage] = useState<SellerCoverage>('all');
+  const [special, setSpecial] = useState<SpecialFilter>('none');
+  const [companyId, setCompanyId] = useState('all');
   const [refreshing, setRefreshing] = useState(false);
   const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
@@ -322,14 +351,32 @@ export default function Productos() {
     else searchTimer.current = window.setTimeout(commit, SEARCH_DELAY_MS);
   };
 
-  const productFilters = useMemo(() => ({ submittedSearch, status, sellerCoverage, offset }), [submittedSearch, status, sellerCoverage, offset]);
+  const resetListView = () => {
+    setSelectedId(null);
+    setExpandedRows({});
+    setOffset(0);
+  };
+
+  const productFilters = useMemo(() => ({
+    submittedSearch,
+    status,
+    sellerCoverage,
+    special,
+    companyId,
+    offset,
+  }), [submittedSearch, status, sellerCoverage, special, companyId, offset]);
+  const listRequest = {
+    search: submittedSearch,
+    status,
+    sellerCoverage,
+    special: special === 'none' ? undefined : special,
+    companyId: companyId === 'all' ? undefined : Number(companyId),
+    limit: PAGE_SIZE,
+  };
   const productsQuery = useQuery({
     queryKey: ['catalog-products', productFilters],
     queryFn: () => api.listCatalogProducts({
-        search: submittedSearch,
-        status,
-        sellerCoverage,
-        limit: PAGE_SIZE,
+        ...listRequest,
         offset,
       }),
     placeholderData: keepPreviousData,
@@ -374,11 +421,19 @@ export default function Productos() {
   const companies = useMemo(() => ((companiesQuery.data || []) as Company[]).filter((company) => company.activo !== false), [companiesQuery.data]);
   const products = (productsQuery.data?.products || []) as Product[];
   const totalCount = Number(productsQuery.data?.totalCount || 0);
+  const summary = (productsQuery.data?.summary || emptySummary) as CatalogSummary;
+  const catalogTotal = status === 'inactive'
+    ? summary.inactive
+    : status === 'archived'
+      ? summary.archived
+      : status === 'all'
+        ? summary.total
+        : summary.active;
+  const hasFocusedFilter = Boolean(submittedSearch || sellerCoverage !== 'all' || special !== 'none' || companyId !== 'all');
   const detail = detailQuery.data as Product | undefined;
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
   const returns = returnsQuery.data as ReturnsSummary | undefined;
-  const sellers = useMemo(() => companies.filter((company) => company.hasFalabellaCredentials), [companies]);
   const selectedProduct = detail?.id === selectedId ? detail : products.find((product) => product.id === selectedId) || null;
   const selectedProductIndex = selectedId == null ? -1 : products.findIndex((product) => product.id === selectedId);
   const hasPreviousProduct = selectedProductIndex > 0 || (selectedProductIndex === 0 && offset > 0);
@@ -395,10 +450,7 @@ export default function Productos() {
     void queryClient.prefetchQuery({
       queryKey: ['catalog-products', nextFilters],
       queryFn: () => api.listCatalogProducts({
-        search: submittedSearch,
-        status,
-        sellerCoverage,
-        limit: PAGE_SIZE,
+        ...listRequest,
         offset: nextOffset,
       }),
       staleTime: 30_000,
@@ -513,10 +565,7 @@ export default function Productos() {
       const page = await queryClient.fetchQuery({
         queryKey: ['catalog-products', nextFilters],
         queryFn: () => api.listCatalogProducts({
-          search: submittedSearch,
-          status,
-          sellerCoverage,
-          limit: PAGE_SIZE,
+          ...listRequest,
           offset: nextOffset,
         }),
         staleTime: 30_000,
@@ -650,11 +699,30 @@ export default function Productos() {
       && String(listing.companyId) === publishVisual.companyId
   )));
 
+  const applyCoverage = (next: SellerCoverage) => {
+    resetListView();
+    setSellerCoverage(next);
+    if (next !== 'all' && special === 'unpublished') setSpecial('none');
+  };
+
+  const applySpecial = (next: SpecialFilter) => {
+    resetListView();
+    setSpecial((current) => current === next ? 'none' : next);
+    if (next === 'unpublished') setSellerCoverage('all');
+  };
+
+  const clearFilters = () => {
+    window.clearTimeout(searchTimer.current);
+    setSearch('');
+    setSubmittedSearch('');
+    setStatus('active');
+    setSellerCoverage('all');
+    setSpecial('none');
+    setCompanyId('all');
+    resetListView();
+  };
+
   const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
-    <TablePanelHeader className="flex items-center justify-between py-3">
-      <p className="text-sm font-semibold">{totalCount} productos</p>
-      <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">{productsQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Página {Math.floor(offset / PAGE_SIZE) + 1}</span>
-    </TablePanelHeader>
     {loading ? <LoadingBlock /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
         <Table className="min-w-[720px] table-fixed">
@@ -699,58 +767,116 @@ export default function Productos() {
     /> : null}
   </TablePanel>;
 
+  const headlineCount = hasFocusedFilter ? totalCount : catalogTotal;
+  const headlineLabel = catalogHeadline(status, sellerCoverage, special, headlineCount);
+  const filtersDirty = hasFocusedFilter || status !== 'active';
+
   return (
     <div className="space-y-5">
-      <div className="space-y-3 border-b border-border pb-4">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="flex min-w-0 flex-1 gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => applySearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  applySearch(search, true);
-                }
-              }}
-              placeholder="Buscar SKU, producto o seller"
-              className="h-9 pl-9"
-              aria-label="Buscar SKU, producto o seller"
-            />
+      <section aria-label="Indicadores del catálogo">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-2xl font-semibold tracking-tight">
+              <span className="tabular-nums">{loading && !productsQuery.data ? '—' : formatNumber(headlineCount, 0)}</span>
+              {' '}{headlineLabel}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {hasFocusedFilter && catalogTotal !== headlineCount
+                ? `de ${formatNumber(catalogTotal, 0)} ${statusCatalogLabel(status, catalogTotal)}`
+                : statusCatalogHint(status)}
+            </p>
           </div>
+          <span className="inline-flex h-8 items-center gap-2 text-xs text-muted-foreground">
+            {productsQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {totalCount > 0 ? `Página ${Math.floor(offset / PAGE_SIZE) + 1}` : null}
+          </span>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-1.5">
+          <FilterPill
+            label="Todos"
+            count={catalogTotal}
+            selected={sellerCoverage === 'all' && special === 'none'}
+            onClick={() => { resetListView(); setSellerCoverage('all'); setSpecial('none'); }}
+          />
+          <FilterPill
+            label="1 seller"
+            count={summary.singleSeller}
+            selected={sellerCoverage === 'single'}
+            onClick={() => applyCoverage(sellerCoverage === 'single' ? 'all' : 'single')}
+          />
+          <FilterPill
+            label="Varios sellers"
+            count={summary.multipleSellers}
+            selected={sellerCoverage === 'multiple'}
+            onClick={() => applyCoverage(sellerCoverage === 'multiple' ? 'all' : 'multiple')}
+          />
+          <FilterPill
+            label="Sin stock"
+            count={summary.outOfStock}
+            selected={special === 'outOfStock'}
+            tone="danger"
+            onClick={() => applySpecial('outOfStock')}
+          />
+          <FilterPill
+            label="Sin publicación"
+            count={summary.unpublished}
+            selected={special === 'unpublished'}
+            onClick={() => applySpecial('unpublished')}
+          />
+          <FilterPill
+            label="Stock bajo"
+            count={summary.lowStock}
+            selected={special === 'lowStock'}
+            tone="warning"
+            onClick={() => applySpecial('lowStock')}
+          />
+          {filtersDirty && (
+            <button type="button" onClick={clearFilters} className="ml-1 inline-flex h-8 items-center gap-1 px-2 text-sm text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" /> Limpiar
+            </button>
+          )}
+        </div>
+      </section>
+
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => applySearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                applySearch(search, true);
+              }
+            }}
+            placeholder="Buscar SKU, producto o seller"
+            className="h-9 pl-9"
+            aria-label="Buscar SKU, producto o seller"
+          />
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Select value={companyId} onValueChange={(value) => { resetListView(); setCompanyId(value); }}>
+            <SelectTrigger className="w-44" aria-label="Filtrar por seller"><SelectValue placeholder="Todos los sellers" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los sellers</SelectItem>
+              {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={status} onValueChange={(value) => { resetListView(); setStatus(value as StatusFilter); }}>
+            <SelectTrigger className="w-36" aria-label="Estado del producto"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Activos</SelectItem>
+              <SelectItem value="inactive">Inactivos</SelectItem>
+              <SelectItem value="archived">Archivados</SelectItem>
+              <SelectItem value="all">Todos los estados</SelectItem>
+            </SelectContent>
+          </Select>
           <Button type="button" variant="outline" size="icon" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
             <RefreshCw className={cn(refreshing && 'animate-spin')} />
           </Button>
-          </div>
           <button onClick={() => openModal('create')} className="primary-button"><PackagePlus className="h-4 w-4" /> Nuevo producto</button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex h-9 items-center gap-2 pr-1 text-xs font-medium text-muted-foreground"><SlidersHorizontal className="h-4 w-4" /> Filtros</span>
-          <Select value={status} onValueChange={(value) => { setSelectedId(null); setExpandedRows({}); setStatus(value); setOffset(0); }}>
-            <SelectTrigger className="w-36 border-border bg-background"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="active">Activos</SelectItem><SelectItem value="inactive">Inactivos</SelectItem><SelectItem value="archived">Archivados</SelectItem></SelectContent>
-          </Select>
-          <Select value={sellerCoverage} onValueChange={(value) => { setSelectedId(null); setExpandedRows({}); setSellerCoverage(value as typeof sellerCoverage); setOffset(0); }}>
-            <SelectTrigger className="w-44 border-border bg-background"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Cualquier cobertura</SelectItem>
-              <SelectItem value="single">Solo 1 seller</SelectItem>
-              <SelectItem value="multiple">2 o más sellers</SelectItem>
-            </SelectContent>
-          </Select>
-          {(status !== 'active' || sellerCoverage !== 'all' || submittedSearch) && <Button type="button" variant="outline" onClick={() => {
-            window.clearTimeout(searchTimer.current);
-            setSelectedId(null);
-            setExpandedRows({});
-            setSearch('');
-            setSubmittedSearch('');
-            setStatus('active');
-            setSellerCoverage('all');
-            setOffset(0);
-          }}><X /> Limpiar</Button>}
         </div>
       </div>
 
@@ -1211,6 +1337,67 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({ 
     </div>
   </div>;
 });
+
+function FilterPill({
+  label,
+  count,
+  selected,
+  onClick,
+  tone = 'default',
+}: {
+  label: string;
+  count?: number;
+  selected: boolean;
+  onClick: () => void;
+  tone?: 'default' | 'warning' | 'danger';
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
+        selected
+          ? 'bg-foreground text-background'
+          : tone === 'danger'
+            ? 'text-red-700 hover:bg-red-50'
+            : tone === 'warning'
+              ? 'text-amber-800 hover:bg-amber-50'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+    >
+      {label}
+      {count != null && <span className="tabular-nums opacity-75">{formatNumber(count, 0)}</span>}
+    </button>
+  );
+}
+
+function catalogHeadline(status: StatusFilter, coverage: SellerCoverage, special: SpecialFilter, count: number) {
+  const plural = count === 1 ? '' : 's';
+  if (special === 'outOfStock') return count === 1 ? 'producto sin stock' : 'productos sin stock';
+  if (special === 'unpublished') return count === 1 ? 'producto sin publicación' : 'productos sin publicación';
+  if (special === 'lowStock') return count === 1 ? 'producto con stock bajo' : 'productos con stock bajo';
+  if (coverage === 'single') return count === 1 ? 'producto de un seller' : 'productos de un seller';
+  if (coverage === 'multiple') return count === 1 ? 'producto de varios sellers' : 'productos de varios sellers';
+  if (status === 'inactive') return `inactivo${plural}`;
+  if (status === 'archived') return `archivado${plural}`;
+  return `producto${plural}`;
+}
+
+function statusCatalogLabel(status: StatusFilter, count: number) {
+  if (status === 'inactive') return count === 1 ? 'inactivo' : 'inactivos';
+  if (status === 'archived') return count === 1 ? 'archivado' : 'archivados';
+  if (status === 'all') return count === 1 ? 'producto' : 'productos';
+  return count === 1 ? 'producto activo' : 'productos activos';
+}
+
+function statusCatalogHint(status: StatusFilter) {
+  if (status === 'inactive') return 'productos inactivos del catálogo';
+  if (status === 'archived') return 'productos archivados del catálogo';
+  if (status === 'all') return 'todos los estados, sin archivados';
+  return 'en el catálogo activo';
+}
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0 border-r border-border px-4 py-4 last:border-r-0"><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate text-base font-semibold">{value}</p></div>;
