@@ -569,8 +569,50 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   const statements = [];
   const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
   await listProducts({ sellerCoverage: 'single', status: 'active' }, db);
-  assert.match(statements[0].sql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 1/);
+  const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(listSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 1/);
   await assert.rejects(() => listProducts({ sellerCoverage: 'unknown' }, db), /sellerCoverage inválido/);
+});
+
+test('el catálogo resume grupos y aplica filtros especiales desde SQL', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('as out_of_stock')) {
+        return {
+          rows: [{
+            total: 12,
+            active: 10,
+            inactive: 2,
+            archived: 1,
+            single_seller: 6,
+            multiple_sellers: 3,
+            out_of_stock: 2,
+            unpublished: 1,
+            low_stock: 4,
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const listed = await listProducts({ status: 'active', special: 'outOfStock' }, db);
+  assert.equal(listed.summary.active, 10);
+  assert.equal(listed.summary.singleSeller, 6);
+  assert.equal(listed.summary.outOfStock, 2);
+  const outOfStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(outOfStockSql, /marketplace_quantity[\s\S]*= 0/);
+  assert.match(outOfStockSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*> 0/);
+  statements.length = 0;
+  await listProducts({ special: 'unpublished', status: 'active' }, db);
+  const unpublishedSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(unpublishedSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 0/);
+  statements.length = 0;
+  await listProducts({ lowStock: true, status: 'active' }, db);
+  const lowStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(lowStockSql, /reorder_point is not null/);
+  await assert.rejects(() => listProducts({ special: 'unknown' }, db), /special inválido/);
 });
 
 test('las salidas del día agregan pedidos locales por producto y fecha de Lima', async () => {

@@ -143,6 +143,7 @@ const apiHttp = {
     search?: string; status?: string; channelCode?: string;
     companyId?: number;
     sellerCoverage?: 'all' | 'single' | 'multiple';
+    special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
     includeArchived?: boolean; limit?: number; offset?: number;
   } = {}) => req(`/products${qs(filter)}`),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
