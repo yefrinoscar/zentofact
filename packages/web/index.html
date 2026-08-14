@@ -10,6 +10,23 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#10192d" />
     <title>ZentoFact</title>
+    <script>
+      (function () {
+        var appEnv = '%VITE_APP_ENV%';
+        var host = location.hostname;
+        var isLocal = host === 'localhost' || host === '127.0.0.1';
+        var isDev = appEnv === 'development'
+          || (appEnv !== 'production' && (isLocal || host.indexOf('development') !== -1));
+        if (!isDev) return;
+        var favicon = isLocal ? '/favicon-local.svg?v=1' : '/favicon-dev.svg?v=3';
+        document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]').forEach(function (link) {
+          link.setAttribute('href', favicon);
+        });
+        var theme = document.querySelector('meta[name="theme-color"]');
+        if (theme) theme.setAttribute('content', isLocal ? '#A3E635' : '#FBBF24');
+        document.title = (isLocal ? 'LOCAL · ' : 'DEV · ') + 'ZentoFact';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
