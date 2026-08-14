@@ -1,6 +1,6 @@
 import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, getSortedRowModel, SortingState, useReactTable } from '@tanstack/react-table';
+import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
   BarChart3,
@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { DataTable, DataTableColumnHeader, DataTablePagination } from '../components/ui/data-table';
+import { DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
@@ -598,6 +598,17 @@ export default function Productos() {
     openModal('publish_visual');
   };
 
+  const togglePublication = useCallback((listing: Listing) => {
+    if (metadataBoolean(listing, 'isPublished')) {
+      setUnpublishListing(listing);
+      setUnpublishConfirmation('');
+      openModal('unpublish_visual');
+      return;
+    }
+    const product = products.find((candidate) => candidate.id === listing.productId);
+    if (product) openPublishVisual(product, listing);
+  }, [products]);
+
   const simulatePublish = (event: FormEvent) => {
     event.preventDefault();
     setActionError('');
@@ -624,7 +635,7 @@ export default function Productos() {
                 return next;
               });
             }}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`${row.getIsExpanded() ? 'Contraer' : 'Expandir'} ${product.name}`}
             aria-expanded={row.getIsExpanded()}
           ><ChevronRight className={cn('h-4 w-4 transition-transform', row.getIsExpanded() && 'rotate-90')} /></button>
@@ -660,7 +671,7 @@ export default function Productos() {
       cell: ({ row }) => {
         const product = row.original;
         const stock = sellerStock(product);
-        return <div className="min-w-36">
+        return <div>
           <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u · {product.sellersCount || 0} sellers</span></p>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn('h-full rounded-full', stock > 0 ? 'bg-emerald-500' : 'bg-red-500')} style={{ width: `${Math.min(100, Math.max(4, stock))}%` }} /></div>
         </div>;
@@ -725,30 +736,31 @@ export default function Productos() {
   const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
     {loading ? <LoadingBlock /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
-        <Table className="min-w-[720px] table-fixed">
+        <Table className="table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
               {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                header.column.id === 'product' && 'w-[50%]',
-                header.column.id === 'price' && 'w-[18%]',
+                header.column.id === 'product' && 'w-[52%]',
+                header.column.id === 'price' && 'w-[15%]',
                 header.column.id === 'stock' && 'w-[19%]',
-                header.column.id === 'status' && 'w-[13%]',
+                header.column.id === 'status' && 'w-[14%]',
               )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
             </TableRow>)}
           </TableHeader>
           <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
             <TableRow
               onClick={() => openProduct(row.original.id)}
-              className={cn('cursor-pointer align-middle', row.getIsExpanded() && 'bg-muted/20')}
+              className={cn('cursor-pointer align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}
               aria-label={`Abrir ${row.original.name}`}
             >
               {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : undefined}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
             </TableRow>
-            {row.getIsExpanded() && <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={row.getVisibleCells().length} className="border-b-4 border-muted bg-muted/20 p-0">
-                <ExpandedProductPublications productId={row.original.id} productName={row.original.name} onOpenDetail={openProduct} />
-              </TableCell>
-            </TableRow>}
+            {row.getIsExpanded() && <ExpandedProductPublications
+              productId={row.original.id}
+              productName={row.original.name}
+              onOpenDetail={openProduct}
+              onTogglePublication={togglePublication}
+            />}
           </Fragment>)}</TableBody>
         </Table>
       </div>
@@ -912,15 +924,7 @@ export default function Productos() {
           openModal('image');
         }}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
-        onTogglePublication={(listing) => {
-          if (metadataBoolean(listing, 'isPublished')) {
-            setUnpublishListing(listing);
-            setUnpublishConfirmation('');
-            openModal('unpublish_visual');
-          } else if (selectedProduct) {
-            openPublishVisual(selectedProduct, listing);
-          }
-        }}
+        onTogglePublication={togglePublication}
       />
 
       {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
@@ -1256,8 +1260,18 @@ function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
   </section>;
 }
 
-const ExpandedProductPublications = memo(function ExpandedProductPublications({ productId, productName, onOpenDetail }: { productId: number; productName: string; onOpenDetail: (productId: number) => void }) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+const ExpandedProductPublications = memo(function ExpandedProductPublications({
+  productId,
+  productName,
+  onOpenDetail,
+  onTogglePublication,
+}: {
+  productId: number;
+  productName: string;
+  onOpenDetail: (productId: number) => void;
+  onTogglePublication: (listing: Listing) => void;
+}) {
+  const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const detailQuery = useQuery({
     queryKey: ['catalog-product-detail', productId],
     queryFn: () => api.getCatalogProduct(productId),
@@ -1269,73 +1283,69 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({ 
     () => ((detailListings || []) as Listing[]).filter(isActivelyPublished),
     [detailListings],
   );
-  const columns = useMemo<ColumnDef<Listing>[]>(() => [
-    {
-      id: 'publishedName',
-      accessorFn: (listing) => listing.title || productName,
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre publicado" />,
-      cell: ({ row }) => <p className="whitespace-normal break-words font-medium leading-5">{row.original.title || productName}</p>,
-    },
-    {
-      accessorKey: 'channelCode',
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Canal" />,
-      cell: ({ row }) => <ChannelBadge value={row.original.channelCode} />,
-    },
-    {
-      id: 'seller',
-      accessorFn: (listing) => sellerShortName(listing.companyName || `Empresa ${listing.companyId}`),
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Seller" />,
-      cell: ({ row }) => <span className="inline-flex rounded-md border border-border bg-muted/70 px-2 py-1 text-xs font-semibold leading-none" title={row.original.companyName || undefined}>
-        {sellerShortName(row.original.companyName || `Empresa ${row.original.companyId}`)}
-      </span>,
-    },
-    {
-      accessorKey: 'sellerSku',
-      header: ({ column }) => <DataTableColumnHeader column={column} title="SKU del seller" />,
-      cell: ({ row }) => <span className="break-all font-mono text-sm tabular-nums">{row.original.sellerSku}</span>,
-    },
-    {
-      id: 'price',
-      accessorFn: (listing) => metadataNumber(listing, 'effectivePrice') ?? metadataNumber(listing, 'regularPrice') ?? 0,
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Precio" className="ml-auto" />,
-      cell: ({ row }) => <SellerPrice listing={row.original} />,
-    },
-    {
-      id: 'stock',
-      accessorFn: (listing) => listing.marketplaceQuantity ?? 0,
-      header: ({ column }) => <DataTableColumnHeader column={column} title="Stock seller" className="ml-auto" />,
-      cell: ({ row }) => <SellerStock listing={row.original} />,
-    },
-  ], [productName]);
-  const table = useReactTable({
-    data: listings,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: setSorting,
-    state: { sorting },
-  });
 
-  return <div className="px-5 py-4 md:pl-[5.5rem]">
-    <div className="flex items-center justify-between gap-3">
-      <div><p className="text-sm font-semibold">Sellers</p><p className="mt-0.5 text-xs text-muted-foreground">{listings.length ? `${listings.length} publicaciones asociadas` : `Publicaciones de ${productName}`}</p></div>
-      <Button type="button" variant="outline" size="sm" onClick={() => onOpenDetail(productId)}>Ver detalle</Button>
-    </div>
-    <div className="mt-3">
-      {detailQuery.isError
-        ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">No se pudieron cargar las publicaciones.</div>
-        : <DataTable
-          table={table}
-          loading={detailQuery.isPending}
-          fetching={detailQuery.isFetching && !detailQuery.isPending}
-          aria-label={`Publicaciones de ${productName}`}
-          header={<div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{listings.length} publicaciones</p><span className="text-xs text-muted-foreground">Página 1</span></div>}
-          empty={<div className="py-10 text-center"><p className="text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-sm text-muted-foreground">Este producto todavía no tiene publicaciones activas.</p></div>}
-          columnClassNames={{ publishedName: 'w-[34%]', channelCode: 'w-[8%]', seller: 'w-[14%]', sellerSku: 'w-[16%]', price: 'w-[13%] text-right', stock: 'w-[15%] text-right' }}
-          cellClassNames={{ publishedName: 'whitespace-normal align-top', channelCode: 'align-top', seller: 'align-top', sellerSku: 'align-top', price: 'text-right align-top', stock: 'text-right align-top' }}
-        />}
-    </div>
-  </div>;
+  if (detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
+    </TableCell>
+  </TableRow>;
+
+  if (detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60">
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
+  </TableRow>;
+
+  if (!listings.length) return <TableRow className="border-b-4 border-b-muted bg-muted/15 hover:bg-muted/15">
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones activas.</TableCell>
+  </TableRow>;
+
+  return <>{listings.map((listing, index) => {
+    const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
+    const isLast = index === listings.length - 1;
+    return <TableRow
+      key={listing.id}
+      className={cn('bg-muted/15 hover:bg-muted/30', isLast && 'border-b-4 border-b-muted')}
+    >
+      <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
+        <div className="relative min-w-0 pl-[4.5rem]">
+          <span aria-hidden="true" className={cn('absolute left-5 -top-3 border-l border-border', isLast ? 'bottom-1/2' : '-bottom-3')} />
+          <span aria-hidden="true" className="absolute left-5 top-1/2 w-8 border-t border-border" />
+          <button
+            type="button"
+            onClick={() => onOpenDetail(productId)}
+            className="line-clamp-2 text-left text-sm font-medium leading-5 text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >{listing.title || productName}</button>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span className="line-clamp-2 font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
+            <ChannelBadge value={listing.channelCode} />
+            <span className="text-border" aria-hidden="true">·</span>
+            <button
+              type="button"
+              title={copiedSku === listing.sellerSku ? 'SKU copiado' : 'Copiar SKU del seller'}
+              aria-label={`Copiar SKU ${listing.sellerSku}`}
+              onClick={async () => {
+                await navigator.clipboard.writeText(listing.sellerSku);
+                setCopiedSku(listing.sellerSku);
+                window.setTimeout(() => setCopiedSku((current) => current === listing.sellerSku ? null : current), 1400);
+              }}
+              className="relative inline-flex items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >{listing.sellerSku}{copiedSku === listing.sellerSku ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}</button>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="py-2.5 align-middle"><SellerPrice listing={listing} /></TableCell>
+      <TableCell className="py-2.5 align-middle"><SellerStock listing={listing} /></TableCell>
+      <TableCell className="py-2.5 align-middle">
+        <div className="flex items-center gap-2">
+          <span className="hidden text-xs font-medium text-emerald-700 xl:inline">Publicada</span>
+          <Switch
+            checked
+            onCheckedChange={() => onTogglePublication(listing)}
+            aria-label={`Despublicar ${listing.sellerSku} de ${sellerName}`}
+          />
+        </div>
+      </TableCell>
+    </TableRow>;
+  })}</>;
 });
 
 function FilterPill({
@@ -1438,7 +1448,9 @@ function SellerStock({ listing }: { listing: Listing }) {
 function ChannelBadge({ value }: { value: string }) {
   const normalized = String(value || 'externo').toLowerCase();
   if (normalized === 'falabella') {
-    return <span className="inline-flex rounded-md bg-muted p-0.5" title="Falabella"><img src={falabellaIcon} alt="Falabella" className="h-5 w-5 rounded-[3px]" /></span>;
+    return <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground" title="Falabella">
+      <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" /> Falabella
+    </span>;
   }
   const classes = normalized === 'ripley'
     ? 'bg-fuchsia-50 text-fuchsia-700'
