@@ -3,6 +3,7 @@ import { authClient } from '../lib/authClient';
 import { clearClientStorageOnLogout, installSessionSecurityListeners } from '../lib/clearClientStorage';
 import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowLeft } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
+import { EnvBadge, ZentoFactMark } from './ZentoFactBrand';
 
 const PASSWORD_MIN_LENGTH = 12;
 
@@ -299,8 +300,11 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
           style={{ backgroundImage: 'radial-gradient(circle at 20% 20%, white 0, transparent 40%), radial-gradient(circle at 80% 80%, white 0, transparent 45%)' }}
         />
         <div className="relative flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-lg font-black tracking-tighter ring-1 ring-white/20">Z</span>
-          <span className="text-lg font-semibold tracking-tight">ZentoFact</span>
+          <ZentoFactMark className="size-11 rounded-2xl p-1" />
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="text-lg font-semibold tracking-tight">ZentoFact</span>
+            <EnvBadge />
+          </span>
         </div>
         <div className="relative">
           <InvoiceFlowArt />
@@ -327,8 +331,11 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 items-center justify-center p-6">
         <form onSubmit={onSubmit} className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary text-base font-black tracking-tighter text-sidebar-primary-foreground">Z</span>
-            <span className="text-base font-semibold tracking-tight">ZentoFact</span>
+            <ZentoFactMark className="size-10 rounded-xl" />
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="text-base font-semibold tracking-tight">ZentoFact</span>
+              <EnvBadge />
+            </span>
           </div>
 
           {(view === 'forgot' || view === 'reset') && (
