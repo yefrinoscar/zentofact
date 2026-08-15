@@ -141,9 +141,12 @@ const apiHttp = {
   // Catálogo canónico e inventario compartido
   listCatalogProducts: (filter: {
     search?: string; status?: string; channelCode?: string;
-    companyId?: number;
-    sellerCoverage?: 'all' | 'single' | 'multiple';
+    companyId?: number; companyIds?: number[];
+    sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
+    inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
+    publicationStatus?: 'all' | 'published' | 'unpublished';
     special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
+    sortBy?: string; sortDir?: 'asc' | 'desc';
     includeArchived?: boolean; limit?: number; offset?: number;
   } = {}) => req(`/products${qs(filter)}`),
   getCatalogProduct: (id: number) => req(`/products/${id}`),

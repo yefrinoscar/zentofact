@@ -11,8 +11,25 @@ import {
 } from './utils.js';
 
 const PRODUCT_STATUSES = ['active', 'inactive', 'archived'];
-const SELLER_COVERAGES = ['all', 'single', 'multiple'];
+const SELLER_COVERAGES = ['all', 'none', 'single', 'multiple'];
+const INVENTORY_STATUSES = ['all', 'inStock', 'lowStock', 'outOfStock'];
+const PUBLICATION_STATUSES = ['all', 'published', 'unpublished'];
 const SPECIAL_FILTERS = ['none', 'outOfStock', 'unpublished', 'lowStock'];
+const CATALOG_SORTS = {
+  updatedAt: { catalog: 'p.updated_at', page: 'page.updated_at' },
+  name: { catalog: 'lower(p.name)', page: 'lower(page.name)' },
+  available: { catalog: '(i.quantity_on_hand - i.quantity_reserved)', page: 'page.available' },
+  sellerStock: {
+    catalog: 'listing_stats.seller_stock_total',
+    page: 'listing_stats.seller_stock_total',
+    requiresListingStats: true,
+  },
+  sellers: {
+    catalog: 'listing_stats.sellers_count',
+    page: 'listing_stats.sellers_count',
+    requiresListingStats: true,
+  },
+};
 const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Lima',
   year: 'numeric',
@@ -66,6 +83,75 @@ function lowStockSql() {
   return 'i.reorder_point is not null and i.quantity_on_hand - i.quantity_reserved <= i.reorder_point';
 }
 
+function inventoryStatusSql(status) {
+  const available = '(i.quantity_on_hand - i.quantity_reserved)';
+  if (status === 'outOfStock') return `${available} <= 0`;
+  if (status === 'lowStock') {
+    return `${available} > 0 and i.reorder_point is not null and ${available} <= i.reorder_point`;
+  }
+  if (status === 'inStock') {
+    return `${available} > 0 and (i.reorder_point is null or ${available} > i.reorder_point)`;
+  }
+  return '';
+}
+
+function publishedListingCondition(alias) {
+  return `${alias}.status='active'
+    and lower(coalesce(${alias}.metadata->>'isPublished', 'false'))='true'
+    and (${alias}.channel_code <> 'falabella'
+      or (
+        lower(coalesce(${alias}.metadata->>'status', ''))='active'
+        and lower(coalesce(${alias}.metadata->>'marketplaceStatus', ''))='active'
+        and lower(coalesce(${alias}.metadata->>'qcStatus', ''))='approved'
+      ))`;
+}
+
+function publicationExistsSql(companyIdsParameter = '') {
+  return `exists (
+    select 1
+    from product_listings publication_listing
+    where publication_listing.product_id=p.id
+      ${companyIdsParameter ? `and publication_listing.company_id=any(${companyIdsParameter}::int[])` : ''}
+      and ${publishedListingCondition('publication_listing')}
+  )`;
+}
+
+function companyIds(filters = {}) {
+  const requested = filters.companyIds ?? filters.companyId;
+  if (requested === undefined || requested === null || String(requested).trim() === '') return [];
+  const rawIds = Array.isArray(requested) ? requested : String(requested).split(',');
+  const ids = [...new Set(rawIds.map((value) => positiveInt(value, 'companyIds')))];
+  if (ids.length > 100) throw httpError('companyIds admite hasta 100 sellers.');
+  return ids;
+}
+
+function catalogOrder(filters = {}) {
+  const sortBy = String(filters.sortBy || 'updatedAt').trim();
+  if (!Object.hasOwn(CATALOG_SORTS, sortBy)) throw httpError('sortBy inválido.');
+  const requestedDirection = String(filters.sortDir || (sortBy === 'name' ? 'asc' : 'desc')).trim().toLowerCase();
+  if (!['asc', 'desc'].includes(requestedDirection)) throw httpError('sortDir inválido.');
+  const selected = CATALOG_SORTS[sortBy];
+  return {
+    requiresListingStats: selected.requiresListingStats === true,
+    catalog: `${selected.catalog} ${requestedDirection} nulls last, p.id desc`,
+    page: `${selected.page} ${requestedDirection} nulls last, page.id desc`,
+  };
+}
+
+function listingStatsSql(productId) {
+  return `select
+    count(l.id) filter (where l.status='active') as listings_count,
+    count(distinct l.company_id) filter (where l.status='active') as sellers_count,
+    coalesce(array_agg(distinct l.channel_code) filter (where l.status='active'), '{}') as channels,
+    min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+      filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
+    max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+      filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
+    coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total
+  from product_listings l
+  where l.product_id=${productId}`;
+}
+
 function specialFilter(filters = {}) {
   const requested = String(filters.special || '').trim();
   if (requested) {
@@ -100,31 +186,48 @@ function appendCatalogSearch(filters = {}, values, where) {
         and channel_listing.status='active'
     )`);
   }
-  if (filters.companyId) {
-    values.push(positiveInt(filters.companyId, 'companyId'));
+  const selectedCompanyIds = companyIds(filters);
+  let companyIdsParameter = '';
+  if (selectedCompanyIds.length) {
+    values.push(selectedCompanyIds);
+    companyIdsParameter = `$${values.length}`;
     where.push(`exists (
       select 1 from product_listings company_listing
-      where company_listing.product_id=p.id and company_listing.company_id=$${values.length}
+      where company_listing.product_id=p.id and company_listing.company_id=any(${companyIdsParameter}::int[])
         and company_listing.status='active'
     )`);
   }
+  return { selectedCompanyIds, companyIdsParameter };
 }
 
 function catalogListConstraints(filters = {}) {
   const values = [];
   const where = [];
-  appendCatalogSearch(filters, values, where);
+  const { companyIdsParameter } = appendCatalogSearch(filters, values, where);
   if (filters.status && filters.status !== 'all') {
     values.push(productStatus(filters.status));
     where.push(`p.status=$${values.length}`);
-  } else if (filters.includeArchived !== 'true' && filters.includeArchived !== true) {
+  } else if (!filters.status && filters.includeArchived !== 'true' && filters.includeArchived !== true) {
     where.push(`p.status <> 'archived'`);
   }
   const sellerCoverage = String(filters.sellerCoverage || 'all').trim().toLowerCase();
   if (!SELLER_COVERAGES.includes(sellerCoverage)) throw httpError('sellerCoverage inválido.');
   if (sellerCoverage !== 'all') {
-    where.push(`${sellerCountSql()} ${sellerCoverage === 'single' ? '= 1' : '> 1'}`);
+    const comparison = sellerCoverage === 'none' ? '= 0' : sellerCoverage === 'single' ? '= 1' : '> 1';
+    where.push(`${sellerCountSql()} ${comparison}`);
   }
+  const inventoryStatus = String(filters.inventoryStatus || 'all').trim();
+  if (!INVENTORY_STATUSES.includes(inventoryStatus)) throw httpError('inventoryStatus inválido.');
+  if (inventoryStatus !== 'all') where.push(inventoryStatusSql(inventoryStatus));
+
+  const publicationStatus = String(filters.publicationStatus || 'all').trim().toLowerCase();
+  if (!PUBLICATION_STATUSES.includes(publicationStatus)) throw httpError('publicationStatus inválido.');
+  if (publicationStatus === 'published') {
+    where.push(publicationExistsSql(companyIdsParameter));
+  } else if (publicationStatus === 'unpublished') {
+    where.push(`not ${publicationExistsSql(companyIdsParameter)}`);
+  }
+
   const special = specialFilter(filters);
   if (special === 'outOfStock') {
     where.push(`${sellerCountSql()} > 0`);
@@ -134,13 +237,20 @@ function catalogListConstraints(filters = {}) {
   } else if (special === 'lowStock') {
     where.push(lowStockSql());
   }
-  return { values, where, sellerCoverage, special };
+  return { values, where, sellerCoverage, inventoryStatus, publicationStatus, special };
 }
 
 function catalogSummaryScope(filters = {}) {
   if (filters.status && filters.status !== 'all') {
     return `p.status='${productStatus(filters.status)}'`;
   }
+  if (filters.status === 'all') return 'true';
+  if (filters.includeArchived === 'true' || filters.includeArchived === true) return 'true';
+  return `p.status <> 'archived'`;
+}
+
+function catalogSummaryTotalScope(filters = {}) {
+  if (filters.status === 'all') return 'true';
   if (filters.includeArchived === 'true' || filters.includeArchived === true) return 'true';
   return `p.status <> 'archived'`;
 }
@@ -165,9 +275,10 @@ async function summarizeProducts(filters = {}, db) {
   appendCatalogSearch(filters, values, where);
   const clause = where.length ? `where ${where.join(' and ')}` : '';
   const scope = catalogSummaryScope(filters);
+  const totalScope = catalogSummaryTotalScope(filters);
   const result = await db.query(
     `select
-       count(*) filter (where p.status <> 'archived') as total,
+       count(*) filter (where ${totalScope}) as total,
        count(*) filter (where p.status = 'active') as active,
        count(*) filter (where p.status = 'inactive') as inactive,
        count(*) filter (where p.status = 'archived') as archived,
@@ -210,9 +321,24 @@ export async function listProducts(filters = {}, db) {
   const { values, where } = catalogListConstraints(filters);
   const clause = where.length ? `where ${where.join(' and ')}` : '';
   const pageValues = [...values, limit, offset];
-  const [result, summary] = await Promise.all([
-    target.query(
-      `select page.*,
+  const order = catalogOrder(filters);
+  const catalogSql = order.requiresListingStats
+    ? `select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
+         i.quantity_on_hand - i.quantity_reserved as available,
+         count(*) over() as total_count,
+         listing_stats.listings_count,
+         listing_stats.sellers_count,
+         listing_stats.channels,
+         listing_stats.seller_price_min,
+         listing_stats.seller_price_max,
+         listing_stats.seller_stock_total
+       from products p
+       join product_inventory i on i.product_id=p.id
+       cross join lateral (${listingStatsSql('p.id')}) listing_stats
+       ${clause}
+       order by ${order.catalog}
+       limit $${pageValues.length - 1} offset $${pageValues.length}`
+    : `select page.*,
          listing_stats.listings_count,
          listing_stats.sellers_count,
          listing_stats.channels,
@@ -226,25 +352,13 @@ export async function listProducts(filters = {}, db) {
          from products p
          join product_inventory i on i.product_id=p.id
          ${clause}
-         order by p.updated_at desc, p.id desc
+         order by ${order.catalog}
          limit $${pageValues.length - 1} offset $${pageValues.length}
        ) page
-       cross join lateral (
-         select
-           count(l.id) filter (where l.status='active') as listings_count,
-           count(distinct l.company_id) filter (where l.status='active') as sellers_count,
-           coalesce(array_agg(distinct l.channel_code) filter (where l.status='active'), '{}') as channels,
-           min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
-             filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
-           max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
-             filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
-           coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total
-         from product_listings l
-         where l.product_id=page.id
-       ) listing_stats
-       order by page.updated_at desc, page.id desc`,
-      pageValues,
-    ),
+       cross join lateral (${listingStatsSql('page.id')}) listing_stats
+       order by ${order.page}`;
+  const [result, summary] = await Promise.all([
+    target.query(catalogSql, pageValues),
     summarizeProducts(filters, target),
   ]);
   return {
