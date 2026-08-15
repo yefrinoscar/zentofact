@@ -301,8 +301,18 @@ function metadataBoolean(listing: Listing, key: string) {
 
 function isActivelyPublished(listing: Listing) {
   if (listing.status !== 'active' || !metadataBoolean(listing, 'isPublished')) return false;
+  if (listing.metadata?.isSellable === false) return false;
   return listing.channelCode !== 'falabella'
     || String(listing.metadata?.qcStatus || '').toLowerCase() === 'approved';
+}
+
+function sellabilityLabel(listing: Listing) {
+  const reason = String(listing.metadata?.sellabilityReason || '').trim();
+  if (reason === 'qc_not_approved') return 'No autorizada';
+  if (reason === 'not_published') return 'No publicada';
+  if (reason === 'business_unit_not_active') return 'Unidad inactiva';
+  if (reason === 'product_not_active') return 'Producto inactivo';
+  return 'No vendible';
 }
 
 function usableBrand(value?: string | null) {
@@ -1047,6 +1057,7 @@ function ProductDrawer({
   onTogglePublication: (listing: Listing) => void;
 }) {
   const listings = product?.listings || [];
+  const activeListings = listings.filter((listing) => listing.status === 'active');
   const publishedListings = listings.filter(isActivelyPublished);
   const publicationsByChannel = [...publishedListings.reduce((groups, listing) => {
     const current = groups.get(listing.channelCode) || [];
@@ -1102,7 +1113,7 @@ function ProductDrawer({
         <div className="shrink-0 border-b border-border px-5 py-3">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{publishedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{activeListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory">Inventario</TabsTrigger>
             <TabsTrigger value="sales">Ventas</TabsTrigger>
             <TabsTrigger value="returns">Devoluciones</TabsTrigger>
@@ -1153,13 +1164,13 @@ function ProductDrawer({
         </TabsContent>
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">{publishedListings.length} publicaciones</p><p className="mt-0.5 text-xs text-muted-foreground">Una publicación activa por seller.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
-          {!publishedListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : publishedListings.map((listing) => {
-            const isPublished = metadataBoolean(listing, 'isPublished');
+          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">{activeListings.length} publicaciones asociadas</p><p className="mt-0.5 text-xs text-muted-foreground">Una publicación activa por seller; el estado de Falabella se verifica con su API.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          {!activeListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones activas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : activeListings.map((listing) => {
+            const isPublished = isActivelyPublished(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
-                <div className="flex shrink-0 items-center gap-3"><span className={cn('text-xs font-medium', isPublished ? 'text-emerald-700' : 'text-muted-foreground')}>{isPublished ? 'Publicada' : 'No publicada'}</span><Switch checked={isPublished} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${isPublished ? 'Despublicar' : 'Publicar'} en ${sellerShortName(listing.companyName)}`} /></div>
+                <div className="flex shrink-0 items-center gap-3"><span className={cn('text-xs font-medium', isPublished ? 'text-emerald-700' : 'text-amber-700')}>{isPublished ? 'Publicada' : sellabilityLabel(listing)}</span><Switch checked={isPublished} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${isPublished ? 'Despublicar' : 'Publicar'} en ${sellerShortName(listing.companyName)}`} /></div>
               </div>
               <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                 <dl className="grid min-w-0 grid-cols-2 gap-4">
@@ -1281,7 +1292,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   });
   const detailListings = (detailQuery.data as Product | undefined)?.listings;
   const listings = useMemo(
-    () => ((detailListings || []) as Listing[]).filter(isActivelyPublished),
+    () => ((detailListings || []) as Listing[]).filter((listing) => listing.status === 'active'),
     [detailListings],
   );
 
@@ -1340,11 +1351,11 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
       <TableCell className="py-2.5 align-middle"><SellerStock listing={listing} /></TableCell>
       <TableCell className="py-2.5 align-middle">
         <div className="flex items-center gap-2">
-          <span className="hidden text-xs font-medium text-emerald-700 xl:inline">Publicada</span>
+          <span className={cn('hidden text-xs font-medium xl:inline', isActivelyPublished(listing) ? 'text-emerald-700' : 'text-amber-700')}>{isActivelyPublished(listing) ? 'Publicada' : sellabilityLabel(listing)}</span>
           <Switch
-            checked
+            checked={isActivelyPublished(listing)}
             onCheckedChange={() => onTogglePublication(listing)}
-            aria-label={`Despublicar ${listing.sellerSku} de ${sellerName}`}
+            aria-label={`${isActivelyPublished(listing) ? 'Despublicar' : 'Publicar'} ${listing.sellerSku} de ${sellerName}`}
           />
         </div>
       </TableCell>
@@ -1439,8 +1450,13 @@ function SellerStock({ listing }: { listing: Listing }) {
   const sellerStock = metadataNumber(listing, 'sellerWarehouseQuantity');
   const fulfillmentStock = metadataNumber(listing, 'fulfillmentQuantity');
   const fromGetStock = listing.metadata?.stockSource === 'falabella_get_stock';
+  const isSellable = listing.metadata?.isSellable;
+  const contentScore = metadataNumber(listing, 'contentScore');
   return <div>
     <strong className="block text-sm">{formatNumber(listing.marketplaceQuantity)} u</strong>
+    {isSellable === false && <small className="block leading-4 text-amber-700" title="El stock físico no se ofrece hasta que Falabella autorice la publicación.">
+      {sellabilityLabel(listing)}{contentScore != null ? ` · score ${formatNumber(contentScore, 0)}` : ''}
+    </small>}
     <small className="block leading-4 text-muted-foreground">
       {fromGetStock
         ? `Seller ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
