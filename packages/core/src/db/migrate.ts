@@ -610,6 +610,24 @@ const DDL = `
   FROM falabella_orders
   ON CONFLICT (company_id, order_id) DO NOTHING;
 
+  CREATE TABLE IF NOT EXISTS falabella_ready_to_ship_operations (
+    company_id INTEGER NOT NULL,
+    order_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'processing',
+    attempts INTEGER NOT NULL DEFAULT 1,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    last_error TEXT,
+    result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (company_id, order_id),
+    FOREIGN KEY (company_id, order_id)
+      REFERENCES falabella_orders(company_id, order_id) ON DELETE CASCADE,
+    CHECK (state IN ('processing', 'reconciling', 'succeeded', 'failed', 'unknown'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_ready_to_ship_operations_state
+    ON falabella_ready_to_ship_operations(state, updated_at);
+
   CREATE TABLE IF NOT EXISTS falabella_label_prints (
     id BIGSERIAL PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

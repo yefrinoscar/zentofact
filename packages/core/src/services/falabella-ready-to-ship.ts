@@ -43,6 +43,18 @@ export function groupReadyToShipPackages(orderItems: any[]): FalabellaReadyToShi
 }
 
 export function areAllOrderItemsReadyToShip(orderItems: any[]): boolean {
-  return orderItems.length > 0
-    && orderItems.every((item) => orderItemStatus(item).includes('ready_to_ship'));
+  return Boolean(readyToShipReachedStatus(orderItems));
+}
+
+export function pendingReadyToShipOrderItems(orderItems: any[]): any[] {
+  return orderItems.filter((item) => !/(^|\|)(ready_to_ship|shipped|delivered)(\||$)/.test(orderItemStatus(item)));
+}
+
+export function readyToShipReachedStatus(orderItems: any[]): '' | 'ready_to_ship' | 'shipped' | 'delivered' {
+  if (!orderItems.length) return '';
+  const statuses = orderItems.map(orderItemStatus);
+  if (statuses.every((status) => /(^|\|)delivered(\||$)/.test(status))) return 'delivered';
+  if (statuses.every((status) => /(^|\|)(shipped|delivered)(\||$)/.test(status))) return 'shipped';
+  if (statuses.every((status) => /(^|\|)(ready_to_ship|shipped|delivered)(\||$)/.test(status))) return 'ready_to_ship';
+  return '';
 }

@@ -15,6 +15,8 @@ import {
   areAllOrderItemsReadyToShip,
   canPrintFalabellaShippingLabel,
   groupReadyToShipPackages,
+  pendingReadyToShipOrderItems,
+  readyToShipReachedStatus,
 } from './falabella-ready-to-ship';
 import { recordFalabellaLabelPrint } from './falabella-label-print.service';
 
@@ -994,7 +996,43 @@ export async function falabellaGetOrderItems(payload: { companyId: number; order
   return { ok: response.ok, status: response.status, url: response.url, orderItems, items, orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)) };
 }
 
-export async function falabellaSetStatusToReadyToShip(payload: { companyId: number; orderId: string | number }) {
+export async function falabellaCheckReadyToShipStatus(payload: { companyId: number; orderId: string | number; signal?: AbortSignal }) {
+  const found = await requireCompanyWithFalabella(payload.companyId);
+  if ('error' in found) return { ok: false, error: found.error };
+  const orderId = String(payload.orderId || '').trim();
+  if (!orderId) return { ok: false, error: 'Falta el OrderId del pedido.' };
+  const { company } = found;
+  const client = new FalabellaApiClient({
+    userId: company.falabellaApiUserId!,
+    apiKey: company.falabellaApiKey!,
+    version: '1.0',
+    defaultFormat: 'JSON',
+  });
+  const response = await client.call({
+    action: 'GetOrderItems',
+    params: { OrderId: orderId },
+    accept: 'application/json',
+    signal: payload.signal,
+  });
+  const error = getFalabellaError(response.data);
+  if (error || !response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: falabellaErrorText(error) || 'Falabella no pudo confirmar el estado del pedido.',
+    };
+  }
+  const orderItems = extractOrderItems(response.data);
+  return {
+    ok: true,
+    ready: areAllOrderItemsReadyToShip(orderItems),
+    providerStatus: readyToShipReachedStatus(orderItems),
+    itemCount: orderItems.length,
+    orderItemIds: normalizeOrderItemIds(orderItems.map(getOrderItemId)),
+  };
+}
+
+export async function falabellaSetStatusToReadyToShip(payload: { companyId: number; orderId: string | number; signal?: AbortSignal }) {
   const found = await requireCompanyWithFalabella(payload.companyId);
   if ('error' in found) return { ok: false, error: found.error };
   const orderId = String(payload.orderId || '').trim();
@@ -1011,6 +1049,7 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
     action: 'GetOrderItems',
     params: { OrderId: orderId },
     accept: 'application/json',
+    signal: payload.signal,
   });
   const itemsError = getFalabellaError(itemsResponse.data);
   if (itemsError || !itemsResponse.ok) {
@@ -1027,24 +1066,25 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
   if (!orderItems.length || rawOrderItemIds.some((id) => !/^\d+$/.test(id)) || orderItemIds.length !== orderItems.length) {
     return { ok: false, error: 'Falabella devolvió artículos incompletos o inválidos. Sincroniza el pedido y vuelve a intentarlo.' };
   }
-  const statuses = orderItems.map(getOrderItemStatus).filter(Boolean);
-  if (statuses.length === orderItems.length && statuses.every((status) => status.includes('ready_to_ship'))) {
-    return { ok: true, alreadyReady: true, orderItemIds, itemCount: orderItems.length };
+  const reachedStatus = readyToShipReachedStatus(orderItems);
+  if (reachedStatus) {
+    return { ok: true, alreadyReady: true, providerStatus: reachedStatus, orderItemIds, itemCount: orderItems.length };
   }
-  if (orderItems.some(isFulfillmentOrderItem)) {
+  const pendingOrderItems = pendingReadyToShipOrderItems(orderItems);
+  if (pendingOrderItems.some(isFulfillmentOrderItem)) {
     return { ok: false, error: 'Falabella gestiona el inventario y despacho de este pedido Fulfillment; no debe marcarse manualmente.' };
   }
-  if (orderItems.some((item) => {
+  if (pendingOrderItems.some((item) => {
     const processable = item?.isProcessable ?? item?.IsProcessable ?? '1';
     return processable === false || String(processable) === '0';
   })) {
     return { ok: false, error: 'Falabella aún está procesando uno o más artículos. Espera unos minutos y vuelve a intentarlo.' };
   }
 
-  const rawPackageIds = orderItems.map(getOrderItemPackageId);
+  const rawPackageIds = pendingOrderItems.map(getOrderItemPackageId);
   if (rawPackageIds.some((packageId) => !packageId)) return { ok: false, error: 'Falabella no devolvió el PackageId de todos los artículos. Sincroniza y vuelve a intentarlo.' };
-  const packages = groupReadyToShipPackages(orderItems);
-  if (!packages.length || packages.reduce((total, entry) => total + entry.orderItemIds.length, 0) !== orderItemIds.length) {
+  const packages = groupReadyToShipPackages(pendingOrderItems);
+  if (!packages.length || packages.reduce((total, entry) => total + entry.orderItemIds.length, 0) !== pendingOrderItems.length) {
     return { ok: false, error: 'Falabella devolvió paquetes incompletos. Sincroniza el pedido y vuelve a intentarlo.' };
   }
 
@@ -1054,34 +1094,40 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
     purchaseOrderId: string;
     purchaseOrderNumber: string;
   }> = [];
+  let confirmedProviderStatus: 'ready_to_ship' | 'shipped' | 'delivered' = 'ready_to_ship';
   const currentItems = async () => {
     try {
       const response = await client.call({
         action: 'GetOrderItems',
         params: { OrderId: orderId },
         accept: 'application/json',
+        signal: payload.signal,
       });
-      if (!response.ok || getFalabellaError(response.data)) return [];
-      return extractOrderItems(response.data);
+      if (!response.ok || getFalabellaError(response.data)) return { confirmed: false, items: [] as any[] };
+      return { confirmed: true, items: extractOrderItems(response.data) };
     } catch {
-      return [];
+      return { confirmed: false, items: [] as any[] };
     }
   };
 
   for (let index = 0; index < packages.length; index += 1) {
     const currentPackage = packages[index];
-    const readyResponse = await client.setStatusToReadyToShip({
+    const readyToShipOptions: Parameters<typeof client.setStatusToReadyToShip>[0] & { signal?: AbortSignal } = {
       orderItemIds: currentPackage.orderItemIds,
       packageId: currentPackage.packageId,
-    });
+      signal: payload.signal,
+    };
+    const readyResponse = await client.setStatusToReadyToShip(readyToShipOptions);
     const readyError = getFalabellaError(readyResponse.data);
     const hasXmlError = /<ErrorResponse\b/i.test(readyResponse.rawText);
     if (readyError || hasXmlError || !readyResponse.ok) {
-      const refreshedItems = await currentItems();
-      if (areAllOrderItemsReadyToShip(refreshedItems)) {
+      const refreshed = await currentItems();
+      if (refreshed.confirmed && areAllOrderItemsReadyToShip(refreshed.items)) {
+        confirmedProviderStatus = readyToShipReachedStatus(refreshed.items) || 'ready_to_ship';
         return {
           ok: true,
           alreadyReady: false,
+          providerStatus: confirmedProviderStatus,
           orderItemIds,
           itemCount: orderItems.length,
           packageIds: packages.map((entry) => entry.packageId),
@@ -1089,10 +1135,16 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
           processedPackageCount: packageResults.length,
         };
       }
+      const pendingRefreshedIds = new Set(
+        pendingReadyToShipOrderItems(refreshed.items).map(getOrderItemId),
+      );
+      const currentPackageChanged = refreshed.confirmed
+        && currentPackage.orderItemIds.some((id) => !pendingRefreshedIds.has(id));
       const providerError = readyToShipErrorMessage(readyError, readyResponse.rawText);
       return {
         ok: false,
         status: readyResponse.status,
+        outcomeUnknown: !refreshed.confirmed || packageResults.length > 0 || currentPackageChanged,
         error: packageResults.length
           ? `Falabella procesó ${packageResults.length} de ${packages.length} paquetes. ${providerError}`
           : providerError,
@@ -1103,6 +1155,7 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
       return {
         ok: false,
         status: readyResponse.status,
+        outcomeUnknown: true,
         error: packageResults.length
           ? `Falabella procesó ${packageResults.length} de ${packages.length} paquetes, pero no confirmó el siguiente. Sincroniza el pedido.`
           : 'Falabella no confirmó el cambio de estado del pedido.',
@@ -1116,14 +1169,18 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
     });
 
     if (index < packages.length - 1) {
-      const refreshedItems = await currentItems();
-      if (areAllOrderItemsReadyToShip(refreshedItems)) break;
+      const refreshed = await currentItems();
+      if (refreshed.confirmed && areAllOrderItemsReadyToShip(refreshed.items)) {
+        confirmedProviderStatus = readyToShipReachedStatus(refreshed.items) || 'ready_to_ship';
+        break;
+      }
     }
   }
 
   return {
     ok: true,
     alreadyReady: false,
+    providerStatus: confirmedProviderStatus,
     orderItemIds,
     itemCount: orderItems.length,
     packageId: packages.length === 1 ? packages[0].packageId : undefined,

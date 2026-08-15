@@ -17,7 +17,13 @@ if (!connectionString) {
   );
 }
 
-export const pool = new Pool({ connectionString });
+export const pool = new Pool({
+  connectionString,
+  max: Number(process.env.POSTGRES_POOL_MAX || 10),
+  connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS || 5_000),
+  lock_timeout: Number(process.env.POSTGRES_LOCK_TIMEOUT_MS || 5_000),
+  idle_in_transaction_session_timeout: Number(process.env.POSTGRES_IDLE_TRANSACTION_TIMEOUT_MS || 60_000),
+});
 
 export const db = drizzle(pool, { schema });
 export type DB = typeof db;
