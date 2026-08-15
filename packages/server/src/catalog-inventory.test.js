@@ -9,7 +9,7 @@ import {
   isFalabellaActivePublished,
   sanitizeMainSku,
 } from './catalog/catalog-import.js';
-import { falabellaPublicationSnapshot } from './catalog/listing-snapshot-service.js';
+import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './catalog/listing-snapshot-service.js';
 import { listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
@@ -178,6 +178,45 @@ test('snapshot Falabella separa precio regular/oferta y suma stock seller más f
   assert.equal(snapshot.metadata.offerIsActive, true);
   assert.equal(snapshot.availableQuantity, 5);
   assert.equal(snapshot.metadata.stockSource, 'falabella_get_stock');
+});
+
+test('un producto no autorizado no expone stock comercial aunque tenga inventario físico', () => {
+  const remote = {
+    name: 'Pulsera para camara Gopro accesorio',
+    status: 'active',
+    qcStatus: 'rejected',
+    contentScore: 22,
+    businessUnits: [{
+      operatorCode: 'fape', status: 'active', isPublished: '0', stock: '100',
+    }],
+  };
+  const snapshot = falabellaPublicationSnapshot(remote, {
+    sellerWarehouseQuantity: 100,
+    fulfillmentQuantity: 0,
+    availableQuantity: 100,
+  });
+
+  assert.equal(snapshot.availableQuantity, 0);
+  assert.equal(snapshot.metadata.reportedAvailableQuantity, 100);
+  assert.equal(snapshot.metadata.isSellable, false);
+  assert.equal(snapshot.metadata.sellabilityReason, 'qc_not_approved');
+  assert.deepEqual(snapshot.metadata.sellabilityReasons, ['qc_not_approved', 'not_published']);
+  assert.equal(snapshot.metadata.contentScore, 22);
+  assert.equal(falabellaPublicationState(remote).isSellable, false);
+});
+
+test('GetStock se consulta por lotes de 1000 SKU', async () => {
+  const calls = [];
+  const sellerSkus = Array.from({ length: 1001 }, (_, index) => `SKU-${index}`);
+  const stocks = await fetchFalabellaStocks({
+    falabellaGetStock: async (input) => {
+      calls.push(input);
+      return { ok: true, stocks: input.sellerSkus.map((sellerSku) => ({ sellerSku, availableQuantity: 1 })) };
+    },
+  }, 2, [...sellerSkus, sellerSkus[0]]);
+
+  assert.deepEqual(calls.map(({ sellerSkus: batch }) => batch.length), [1000, 1]);
+  assert.equal(stocks.length, 1001);
 });
 
 test('rechaza stock negativo antes de insertar el ledger', async () => {
@@ -395,6 +434,45 @@ test('la asociación multiseñal infiere la variante y une títulos comerciales 
   const match = scoreFalabellaAssociation(canonical, seller);
   assert.equal(match.eligible, true);
   assert.ok(match.confidence >= 0.82);
+});
+
+test('asocia las tres publicaciones verificadas de la pulsera para cámara', () => {
+  const groups = groupFalabellaCatalogRecords([
+    {
+      company: { id: 1, name: 'LIMBO' },
+      remote: {
+        name: 'Muñequera Pulsera Giratoria para Cámara GoPro Accesorios',
+        sellerSku: 'CAM4563011987', color: 'Negro', price: 9.9,
+      },
+    },
+    {
+      company: { id: 2, name: 'DOLPHIN' },
+      remote: {
+        name: 'Pulsera para camara Gopro accesorio',
+        sellerSku: 'PDG44345564', color: 'Negro', size: 'Talla única', price: 9.95,
+      },
+    },
+    {
+      company: { id: 10, name: 'LA TIENDA DEL VIAJERO' },
+      remote: {
+        name: 'Pulsera para camara de acción - accesorio de mano',
+        sellerSku: '129650681', color: 'NEGRO', price: 9.99,
+      },
+    },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 3);
+  assert.deepEqual(
+    groups[0].records.map(({ remote }) => remote.sellerSku).sort(),
+    ['129650681', 'CAM4563011987', 'PDG44345564'],
+  );
+
+  const variantGroups = groupFalabellaCatalogRecords([
+    { company: { id: 1 }, remote: { name: 'Pulsera para camara Gopro accesorio', sellerSku: 'BLACK', color: 'Negro' } },
+    { company: { id: 2 }, remote: { name: 'Pulsera para camara Gopro accesorio', sellerSku: 'WHITE', color: 'Blanco' } },
+  ]);
+  assert.equal(variantGroups.length, 2);
 });
 
 test('la asociación no mezcla variantes ni familias ambiguas', () => {
@@ -843,4 +921,41 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
   assert.equal(metadata.isPublished, true);
   assert.equal(metadata.status, 'active');
   assert.equal(metadata.marketplaceStatus, 'active');
+});
+
+test('import no publica stock de una publicación Falabella no autorizada', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      queries.push({ sql: compact, params });
+      if (compact.startsWith('select p.id, p.main_sku from product_listings')) return { rows: [{ id: 9, main_sku: 'AG76' }] };
+      if (compact.startsWith('select exists(select 1 from products')) {
+        return { rows: [{ product_exists: true, company_exists: true, account_exists: true }] };
+      }
+      if (compact.startsWith('insert into product_listings')) {
+        return { rows: [{
+          id: 31, product_id: params[0], channel_code: params[1], company_id: params[2],
+          channel_account_id: null, seller_sku: params[4], shop_sku: params[5], status: 'active',
+          marketplace_quantity: params[8], metadata: JSON.parse(params[10]),
+        }] };
+      }
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  };
+  await importFalabellaCatalog({
+    companyId: 2,
+    mode: 'listings_only',
+    products: [{
+      sellerSku: 'PDG44345564', shopSku: '138999856', name: 'Pulsera para camara Gopro accesorio',
+      quantity: 100, status: 'active', qcStatus: 'rejected',
+      businessUnits: [{ operatorCode: 'fape', status: 'active', isPublished: '0', stock: '100' }],
+    }],
+  }, 'actor', db);
+  const listingInsert = queries.find(({ sql }) => sql.startsWith('insert into product_listings'));
+  const metadata = listingInsert.params[10] && JSON.parse(listingInsert.params[10]);
+  assert.equal(listingInsert.params[8], 0);
+  assert.equal(metadata.reportedAvailableQuantity, 100);
+  assert.equal(metadata.isSellable, false);
+  assert.equal(metadata.sellabilityReason, 'qc_not_approved');
 });

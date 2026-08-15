@@ -286,6 +286,7 @@ function metadataStatus(listing: Listing, key: string) {
 
 function isActivelyPublished(listing: Listing) {
   if (String(listing.status).toLowerCase() !== 'active' || !metadataBoolean(listing, 'isPublished')) return false;
+  if (listing.metadata?.isSellable === false) return false;
   if (String(listing.channelCode).toLowerCase() !== 'falabella') return true;
   return metadataStatus(listing, 'status') === 'active'
     && metadataStatus(listing, 'marketplaceStatus') === 'active'
@@ -299,6 +300,9 @@ function publicationPresentation(listing: Listing) {
   if (String(listing.status).toLowerCase() !== 'active') {
     return { visible: false, label: 'Listing inactivo', className: 'text-muted-foreground' };
   }
+  if (listing.metadata?.isSellable === false) {
+    return { visible: false, label: sellabilityLabel(listing), className: 'text-amber-700 dark:text-amber-300' };
+  }
   if (!metadataBoolean(listing, 'isPublished')) {
     return { visible: false, label: 'No publicada', className: 'text-muted-foreground' };
   }
@@ -307,6 +311,15 @@ function publicationPresentation(listing: Listing) {
     return { visible: false, label: 'Pendiente de aprobación', className: 'text-amber-700 dark:text-amber-300' };
   }
   return { visible: false, label: 'No visible', className: 'text-muted-foreground' };
+}
+
+function sellabilityLabel(listing: Listing) {
+  const reason = String(listing.metadata?.sellabilityReason || '').trim();
+  if (reason === 'qc_not_approved') return 'No autorizada';
+  if (reason === 'not_published') return 'No publicada';
+  if (reason === 'business_unit_not_active') return 'Unidad inactiva';
+  if (reason === 'product_not_active') return 'Producto inactivo';
+  return 'No vendible';
 }
 
 function usableBrand(value?: string | null) {
@@ -1046,7 +1059,8 @@ function ProductDrawer({
   onTogglePublication: (listing: Listing) => void;
 }) {
   const listings = product?.listings || [];
-  const publishedListings = listings.filter(isActivelyPublished);
+  const activeListings = listings.filter((listing) => listing.status === 'active');
+  const publishedListings = activeListings.filter(isActivelyPublished);
   const publicationsByChannel = [...publishedListings.reduce((groups, listing) => {
     const current = groups.get(listing.channelCode) || [];
     current.push(listing);
@@ -1101,7 +1115,7 @@ function ProductDrawer({
         <div className="shrink-0 border-b border-border px-5 py-3">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{listings.length}</span></TabsTrigger>
+            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{activeListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory">Inventario</TabsTrigger>
             <TabsTrigger value="sales">Ventas</TabsTrigger>
             <TabsTrigger value="returns">Devoluciones</TabsTrigger>
@@ -1153,9 +1167,9 @@ function ProductDrawer({
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
           <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">
-            {listings.length} {listings.length === 1 ? 'publicación' : 'publicaciones'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
-          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
-          {!listings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : listings.map((listing) => {
+            {activeListings.length} {activeListings.length === 1 ? 'publicación activa' : 'publicaciones activas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
+          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal; Falabella verifica su autorización.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          {!activeListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones activas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : activeListings.map((listing) => {
             const publication = publicationPresentation(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
               <div className="flex items-start justify-between gap-4">
@@ -1281,7 +1295,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     retry: 1,
   });
   const detailListings = (detailQuery.data as Product | undefined)?.listings;
-  const listings = (detailListings || []) as Listing[];
+  const listings = useMemo(
+    () => ((detailListings || []) as Listing[]).filter((listing) => listing.status === 'active'),
+    [detailListings],
+  );
 
   if (detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
@@ -1421,8 +1438,13 @@ function SellerStock({ listing }: { listing: Listing }) {
   const sellerStock = metadataNumber(listing, 'sellerWarehouseQuantity');
   const fulfillmentStock = metadataNumber(listing, 'fulfillmentQuantity');
   const fromGetStock = listing.metadata?.stockSource === 'falabella_get_stock';
+  const isSellable = listing.metadata?.isSellable;
+  const contentScore = metadataNumber(listing, 'contentScore');
   return <div>
     <strong className="block text-sm">{formatNumber(listing.marketplaceQuantity)} u</strong>
+    {isSellable === false && <small className="block leading-4 text-amber-700" title="El stock físico no se ofrece hasta que Falabella autorice la publicación.">
+      {sellabilityLabel(listing)}{contentScore != null ? ` · score ${formatNumber(contentScore, 0)}` : ''}
+    </small>}
     <small className="block leading-4 text-muted-foreground">
       {fromGetStock
         ? `Seller ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`

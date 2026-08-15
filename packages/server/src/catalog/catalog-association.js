@@ -53,6 +53,14 @@ const VERIFIED_EQUIVALENT_FAMILIES = [
       '140x210', 'aluminizada', 'camping', 'desastres', 'mylar', 'supervivencia', 'trekking',
     ]),
   },
+  {
+    key: 'pulsera-camara-gopro',
+    requiredTokens: ['pulsera', 'camara', 'accesorio'],
+    anyTokens: ['gopro', 'accion', 'mano', 'giratoria'],
+    // Los sellers alternan entre GoPro, acción, mano y giratoria para el
+    // mismo accesorio físico. Color y talla siguen siendo señales de variante.
+    ignoredTokens: new Set(['accion', 'gopro', 'giratoria', 'mano']),
+  },
 ];
 
 // La numeración N°1/N°2/N°3 no identifica de forma fiable estos adornos entre
