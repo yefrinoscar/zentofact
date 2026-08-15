@@ -424,6 +424,7 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
         }
         summary.productsReused += 1;
       }
+      const publicationSnapshot = falabellaPublicationSnapshot(remote);
       await upsertListing(productRow.id, {
         channelCode: 'falabella',
         companyId,
@@ -434,8 +435,10 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
         marketplaceQuantity: remote.quantity ?? remote.businessUnits?.[0]?.stock ?? null,
         marketplaceSyncedAt: new Date().toISOString(),
         metadata: {
-          status: remote.status || null,
-          qcStatus: remote.qcStatus || null,
+          status: publicationSnapshot.metadata.status,
+          marketplaceStatus: publicationSnapshot.metadata.marketplaceStatus,
+          qcStatus: publicationSnapshot.metadata.qcStatus,
+          isPublished: publicationSnapshot.metadata.isPublished,
           url: remote.url || null,
           importBatchId: summary.batchId,
         },

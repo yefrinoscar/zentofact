@@ -10,6 +10,7 @@ import {
   CircleDollarSign,
   Check,
   Copy,
+  ExternalLink,
   ImagePlus,
   Loader2,
   PackagePlus,
@@ -22,10 +23,23 @@ import {
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
+import { sellerShortName } from '../lib/seller-name';
+import { falabellaProductUrl } from '../lib/marketplace-url';
+import {
+  CatalogFilters,
+  CATALOG_SORT_REQUESTS,
+  catalogSortLabel,
+  type CatalogSort,
+  type CatalogStatusFilter,
+  type InventoryStatusFilter,
+  type PublicationStatusFilter,
+  type SellerCoverageFilter,
+} from '../components/CatalogFilters';
 import { DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
+import { Skeleton } from '../components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelHeader, TableRow } from '../components/ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
@@ -78,34 +92,6 @@ type Product = {
   channels?: string[];
   listings?: Listing[];
   updatedAt?: string;
-};
-
-type SellerCoverage = 'all' | 'single' | 'multiple';
-type SpecialFilter = 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
-type StatusFilter = 'active' | 'inactive' | 'archived' | 'all';
-
-type CatalogSummary = {
-  total: number;
-  active: number;
-  inactive: number;
-  archived: number;
-  singleSeller: number;
-  multipleSellers: number;
-  outOfStock: number;
-  unpublished: number;
-  lowStock: number;
-};
-
-const emptySummary: CatalogSummary = {
-  total: 0,
-  active: 0,
-  inactive: 0,
-  archived: 0,
-  singleSeller: 0,
-  multipleSellers: 0,
-  outOfStock: 0,
-  unpublished: 0,
-  lowStock: 0,
 };
 
 type Movement = {
@@ -216,17 +202,6 @@ function companyName(company: Company) {
   return sellerShortName(company.nombreComercial || company.nombre || company.razonSocial || `Empresa ${company.id}`);
 }
 
-function sellerShortName(value?: string | null) {
-  const fallback = String(value || '').trim();
-  if (!fallback) return 'Seller';
-  return fallback
-    .replace(/\s+(?:E\.?\s*I\.?\s*R\.?\s*L\.?|S\.?\s*R\.?\s*L\.?|S\.?\s*A\.?\s*C\.?)\.?$/i, '')
-    .replace(/\s+PER[ÚU]$/i, '')
-    .replace(/^(?:INVERSIONES|IMPORTACIONES|TIENDAS)\s+/i, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
 function suggestedSellerSku(product: Product, company: Company) {
   const sellerCode = companyName(company)
     .normalize('NFD')
@@ -282,6 +257,11 @@ function sellerStock(product: Product) {
   return Number.isFinite(stock) ? stock : 0;
 }
 
+function availableStock(product: Product) {
+  const stock = Number(product.available);
+  return Number.isFinite(stock) ? stock : 0;
+}
+
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
@@ -296,13 +276,37 @@ function metadataNumber(listing: Listing, key: string) {
 }
 
 function metadataBoolean(listing: Listing, key: string) {
-  return listing.metadata?.[key] === true;
+  const value = listing.metadata?.[key];
+  return value === true || String(value ?? '').trim().toLowerCase() === 'true' || String(value ?? '').trim() === '1';
+}
+
+function metadataStatus(listing: Listing, key: string) {
+  return String(listing.metadata?.[key] || '').trim().toLowerCase();
 }
 
 function isActivelyPublished(listing: Listing) {
-  if (listing.status !== 'active' || !metadataBoolean(listing, 'isPublished')) return false;
-  return listing.channelCode !== 'falabella'
-    || String(listing.metadata?.qcStatus || '').toLowerCase() === 'approved';
+  if (String(listing.status).toLowerCase() !== 'active' || !metadataBoolean(listing, 'isPublished')) return false;
+  if (String(listing.channelCode).toLowerCase() !== 'falabella') return true;
+  return metadataStatus(listing, 'status') === 'active'
+    && metadataStatus(listing, 'marketplaceStatus') === 'active'
+    && metadataStatus(listing, 'qcStatus') === 'approved';
+}
+
+function publicationPresentation(listing: Listing) {
+  if (isActivelyPublished(listing)) {
+    return { visible: true, label: 'Visible', className: 'text-emerald-700 dark:text-emerald-300' };
+  }
+  if (String(listing.status).toLowerCase() !== 'active') {
+    return { visible: false, label: 'Listing inactivo', className: 'text-muted-foreground' };
+  }
+  if (!metadataBoolean(listing, 'isPublished')) {
+    return { visible: false, label: 'No publicada', className: 'text-muted-foreground' };
+  }
+  if (String(listing.channelCode).toLowerCase() === 'falabella'
+    && metadataStatus(listing, 'qcStatus') !== 'approved') {
+    return { visible: false, label: 'Pendiente de aprobación', className: 'text-amber-700 dark:text-amber-300' };
+  }
+  return { visible: false, label: 'No visible', className: 'text-muted-foreground' };
 }
 
 function usableBrand(value?: string | null) {
@@ -315,10 +319,12 @@ export default function Productos() {
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('active');
-  const [sellerCoverage, setSellerCoverage] = useState<SellerCoverage>('all');
-  const [special, setSpecial] = useState<SpecialFilter>('none');
-  const [companyId, setCompanyId] = useState('all');
+  const [status, setStatus] = useState<CatalogStatusFilter>('active');
+  const [inventoryStatus, setInventoryStatus] = useState<InventoryStatusFilter>('all');
+  const [publicationStatus, setPublicationStatus] = useState<PublicationStatusFilter>('all');
+  const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
+  const [companyIds, setCompanyIds] = useState<number[]>([]);
+  const [sort, setSort] = useState<CatalogSort>('updated_desc');
   const [refreshing, setRefreshing] = useState(false);
   const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
   const [copiedSku, setCopiedSku] = useState<string | null>(null);
@@ -358,20 +364,25 @@ export default function Productos() {
     setOffset(0);
   };
 
+  const sortRequest = CATALOG_SORT_REQUESTS[sort];
   const productFilters = useMemo(() => ({
     submittedSearch,
     status,
+    inventoryStatus,
+    publicationStatus,
     sellerCoverage,
-    special,
-    companyId,
+    companyIds,
+    sort,
     offset,
-  }), [submittedSearch, status, sellerCoverage, special, companyId, offset]);
+  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, sort, offset]);
   const listRequest = {
     search: submittedSearch,
     status,
+    inventoryStatus,
+    publicationStatus,
     sellerCoverage,
-    special: special === 'none' ? undefined : special,
-    companyId: companyId === 'all' ? undefined : Number(companyId),
+    companyIds: companyIds.length ? companyIds : undefined,
+    ...sortRequest,
     limit: PAGE_SIZE,
   };
   const productsQuery = useQuery({
@@ -419,18 +430,12 @@ export default function Productos() {
     retry: 1,
   });
 
-  const companies = useMemo(() => ((companiesQuery.data || []) as Company[]).filter((company) => company.activo !== false), [companiesQuery.data]);
+  const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
+    .filter((company) => company.activo !== false)
+    .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
+  const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
   const products = (productsQuery.data?.products || []) as Product[];
   const totalCount = Number(productsQuery.data?.totalCount || 0);
-  const summary = (productsQuery.data?.summary || emptySummary) as CatalogSummary;
-  const catalogTotal = status === 'inactive'
-    ? summary.inactive
-    : status === 'archived'
-      ? summary.archived
-      : status === 'all'
-        ? summary.total
-        : summary.active;
-  const hasFocusedFilter = Boolean(submittedSearch || sellerCoverage !== 'all' || special !== 'none' || companyId !== 'all');
   const detail = detailQuery.data as Product | undefined;
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
@@ -600,7 +605,7 @@ export default function Productos() {
   };
 
   const togglePublication = useCallback((listing: Listing) => {
-    if (metadataBoolean(listing, 'isPublished')) {
+    if (isActivelyPublished(listing)) {
       setUnpublishListing(listing);
       setUnpublishConfirmation('');
       openModal('unpublish_visual');
@@ -623,7 +628,7 @@ export default function Productos() {
       header: 'Producto',
       cell: ({ row }) => {
         const product = row.original;
-        return <div className="flex items-center gap-3">
+        return <div className="grid min-w-0 grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
           <button
             type="button"
             onClick={(event) => {
@@ -644,7 +649,13 @@ export default function Productos() {
             ? <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
             : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
           <span className="min-w-0 flex-1">
-            <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
+            <button
+              type="button"
+              onClick={() => openProduct(product.id)}
+              className="block w-full text-left hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
+            </button>
             <button
               type="button"
               title="Copiar SKU interno"
@@ -657,6 +668,20 @@ export default function Productos() {
               }}
               className="mt-1 inline-flex items-center gap-1.5 font-mono text-xs font-semibold tracking-wide text-muted-foreground hover:text-foreground"
             >{product.mainSku}{copiedSku === product.mainSku ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}</button>
+          </span>
+          <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
+            <span className="min-w-0">
+              <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
+              <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock interno</span>
+              <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(availableStock(product))} u</span>
+            </span>
+            <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
+              <ProductStatusBadge product={product} compact />
+            </span>
           </span>
         </div>;
       },
@@ -671,19 +696,21 @@ export default function Productos() {
       header: 'Stock',
       cell: ({ row }) => {
         const product = row.original;
-        const stock = sellerStock(product);
+        const stock = availableStock(product);
         return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u · {product.sellersCount || 0} sellers</span></p>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn('h-full rounded-full', stock > 0 ? 'bg-emerald-500' : 'bg-red-500')} style={{ width: `${Math.min(100, Math.max(4, stock))}%` }} /></div>
+          <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Inventario interno · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
+          </p>
         </div>;
       },
     },
     {
       id: 'status',
-      header: 'Estado',
-      cell: ({ row }) => <StockBadge product={row.original} />,
+      header: 'Estado del producto',
+      cell: ({ row }) => <ProductStatusBadge product={row.original} />,
     },
-  ], [copiedSku]);
+  ], [copiedSku, openProduct]);
 
   const table = useReactTable({
     data: products,
@@ -711,50 +738,82 @@ export default function Productos() {
       && String(listing.companyId) === publishVisual.companyId
   )));
 
-  const applyCoverage = (next: SellerCoverage) => {
+  const applyStatus = (next: CatalogStatusFilter) => {
     resetListView();
-    setSellerCoverage(next);
-    if (next !== 'all' && special === 'unpublished') setSpecial('none');
+    setStatus(next);
   };
 
-  const applySpecial = (next: SpecialFilter) => {
+  const applyInventoryStatus = (next: InventoryStatusFilter) => {
     resetListView();
-    setSpecial((current) => current === next ? 'none' : next);
-    if (next === 'unpublished') setSellerCoverage('all');
+    setInventoryStatus(next);
+  };
+
+  const applyPublicationStatus = (next: PublicationStatusFilter) => {
+    resetListView();
+    setPublicationStatus(next);
+    if (next === 'published' && sellerCoverage === 'none') setSellerCoverage('all');
+  };
+
+  const applyCoverage = (next: SellerCoverageFilter) => {
+    resetListView();
+    setSellerCoverage(next);
+    if (next === 'none') {
+      setCompanyIds([]);
+      if (publicationStatus === 'published') setPublicationStatus('all');
+    }
+  };
+
+  const applyCompanyIds = (next: number[]) => {
+    resetListView();
+    setCompanyIds([...next].sort((left, right) => left - right));
+    if (next.length && sellerCoverage === 'none') setSellerCoverage('all');
+  };
+
+  const applySort = (next: CatalogSort) => {
+    resetListView();
+    setSort(next);
   };
 
   const clearFilters = () => {
-    window.clearTimeout(searchTimer.current);
-    setSearch('');
-    setSubmittedSearch('');
-    setStatus('active');
+    setStatus('all');
+    setInventoryStatus('all');
+    setPublicationStatus('all');
     setSellerCoverage('all');
-    setSpecial('none');
-    setCompanyId('all');
+    setCompanyIds([]);
     resetListView();
   };
 
   const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
-    {loading ? <LoadingBlock /> : products.length === 0 ? <EmptyBlock /> : (
+    <TablePanelHeader className="flex min-h-16 items-center justify-between gap-3 py-3">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold" aria-live="polite">
+          <span className="tabular-nums">{loading && !productsQuery.data ? '—' : formatNumber(totalCount, 0)}</span>
+          {' '}{totalCount === 1 ? 'producto' : 'productos'}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">Orden: {catalogSortLabel(sort)}</p>
+      </div>
+      {productsQuery.isFetching && !loading && (
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Actualizando
+        </span>
+      )}
+    </TablePanelHeader>
+    {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
         <Table className="table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
               {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                header.column.id === 'product' && 'w-[52%]',
-                header.column.id === 'price' && 'w-[15%]',
-                header.column.id === 'stock' && 'w-[19%]',
-                header.column.id === 'status' && 'w-[14%]',
+                header.column.id === 'product' && 'w-full sm:w-[52%]',
+                header.column.id === 'price' && 'hidden sm:table-cell sm:w-[15%]',
+                header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[19%]',
+                header.column.id === 'status' && 'hidden sm:table-cell sm:w-[14%]',
               )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
             </TableRow>)}
           </TableHeader>
           <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
-            <TableRow
-              onClick={() => openProduct(row.original.id)}
-              className={cn('cursor-pointer align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}
-              aria-label={`Abrir ${row.original.name}`}
-            >
-              {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : undefined}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+            <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
+              {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell'}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
             </TableRow>
             {row.getIsExpanded() && <ExpandedProductPublications
               productId={row.original.id}
@@ -780,80 +839,10 @@ export default function Productos() {
     /> : null}
   </TablePanel>;
 
-  const headlineCount = hasFocusedFilter ? totalCount : catalogTotal;
-  const headlineLabel = catalogHeadline(status, sellerCoverage, special, headlineCount);
-  const filtersDirty = hasFocusedFilter || status !== 'active';
-
   return (
-    <div className="space-y-5">
-      <section aria-label="Indicadores del catálogo">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-2xl font-semibold tracking-tight">
-              <span className="tabular-nums">{loading && !productsQuery.data ? '—' : formatNumber(headlineCount, 0)}</span>
-              {' '}{headlineLabel}
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {hasFocusedFilter && catalogTotal !== headlineCount
-                ? `de ${formatNumber(catalogTotal, 0)} ${statusCatalogLabel(status, catalogTotal)}`
-                : statusCatalogHint(status)}
-            </p>
-          </div>
-          <span className="inline-flex h-8 items-center gap-2 text-xs text-muted-foreground">
-            {productsQuery.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {totalCount > 0 ? `Página ${Math.floor(offset / PAGE_SIZE) + 1}` : null}
-          </span>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-1.5">
-          <FilterPill
-            label="Todos"
-            count={catalogTotal}
-            selected={sellerCoverage === 'all' && special === 'none'}
-            onClick={() => { resetListView(); setSellerCoverage('all'); setSpecial('none'); }}
-          />
-          <FilterPill
-            label="1 seller"
-            count={summary.singleSeller}
-            selected={sellerCoverage === 'single'}
-            onClick={() => applyCoverage(sellerCoverage === 'single' ? 'all' : 'single')}
-          />
-          <FilterPill
-            label="Varios sellers"
-            count={summary.multipleSellers}
-            selected={sellerCoverage === 'multiple'}
-            onClick={() => applyCoverage(sellerCoverage === 'multiple' ? 'all' : 'multiple')}
-          />
-          <FilterPill
-            label="Sin stock"
-            count={summary.outOfStock}
-            selected={special === 'outOfStock'}
-            tone="danger"
-            onClick={() => applySpecial('outOfStock')}
-          />
-          <FilterPill
-            label="Sin publicación"
-            count={summary.unpublished}
-            selected={special === 'unpublished'}
-            onClick={() => applySpecial('unpublished')}
-          />
-          <FilterPill
-            label="Stock bajo"
-            count={summary.lowStock}
-            selected={special === 'lowStock'}
-            tone="warning"
-            onClick={() => applySpecial('lowStock')}
-          />
-          {filtersDirty && (
-            <button type="button" onClick={clearFilters} className="ml-1 inline-flex h-8 items-center gap-1 px-2 text-sm text-muted-foreground hover:text-foreground">
-              <X className="h-3.5 w-3.5" /> Limpiar
-            </button>
-          )}
-        </div>
-      </section>
-
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-        <div className="relative min-w-0 flex-1">
+    <div className="space-y-4">
+      <CatalogFilters
+        searchControl={<div className="relative min-w-0">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
@@ -864,34 +853,44 @@ export default function Productos() {
                 applySearch(search, true);
               }
             }}
-            placeholder="Buscar SKU, producto o seller"
-            className="h-9 pl-9"
-            aria-label="Buscar SKU, producto o seller"
+            placeholder="Buscar por producto, SKU o marca"
+            className="h-11 px-9 sm:h-9"
+            aria-label="Buscar por producto, SKU o marca"
           />
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Select value={companyId} onValueChange={(value) => { resetListView(); setCompanyId(value); }}>
-            <SelectTrigger className="w-44" aria-label="Filtrar por seller"><SelectValue placeholder="Todos los sellers" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los sellers</SelectItem>
-              {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={status} onValueChange={(value) => { resetListView(); setStatus(value as StatusFilter); }}>
-            <SelectTrigger className="w-36" aria-label="Estado del producto"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Activos</SelectItem>
-              <SelectItem value="inactive">Inactivos</SelectItem>
-              <SelectItem value="archived">Archivados</SelectItem>
-              <SelectItem value="all">Todos los estados</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button type="button" variant="outline" size="icon" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
+          {search && (
+            <button
+              type="button"
+              onClick={() => applySearch('', true)}
+              className="absolute right-1 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8 sm:w-8"
+              aria-label="Limpiar búsqueda"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>}
+        actions={<>
+          <Button type="button" variant="outline" size="icon" className="size-11 sm:size-9" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
             <RefreshCw className={cn(refreshing && 'animate-spin')} />
           </Button>
-          <button onClick={() => openModal('create')} className="primary-button"><PackagePlus className="h-4 w-4" /> Nuevo producto</button>
-        </div>
-      </div>
+          <Button type="button" onClick={() => openModal('create')} className="h-11 flex-1 sm:h-9 sm:flex-none">
+            <PackagePlus data-icon="inline-start" /> Nuevo producto
+          </Button>
+        </>}
+        status={status}
+        inventoryStatus={inventoryStatus}
+        publicationStatus={publicationStatus}
+        sellerCoverage={sellerCoverage}
+        companyIds={companyIds}
+        companies={companyOptions}
+        sort={sort}
+        onStatusChange={applyStatus}
+        onInventoryStatusChange={applyInventoryStatus}
+        onPublicationStatusChange={applyPublicationStatus}
+        onSellerCoverageChange={applyCoverage}
+        onCompanyIdsChange={applyCompanyIds}
+        onSortChange={applySort}
+        onClearFilters={clearFilters}
+      />
 
       {visibleError && <Notice tone="error">{visibleError}</Notice>}
 
@@ -1102,7 +1101,7 @@ function ProductDrawer({
         <div className="shrink-0 border-b border-border px-5 py-3">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{publishedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{listings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory">Inventario</TabsTrigger>
             <TabsTrigger value="sales">Ventas</TabsTrigger>
             <TabsTrigger value="returns">Devoluciones</TabsTrigger>
@@ -1111,7 +1110,7 @@ function ProductDrawer({
 
         <TabsContent value="overview" className="min-h-0 overflow-y-auto">
           <div className="grid grid-cols-2 border-b border-border md:grid-cols-4">
-            <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
+            <Metric label="Stock publicado" value={`${formatNumber(sellerStock(product))} u`} />
             <Metric label="Precio" value={formatBasePrice(product)} />
             <Metric label="Sellers" value={String(product.sellersCount || 0)} />
             <Metric label="Publicadas" value={String(publishedListings.length)} />
@@ -1122,7 +1121,7 @@ function ProductDrawer({
               {publicationsByChannel.map(({ channelCode, sellers: channelSellers }) => <article key={channelCode} className="rounded-lg bg-muted/40 p-4">
                 <header className="flex flex-wrap items-center gap-2">
                   <ChannelBadge value={channelCode} />
-                  <span className="text-xs text-muted-foreground">{channelSellers.length} seller{channelSellers.length === 1 ? '' : 's'} activos</span>
+                  <span className="text-xs text-muted-foreground">{channelSellers.length} seller{channelSellers.length === 1 ? '' : 's'}</span>
                 </header>
                 <ul className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
                   {channelSellers.map((seller) => <li key={seller.companyId} className="flex min-w-0 items-start gap-2.5">
@@ -1136,7 +1135,7 @@ function ProductDrawer({
                   </li>)}
                 </ul>
               </article>)}
-            </div> : <p className="mt-4 text-sm text-muted-foreground">Aún no está publicado en ningún seller.</p>}
+            </div> : <p className="mt-4 text-sm text-muted-foreground">Ninguna publicación está visible en un seller y canal.</p>}
           </section>
           <section className="border-b border-border px-5 py-5">
             <h3 className="text-sm font-semibold">Información</h3>
@@ -1153,13 +1152,15 @@ function ProductDrawer({
         </TabsContent>
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">{publishedListings.length} publicaciones</p><p className="mt-0.5 text-xs text-muted-foreground">Una publicación activa por seller.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
-          {!publishedListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : publishedListings.map((listing) => {
-            const isPublished = metadataBoolean(listing, 'isPublished');
+          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">
+            {listings.length} {listings.length === 1 ? 'publicación' : 'publicaciones'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
+          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          {!listings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : listings.map((listing) => {
+            const publication = publicationPresentation(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
               <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
-                <div className="flex shrink-0 items-center gap-3"><span className={cn('text-xs font-medium', isPublished ? 'text-emerald-700' : 'text-muted-foreground')}>{isPublished ? 'Publicada' : 'No publicada'}</span><Switch checked={isPublished} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${isPublished ? 'Despublicar' : 'Publicar'} en ${sellerShortName(listing.companyName)}`} /></div>
+                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} listing={listing} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
+                <div className="flex shrink-0 items-center gap-3"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /></div>
               </div>
               <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                 <dl className="grid min-w-0 grid-cols-2 gap-4">
@@ -1280,10 +1281,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     retry: 1,
   });
   const detailListings = (detailQuery.data as Product | undefined)?.listings;
-  const listings = useMemo(
-    () => ((detailListings || []) as Listing[]).filter(isActivelyPublished),
-    [detailListings],
-  );
+  const listings = (detailListings || []) as Listing[];
 
   if (detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
@@ -1296,11 +1294,12 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   </TableRow>;
 
   if (!listings.length) return <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones activas.</TableCell>
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
   </TableRow>;
 
   return <>{listings.map((listing, index) => {
     const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
+    const publication = publicationPresentation(listing);
     const isLast = index === listings.length - 1;
     return <TableRow
       key={listing.id}
@@ -1310,9 +1309,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
       )}
     >
       <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
-        <div className="relative min-w-0 pl-[4.5rem]">
-          <span aria-hidden="true" className={cn('absolute left-5 -top-3 border-l border-border', isLast ? 'bottom-1/2' : '-bottom-3')} />
-          <span aria-hidden="true" className="absolute left-5 top-1/2 w-8 border-t border-border" />
+        <div className="min-w-0 pl-[4.5rem]">
           <button
             type="button"
             onClick={() => onOpenDetail(productId)}
@@ -1320,7 +1317,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
           >{listing.title || productName}</button>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             <span className="line-clamp-2 font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
-            <ChannelBadge value={listing.channelCode} />
+            <ChannelBadge value={listing.channelCode} listing={listing} />
             <span className="text-border" aria-hidden="true">·</span>
             <button
               type="button"
@@ -1334,17 +1331,29 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
               className="relative inline-flex items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >{listing.sellerSku}{copiedSku === listing.sellerSku ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}</button>
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:hidden">
+            <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
+            <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock publicado</span><SellerStock listing={listing} /></div>
+            <div className="col-span-2 flex items-center justify-between border-t border-border/60 pt-2">
+              <span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span>
+              <Switch
+                checked={publication.visible}
+                onCheckedChange={() => onTogglePublication(listing)}
+                aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+              />
+            </div>
+          </div>
         </div>
       </TableCell>
-      <TableCell className="py-2.5 align-middle"><SellerPrice listing={listing} /></TableCell>
-      <TableCell className="py-2.5 align-middle"><SellerStock listing={listing} /></TableCell>
-      <TableCell className="py-2.5 align-middle">
+      <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerPrice listing={listing} /></TableCell>
+      <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerStock listing={listing} /></TableCell>
+      <TableCell className="hidden py-2.5 align-middle sm:table-cell">
         <div className="flex items-center gap-2">
-          <span className="hidden text-xs font-medium text-emerald-700 xl:inline">Publicada</span>
+          <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
           <Switch
-            checked
+            checked={publication.visible}
             onCheckedChange={() => onTogglePublication(listing)}
-            aria-label={`Despublicar ${listing.sellerSku} de ${sellerName}`}
+            aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
           />
         </div>
       </TableCell>
@@ -1352,65 +1361,38 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   })}</>;
 });
 
-function FilterPill({
-  label,
-  count,
-  selected,
-  onClick,
-  tone = 'default',
-}: {
-  label: string;
-  count?: number;
-  selected: boolean;
-  onClick: () => void;
-  tone?: 'default' | 'warning' | 'danger';
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
-        selected
-          ? 'bg-foreground text-background'
-          : tone === 'danger'
-            ? 'text-red-700 hover:bg-red-50'
-            : tone === 'warning'
-              ? 'text-amber-800 hover:bg-amber-50'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-      )}
-    >
-      {label}
-      {count != null && <span className="tabular-nums opacity-75">{formatNumber(count, 0)}</span>}
-    </button>
-  );
-}
-
-function catalogHeadline(status: StatusFilter, coverage: SellerCoverage, special: SpecialFilter, count: number) {
-  const plural = count === 1 ? '' : 's';
-  if (special === 'outOfStock') return count === 1 ? 'producto sin stock' : 'productos sin stock';
-  if (special === 'unpublished') return count === 1 ? 'producto sin publicación' : 'productos sin publicación';
-  if (special === 'lowStock') return count === 1 ? 'producto con stock bajo' : 'productos con stock bajo';
-  if (coverage === 'single') return count === 1 ? 'producto de un seller' : 'productos de un seller';
-  if (coverage === 'multiple') return count === 1 ? 'producto de varios sellers' : 'productos de varios sellers';
-  if (status === 'inactive') return `inactivo${plural}`;
-  if (status === 'archived') return `archivado${plural}`;
-  return `producto${plural}`;
-}
-
-function statusCatalogLabel(status: StatusFilter, count: number) {
-  if (status === 'inactive') return count === 1 ? 'inactivo' : 'inactivos';
-  if (status === 'archived') return count === 1 ? 'archivado' : 'archivados';
-  if (status === 'all') return count === 1 ? 'producto' : 'productos';
-  return count === 1 ? 'producto activo' : 'productos activos';
-}
-
-function statusCatalogHint(status: StatusFilter) {
-  if (status === 'inactive') return 'productos inactivos del catálogo';
-  if (status === 'archived') return 'productos archivados del catálogo';
-  if (status === 'all') return 'todos los estados, sin archivados';
-  return 'en el catálogo activo';
+function CatalogTableSkeleton() {
+  return <div className="min-w-0" aria-label="Cargando productos" aria-busy="true">
+    <Table className="table-fixed">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-full sm:w-[52%]"><Skeleton className="h-4 w-20" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[15%]"><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[19%]"><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[14%]"><Skeleton className="h-4 w-24" /></TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {Array.from({ length: 8 }, (_, row) => <TableRow key={row} className="hover:bg-transparent">
+          <TableCell className="whitespace-normal py-4">
+            <div className="grid grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
+              <Skeleton className="h-10 w-10" />
+              <Skeleton className="h-12 w-12 rounded-lg" />
+              <div className="min-w-0 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-24" /></div>
+              <div className="col-span-3 grid grid-cols-2 gap-5 border-t border-border/60 pt-3 sm:hidden">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="col-span-2 h-7 w-full" />
+              </div>
+            </div>
+          </TableCell>
+          <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
+          <TableCell className="hidden sm:table-cell"><Skeleton className="h-8 w-24" /></TableCell>
+          <TableCell className="hidden sm:table-cell"><Skeleton className="h-7 w-20 rounded-full" /></TableCell>
+        </TableRow>)}
+      </TableBody>
+    </Table>
+  </div>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -1444,38 +1426,72 @@ function SellerStock({ listing }: { listing: Listing }) {
     <small className="block leading-4 text-muted-foreground">
       {fromGetStock
         ? `Seller ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
-        : 'snapshot pendiente'}
+        : 'stock publicado'}
     </small>
   </div>;
 }
 
-function ChannelBadge({ value }: { value: string }) {
+function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) {
   const normalized = String(value || 'externo').toLowerCase();
-  if (normalized === 'falabella') {
-    return <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground" title="Falabella">
+  const compact = normalized.replace(/[\s_-]+/g, '');
+  if (compact === 'falabella') {
+    const href = listing ? falabellaProductUrl(listing.channelCode, listing.metadata) : null;
+    const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-muted px-1.5 text-[11px] font-medium text-muted-foreground sm:min-h-6';
+    if (!listing || !href) return <span className={badgeClassName} title="Falabella">
       <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" /> Falabella
     </span>;
+
+    return <FalabellaProductLink href={href} listing={listing} className={badgeClassName} />;
   }
-  const classes = normalized === 'ripley'
+  const classes = compact === 'ripley'
     ? 'bg-fuchsia-50 text-fuchsia-700'
-    : normalized === 'mercadolibre'
+    : compact === 'mercadolibre'
       ? 'bg-amber-50 text-amber-800'
       : 'bg-slate-100 text-slate-700';
   return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', classes)}>{channelLabel(normalized)}</span>;
 }
 
-function channelLabel(value: string) {
-  const normalized = String(value || '').toLowerCase();
-  if (normalized === 'falabella') return 'Falabella';
-  if (normalized === 'ripley') return 'Ripley';
-  if (normalized === 'mercadolibre') return 'Mercado Libre';
-  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Externo';
+function FalabellaProductLink({ href, listing, className }: { href: string; listing: Listing; className: string }) {
+  return <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => event.stopPropagation()}
+      aria-label={`Ver ${listing.title || listing.sellerSku} en Falabella; abre en una pestaña nueva`}
+      title="Ver producto en Falabella"
+      className={cn(
+        className,
+        'falabella-product-link transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
+      )}
+    >
+      <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" />
+      <span className="falabella-copy relative h-4 w-[6.8rem] sm:w-[3.55rem] sm:transition-[width] sm:duration-200 sm:ease-out motion-reduce:transition-none">
+        <span className="falabella-name absolute inset-0 hidden items-center whitespace-nowrap transition-opacity duration-150 sm:flex sm:opacity-100 motion-reduce:transition-none">Falabella</span>
+        <span className="falabella-action absolute inset-0 flex items-center whitespace-nowrap opacity-100 transition-opacity duration-150 sm:opacity-0 motion-reduce:transition-none">Ver en Falabella</span>
+      </span>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+    </a>;
 }
 
-function StockBadge({ product }: { product: Product }) {
-  const stock = sellerStock(product);
-  const classes = stock <= 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700';
-  return <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium', classes)}><span className="h-2 w-2 rounded-full bg-current" />{stock <= 0 ? 'Sin stock' : 'En stock'}</span>;
+function channelLabel(value: string) {
+  const normalized = String(value || '').toLowerCase();
+  const compact = normalized.replace(/[\s_-]+/g, '');
+  if (compact === 'falabella') return 'Falabella';
+  if (compact === 'ripley') return 'Ripley';
+  if (compact === 'mercadolibre') return 'Mercado Libre';
+  const readable = normalized.replace(/[_-]+/g, ' ').trim();
+  return readable ? readable.charAt(0).toUpperCase() + readable.slice(1) : 'Externo';
+}
+
+function ProductStatusBadge({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const status = String(product.status || 'inactive').toLowerCase();
+  const label = status === 'active' ? 'Activo' : status === 'archived' ? 'Archivado' : 'Inactivo';
+  const classes = status === 'active'
+    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+    : status === 'archived'
+      ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+      : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300';
+  return <span title="Estado del producto en ZentoFact" className={cn('inline-flex items-center rounded-full text-xs font-medium', compact ? 'gap-1 px-2 py-0.5' : 'gap-1.5 px-2.5 py-1', classes)}><span className="h-2 w-2 rounded-full bg-current" />{label}</span>;
 }
 
 function movementLabel(type: string) {

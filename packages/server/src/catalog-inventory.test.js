@@ -571,7 +571,59 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   await listProducts({ sellerCoverage: 'single', status: 'active' }, db);
   const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(listSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 1/);
+
+  statements.length = 0;
+  await listProducts({ sellerCoverage: 'none', status: 'active' }, db);
+  const noSellerSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(noSellerSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 0/);
   await assert.rejects(() => listProducts({ sellerCoverage: 'unknown' }, db), /sellerCoverage inválido/);
+});
+
+test('el catálogo combina facetas profesionales y ordenamiento desde SQL', async () => {
+  const statements = [];
+  const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
+
+  await listProducts({
+    status: 'all',
+    companyIds: '2,7',
+    inventoryStatus: 'outOfStock',
+    publicationStatus: 'unpublished',
+    sortBy: 'sellers',
+    sortDir: 'asc',
+  }, db);
+  const filtered = statements.find((statement) => statement.sql.includes('count(*) over()'));
+  assert.ok(filtered);
+  assert.doesNotMatch(filtered.sql, /p\.status <> 'archived'/);
+  assert.match(filtered.sql, /company_listing\.company_id=any\(\$1::int\[\]\)/);
+  assert.deepEqual(filtered.params[0], [2, 7]);
+  assert.match(filtered.sql, /quantity_on_hand - i\.quantity_reserved\) <= 0/);
+  assert.match(filtered.sql, /not exists[\s\S]*publication_listing\.company_id=any\(\$1::int\[\]\)[\s\S]*metadata->>'isPublished'[\s\S]*metadata->>'status'[\s\S]*metadata->>'marketplaceStatus'[\s\S]*metadata->>'qcStatus'/);
+  assert.match(filtered.sql, /order by listing_stats\.sellers_count asc nulls last, p\.id desc/);
+  const allStatusSummary = statements.find((statement) => statement.sql.includes('as single_seller'))?.sql || '';
+  assert.match(allStatusSummary, /count\(\*\) filter \(where true\) as total/);
+
+  statements.length = 0;
+  await listProducts({ inventoryStatus: 'lowStock', publicationStatus: 'published' }, db);
+  const lowStock = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(lowStock, /quantity_on_hand - i\.quantity_reserved\) > 0[\s\S]*reorder_point is not null/);
+  assert.match(lowStock, /exists[\s\S]*metadata->>'isPublished'[\s\S]*='true'/);
+
+  statements.length = 0;
+  await listProducts({ inventoryStatus: 'inStock', sortBy: 'name', sortDir: 'desc' }, db);
+  const inStock = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(inStock, /reorder_point is null or[\s\S]*> i\.reorder_point/);
+  assert.match(inStock, /order by lower\(p\.name\) desc nulls last, p\.id desc/);
+  assert.match(inStock, /where l\.product_id=page\.id[\s\S]*order by lower\(page\.name\) desc nulls last/);
+
+  statements.length = 0;
+  await listProducts({ sortBy: 'available', sortDir: 'asc' }, db);
+  const sortedByAvailable = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(sortedByAvailable, /order by \(i\.quantity_on_hand - i\.quantity_reserved\) asc nulls last, p\.id desc/);
+
+  await assert.rejects(() => listProducts({ inventoryStatus: 'unknown' }, db), /inventoryStatus inválido/);
+  await assert.rejects(() => listProducts({ publicationStatus: 'unknown' }, db), /publicationStatus inválido/);
+  await assert.rejects(() => listProducts({ sortBy: 'unknown' }, db), /sortBy inválido/);
+  await assert.rejects(() => listProducts({ sortDir: 'sideways' }, db), /sortDir inválido/);
 });
 
 test('el catálogo resume grupos y aplica filtros especiales desde SQL', async () => {
@@ -771,7 +823,15 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
   const result = await importFalabellaCatalog({
     companyId: 1,
     mode: 'create_products_from_seller_sku',
-    products: [{ sellerSku: 'Camiséta negra / M', shopSku: 'SHOP-9', name: 'Camiseta', quantity: 4 }],
+    products: [{
+      sellerSku: 'Camiséta negra / M',
+      shopSku: 'SHOP-9',
+      name: 'Camiseta',
+      quantity: 4,
+      status: 'active',
+      qcStatus: 'approved',
+      businessUnits: [{ operatorCode: 'fape', status: 'active', isPublished: '1' }],
+    }],
   }, 'actor', db);
   assert.equal(result.productsCreated, 0);
   assert.equal(result.productsReused, 1);
@@ -779,4 +839,8 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
   assert.equal(queries.some(({ sql }) => sql.startsWith('insert into products')), false);
   const listingInsert = queries.find(({ sql }) => sql.startsWith('insert into product_listings'));
   assert.equal(listingInsert.params[0], 9);
+  const metadata = JSON.parse(listingInsert.params[10]);
+  assert.equal(metadata.isPublished, true);
+  assert.equal(metadata.status, 'active');
+  assert.equal(metadata.marketplaceStatus, 'active');
 });
