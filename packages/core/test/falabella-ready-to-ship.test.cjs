@@ -5,6 +5,8 @@ const {
   areAllOrderItemsReadyToShip,
   canPrintFalabellaShippingLabel,
   groupReadyToShipPackages,
+  pendingReadyToShipOrderItems,
+  readyToShipReachedStatus,
 } = require('../dist/services/falabella-ready-to-ship.js');
 
 test('permite imprimir etiquetas pendientes o listas para enviar', () => {
@@ -55,6 +57,32 @@ test('detecta cuando Falabella ya dejó toda la orden lista', () => {
   ]), true);
   assert.equal(areAllOrderItemsReadyToShip([
     { Status: 'ready_to_ship' },
+    { Status: 'shipped' },
+  ]), true);
+  assert.equal(readyToShipReachedStatus([
+    { Status: 'shipped' },
+    { Status: 'delivered' },
+  ]), 'shipped');
+  assert.equal(readyToShipReachedStatus([
+    { Status: 'delivered' },
+    { Status: 'delivered' },
+  ]), 'delivered');
+  assert.equal(areAllOrderItemsReadyToShip([
+    { Status: 'ready_to_ship' },
     { Status: 'pending' },
   ]), false);
+});
+
+test('un reintento omite los paquetes que Falabella ya dejó listos', () => {
+  const pendingItems = pendingReadyToShipOrderItems([
+    { OrderItemId: '10', PackageId: 'PKG-A', Status: 'ready_to_ship' },
+    { OrderItemId: '13', PackageId: 'PKG-A', Status: 'shipped' },
+    { OrderItemId: '14', PackageId: 'PKG-A', Status: 'delivered' },
+    { OrderItemId: '11', PackageId: 'PKG-B', Status: 'pending' },
+    { OrderItemId: '12', PackageId: 'PKG-B', Status: 'pending' },
+  ]);
+
+  assert.deepEqual(groupReadyToShipPackages(pendingItems), [
+    { packageId: 'PKG-B', orderItemIds: ['11', '12'] },
+  ]);
 });

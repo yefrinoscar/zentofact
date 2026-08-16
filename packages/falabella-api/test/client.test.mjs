@@ -7,6 +7,7 @@ test('SetStatusToReadyToShip sends signed parameters in the query string', async
   let requestUrl = '';
   let requestInit;
   const apiKey = 'test-api-key';
+  const controller = new AbortController();
   const client = new FalabellaApiClient({
     userId: 'seller@example.com',
     apiKey,
@@ -25,6 +26,7 @@ test('SetStatusToReadyToShip sends signed parameters in the query string', async
   await client.setStatusToReadyToShip({
     orderItemIds: ['123', '456'],
     packageId: 'PKG000123',
+    signal: controller.signal,
   });
 
   const url = new URL(requestUrl);
@@ -36,6 +38,7 @@ test('SetStatusToReadyToShip sends signed parameters in the query string', async
   assert.equal(url.pathname, '/');
   assert.equal(requestInit?.method, 'POST');
   assert.equal(requestInit?.body, undefined);
+  assert.equal(requestInit?.signal, controller.signal);
   assert.equal(signedParameters.Action, 'SetStatusToReadyToShip');
   assert.equal(signedParameters.OrderItemIds, '[123,456]');
   assert.equal(signedParameters.PackageId, 'PKG000123');
