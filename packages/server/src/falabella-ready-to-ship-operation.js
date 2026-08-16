@@ -13,26 +13,40 @@ function timeoutError() {
   return error;
 }
 
+function isTimeoutError(error) {
+  return error?.name === 'TimeoutError';
+}
+
+function readyToShipReachedOrderStatus(status) {
+  return /(^|\|)(ready_to_ship|shipped|delivered)(\||$)/i.test(String(status || ''));
+}
+
 async function withTimeout(operation, parentSignal, timeoutMs) {
   const controller = new AbortController();
-  let rejectBoundary;
-  const boundary = new Promise((_, reject) => { rejectBoundary = reject; });
+  const abortWith = (reason) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
   const abortFromParent = () => {
-    const reason = parentSignal?.reason instanceof Error
+    abortWith(parentSignal?.reason instanceof Error
       ? parentSignal.reason
-      : new Error('La solicitud fue cancelada.');
-    controller.abort(reason);
-    rejectBoundary(reason);
+      : new Error('La solicitud fue cancelada.'));
   };
   if (parentSignal?.aborted) abortFromParent();
   else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+
+  const work = Promise.resolve().then(() => operation(controller.signal));
+  work.catch(() => {});
+
+  let rejectTimeout;
+  const hung = new Promise((_, reject) => { rejectTimeout = reject; });
+  hung.catch(() => {});
   const timer = setTimeout(() => {
     const error = timeoutError();
-    controller.abort(error);
-    rejectBoundary(error);
+    abortWith(error);
+    setTimeout(() => rejectTimeout(error), 0);
   }, timeoutMs);
   try {
-    return await Promise.race([operation(controller.signal), boundary]);
+    return await Promise.race([work, hung]);
   } finally {
     clearTimeout(timer);
     parentSignal?.removeEventListener('abort', abortFromParent);
@@ -53,6 +67,15 @@ async function claimOperation(pool, companyId, orderId) {
        state='processing', attempts=falabella_ready_to_ship_operations.attempts + 1,
        started_at=now(), updated_at=now(), finished_at=null, last_error=null, result='{}'::jsonb
      where falabella_ready_to_ship_operations.state='failed'
+        or (
+          falabella_ready_to_ship_operations.state='succeeded'
+          and exists (
+            select 1 from falabella_orders fo
+            where fo.company_id=falabella_ready_to_ship_operations.company_id
+              and fo.order_id=falabella_ready_to_ship_operations.order_id
+              and coalesce(fo.status, '') !~* '(^|\\|)(ready_to_ship|shipped|delivered)(\\||$)'
+          )
+        )
      returning state, attempts`,
     [companyId, orderId],
   );
@@ -119,16 +142,16 @@ async function markCompleted(pool, companyId, orderId, result) {
        update falabella_orders
        set status=case
              when coalesce(status, '') ~* '(^|\\|)delivered(\\||$)' then status
-             when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $5::text <> 'delivered' then status
-             else $5::text
+             when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $4::text <> 'delivered' then status
+             else $4::text
            end,
            raw_data=jsonb_set(
              coalesce(raw_data, '{}'::jsonb),
              '{Statuses}',
              to_jsonb((case
                when coalesce(status, '') ~* '(^|\\|)delivered(\\||$)' then status
-               when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $5::text <> 'delivered' then status
-               else $5::text
+               when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $4::text <> 'delivered' then status
+               else $4::text
              end)::text),
              true
            ),
@@ -144,21 +167,21 @@ async function markCompleted(pool, companyId, orderId, result) {
        select company_id, order_id, order_number,
          case
            when coalesce(status, '') ~* '(^|\\|)delivered(\\||$)' then status
-           when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $5::text <> 'delivered' then status
-           else $5::text
+           when coalesce(status, '') ~* '(^|\\|)shipped(\\||$)' and $4::text <> 'delivered' then status
+           else $4::text
          end,
          coalesce(falabella_created_at, first_seen_at),
          case
-           when $5::text <> 'ready_to_ship'
+           when $4::text <> 'ready_to_ship'
              or coalesce(status, '') ~* '(^|\\|)(shipped|delivered)(\\||$)'
-             or $3::boolean then null
+             then null
            else now()
          end,
          case
            when coalesce(status, '') ~* '(^|\\|)(shipped|delivered)(\\||$)' then coalesce(falabella_updated_at, now())
            else null
          end,
-         case when $3::boolean then falabella_updated_at else now() end,
+         now(),
          first_seen_at, now()
        from updated_order
        on conflict (company_id, order_id) do update set
@@ -171,10 +194,10 @@ async function markCompleted(pool, companyId, orderId, result) {
        returning id
      )
      update falabella_ready_to_ship_operations
-     set state='succeeded', updated_at=now(), finished_at=now(), last_error=null, result=$4::jsonb
+     set state='succeeded', updated_at=now(), finished_at=now(), last_error=null, result=$3::jsonb
      where company_id=$1 and order_id=$2
      returning state`,
-    [companyId, orderId, Boolean(result?.alreadyReady), JSON.stringify(result || {}), providerStatus],
+    [companyId, orderId, JSON.stringify(result || {}), providerStatus],
   );
 }
 
@@ -212,7 +235,7 @@ async function reconcileUnknown({
       return { kind: 'error', status: providerErrorStatus(result), error: result?.error || 'Falabella no pudo confirmar el estado.' };
     }
     if (result?.ready) {
-      const completed = { ok: true, alreadyReady: true, reconciled: true, ...(result || {}) };
+      const completed = { ok: true, reconciled: true, alreadyReady: false, ...(result || {}) };
       await markCompleted(pool, companyId, orderId, completed);
       return { kind: 'success', result: completed };
     }
@@ -221,7 +244,13 @@ async function reconcileUnknown({
     return { kind: 'error', status: 409, error };
   } catch (error) {
     await markUnknown(pool, companyId, orderId, error);
-    return { kind: 'error', status: 504, error: timeoutError().message };
+    return {
+      kind: 'error',
+      status: isTimeoutError(error) ? 504 : 502,
+      error: isTimeoutError(error)
+        ? error.message
+        : (error?.message || 'Falabella no pudo confirmar el estado.'),
+    };
   }
 }
 
@@ -252,7 +281,7 @@ export async function markFalabellaOrderReadyToShip({
         error: 'El pedido ya fue enviado a Falabella. Sincroniza la bandeja para ver su estado actual.',
       };
     }
-    if (state.operation_state === 'succeeded') {
+    if (state.operation_state === 'succeeded' && readyToShipReachedOrderStatus(state.order_status)) {
       return { kind: 'success', result: { ok: true, alreadyReady: true } };
     }
     if (
@@ -301,8 +330,8 @@ export async function markFalabellaOrderReadyToShip({
     await markUnknown(pool, normalizedCompanyId, normalizedOrderId, error);
     return {
       kind: 'error',
-      status: error?.name === 'TimeoutError' ? 504 : 502,
-      error: error?.name === 'TimeoutError'
+      status: isTimeoutError(error) ? 504 : 502,
+      error: isTimeoutError(error)
         ? error.message
         : 'La conexión con Falabella terminó sin confirmar el resultado. Verificaremos el estado antes de permitir otro intento.',
     };

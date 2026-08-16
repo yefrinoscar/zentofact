@@ -29,6 +29,11 @@ async function requireCompanyWithFalabella(companyId: number) {
   return { company };
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : '';
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
 function escXml(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1045,12 +1050,23 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
     version: '1.0',
     defaultFormat: 'JSON',
   });
-  const itemsResponse = await client.call({
-    action: 'GetOrderItems',
-    params: { OrderId: orderId },
-    accept: 'application/json',
-    signal: payload.signal,
-  });
+  let itemsResponse;
+  try {
+    itemsResponse = await client.call({
+      action: 'GetOrderItems',
+      params: { OrderId: orderId },
+      accept: 'application/json',
+      signal: payload.signal,
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'La solicitud fue cancelada.',
+      };
+    }
+    throw error;
+  }
   const itemsError = getFalabellaError(itemsResponse.data);
   if (itemsError || !itemsResponse.ok) {
     return {
@@ -1112,12 +1128,27 @@ export async function falabellaSetStatusToReadyToShip(payload: { companyId: numb
 
   for (let index = 0; index < packages.length; index += 1) {
     const currentPackage = packages[index];
-    const readyToShipOptions: Parameters<typeof client.setStatusToReadyToShip>[0] & { signal?: AbortSignal } = {
-      orderItemIds: currentPackage.orderItemIds,
-      packageId: currentPackage.packageId,
-      signal: payload.signal,
-    };
-    const readyResponse = await client.setStatusToReadyToShip(readyToShipOptions);
+    let readyResponse;
+    try {
+      const readyToShipOptions: Parameters<typeof client.setStatusToReadyToShip>[0] & { signal?: AbortSignal } = {
+        orderItemIds: currentPackage.orderItemIds,
+        packageId: currentPackage.packageId,
+        signal: payload.signal,
+      };
+      readyResponse = await client.setStatusToReadyToShip(readyToShipOptions);
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        return {
+          ok: false,
+          status: 499,
+          outcomeUnknown: true,
+          error: packageResults.length
+            ? `Falabella procesó ${packageResults.length} de ${packages.length} paquetes, pero la conexión se interrumpió. Se verificará el estado antes de otro intento.`
+            : (error instanceof Error ? error.message : 'La conexión con Falabella se interrumpió durante el cambio de estado.'),
+        };
+      }
+      throw error;
+    }
     const readyError = getFalabellaError(readyResponse.data);
     const hasXmlError = /<ErrorResponse\b/i.test(readyResponse.rawText);
     if (readyError || hasXmlError || !readyResponse.ok) {

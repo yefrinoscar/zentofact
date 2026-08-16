@@ -65,7 +65,8 @@ test('PostgreSQL real: concurrencia, estado terminal y reconciliación no agotan
         result jsonb not null default '{}'::jsonb,
         primary key (company_id, order_id),
         foreign key (company_id, order_id)
-          references falabella_orders(company_id, order_id) on delete cascade
+          references falabella_orders(company_id, order_id) on delete cascade,
+        check (state in ('processing', 'reconciling', 'succeeded', 'failed', 'unknown'))
       );
     `);
 
@@ -155,19 +156,20 @@ test('PostgreSQL real: concurrencia, estado terminal y reconciliación no agotan
         repeatedPosts += 1;
         return { ok: true };
       },
-      reconcile: async () => ({ ok: true, ready: true, providerStatus: 'delivered' }),
+      reconcile: async () => ({ ok: true, ready: true, providerStatus: 'ready_to_ship' }),
     });
     assert.equal(reconciled.kind, 'success');
     assert.equal(reconciled.result.reconciled, true);
     assert.equal(repeatedPosts, 0);
     const reconciledOrder = await pool.query(
-      `select orders.status, lifecycle.shipped_at
+      `select orders.status, lifecycle.ready_to_ship_at, lifecycle.shipped_at
        from falabella_orders orders
        join falabella_order_lifecycle lifecycle using (company_id, order_id)
        where orders.company_id=7 and orders.order_id='ORDER-UNKNOWN'`,
     );
-    assert.equal(reconciledOrder.rows[0].status, 'delivered');
-    assert.ok(reconciledOrder.rows[0].shipped_at);
+    assert.equal(reconciledOrder.rows[0].status, 'ready_to_ship');
+    assert.ok(reconciledOrder.rows[0].ready_to_ship_at);
+    assert.equal(reconciledOrder.rows[0].shipped_at, null);
   } finally {
     await pool.end();
   }
