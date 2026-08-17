@@ -10,7 +10,7 @@ import {
   sanitizeMainSku,
 } from './catalog/catalog-import.js';
 import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './catalog/listing-snapshot-service.js';
-import { listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { getCatalogSummary, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
@@ -857,6 +857,12 @@ test('el catálogo resume grupos y aplica filtros especiales desde SQL', async (
             out_of_stock: 2,
             unpublished: 1,
             low_stock: 4,
+            without_sales: 55,
+            units_available: 447,
+            units_to_reorder: 1845,
+            inventory_value: 26365,
+            units_sold_30: 2108,
+            revenue_30: 92671,
           }],
         };
       }
@@ -867,6 +873,24 @@ test('el catálogo resume grupos y aplica filtros especiales desde SQL', async (
   assert.equal(listed.summary.active, 10);
   assert.equal(listed.summary.singleSeller, 6);
   assert.equal(listed.summary.outOfStock, 2);
+  assert.equal(listed.summary.withoutSales, 55);
+  assert.equal(listed.summary.unitsAvailable, 447);
+  assert.equal(listed.summary.unitsToReorder, 1845);
+  assert.equal(listed.summary.inventoryValue, 26365);
+  assert.equal(listed.summary.unitsSold30, 2108);
+  assert.equal(listed.summary.revenue30, 92671);
+  assert.equal(listed.summary.daysOfSupply, 447 / (2108 / 30));
+  const summarySql = statements.find((statement) => statement.sql.includes('as out_of_stock'))?.sql || '';
+  assert.match(summarySql, /as with_stock/);
+  assert.match(summarySql, /as without_stock/);
+  assert.match(summarySql, /as units_available/);
+  assert.match(summarySql, /as units_sold_30/);
+  assert.match(summarySql, /as without_sales/);
+  assert.match(summarySql, /as revenue_30/);
+  assert.match(summarySql, /sales30 as/);
+  assert.match(summarySql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
+  assert.match(summarySql, /coalesce\(i\.reorder_point, sales30\.sold, 0\)/);
+  assert.match(summarySql, /coalesce\(coverage\.listing_price, p\.reference_price, 0\)/);
   const outOfStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(outOfStockSql, /marketplace_quantity[\s\S]*= 0/);
   assert.match(outOfStockSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*> 0/);
@@ -879,6 +903,34 @@ test('el catálogo resume grupos y aplica filtros especiales desde SQL', async (
   const lowStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(lowStockSql, /reorder_point is not null/);
   await assert.rejects(() => listProducts({ special: 'unknown' }, db), /special inválido/);
+});
+
+test('el resumen de catálogo expone kpis operativos desde SQL', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      return {
+        rows: [{
+          scoped_total: 135,
+          without_sales: 55,
+          out_of_stock: 13,
+          units_to_reorder: 1827,
+          units_sold_30: 2090,
+        }],
+      };
+    },
+  };
+  const summary = await getCatalogSummary({ status: 'active' }, db);
+  assert.equal(summary.scopedTotal, 135);
+  assert.equal(summary.withoutSales, 55);
+  assert.equal(summary.outOfStock, 13);
+  assert.equal(summary.unitsToReorder, 1827);
+  assert.equal(summary.unitsSold30, 2090);
+  assert.match(statements[0].sql, /as without_sales/);
+  assert.match(statements[0].sql, /as units_sold_30/);
+  assert.equal(statements[0].params.length, 1);
+  assert.equal(statements[0].params[0], 'active');
 });
 
 test('las salidas del día agregan pedidos locales por producto y fecha de Lima', async () => {
