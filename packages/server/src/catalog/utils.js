@@ -93,6 +93,36 @@ export function mapListing(row) {
   };
 }
 
+const COMPACT_LISTING_METADATA_KEYS = [
+  'effectivePrice', 'price', 'regularPrice', 'offerPrice', 'offerIsActive',
+  'sellerWarehouseQuantity', 'fulfillmentQuantity', 'stockSource',
+  'isSellable', 'sellabilityReason', 'contentScore',
+  'isPublished', 'status', 'marketplaceStatus', 'qcStatus',
+  'url',
+];
+
+export function mapCompactListing(row) {
+  if (!row) return null;
+  const source = jsonObject(row.metadata);
+  const metadata = {};
+  for (const key of COMPACT_LISTING_METADATA_KEYS) {
+    if (Object.hasOwn(source, key)) metadata[key] = source[key];
+  }
+  return {
+    id: Number(row.id),
+    productId: Number(row.product_id),
+    channelCode: row.channel_code,
+    companyId: Number(row.company_id),
+    companyName: row.company_name,
+    sellerSku: row.seller_sku,
+    shopSku: row.shop_sku,
+    title: row.title,
+    status: row.status,
+    marketplaceQuantity: row.marketplace_quantity == null ? null : Number(row.marketplace_quantity),
+    metadata,
+  };
+}
+
 export async function inTransaction(db, work) {
   if (db) return work(db);
   const { pool } = await loadCore();

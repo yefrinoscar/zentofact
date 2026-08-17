@@ -649,6 +649,7 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   await listProducts({ sellerCoverage: 'single', status: 'active' }, db);
   const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(listSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 1/);
+  assert.equal(statements.some((statement) => statement.sql.includes('product_id = any')), false);
 
   statements.length = 0;
   await listProducts({ sellerCoverage: 'none', status: 'active' }, db);
@@ -702,6 +703,141 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   await assert.rejects(() => listProducts({ publicationStatus: 'unknown' }, db), /publicationStatus inválido/);
   await assert.rejects(() => listProducts({ sortBy: 'unknown' }, db), /sortBy inválido/);
   await assert.rejects(() => listProducts({ sortDir: 'sideways' }, db), /sortDir inválido/);
+});
+
+test('el catálogo adjunta publicaciones activas compactas después de paginar', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('count(*) over()')) {
+        return {
+          rows: [{
+            id: 5,
+            main_sku: 'ZEN-CAMISETA-M',
+            name: 'Camiseta M',
+            description: null,
+            brand: null,
+            status: 'active',
+            attributes: {},
+            barcode: null,
+            image_url: null,
+            reference_price: 20,
+            unit: null,
+            quantity_on_hand: 10,
+            quantity_reserved: 1,
+            available: 9,
+            reorder_point: 2,
+            listings_count: 1,
+            sellers_count: 1,
+            channels: ['falabella'],
+            seller_price_min: 19.9,
+            seller_price_max: 19.9,
+            seller_stock_total: 4,
+            created_at: '2026-08-01T00:00:00.000Z',
+            updated_at: '2026-08-12T00:00:00.000Z',
+            created_by: null,
+            updated_by: null,
+            total_count: 1,
+          }],
+        };
+      }
+      if (sql.includes('product_id = any') && sql.includes("status = 'active'")) {
+        return {
+          rows: [{
+            id: 71,
+            product_id: 5,
+            channel_code: 'falabella',
+            company_id: 8,
+            company_name: 'LIMBO',
+            seller_sku: 'FA-123',
+            shop_sku: 'SHOP-1',
+            title: 'Camiseta publicada',
+            status: 'active',
+            marketplace_quantity: 4,
+            marketplace_synced_at: '2026-08-12T00:00:00.000Z',
+            channel_account_id: 3,
+            external_product_id: 'EXT-9',
+            created_at: '2026-08-01T00:00:00.000Z',
+            updated_at: '2026-08-12T00:00:00.000Z',
+            metadata: {
+              effectivePrice: 19.9,
+              price: 24,
+              regularPrice: 24,
+              offerPrice: 19.9,
+              offerIsActive: true,
+              sellerWarehouseQuantity: 2,
+              fulfillmentQuantity: 2,
+              stockSource: 'falabella_get_stock',
+              isSellable: true,
+              sellabilityReason: null,
+              contentScore: 88,
+              isPublished: true,
+              status: 'active',
+              marketplaceStatus: 'active',
+              qcStatus: 'approved',
+              url: 'https://www.falabella.com.pe/falabella-pe/product/123',
+              images: ['https://cdn.example/img.jpg'],
+              marketplaceSyncedAt: '2026-08-12T00:00:00.000Z',
+              associationScore: 0.9,
+            },
+          }],
+        };
+      }
+      return { rows: [{}] };
+    },
+  };
+
+  const listed = await listProducts({ limit: 20, offset: 40 }, db);
+  const pageQuery = statements.find((statement) => statement.sql.includes('count(*) over()'));
+  const listingsQuery = statements.find((statement) => (
+    statement.sql.includes('product_id = any') && statement.sql.includes("status = 'active'")
+  ));
+  assert.ok(pageQuery);
+  assert.ok(listingsQuery);
+  assert.match(pageQuery.sql, /limit \$\d+ offset \$\d+/i);
+  assert.doesNotMatch(pageQuery.sql, /nombre_comercial/);
+  assert.notEqual(pageQuery.sql, listingsQuery.sql);
+  assert.match(listingsQuery.sql, /l\.product_id = any\(\$1::int\[\]\)/);
+  assert.match(listingsQuery.sql, /l\.status = 'active'/);
+  assert.deepEqual(listingsQuery.params[0], [5]);
+  assert.equal(listed.products.length, 1);
+  assert.equal(listed.products[0].listings.length, 1);
+  const listing = listed.products[0].listings[0];
+  assert.equal(listing.id, 71);
+  assert.equal(listing.productId, 5);
+  assert.equal(listing.channelCode, 'falabella');
+  assert.equal(listing.companyId, 8);
+  assert.equal(listing.companyName, 'LIMBO');
+  assert.equal(listing.sellerSku, 'FA-123');
+  assert.equal(listing.shopSku, 'SHOP-1');
+  assert.equal(listing.title, 'Camiseta publicada');
+  assert.equal(listing.status, 'active');
+  assert.equal(listing.marketplaceQuantity, 4);
+  assert.equal(listing.marketplaceSyncedAt, undefined);
+  assert.equal(listing.channelAccountId, undefined);
+  assert.equal(listing.externalProductId, undefined);
+  assert.equal(listing.images, undefined);
+  assert.deepEqual(listing.metadata, {
+    effectivePrice: 19.9,
+    price: 24,
+    regularPrice: 24,
+    offerPrice: 19.9,
+    offerIsActive: true,
+    sellerWarehouseQuantity: 2,
+    fulfillmentQuantity: 2,
+    stockSource: 'falabella_get_stock',
+    isSellable: true,
+    sellabilityReason: null,
+    contentScore: 88,
+    isPublished: true,
+    status: 'active',
+    marketplaceStatus: 'active',
+    qcStatus: 'approved',
+    url: 'https://www.falabella.com.pe/falabella-pe/product/123',
+  });
+  assert.equal(Object.hasOwn(listing.metadata, 'images'), false);
+  assert.equal(Object.hasOwn(listing.metadata, 'marketplaceSyncedAt'), false);
 });
 
 test('el catálogo resume grupos y aplica filtros especiales desde SQL', async () => {
