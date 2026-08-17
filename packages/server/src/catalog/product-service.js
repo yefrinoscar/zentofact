@@ -4,6 +4,7 @@ import {
   inTransaction,
   jsonObject,
   loadCore,
+  mapCompactListing,
   mapListing,
   mapProduct,
   positiveInt,
@@ -256,6 +257,8 @@ function catalogSummaryTotalScope(filters = {}) {
 }
 
 function mapCatalogSummary(row = {}) {
+  const unitsAvailable = Number(row.units_available || 0);
+  const unitsSold30 = Number(row.units_sold_30 || 0);
   return {
     total: Number(row.total || 0),
     active: Number(row.active || 0),
@@ -266,18 +269,82 @@ function mapCatalogSummary(row = {}) {
     outOfStock: Number(row.out_of_stock || 0),
     unpublished: Number(row.unpublished || 0),
     lowStock: Number(row.low_stock || 0),
+    withStock: Number(row.with_stock || 0),
+    withoutStock: Number(row.without_stock || 0),
+    withoutSales: Number(row.without_sales || 0),
+    unitsAvailable,
+    unitsReserved: Number(row.units_reserved || 0),
+    unitsToReorder: Number(row.units_to_reorder || 0),
+    inventoryValue: Number(row.inventory_value || 0),
+    unitsSold30,
+    revenue30: Number(row.revenue_30 || 0),
+    daysOfSupply: unitsSold30 > 0 ? unitsAvailable / (unitsSold30 / 30) : null,
+    sellThrough30: (unitsSold30 + unitsAvailable) > 0
+      ? (unitsSold30 / (unitsSold30 + unitsAvailable)) * 100
+      : null,
+    scopedTotal: Number(row.scoped_total || 0),
   };
 }
 
+function catalogSales30Cte() {
+  return `sales30 as (
+    select mapped.product_id,
+      sum(mapped.quantity)::numeric as sold,
+      sum(mapped.line_total)::numeric as revenue
+    from (
+      select
+        coalesce(oi.product_id, linked.product_id, listing.product_id) as product_id,
+        oi.quantity,
+        coalesce(oi.total, oi.unit_price * oi.quantity, 0) as line_total
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      left join falabella_orders fo
+        on fo.company_id=o.company_id and fo.order_id=o.external_order_id
+      left join product_listings linked on linked.id=oi.listing_id
+      left join lateral (
+        select l.product_id
+        from product_listings l
+        where l.company_id=o.company_id
+          and l.status='active'
+          and (
+            (nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku)
+            or (nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku)
+            or (nullif(trim(oi.sku), '') is not null and l.shop_sku=oi.sku)
+          )
+        order by
+          case
+            when nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku then 0
+            when nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku then 1
+            else 2
+          end,
+          l.id
+        limit 1
+      ) listing on true
+      where o.order_status in ('confirmed','completed')
+        and coalesce(o.fulfillment_status, '') <> 'returned'
+        and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
+        and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'
+        and o.ordered_at >= now() - interval '30 days'
+    ) mapped
+    where mapped.product_id is not null
+    group by mapped.product_id
+  )`;
+}
+
+export async function getCatalogSummary(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  return summarizeProducts(filters, target);
+}
+
 async function summarizeProducts(filters = {}, db) {
-  const values = [];
-  const where = [];
-  appendCatalogSearch(filters, values, where);
+  const { values, where } = catalogListConstraints(filters);
   const clause = where.length ? `where ${where.join(' and ')}` : '';
   const scope = catalogSummaryScope(filters);
   const totalScope = catalogSummaryTotalScope(filters);
   const result = await db.query(
-    `select
+    `with ${catalogSales30Cte()}
+     select
+       count(*) filter (where ${scope}) as scoped_total,
        count(*) filter (where ${totalScope}) as total,
        count(*) filter (where p.status = 'active') as active,
        count(*) filter (where p.status = 'inactive') as inactive,
@@ -286,13 +353,25 @@ async function summarizeProducts(filters = {}, db) {
        count(*) filter (where ${scope} and coverage.sellers_count > 1) as multiple_sellers,
        count(*) filter (where ${scope} and coverage.sellers_count > 0 and coverage.seller_stock_total = 0) as out_of_stock,
        count(*) filter (where ${scope} and coverage.sellers_count = 0) as unpublished,
-       count(*) filter (where ${scope} and ${lowStockSql()}) as low_stock
+       count(*) filter (where ${scope} and ${inventoryStatusSql('lowStock')}) as low_stock,
+       count(*) filter (where ${scope} and ${inventoryStatusSql('inStock')}) as with_stock,
+       count(*) filter (where ${scope} and ${inventoryStatusSql('outOfStock')}) as without_stock,
+       count(*) filter (where ${scope} and coalesce(sales30.sold, 0) = 0) as without_sales,
+       coalesce(sum(i.quantity_on_hand - i.quantity_reserved) filter (where ${scope}), 0) as units_available,
+       coalesce(sum(i.quantity_reserved) filter (where ${scope}), 0) as units_reserved,
+       coalesce(sum(greatest(0, coalesce(i.reorder_point, sales30.sold, 0) - (i.quantity_on_hand - i.quantity_reserved))) filter (where ${scope}), 0) as units_to_reorder,
+       coalesce(sum((i.quantity_on_hand - i.quantity_reserved) * coalesce(coverage.listing_price, p.reference_price, 0)) filter (where ${scope}), 0) as inventory_value,
+       coalesce(sum(sales30.sold) filter (where ${scope}), 0) as units_sold_30,
+       coalesce(sum(sales30.revenue) filter (where ${scope}), 0) as revenue_30
      from products p
      join product_inventory i on i.product_id=p.id
+     left join sales30 on sales30.product_id=p.id
      cross join lateral (
        select
          count(distinct l.company_id) filter (where l.status='active') as sellers_count,
-         coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total
+         coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total,
+         min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+           filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as listing_price
        from product_listings l
        where l.product_id=p.id
      ) coverage
@@ -361,8 +440,35 @@ export async function listProducts(filters = {}, db) {
     target.query(catalogSql, pageValues),
     summarizeProducts(filters, target),
   ]);
+  const products = result.rows.map(mapProduct);
+  if (products.length) {
+    try {
+      const listingsResult = await target.query(
+        `select l.id, l.product_id, l.channel_code, l.company_id,
+           coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+           l.seller_sku, l.shop_sku, l.title, l.status, l.marketplace_quantity,
+           l.metadata
+         from product_listings l
+         join companies c on c.id = l.company_id
+         where l.product_id = any($1::int[]) and l.status = 'active'
+         order by l.channel_code, company_name, l.id`,
+        [products.map((product) => product.id)],
+      );
+      const listingsByProductId = new Map(products.map((product) => [product.id, []]));
+      for (const row of listingsResult.rows) {
+        const listing = mapCompactListing(row);
+        if (!listing) continue;
+        listingsByProductId.get(listing.productId)?.push(listing);
+      }
+      for (const product of products) {
+        product.listings = listingsByProductId.get(product.id) || [];
+      }
+    } catch {
+      // Leave listings unset so expand can fall back to GET /products/:id.
+    }
+  }
   return {
-    products: result.rows.map(mapProduct),
+    products,
     totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,
     limit,
     offset,
