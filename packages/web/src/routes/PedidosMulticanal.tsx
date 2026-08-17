@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertCircle,
-  CalendarDays,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   CircleDashed,
   Clock3,
   FileText,
@@ -12,19 +10,20 @@ import {
   Package,
   PackageSearch,
   Plus,
-  RefreshCw,
   Search,
   Store,
   Trash2,
-  Users,
   WandSparkles,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { todayInLima } from '../lib/documentDateRange';
+import DayStrip from '../components/DayStrip';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
+import { DataTable, DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import {
@@ -35,16 +34,12 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TablePanel,
-  TablePanelFooter,
-  TablePanelHeader,
-  TableRow,
-} from '../components/ui/table';
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '../components/ui/sheet';
 import {
   Dialog,
   DialogContent,
@@ -175,6 +170,8 @@ type SalesPulse = {
   topProducts: Array<{
     sku: string;
     name: string;
+    imageUrl?: string | null;
+    shopSku?: string | null;
     unitsSold: number;
     ordersCount: number;
     salesTotal: number;
@@ -189,7 +186,8 @@ type SalesPulse = {
   }>;
 };
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
+const RANKING_SIZE = 6;
 
 const FALLBACK_CHANNELS: Channel[] = [
   { id: -1, code: 'falabella', name: 'Falabella', active: true, defaultAutoCreateOrders: true },
@@ -241,6 +239,12 @@ const SOURCE_LABELS: Record<string, string> = {
   system: 'Sistema',
 };
 
+function titleCaseSeller(value: string) {
+  return value
+    .toLocaleLowerCase('es')
+    .replace(/(^|[\s/-])(\S)/g, (_, sep, char) => sep + char.toLocaleUpperCase('es'));
+}
+
 function companyName(company: Company) {
   const candidates = [company.nombreComercial, company.nombre, company.razonSocial]
     .map((value) => String(value || '').trim())
@@ -249,7 +253,8 @@ function companyName(company: Company) {
       .replace(/^(?:importaciones|inversiones|tiendas|la tienda del)\s+/i, '')
       .replace(/\s+(?:per[uú]|e\.?i\.?r\.?l\.?|s\.?r\.?l\.?|s\.?a\.?c\.?)$/i, '')
       .trim());
-  return candidates.sort((left, right) => left.length - right.length)[0] || `Empresa ${company.id}`;
+  const name = candidates.sort((left, right) => left.length - right.length)[0];
+  return name ? titleCaseSeller(name) : `Empresa ${company.id}`;
 }
 
 function formatMoney(value: number | null | undefined, currency = 'PEN') {
@@ -271,11 +276,6 @@ function formatDate(value: string | null | undefined) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
-}
-
-function limaDateOffset(days: number) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' })
-    .format(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
 }
 
 function limaDate(value: string | null | undefined) {
@@ -483,33 +483,41 @@ function channelTone(code: string) {
   }[code] || 'border-border bg-muted text-muted-foreground';
 }
 
-function ChannelMark({ code, name }: { code: string; name: string }) {
+function ChannelMark({ code, name, size = 'sm' }: { code: string; name: string; size?: 'sm' | 'md' }) {
+  const box = size === 'sm' ? 'size-4' : 'size-8';
   if (code === 'falabella') {
-    return <img src={falabellaLogo} alt="Falabella" className="size-8 shrink-0 rounded-lg object-contain" />;
+    return <img src={falabellaLogo} alt="Falabella" className={cn('shrink-0 rounded-sm object-contain', box)} />;
   }
   return (
-    <span className={cn('grid size-8 shrink-0 place-items-center rounded-md border text-xs font-bold', channelTone(code))} aria-hidden="true">
+    <span className={cn('grid shrink-0 place-items-center rounded-sm border font-bold', channelTone(code), size === 'sm' ? 'size-4 text-[8px]' : 'size-8 text-xs')} aria-hidden="true">
       {name.slice(0, 2).toUpperCase()}
     </span>
   );
 }
 
-function ChannelIcon({ code, name, size = 'md' }: { code: string; name?: string; size?: 'sm' | 'md' }) {
-  if (code === 'falabella') {
-    return <img src={falabellaLogo} alt="Falabella" className={cn('shrink-0 rounded-md object-contain', size === 'sm' ? 'size-5' : 'size-8')} />;
+function falabellaMediaUrl(shopSku?: string | null) {
+  const sku = String(shopSku || '').trim();
+  if (!sku || !/^[A-Za-z0-9_-]+$/.test(sku)) return '';
+  return `https://media.falabella.com/falabellaPE/${sku}_01`;
+}
+
+function productImageSrc(url?: string | null, shopSku?: string | null, sku?: string | null) {
+  const value = String(url || '').trim() || falabellaMediaUrl(shopSku) || falabellaMediaUrl(sku);
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' && /(^|\.)falabella\.com$/i.test(parsed.hostname)) {
+      return `/catalog/image?url=${encodeURIComponent(value)}`;
+    }
+  } catch {
+    return value;
   }
-  return (
-    <span
-      className={cn(
-        'grid shrink-0 place-items-center rounded-md border font-bold',
-        channelTone(code),
-        size === 'sm' ? 'size-5 text-[8px]' : 'size-8 text-xs',
-      )}
-      aria-label={name || code}
-    >
-      {(name || code).slice(0, 2).toUpperCase()}
-    </span>
-  );
+  return value;
+}
+
+function dayLabel(date: string) {
+  if (date === todayInLima()) return 'hoy';
+  return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00`));
 }
 
 function demoDetail(order: ManagedOrder): OrderDetail {
@@ -543,10 +551,11 @@ export default function PedidosMulticanal() {
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
-  const [dateRange, setDateRange] = useState<'today' | '7days' | 'all'>('today');
+  const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [salesPulse, setSalesPulse] = useState<SalesPulse | null>(null);
@@ -555,6 +564,7 @@ export default function PedidosMulticanal() {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [productsOpen, setProductsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -566,6 +576,7 @@ export default function PedidosMulticanal() {
   const [notes, setNotes] = useState('');
   const [manualLines, setManualLines] = useState<ManualLine[]>([newLine()]);
   const requestRef = useRef(0);
+  const loadedDateRef = useRef('');
 
   useEffect(() => {
     Promise.all([
@@ -587,15 +598,17 @@ export default function PedidosMulticanal() {
 
   const load = useCallback(async () => {
     const requestId = ++requestRef.current;
-    setLoading(true);
+    const replace = loadedDateRef.current !== date;
+    if (replace) setLoading(true);
+    else setFetching(true);
     setLoadError('');
     try {
       const result = await api.listManagedOrders({
         companyId: companyId === 'all' ? undefined : Number(companyId),
         channelCode: channelCode === 'all' ? undefined : channelCode,
         fulfillmentStatus: fulfillmentStatus === 'all' ? undefined : fulfillmentStatus,
-        from: dateRange === 'today' ? limaDateOffset(0) : dateRange === '7days' ? limaDateOffset(-6) : undefined,
-        to: dateRange === 'all' ? undefined : limaDateOffset(0),
+        from: date,
+        to: date,
         search: search.trim() || undefined,
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
@@ -605,6 +618,7 @@ export default function PedidosMulticanal() {
       const nextTotal = Number(result?.totalCount || 0);
       setOrders(nextOrders);
       setTotalCount(nextTotal);
+      loadedDateRef.current = date;
       if (nextTotal > 0) setHasRealOrders(true);
     } catch (error: any) {
       if (requestId !== requestRef.current) return;
@@ -612,21 +626,44 @@ export default function PedidosMulticanal() {
       setTotalCount(0);
       setLoadError(error?.message || 'No se pudieron cargar los pedidos.');
     } finally {
-      if (requestId === requestRef.current) setLoading(false);
+      if (requestId === requestRef.current) {
+        setLoading(false);
+        setFetching(false);
+      }
     }
-  }, [channelCode, companyId, dateRange, fulfillmentStatus, page, search]);
+  }, [channelCode, companyId, date, fulfillmentStatus, page, search]);
 
   const loadSalesPulse = useCallback(async () => {
     setPulseLoading(true);
     setPulseError('');
     try {
-      setSalesPulse(await api.getManagedOrderSalesPulse());
+      const [pulse, catalogSales] = await Promise.all([
+        api.getManagedOrderSalesPulse({ date }),
+        api.listTodayProductSales({ date, limit: 80 }).catch(() => null),
+      ]);
+      const photos = new Map<string, { imageUrl?: string | null; shopSku?: string | null }>();
+      for (const product of Array.isArray(catalogSales?.products) ? catalogSales.products : []) {
+        const key = String(product.sku || '').trim().toLowerCase();
+        if (!key) continue;
+        photos.set(key, { imageUrl: product.imageUrl, shopSku: product.shopSku });
+      }
+      setSalesPulse({
+        ...pulse,
+        topProducts: (pulse?.topProducts || []).map((product: SalesPulse['topProducts'][number]) => {
+          const extra = photos.get(String(product.sku || '').trim().toLowerCase());
+          return {
+            ...product,
+            imageUrl: product.imageUrl || extra?.imageUrl || null,
+            shopSku: product.shopSku || extra?.shopSku || null,
+          };
+        }),
+      });
     } catch (error: any) {
-      setPulseError(error?.message || 'No se pudo cargar la actividad de hoy.');
+      setPulseError(error?.message || 'No se pudo cargar la actividad del día.');
     } finally {
       setPulseLoading(false);
     }
-  }, []);
+  }, [date]);
 
   useEffect(() => {
     const timer = window.setTimeout(load, search ? 250 : 0);
@@ -639,7 +676,7 @@ export default function PedidosMulticanal() {
 
   useEffect(() => {
     setPage(1);
-  }, [companyId, channelCode, fulfillmentStatus, dateRange]);
+  }, [companyId, channelCode, fulfillmentStatus, date]);
 
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
@@ -652,15 +689,14 @@ export default function PedidosMulticanal() {
 
   const filteredDemoOrders = useMemo(() => {
     const term = search.trim().toLowerCase();
-    const from = dateRange === 'today' ? limaDateOffset(0) : dateRange === '7days' ? limaDateOffset(-6) : '';
     return demoOrders.filter((order) => (
       (channelCode === 'all' || order.channelCode === channelCode)
       && (fulfillmentStatus === 'all' || order.fulfillmentStatus === fulfillmentStatus)
-      && (!from || limaDate(order.orderedAt) >= from)
+      && limaDate(order.orderedAt) === date
       && (!term || [order.externalOrderNumber, order.customer?.name, order.customer?.documentNumber]
         .some((value) => String(value || '').toLowerCase().includes(term)))
     ));
-  }, [channelCode, dateRange, demoOrders, fulfillmentStatus, search]);
+  }, [channelCode, date, demoOrders, fulfillmentStatus, search]);
 
   const demoMode = !loading && !loadError && !hasRealOrders;
   const displayedOrders = demoMode ? filteredDemoOrders : orders;
@@ -786,7 +822,7 @@ export default function PedidosMulticanal() {
       setCompanyId('all');
       setChannelCode('all');
       setFulfillmentStatus('all');
-      setDateRange('today');
+      setDate(todayInLima());
       setSearch('');
       setPage(1);
       setCreateOpen(false);
@@ -800,107 +836,137 @@ export default function PedidosMulticanal() {
     }
   };
 
-  const pulseSellers = salesPulse?.sellers || [];
-  const sellersWithSales = pulseSellers.filter((seller) => seller.ordersCount > 0);
-  const sellersWithoutSales = pulseSellers.filter((seller) => seller.ordersCount === 0);
-  const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || fulfillmentStatus !== 'all' || dateRange !== 'today' || Boolean(search.trim());
+  const pulseSellers = useMemo(() => {
+    const sellers = salesPulse?.sellers || [];
+    return [...sellers].sort((left, right) => {
+      if ((right.ordersCount > 0) !== (left.ordersCount > 0)) return left.ordersCount > 0 ? -1 : 1;
+      if (right.salesTotal !== left.salesTotal) return right.salesTotal - left.salesTotal;
+      return left.companyName.localeCompare(right.companyName, 'es');
+    });
+  }, [salesPulse]);
+  const soldProducts = salesPulse?.topProducts || [];
+  const rankingProducts = soldProducts.slice(0, RANKING_SIZE);
+  const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || fulfillmentStatus !== 'all' || Boolean(search.trim());
+  const selectedSellerName = companyId === 'all' ? '' : companyById.get(Number(companyId)) || '';
+  const selectedChannelName = channelCode === 'all' ? '' : channelCatalog.find((channel) => channel.code === channelCode)?.name || channelCode;
+  const selectedStatusLabel = fulfillmentStatus === 'all' ? '' : FULFILLMENT_LABELS[fulfillmentStatus] || fulfillmentStatus;
   const clearFilters = () => {
     setCompanyId('all');
     setChannelCode('all');
     setFulfillmentStatus('all');
-    setDateRange('today');
     setSearch('');
     setPage(1);
   };
 
+  const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => [
+    {
+      id: 'order',
+      header: 'Pedido',
+      cell: ({ row }) => (
+        <span className="block truncate font-mono font-medium text-foreground">{row.original.externalOrderNumber}</span>
+      ),
+    },
+    {
+      id: 'seller',
+      header: 'Seller',
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
+          <span className="truncate font-medium">{companyById.get(row.original.companyId) || `Empresa ${row.original.companyId}`}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'customer',
+      header: 'Cliente',
+      cell: ({ row }) => <span className="block truncate">{row.original.customer?.name || 'Sin nombre'}</span>,
+    },
+    {
+      id: 'status',
+      header: 'Estado',
+      cell: ({ row }) => fulfillmentBadge(row.original.fulfillmentStatus),
+    },
+    {
+      id: 'total',
+      header: () => <span className="block text-right">Total</span>,
+      cell: ({ row }) => (
+        <span className="block truncate text-right font-medium tabular-nums">{formatMoney(row.original.total, row.original.currency)}</span>
+      ),
+    },
+  ], [companyById]);
+
+  const table = useReactTable({
+    data: displayedOrders,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (order) => String(order.id),
+    manualPagination: true,
+    pageCount: totalPages,
+  });
+
+  const filterTriggerClass = 'h-9 w-44 rounded-md border-border bg-background';
+
   return (
     <div className="space-y-4">
-      <section className="overflow-hidden rounded-md border border-border bg-card" aria-labelledby="sales-pulse-title">
-        <div className="flex flex-col gap-4 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div>
-            <h2 id="sales-pulse-title" className="flex items-center gap-2 text-base font-semibold">
-              <CalendarDays className="size-4 text-muted-foreground" /> Ventas de hoy
-              {demoMode && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><WandSparkles /> Demo</Badge>}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">Todos los productos vendidos, sin importar el canal.</p>
+      <DayStrip value={date} onChange={(next) => { setDate(next); setPage(1); }} />
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold">Ventas de {dayLabel(date)}</h2>
+            {demoMode && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><WandSparkles /> Demo</Badge>}
           </div>
-          <div className="flex items-center gap-2">
-            {pulseError && <Button type="button" variant="ghost" onClick={loadSalesPulse} className="h-11 cursor-pointer text-destructive">Reintentar</Button>}
-            <Button onClick={openCreate} disabled={!availableManualCompanies.length} size="lg" className="min-h-11 cursor-pointer">
-              <Plus /> Registrar venta
+          {pulseLoading ? (
+            <div className="mt-1 h-8 w-64 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+          ) : (
+            <div className="mt-1 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+              <p className="text-2xl font-semibold tracking-tight tabular-nums">{salesPulse ? formatMoney(salesPulse.salesTotal) : '—'}</p>
+              <p className="text-sm text-muted-foreground">{salesPulse ? salesPulse.ordersCount : displayedTotal} {Number(salesPulse?.ordersCount ?? displayedTotal) === 1 ? 'pedido' : 'pedidos'}</p>
+              <p className="text-sm text-muted-foreground">
+                {salesPulse ? `${salesPulse.sellersWithSales}/${pulseSellers.length}` : '—'} sellers con ventas
+              </p>
+            </div>
+          )}
+          {pulseError && (
+            <Button type="button" variant="ghost" size="xs" onClick={loadSalesPulse} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
+              Reintentar
             </Button>
-          </div>
+          )}
         </div>
+        <Button onClick={openCreate} disabled={!availableManualCompanies.length} className="h-9 shrink-0 cursor-pointer">
+          <Plus /> Registrar venta
+        </Button>
+      </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4">
-          <TodayMetric label="Venta total" value={salesPulse ? formatMoney(salesPulse.salesTotal) : '—'} loading={pulseLoading} />
-          <TodayMetric className="border-l border-border" label="Ventas válidas" value={salesPulse ? String(salesPulse.ordersCount) : '—'} loading={pulseLoading} />
-          <TodayMetric className="border-t border-border sm:border-l sm:border-t-0" label="Unidades" value={salesPulse ? String(salesPulse.unitsSold) : '—'} loading={pulseLoading} />
-          <TodayMetric className="border-l border-t border-border sm:border-t-0" label="Sellers activos" value={salesPulse ? `${salesPulse.sellersWithSales} / ${pulseSellers.length}` : '—'} loading={pulseLoading} />
-        </div>
-
-        <div className="flex min-h-12 flex-wrap items-center gap-x-5 gap-y-2 border-y border-border bg-muted/20 px-4 py-2 sm:px-5" aria-label="Ventas de hoy por canal">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Canales</span>
-          {pulseLoading ? <span className="text-sm text-muted-foreground">Actualizando…</span> : salesPulse?.channels.length ? salesPulse.channels.map((channel) => (
-            <span key={channel.code} className="flex items-center gap-2 text-sm">
-              <ChannelIcon code={channel.code} name={channel.name} size="sm" />
-              <span className="font-medium">{channel.name}</span>
-              <span className="tabular-nums text-muted-foreground">{channel.ordersCount}</span>
-            </span>
-          )) : <span className="text-sm text-muted-foreground">Aún no hay ventas registradas hoy.</span>}
-        </div>
-
-        <div className="grid lg:grid-cols-[minmax(0,1.55fr)_minmax(18rem,0.45fr)]">
+      <section className="overflow-hidden rounded-md border border-border bg-card">
+        <div className="grid lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,0.5fr)]">
           <div className="min-w-0 lg:border-r lg:border-border">
-            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-              <div>
-                <h3 className="text-sm font-semibold">Productos vendidos</h3>
-                <p className="text-xs text-muted-foreground">Ordenados por unidades vendidas hoy</p>
-              </div>
-              <span className="text-xs text-muted-foreground">Top {salesPulse?.topProducts.length || 0}</span>
+            <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-5">
+              <h3 className="text-sm font-semibold">Productos vendidos</h3>
+              {soldProducts.length > 0 && (
+                <Button type="button" variant="link" size="xs" className="h-7 cursor-pointer px-0 text-primary" onClick={() => setProductsOpen(true)}>
+                  Ver todos
+                </Button>
+              )}
             </div>
-            <TodayProducts products={salesPulse?.topProducts || []} loading={pulseLoading} />
+            <TodayProducts products={rankingProducts} loading={pulseLoading} />
           </div>
 
-          <aside aria-label="Cobertura de sellers">
-            <div className="border-b border-border px-4 py-3 sm:px-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Cobertura de sellers</h3>
-                  <p className="text-xs text-muted-foreground">Quién registró ventas hoy</p>
-                </div>
-                <span className="text-sm font-semibold tabular-nums">{salesPulse ? `${salesPulse.sellersWithSales}/${pulseSellers.length}` : '—'}</span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-[width] duration-200 motion-reduce:transition-none"
-                  style={{ width: pulseSellers.length ? `${(sellersWithSales.length / pulseSellers.length) * 100}%` : '0%' }}
-                />
-              </div>
+          <aside aria-label="Sellers">
+            <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-5">
+              <h3 className="text-sm font-semibold">Sellers</h3>
+              <span className="text-xs font-medium tabular-nums text-muted-foreground">
+                {salesPulse ? `${salesPulse.sellersWithSales}/${pulseSellers.length}` : '—'} sellers con ventas
+              </span>
             </div>
-            <SellerGroup
-              title="Sin ventas"
-              count={sellersWithoutSales.length}
-              sellers={sellersWithoutSales}
+            <SellerList
+              sellers={pulseSellers}
               loading={pulseLoading}
               selectedCompanyId={companyId}
               onSelect={(sellerId) => {
                 setCompanyId(companyId === String(sellerId) ? 'all' : String(sellerId));
                 setPage(1);
               }}
-              emptySales
-            />
-            <SellerGroup
-              title="Con ventas"
-              count={sellersWithSales.length}
-              sellers={sellersWithSales}
-              loading={pulseLoading}
-              selectedCompanyId={companyId}
-              onSelect={(sellerId) => {
-                setCompanyId(companyId === String(sellerId) ? 'all' : String(sellerId));
-                setPage(1);
-              }}
-              className="border-t border-border"
             />
           </aside>
         </div>
@@ -919,161 +985,114 @@ export default function PedidosMulticanal() {
         </div>
       )}
 
-      <TablePanel>
-        <TablePanelHeader className="space-y-4 bg-card">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(1);
-                }}
-                placeholder="Buscar pedido, cliente o documento"
-                aria-label="Buscar pedidos"
-                className="h-11 pl-9 sm:h-9"
-              />
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:flex">
-              <Select value={dateRange} onValueChange={(value) => setDateRange(value as 'today' | '7days' | 'all')}>
-                <SelectTrigger className="w-full data-[size=default]:h-11 sm:data-[size=default]:h-9 xl:w-36"><SelectValue placeholder="Período" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="today">Hoy</SelectItem>
-                  <SelectItem value="7days">Últimos 7 días</SelectItem>
-                  <SelectItem value="all">Todo el historial</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={companyId} onValueChange={setCompanyId}>
-                <SelectTrigger className="w-full data-[size=default]:h-11 sm:data-[size=default]:h-9 xl:w-40"><SelectValue placeholder="Seller" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los sellers</SelectItem>
-                  {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={channelCode} onValueChange={setChannelCode}>
-                <SelectTrigger className="w-full data-[size=default]:h-11 sm:data-[size=default]:h-9 xl:w-40"><SelectValue placeholder="Origen" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los orígenes</SelectItem>
-                  {channelCatalog.map((channel) => <SelectItem key={channel.code} value={channel.code}>{channel.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={fulfillmentStatus} onValueChange={setFulfillmentStatus}>
-                <SelectTrigger className="w-full data-[size=default]:h-11 sm:data-[size=default]:h-9 xl:w-40"><SelectValue placeholder="Estado" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los estados</SelectItem>
-                  {Object.entries(FULFILLMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+      <div className="space-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative min-w-0 sm:w-[22rem]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Buscar pedido, cliente o documento"
+              aria-label="Buscar pedidos"
+              className="h-9 pl-9"
+            />
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Select value={companyId} onValueChange={(value) => { setCompanyId(value); setPage(1); }}>
+              <SelectTrigger className={filterTriggerClass}><SelectValue placeholder="Seller" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los sellers</SelectItem>
+                {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={channelCode} onValueChange={(value) => { setChannelCode(value); setPage(1); }}>
+              <SelectTrigger className={cn(filterTriggerClass, 'w-40')}><SelectValue placeholder="Origen" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los orígenes</SelectItem>
+                {channelCatalog.map((channel) => <SelectItem key={channel.code} value={channel.code}>{channel.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={fulfillmentStatus} onValueChange={(value) => { setFulfillmentStatus(value); setPage(1); }}>
+              <SelectTrigger className={cn(filterTriggerClass, 'w-36')}><SelectValue placeholder="Estado" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los estados</SelectItem>
+                {Object.entries(FULFILLMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
             {hasActiveFilters && (
-              <Button variant="ghost" size="icon" className="size-11 cursor-pointer sm:size-9" onClick={clearFilters} aria-label="Limpiar filtros" title="Limpiar filtros"><X /></Button>
+              <Button type="button" variant="ghost" size="xs" className="h-9 cursor-pointer" onClick={clearFilters}>
+                Limpiar
+              </Button>
             )}
-            <Button variant="outline" size="icon" className="size-11 cursor-pointer sm:size-9" onClick={() => Promise.all([load(), loadSalesPulse()])} disabled={loading || pulseLoading} aria-label="Actualizar pedidos" title="Actualizar pedidos">
-              <RefreshCw className={cn((loading || pulseLoading) && 'animate-spin motion-reduce:animate-none')} />
-            </Button>
           </div>
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium">{dateRange === 'today' ? 'Pedidos de hoy' : dateRange === '7days' ? 'Pedidos de los últimos 7 días' : 'Todos los pedidos'} · {displayedTotal}</p>
-              <p className="text-xs text-muted-foreground">Selecciona una fila para revisar productos y actividad.</p>
-            </div>
-            {demoMode && <p className="text-xs text-muted-foreground">La muestra desaparece cuando registres o sincronices el primer pedido real.</p>}
+        </div>
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {search.trim() && <FilterChip label={search.trim()} onRemove={() => { setSearch(''); setPage(1); }} />}
+            {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => { setCompanyId('all'); setPage(1); }} />}
+            {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => { setChannelCode('all'); setPage(1); }} />}
+            {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => { setFulfillmentStatus('all'); setPage(1); }} />}
           </div>
-        </TablePanelHeader>
+        )}
+        {demoMode && <p className="text-xs text-muted-foreground">La muestra desaparece cuando registres o sincronices el primer pedido real.</p>}
+      </div>
 
-        <Table className="table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[42%] sm:w-[32%] lg:w-[20%]">Pedido</TableHead>
-              <TableHead className="hidden w-[20%] md:table-cell">Seller</TableHead>
-              <TableHead className="hidden w-[20%] lg:table-cell">Cliente</TableHead>
-              <TableHead className="w-[34%] sm:w-[28%] lg:w-[16%]">Estado</TableHead>
-              <TableHead className="hidden w-[17%] xl:table-cell">Fecha</TableHead>
-              <TableHead className="w-[24%] text-right sm:w-[20%] lg:w-[13%]">Total</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6}>
-                  <div className="flex h-36 items-center justify-center gap-2 text-muted-foreground">
-                    <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando pedidos…
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : displayedOrders.length ? displayedOrders.map((order) => (
-              <TableRow
-                key={order.id}
-                className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-                onClick={() => openDetail(order)}
-                tabIndex={0}
-                aria-label={`Abrir pedido ${order.externalOrderNumber}`}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    openDetail(order);
-                  }
-                }}
-              >
-                <TableCell>
-                  <div className="truncate font-mono font-medium text-foreground">{order.externalOrderNumber}</div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground md:hidden">{companyById.get(order.companyId) || `Empresa ${order.companyId}`}</div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground lg:hidden">{order.customer?.name || 'Cliente sin nombre'}</div>
-                </TableCell>
-                <TableCell className="hidden md:table-cell">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <ChannelMark code={order.channelCode} name={order.channelName} />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{companyById.get(order.companyId) || `Empresa ${order.companyId}`}</div>
-                      {order.channelCode !== 'falabella' && <div className="truncate text-xs text-muted-foreground">{order.channelName}</div>}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="hidden lg:table-cell">
-                  <div className="truncate">{order.customer?.name || 'Sin nombre'}</div>
-                  {order.customer?.documentNumber && <div className="mt-0.5 font-mono text-xs text-muted-foreground">{order.customer.documentNumber}</div>}
-                </TableCell>
-                <TableCell>{fulfillmentBadge(order.fulfillmentStatus)}</TableCell>
-                <TableCell className="hidden xl:table-cell">
-                  <div>{formatDate(order.orderedAt)}</div>
-                  {order.promisedShippingAt && <div className="mt-0.5 text-xs text-muted-foreground">Límite: {formatDate(order.promisedShippingAt)}</div>}
-                </TableCell>
-                <TableCell className="truncate text-right font-medium tabular-nums">{formatMoney(order.total, order.currency)}</TableCell>
-              </TableRow>
-            )) : (
-              <TableRow>
-                <TableCell colSpan={6}>
-                  <div className="flex flex-col items-center gap-2 py-14 text-center">
-                    <Store className="size-8 text-muted-foreground/50" />
-                    <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
-                    <p className="text-sm text-muted-foreground">Prueba otra búsqueda o registra una venta manual.</p>
-                    <Button size="sm" className="mt-2 h-11 cursor-pointer sm:h-8" onClick={openCreate} disabled={!availableManualCompanies.length}><Plus /> Registrar venta</Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-
-        <TablePanelFooter>
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-sm text-muted-foreground">
-              {displayedTotal ? demoMode ? `Mostrando ${displayedTotal} de muestra` : `Mostrando ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, totalCount)} de ${totalCount}` : '0 pedidos'}
-            </p>
-            {!demoMode && totalPages > 1 && (
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="h-11 cursor-pointer sm:h-8" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>
-                  <ChevronLeft /> Anterior
-                </Button>
-                <Button variant="outline" size="sm" className="h-11 cursor-pointer sm:h-8" disabled={page >= totalPages || loading} onClick={() => setPage((current) => current + 1)}>
-                  Siguiente <ChevronRight />
-                </Button>
-              </div>
-            )}
+      <DataTable
+        table={table}
+        aria-label={`Pedidos de ${dayLabel(date)}`}
+        loading={loading}
+        fetching={fetching}
+        skeleton="plain"
+        onRowClick={openDetail}
+        columnClassNames={{
+          order: 'h-10 w-[28%]',
+          seller: 'h-10 w-[22%]',
+          customer: 'h-10 w-[22%]',
+          status: 'h-10 w-[16%]',
+          total: 'h-10 w-[12%] text-right',
+        }}
+        cellClassNames={{
+          order: 'py-2',
+          seller: 'py-2',
+          customer: 'py-2',
+          status: 'py-2',
+          total: 'py-2 text-right',
+        }}
+        empty={(
+          <div className="flex flex-col items-center gap-2 py-14 text-center">
+            <Store className="size-8 text-muted-foreground/50" />
+            <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
+            <p className="text-sm text-muted-foreground">Prueba otra búsqueda o registra una venta manual.</p>
+            <Button size="sm" className="mt-2 cursor-pointer" onClick={openCreate} disabled={!availableManualCompanies.length}><Plus /> Registrar venta</Button>
           </div>
-        </TablePanelFooter>
-      </TablePanel>
+        )}
+        footer={!loading ? (
+          <DataTablePagination
+            pageIndex={page - 1}
+            pageSize={PAGE_SIZE}
+            totalCount={displayedTotal}
+            fetching={fetching}
+            onPageChange={(nextPage) => setPage(nextPage + 1)}
+          />
+        ) : undefined}
+      />
+
+      <Sheet open={productsOpen} onOpenChange={setProductsOpen}>
+        <SheetContent className="sm:max-w-md">
+          <SheetHeader className="border-b border-border px-5 py-4 pr-16">
+            <SheetTitle>Productos vendidos</SheetTitle>
+            <SheetDescription>
+              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date)}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <TodayProducts products={soldProducts} loading={false} />
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={createOpen} onOpenChange={(open) => !creating && setCreateOpen(open)}>
         <DialogContent className="max-h-[92vh] overflow-y-auto [&_[data-slot=dialog-close]]:size-11 sm:max-w-2xl">
@@ -1205,7 +1224,7 @@ export default function PedidosMulticanal() {
             <>
               <DialogHeader>
                 <div className="flex items-center gap-3 pr-8">
-                  <ChannelMark code={detail.channelCode} name={detail.channelName} />
+                  <ChannelMark code={detail.channelCode} name={detail.channelName} size="md" />
                   <div>
                     <DialogTitle>Pedido {detail.externalOrderNumber}</DialogTitle>
                     <DialogDescription>{detail.channelName} · {detail.channelAccountName} · {companyById.get(detail.companyId) || `Empresa ${detail.companyId}`}</DialogDescription>
@@ -1297,28 +1316,52 @@ function Field({
   );
 }
 
-function TodayMetric({ label, value, loading, className }: { label: string; value: string; loading: boolean; className?: string }) {
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <div className={cn('min-w-0 px-4 py-3 sm:px-5 sm:py-4', className)}>
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      {loading ? (
-        <div className="mt-2 h-6 w-24 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-      ) : (
-        <p className="mt-1 truncate text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">{value}</p>
-      )}
-    </div>
+    <button
+      type="button"
+      onClick={onRemove}
+      className="inline-flex h-7 max-w-48 cursor-pointer items-center gap-1 rounded-md border border-border bg-muted/40 px-2 text-xs font-medium text-foreground hover:bg-muted"
+    >
+      <span className="truncate">{label}</span>
+      <X className="size-3 shrink-0 text-muted-foreground" />
+    </button>
+  );
+}
+
+function ProductThumb({ url, shopSku, sku, name }: { url?: string | null; shopSku?: string | null; sku?: string | null; name: string }) {
+  const candidates = [productImageSrc(url), productImageSrc(null, shopSku), productImageSrc(null, null, sku)].filter((src, index, list) => src && list.indexOf(src) === index);
+  const [failedCount, setFailedCount] = useState(0);
+  const src = candidates[failedCount] || '';
+  if (!src) {
+    return (
+      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
+        <Package className="size-4 text-muted-foreground" />
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      title={name}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailedCount((current) => current + 1)}
+      className="size-10 shrink-0 rounded-md bg-muted object-cover"
+    />
   );
 }
 
 function TodayProducts({ products, loading }: { products: SalesPulse['topProducts']; loading: boolean }) {
   if (loading) {
     return (
-      <div className="divide-y divide-border" aria-label="Cargando productos vendidos hoy">
-        {[0, 1, 2, 3, 4].map((item) => (
-          <div key={item} className="flex h-[4.5rem] items-center gap-3 px-4 sm:px-5">
-            <div className="size-9 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
-            <div className="flex-1 space-y-2"><div className="h-3 w-2/3 animate-pulse rounded bg-muted motion-reduce:animate-none" /><div className="h-2.5 w-28 animate-pulse rounded bg-muted motion-reduce:animate-none" /></div>
-            <div className="h-4 w-16 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+      <div className="divide-y divide-border" aria-label="Cargando productos vendidos">
+        {[0, 1, 2, 3, 4, 5].map((item) => (
+          <div key={item} className="flex h-14 items-center gap-2.5 px-4 sm:px-5">
+            <div className="size-10 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
+            <div className="h-3 flex-1 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            <div className="h-3 w-14 animate-pulse rounded bg-muted motion-reduce:animate-none" />
           </div>
         ))}
       </div>
@@ -1327,10 +1370,10 @@ function TodayProducts({ products, loading }: { products: SalesPulse['topProduct
 
   if (!products.length) {
     return (
-      <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-6 text-center">
-        <PackageSearch className="size-8 text-muted-foreground/60" />
-        <p className="text-sm font-medium">Aún no hay productos vendidos hoy</p>
-        <p className="max-w-sm text-sm text-muted-foreground">Cuando ingrese una venta desde cualquier canal, sus productos aparecerán aquí.</p>
+      <div className="flex min-h-40 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
+        <PackageSearch className="size-6 text-muted-foreground/60" />
+        <p className="text-sm font-medium">Aún no hay productos vendidos</p>
+        <p className="text-xs text-muted-foreground">Cuando ingrese una venta, aparecerá aquí.</p>
       </div>
     );
   }
@@ -1338,24 +1381,16 @@ function TodayProducts({ products, loading }: { products: SalesPulse['topProduct
   return (
     <ol className="divide-y divide-border">
       {products.map((product, index) => (
-        <li key={`${product.sku}:${product.name}`} className="grid min-h-[4.5rem] grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5 sm:grid-cols-[2rem_minmax(0,1fr)_auto_auto] sm:px-5">
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+        <li key={`${product.sku}:${product.name}`} className="grid grid-cols-[1.25rem_2.5rem_minmax(0,1fr)_auto] items-center gap-2.5 px-4 py-2 sm:px-5">
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+          <ProductThumb url={product.imageUrl} shopSku={product.shopSku} sku={product.sku} name={product.name} />
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-foreground" title={product.name}>{product.name}</p>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="truncate font-mono text-xs text-muted-foreground">{product.sku}</span>
-              <span className="hidden items-center gap-1 sm:flex" aria-label={`Canales: ${product.channelCodes.join(', ')}`}>
-                {product.channelCodes.map((code) => <ChannelIcon key={code} code={code} size="sm" />)}
-              </span>
-            </div>
+            <p className="truncate text-sm font-medium leading-5" title={product.name}>{product.name}</p>
+            <p className="truncate font-mono text-[11px] text-muted-foreground">{product.sku}</p>
           </div>
-          <div className="text-right">
-            <p className="text-sm font-semibold tabular-nums">{product.unitsSold}</p>
-            <p className="text-[11px] text-muted-foreground">unidades</p>
-          </div>
-          <div className="hidden min-w-24 text-right sm:block">
-            <p className="text-sm font-medium tabular-nums">{formatMoney(product.salesTotal)}</p>
-            <p className="text-[11px] text-muted-foreground">{product.ordersCount} {product.ordersCount === 1 ? 'pedido' : 'pedidos'}</p>
+          <div className="shrink-0 text-right">
+            <p className="text-sm font-semibold tabular-nums leading-5">{formatMoney(product.salesTotal)}</p>
+            <p className="text-xs tabular-nums text-muted-foreground">{product.unitsSold} unid.</p>
           </div>
         </li>
       ))}
@@ -1363,77 +1398,58 @@ function TodayProducts({ products, loading }: { products: SalesPulse['topProduct
   );
 }
 
-function SellerGroup({
-  title,
-  count,
+function SellerList({
   sellers,
   selectedCompanyId,
   onSelect,
-  emptySales = false,
   loading = false,
-  className,
 }: {
-  title: string;
-  count: number;
   sellers: SalesPulseSeller[];
   selectedCompanyId: string;
   onSelect: (companyId: number) => void;
-  emptySales?: boolean;
   loading?: boolean;
-  className?: string;
 }) {
+  if (loading) {
+    return (
+      <div className="space-y-1.5 px-4 py-2 sm:px-5" aria-label="Cargando sellers">
+        {[0, 1, 2, 3].map((item) => <div key={item} className="h-8 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />)}
+      </div>
+    );
+  }
+
+  if (!sellers.length) {
+    return (
+      <div className="flex min-h-24 items-center justify-center px-4 py-6 text-sm text-muted-foreground">
+        No hay sellers activos
+      </div>
+    );
+  }
+
   return (
-    <div className={cn('min-w-0 px-4 py-4 sm:px-5', className)}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {emptySales ? <CircleDashed className="size-3.5" /> : <CheckCircle2 className="size-3.5 text-emerald-600" />}
-          {title}
-        </p>
-        <span className="text-xs font-medium tabular-nums text-muted-foreground">{count}</span>
-      </div>
-      <div className="max-h-40 overflow-y-auto">
-        {loading ? (
-          <div className="space-y-2 py-1" aria-label={`Cargando sellers ${title.toLowerCase()}`}>
-            {[0, 1, 2].map((item) => <div key={item} className="h-9 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />)}
-          </div>
-        ) : sellers.length ? sellers.map((seller) => {
-          const selected = selectedCompanyId === String(seller.companyId);
-          const initials = seller.companyName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-          return (
-            <button
-              key={seller.companyId}
-              type="button"
-              onClick={() => onSelect(seller.companyId)}
-              aria-pressed={selected}
-              className={cn(
-                'flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-                selected && 'bg-primary/8 ring-1 ring-primary/20',
-              )}
-            >
-              <span className={cn(
-                'grid size-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold',
-                emptySales ? 'bg-muted text-muted-foreground' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-              )}>{initials || '—'}</span>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{seller.companyName}</span>
-              <span className="shrink-0 text-right">
-                {emptySales ? (
-                  <span className="text-xs text-muted-foreground">Sin ventas</span>
-                ) : (
-                  <>
-                    <span className="block text-xs font-semibold tabular-nums">{formatMoney(seller.salesTotal)}</span>
-                    <span className="block text-[11px] text-muted-foreground">{seller.ordersCount} {seller.ordersCount === 1 ? 'venta' : 'ventas'}</span>
-                  </>
-                )}
-              </span>
-            </button>
-          );
-        }) : (
-          <div className="flex min-h-20 items-center gap-2 px-2 text-sm text-muted-foreground">
-            {emptySales ? <Users className="size-4" /> : <CircleDashed className="size-4" />}
-            {emptySales ? 'Todos registraron ventas' : 'Aún no hay ventas hoy'}
-          </div>
-        )}
-      </div>
+    <div className="max-h-64 overflow-y-auto px-2 pb-2 sm:px-3">
+      {sellers.map((seller) => {
+        const selected = selectedCompanyId === String(seller.companyId);
+        const sold = seller.ordersCount > 0;
+        return (
+          <button
+            key={seller.companyId}
+            type="button"
+            onClick={() => onSelect(seller.companyId)}
+            aria-pressed={selected}
+            className={cn(
+              'flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+              selected && 'bg-primary/8 ring-1 ring-primary/20',
+              !sold && 'text-muted-foreground',
+            )}
+          >
+            {sold
+              ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
+              : <CircleDashed className="size-3.5 shrink-0" />}
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{titleCaseSeller(seller.companyName)}</span>
+            {sold && <span className="shrink-0 text-xs font-semibold tabular-nums">{formatMoney(seller.salesTotal)}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

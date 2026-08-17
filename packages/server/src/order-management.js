@@ -61,6 +61,12 @@ function jsonValue(value, fallback = {}) {
   return value;
 }
 
+function titleCaseSeller(value) {
+  return String(value || '')
+    .toLocaleLowerCase('es')
+    .replace(/(^|[\s/-])(\S)/g, (_, sep, char) => sep + char.toLocaleUpperCase('es'));
+}
+
 function shortSellerName(row) {
   const candidates = [row.nombre_comercial, row.nombre, row.razon_social]
     .map((value) => String(value || '').trim())
@@ -69,7 +75,8 @@ function shortSellerName(row) {
       .replace(/^(?:importaciones|inversiones|tiendas|la tienda del)\s+/i, '')
       .replace(/\s+(?:per[uú]|e\.?i\.?r\.?l\.?|s\.?r\.?l\.?|s\.?a\.?c\.?)$/i, '')
       .trim());
-  return candidates.sort((left, right) => left.length - right.length)[0] || `Empresa ${row.company_id}`;
+  const name = candidates.sort((left, right) => left.length - right.length)[0];
+  return name ? titleCaseSeller(name) : `Empresa ${row.company_id}`;
 }
 
 function nullableNumber(value, field) {
@@ -916,6 +923,25 @@ export async function getSalesPulse(filters = {}, db) {
     target.query(
       `select coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, ''), 'Sin SKU') as sku,
          coalesce(nullif(p.name, ''), nullif(oi.description, ''), 'Producto sin nombre') as product_name,
+         min(coalesce(
+           nullif(p.image_url, ''),
+           nullif(psku.image_url, ''),
+           nullif(listing.metadata->'images'->>0, ''),
+           nullif(listing.metadata->'images'->0->>'Url', ''),
+           nullif(listing.metadata->'images'->0->>'url', ''),
+           nullif(listing.metadata->>'imageUrl', ''),
+           nullif(oi.raw_data->>'Image', ''),
+           nullif(oi.raw_data->>'ImageUrl', ''),
+           nullif(oi.raw_data->>'ImageURL', ''),
+           nullif(oi.raw_data->>'ProductImage', ''),
+           nullif(oi.raw_data->>'MainImage', '')
+         )) as image_url,
+         min(coalesce(
+           nullif(trim(listing.shop_sku), ''),
+           nullif(trim(oi.provider_sku), ''),
+           nullif(trim(oi.raw_data->>'ShopSku'), ''),
+           nullif(trim(oi.raw_data->>'ShopSKU'), '')
+         )) as shop_sku,
          sum(coalesce(oi.quantity, 0))::numeric as units_sold,
          sum(sum(coalesce(oi.quantity, 0))) over()::numeric as total_units_sold,
          count(distinct o.id)::int as orders_count,
@@ -927,6 +953,9 @@ export async function getSalesPulse(filters = {}, db) {
        join order_channel_accounts a on a.id=o.channel_account_id
        join order_channels ch on ch.id=a.channel_id
        left join products p on p.id=oi.product_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+       left join product_listings listing on listing.id = oi.listing_id
        where o.order_status not in ('cancelled', 'failed')
          and o.payment_status not in ('refunded', 'failed')
          and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
@@ -934,7 +963,7 @@ export async function getSalesPulse(filters = {}, db) {
            = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
        group by 1, 2
        order by units_sold desc, sales_total desc, product_name
-       limit 8`,
+       limit 80`,
       [date],
     ),
     target.query(
@@ -967,6 +996,8 @@ export async function getSalesPulse(filters = {}, db) {
   const topProducts = productResult.rows.map((row) => ({
     sku: row.sku,
     name: row.product_name,
+    imageUrl: row.image_url || null,
+    shopSku: row.shop_sku || null,
     unitsSold: Number(row.units_sold || 0),
     ordersCount: Number(row.orders_count || 0),
     salesTotal: Number(row.sales_total || 0),

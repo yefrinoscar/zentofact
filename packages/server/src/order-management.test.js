@@ -225,6 +225,8 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
       if (sql.includes('join order_items')) return { rows: [{
         sku: 'SKU-1',
         product_name: 'Producto principal',
+        image_url: 'https://img.example/p.jpg',
+        shop_sku: '12345678',
         units_sold: '5',
         total_units_sold: '5',
         orders_count: 3,
@@ -242,9 +244,11 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
   assert.equal(result.unitsSold, 5);
   assert.equal(result.sellersWithSales, 1);
   assert.equal(result.sellersWithoutSales, 1);
-  assert.equal(result.sellers[1].companyName, 'MANTA RAYA');
+  assert.equal(result.sellers[1].companyName, 'Manta Raya');
   assert.equal(result.sellers[1].ordersCount, 0);
   assert.equal(result.topProducts[0].name, 'Producto principal');
+  assert.equal(result.topProducts[0].imageUrl, 'https://img.example/p.jpg');
+  assert.equal(result.topProducts[0].shopSku, '12345678');
   assert.deepEqual(result.topProducts[0].channelCodes, ['falabella']);
   assert.equal(result.channels[0].ordersCount, 3);
 });
