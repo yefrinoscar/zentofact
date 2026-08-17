@@ -337,10 +337,8 @@ export default function Productos() {
   const [publicationStatus, setPublicationStatus] = useState<PublicationStatusFilter>('all');
   const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
   const [companyIds, setCompanyIds] = useState<number[]>([]);
-  const [sort, setSort] = useState<CatalogSort>('updated_desc');
+  const [sort] = useState<CatalogSort>('updated_desc');
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
-  const [copiedSku, setCopiedSku] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
@@ -363,7 +361,6 @@ export default function Productos() {
     window.clearTimeout(searchTimer.current);
     const commit = () => {
       setSelectedId(null);
-      setExpandedRows({});
       setSubmittedSearch(value.trim());
       setOffset(0);
     };
@@ -373,11 +370,9 @@ export default function Productos() {
 
   const resetListView = () => {
     setSelectedId(null);
-    setExpandedRows({});
     setOffset(0);
   };
 
-  const sortRequest = CATALOG_SORT_REQUESTS[sort];
   const productFilters = useMemo(() => ({
     submittedSearch,
     status,
@@ -388,16 +383,25 @@ export default function Productos() {
     sort,
     offset,
   }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, sort, offset]);
-  const listRequest = {
+  const tableResetKey = JSON.stringify({
+    submittedSearch,
+    status,
+    inventoryStatus,
+    publicationStatus,
+    sellerCoverage,
+    companyIds,
+    sort,
+  });
+  const listRequest = useMemo(() => ({
     search: submittedSearch,
     status,
     inventoryStatus,
     publicationStatus,
     sellerCoverage,
     companyIds: companyIds.length ? companyIds : undefined,
-    ...sortRequest,
+    ...CATALOG_SORT_REQUESTS[sort],
     limit: PAGE_SIZE,
-  };
+  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, sort]);
   const productsQuery = useQuery({
     queryKey: ['catalog-products', productFilters],
     queryFn: () => api.listCatalogProducts({
@@ -462,7 +466,9 @@ export default function Productos() {
     .filter((company) => company.activo !== false)
     .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
   const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
-  const products = (productsQuery.data?.products || []) as Product[];
+  const products = useMemo(() => (productsQuery.data?.products || []) as Product[], [productsQuery.data?.products]);
+  const productsByIdRef = useRef(new Map<number, Product>());
+  productsByIdRef.current = new Map(products.map((product) => [product.id, product]));
   const totalCount = Number(productsQuery.data?.totalCount || 0);
   const inventorySummary = (summaryQuery.data || productsQuery.data?.summary || null) as CatalogInventorySummary | null;
   const detail = detailQuery.data as Product | undefined;
@@ -470,16 +476,18 @@ export default function Productos() {
   const sales = salesQuery.data as SalesSummary | undefined;
   const returns = returnsQuery.data as ReturnsSummary | undefined;
   const selectedProduct = detail?.id === selectedId ? detail : products.find((product) => product.id === selectedId) || null;
+  const selectedProductRef = useRef<Product | null>(null);
+  selectedProductRef.current = selectedProduct;
   const selectedProductIndex = selectedId == null ? -1 : products.findIndex((product) => product.id === selectedId);
   const hasPreviousProduct = selectedProductIndex > 0 || (selectedProductIndex === 0 && offset > 0);
   const hasNextProduct = selectedProductIndex >= 0
     && (selectedProductIndex < products.length - 1 || offset + products.length < totalCount);
   const selectedProductPosition = selectedProductIndex >= 0 ? offset + selectedProductIndex + 1 : null;
   const loading = productsQuery.isPending;
-  const detailLoading = detailQuery.isPending;
+  const detailLoading = detailQuery.isPending && !selectedProduct;
   const queryError = productsQuery.error || companiesQuery.error || detailQuery.error || movementsQuery.error || salesQuery.error || returnsQuery.error;
 
-  const prefetchProductsPage = (nextOffset: number) => {
+  const prefetchProductsPage = useCallback((nextOffset: number) => {
     if (nextOffset < 0 || nextOffset >= totalCount) return;
     const nextFilters = { ...productFilters, offset: nextOffset };
     void queryClient.prefetchQuery({
@@ -490,7 +498,16 @@ export default function Productos() {
       }),
       staleTime: 30_000,
     });
-  };
+  }, [listRequest, productFilters, queryClient, totalCount]);
+
+  const handleCatalogPageChange = useCallback((nextPage: number) => {
+    setSelectedId(null);
+    setOffset(nextPage * PAGE_SIZE);
+  }, []);
+
+  const handleCatalogPrefetch = useCallback((nextPage: number) => {
+    prefetchProductsPage(nextPage * PAGE_SIZE);
+  }, [prefetchProductsPage]);
 
   const reloadAll = async () => {
     await Promise.all([
@@ -610,7 +627,6 @@ export default function Productos() {
       const target = direction === 'next' ? pageProducts[0] : pageProducts.at(-1);
       if (!target) return;
       setOffset(nextOffset);
-      setExpandedRows({});
       setSelectedId(target.id);
     } catch (caught: any) {
       setError(caught?.message || 'No se pudo cargar el producto siguiente.');
@@ -633,17 +649,22 @@ export default function Productos() {
     });
     openModal('publish_visual');
   };
+  const openPublishVisualRef = useRef(openPublishVisual);
+  openPublishVisualRef.current = openPublishVisual;
 
   const togglePublication = useCallback((listing: Listing) => {
     if (isActivelyPublished(listing)) {
       setUnpublishListing(listing);
       setUnpublishConfirmation('');
-      openModal('unpublish_visual');
+      setActionError('');
+      setActionMessage('');
+      setModal('unpublish_visual');
       return;
     }
-    const product = products.find((candidate) => candidate.id === listing.productId);
-    if (product) openPublishVisual(product, listing);
-  }, [products]);
+    const product = productsByIdRef.current.get(listing.productId)
+      || (selectedProductRef.current?.id === listing.productId ? selectedProductRef.current : null);
+    if (product) openPublishVisualRef.current(product, listing);
+  }, []);
 
   const simulatePublish = (event: FormEvent) => {
     event.preventDefault();
@@ -651,115 +672,6 @@ export default function Productos() {
     const seller = companies.find((company) => String(company.id) === publishVisual.companyId);
     setActionMessage(`Publicación preparada para ${seller ? companyName(seller) : 'el seller'}.`);
   };
-
-  const columns = useMemo<ColumnDef<Product>[]>(() => [
-    {
-      id: 'product',
-      header: 'Producto',
-      cell: ({ row }) => {
-        const product = row.original;
-        return <div className="grid min-w-0 grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
-          <button
-            type="button"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              setExpandedRows((current) => {
-                const next = typeof current === 'object' ? { ...current } : {};
-                if (next[row.id]) delete next[row.id];
-                else next[row.id] = true;
-                return next;
-              });
-            }}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={`${row.getIsExpanded() ? 'Contraer' : 'Expandir'} ${product.name}`}
-            aria-expanded={row.getIsExpanded()}
-          ><ChevronRight className={cn('h-4 w-4 transition-transform', row.getIsExpanded() && 'rotate-90')} /></button>
-          {product.imageUrl
-            ? <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
-            : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
-          <span className="min-w-0 flex-1">
-            <button
-              type="button"
-              onClick={() => openProduct(product.id)}
-              className="block w-full text-left hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
-            </button>
-            <button
-              type="button"
-              title="Copiar SKU interno"
-              aria-label={`Copiar SKU ${product.mainSku}`}
-              onClick={async (event) => {
-                event.stopPropagation();
-                await navigator.clipboard.writeText(product.mainSku);
-                setCopiedSku(product.mainSku);
-                window.setTimeout(() => setCopiedSku((current) => current === product.mainSku ? null : current), 1400);
-              }}
-              className="mt-1 inline-flex items-center gap-1.5 font-mono text-xs font-semibold tracking-wide text-muted-foreground hover:text-foreground"
-            >{product.mainSku}{copiedSku === product.mainSku ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}</button>
-          </span>
-          <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
-            <span className="min-w-0">
-              <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
-              <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
-            </span>
-            <span className="min-w-0">
-              <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock interno</span>
-              <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(availableStock(product))} u</span>
-            </span>
-            <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
-              <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
-              <ProductStatusBadge product={product} compact />
-            </span>
-          </span>
-        </div>;
-      },
-    },
-    {
-      id: 'price',
-      header: 'Precio',
-      cell: ({ row }) => <span className="text-sm font-medium">{formatBasePrice(row.original)}</span>,
-    },
-    {
-      id: 'stock',
-      header: 'Stock',
-      cell: ({ row }) => {
-        const product = row.original;
-        const stock = availableStock(product);
-        return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Inventario interno · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
-          </p>
-        </div>;
-      },
-    },
-    {
-      id: 'status',
-      header: 'Estado del producto',
-      cell: ({ row }) => <ProductStatusBadge product={row.original} />,
-    },
-  ], [copiedSku, openProduct]);
-
-  const table = useReactTable({
-    data: products,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getRowCanExpand: () => true,
-    getRowId: (product) => String(product.id),
-    onExpandedChange: setExpandedRows,
-    manualPagination: true,
-    rowCount: totalCount,
-    state: {
-      expanded: expandedRows,
-      pagination: {
-        pageIndex: Math.floor(offset / PAGE_SIZE),
-        pageSize: PAGE_SIZE,
-      },
-    },
-  });
 
   const visibleError = error || (queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el catálogo.' : '');
   const visualListingExists = Boolean(selectedProduct?.listings?.some((listing) => (
@@ -807,49 +719,6 @@ export default function Productos() {
     setCompanyIds([]);
     resetListView();
   };
-
-  const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
-    {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
-      <div className="min-w-0" aria-busy={productsQuery.isFetching}>
-        <Table className="w-full table-fixed">
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="hover:bg-transparent">
-              {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                'min-w-0',
-                header.column.id === 'product' && 'w-[48%]',
-                header.column.id === 'price' && 'hidden sm:table-cell sm:w-[14%]',
-                header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[18%]',
-                header.column.id === 'status' && 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
-              )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
-            </TableRow>)}
-          </TableHeader>
-          <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
-            <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
-              {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn('min-w-0', cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell')}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
-            </TableRow>
-            {row.getIsExpanded() && <ExpandedProductPublications
-              productId={row.original.id}
-              productName={row.original.name}
-              onOpenDetail={openProduct}
-              onTogglePublication={togglePublication}
-            />}
-          </Fragment>)}</TableBody>
-        </Table>
-      </div>
-    )}
-    {totalCount > 0 ? <DataTablePagination
-      pageIndex={Math.floor(offset / PAGE_SIZE)}
-      pageSize={PAGE_SIZE}
-      totalCount={totalCount}
-      fetching={productsQuery.isFetching}
-      onPageChange={(nextPage) => {
-        setSelectedId(null);
-        setExpandedRows({});
-        setOffset(nextPage * PAGE_SIZE);
-      }}
-      onPrefetch={(nextPage) => prefetchProductsPage(nextPage * PAGE_SIZE)}
-    /> : null}
-  </TablePanel>;
 
   return (
     <div className="space-y-4">
@@ -909,7 +778,19 @@ export default function Productos() {
 
       {visibleError && <Notice tone="error">{visibleError}</Notice>}
 
-      {renderCatalogTable()}
+      <CatalogTable
+        key={tableResetKey}
+        products={products}
+        totalCount={totalCount}
+        loading={loading}
+        fetching={productsQuery.isFetching}
+        pageIndex={Math.floor(offset / PAGE_SIZE)}
+        pageSize={PAGE_SIZE}
+        onPageChange={handleCatalogPageChange}
+        onPrefetch={handleCatalogPrefetch}
+        onOpenProduct={openProduct}
+        onTogglePublication={togglePublication}
+      />
 
       <ProductDrawer
         open={selectedId != null}
@@ -1028,6 +909,229 @@ export default function Productos() {
     </div>
   );
 }
+
+function CopyableSku({
+  sku,
+  title = 'Copiar SKU interno',
+  copiedTitle,
+  className = 'mt-1 inline-flex items-center gap-1.5 font-mono text-xs font-semibold tracking-wide text-muted-foreground hover:text-foreground',
+}: {
+  sku: string;
+  title?: string;
+  copiedTitle?: string;
+  className?: string;
+}) {
+  const [copiedSku, setCopiedSku] = useState<string | null>(null);
+  const copied = copiedSku === sku;
+  return (
+    <button
+      type="button"
+      title={copied ? copiedTitle || title : title}
+      aria-label={`Copiar SKU ${sku}`}
+      onClick={async (event) => {
+        event.stopPropagation();
+        await navigator.clipboard.writeText(sku);
+        setCopiedSku(sku);
+        window.setTimeout(() => setCopiedSku((current) => current === sku ? null : current), 1400);
+      }}
+      className={className}
+    >
+      {sku}
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
+const CatalogProductIdentity = memo(function CatalogProductIdentity({
+  product,
+  expanded,
+  onToggleExpand,
+  onOpenProduct,
+}: {
+  product: Product;
+  expanded: boolean;
+  onToggleExpand: (productId: number) => void;
+  onOpenProduct: (productId: number) => void;
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleExpand(product.id);
+        }}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`${expanded ? 'Contraer' : 'Expandir'} ${product.name}`}
+        aria-expanded={expanded}
+      >
+        <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
+      </button>
+      {product.imageUrl
+        ? <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+        : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
+      <span className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => onOpenProduct(product.id)}
+          className="block w-full text-left hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
+        </button>
+        <CopyableSku sku={product.mainSku} />
+      </span>
+      <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
+        <span className="min-w-0">
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
+          <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock interno</span>
+          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(availableStock(product))} u</span>
+        </span>
+        <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
+          <ProductStatusBadge product={product} compact />
+        </span>
+      </span>
+    </div>
+  );
+});
+
+const CatalogTable = memo(function CatalogTable({
+  products,
+  totalCount,
+  loading,
+  fetching,
+  pageIndex,
+  pageSize,
+  onPageChange,
+  onPrefetch,
+  onOpenProduct,
+  onTogglePublication,
+}: {
+  products: Product[];
+  totalCount: number;
+  loading: boolean;
+  fetching: boolean;
+  pageIndex: number;
+  pageSize: number;
+  onPageChange: (nextPage: number) => void;
+  onPrefetch: (nextPage: number) => void;
+  onOpenProduct: (productId: number) => void;
+  onTogglePublication: (listing: Listing) => void;
+}) {
+  const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
+  const toggleExpand = useCallback((productId: number) => {
+    const rowId = String(productId);
+    setExpandedRows((current) => {
+      const next = typeof current === 'object' ? { ...current } : {};
+      if (next[rowId]) delete next[rowId];
+      else next[rowId] = true;
+      return next;
+    });
+  }, []);
+
+  const columns = useMemo<ColumnDef<Product>[]>(() => [
+    {
+      id: 'product',
+      header: 'Producto',
+      cell: ({ row }) => (
+        <CatalogProductIdentity
+          product={row.original}
+          expanded={row.getIsExpanded()}
+          onToggleExpand={toggleExpand}
+          onOpenProduct={onOpenProduct}
+        />
+      ),
+    },
+    {
+      id: 'price',
+      header: 'Precio',
+      cell: ({ row }) => <span className="text-sm font-medium">{formatBasePrice(row.original)}</span>,
+    },
+    {
+      id: 'stock',
+      header: 'Stock',
+      cell: ({ row }) => {
+        const product = row.original;
+        const stock = availableStock(product);
+        return <div>
+          <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Inventario interno · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
+          </p>
+        </div>;
+      },
+    },
+    {
+      id: 'status',
+      header: 'Estado del producto',
+      cell: ({ row }) => <ProductStatusBadge product={row.original} />,
+    },
+  ], [onOpenProduct, toggleExpand]);
+
+  const table = useReactTable({
+    data: products,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    getRowCanExpand: () => true,
+    getRowId: (product) => String(product.id),
+    onExpandedChange: setExpandedRows,
+    manualPagination: true,
+    rowCount: totalCount,
+    state: {
+      expanded: expandedRows,
+      pagination: {
+        pageIndex,
+        pageSize,
+      },
+    },
+  });
+
+  return (
+    <TablePanel aria-label="Catálogo de productos">
+      {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
+        <div className="min-w-0" aria-busy={fetching}>
+          <Table className="table-fixed">
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
+                {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
+                  header.column.id === 'product' && 'w-full sm:w-[52%]',
+                  header.column.id === 'price' && 'hidden sm:table-cell sm:w-[15%]',
+                  header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[19%]',
+                  header.column.id === 'status' && 'hidden sm:table-cell sm:w-[14%]',
+                )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
+              </TableRow>)}
+            </TableHeader>
+            <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
+              <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
+                {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell'}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+              </TableRow>
+              {row.getIsExpanded() && <ExpandedProductPublications
+                productId={row.original.id}
+                productName={row.original.name}
+                listings={row.original.listings}
+                onOpenDetail={onOpenProduct}
+                onTogglePublication={onTogglePublication}
+              />}
+            </Fragment>)}</TableBody>
+          </Table>
+        </div>
+      )}
+      {totalCount > 0 ? <DataTablePagination
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        totalCount={totalCount}
+        fetching={fetching}
+        onPageChange={onPageChange}
+        onPrefetch={onPrefetch}
+      /> : null}
+    </TablePanel>
+  );
+});
 
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
@@ -1281,34 +1385,37 @@ function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
 const ExpandedProductPublications = memo(function ExpandedProductPublications({
   productId,
   productName,
+  listings: providedListings,
   onOpenDetail,
   onTogglePublication,
 }: {
   productId: number;
   productName: string;
+  listings?: Listing[];
   onOpenDetail: (productId: number) => void;
   onTogglePublication: (listing: Listing) => void;
 }) {
-  const [copiedSku, setCopiedSku] = useState<string | null>(null);
+  const shouldFetch = providedListings === undefined;
   const detailQuery = useQuery({
     queryKey: ['catalog-product-detail', productId],
     queryFn: () => api.getCatalogProduct(productId),
+    enabled: shouldFetch,
     staleTime: 30_000,
     retry: 1,
   });
-  const detailListings = (detailQuery.data as Product | undefined)?.listings;
+  const sourceListings = providedListings ?? ((detailQuery.data as Product | undefined)?.listings || []);
   const listings = useMemo(
-    () => ((detailListings || []) as Listing[]).filter((listing) => listing.status === 'active'),
-    [detailListings],
+    () => sourceListings.filter((listing) => listing.status === 'active'),
+    [sourceListings],
   );
 
-  if (detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
+  if (shouldFetch && detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
       <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
     </TableCell>
   </TableRow>;
 
-  if (detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60">
+  if (shouldFetch && detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60">
     <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
   </TableRow>;
 
@@ -1338,17 +1445,12 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
             <span className="line-clamp-2 font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
             <ChannelBadge value={listing.channelCode} listing={listing} />
             <span className="text-border" aria-hidden="true">·</span>
-            <button
-              type="button"
-              title={copiedSku === listing.sellerSku ? 'SKU copiado' : 'Copiar SKU del seller'}
-              aria-label={`Copiar SKU ${listing.sellerSku}`}
-              onClick={async () => {
-                await navigator.clipboard.writeText(listing.sellerSku);
-                setCopiedSku(listing.sellerSku);
-                window.setTimeout(() => setCopiedSku((current) => current === listing.sellerSku ? null : current), 1400);
-              }}
+            <CopyableSku
+              sku={listing.sellerSku}
+              title="Copiar SKU del seller"
+              copiedTitle="SKU copiado"
               className="relative inline-flex items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >{listing.sellerSku}{copiedSku === listing.sellerSku ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}</button>
+            />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:hidden">
             <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>

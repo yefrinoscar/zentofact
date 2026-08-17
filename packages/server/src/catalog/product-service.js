@@ -4,6 +4,7 @@ import {
   inTransaction,
   jsonObject,
   loadCore,
+  mapCompactListing,
   mapListing,
   mapProduct,
   positiveInt,
@@ -439,8 +440,35 @@ export async function listProducts(filters = {}, db) {
     target.query(catalogSql, pageValues),
     summarizeProducts(filters, target),
   ]);
+  const products = result.rows.map(mapProduct);
+  if (products.length) {
+    try {
+      const listingsResult = await target.query(
+        `select l.id, l.product_id, l.channel_code, l.company_id,
+           coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+           l.seller_sku, l.shop_sku, l.title, l.status, l.marketplace_quantity,
+           l.metadata
+         from product_listings l
+         join companies c on c.id = l.company_id
+         where l.product_id = any($1::int[]) and l.status = 'active'
+         order by l.channel_code, company_name, l.id`,
+        [products.map((product) => product.id)],
+      );
+      const listingsByProductId = new Map(products.map((product) => [product.id, []]));
+      for (const row of listingsResult.rows) {
+        const listing = mapCompactListing(row);
+        if (!listing) continue;
+        listingsByProductId.get(listing.productId)?.push(listing);
+      }
+      for (const product of products) {
+        product.listings = listingsByProductId.get(product.id) || [];
+      }
+    } catch {
+      // Leave listings unset so expand can fall back to GET /products/:id.
+    }
+  }
   return {
-    products: result.rows.map(mapProduct),
+    products,
     totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,
     limit,
     offset,
