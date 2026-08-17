@@ -28,18 +28,18 @@ import { falabellaProductUrl } from '../lib/marketplace-url';
 import {
   CatalogFilters,
   CATALOG_SORT_REQUESTS,
-  catalogSortLabel,
   type CatalogSort,
   type CatalogStatusFilter,
   type InventoryStatusFilter,
   type PublicationStatusFilter,
   type SellerCoverageFilter,
 } from '../components/CatalogFilters';
+import { CatalogInventoryKpis, type CatalogInventorySummary } from '../components/CatalogInventoryKpis';
 import { DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Skeleton } from '../components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelHeader, TableRow } from '../components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
@@ -408,6 +408,21 @@ export default function Productos() {
     staleTime: 30_000,
     retry: 1,
   });
+  const summaryFilters = {
+    search: submittedSearch,
+    status,
+    inventoryStatus,
+    publicationStatus,
+    sellerCoverage,
+    companyIds: companyIds.length ? companyIds : undefined,
+  };
+  const summaryQuery = useQuery({
+    queryKey: ['catalog-summary', summaryFilters],
+    queryFn: () => api.getCatalogSummary(summaryFilters),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+    retry: 1,
+  });
   const companiesQuery = useQuery({
     queryKey: ['catalog-companies'],
     queryFn: () => api.listCompanies(),
@@ -449,6 +464,7 @@ export default function Productos() {
   const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
   const products = (productsQuery.data?.products || []) as Product[];
   const totalCount = Number(productsQuery.data?.totalCount || 0);
+  const inventorySummary = (summaryQuery.data || productsQuery.data?.summary || null) as CatalogInventorySummary | null;
   const detail = detailQuery.data as Product | undefined;
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
@@ -479,6 +495,7 @@ export default function Productos() {
   const reloadAll = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['catalog-products'] }),
+      queryClient.invalidateQueries({ queryKey: ['catalog-summary'] }),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-detail', selectedId] }) : Promise.resolve(),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-movements', selectedId] }) : Promise.resolve(),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-sales', selectedId] }) : Promise.resolve(),
@@ -782,11 +799,6 @@ export default function Productos() {
     if (next.length && sellerCoverage === 'none') setSellerCoverage('all');
   };
 
-  const applySort = (next: CatalogSort) => {
-    resetListView();
-    setSort(next);
-  };
-
   const clearFilters = () => {
     setStatus('all');
     setInventoryStatus('all');
@@ -797,36 +809,23 @@ export default function Productos() {
   };
 
   const renderCatalogTable = () => <TablePanel aria-label="Catálogo de productos">
-    <TablePanelHeader className="flex min-h-16 items-center justify-between gap-3 py-3">
-      <div className="min-w-0">
-        <p className="text-sm font-semibold" aria-live="polite">
-          <span className="tabular-nums">{loading && !productsQuery.data ? '—' : formatNumber(totalCount, 0)}</span>
-          {' '}{totalCount === 1 ? 'producto' : 'productos'}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">Orden: {catalogSortLabel(sort)}</p>
-      </div>
-      {productsQuery.isFetching && !loading && (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Actualizando
-        </span>
-      )}
-    </TablePanelHeader>
     {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
       <div className="min-w-0" aria-busy={productsQuery.isFetching}>
-        <Table className="table-fixed">
+        <Table className="w-full table-fixed">
           <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
+            {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="hover:bg-transparent">
               {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                header.column.id === 'product' && 'w-full sm:w-[52%]',
-                header.column.id === 'price' && 'hidden sm:table-cell sm:w-[15%]',
-                header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[19%]',
-                header.column.id === 'status' && 'hidden sm:table-cell sm:w-[14%]',
+                'min-w-0',
+                header.column.id === 'product' && 'w-[48%]',
+                header.column.id === 'price' && 'hidden sm:table-cell sm:w-[14%]',
+                header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[18%]',
+                header.column.id === 'status' && 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
               )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
             </TableRow>)}
           </TableHeader>
           <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
             <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
-              {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell'}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+              {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn('min-w-0', cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell')}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
             </TableRow>
             {row.getIsExpanded() && <ExpandedProductPublications
               productId={row.original.id}
@@ -854,6 +853,11 @@ export default function Productos() {
 
   return (
     <div className="space-y-4">
+      <CatalogInventoryKpis
+        summary={inventorySummary}
+        productCount={summaryQuery.data?.scopedTotal ?? (productsQuery.data ? totalCount : null)}
+        loading={summaryQuery.isPending}
+      />
       <CatalogFilters
         searchControl={<div className="relative min-w-0">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -895,13 +899,11 @@ export default function Productos() {
         sellerCoverage={sellerCoverage}
         companyIds={companyIds}
         companies={companyOptions}
-        sort={sort}
         onStatusChange={applyStatus}
         onInventoryStatusChange={applyInventoryStatus}
         onPublicationStatusChange={applyPublicationStatus}
         onSellerCoverageChange={applyCoverage}
         onCompanyIdsChange={applyCompanyIds}
-        onSortChange={applySort}
         onClearFilters={clearFilters}
       />
 
@@ -1383,10 +1385,10 @@ function CatalogTableSkeleton() {
     <Table className="table-fixed">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-full sm:w-[52%]"><Skeleton className="h-4 w-20" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[15%]"><Skeleton className="h-4 w-14" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[19%]"><Skeleton className="h-4 w-14" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[14%]"><Skeleton className="h-4 w-24" /></TableHead>
+          <TableHead className="w-[48%]"><Skeleton className="h-4 w-20" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[14%]"><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[18%]"><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className="hidden sm:table-cell sm:w-[20%]"><Skeleton className="h-4 w-24" /></TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
