@@ -561,14 +561,23 @@ app.get('/insumos', async (c) => {
     }));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.get('/insumos/movements', async (c) => {
+  try {
+    return ok(c, await insumos.listInsumoMovements({
+      insumoId: c.req.query('insumoId'),
+      limit: c.req.query('limit'),
+      offset: c.req.query('offset'),
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/insumos', async (c) => {
-  try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')?.id), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/insumos/:id', async (c) => {
-  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/insumos/:id/adjust', async (c) => {
-  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──

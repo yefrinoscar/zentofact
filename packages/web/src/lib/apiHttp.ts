@@ -220,6 +220,7 @@ const apiHttp = {
     iconKey?: string;
     quantityOnHand?: number;
     reorderPoint?: number | null;
+    pin: string;
   }) => req('/insumos', { method: 'POST', body: JSON.stringify(data) }),
   updateInsumo: (id: number, data: {
     name?: string;
@@ -227,12 +228,19 @@ const apiHttp = {
     iconKey?: string;
     reorderPoint?: number | null;
     status?: string;
+    pin: string;
   }) => req(`/insumos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adjustInsumo: (id: number, data: {
     delta?: number;
     absoluteTarget?: number;
     note?: string;
+    pin: string;
   }) => req(`/insumos/${id}/adjust`, { method: 'POST', body: JSON.stringify(data) }),
+  listInsumoMovements: (filter: {
+    insumoId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/insumos/movements${qs(filter)}`),
 
   // Empresas
   listCompanies: () => req('/companies'),

@@ -4,8 +4,10 @@ import {
   adjustInsumo,
   createInsumo,
   DEFAULT_INSUMOS,
+  listInsumoMovements,
   listInsumos,
   mapInsumo,
+  quantityCapFor,
   slugifyInsumoName,
   updateInsumo,
 } from './insumos.js';
@@ -28,11 +30,15 @@ function seedRow(overrides = {}) {
   };
 }
 
+const CHANGE_PIN = '2324';
+
 class InsumosDb {
   constructor(rows = []) {
     this.rows = rows.map((row) => ({ ...row }));
     this.movements = [];
+    this.users = [];
     this.nextId = this.rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
+    this.nextMovementId = 1;
   }
 
   async query(sql, params = []) {
@@ -140,13 +146,45 @@ class InsumosDb {
 
     if (compact.startsWith('insert into insumo_movements')) {
       this.movements.push({
+        id: this.nextMovementId++,
         insumo_id: params[0],
         quantity_delta: params[1],
         quantity_after: params[2],
         note: params[3],
         actor_user_id: params[4],
+        actor_name: params[5],
+        created_at: '2026-08-19T12:00:00.000Z',
       });
       return { rows: [] };
+    }
+
+    if (compact.includes('from insumo_movements')) {
+      const insumoId = params[0] == null ? null : Number(params[0]);
+      const limit = Number(params[1]);
+      const offset = Number(params[2]);
+      let matches = this.movements.map((movement) => {
+        const insumo = this.rows.find((row) => Number(row.id) === Number(movement.insumo_id));
+        return {
+          ...movement,
+          insumo_name: insumo?.name,
+          insumo_code: insumo?.code,
+        };
+      });
+      if (insumoId != null) {
+        matches = matches.filter((item) => Number(item.insumo_id) === insumoId);
+      }
+      matches.sort((left, right) => Number(right.id) - Number(left.id));
+      return {
+        rows: matches.slice(offset, offset + limit).map((item) => ({
+          ...item,
+          total_count: matches.length,
+        })),
+      };
+    }
+
+    if (compact.includes('from "user"')) {
+      const user = this.users.find((item) => item.id === params[0]);
+      return { rows: user ? [{ name: user.name }] : [] };
     }
 
     throw new Error(`Query no simulada: ${compact}`);
@@ -197,7 +235,7 @@ test('filtra por búsqueda y por reposición', async () => {
 
 test('fijar saldo actualiza la cantidad y deja movimiento', async () => {
   const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
-  const result = await adjustInsumo(1, { absoluteTarget: 12, note: 'Conteo' }, 'user-1', db);
+  const result = await adjustInsumo(1, { absoluteTarget: 12, note: 'Conteo', pin: CHANGE_PIN }, 'user-1', db);
   assert.equal(result.applied, true);
   assert.equal(result.insumo.quantityOnHand, 12);
   assert.equal(db.movements.length, 1);
@@ -207,7 +245,7 @@ test('fijar saldo actualiza la cantidad y deja movimiento', async () => {
 
 test('sumar o restar cambia el saldo actual', async () => {
   const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
-  const result = await adjustInsumo(1, { delta: -1 }, 'user-1', db);
+  const result = await adjustInsumo(1, { delta: -1, pin: CHANGE_PIN }, 'user-1', db);
   assert.equal(result.insumo.quantityOnHand, 3);
   assert.equal(db.movements[0].quantity_delta, -1);
 });
@@ -215,7 +253,7 @@ test('sumar o restar cambia el saldo actual', async () => {
 test('no deja la cantidad en negativo', async () => {
   const db = new InsumosDb([seedRow({ quantity_on_hand: 2 })]);
   await assert.rejects(
-    () => adjustInsumo(1, { delta: -5 }, 'user-1', db),
+    () => adjustInsumo(1, { delta: -5, pin: CHANGE_PIN }, 'user-1', db),
     /no puede quedar negativa/,
   );
   assert.equal(db.rows[0].quantity_on_hand, 2);
@@ -224,7 +262,7 @@ test('no deja la cantidad en negativo', async () => {
 
 test('un ajuste sin cambio no escribe movimiento', async () => {
   const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
-  const result = await adjustInsumo(1, { absoluteTarget: 4 }, 'user-1', db);
+  const result = await adjustInsumo(1, { absoluteTarget: 4, pin: CHANGE_PIN }, 'user-1', db);
   assert.equal(result.applied, false);
   assert.equal(result.noChange, true);
   assert.equal(db.movements.length, 0);
@@ -238,6 +276,7 @@ test('crea un insumo nuevo con código a partir del nombre', async () => {
     iconKey: 'generic',
     quantityOnHand: 6,
     reorderPoint: 2,
+    pin: CHANGE_PIN,
   }, 'user-1', db);
   assert.equal(created.code, 'plastico-burbuja');
   assert.equal(created.quantityOnHand, 6);
@@ -247,14 +286,14 @@ test('crea un insumo nuevo con código a partir del nombre', async () => {
 test('rechaza un insumo duplicado', async () => {
   const db = new InsumosDb([seedRow()]);
   await assert.rejects(
-    () => createInsumo({ name: 'fill grande', unit: 'rollos' }, 'user-1', db),
+    () => createInsumo({ name: 'fill grande', unit: 'rollos', pin: CHANGE_PIN }, 'user-1', db),
     /Ya existe un insumo/,
   );
 });
 
 test('actualiza unidad y punto de reposición', async () => {
   const db = new InsumosDb([seedRow()]);
-  const updated = await updateInsumo(1, { unit: 'kg', reorderPoint: 5 }, 'user-1', db);
+  const updated = await updateInsumo(1, { unit: 'kg', reorderPoint: 5, pin: CHANGE_PIN }, 'user-1', db);
   assert.equal(updated.unit, 'kg');
   assert.equal(updated.reorderPoint, 5);
   assert.equal(updated.lowStock, true);
@@ -264,4 +303,81 @@ test('mapInsumo calcula reposición con el saldo actual', () => {
   assert.equal(mapInsumo(seedRow({ quantity_on_hand: 2, reorder_point: 2 })).lowStock, true);
   assert.equal(mapInsumo(seedRow({ quantity_on_hand: 3, reorder_point: 2 })).lowStock, false);
   assert.equal(mapInsumo(seedRow({ quantity_on_hand: 0, reorder_point: null })).lowStock, false);
+});
+
+test('el tope es 36 para cinta y 16 para cada fill', () => {
+  assert.equal(quantityCapFor({ code: 'cinta-scotch', name: 'Cinta scotch', icon_key: 'cinta-scotch' }), 36);
+  assert.equal(quantityCapFor({ code: 'cinta-fill', name: 'Fill grande', icon_key: 'cinta-fill' }), 16);
+  assert.equal(quantityCapFor({ code: 'fill-pequeno', name: 'Fill pequeño', icon_key: 'fill-pequeno' }), 16);
+  assert.equal(mapInsumo(seedRow()).quantityCap, 16);
+  assert.equal(mapInsumo(seedRow({
+    code: 'cinta-scotch', name: 'Cinta scotch', icon_key: 'cinta-scotch',
+  })).quantityCap, 36);
+});
+
+test('un ajuste exige el PIN 2324', async () => {
+  const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
+  await assert.rejects(() => adjustInsumo(1, { delta: 1 }, 'user-1', db), /PIN incorrecto/);
+  await assert.rejects(
+    () => adjustInsumo(1, { delta: 1, pin: '0000' }, 'user-1', db),
+    /PIN incorrecto/,
+  );
+  assert.equal(db.rows[0].quantity_on_hand, 4);
+  assert.equal(db.movements.length, 0);
+});
+
+test('crear o actualizar un insumo también exige el PIN', async () => {
+  const db = new InsumosDb([seedRow()]);
+  await assert.rejects(
+    () => createInsumo({ name: 'Plástico burbuja', unit: 'rollos' }, 'user-1', db),
+    /PIN incorrecto/,
+  );
+  await assert.rejects(
+    () => updateInsumo(1, { unit: 'kg' }, 'user-1', db),
+    /PIN incorrecto/,
+  );
+});
+
+test('la cinta no puede pasar de 36', async () => {
+  const db = new InsumosDb([seedRow({
+    code: 'cinta-scotch', name: 'Cinta scotch', icon_key: 'cinta-scotch', quantity_on_hand: 36,
+  })]);
+  await assert.rejects(
+    () => adjustInsumo(1, { delta: 1, pin: CHANGE_PIN }, 'user-1', db),
+    /Cinta scotch no puede pasar de 36/,
+  );
+  const atCap = await adjustInsumo(1, { absoluteTarget: 36, pin: CHANGE_PIN }, 'user-1', db);
+  assert.equal(atCap.noChange, true);
+});
+
+test('cada fill no puede pasar de 16', async () => {
+  const grande = new InsumosDb([seedRow({ quantity_on_hand: 16 })]);
+  await assert.rejects(
+    () => adjustInsumo(1, { delta: 1, pin: CHANGE_PIN }, 'user-1', grande),
+    /Fill grande no puede pasar de 16/,
+  );
+  const pequeno = new InsumosDb([seedRow({
+    id: 1, code: 'fill-pequeno', name: 'Fill pequeño', icon_key: 'fill-pequeno', quantity_on_hand: 15,
+  })]);
+  await assert.rejects(
+    () => adjustInsumo(1, { absoluteTarget: 17, pin: CHANGE_PIN }, 'user-1', pequeno),
+    /Fill pequeño no puede pasar de 16/,
+  );
+  const ok = await adjustInsumo(1, { absoluteTarget: 16, pin: CHANGE_PIN }, 'user-1', pequeno);
+  assert.equal(ok.insumo.quantityOnHand, 16);
+});
+
+test('el movimiento guarda quién lo hizo y a qué hora', async () => {
+  const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
+  await adjustInsumo(1, { delta: 2, pin: CHANGE_PIN }, { id: 'user-1', name: 'Ana Rojas' }, db);
+  assert.equal(db.movements[0].actor_user_id, 'user-1');
+  assert.equal(db.movements[0].actor_name, 'Ana Rojas');
+  assert.equal(db.movements[0].created_at, '2026-08-19T12:00:00.000Z');
+  const listed = await listInsumoMovements({}, db);
+  assert.equal(listed.totalCount, 1);
+  assert.equal(listed.items[0].insumoName, 'Fill grande');
+  assert.equal(listed.items[0].quantityDelta, 2);
+  assert.equal(listed.items[0].quantityAfter, 6);
+  assert.equal(listed.items[0].actorName, 'Ana Rojas');
+  assert.equal(listed.items[0].createdAt, '2026-08-19T12:00:00.000Z');
 });
