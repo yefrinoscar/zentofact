@@ -707,7 +707,7 @@ async function ingestOrderInTransaction(input, db) {
            metadata=order_items.metadata || excluded.metadata,
            raw_data=excluded.raw_data,
            updated_at=now()
-         returning id, external_item_id, sku, provider_sku, quantity,
+         returning id, external_item_id, sku, provider_sku, quantity, provider_status,
            product_id, listing_id, main_sku, stock_state,
            stock_applied_quantity, stock_revision`,
         [

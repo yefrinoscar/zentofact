@@ -9,6 +9,35 @@ const ELIGIBLE_STATUSES = new Set(['confirmed', 'completed']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
 
+function orderRef(persisted) {
+  return persisted?.external_order_number || persisted?.external_order_id || persisted?.id;
+}
+
+function restockReason(kind, persisted) {
+  const pedido = orderRef(persisted);
+  if (kind === 'return' || kind === 'returned' || kind === 'fulfillment_returned') {
+    return `Devolución del pedido ${pedido}`;
+  }
+  if (kind === 'cancelled' || kind === 'canceled' || kind === 'order_cancelled') {
+    return `Cancelación del pedido ${pedido}`;
+  }
+  if (kind === 'failed' || kind === 'order_failed') {
+    return `Fallo del pedido ${pedido}`;
+  }
+  if (kind === 'items_complete_delete') return `Línea eliminada del pedido ${pedido}`;
+  if (kind === 'invalid_quantity') return `Cantidad inválida del pedido ${pedido}`;
+  return `Reintegro de stock del pedido ${pedido}`;
+}
+
+function itemTerminalKind(status) {
+  const value = String(status || '').toLowerCase();
+  if (!value) return null;
+  if (value.includes('cancel')) return 'cancelled';
+  if (value.includes('failed')) return 'failed';
+  if (value.includes('returned') || value.includes('return_shipped')) return 'returned';
+  return null;
+}
+
 function number(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -95,6 +124,7 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     listingId: item.listing_id,
     source: context.source,
     actorUserId: context.actorUserId,
+    reason: context.reason,
     metadata: {
       externalItemId: item.external_item_id,
       from: already,
@@ -129,21 +159,23 @@ export async function stockPhase(input) {
     doomedItems = [],
   } = input;
   const enabled = input.enabled ?? inventoryConfig.enabled;
-  if (!enabled) return { enabled: false, applied: 0, skipped: 0, reversed: 0 };
   const source = String(input.source || 'system').toLowerCase();
   const actorUserId = input.actorUserId || null;
   const orderId = Number(persisted.id);
   const channelCode = account.channelCode || account.channel_code;
   const companyId = Number(persisted.company_id);
   const isMarketplace = MARKETPLACE_SOURCES.has(source);
-  const context = { orderId, source, actorUserId };
-  const stats = { enabled: true, applied: 0, skipped: 0, reversed: 0 };
+  const context = { orderId, source, actorUserId, persisted };
+  const stats = { enabled: Boolean(enabled), applied: 0, skipped: 0, reversed: 0 };
 
   await db.query('select id from orders where id=$1 for update', [orderId]);
 
   // A. Revertir las líneas ausentes mientras sus FKs todavía existen.
   for (const row of doomedItems) {
-    const result = await reverseItem(db, row, { ...context, reason: 'items_complete_delete' });
+    const result = await reverseItem(db, row, {
+      ...context,
+      reason: restockReason('items_complete_delete', persisted),
+    });
     if (result.applied) stats.reversed += 1;
   }
 
@@ -157,7 +189,10 @@ export async function stockPhase(input) {
       [orderId],
     );
     for (const row of result.rows) {
-      const reversed = await reverseItem(db, row, { ...context, reason: `order_${currentStatus}` });
+      const reversed = await reverseItem(db, row, {
+        ...context,
+        reason: restockReason(currentStatus, persisted),
+      });
       if (reversed.applied) stats.reversed += 1;
     }
     return stats;
@@ -176,7 +211,10 @@ export async function stockPhase(input) {
       [orderId],
     );
     for (const row of result.rows) {
-      const returned = await reverseItem(db, row, { ...context, reason: 'fulfillment_returned' }, 'return');
+      const returned = await reverseItem(db, row, {
+        ...context,
+        reason: restockReason('return', persisted),
+      }, 'return');
       if (returned.applied) stats.reversed += 1;
     }
     return stats;
@@ -189,11 +227,25 @@ export async function stockPhase(input) {
     // Las líneas históricas recuperadas bajo demanda para analítica de ventas no
     // deben convertirse después en movimientos de stock retroactivos.
     if (item.stock_state === 'reversed' || item.stock_state === 'skipped_policy') continue;
+    const terminalKind = itemTerminalKind(item.provider_status);
+    if (terminalKind) {
+      const movementType = terminalKind === 'returned' ? 'return' : 'sale_reversal';
+      const reversed = await reverseItem(db, item, {
+        ...context,
+        reason: restockReason(terminalKind, persisted),
+      }, movementType);
+      if (reversed.applied) stats.reversed += 1;
+      continue;
+    }
+    if (!enabled) continue;
     const quantity = Number(item.quantity);
     const already = number(item.stock_applied_quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       if (already > 0 || item.stock_state === 'applied') {
-        const reversed = await reverseItem(db, item, { ...context, reason: 'invalid_quantity' });
+        const reversed = await reverseItem(db, item, {
+          ...context,
+          reason: restockReason('invalid_quantity', persisted),
+        });
         if (reversed.applied) stats.reversed += 1;
       } else {
         console.warn(JSON.stringify({ event: 'catalog.stock.invalid_quantity', orderId, itemId: item.id, quantity: item.quantity }));
