@@ -24,6 +24,8 @@ const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
+const insumos = await import('./insumos.js');
+await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const orderManagement = await import('./order-management.js');
@@ -112,6 +114,7 @@ const moduleGuards = [
   ['/facturas', 'facturas'],
   ['/workflow', 'falabella_sellers'],
   ['/auto-emit', 'auto_emision'],
+  ['/insumos', 'insumos'],
 ];
 for (const [prefix, perm] of moduleGuards) {
   const permissionGuard = requirePermission(perm);
@@ -529,6 +532,28 @@ app.delete('/users/:id', requirePermission('users'), async (c) => {
 });
 app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
   try { return ok(c, { permissions: PERMISSIONS, roles: ROLE_PRESETS }); } catch (e) { return fail(c, e); }
+});
+
+app.get('/insumos', async (c) => {
+  try {
+    return ok(c, await insumos.listInsumos({
+      search: c.req.query('search'),
+      stock: c.req.query('stock'),
+      sortBy: c.req.query('sortBy'),
+      sortDir: c.req.query('sortDir'),
+      limit: c.req.query('limit'),
+      offset: c.req.query('offset'),
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/insumos', async (c) => {
+  try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')?.id), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/insumos/:id', async (c) => {
+  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/insumos/:id/adjust', async (c) => {
+  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──

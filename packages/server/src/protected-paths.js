@@ -17,6 +17,7 @@ export const PROTECTED_PATHS = [
   '/auto-emit',
   '/users',
   '/me',
+  '/insumos',
 ];
 
 export function isProtectedPath(path) {
