@@ -41,6 +41,7 @@ const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
 const readyToShipOperation = await import('./falabella-ready-to-ship-operation.js');
+const { operationalErrorBody } = await import('./error-log.js');
 const {
   normalizeFalabellaManifestDocumentRequests,
   normalizeFalabellaManifestOrders,
@@ -179,10 +180,10 @@ app.use('/falabella', falabellaAccessGuard);
 app.use('/falabella/*', falabellaAccessGuard);
 
 const ok = (c, data, status = 200) => c.json(data, status);
-const fail = (c, e, status = 500) => {
-  console.error('[API ERROR]', c.req.method, c.req.path, '→', (e && e.stack) || e);
-  return c.json({ error: String((e && e.message) || e) }, status);
-};
+const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
+  operation: 'api',
+  context: { method: c.req.method, path: c.req.path, status },
+}), status);
 
 function publicFalabellaManifestJob(job) {
   if (!job) return null;
@@ -784,7 +785,12 @@ app.post('/falabella/:companyId/orders/:orderId/ready-to-ship', async (c) => {
       reconcile: core.falabellaCheckReadyToShipStatus,
       signal: c.req.raw.signal,
     });
-    if (outcome.kind !== 'success') return c.json({ error: outcome.error }, outcome.status);
+    if (outcome.kind !== 'success') {
+      return c.json(operationalErrorBody(outcome.error, {
+        operation: 'falabella.ready-to-ship',
+        context: { companyId, orderId, status: outcome.status },
+      }), outcome.status);
+    }
     dashboard.clearDashboardResponseCache();
     return ok(c, outcome.result);
   } catch (e) {
@@ -806,7 +812,10 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
     if (result?.error) {
       const providerStatus = Number(result.status || 0);
       const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : providerStatus >= 400 ? providerStatus : 400;
-      return c.json({ error: result.error }, status);
+      return c.json(operationalErrorBody(result.error, {
+        operation: 'falabella.shipping-label',
+        context: { companyId, orderId, status },
+      }), status);
     }
     c.header('Cache-Control', 'private, no-store');
     return ok(c, result);
