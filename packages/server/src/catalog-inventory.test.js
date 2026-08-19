@@ -364,17 +364,25 @@ test('cancelación y devolución revierten cantidades aplicadas una sola vez', a
   const applied = item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M', stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1 });
   cancelledDb.items.set(101, { ...applied });
   await stockPhase(phaseInput(cancelledDb, [], {
-    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
-    persisted: { id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled' },
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled',
+      external_order_number: '3248709095',
+    },
   }));
   assert.equal(cancelledDb.quantity, 10);
-  assert.equal(cancelledDb.movements.has('sale_reversal:order_item:101:rev:2'), true);
+  const cancelledMovement = cancelledDb.movements.get('sale_reversal:order_item:101:rev:2');
+  assert.equal(cancelledMovement.quantity_delta, 2);
+  assert.equal(cancelledMovement.reason, 'Cancelación del pedido 3248709095');
 
   const returnedDb = new InventoryDb(8);
   returnedDb.items.set(101, { ...applied });
-  const returnedOrder = { id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned' };
+  const returnedOrder = {
+    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
+    external_order_number: '3248709095',
+  };
   await stockPhase(phaseInput(returnedDb, [], {
-    existing: { order_status: 'completed', fulfillment_status: 'delivered' },
+    existing: { order_status: 'completed', fulfillment_status: 'ready_to_ship' },
     persisted: returnedOrder,
   }));
   await stockPhase(phaseInput(returnedDb, [], {
@@ -382,7 +390,64 @@ test('cancelación y devolución revierten cantidades aplicadas una sola vez', a
     persisted: returnedOrder,
   }));
   assert.equal(returnedDb.quantity, 10);
+  const returnedMovement = returnedDb.movements.get('return:order_item:101:rev:2');
   assert.deepEqual([...returnedDb.movements.keys()], ['return:order_item:101:rev:2']);
+  assert.equal(returnedMovement.quantity_delta, 2);
+  assert.equal(returnedMovement.reason, 'Devolución del pedido 3248709095');
+});
+
+test('una línea cancelada o devuelta reintegra stock aunque el pedido siga listo para enviar', async () => {
+  const cancelledDb = new InventoryDb(8);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+    provider_status: 'canceled',
+  });
+  cancelledDb.items.set(101, { ...applied });
+  await stockPhase(phaseInput(cancelledDb, [{ ...applied }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'ready_to_ship',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(cancelledDb.quantity, 10);
+  assert.equal(cancelledDb.items.get(101).stock_state, 'reversed');
+  assert.equal(cancelledDb.movements.get('sale_reversal:order_item:101:rev:2').reason, 'Cancelación del pedido 3248709095');
+
+  const returnedDb = new InventoryDb(8);
+  const returnedItem = { ...applied, provider_status: 'returned' };
+  returnedDb.items.set(101, returnedItem);
+  await stockPhase(phaseInput(returnedDb, [{ ...returnedItem }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'ready_to_ship',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(returnedDb.quantity, 10);
+  assert.equal(returnedDb.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3248709095');
+});
+
+test('una cancelación reintegra stock aplicado aunque el catálogo esté apagado', async () => {
+  const db = new InventoryDb(4);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 1, stock_revision: 1, quantity: 1,
+  });
+  db.items.set(101, { ...applied });
+  await stockPhase(phaseInput(db, [], {
+    enabled: false,
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(db.quantity, 5);
+  const movement = db.movements.get('sale_reversal:order_item:101:rev:2');
+  assert.equal(movement.quantity_delta, 1);
+  assert.equal(movement.reason, 'Cancelación del pedido 3248709095');
 });
 
 test('primer ingest cancelado no intenta resolver ni descontar stock', async () => {
