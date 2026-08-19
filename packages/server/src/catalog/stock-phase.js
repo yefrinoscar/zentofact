@@ -13,6 +13,35 @@ export function isStockEligibleFulfillment(status) {
   return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());
 }
 
+function orderRef(persisted) {
+  return persisted?.external_order_number || persisted?.external_order_id || persisted?.id;
+}
+
+function restockReason(kind, persisted) {
+  const pedido = orderRef(persisted);
+  if (kind === 'return' || kind === 'returned' || kind === 'fulfillment_returned') {
+    return `Devolución del pedido ${pedido}`;
+  }
+  if (kind === 'cancelled' || kind === 'canceled' || kind === 'order_cancelled') {
+    return `Cancelación del pedido ${pedido}`;
+  }
+  if (kind === 'failed' || kind === 'order_failed') {
+    return `Fallo del pedido ${pedido}`;
+  }
+  if (kind === 'items_complete_delete') return `Línea eliminada del pedido ${pedido}`;
+  if (kind === 'invalid_quantity') return `Cantidad inválida del pedido ${pedido}`;
+  return `Reintegro de stock del pedido ${pedido}`;
+}
+
+function itemTerminalKind(status) {
+  const value = String(status || '').toLowerCase();
+  if (!value) return null;
+  if (value.includes('cancel')) return 'cancelled';
+  if (value.includes('failed')) return 'failed';
+  if (value.includes('returned') || value.includes('return_shipped')) return 'returned';
+  return null;
+}
+
 function number(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -100,7 +129,7 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     productId: item.product_id,
     quantityDelta: already,
     movementType,
-    reason: movementReason(context.orderNumber),
+    reason: context.reason || movementReason(context.orderNumber),
     idempotencyKey: key,
     allowNegative: true,
     orderId: context.orderId,
@@ -159,6 +188,7 @@ export async function stockPhase(input) {
     orderNumber: orderNumberOf(persisted),
     source,
     actorUserId,
+    persisted,
   };
   const stats = { enabled: Boolean(saleEnabled), applied: 0, skipped: 0, reversed: 0, becameEligible };
 
@@ -166,7 +196,10 @@ export async function stockPhase(input) {
 
   // A. Revertir las líneas ausentes mientras sus FKs todavía existen.
   for (const row of doomedItems) {
-    const result = await reverseItem(db, row, { ...context, reason: 'items_complete_delete' });
+    const result = await reverseItem(db, row, {
+      ...context,
+      reason: restockReason('items_complete_delete', persisted),
+    });
     if (result.applied) stats.reversed += 1;
   }
 
@@ -180,7 +213,10 @@ export async function stockPhase(input) {
       [orderId],
     );
     for (const row of result.rows) {
-      const reversed = await reverseItem(db, row, { ...context, reason: `order_${currentStatus}` });
+      const reversed = await reverseItem(db, row, {
+        ...context,
+        reason: restockReason(currentStatus, persisted),
+      });
       if (reversed.applied) stats.reversed += 1;
     }
     return stats;
@@ -199,19 +235,22 @@ export async function stockPhase(input) {
       [orderId],
     );
     for (const row of result.rows) {
-      const returned = await reverseItem(db, row, { ...context, reason: 'fulfillment_returned' }, 'return');
+      const returned = await reverseItem(db, row, {
+        ...context,
+        reason: restockReason('return', persisted),
+      }, 'return');
       if (returned.applied) stats.reversed += 1;
     }
     return stats;
   }
 
-  if (!isStockEligibleFulfillment(currentFulfillment) || !saleEnabled) return stats;
+  if (!isStockEligibleFulfillment(currentFulfillment) && !upsertedItems.length) return stats;
 
   let saleItems = upsertedItems;
   if (!saleItems.length) {
     saleItems = (await db.query(
       `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
-         main_sku, stock_state, stock_applied_quantity, stock_revision
+         main_sku, stock_state, stock_applied_quantity, stock_revision, provider_status
        from order_items
        where order_id=$1 and stock_state <> 'reversed'
        for update`,
@@ -225,12 +264,26 @@ export async function stockPhase(input) {
     // deben convertirse después en movimientos de stock retroactivos, salvo que
     // el pedido acabe de pasar a listo para enviar o se pida explícitamente.
     if (item.stock_state === 'reversed') continue;
+    const terminalKind = itemTerminalKind(item.provider_status);
+    if (terminalKind) {
+      const movementType = terminalKind === 'returned' ? 'return' : 'sale_reversal';
+      const reversed = await reverseItem(db, item, {
+        ...context,
+        reason: restockReason(terminalKind, persisted),
+      }, movementType);
+      if (reversed.applied) stats.reversed += 1;
+      continue;
+    }
+    if (!isStockEligibleFulfillment(currentFulfillment) || !saleEnabled) continue;
     if (item.stock_state === 'skipped_policy' && !input.includeSkippedPolicy && !becameEligible) continue;
     const quantity = Number(item.quantity);
     const already = number(item.stock_applied_quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       if (already > 0 || item.stock_state === 'applied') {
-        const reversed = await reverseItem(db, item, { ...context, reason: 'invalid_quantity' });
+        const reversed = await reverseItem(db, item, {
+          ...context,
+          reason: restockReason('invalid_quantity', persisted),
+        });
         if (reversed.applied) stats.reversed += 1;
       } else {
         console.warn(JSON.stringify({ event: 'catalog.stock.invalid_quantity', orderId, itemId: item.id, quantity: item.quantity }));

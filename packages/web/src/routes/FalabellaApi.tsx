@@ -632,13 +632,13 @@ function statusInfo(statusKey: string) {
   if (statusKey.includes('returned')) {
     return {
       label: 'Devuelta',
-      description: 'La orden fue devuelta; revisar antes de emitir.',
+      description: 'Si tiene boleta, se emite la nota de crédito sola.',
     };
   }
   if (statusKey.includes('canceled')) {
     return {
       label: 'Cancelada',
-      description: 'La orden fue cancelada; no debería emitirse automáticamente.',
+      description: 'Si tiene boleta, se emite la nota de crédito sola.',
     };
   }
   if (statusKey.includes('failed')) {
@@ -1342,7 +1342,7 @@ export default function FalabellaApi() {
       },
       review: {
         title: 'Revisar antes de emitir',
-        description: 'Órdenes devueltas, canceladas, fallidas o con un estado no mapeado. La app no debería emitirlas automáticamente.',
+        description: 'Canceladas y devueltas con boleta se anulan solas. Aquí quedan las fallidas o sin documento.',
       },
     };
     return meta[selectedFlowFilter];
@@ -1383,7 +1383,7 @@ export default function FalabellaApi() {
     {
       value: 'review' as InvoiceFlowFilter,
       label: 'Revisión',
-      description: 'No automáticas',
+      description: 'Anular o revisar',
       count: flowStats.review,
       amount: flowStats.reviewAmount,
       activeClass: 'bg-background text-slate-800 shadow-sm ring-1 ring-border',

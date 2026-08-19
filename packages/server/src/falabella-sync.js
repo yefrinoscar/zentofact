@@ -372,10 +372,39 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
   return { candidates: candidates.rows.length, checked, hydrated, failed };
 }
 
+function itemNeedsStockRestock(item) {
+  const status = String(item?.Status ?? item?.status ?? '').trim().toLowerCase();
+  return status.includes('cancel')
+    || status.includes('failed')
+    || status.includes('returned')
+    || status.includes('return_shipped');
+}
+
+async function ingestReconciledOrder(db, companyId, order, items, status, account) {
+  const raw = order.raw_data && typeof order.raw_data === 'object' ? order.raw_data : {};
+  const normalized = normalizeFalabellaOrder({
+    ...raw,
+    OrderId: order.order_id || raw.OrderId,
+    OrderNumber: order.order_number || raw.OrderNumber,
+    Statuses: [{ Status: status }],
+    OrderItems: { OrderItem: items },
+    UpdatedAt: order.falabella_updated_at || raw.UpdatedAt,
+  });
+  if (!normalized) return;
+  await ingestFalabellaOrder({
+    companyId,
+    normalized,
+    account,
+    source: 'sync',
+    correlationId: `falabella-reconcile:${companyId}:${order.order_id}`,
+    catalogInventoryEnabled: true,
+  }, db);
+}
+
 async function reconcileActionableOrderStatuses(db, companyId, client) {
   if (typeof client?.call !== 'function') return { checked: 0, updated: 0, failed: 0 };
   const candidates = await db.query(
-    `select order_id, order_number, status, falabella_created_at, falabella_updated_at,
+    `select order_id, order_number, status, falabella_created_at, falabella_updated_at, raw_data,
        case when raw_data->>'LabelCount' ~ '^[0-9]+$'
          then greatest((raw_data->>'LabelCount')::int, 1)
          else 1
@@ -389,6 +418,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
   );
   let updated = 0;
   let failed = 0;
+  let account = null;
   for (const order of candidates.rows) {
     try {
       const response = await client.call({
@@ -417,22 +447,39 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
         pendingAt: order.falabella_created_at,
         providerUpdatedAt: updatedAt,
       });
-      if (status === order.status && labelCount === Number(order.label_count || 1)) continue;
-      await db.query(
-        `update falabella_orders
-         set status=$3,
-             raw_data=jsonb_set(
-               jsonb_set(coalesce(raw_data, '{}'::jsonb), '{Statuses}', to_jsonb($3::text), true),
-               '{LabelCount}', to_jsonb($5::int), true
-             ),
-             falabella_updated_at=coalesce($4, falabella_updated_at),
-             last_seen_at=now(), synchronized_at=now()
-         where company_id=$1 and order_id=$2`,
-        [companyId, order.order_id, status, updatedAt, labelCount],
-      );
-      updated += 1;
-    } catch {
+      const statusChanged = status !== order.status || labelCount !== Number(order.label_count || 1);
+      const restockNeeded = items.some(itemNeedsStockRestock);
+      if (!statusChanged && !restockNeeded) continue;
+      if (statusChanged) {
+        await db.query(
+          `update falabella_orders
+           set status=$3,
+               raw_data=jsonb_set(
+                 jsonb_set(coalesce(raw_data, '{}'::jsonb), '{Statuses}', to_jsonb($3::text), true),
+                 '{LabelCount}', to_jsonb($5::int), true
+               ),
+               falabella_updated_at=coalesce($4, falabella_updated_at),
+               last_seen_at=now(), synchronized_at=now()
+           where company_id=$1 and order_id=$2`,
+          [companyId, order.order_id, status, updatedAt, labelCount],
+        );
+        updated += 1;
+      }
+      if (restockNeeded || /cancel|returned|failed/.test(status)) {
+        account ||= await ensureFalabellaOrderAccount(db, companyId);
+        await ingestReconciledOrder(db, companyId, {
+          ...order,
+          falabella_updated_at: updatedAt || order.falabella_updated_at,
+        }, items, status, account);
+      }
+    } catch (error) {
       failed += 1;
+      console.warn(JSON.stringify({
+        event: 'falabella.sync.reconcile_failed',
+        companyId,
+        orderId: order.order_id,
+        message: String(error?.message || error),
+      }));
     }
   }
   return { checked: candidates.rows.length, updated, failed };
@@ -566,6 +613,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
        where company_id=$1`,
       [companyId, message],
     ).catch(() => {});
+    if (runId && error && typeof error === 'object') error.runId = runId;
     throw error;
   } finally {
     if (locked) await db.query('select pg_advisory_unlock($1,$2)', [LOCK_NAMESPACE, Number(companyId)]).catch(() => {});

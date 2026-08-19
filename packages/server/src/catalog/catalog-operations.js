@@ -151,7 +151,7 @@ export async function applyReadyOrderStock(input = {}, db) {
     }
     const items = (await client.query(
       `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
-         main_sku, stock_state, stock_applied_quantity, stock_revision
+         main_sku, stock_state, stock_applied_quantity, stock_revision, provider_status
        from order_items where order_id=$1 for update`,
       [order.id],
     )).rows;

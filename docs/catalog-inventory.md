@@ -84,7 +84,12 @@ bandeja) sigue aplicando el movimiento.
   `stock_applied_quantity > 0`, aunque su estado actual sea
   `skipped_insufficient`. Esto es importante cuando una subida de cantidad no
   pudo aplicar el delta nuevo: las unidades aplicadas anteriormente todavía
-  deben devolverse.
+  deben devolverse. El movimiento queda en el ledger con motivo visible
+  (`Cancelación del pedido …` o `Devolución del pedido …`).
+- El sync de Falabella reingesta un pedido listo para enviar cuando
+  GetOrderItems reporta cancelación, fallo o devolución, para reintegrar el
+  stock ya descontado. Una línea cancelada o devuelta se revierte aunque el
+  pedido siga en `ready_to_ship`.
 - Con stock insuficiente marketplace se guarda el pedido y se marca la línea;
   el saldo no se vuelve negativo. Ajustes manuales insuficientes hacen rollback.
 
