@@ -1,6 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Minus, PackageOpen, Plus } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
@@ -14,7 +13,7 @@ import {
 } from '../lib/insumos-log';
 import { InsumoIcon, hasInsumoPhoto, type InsumoIconKey } from '../components/insumo-icons';
 import { Button } from '../components/ui/button';
-import { DataTable, DataTablePagination } from '../components/ui/data-table';
+import { DataTablePagination } from '../components/ui/data-table';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +25,16 @@ import {
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Skeleton } from '../components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TablePanel,
+  TablePanelHeader,
+  TableRow,
+} from '../components/ui/table';
 
 type Insumo = {
   id: number;
@@ -228,40 +237,6 @@ export default function Insumos() {
   const bumpError = bump.error instanceof Error ? bump.error.message : bump.error ? 'No se pudo actualizar.' : '';
   const visibleError = formError || queryError || movementsError || (!pending && bumpError ? bumpError : '');
 
-  const columns = useMemo<ColumnDef<InsumoMovement>[]>(() => [
-    {
-      accessorKey: 'insumoName',
-      header: 'Insumo',
-      cell: ({ row }) => <span className="font-medium">{row.original.insumoName}</span>,
-    },
-    {
-      accessorKey: 'quantityDelta',
-      header: 'Cambio',
-      cell: ({ row }) => formatInsumoChange(row.original.quantityDelta, row.original.quantityAfter),
-    },
-    {
-      accessorKey: 'actorName',
-      header: 'Quién',
-      cell: ({ row }) => formatInsumoActor(row.original.actorName),
-    },
-    {
-      accessorKey: 'createdAt',
-      header: 'Hora',
-      cell: ({ row }) => (
-        <span className="text-muted-foreground">{formatInsumoWhen(row.original.createdAt)}</span>
-      ),
-    },
-  ], []);
-
-  const table = useReactTable({
-    data: movements,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => String(row.id),
-    manualPagination: true,
-    pageCount: Math.max(1, Math.ceil(movementsTotal / MOVEMENT_PAGE)),
-  });
-
   return (
     <div className="space-y-6">
       {visibleError ? (
@@ -269,12 +244,14 @@ export default function Insumos() {
       ) : null}
 
       {listQuery.isPending && !payload ? (
-        <section className="grid grid-cols-3 gap-6" aria-label="Cargando insumos">
+        <section className="divide-y divide-border md:grid md:grid-cols-3 md:gap-6 md:divide-y-0" aria-label="Cargando insumos">
           {Array.from({ length: 3 }, (_, index) => (
-            <div key={index} className="flex flex-col items-center">
-              <Skeleton className="aspect-square w-full max-w-48 rounded-2xl" />
-              <Skeleton className="mt-3 h-4 w-24" />
-              <Skeleton className="mt-3 h-8 w-28" />
+            <div key={index} className="flex items-center gap-3 py-3 md:flex-col md:items-center md:py-0">
+              <Skeleton className="size-16 shrink-0 rounded-xl md:aspect-square md:size-auto md:w-full md:max-w-48 md:rounded-2xl" />
+              <div className="min-w-0 flex-1 md:w-full md:max-w-48">
+                <Skeleton className="h-4 w-24 md:mx-auto" />
+                <Skeleton className="mt-3 h-8 w-full" />
+              </div>
             </div>
           ))}
         </section>
@@ -284,7 +261,7 @@ export default function Insumos() {
           <p className="text-sm font-medium">Sin insumos</p>
         </div>
       ) : (
-        <section className="grid grid-cols-3 gap-6" aria-label="Inventario de insumos">
+        <section className="divide-y divide-border md:grid md:grid-cols-3 md:gap-6 md:divide-y-0" aria-label="Inventario de insumos">
           {items.map((insumo) => (
             <InsumoMeter
               key={insumo.id}
@@ -296,20 +273,64 @@ export default function Insumos() {
         </section>
       )}
 
-      <DataTable
-        table={table}
-        aria-label="Movimientos de insumos"
-        loading={movementsQuery.isPending && !movementsPayload}
-        fetching={movementsQuery.isFetching}
-        skeleton="plain"
-        header={(
-          <div>
-            <p className="text-sm font-medium">Movimientos</p>
-            <p className="mt-1 text-xs text-muted-foreground">Quién cambió cada cantidad y cuándo.</p>
+      <TablePanel aria-label="Movimientos de insumos" aria-busy={movementsQuery.isPending || movementsQuery.isFetching}>
+        <TablePanelHeader>
+          <p className="text-sm font-medium">Movimientos</p>
+          <p className="mt-1 text-xs text-muted-foreground">Quién cambió cada cantidad y cuándo.</p>
+        </TablePanelHeader>
+        {movementsQuery.isPending && !movementsPayload ? (
+          <div className="divide-y divide-border">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div key={index} className="flex items-center justify-between gap-3 px-4 py-3">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-24" />
+              </div>
+            ))}
           </div>
+        ) : movements.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay cambios.</p>
+        ) : (
+          <>
+            <ul className="divide-y divide-border md:hidden">
+              {movements.map((movement) => (
+                <li key={movement.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{movement.insumoName}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {formatInsumoActor(movement.actorName)} · {formatInsumoWhen(movement.createdAt)}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-right text-sm tabular-nums">
+                    {formatInsumoChange(movement.quantityDelta, movement.quantityAfter)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Insumo</TableHead>
+                    <TableHead>Cambio</TableHead>
+                    <TableHead>Quién</TableHead>
+                    <TableHead>Hora</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {movements.map((movement) => (
+                    <TableRow key={movement.id}>
+                      <TableCell className="font-medium whitespace-normal">{movement.insumoName}</TableCell>
+                      <TableCell className="tabular-nums">{formatInsumoChange(movement.quantityDelta, movement.quantityAfter)}</TableCell>
+                      <TableCell className="whitespace-normal">{formatInsumoActor(movement.actorName)}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatInsumoWhen(movement.createdAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
-        empty={<p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay cambios.</p>}
-        footer={movementsTotal > MOVEMENT_PAGE ? (
+        {movementsTotal > MOVEMENT_PAGE ? (
           <DataTablePagination
             pageIndex={pageIndex}
             pageSize={MOVEMENT_PAGE}
@@ -318,7 +339,7 @@ export default function Insumos() {
             onPageChange={setPageIndex}
           />
         ) : null}
-      />
+      </TablePanel>
 
       <Dialog
         open={pending != null}
@@ -417,10 +438,72 @@ function InsumoMeter({
     setDraft(current);
   };
 
+  const stepper = (
+    <div className="flex shrink-0 items-center gap-1 md:gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="size-11 md:size-9"
+        aria-label={`Restar 1 ${insumo.name}`}
+        disabled={busy || empty}
+        onClick={() => onChange({ delta: -1 })}
+      >
+        <Minus />
+      </Button>
+      <input
+        aria-label={`Cantidad de ${insumo.name}`}
+        inputMode="decimal"
+        disabled={busy}
+        value={shown}
+        onFocus={() => {
+          setDraft(current);
+          setFocused(true);
+        }}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (skipCommit.current) {
+            skipCommit.current = false;
+            setFocused(false);
+            setDraft(current);
+            return;
+          }
+          commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+          if (event.key === 'Escape') {
+            skipCommit.current = true;
+            setDraft(current);
+            event.currentTarget.blur();
+          }
+        }}
+        className={cn(
+          'h-11 w-14 rounded-md border border-transparent bg-transparent text-center text-3xl font-semibold tabular-nums outline-none md:w-20 md:text-4xl',
+          'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30',
+          tone.text,
+        )}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="size-11 md:size-9"
+        aria-label={`Sumar 1 ${insumo.name}`}
+        disabled={busy || atCap}
+        onClick={() => onChange({ delta: 1 })}
+      >
+        <Plus />
+      </Button>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col items-center text-center">
+    <article className="flex items-center gap-3 py-3 md:flex-col md:items-center md:py-0 md:text-center">
       <span className={cn(
-        'aspect-square w-full max-w-48 overflow-hidden rounded-2xl',
+        'size-16 shrink-0 overflow-hidden rounded-xl md:aspect-square md:size-auto md:w-full md:max-w-48 md:rounded-2xl',
         photo ? '' : 'bg-muted',
       )}>
         {photo ? (
@@ -430,83 +513,40 @@ function InsumoMeter({
           />
         ) : (
           <span className="grid size-full place-items-center">
-            <InsumoIcon iconKey={insumo.iconKey} className="size-16" />
+            <InsumoIcon iconKey={insumo.iconKey} className="size-8 md:size-16" />
           </span>
         )}
       </span>
-      <h2 className="mt-3 text-sm font-medium text-foreground">{insumo.name}</h2>
-      <div className="mt-2 flex items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          aria-label={`Restar 1 ${insumo.name}`}
-          disabled={busy || empty}
-          onClick={() => onChange({ delta: -1 })}
-        >
-          <Minus />
-        </Button>
-        <input
-          aria-label={`Cantidad de ${insumo.name}`}
-          inputMode="decimal"
-          disabled={busy}
-          value={shown}
-          onFocus={() => {
-            setDraft(current);
-            setFocused(true);
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            if (skipCommit.current) {
-              skipCommit.current = false;
-              setFocused(false);
-              setDraft(current);
-              return;
-            }
-            commit();
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.currentTarget.blur();
-            }
-            if (event.key === 'Escape') {
-              skipCommit.current = true;
-              setDraft(current);
-              event.currentTarget.blur();
-            }
-          }}
-          className={cn(
-            'h-11 w-20 rounded-md border border-transparent bg-transparent text-center text-4xl font-semibold tabular-nums outline-none',
-            'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30',
-            tone.text,
-          )}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          aria-label={`Sumar 1 ${insumo.name}`}
-          disabled={busy || atCap}
-          onClick={() => onChange({ delta: 1 })}
-        >
-          <Plus />
-        </Button>
+      <div className="min-w-0 flex-1 md:flex md:w-full md:flex-col md:items-center">
+        <div className="flex items-center justify-between gap-2 md:flex-col md:justify-center">
+          <div className="min-w-0 md:mt-3">
+            <h2 className="truncate text-sm font-medium text-foreground">{insumo.name}</h2>
+            <p className={cn('mt-0.5 text-xs font-semibold md:hidden', tone.text)}>
+              {tone.label}
+              <span className="ml-1 font-normal text-muted-foreground">{unitLabel(insumo.unit)}</span>
+              {Number.isFinite(cap) ? (
+                <span className="ml-1 font-normal text-muted-foreground">· máx. {cap}</span>
+              ) : null}
+            </p>
+          </div>
+          {stepper}
+        </div>
+        <div className="mt-2 flex w-full gap-[3px] md:mt-3 md:max-w-48" aria-hidden="true">
+          {Array.from({ length: METER_TICKS }, (_, tick) => (
+            <span
+              key={tick}
+              className={cn('h-2 flex-1 rounded-sm md:h-4', tick < filled ? tone.bar : tone.track)}
+            />
+          ))}
+        </div>
+        <p className={cn('mt-2 hidden text-sm font-semibold md:block', tone.text)}>
+          {tone.label}
+          <span className="ml-1 font-normal text-muted-foreground">{unitLabel(insumo.unit)}</span>
+        </p>
+        {Number.isFinite(cap) ? (
+          <p className="mt-1 hidden text-xs text-muted-foreground md:block">máx. {cap}</p>
+        ) : null}
       </div>
-      <div className="mt-3 flex w-full max-w-48 gap-[3px]" aria-hidden="true">
-        {Array.from({ length: METER_TICKS }, (_, tick) => (
-          <span
-            key={tick}
-            className={cn('h-4 flex-1 rounded-sm', tick < filled ? tone.bar : tone.track)}
-          />
-        ))}
-      </div>
-      <p className={cn('mt-2 text-sm font-semibold', tone.text)}>
-        {tone.label}
-        <span className="ml-1 font-normal text-muted-foreground">{unitLabel(insumo.unit)}</span>
-      </p>
-      {Number.isFinite(cap) ? (
-        <p className="mt-1 text-xs text-muted-foreground">máx. {cap}</p>
-      ) : null}
-    </div>
+    </article>
   );
 }
