@@ -11,6 +11,7 @@ import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
 import ProductosHoy from './routes/ProductosHoy';
+import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
@@ -81,6 +82,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/salidas': {
     title: 'Salidas de hoy',
     subtitle: 'Productos que salen hoy según PromisedShippingTime.',
+  },
+  '/insumos': {
+    title: 'Insumos',
+    subtitle: 'Cantidad de materiales de empaque y oficina.',
   },
   '/auto-emision': {
     title: 'Automatización',
@@ -252,6 +257,7 @@ function AppLayout() {
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
+              <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
               <Route path="/boletas/new" element={<RequirePermission permission="boletas" {...permissionState}><IndividualInvoice fixedDocType="03" /></RequirePermission>} />

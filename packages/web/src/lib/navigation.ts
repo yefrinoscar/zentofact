@@ -7,6 +7,7 @@ import {
   Inbox,
   ListOrdered,
   PackageMinus,
+  PackageOpen,
   PackageSearch,
   ReceiptText,
   ScanLine,
@@ -43,6 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
       { to: '/salidas', icon: PackageMinus, label: 'Salidas de hoy', permission: 'salidas' },
+      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
   },
   {

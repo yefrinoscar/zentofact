@@ -205,6 +205,34 @@ const apiHttp = {
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
   listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
 
+  listInsumos: (filter: {
+    search?: string;
+    stock?: string;
+    sortBy?: string;
+    sortDir?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/insumos${qs(filter)}`),
+  createInsumo: (data: {
+    name: string;
+    unit: string;
+    iconKey?: string;
+    quantityOnHand?: number;
+    reorderPoint?: number | null;
+  }) => req('/insumos', { method: 'POST', body: JSON.stringify(data) }),
+  updateInsumo: (id: number, data: {
+    name?: string;
+    unit?: string;
+    iconKey?: string;
+    reorderPoint?: number | null;
+    status?: string;
+  }) => req(`/insumos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  adjustInsumo: (id: number, data: {
+    delta?: number;
+    absoluteTarget?: number;
+    note?: string;
+  }) => req(`/insumos/${id}/adjust`, { method: 'POST', body: JSON.stringify(data) }),
+
   // Empresas
   listCompanies: () => req('/companies'),
   getCompany: (id: number) => req(`/companies/${id}`),

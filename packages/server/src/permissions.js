@@ -7,6 +7,7 @@ export const PERMISSIONS = [
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders', hiddenInProduction: true },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
+  { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'operation' },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'boletas', label: 'Boletas', description: 'Ver, emitir y reenviar boletas electrónicas', path: '/boletas', section: 'documents' },
@@ -40,7 +41,7 @@ export const ROLE_PRESETS = {
   operator: {
     label: 'Operador',
     description: 'Recibe pedidos y realiza la preparación y el escaneo',
-    permissions: ['order_management', 'orders_inbox', 'orders_scanner', 'salidas'],
+    permissions: ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'],
   },
   billing: {
     label: 'Facturación',
@@ -83,6 +84,7 @@ const INTERIM_OPERATOR_PRESET = [
 const RECENT_OPERATOR_PRESET = ['falabella_sellers', 'orders_inbox', 'orders_scanner'];
 const PREVIOUS_OPERATOR_PRESET = ['orders_inbox', 'orders_scanner'];
 const OPERATOR_WITHOUT_SALIDAS = ['order_management', 'orders_inbox', 'orders_scanner'];
+const OPERATOR_WITHOUT_INSUMOS = ['order_management', 'orders_inbox', 'orders_scanner', 'salidas'];
 const INTERIM_BILLING_PRESET = ['boletas', 'facturas', 'credit_notes_manage'];
 const INTERIM_VIEWER_PRESET = [
   'falabella_sellers', 'orders_inbox', 'boletas', 'facturas',
@@ -136,6 +138,7 @@ export function normalizePermissions(input, role = 'operator') {
     || samePermissionSet(list, RECENT_OPERATOR_PRESET)
     || samePermissionSet(list, PREVIOUS_OPERATOR_PRESET)
     || samePermissionSet(list, OPERATOR_WITHOUT_SALIDAS)
+    || samePermissionSet(list, OPERATOR_WITHOUT_INSUMOS)
   )) return [...ROLE_PRESETS.operator.permissions];
   if (normalizedRole === 'billing' && samePermissionSet(list, INTERIM_BILLING_PRESET)) {
     return [...ROLE_PRESETS.billing.permissions];
@@ -180,6 +183,7 @@ export function pathPermission(pathname) {
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella_sellers';
   if (pathname.startsWith('/productos')) return 'productos';
   if (pathname.startsWith('/salidas')) return 'salidas';
+  if (pathname.startsWith('/insumos')) return 'insumos';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';
   if (pathname.startsWith('/credit-notes/bulk')) return 'credit_notes_bulk';
   if (pathname.startsWith('/credit-notes')) return 'credit_notes_manage';
