@@ -677,7 +677,7 @@ test('asocia las publicaciones verificadas de las pilas AA recargables USB-C', (
   assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:pilas-aa-recargables-usb-c/);
 });
 
-test('mantiene separadas las tres variantes físicas verificadas de sillas de comer', () => {
+test('asocia la silla reclinable por modelo y mantiene separada la silla evolutiva', () => {
   const publications = [
     ['128545421', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
     ['129551348', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
@@ -698,8 +698,8 @@ test('mantiene separadas las tres variantes físicas verificadas de sillas de co
     remote: { name, shopSku, sellerSku: `SILLA-${index}` },
   })));
 
-  assert.equal(groups.length, 3);
-  assert.deepEqual(groups.map((group) => group.records.length).sort((left, right) => left - right), [1, 4, 8]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.map((group) => group.records.length).sort((left, right) => left - right), [1, 12]);
 });
 
 test('asocia las sillas evolutivas verificadas aunque cambie el color', () => {

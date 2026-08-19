@@ -98,10 +98,11 @@ const VERIFIED_LISTING_FAMILIES = new Map([
     '140704306', '140716408', '140715741', '140472043', '140746441', '140822955',
     '140454972', '156576493', '156576509', '156576540', '156576302', '156576358', '156576403',
   ].map((shopSku) => [shopSku, 'camiseta-faja-reductora-vivid-bvd']),
-  ...['128545421', '129551348', '129750004', '131876164']
-    .map((shopSku) => [shopSku, 'silla-comer-reclinable-azul']),
-  ...['128545517', '131610914', '129551254', '129750010', '136344532', '129741409', '135888322', '129645938']
-    .map((shopSku) => [shopSku, 'silla-comer-reclinable-rosada']),
+  ...[
+    '128545421', '129551348', '129750004', '131876164',
+    '128545517', '131610914', '129551254', '129750010',
+    '136344532', '129741409', '135888322', '129645938',
+  ].map((shopSku) => [shopSku, 'silla-comer-reclinable']),
   ...['144959050', '144962663', '156582201']
     .map((shopSku) => [shopSku, 'silla-comer-evolutiva-patas-altas']),
   ...['140437519', '140681420', '140716029', '140714631', '140377407', '140546534', '140743807', '156581792']
@@ -120,7 +121,10 @@ const VERIFIED_SIZELESS_FAMILIES = new Set([
   'mochila-viajera-aerolineas',
 ]);
 
-const VERIFIED_COLORLESS_FAMILIES = new Set(['silla-comer-evolutiva-patas-altas']);
+const VERIFIED_COLORLESS_FAMILIES = new Set([
+  'silla-comer-evolutiva-patas-altas',
+  'silla-comer-reclinable',
+]);
 
 export function normalizeCatalogText(value) {
   return String(value || '')
