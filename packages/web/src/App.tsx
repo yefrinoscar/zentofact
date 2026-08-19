@@ -16,6 +16,7 @@ import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import PedidosMulticanal from './routes/PedidosMulticanal';
+import RegistrarVenta from './routes/RegistrarVenta';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
@@ -48,6 +49,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/orders': {
     title: 'Pedidos',
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
+  },
+  '/orders/nueva': {
+    title: 'Nueva venta',
+    subtitle: 'Registra una venta con productos del catálogo.',
   },
   '/scanner': {
     title: 'Preparación y escaneo',
@@ -236,6 +241,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route path="/orders/nueva" element={<RequirePermission permission="order_management" {...permissionState}><RegistrarVenta /></RequirePermission>} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />

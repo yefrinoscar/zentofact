@@ -61,6 +61,12 @@ function jsonValue(value, fallback = {}) {
   return value;
 }
 
+function titleCaseSeller(value) {
+  return String(value || '')
+    .toLocaleLowerCase('es')
+    .replace(/(^|[\s/-])(\S)/g, (_, sep, char) => sep + char.toLocaleUpperCase('es'));
+}
+
 function shortSellerName(row) {
   const candidates = [row.nombre_comercial, row.nombre, row.razon_social]
     .map((value) => String(value || '').trim())
@@ -69,7 +75,8 @@ function shortSellerName(row) {
       .replace(/^(?:importaciones|inversiones|tiendas|la tienda del)\s+/i, '')
       .replace(/\s+(?:per[uú]|e\.?i\.?r\.?l\.?|s\.?r\.?l\.?|s\.?a\.?c\.?)$/i, '')
       .trim());
-  return candidates.sort((left, right) => left.length - right.length)[0] || `Empresa ${row.company_id}`;
+  const name = candidates.sort((left, right) => left.length - right.length)[0];
+  return name ? titleCaseSeller(name) : `Empresa ${row.company_id}`;
 }
 
 function nullableNumber(value, field) {
@@ -916,6 +923,25 @@ export async function getSalesPulse(filters = {}, db) {
     target.query(
       `select coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''), nullif(oi.provider_sku, ''), 'Sin SKU') as sku,
          coalesce(nullif(p.name, ''), nullif(oi.description, ''), 'Producto sin nombre') as product_name,
+         min(coalesce(
+           nullif(p.image_url, ''),
+           nullif(psku.image_url, ''),
+           nullif(listing.metadata->'images'->>0, ''),
+           nullif(listing.metadata->'images'->0->>'Url', ''),
+           nullif(listing.metadata->'images'->0->>'url', ''),
+           nullif(listing.metadata->>'imageUrl', ''),
+           nullif(oi.raw_data->>'Image', ''),
+           nullif(oi.raw_data->>'ImageUrl', ''),
+           nullif(oi.raw_data->>'ImageURL', ''),
+           nullif(oi.raw_data->>'ProductImage', ''),
+           nullif(oi.raw_data->>'MainImage', '')
+         )) as image_url,
+         min(coalesce(
+           nullif(trim(listing.shop_sku), ''),
+           nullif(trim(oi.provider_sku), ''),
+           nullif(trim(oi.raw_data->>'ShopSku'), ''),
+           nullif(trim(oi.raw_data->>'ShopSKU'), '')
+         )) as shop_sku,
          sum(coalesce(oi.quantity, 0))::numeric as units_sold,
          sum(sum(coalesce(oi.quantity, 0))) over()::numeric as total_units_sold,
          count(distinct o.id)::int as orders_count,
@@ -927,6 +953,9 @@ export async function getSalesPulse(filters = {}, db) {
        join order_channel_accounts a on a.id=o.channel_account_id
        join order_channels ch on ch.id=a.channel_id
        left join products p on p.id=oi.product_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+       left join product_listings listing on listing.id = oi.listing_id
        where o.order_status not in ('cancelled', 'failed')
          and o.payment_status not in ('refunded', 'failed')
          and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
@@ -934,7 +963,7 @@ export async function getSalesPulse(filters = {}, db) {
            = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
        group by 1, 2
        order by units_sold desc, sales_total desc, product_name
-       limit 8`,
+       limit 80`,
       [date],
     ),
     target.query(
@@ -967,6 +996,8 @@ export async function getSalesPulse(filters = {}, db) {
   const topProducts = productResult.rows.map((row) => ({
     sku: row.sku,
     name: row.product_name,
+    imageUrl: row.image_url || null,
+    shopSku: row.shop_sku || null,
     unitsSold: Number(row.units_sold || 0),
     ordersCount: Number(row.orders_count || 0),
     salesTotal: Number(row.sales_total || 0),
@@ -1085,4 +1116,75 @@ export async function getOrder(orderId, db) {
       createdAt: row.created_at,
     })),
   };
+}
+
+const RECORDABLE_PAYMENT_METHODS = ['efectivo', 'yape_plin', 'transferencia'];
+
+export async function updateOrderPayment(orderId, input = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const id = positiveInt(orderId, 'orderId');
+  const paymentStatus = enumValue(input.paymentStatus, PAYMENT_STATUSES, 'paymentStatus', 'paid');
+  const paymentMethod = requiredText(input.paymentMethod, 'paymentMethod', 50).toLowerCase();
+  if (!RECORDABLE_PAYMENT_METHODS.includes(paymentMethod)) {
+    throw new Error('paymentMethod inválido.');
+  }
+  const receivedBy = optionalText(input.receivedBy, 200);
+  const paymentProof = input.paymentProof && typeof input.paymentProof === 'object'
+    ? input.paymentProof
+    : null;
+
+  const current = await target.query(
+    `select o.*, ch.code as channel_code, ch.name as channel_name,
+       a.display_name as channel_account_name
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.id=$1`,
+    [id],
+  );
+  const existing = current.rows[0];
+  if (!existing) return null;
+
+  const patch = {
+    paymentMethod,
+    paidAt: new Date().toISOString(),
+  };
+  if (receivedBy) patch.receivedBy = receivedBy;
+  if (paymentProof) patch.paymentProof = paymentProof;
+
+  const updated = await target.query(
+    `update orders
+     set payment_status=$2,
+         metadata=coalesce(metadata, '{}'::jsonb) || $3::jsonb,
+         updated_at=now()
+     where id=$1
+     returning *`,
+    [id, paymentStatus, JSON.stringify(patch)],
+  );
+  const persisted = updated.rows[0];
+  if (!persisted) return null;
+
+  await target.query(
+    `insert into order_events (
+       order_id, event_type, source, actor_user_id, idempotency_key,
+       previous_values, new_values, payload
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      id,
+      'order.payment_recorded',
+      'user',
+      optionalText(input.actorUserId, 300),
+      `order.payment_recorded:${id}:${persisted.updated_at}`,
+      JSON.stringify({ paymentStatus: existing.payment_status }),
+      JSON.stringify({ paymentStatus, paymentMethod }),
+      JSON.stringify({ paymentMethod, receivedBy: receivedBy || null }),
+    ],
+  );
+
+  return normalizeOrderRow({
+    ...persisted,
+    channel_code: existing.channel_code,
+    channel_name: existing.channel_name,
+    channel_account_name: existing.channel_account_name,
+  });
 }

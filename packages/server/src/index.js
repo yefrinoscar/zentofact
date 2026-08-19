@@ -239,11 +239,22 @@ app.get('/orders-inbox/companies', async (c) => {
 });
 app.post('/orders-inbox/sync', async (c) => {
   try {
-    const result = await ordersInbox.syncAllOrdersInbox();
+    const body = await c.req.json().catch(() => ({}));
+    const date = String(body?.date || '').trim();
+    const result = await ordersInbox.syncAllOrdersInbox({
+      syncOptions: date ? { mode: 'day', date } : {},
+    });
     dashboard.clearDashboardResponseCache();
     return ok(c, result);
   }
   catch (e) { return fail(c, e, 400); }
+});
+
+app.get('/order-management/geo/maps-key', async (c) => {
+  try {
+    const key = String(process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+    return ok(c, { key });
+  } catch (e) { return fail(c, e); }
 });
 
 // ── Pedidos multicanal (backend nuevo; no reemplaza la bandeja actual) ──
@@ -320,6 +331,16 @@ app.post('/order-management/orders/manual', async (c) => {
 app.get('/order-management/orders/:id', async (c) => {
   try {
     const order = await orderManagement.getOrder(Number(c.req.param('id')));
+    return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
+  } catch (e) { return fail(c, e, 400); }
+});
+app.patch('/order-management/orders/:id/payment', async (c) => {
+  try {
+    const body = await c.req.json();
+    const order = await orderManagement.updateOrderPayment(Number(c.req.param('id')), {
+      ...body,
+      actorUserId: c.get('user')?.id,
+    });
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });

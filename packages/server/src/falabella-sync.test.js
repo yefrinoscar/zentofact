@@ -214,6 +214,30 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'month'), true);
 });
 
+test('una sincronización por día pide a Falabella los pedidos creados en esa fecha', async () => {
+  const db = new FakeDb();
+  let seenFilters = null;
+  const client = {
+    getOrdersV2: async (filters) => {
+      seenFilters = filters;
+      return response([{
+        OrderId: '88', OrderNumber: '3248709095', CreatedAt: '2026-08-17T15:37:00Z',
+        UpdatedAt: '2026-08-17T15:40:00Z', GrandTotal: 262.9, Statuses: [{ Status: 'pending' }],
+      }]);
+    },
+  };
+  const result = await syncFalabellaOrders(7, { mode: 'day', date: '2026-08-17' }, fakeDependencies(db, client));
+  assert.equal(result.status, 'success');
+  assert.equal(result.mode, 'day');
+  assert.equal(result.received, 1);
+  assert.equal(seenFilters.createdAfter, '2026-08-17T05:00:00.000Z');
+  assert.equal(seenFilters.createdBefore, '2026-08-18T04:59:59.999Z');
+  assert.equal(seenFilters.updatedAfter, undefined);
+  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
+  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);
+  assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'day'), true);
+});
+
 test('rechaza una segunda sincronización de la misma empresa sin llamar Falabella', async () => {
   const db = new FakeDb({ locked: false });
   let called = false;

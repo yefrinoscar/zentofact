@@ -5,8 +5,9 @@ import {
   ingestOrder,
   listOrders,
   resolveDocumentDecision,
+  updateOrderPayment,
 } from './order-management.js';
-import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from './order-adapters/falabella.js';
+import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems, mapFalabellaShipping } from './order-adapters/falabella.js';
 
 function account(overrides = {}) {
   return {
@@ -183,6 +184,24 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
   });
 });
 
+test('arma la dirección oficial de Falabella desde AddressShipping', () => {
+  assert.deepEqual(mapFalabellaShipping({
+    ShippingType: 'Dropshipping',
+    AddressShipping: {
+      Address1: 'Prolongacion Chapén #1141',
+      Address3: 'segundo piso',
+      City: 'CAJAMARCA',
+      Region: 'CAJAMARCA',
+    },
+  }), {
+    type: 'Dropshipping',
+    address: 'Prolongacion Chapén #1141, segundo piso, CAJAMARCA',
+    city: 'CAJAMARCA',
+    region: 'CAJAMARCA',
+    trackingCode: '',
+  });
+});
+
 test('cada OrderItem de Falabella cuenta como una unidad cuando Quantity no viene informado', () => {
   const items = mapFalabellaOrderItems({
     OrderItems: {
@@ -225,6 +244,8 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
       if (sql.includes('join order_items')) return { rows: [{
         sku: 'SKU-1',
         product_name: 'Producto principal',
+        image_url: 'https://img.example/p.jpg',
+        shop_sku: '12345678',
         units_sold: '5',
         total_units_sold: '5',
         orders_count: 3,
@@ -242,9 +263,11 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
   assert.equal(result.unitsSold, 5);
   assert.equal(result.sellersWithSales, 1);
   assert.equal(result.sellersWithoutSales, 1);
-  assert.equal(result.sellers[1].companyName, 'MANTA RAYA');
+  assert.equal(result.sellers[1].companyName, 'Manta Raya');
   assert.equal(result.sellers[1].ordersCount, 0);
   assert.equal(result.topProducts[0].name, 'Producto principal');
+  assert.equal(result.topProducts[0].imageUrl, 'https://img.example/p.jpg');
+  assert.equal(result.topProducts[0].shopSku, '12345678');
   assert.deepEqual(result.topProducts[0].channelCodes, ['falabella']);
   assert.equal(result.channels[0].ordersCount, 3);
 });
@@ -262,4 +285,79 @@ test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () 
   const result = await listOrders({ from: '2026-08-12', to: '2026-08-12', limit: 10 }, db);
   assert.equal(result.totalCount, 0);
   assert.deepEqual(result.orders, []);
+});
+
+test('registra el pago de un pedido pendiente y deja el método en metadata', async () => {
+  const order = {
+    id: 91,
+    company_id: 7,
+    channel_account_id: 22,
+    external_order_id: 'VTA-1',
+    external_order_number: 'VTA-1',
+    order_status: 'confirmed',
+    payment_status: 'pending',
+    fulfillment_status: 'pending',
+    document_status: 'pending',
+    provider_status: null,
+    document_requirement: 'optional',
+    document_type_policy: 'automatic',
+    requested_document_type: 'boleta',
+    currency: 'PEN',
+    subtotal: 100,
+    shipping_amount: null,
+    discount_amount: null,
+    total: 100,
+    customer: { name: 'Ana' },
+    shipping: { type: 'envio' },
+    metadata: { paymentMethod: 'despues' },
+    ordered_at: '2026-08-17T15:00:00Z',
+    promised_shipping_at: null,
+    provider_updated_at: null,
+    first_seen_at: '2026-08-17T15:00:00Z',
+    last_seen_at: '2026-08-17T15:00:00Z',
+    created_at: '2026-08-17T15:00:00Z',
+    updated_at: '2026-08-17T15:00:00Z',
+    channel_code: 'manual',
+    channel_name: 'Venta manual',
+    channel_account_name: 'Mostrador',
+  };
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      const compact = sql.replace(/\s+/g, ' ').trim();
+      queries.push({ sql: compact, params });
+      if (compact.startsWith('select o.*, ch.code')) return { rows: [order] };
+      if (compact.startsWith('update orders')) {
+        return {
+          rows: [{
+            ...order,
+            payment_status: params[1],
+            metadata: { ...order.metadata, ...JSON.parse(params[2]) },
+            updated_at: '2026-08-17T16:00:00Z',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const result = await updateOrderPayment(91, {
+    paymentMethod: 'yape_plin',
+    receivedBy: '',
+    actorUserId: 'user-1',
+  }, db);
+
+  assert.equal(result.paymentStatus, 'paid');
+  assert.equal(result.metadata.paymentMethod, 'yape_plin');
+  assert.equal(result.metadata.paymentMethod === 'despues', false);
+  assert.match(queries[1].sql, /payment_status/);
+  assert.equal(queries[2].params[1], 'order.payment_recorded');
+  assert.equal(queries[2].params[3], 'user-1');
+});
+
+test('rechaza un método de pago que no se puede registrar después', async () => {
+  await assert.rejects(
+    () => updateOrderPayment(91, { paymentMethod: 'despues' }, { query: async () => ({ rows: [] }) }),
+    /paymentMethod inválido/,
+  );
 });

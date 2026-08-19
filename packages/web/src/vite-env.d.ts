@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_DEV_LOADING_DELAY_ENABLED?: string;
   readonly VITE_DEV_LOADING_DELAY_MS?: string;
+  readonly VITE_GOOGLE_MAPS_API_KEY?: string;
 }
 
 declare module '*.png' {

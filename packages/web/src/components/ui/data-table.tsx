@@ -70,6 +70,8 @@ export function DataTable<TData>({
   footer,
   columnClassNames,
   cellClassNames,
+  skeleton = 'catalog',
+  onRowClick,
   'aria-label': ariaLabel,
 }: {
   table: TanstackTable<TData>;
@@ -80,6 +82,8 @@ export function DataTable<TData>({
   footer?: ReactNode;
   columnClassNames?: Record<string, string>;
   cellClassNames?: Record<string, string>;
+  skeleton?: 'catalog' | 'plain';
+  onRowClick?: (row: TData) => void;
   'aria-label'?: string;
 }) {
   const rows = table.getRowModel().rows;
@@ -88,7 +92,7 @@ export function DataTable<TData>({
     <TablePanel aria-label={ariaLabel} aria-busy={loading || fetching}>
       {header ? <TablePanelHeader>{header}</TablePanelHeader> : null}
       {loading ? (
-        <DataTableSkeleton columnCount={table.getAllColumns().length || 4} />
+        <DataTableSkeleton columnCount={table.getAllColumns().length || 4} variant={skeleton} />
       ) : rows.length === 0 ? empty : (
         <div className="min-w-0" aria-busy={fetching}>
           <Table className="min-w-[720px] table-fixed">
@@ -105,7 +109,18 @@ export function DataTable<TData>({
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
-                <TableRow key={row.id} className="align-middle">
+                <TableRow
+                  key={row.id}
+                  className={onRowClick ? 'cursor-pointer align-middle focus-visible:bg-muted/30 focus-visible:outline-none' : 'align-middle'}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onKeyDown={onRowClick ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onRowClick(row.original);
+                    }
+                  } : undefined}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} className={cellClassNames?.[cell.column.id]}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -125,9 +140,11 @@ export function DataTable<TData>({
 export function DataTableSkeleton({
   columnCount = 4,
   rowCount = 8,
+  variant = 'catalog',
 }: {
   columnCount?: number;
   rowCount?: number;
+  variant?: 'catalog' | 'plain';
 }) {
   return (
     <div className="min-w-0">
@@ -145,8 +162,8 @@ export function DataTableSkeleton({
           {Array.from({ length: rowCount }, (_, row) => (
             <TableRow key={row} className="hover:bg-transparent">
               {Array.from({ length: columnCount }, (_, column) => (
-                <TableCell key={column}>
-                  {column === 0 ? (
+                <TableCell key={column} className={variant === 'plain' ? 'py-2' : undefined}>
+                  {variant === 'catalog' && column === 0 ? (
                     <div className="flex items-center gap-3">
                       <Skeleton className="h-14 w-14 shrink-0 rounded-lg" />
                       <div className="min-w-0 flex-1 space-y-2">
@@ -155,10 +172,7 @@ export function DataTableSkeleton({
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      <Skeleton className="h-5 w-12" />
-                      <Skeleton className="h-3 w-16" />
-                    </div>
+                    <Skeleton className={variant === 'plain' ? 'h-4 w-24' : 'h-5 w-12'} />
                   )}
                 </TableCell>
               ))}
@@ -197,8 +211,7 @@ export function DataTablePagination({
         {fetching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
         Mostrando {from} a {to} de {totalCount}
       </p>
-      {totalPages > 1 && (
-        <Pagination className="mx-0 w-auto justify-end">
+      <Pagination className="mx-0 w-auto justify-end">
           <PaginationContent>
             <PaginationItem>
               <PaginationPrevious
@@ -246,7 +259,6 @@ export function DataTablePagination({
             </PaginationItem>
           </PaginationContent>
         </Pagination>
-      )}
     </TablePanelFooter>
   );
 }

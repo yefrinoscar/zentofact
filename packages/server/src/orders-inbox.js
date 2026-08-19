@@ -452,13 +452,14 @@ export async function syncAllOrdersInbox(dependencies = {}) {
   const core = dependencies.listCompanies && dependencies.syncOrders ? null : await loadCore();
   const listCompanies = dependencies.listCompanies || core.listCompanies;
   const syncOrders = dependencies.syncOrders || (await import('./falabella-sync.js')).syncFalabellaOrders;
+  const syncOptions = dependencies.syncOptions || {};
   const companies = (await listCompanies()).filter((company) => (
     company.activo && company.falabellaApiUserId?.trim() && company.falabellaApiKey?.trim()
   ));
   const results = [];
   for (const company of companies) {
     try {
-      const result = await syncOrders(company.id);
+      const result = await syncOrders(company.id, syncOptions);
       results.push({ companyId: company.id, companyName: company.nombre || company.razonSocial, ok: true, result });
     } catch (error) {
       results.push({ companyId: company.id, companyName: company.nombre || company.razonSocial, ok: false, error: String(error?.message || error) });
