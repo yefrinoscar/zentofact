@@ -156,13 +156,17 @@ test('sincroniza solo tiendas activas con credenciales y conserva errores por ti
       { id: 2, activo: true, nombre: 'Dos', falabellaApiUserId: 'user', falabellaApiKey: 'key' },
       { id: 3, activo: false, nombre: 'Tres', falabellaApiUserId: 'user', falabellaApiKey: 'key' },
     ],
-    syncOrders: async (companyId) => {
-      seen.push(companyId);
+    syncOrders: async (companyId, options) => {
+      seen.push({ companyId, options });
       if (companyId === 2) throw new Error('temporal');
       return { status: 'success' };
     },
+    syncOptions: { mode: 'day', date: '2026-08-17' },
   });
-  assert.deepEqual(seen, [1, 2]);
+  assert.deepEqual(seen, [
+    { companyId: 1, options: { mode: 'day', date: '2026-08-17' } },
+    { companyId: 2, options: { mode: 'day', date: '2026-08-17' } },
+  ]);
   assert.equal(result.stores, 2);
   assert.equal(result.successful, 1);
   assert.equal(result.failed, 1);

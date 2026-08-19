@@ -1117,3 +1117,74 @@ export async function getOrder(orderId, db) {
     })),
   };
 }
+
+const RECORDABLE_PAYMENT_METHODS = ['efectivo', 'yape_plin', 'transferencia'];
+
+export async function updateOrderPayment(orderId, input = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const id = positiveInt(orderId, 'orderId');
+  const paymentStatus = enumValue(input.paymentStatus, PAYMENT_STATUSES, 'paymentStatus', 'paid');
+  const paymentMethod = requiredText(input.paymentMethod, 'paymentMethod', 50).toLowerCase();
+  if (!RECORDABLE_PAYMENT_METHODS.includes(paymentMethod)) {
+    throw new Error('paymentMethod inválido.');
+  }
+  const receivedBy = optionalText(input.receivedBy, 200);
+  const paymentProof = input.paymentProof && typeof input.paymentProof === 'object'
+    ? input.paymentProof
+    : null;
+
+  const current = await target.query(
+    `select o.*, ch.code as channel_code, ch.name as channel_name,
+       a.display_name as channel_account_name
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.id=$1`,
+    [id],
+  );
+  const existing = current.rows[0];
+  if (!existing) return null;
+
+  const patch = {
+    paymentMethod,
+    paidAt: new Date().toISOString(),
+  };
+  if (receivedBy) patch.receivedBy = receivedBy;
+  if (paymentProof) patch.paymentProof = paymentProof;
+
+  const updated = await target.query(
+    `update orders
+     set payment_status=$2,
+         metadata=coalesce(metadata, '{}'::jsonb) || $3::jsonb,
+         updated_at=now()
+     where id=$1
+     returning *`,
+    [id, paymentStatus, JSON.stringify(patch)],
+  );
+  const persisted = updated.rows[0];
+  if (!persisted) return null;
+
+  await target.query(
+    `insert into order_events (
+       order_id, event_type, source, actor_user_id, idempotency_key,
+       previous_values, new_values, payload
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      id,
+      'order.payment_recorded',
+      'user',
+      optionalText(input.actorUserId, 300),
+      `order.payment_recorded:${id}:${persisted.updated_at}`,
+      JSON.stringify({ paymentStatus: existing.payment_status }),
+      JSON.stringify({ paymentStatus, paymentMethod }),
+      JSON.stringify({ paymentMethod, receivedBy: receivedBy || null }),
+    ],
+  );
+
+  return normalizeOrderRow({
+    ...persisted,
+    channel_code: existing.channel_code,
+    channel_name: existing.channel_name,
+    channel_account_name: existing.channel_account_name,
+  });
+}

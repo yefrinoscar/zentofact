@@ -138,6 +138,20 @@ function monthWindow(month) {
   };
 }
 
+function limaDayWindow(date) {
+  const value = String(date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Fecha inválida; usa YYYY-MM-DD.');
+  const from = new Date(`${value}T05:00:00.000Z`);
+  if (Number.isNaN(from.getTime())) throw new Error('Fecha inválida; usa YYYY-MM-DD.');
+  return { from, to: new Date(from.getTime() + 86_400_000) };
+}
+
+function resolveSyncMode(options = {}) {
+  if (options.mode === 'month') return 'month';
+  if (options.mode === 'day' || options.date) return 'day';
+  return 'incremental';
+}
+
 export async function fetchFalabellaPages(client, filters, onPage, pageSize = PAGE_SIZE) {
   let pages = 0;
   let received = 0;
@@ -426,7 +440,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
   const db = await dbPool.connect();
   let locked = false;
   let runId = null;
-  const mode = options.mode === 'month' ? 'month' : 'incremental';
+  const mode = resolveSyncMode(options);
   try {
     const lock = await db.query('select pg_try_advisory_lock($1,$2) as locked', [LOCK_NAMESPACE, Number(companyId)]);
     locked = lock.rows[0]?.locked === true;
@@ -448,6 +462,9 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     let filters;
     if (mode === 'month') {
       ({ from: windowFrom, to: windowTo } = monthWindow(options.month));
+      filters = { createdAfter: windowFrom.toISOString(), createdBefore: new Date(windowTo.getTime() - 1).toISOString(), sortDirection: 'ASC' };
+    } else if (mode === 'day') {
+      ({ from: windowFrom, to: windowTo } = limaDayWindow(options.date));
       filters = { createdAfter: windowFrom.toISOString(), createdBefore: new Date(windowTo.getTime() - 1).toISOString(), sortDirection: 'ASC' };
     } else {
       windowTo = new Date(now.getTime() - SAFETY_LAG_MS);

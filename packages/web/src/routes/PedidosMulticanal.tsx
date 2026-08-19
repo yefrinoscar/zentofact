@@ -1,18 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertCircle,
+  Banknote,
+  Check,
   CheckCircle2,
   CircleDashed,
   Clock3,
+  Copy,
+  Eye,
   FileText,
+  ImagePlus,
   Loader2,
+  MoreHorizontal,
   Package,
   PackageSearch,
   Plus,
+  RefreshCw,
   Search,
   Store,
-  Trash2,
   WandSparkles,
   X,
 } from 'lucide-react';
@@ -21,9 +29,16 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
+import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { DataTable, DataTablePagination } from '../components/ui/data-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import {
@@ -118,7 +133,21 @@ type ManagedOrder = {
   currency: string;
   total?: number | null;
   customer?: { name?: string; documentNumber?: string; phone?: string };
-  shipping?: { type?: string; trackingCode?: string };
+  shipping?: {
+    type?: string;
+    trackingCode?: string;
+    address?: string;
+    district?: string;
+    reference?: string;
+    lat?: number;
+    lng?: number;
+  };
+  metadata?: {
+    paymentMethod?: string;
+    saleSource?: string;
+    delivery?: string;
+    receivedBy?: string;
+  };
   orderedAt?: string | null;
   promisedShippingAt?: string | null;
   providerUpdatedAt?: string | null;
@@ -135,19 +164,6 @@ type OrderDetail = ManagedOrder & {
     number?: string | null;
     status?: string | null;
   }>;
-};
-
-type CatalogProduct = {
-  sku: string;
-  name: string;
-  price: number;
-  stock: number;
-};
-
-type ManualLine = {
-  id: string;
-  productSku: string;
-  quantity: number;
 };
 
 type SalesPulseSeller = {
@@ -186,22 +202,45 @@ type SalesPulse = {
   }>;
 };
 
-const PAGE_SIZE = 20;
+const DAY_LIMIT = 500;
 const RANKING_SIZE = 6;
+const SEARCH_DELAY_MS = 250;
+
+const PAYMENT_LABELS: Record<string, string> = {
+  unknown: 'Sin dato',
+  pending: 'Pendiente de pago',
+  paid: 'Pagado',
+  partially_refunded: 'Reembolso parcial',
+  refunded: 'Reembolsado',
+  failed: 'Fallido',
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  despues: 'Después',
+  efectivo: 'Efectivo',
+  yape_plin: 'Yape / Plin',
+  transferencia: 'Transferencia',
+};
+
+const RECORD_PAYMENT_METHODS = [
+  { value: 'efectivo', label: 'Efectivo' },
+  { value: 'yape_plin', label: 'Yape / Plin' },
+  { value: 'transferencia', label: 'Transferencia' },
+] as const;
+
+const SALE_SOURCE_LABELS: Record<string, string> = {
+  marketplace: 'Marketplace',
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  telefono: 'Teléfono',
+  otro: 'Otro',
+};
 
 const FALLBACK_CHANNELS: Channel[] = [
   { id: -1, code: 'falabella', name: 'Falabella', active: true, defaultAutoCreateOrders: true },
   { id: -2, code: 'mercado_libre', name: 'Mercado Libre', active: true, defaultAutoCreateOrders: true },
   { id: -3, code: 'ripley', name: 'Ripley', active: true, defaultAutoCreateOrders: true },
   { id: -4, code: 'manual', name: 'Venta manual', active: true, defaultAutoCreateOrders: false },
-];
-
-const DEMO_PRODUCTS: CatalogProduct[] = [
-  { sku: 'ZF-MOC-001', name: 'Mochila urbana impermeable', price: 129.9, stock: 18 },
-  { sku: 'ZF-AUD-002', name: 'Audífonos Bluetooth Pro', price: 89.9, stock: 32 },
-  { sku: 'ZF-BOT-003', name: 'Botella térmica 750 ml', price: 54.9, stock: 25 },
-  { sku: 'ZF-CAM-004', name: 'Cámara WiFi para hogar', price: 159, stock: 11 },
-  { sku: 'ZF-ORG-005', name: 'Organizador modular 3 niveles', price: 72.5, stock: 9 },
 ];
 
 const FULFILLMENT_LABELS: Record<string, string> = {
@@ -228,6 +267,7 @@ const EVENT_LABELS: Record<string, string> = {
   'order.created': 'Pedido creado',
   'order.updated': 'Pedido actualizado',
   'order.stale_observed': 'Actualización recibida',
+  'order.payment_recorded': 'Pago registrado',
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -275,6 +315,18 @@ function formatDate(value: string | null | undefined) {
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+  }).format(date);
+}
+
+function formatTime(value: string | null | undefined) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 
@@ -381,7 +433,7 @@ function createDemoOrders(companyId: number): ManagedOrder[] {
       externalOrderId: 'VTA-1042',
       externalOrderNumber: 'VTA-1042',
       orderStatus: 'completed',
-      paymentStatus: 'paid',
+      paymentStatus: 'pending',
       fulfillmentStatus: 'delivered',
       documentStatus: 'accepted',
       documentRequirement: 'optional',
@@ -390,7 +442,8 @@ function createDemoOrders(companyId: number): ManagedOrder[] {
       currency: 'PEN',
       total: 109.8,
       customer: { name: 'Carlos Vega', documentNumber: '41876532' },
-      shipping: { type: 'Tienda física' },
+      shipping: { type: 'recojo', address: 'Av. La Marina 2055, San Miguel' },
+      metadata: { paymentMethod: 'despues', saleSource: 'whatsapp', delivery: 'recojo' },
       orderedAt: hoursAgo(19),
       demo: true,
       demoItems: [{ id: -5, sku: 'ZF-BOT-003', description: 'Botella térmica 750 ml', quantity: 2, total: 109.8 }],
@@ -456,22 +509,118 @@ function fulfillmentBadge(status: string) {
   return <Badge variant="outline" className={cn('rounded-md', classes)}>{FULFILLMENT_LABELS[status] || status}</Badge>;
 }
 
-function documentBadge(order: ManagedOrder) {
-  if (order.documentRequirement === 'disabled') {
-    return <Badge variant="outline" className="rounded-md text-muted-foreground">No aplica</Badge>;
-  }
-  const status = order.documentStatus;
-  const classes = status === 'accepted'
+function documentTone(status: string) {
+  return status === 'accepted'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
     : status === 'rejected' || status === 'cancelled'
       ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
       : status === 'pending'
         ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
         : 'border-border bg-muted/40 text-muted-foreground';
-  const type = order.documentDecision?.type
-    ? ` · ${order.documentDecision.type === 'factura' ? 'Factura' : 'Boleta'}`
-    : '';
-  return <Badge variant="outline" className={cn('rounded-md', classes)}>{DOCUMENT_LABELS[status] || status}{type}</Badge>;
+}
+
+function documentTypeLabel(order: ManagedOrder) {
+  if (order.documentDecision?.type === 'factura') return 'Factura';
+  if (order.documentDecision?.type === 'boleta') return 'Boleta';
+  return '';
+}
+
+function documentBadge(order: ManagedOrder) {
+  if (order.documentRequirement === 'disabled') {
+    return <Badge variant="outline" className="rounded-md text-muted-foreground">No aplica</Badge>;
+  }
+  const status = order.documentStatus;
+  const type = documentTypeLabel(order);
+  return (
+    <Badge variant="outline" className={cn('rounded-md', documentTone(status))}>
+      {DOCUMENT_LABELS[status] || status}{type ? ` · ${type}` : ''}
+    </Badge>
+  );
+}
+
+function paymentBadge(status: string) {
+  if (status === 'unknown' || !status) return null;
+  const classes = status === 'paid'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+    : status === 'refunded' || status === 'failed' || status === 'partially_refunded'
+      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300';
+  return <Badge variant="outline" className={cn('rounded-md', classes)}>{PAYMENT_LABELS[status] || status}</Badge>;
+}
+
+function canRecordPayment(order: ManagedOrder) {
+  if (order.channelCode !== 'manual') return false;
+  return order.paymentStatus === 'pending' || order.paymentStatus === 'failed';
+}
+
+function originLabel(order: ManagedOrder) {
+  if (order.channelCode === 'manual') {
+    return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Manual';
+  }
+  return order.channelName;
+}
+
+function deliveryLabel(order: ManagedOrder) {
+  const type = order.shipping?.type || order.metadata?.delivery || '';
+  if (type === 'recojo') return 'Recojo';
+  if (type === 'envio') return 'Envío';
+  if (order.shipping?.trackingCode) return 'Envío';
+  if (order.channelCode !== 'manual') return 'Marketplace';
+  return '—';
+}
+
+function shippingAddress(shipping?: ManagedOrder['shipping']) {
+  if (!shipping) return '';
+  const raw = (shipping as { address?: unknown }).address;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (text && text !== '[object Object]') return text;
+  }
+  if (raw && typeof raw === 'object') {
+    const row = raw as Record<string, unknown>;
+    const parts = [
+      row.Address1, row.address1, row.address, row.line1,
+      row.Address2, row.address2, row.line2,
+      row.City, row.city, row.district, row.District,
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    if (parts.length) return [...new Set(parts)].join(', ');
+  }
+  const district = String(shipping.district || '').trim();
+  if (district) return district;
+  if (typeof shipping.lat === 'number' && typeof shipping.lng === 'number') {
+    return `${shipping.lat.toFixed(5)}, ${shipping.lng.toFixed(5)}`;
+  }
+  return String(shipping.trackingCode || '').trim();
+}
+
+function addressText(order: ManagedOrder) {
+  return shippingAddress(order.shipping) || '—';
+}
+
+function paymentMethodLabel(order: ManagedOrder) {
+  const method = String(order.metadata?.paymentMethod || '').trim();
+  return PAYMENT_METHOD_LABELS[method] || '—';
+}
+
+function CopyableOrderNumber({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={copied ? 'Número copiado' : 'Copiar número de pedido'}
+      aria-label={`Copiar pedido ${value}`}
+      onClick={async (event) => {
+        event.stopPropagation();
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1400);
+      }}
+      className="inline-flex max-w-full items-center gap-1.5 font-mono text-[13px] font-medium tabular-nums text-foreground hover:text-foreground"
+    >
+      <span className="truncate">{value}</span>
+      {copied ? <Check className="size-3.5 shrink-0 text-emerald-600" /> : <Copy className="size-3.5 shrink-0 text-muted-foreground" />}
+    </button>
+  );
 }
 
 function channelTone(code: string) {
@@ -537,106 +686,68 @@ function demoDetail(order: ManagedOrder): OrderDetail {
   };
 }
 
-function newLine(): ManualLine {
-  return { id: Math.random().toString(36).slice(2), productSku: '', quantity: 1 };
-}
-
 export default function PedidosMulticanal() {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
-  const [orders, setOrders] = useState<ManagedOrder[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [hasRealOrders, setHasRealOrders] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
   const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [fetching, setFetching] = useState(false);
-  const [loadError, setLoadError] = useState('');
+  const [submittedSearch, setSubmittedSearch] = useState('');
+  const [hasRealOrders, setHasRealOrders] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const [salesPulse, setSalesPulse] = useState<SalesPulse | null>(null);
-  const [pulseLoading, setPulseLoading] = useState(true);
-  const [pulseError, setPulseError] = useState('');
+  const [syncNote, setSyncNote] = useState('');
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
-  const [manualCompanyId, setManualCompanyId] = useState('');
-  const [saleSource, setSaleSource] = useState('tienda_fisica');
-  const [customerName, setCustomerName] = useState('');
-  const [customerDocument, setCustomerDocument] = useState('');
-  const [documentType, setDocumentType] = useState('boleta');
-  const [notes, setNotes] = useState('');
-  const [manualLines, setManualLines] = useState<ManualLine[]>([newLine()]);
-  const requestRef = useRef(0);
-  const loadedDateRef = useRef('');
+  const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
+  const [demoPaymentOverrides, setDemoPaymentOverrides] = useState<Record<number, { paymentStatus: string; paymentMethod: string }>>({});
+  const syncNoteTimer = useRef(0);
+  const searchTimer = useRef(0);
 
-  useEffect(() => {
-    Promise.all([
-      api.listCompanies(),
-      api.listOrderChannels(),
-      api.listOrderChannelAccounts({ active: true }),
-    ]).then(([companyRows, channelRows, accountRows]) => {
-      const nextCompanies = Array.isArray(companyRows) ? companyRows : [];
-      const nextAccounts = Array.isArray(accountRows) ? accountRows : [];
-      setCompanies(nextCompanies);
-      setChannels(Array.isArray(channelRows) ? channelRows : []);
-      setAccounts(nextAccounts);
-      const firstManual = nextAccounts.find((account) => account.channelCode === 'manual');
-      setManualCompanyId(String(firstManual?.companyId || nextCompanies[0]?.id || ''));
-    }).catch((error: any) => {
-      setLoadError(error?.message || 'No se pudo cargar la configuración de canales.');
-    });
+  useEffect(() => () => {
+    if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
   }, []);
 
-  const load = useCallback(async () => {
-    const requestId = ++requestRef.current;
-    const replace = loadedDateRef.current !== date;
-    if (replace) setLoading(true);
-    else setFetching(true);
-    setLoadError('');
-    try {
-      const result = await api.listManagedOrders({
-        companyId: companyId === 'all' ? undefined : Number(companyId),
-        channelCode: channelCode === 'all' ? undefined : channelCode,
-        fulfillmentStatus: fulfillmentStatus === 'all' ? undefined : fulfillmentStatus,
-        from: date,
-        to: date,
-        search: search.trim() || undefined,
-        limit: PAGE_SIZE,
-        offset: (page - 1) * PAGE_SIZE,
-      });
-      if (requestId !== requestRef.current) return;
-      const nextOrders = Array.isArray(result?.orders) ? result.orders : [];
-      const nextTotal = Number(result?.totalCount || 0);
-      setOrders(nextOrders);
-      setTotalCount(nextTotal);
-      loadedDateRef.current = date;
-      if (nextTotal > 0) setHasRealOrders(true);
-    } catch (error: any) {
-      if (requestId !== requestRef.current) return;
-      setOrders([]);
-      setTotalCount(0);
-      setLoadError(error?.message || 'No se pudieron cargar los pedidos.');
-    } finally {
-      if (requestId === requestRef.current) {
-        setLoading(false);
-        setFetching(false);
-      }
-    }
-  }, [channelCode, companyId, date, fulfillmentStatus, page, search]);
+  const applySearch = (value: string) => {
+    setSearch(value);
+    window.clearTimeout(searchTimer.current);
+    searchTimer.current = window.setTimeout(() => setSubmittedSearch(value.trim()), SEARCH_DELAY_MS);
+  };
 
-  const loadSalesPulse = useCallback(async () => {
-    setPulseLoading(true);
-    setPulseError('');
-    try {
+  const companiesQuery = useQuery({
+    queryKey: ['order-companies'],
+    queryFn: () => api.listCompanies(),
+    staleTime: 5 * 60_000,
+  });
+  const channelsQuery = useQuery({
+    queryKey: ['order-channels'],
+    queryFn: () => api.listOrderChannels(),
+    staleTime: 5 * 60_000,
+  });
+  const orderFilters = useMemo(() => ({
+    companyId: companyId === 'all' ? undefined : Number(companyId),
+    channelCode: channelCode === 'all' ? undefined : channelCode,
+    fulfillmentStatus: fulfillmentStatus === 'all' ? undefined : fulfillmentStatus,
+    from: date,
+    to: date,
+    search: submittedSearch || undefined,
+    limit: DAY_LIMIT,
+    offset: 0,
+  }), [channelCode, companyId, date, fulfillmentStatus, submittedSearch]);
+  const ordersQuery = useQuery({
+    queryKey: ['managed-orders', orderFilters],
+    queryFn: () => api.listManagedOrders(orderFilters),
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+  const pulseQuery = useQuery({
+    queryKey: ['managed-order-sales-pulse', date],
+    queryFn: async () => {
       const [pulse, catalogSales] = await Promise.all([
         api.getManagedOrderSalesPulse({ date }),
         api.listTodayProductSales({ date, limit: 80 }).catch(() => null),
@@ -647,7 +758,7 @@ export default function PedidosMulticanal() {
         if (!key) continue;
         photos.set(key, { imageUrl: product.imageUrl, shopSku: product.shopSku });
       }
-      setSalesPulse({
+      return {
         ...pulse,
         topProducts: (pulse?.topProducts || []).map((product: SalesPulse['topProducts'][number]) => {
           const extra = photos.get(String(product.sku || '').trim().toLowerCase());
@@ -657,69 +768,70 @@ export default function PedidosMulticanal() {
             shopSku: product.shopSku || extra?.shopSku || null,
           };
         }),
-      });
-    } catch (error: any) {
-      setPulseError(error?.message || 'No se pudo cargar la actividad del día.');
-    } finally {
-      setPulseLoading(false);
-    }
-  }, [date]);
+      } as SalesPulse;
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+
+  const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
+  const channels = (Array.isArray(channelsQuery.data) ? channelsQuery.data : []) as Channel[];
+  const orders = (Array.isArray(ordersQuery.data?.orders) ? ordersQuery.data.orders : []) as ManagedOrder[];
+  const totalCount = Number(ordersQuery.data?.totalCount || 0);
+  const salesPulse = pulseQuery.data || null;
+  const loading = ordersQuery.isPending && !ordersQuery.data;
+  const fetching = ordersQuery.isFetching;
+  const loadError = (ordersQuery.error as Error | undefined)?.message
+    || (companiesQuery.error as Error | undefined)?.message
+    || '';
+  const pulseLoading = pulseQuery.isPending && !pulseQuery.data;
+  const pulseError = (pulseQuery.error as Error | undefined)?.message || '';
 
   useEffect(() => {
-    const timer = window.setTimeout(load, search ? 250 : 0);
-    return () => window.clearTimeout(timer);
-  }, [load, search]);
-
-  useEffect(() => {
-    loadSalesPulse();
-  }, [loadSalesPulse]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [companyId, channelCode, fulfillmentStatus, date]);
+    if (totalCount > 0) setHasRealOrders(true);
+  }, [totalCount]);
 
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
   )), [channels]);
 
   const demoOrders = useMemo(
-    () => createDemoOrders(Number(companyId === 'all' ? companies[0]?.id || 1 : companyId)),
-    [companies, companyId],
+    () => createDemoOrders(Number(companyId === 'all' ? companies[0]?.id || 1 : companyId)).map((order) => {
+      const override = demoPaymentOverrides[order.id];
+      return override ? { ...order, paymentStatus: override.paymentStatus, metadata: { ...order.metadata, paymentMethod: override.paymentMethod } } : order;
+    }),
+    [companies, companyId, demoPaymentOverrides],
   );
 
   const filteredDemoOrders = useMemo(() => {
-    const term = search.trim().toLowerCase();
+    const term = submittedSearch.toLowerCase();
     return demoOrders.filter((order) => (
       (channelCode === 'all' || order.channelCode === channelCode)
       && (fulfillmentStatus === 'all' || order.fulfillmentStatus === fulfillmentStatus)
       && limaDate(order.orderedAt) === date
-      && (!term || [order.externalOrderNumber, order.customer?.name, order.customer?.documentNumber]
+      && (!term || [order.externalOrderNumber, order.customer?.name, order.customer?.documentNumber, order.customer?.phone]
         .some((value) => String(value || '').toLowerCase().includes(term)))
     ));
-  }, [channelCode, date, demoOrders, fulfillmentStatus, search]);
+  }, [channelCode, date, demoOrders, fulfillmentStatus, submittedSearch]);
 
   const demoMode = !loading && !loadError && !hasRealOrders;
   const displayedOrders = demoMode ? filteredDemoOrders : orders;
   const displayedTotal = demoMode ? filteredDemoOrders.length : totalCount;
-  const totalPages = demoMode ? 1 : Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const companyById = useMemo(
     () => new Map(companies.map((company) => [company.id, companyName(company)])),
     [companies],
   );
 
-  const manualAccounts = useMemo(
-    () => accounts.filter((account) => account.channelCode === 'manual' && account.active),
-    [accounts],
-  );
-  const availableManualCompanies = useMemo(
-    () => companies.filter((company) => manualAccounts.some((account) => account.companyId === company.id)),
-    [companies, manualAccounts],
-  );
-  const manualTotal = manualLines.reduce((sum, line) => {
-    const product = DEMO_PRODUCTS.find((item) => item.sku === line.productSku);
-    return sum + Number(product?.price || 0) * Math.max(1, Number(line.quantity || 1));
-  }, 0);
+  useEffect(() => {
+    const registered = (location.state as { registered?: string } | null)?.registered;
+    if (!registered) return;
+    setSuccessMessage(`Venta ${registered} registrada.`);
+    setHasRealOrders(true);
+    void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+    void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, queryClient]);
 
   const openDetail = async (order: ManagedOrder) => {
     setDetailOpen(true);
@@ -733,106 +845,9 @@ export default function PedidosMulticanal() {
     try {
       setDetail(await api.getManagedOrder(order.id));
     } catch (error: any) {
-      setLoadError(error?.message || 'No se pudo abrir el pedido.');
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
-    }
-  };
-
-  const resetManualForm = () => {
-    setSaleSource('tienda_fisica');
-    setCustomerName('');
-    setCustomerDocument('');
-    setDocumentType('boleta');
-    setNotes('');
-    setManualLines([newLine()]);
-    setCreateError('');
-  };
-
-  const openCreate = () => {
-    const filteredCompany = companyId !== 'all'
-      ? availableManualCompanies.find((company) => company.id === Number(companyId))
-      : null;
-    setManualCompanyId(String(filteredCompany?.id || availableManualCompanies[0]?.id || ''));
-    setCreateOpen(true);
-    setCreateError('');
-  };
-
-  const updateLine = (lineId: string, patch: Partial<ManualLine>) => {
-    setManualLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
-  };
-
-  const createManualOrder = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setCreateError('');
-    const selectedCompanyId = Number(manualCompanyId);
-    const account = manualAccounts.find((item) => item.companyId === selectedCompanyId);
-    const selectedLines = manualLines.map((line) => ({
-      line,
-      product: DEMO_PRODUCTS.find((product) => product.sku === line.productSku),
-    })).filter((entry) => entry.product);
-
-    if (!account) {
-      setCreateError('Esta empresa todavía no tiene habilitado el canal de venta manual.');
-      return;
-    }
-    if (!customerName.trim()) {
-      setCreateError('Ingresa el nombre del cliente.');
-      return;
-    }
-    if (!selectedLines.length || selectedLines.length !== manualLines.length) {
-      setCreateError('Selecciona un producto en cada línea de la venta.');
-      return;
-    }
-
-    setCreating(true);
-    try {
-      const orderNumber = `VTA-${new Date().toISOString().replace(/\D/g, '').slice(2, 14)}`;
-      await api.createManagedOrder({
-        companyId: selectedCompanyId,
-        channelAccountId: account.id,
-        externalOrderId: orderNumber,
-        externalOrderNumber: orderNumber,
-        orderStatus: 'confirmed',
-        paymentStatus: 'paid',
-        fulfillmentStatus: saleSource === 'tienda_fisica' ? 'delivered' : 'pending',
-        requestedDocumentType: documentType === 'none' ? null : documentType,
-        currency: 'PEN',
-        subtotal: manualTotal,
-        total: manualTotal,
-        customer: {
-          name: customerName.trim(),
-          documentNumber: customerDocument.trim(),
-        },
-        shipping: { type: saleSource },
-        metadata: { origin: 'manual_ui', saleSource, notes: notes.trim(), catalog: 'demo' },
-        orderedAt: new Date().toISOString(),
-        itemsComplete: true,
-        items: selectedLines.map(({ line, product }, index) => ({
-          externalItemId: `${orderNumber}-${index + 1}`,
-          sku: product!.sku,
-          description: product!.name,
-          quantity: Math.max(1, Number(line.quantity || 1)),
-          unitPrice: product!.price,
-          total: product!.price * Math.max(1, Number(line.quantity || 1)),
-        })),
-      });
-      setHasRealOrders(true);
-      setCompanyId('all');
-      setChannelCode('all');
-      setFulfillmentStatus('all');
-      setDate(todayInLima());
-      setSearch('');
-      setPage(1);
-      setCreateOpen(false);
-      resetManualForm();
-      setSuccessMessage(`Venta ${orderNumber} registrada correctamente.`);
-      await Promise.all([load(), loadSalesPulse()]);
-    } catch (error: any) {
-      setCreateError(error?.message || 'No se pudo registrar la venta.');
-    } finally {
-      setCreating(false);
     }
   };
 
@@ -855,42 +870,202 @@ export default function PedidosMulticanal() {
     setChannelCode('all');
     setFulfillmentStatus('all');
     setSearch('');
-    setPage(1);
+    setSubmittedSearch('');
   };
+
+  const markSyncNote = (note: string) => {
+    if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
+    setSyncNote(note);
+    syncNoteTimer.current = window.setTimeout(() => setSyncNote(''), 2800);
+  };
+
+  const syncMutation = useMutation({
+    mutationFn: () => api.syncOrdersInbox({ date }),
+    onMutate: () => {
+      setSyncNote('');
+    },
+    onSuccess: async (result) => {
+      const failed = Number(result?.failed || 0);
+      if (result?.status === 'already_running') markSyncNote('En curso');
+      else markSyncNote(failed ? 'Incompleto' : 'Actualizado');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
+      ]);
+    },
+    onError: () => markSyncNote('Error'),
+  });
+  const syncing = syncMutation.isPending;
+  const syncRealData = () => syncMutation.mutate();
+
+  const paymentMutation = useMutation({
+    mutationFn: async (input: {
+      order: ManagedOrder;
+      paymentMethod: string;
+      receivedBy: string;
+      paymentProof: { name: string; type: string; dataUrl: string } | null;
+    }) => {
+      if (input.order.demo) {
+        return { ...input.order, paymentStatus: 'paid', metadata: { ...input.order.metadata, paymentMethod: input.paymentMethod } };
+      }
+      return api.updateManagedOrderPayment(input.order.id, {
+        paymentMethod: input.paymentMethod,
+        receivedBy: input.receivedBy || undefined,
+        paymentProof: input.paymentProof,
+      });
+    },
+    onSuccess: (updated, input) => {
+      if (input.order.demo) {
+        setDemoPaymentOverrides((current) => ({
+          ...current,
+          [input.order.id]: { paymentStatus: 'paid', paymentMethod: input.paymentMethod },
+        }));
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+        void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+      }
+      setPaymentOrder(null);
+      setSuccessMessage(`Pago de ${updated.externalOrderNumber || input.order.externalOrderNumber} registrado.`);
+    },
+  });
 
   const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => [
     {
       id: 'order',
       header: 'Pedido',
-      cell: ({ row }) => (
-        <span className="block truncate font-mono font-medium text-foreground">{row.original.externalOrderNumber}</span>
-      ),
+      size: 168,
+      cell: ({ row }) => <CopyableOrderNumber value={row.original.externalOrderNumber} />,
     },
     {
       id: 'seller',
       header: 'Seller',
+      size: 132,
       cell: ({ row }) => (
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
           <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
-          <span className="truncate font-medium">{companyById.get(row.original.companyId) || `Empresa ${row.original.companyId}`}</span>
+          <span className="truncate">{companyById.get(row.original.companyId) || `Empresa ${row.original.companyId}`}</span>
         </div>
       ),
     },
     {
       id: 'customer',
       header: 'Cliente',
-      cell: ({ row }) => <span className="block truncate">{row.original.customer?.name || 'Sin nombre'}</span>,
+      size: 168,
+      cell: ({ row }) => (
+        <div className="min-w-0">
+          <p className="truncate">{row.original.customer?.name || 'Sin nombre'}</p>
+          {row.original.customer?.documentNumber ? (
+            <p className="truncate font-mono text-[11px] text-muted-foreground">{row.original.customer.documentNumber}</p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      id: 'phone',
+      header: 'Teléfono',
+      size: 116,
+      cell: ({ row }) => (
+        <span className="truncate font-mono text-[13px] tabular-nums text-muted-foreground">{row.original.customer?.phone || '—'}</span>
+      ),
+    },
+    {
+      id: 'origin',
+      header: 'Origen',
+      size: 124,
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
+          <span className="truncate">{originLabel(row.original)}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'delivery',
+      header: 'Entrega',
+      size: 108,
+      cell: ({ row }) => <span className="truncate">{deliveryLabel(row.original)}</span>,
+    },
+    {
+      id: 'address',
+      header: 'Dirección',
+      size: 240,
+      cell: ({ row }) => (
+        <span className="line-clamp-2 whitespace-normal text-[13px] leading-5 text-muted-foreground" title={addressText(row.original)}>
+          {addressText(row.original)}
+        </span>
+      ),
+    },
+    {
+      id: 'time',
+      header: 'Hora',
+      size: 72,
+      cell: ({ row }) => (
+        <span className="tabular-nums text-muted-foreground">{formatTime(row.original.orderedAt)}</span>
+      ),
     },
     {
       id: 'status',
       header: 'Estado',
-      cell: ({ row }) => fulfillmentBadge(row.original.fulfillmentStatus),
+      size: 220,
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {fulfillmentBadge(row.original.fulfillmentStatus)}
+          {paymentBadge(row.original.paymentStatus)}
+        </div>
+      ),
+    },
+    {
+      id: 'method',
+      header: 'Método',
+      size: 112,
+      cell: ({ row }) => <span className="truncate text-muted-foreground">{paymentMethodLabel(row.original)}</span>,
     },
     {
       id: 'total',
       header: () => <span className="block text-right">Total</span>,
+      size: 108,
       cell: ({ row }) => (
         <span className="block truncate text-right font-medium tabular-nums">{formatMoney(row.original.total, row.original.currency)}</span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Acciones',
+      size: 72,
+      cell: ({ row }) => (
+        <div
+          className="flex w-full items-center justify-center"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
+                aria-label={`Acciones de ${row.original.externalOrderNumber}`}
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-44">
+              {canRecordPayment(row.original) && (
+                <>
+                  <DropdownMenuItem onClick={() => setPaymentOrder(row.original)}>
+                    <Banknote /> Registrar pago
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem onClick={() => void openDetail(row.original)}>
+                <Eye /> Ver detalle
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       ),
     },
   ], [companyById]);
@@ -900,15 +1075,14 @@ export default function PedidosMulticanal() {
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (order) => String(order.id),
-    manualPagination: true,
-    pageCount: totalPages,
   });
 
-  const filterTriggerClass = 'h-9 w-44 rounded-md border-border bg-background';
+  const filterTriggerClass = 'h-9 w-auto min-w-[7.25rem] max-w-[11rem] rounded-md border-border bg-background';
+  const filterMenuClass = 'w-auto min-w-[14rem]';
 
   return (
     <div className="space-y-4">
-      <DayStrip value={date} onChange={(next) => { setDate(next); setPage(1); }} />
+      <DayStrip value={date} onChange={setDate} />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
@@ -922,20 +1096,34 @@ export default function PedidosMulticanal() {
             <div className="mt-1 flex flex-wrap items-baseline gap-x-5 gap-y-1">
               <p className="text-2xl font-semibold tracking-tight tabular-nums">{salesPulse ? formatMoney(salesPulse.salesTotal) : '—'}</p>
               <p className="text-sm text-muted-foreground">{salesPulse ? salesPulse.ordersCount : displayedTotal} {Number(salesPulse?.ordersCount ?? displayedTotal) === 1 ? 'pedido' : 'pedidos'}</p>
-              <p className="text-sm text-muted-foreground">
-                {salesPulse ? `${salesPulse.sellersWithSales}/${pulseSellers.length}` : '—'} sellers con ventas
-              </p>
             </div>
           )}
           {pulseError && (
-            <Button type="button" variant="ghost" size="xs" onClick={loadSalesPulse} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
+            <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
               Reintentar
             </Button>
           )}
         </div>
-        <Button onClick={openCreate} disabled={!availableManualCompanies.length} className="h-9 shrink-0 cursor-pointer">
-          <Plus /> Registrar venta
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void syncRealData()}
+            disabled={syncing}
+            aria-live="polite"
+            className={cn(
+              'h-9 min-w-36 cursor-pointer',
+              syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
+              (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
+            )}
+          >
+            {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
+            {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
+          </Button>
+          <Button onClick={() => navigate('/orders/nueva')} className="h-9 cursor-pointer">
+            <Plus /> Registrar venta
+          </Button>
+        </div>
       </div>
 
       <section className="overflow-hidden rounded-md border border-border bg-card">
@@ -965,7 +1153,6 @@ export default function PedidosMulticanal() {
               selectedCompanyId={companyId}
               onSelect={(sellerId) => {
                 setCompanyId(companyId === String(sellerId) ? 'all' : String(sellerId));
-                setPage(1);
               }}
             />
           </aside>
@@ -987,37 +1174,40 @@ export default function PedidosMulticanal() {
 
       <div className="space-y-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative min-w-0 sm:w-[22rem]">
+          <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
+              onChange={(event) => applySearch(event.target.value)}
               placeholder="Buscar pedido, cliente o documento"
               aria-label="Buscar pedidos"
               className="h-9 pl-9"
             />
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Select value={companyId} onValueChange={(value) => { setCompanyId(value); setPage(1); }}>
-              <SelectTrigger className={filterTriggerClass}><SelectValue placeholder="Seller" /></SelectTrigger>
-              <SelectContent>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por seller">
+                <span className="truncate">{companyId === 'all' ? 'Seller' : selectedSellerName}</span>
+              </SelectTrigger>
+              <SelectContent className={filterMenuClass}>
                 <SelectItem value="all">Todos los sellers</SelectItem>
                 {companies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={channelCode} onValueChange={(value) => { setChannelCode(value); setPage(1); }}>
-              <SelectTrigger className={cn(filterTriggerClass, 'w-40')}><SelectValue placeholder="Origen" /></SelectTrigger>
-              <SelectContent>
+            <Select value={channelCode} onValueChange={setChannelCode}>
+              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por origen">
+                <span className="truncate">{channelCode === 'all' ? 'Origen' : selectedChannelName}</span>
+              </SelectTrigger>
+              <SelectContent className={filterMenuClass}>
                 <SelectItem value="all">Todos los orígenes</SelectItem>
                 {channelCatalog.map((channel) => <SelectItem key={channel.code} value={channel.code}>{channel.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={fulfillmentStatus} onValueChange={(value) => { setFulfillmentStatus(value); setPage(1); }}>
-              <SelectTrigger className={cn(filterTriggerClass, 'w-36')}><SelectValue placeholder="Estado" /></SelectTrigger>
-              <SelectContent>
+            <Select value={fulfillmentStatus} onValueChange={setFulfillmentStatus}>
+              <SelectTrigger className={filterTriggerClass} aria-label="Filtrar por estado">
+                <span className="truncate">{fulfillmentStatus === 'all' ? 'Estado' : selectedStatusLabel}</span>
+              </SelectTrigger>
+              <SelectContent className={filterMenuClass}>
                 <SelectItem value="all">Todos los estados</SelectItem>
                 {Object.entries(FULFILLMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
               </SelectContent>
@@ -1031,53 +1221,35 @@ export default function PedidosMulticanal() {
         </div>
         {hasActiveFilters && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {search.trim() && <FilterChip label={search.trim()} onRemove={() => { setSearch(''); setPage(1); }} />}
-            {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => { setCompanyId('all'); setPage(1); }} />}
-            {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => { setChannelCode('all'); setPage(1); }} />}
-            {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => { setFulfillmentStatus('all'); setPage(1); }} />}
+            {search.trim() && <FilterChip label={search.trim()} onRemove={() => { setSearch(''); setSubmittedSearch(''); }} />}
+            {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => setCompanyId('all')} />}
+            {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => setChannelCode('all')} />}
+            {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
           </div>
         )}
         {demoMode && <p className="text-xs text-muted-foreground">La muestra desaparece cuando registres o sincronices el primer pedido real.</p>}
       </div>
 
-      <DataTable
+      <OrdersVirtualTable
         table={table}
         aria-label={`Pedidos de ${dayLabel(date)}`}
         loading={loading}
         fetching={fetching}
-        skeleton="plain"
         onRowClick={openDetail}
-        columnClassNames={{
-          order: 'h-10 w-[28%]',
-          seller: 'h-10 w-[22%]',
-          customer: 'h-10 w-[22%]',
-          status: 'h-10 w-[16%]',
-          total: 'h-10 w-[12%] text-right',
-        }}
-        cellClassNames={{
-          order: 'py-2',
-          seller: 'py-2',
-          customer: 'py-2',
-          status: 'py-2',
-          total: 'py-2 text-right',
-        }}
         empty={(
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <Store className="size-8 text-muted-foreground/50" />
             <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
             <p className="text-sm text-muted-foreground">Prueba otra búsqueda o registra una venta manual.</p>
-            <Button size="sm" className="mt-2 cursor-pointer" onClick={openCreate} disabled={!availableManualCompanies.length}><Plus /> Registrar venta</Button>
+            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva')}><Plus /> Registrar venta</Button>
           </div>
         )}
-        footer={!loading ? (
-          <DataTablePagination
-            pageIndex={page - 1}
-            pageSize={PAGE_SIZE}
-            totalCount={displayedTotal}
-            fetching={fetching}
-            onPageChange={(nextPage) => setPage(nextPage + 1)}
-          />
-        ) : undefined}
+        footer={(
+          <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            {fetching && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+            {displayedTotal} {displayedTotal === 1 ? 'pedido' : 'pedidos'}
+          </p>
+        )}
       />
 
       <Sheet open={productsOpen} onOpenChange={setProductsOpen}>
@@ -1094,224 +1266,100 @@ export default function PedidosMulticanal() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={createOpen} onOpenChange={(open) => !creating && setCreateOpen(open)}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto [&_[data-slot=dialog-close]]:size-11 sm:max-w-2xl">
-          <form onSubmit={createManualOrder} className="space-y-5 [&_[data-slot=select-trigger]]:h-11 [&_input]:h-11">
-            <DialogHeader>
-              <DialogTitle>Registrar venta</DialogTitle>
-              <DialogDescription>Registra la venta para que el equipo pueda verla y gestionarla aquí.</DialogDescription>
-            </DialogHeader>
-
-            {createError && (
-              <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
-                <AlertCircle className="size-4 shrink-0" /> {createError}
-              </div>
-            )}
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Seller" htmlFor="manual-company">
-                <Select value={manualCompanyId} onValueChange={setManualCompanyId} disabled={creating}>
-                  <SelectTrigger id="manual-company" className="w-full data-[size=default]:h-11"><SelectValue placeholder="Selecciona una empresa" /></SelectTrigger>
-                  <SelectContent>
-                    {availableManualCompanies.map((company) => <SelectItem key={company.id} value={String(company.id)}>{companyName(company)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Origen de la venta" htmlFor="sale-source">
-                <Select value={saleSource} onValueChange={setSaleSource} disabled={creating}>
-                  <SelectTrigger id="sale-source" className="w-full data-[size=default]:h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tienda_fisica">Tienda física</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    <SelectItem value="instagram">Instagram</SelectItem>
-                    <SelectItem value="telefono">Teléfono</SelectItem>
-                    <SelectItem value="otro">Otro canal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Cliente" htmlFor="customer-name">
-                <Input id="customer-name" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Nombre o razón social" disabled={creating} />
-              </Field>
-              <Field label="DNI o RUC" htmlFor="customer-document" hint="Opcional">
-                <Input id="customer-document" value={customerDocument} onChange={(event) => setCustomerDocument(event.target.value)} placeholder="Documento del cliente" inputMode="numeric" disabled={creating} />
-              </Field>
-              <Field label="Comprobante" htmlFor="document-type">
-                <Select value={documentType} onValueChange={setDocumentType} disabled={creating}>
-                  <SelectTrigger id="document-type" className="w-full data-[size=default]:h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="boleta">Boleta</SelectItem>
-                    <SelectItem value="factura">Factura</SelectItem>
-                    <SelectItem value="none">Sin comprobante por ahora</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Nota interna" htmlFor="sale-notes" hint="Opcional">
-                <Input id="sale-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Ej. recoger en tienda" disabled={creating} />
-              </Field>
-            </div>
-
-            <section className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-medium">Productos</h3>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Catálogo de muestra para probar el flujo de registro.</p>
-                </div>
-                <Button type="button" variant="outline" size="sm" className="h-11 cursor-pointer" onClick={() => setManualLines((current) => [...current, newLine()])} disabled={creating}>
-                  <Plus /> Agregar
-                </Button>
-              </div>
-              <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
-                {manualLines.map((line, index) => (
-                  <div key={line.id} className="grid gap-2 sm:grid-cols-[1fr_6rem_2rem] sm:items-center">
-                    <Select value={line.productSku} onValueChange={(value) => updateLine(line.id, { productSku: value })} disabled={creating}>
-                      <SelectTrigger aria-label={`Producto ${index + 1}`} className="w-full bg-background data-[size=default]:h-11"><SelectValue placeholder="Selecciona un producto" /></SelectTrigger>
-                      <SelectContent>
-                        {DEMO_PRODUCTS.map((product) => (
-                          <SelectItem key={product.sku} value={product.sku}>
-                            {product.name} · {formatMoney(product.price)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={99}
-                      value={line.quantity}
-                      onChange={(event) => updateLine(line.id, { quantity: Math.max(1, Number(event.target.value || 1)) })}
-                      aria-label={`Cantidad del producto ${index + 1}`}
-                      className="bg-background"
-                      disabled={creating}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="size-11 cursor-pointer"
-                      aria-label={`Eliminar producto ${index + 1}`}
-                      title="Eliminar producto"
-                      onClick={() => setManualLines((current) => current.filter((item) => item.id !== line.id))}
-                      disabled={creating || manualLines.length === 1}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-muted/40 px-4 py-3">
-                <span className="text-sm text-muted-foreground">Total de la venta</span>
-                <span className="text-base font-semibold tabular-nums">{formatMoney(manualTotal)}</span>
-              </div>
-            </section>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" className="h-11 cursor-pointer" onClick={() => setCreateOpen(false)} disabled={creating}>Cancelar</Button>
-              <Button type="submit" className="h-11 cursor-pointer" disabled={creating || !manualCompanyId || manualTotal <= 0}>
-                {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Package />} {creating ? 'Registrando…' : 'Registrar venta'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto [&_[data-slot=dialog-close]]:size-11 sm:max-w-3xl">
+      <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+        <SheetContent className="sm:max-w-lg">
           {detailLoading ? (
-            <div className="flex h-56 items-center justify-center gap-2 text-muted-foreground">
+            <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
               <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> Cargando detalle…
             </div>
           ) : detail ? (
             <>
-              <DialogHeader>
-                <div className="flex items-center gap-3 pr-8">
+              <SheetHeader className="border-b border-border px-5 py-4 pr-16">
+                <div className="flex min-w-0 items-center gap-3">
                   <ChannelMark code={detail.channelCode} name={detail.channelName} size="md" />
-                  <div>
-                    <DialogTitle>Pedido {detail.externalOrderNumber}</DialogTitle>
-                    <DialogDescription>{detail.channelName} · {detail.channelAccountName} · {companyById.get(detail.companyId) || `Empresa ${detail.companyId}`}</DialogDescription>
+                  <div className="min-w-0">
+                    <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
+                    <SheetDescription className="mt-1 truncate">
+                      {detail.channelName} · {companyById.get(detail.companyId) || `Empresa ${detail.companyId}`}
+                    </SheetDescription>
                   </div>
                 </div>
-              </DialogHeader>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <DetailStat label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
-                <DetailStat label="Comprobante" content={documentBadge(detail)} />
-                <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
-              </div>
-
-              <section>
-                <h3 className="mb-3 text-sm font-medium">Productos</h3>
-                <div className="divide-y divide-border rounded-md border border-border">
-                  {detail.items.length ? detail.items.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted"><Package className="size-4 text-muted-foreground" /></span>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{item.description || item.sku || 'Producto'}</p>
-                          <p className="text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
-                        </div>
-                      </div>
-                      <span className="shrink-0 tabular-nums">{formatMoney(item.total, detail.currency)}</span>
-                    </div>
-                  )) : <p className="px-4 py-5 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
+              </SheetHeader>
+              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <DetailStat label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
+                  <DetailStat label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-sm text-muted-foreground">Sin dato</span>} />
+                  <DetailStat label="Comprobante" content={documentBadge(detail)} />
+                  <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                 </div>
-              </section>
 
-              {detail.documents.length > 0 && (
                 <section>
-                  <h3 className="mb-3 text-sm font-medium">Comprobantes vinculados</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {detail.documents.map((document) => (
-                      <Badge key={document.id} variant="outline" className="h-auto rounded-md px-3 py-2">
-                        <FileText /> {document.number || document.kind} · {DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}
-                      </Badge>
-                    ))}
+                  <h3 className="mb-3 text-sm font-medium">Productos</h3>
+                  <div className="divide-y divide-border rounded-md border border-border">
+                    {detail.items.length ? detail.items.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted"><Package className="size-4 text-muted-foreground" /></span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{item.description || item.sku || 'Producto'}</p>
+                            <p className="text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
+                          </div>
+                        </div>
+                        <span className="shrink-0 tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                      </div>
+                    )) : <p className="px-4 py-5 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
                   </div>
                 </section>
-              )}
 
-              <section>
-                <h3 className="mb-3 text-sm font-medium">Actividad</h3>
-                <div className="space-y-3">
-                  {[...detail.events].reverse().map((event) => (
-                    <div key={event.id} className="flex gap-3">
-                      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted">
-                        {event.eventType.includes('created') ? <CheckCircle2 className="size-4 text-emerald-600" /> : <Clock3 className="size-4 text-muted-foreground" />}
-                      </div>
-                      <div className="min-w-0 border-b border-border pb-3">
-                        <p className="font-medium">{EVENT_LABELS[event.eventType] || event.eventType}</p>
-                        <p className="text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
-                      </div>
+                {detail.documents.length > 0 && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">Comprobantes vinculados</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {detail.documents.map((document) => (
+                        <Badge key={document.id} variant="outline" className="h-auto rounded-md px-3 py-2">
+                          <FileText /> {document.number || document.kind} · {DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}
+                        </Badge>
+                      ))}
                     </div>
-                  ))}
-                  {!detail.events.length && <p className="text-sm text-muted-foreground">Todavía no hay eventos registrados.</p>}
-                </div>
-              </section>
+                  </section>
+                )}
+
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">Actividad</h3>
+                  <div className="space-y-3">
+                    {[...detail.events].reverse().map((event) => (
+                      <div key={event.id} className="flex gap-3">
+                        <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted">
+                          {event.eventType.includes('created') ? <CheckCircle2 className="size-4 text-emerald-600" /> : <Clock3 className="size-4 text-muted-foreground" />}
+                        </div>
+                        <div className="min-w-0 border-b border-border pb-3">
+                          <p className="font-medium">{EVENT_LABELS[event.eventType] || event.eventType}</p>
+                          <p className="text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {!detail.events.length && <p className="text-sm text-muted-foreground">Todavía no hay eventos registrados.</p>}
+                  </div>
+                </section>
+              </div>
             </>
           ) : null}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+        </SheetContent>
+      </Sheet>
 
-function Field({
-  label,
-  hint,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  htmlFor: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <Label htmlFor={htmlFor}>{label}</Label>
-        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
-      </div>
-      {children}
+      <RegisterPaymentDialog
+        order={paymentOrder}
+        busy={paymentMutation.isPending}
+        error={(paymentMutation.error as Error | undefined)?.message || ''}
+        onClose={() => {
+          paymentMutation.reset();
+          setPaymentOrder(null);
+        }}
+        onSubmit={(input) => {
+          if (!paymentOrder) return;
+          paymentMutation.mutate({ order: paymentOrder, ...input });
+        }}
+      />
     </div>
   );
 }
@@ -1460,5 +1508,129 @@ function DetailStat({ label, content }: { label: string; content: React.ReactNod
       <p className="mb-2 text-xs text-muted-foreground">{label}</p>
       {content}
     </div>
+  );
+}
+
+function RegisterPaymentDialog({
+  order,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  order: ManagedOrder | null;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onSubmit: (input: {
+    paymentMethod: string;
+    receivedBy: string;
+    paymentProof: { name: string; type: string; dataUrl: string } | null;
+  }) => void;
+}) {
+  const [paymentMethod, setPaymentMethod] = useState<(typeof RECORD_PAYMENT_METHODS)[number]['value']>('efectivo');
+  const [receivedBy, setReceivedBy] = useState('');
+  const [paymentProof, setPaymentProof] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    if (!order) return;
+    setPaymentMethod('efectivo');
+    setReceivedBy('');
+    setPaymentProof(null);
+    setLocalError('');
+  }, [order]);
+
+  const attachProof = (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setLocalError('La constancia debe ser una foto o captura.');
+      return;
+    }
+    if (file.size > 1_500_000) {
+      setLocalError('La constancia pesa más de 1.5 MB. Usa una foto más liviana.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPaymentProof({ name: file.name, type: file.type, dataUrl: String(reader.result || '') });
+      setLocalError('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <Dialog open={Boolean(order)} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Registrar pago</DialogTitle>
+          <DialogDescription>
+            {order ? `Pedido ${order.externalOrderNumber} · ${formatMoney(order.total, order.currency)}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        {(localError || error) && (
+          <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+            <AlertCircle className="size-4 shrink-0" /> {localError || error}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {RECORD_PAYMENT_METHODS.map((method) => (
+            <button
+              key={method.value}
+              type="button"
+              onClick={() => {
+                setPaymentMethod(method.value);
+                if (method.value === 'efectivo') setPaymentProof(null);
+                if (method.value !== 'efectivo') setReceivedBy('');
+              }}
+              className={cn(
+                'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
+                paymentMethod === method.value ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
+              )}
+            >
+              {method.label}
+            </button>
+          ))}
+        </div>
+        {paymentMethod === 'efectivo' && (
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-received-by">¿Quién cobró?</Label>
+            <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
+          </div>
+        )}
+        {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
+          <div className="space-y-1.5">
+            <Label>Constancia</Label>
+            {paymentProof ? (
+              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
+                <img src={paymentProof.dataUrl} alt="" className="size-12 rounded object-cover" />
+                <span className="min-w-0 flex-1 truncate text-sm">{paymentProof.name}</span>
+                <Button type="button" variant="ghost" size="icon-sm" className="size-8 cursor-pointer" aria-label="Quitar constancia" onClick={() => setPaymentProof(null)}>
+                  <X />
+                </Button>
+              </div>
+            ) : (
+              <label className="flex h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-sm text-muted-foreground hover:bg-muted/40">
+                <ImagePlus className="size-5" />
+                Foto opcional
+                <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachProof(event.target.files?.[0])} />
+              </label>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" className="cursor-pointer" onClick={onClose} disabled={busy}>Cancelar</Button>
+          <Button
+            type="button"
+            className="cursor-pointer"
+            disabled={busy}
+            onClick={() => onSubmit({ paymentMethod, receivedBy, paymentProof })}
+          >
+            {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
+            {busy ? 'Guardando…' : 'Registrar pago'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
