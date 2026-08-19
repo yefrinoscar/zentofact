@@ -1,4 +1,6 @@
 import { httpError, loadCore, positiveInt } from './utils.js';
+import { syncProductInventoryFromListings } from './inventory-service.js';
+import { syncProductStatusesFromListings } from './product-service.js';
 
 function providerError(response) {
   return response?.error?.Head?.ErrorMessage
@@ -90,7 +92,10 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { 
   const fulfillmentQuantity = numberOrNull(stock?.fulfillmentQuantity) ?? 0;
   const reportedAvailableQuantity = numberOrNull(stock?.availableQuantity)
     ?? sellerWarehouseQuantity + fulfillmentQuantity;
-  const availableQuantity = publication.isSellable ? reportedAvailableQuantity : 0;
+  // Stock y vendibilidad son dimensiones distintas. Falabella puede reportar
+  // inventario para una publicación rechazada o inactiva; conservamos ese dato
+  // y usamos isSellable exclusivamente para representar su estado comercial.
+  const availableQuantity = reportedAvailableQuantity;
   return {
     title: remote?.name || null,
     shopSku: remote?.shopSku || null,
@@ -140,7 +145,7 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
     `select l.id, l.product_id, l.company_id, l.seller_sku
      from product_listings l
      join products p on p.id=l.product_id
-     where l.channel_code='falabella' and l.status='active' and p.status='active'
+     where l.channel_code='falabella' and l.status='active' and p.status<>'archived'
        ${productId == null ? '' : 'and l.product_id=$1'}
      order by l.company_id, l.id`,
     values,
@@ -153,6 +158,7 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
   }
 
   const summary = { requested: listings.length, refreshed: 0, missing: [], errors: [] };
+  const refreshedProductIds = new Set();
   for (const [companyId, companyListings] of groups) {
     const sellerSkus = companyListings.map((listing) => listing.seller_sku);
     try {
@@ -195,10 +201,13 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
           ],
         );
         summary.refreshed += 1;
+        refreshedProductIds.add(Number(listing.product_id));
       }
     } catch (error) {
       summary.errors.push({ companyId, message: error?.message || String(error) });
     }
   }
+  await syncProductInventoryFromListings(target, [...refreshedProductIds]);
+  await syncProductStatusesFromListings(target, [...refreshedProductIds]);
   return summary;
 }
