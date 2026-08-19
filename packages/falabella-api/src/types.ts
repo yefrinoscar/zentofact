@@ -71,6 +71,7 @@ export interface GetDocumentOptions {
 export interface SetStatusToReadyToShipOptions {
   orderItemIds: Array<string | number>;
   packageId: string;
+  signal?: AbortSignal;
 }
 
 export interface FalabellaDocument {

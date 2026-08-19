@@ -68,12 +68,32 @@ function customerFrom(raw) {
   };
 }
 
+function addressFrom(value) {
+  if (!value) return '';
+  if (typeof value === 'string') {
+    const textValue = value.trim();
+    return textValue === '[object Object]' ? '' : textValue;
+  }
+  if (typeof value === 'object') {
+    const parts = [value.Address1, value.Address3, value.Ward || value.City, value.Region]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    return [...new Set(parts)].join(', ');
+  }
+  return '';
+}
+
+export function mapFalabellaShipping(raw) {
+  return shippingFrom(raw);
+}
+
 function shippingFrom(raw) {
+  const shipping = raw?.AddressShipping || raw?.ShippingAddress || raw?.Address;
   return {
     type: text(raw?.ShippingType),
-    address: text(raw?.AddressShipping || raw?.ShippingAddress || raw?.Address),
-    city: text(raw?.AddressShippingCity || raw?.ShippingCity || raw?.City),
-    region: text(raw?.AddressShippingRegion || raw?.ShippingRegion || raw?.Region),
+    address: addressFrom(shipping),
+    city: text(shipping?.City || raw?.AddressShippingCity || raw?.ShippingCity || raw?.City),
+    region: text(shipping?.Region || raw?.AddressShippingRegion || raw?.ShippingRegion || raw?.Region),
     trackingCode: text(raw?.TrackingCode || raw?.TrackingNumber),
   };
 }

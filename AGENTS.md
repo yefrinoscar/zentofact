@@ -62,3 +62,17 @@ Ese script (`scripts/setup-worktree.sh`) hace el arranque y no reemplaza nada qu
 - Si los archivos lock son diferentes, instala las dependencias en el worktree y no compartas `node_modules`.
 - Nunca reemplaces archivos o directorios existentes.
 - Verifica que los symlinks funcionen antes de continuar.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in Linear and are created manually; agents draft title and body but do not create tickets. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

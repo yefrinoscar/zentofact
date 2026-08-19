@@ -159,6 +159,10 @@
 }
 
 @layer components {
+  .pac-container {
+    display: none;
+  }
+
   .primary-button {
     @apply inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50;
   }
@@ -211,6 +215,23 @@
     align-items: center;
     justify-content: center;
     padding: 1.5rem;
+  }
+}
+
+@media (min-width: 40rem) {
+  .falabella-product-link:hover .falabella-copy,
+  .falabella-product-link:focus .falabella-copy {
+    width: 6.8rem;
+  }
+
+  .falabella-product-link:hover .falabella-name,
+  .falabella-product-link:focus .falabella-name {
+    opacity: 0;
+  }
+
+  .falabella-product-link:hover .falabella-action,
+  .falabella-product-link:focus .falabella-action {
+    opacity: 1;
   }
 }
 

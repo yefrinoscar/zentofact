@@ -7,6 +7,8 @@ import { broadcastForceReauth, clearClientStorageOnLogout } from '../lib/clearCl
 import { isNavItemActive, visibleNavigation } from '../lib/navigation';
 import { ROLE_PRESETS, normalizeRole } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
+import { EnvBadge } from './ZentoFactBrand';
+import { isDevApp, runtimeEnvironmentLabel } from '../lib/runtimeEnv';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,8 +39,13 @@ export function MobileTopNavigation({ title }: { title: string }) {
 
         {onMenu ? (
           <div className="min-w-0 flex-1 px-1">
-            <p className="truncate text-sm font-semibold">ZentoFact</p>
-            <p className="truncate text-xs text-muted-foreground">Selecciona un módulo</p>
+            <p className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-sm font-semibold">ZentoFact</span>
+              <EnvBadge />
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {isDevApp() ? runtimeEnvironmentLabel() : 'Selecciona un módulo'}
+            </p>
           </div>
         ) : activeGroup ? (
           <nav className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label={`Navegación de ${activeGroup.label}`}>

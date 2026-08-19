@@ -5,7 +5,7 @@ import { Button } from './ui/button';
 import { Calendar } from './ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { cn } from '../lib/cn';
-import { addDaysToDateKey, dateFromKey, dateKey, todayInLima } from '../lib/documentDateRange';
+import { addDaysToDateKey, dateFromKey, todayInLima } from '../lib/documentDateRange';
 
 const WEEKDAY = new Intl.DateTimeFormat('es-PE', { weekday: 'short' });
 const DAY = new Intl.DateTimeFormat('es-PE', { day: 'numeric' });
@@ -52,6 +52,7 @@ export default function DayStrip({
   const [shift, setShift] = useState(0);
   const [enableTransition, setEnableTransition] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => dateFromKey(value));
   const startRef = useRef(initialStart);
   const valueRef = useRef(value);
   const pendingStart = useRef<string | null>(null);
@@ -215,7 +216,13 @@ export default function DayStrip({
       >
         <ChevronRight />
       </Button>
-      <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+      <Popover
+        open={calendarOpen}
+        onOpenChange={(open) => {
+          setCalendarOpen(open);
+          if (open) setVisibleMonth(dateFromKey(valueRef.current));
+        }}
+      >
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="icon" className="shrink-0" aria-label="Elegir fecha en el calendario">
             <CalendarDays />
@@ -224,15 +231,21 @@ export default function DayStrip({
         <PopoverContent align="end" className="w-auto p-2">
           <Calendar
             mode="single"
+            required
+            numberOfMonths={1}
+            timeZone="America/Lima"
+            noonSafe
             selected={selectedDate}
+            month={visibleMonth}
+            onMonthChange={setVisibleMonth}
             onSelect={(next) => {
               if (!next) return;
-              select(dateKey(next));
+              select(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(next));
               setCalendarOpen(false);
             }}
-            defaultMonth={selectedDate}
             locale={es}
             disabled={{ after: dateFromKey(max) }}
+            classNames={{ months: 'relative flex' }}
             autoFocus
           />
         </PopoverContent>

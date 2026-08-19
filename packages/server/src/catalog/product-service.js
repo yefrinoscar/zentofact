@@ -4,6 +4,7 @@ import {
   inTransaction,
   jsonObject,
   loadCore,
+  mapCompactListing,
   mapListing,
   mapProduct,
   positiveInt,
@@ -11,6 +12,25 @@ import {
 } from './utils.js';
 
 const PRODUCT_STATUSES = ['active', 'inactive', 'archived'];
+const SELLER_COVERAGES = ['all', 'none', 'single', 'multiple'];
+const INVENTORY_STATUSES = ['all', 'inStock', 'lowStock', 'outOfStock'];
+const PUBLICATION_STATUSES = ['all', 'published', 'unpublished'];
+const SPECIAL_FILTERS = ['none', 'outOfStock', 'unpublished', 'lowStock'];
+const CATALOG_SORTS = {
+  updatedAt: { catalog: 'p.updated_at', page: 'page.updated_at' },
+  name: { catalog: 'lower(p.name)', page: 'lower(page.name)' },
+  available: { catalog: '(i.quantity_on_hand - i.quantity_reserved)', page: 'page.available' },
+  sellerStock: {
+    catalog: 'listing_stats.seller_stock_total',
+    page: 'listing_stats.seller_stock_total',
+    requiresListingStats: true,
+  },
+  sellers: {
+    catalog: 'listing_stats.sellers_count',
+    page: 'listing_stats.sellers_count',
+    requiresListingStats: true,
+  },
+};
 const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Lima',
   year: 'numeric',
@@ -32,7 +52,7 @@ export function limaDate(value) {
   return date;
 }
 
-function productStatus(value, fallback = 'active') {
+function productStatus(value, fallback = 'inactive') {
   const normalized = String(value ?? fallback).trim().toLowerCase();
   if (!PRODUCT_STATUSES.includes(normalized)) throw httpError('status inválido.');
   return normalized;
@@ -42,6 +62,366 @@ function limitOffset(input = {}) {
   const limit = Math.min(Math.max(Number(input.limit) || 50, 1), 200);
   const offset = Math.max(Number(input.offset) || 0, 0);
   return { limit, offset };
+}
+
+function sellerCountSql() {
+  return `(
+    select count(distinct coverage_listing.company_id)
+    from product_listings coverage_listing
+    where coverage_listing.product_id=p.id
+  )`;
+}
+
+function sellerStockSql() {
+  return `(
+    select coalesce(sum(stock_listing.marketplace_quantity), 0)
+    from product_listings stock_listing
+    where stock_listing.product_id=p.id
+  )`;
+}
+
+function lowStockSql() {
+  return 'i.reorder_point is not null and i.quantity_on_hand - i.quantity_reserved <= i.reorder_point';
+}
+
+function inventoryStatusSql(status) {
+  const available = '(i.quantity_on_hand - i.quantity_reserved)';
+  if (status === 'outOfStock') return `${available} <= 0`;
+  if (status === 'lowStock') {
+    return `${available} > 0 and i.reorder_point is not null and ${available} <= i.reorder_point`;
+  }
+  if (status === 'inStock') {
+    return `${available} > 0 and (i.reorder_point is null or ${available} > i.reorder_point)`;
+  }
+  return '';
+}
+
+export function publishedListingCondition(alias) {
+  return `${alias}.status='active'
+    and lower(coalesce(${alias}.metadata->>'isPublished', 'false'))='true'
+    and lower(coalesce(${alias}.metadata->>'isSellable', 'true'))<>'false'
+    and (${alias}.channel_code <> 'falabella'
+      or (
+        lower(coalesce(${alias}.metadata->>'status', ''))='active'
+        and lower(coalesce(${alias}.metadata->>'marketplaceStatus', ''))='active'
+        and lower(coalesce(${alias}.metadata->>'qcStatus', ''))='approved'
+      ))`;
+}
+
+function activeProductCondition() {
+  return `p.status='active' and ${publicationExistsSql()}`;
+}
+
+function inactiveProductCondition() {
+  return `(p.status='inactive' or (p.status='active' and not ${publicationExistsSql()}))`;
+}
+
+export async function syncProductStatusesFromListings(db, productIdsInput) {
+  if (!db?.query) throw new Error('syncProductStatusesFromListings requiere una conexión abierta.');
+  const productIds = [...new Set((productIdsInput || []).map((id) => positiveInt(id, 'productId')))];
+  if (!productIds.length) return [];
+  const result = await db.query(
+    `with desired_product_statuses as (
+       select p.id,
+         case when exists (
+           select 1 from product_listings status_listing
+           where status_listing.product_id=p.id
+             and ${publishedListingCondition('status_listing')}
+         ) then 'active' else 'inactive' end as status
+       from products p
+       where p.id=any($1::bigint[]) and p.status<>'archived'
+     )
+     update products p set status=desired.status, updated_at=now()
+     from desired_product_statuses desired
+     where p.id=desired.id and p.status is distinct from desired.status
+     returning p.id, p.main_sku, p.status`,
+    [productIds],
+  );
+  return result.rows.map((row) => ({ id: Number(row.id), mainSku: row.main_sku, status: row.status }));
+}
+
+function publicationExistsSql(companyIdsParameter = '') {
+  return `exists (
+    select 1
+    from product_listings publication_listing
+    where publication_listing.product_id=p.id
+      ${companyIdsParameter ? `and publication_listing.company_id=any(${companyIdsParameter}::int[])` : ''}
+      and ${publishedListingCondition('publication_listing')}
+  )`;
+}
+
+function companyIds(filters = {}) {
+  const requested = filters.companyIds ?? filters.companyId;
+  if (requested === undefined || requested === null || String(requested).trim() === '') return [];
+  const rawIds = Array.isArray(requested) ? requested : String(requested).split(',');
+  const ids = [...new Set(rawIds.map((value) => positiveInt(value, 'companyIds')))];
+  if (ids.length > 100) throw httpError('companyIds admite hasta 100 sellers.');
+  return ids;
+}
+
+function catalogOrder(filters = {}) {
+  const sortBy = String(filters.sortBy || 'updatedAt').trim();
+  if (!Object.hasOwn(CATALOG_SORTS, sortBy)) throw httpError('sortBy inválido.');
+  const requestedDirection = String(filters.sortDir || (sortBy === 'name' ? 'asc' : 'desc')).trim().toLowerCase();
+  if (!['asc', 'desc'].includes(requestedDirection)) throw httpError('sortDir inválido.');
+  const selected = CATALOG_SORTS[sortBy];
+  return {
+    requiresListingStats: selected.requiresListingStats === true,
+    catalog: `${selected.catalog} ${requestedDirection} nulls last, p.id desc`,
+    page: `${selected.page} ${requestedDirection} nulls last, page.id desc`,
+  };
+}
+
+function listingStatsSql(productId) {
+  return `select
+    count(l.id) as listings_count,
+    count(distinct l.company_id) as sellers_count,
+    coalesce(array_agg(distinct l.channel_code), '{}') as channels,
+    min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+      filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
+    max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+      filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
+    coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total
+  from product_listings l
+  where l.product_id=${productId}`;
+}
+
+function specialFilter(filters = {}) {
+  const requested = String(filters.special || '').trim();
+  if (requested) {
+    if (!SPECIAL_FILTERS.includes(requested)) throw httpError('special inválido.');
+    return requested;
+  }
+  if (filters.lowStock === 'true' || filters.lowStock === true) return 'lowStock';
+  return 'none';
+}
+
+function appendCatalogSearch(filters = {}, values, where) {
+  const search = String(filters.search || '').trim();
+  if (search) {
+    values.push(`%${search}%`);
+    where.push(`(
+      p.main_sku ilike $${values.length}
+      or p.name ilike $${values.length}
+      or p.brand ilike $${values.length}
+      or exists (
+        select 1 from product_listings search_listing
+        where search_listing.product_id=p.id
+          and (search_listing.seller_sku ilike $${values.length}
+            or search_listing.shop_sku ilike $${values.length})
+      )
+    )`);
+  }
+  if (filters.channelCode && filters.channelCode !== 'all') {
+    values.push(String(filters.channelCode).trim().toLowerCase());
+    where.push(`exists (
+      select 1 from product_listings channel_listing
+      where channel_listing.product_id=p.id and channel_listing.channel_code=$${values.length}
+        and channel_listing.status='active'
+    )`);
+  }
+  const selectedCompanyIds = companyIds(filters);
+  let companyIdsParameter = '';
+  if (selectedCompanyIds.length) {
+    values.push(selectedCompanyIds);
+    companyIdsParameter = `$${values.length}`;
+    where.push(`exists (
+      select 1 from product_listings company_listing
+      where company_listing.product_id=p.id and company_listing.company_id=any(${companyIdsParameter}::int[])
+        and company_listing.status='active'
+    )`);
+  }
+  return { selectedCompanyIds, companyIdsParameter };
+}
+
+function catalogListConstraints(filters = {}) {
+  const values = [];
+  const where = [];
+  const { companyIdsParameter } = appendCatalogSearch(filters, values, where);
+  if (filters.status && filters.status !== 'all') {
+    const selectedStatus = productStatus(filters.status);
+    values.push(selectedStatus);
+    if (selectedStatus === 'active') {
+      where.push(`p.status=$${values.length} and ${publicationExistsSql()}`);
+    } else if (selectedStatus === 'inactive') {
+      where.push(`(p.status=$${values.length} or (p.status='active' and not ${publicationExistsSql()}))`);
+    } else {
+      where.push(`p.status=$${values.length}`);
+    }
+  } else if (!filters.status && filters.includeArchived !== 'true' && filters.includeArchived !== true) {
+    where.push(`p.status <> 'archived'`);
+  }
+  const sellerCoverage = String(filters.sellerCoverage || 'all').trim().toLowerCase();
+  if (!SELLER_COVERAGES.includes(sellerCoverage)) throw httpError('sellerCoverage inválido.');
+  if (sellerCoverage !== 'all') {
+    const comparison = sellerCoverage === 'none' ? '= 0' : sellerCoverage === 'single' ? '= 1' : '> 1';
+    where.push(`${sellerCountSql()} ${comparison}`);
+  }
+  const inventoryStatus = String(filters.inventoryStatus || 'all').trim();
+  if (!INVENTORY_STATUSES.includes(inventoryStatus)) throw httpError('inventoryStatus inválido.');
+  if (inventoryStatus !== 'all') where.push(inventoryStatusSql(inventoryStatus));
+
+  const publicationStatus = String(filters.publicationStatus || 'all').trim().toLowerCase();
+  if (!PUBLICATION_STATUSES.includes(publicationStatus)) throw httpError('publicationStatus inválido.');
+  if (publicationStatus === 'published') {
+    where.push(publicationExistsSql(companyIdsParameter));
+  } else if (publicationStatus === 'unpublished') {
+    where.push(`not ${publicationExistsSql(companyIdsParameter)}`);
+  }
+
+  const special = specialFilter(filters);
+  if (special === 'outOfStock') {
+    where.push(`${sellerCountSql()} > 0`);
+    where.push(`${sellerStockSql()} = 0`);
+  } else if (special === 'unpublished') {
+    where.push(`${sellerCountSql()} = 0`);
+  } else if (special === 'lowStock') {
+    where.push(lowStockSql());
+  }
+  return { values, where, sellerCoverage, inventoryStatus, publicationStatus, special };
+}
+
+function catalogSummaryScope(filters = {}) {
+  if (filters.status && filters.status !== 'all') {
+    const selectedStatus = productStatus(filters.status);
+    if (selectedStatus === 'active') return activeProductCondition();
+    if (selectedStatus === 'inactive') return inactiveProductCondition();
+    return `p.status='${selectedStatus}'`;
+  }
+  if (filters.status === 'all') return 'true';
+  if (filters.includeArchived === 'true' || filters.includeArchived === true) return 'true';
+  return `p.status <> 'archived'`;
+}
+
+function catalogSummaryTotalScope(filters = {}) {
+  if (filters.status === 'all') return 'true';
+  if (filters.includeArchived === 'true' || filters.includeArchived === true) return 'true';
+  return `p.status <> 'archived'`;
+}
+
+function mapCatalogSummary(row = {}) {
+  const unitsAvailable = Number(row.units_available || 0);
+  const unitsSold30 = Number(row.units_sold_30 || 0);
+  return {
+    total: Number(row.total || 0),
+    active: Number(row.active || 0),
+    inactive: Number(row.inactive || 0),
+    archived: Number(row.archived || 0),
+    singleSeller: Number(row.single_seller || 0),
+    multipleSellers: Number(row.multiple_sellers || 0),
+    outOfStock: Number(row.out_of_stock || 0),
+    unpublished: Number(row.unpublished || 0),
+    lowStock: Number(row.low_stock || 0),
+    withStock: Number(row.with_stock || 0),
+    withoutStock: Number(row.without_stock || 0),
+    withoutSales: Number(row.without_sales || 0),
+    unitsAvailable,
+    unitsReserved: Number(row.units_reserved || 0),
+    unitsToReorder: Number(row.units_to_reorder || 0),
+    inventoryValue: Number(row.inventory_value || 0),
+    unitsSold30,
+    revenue30: Number(row.revenue_30 || 0),
+    daysOfSupply: unitsSold30 > 0 ? unitsAvailable / (unitsSold30 / 30) : null,
+    sellThrough30: (unitsSold30 + unitsAvailable) > 0
+      ? (unitsSold30 / (unitsSold30 + unitsAvailable)) * 100
+      : null,
+    scopedTotal: Number(row.scoped_total || 0),
+  };
+}
+
+function catalogSales30Cte() {
+  return `sales30 as (
+    select mapped.product_id,
+      sum(mapped.quantity)::numeric as sold,
+      sum(mapped.line_total)::numeric as revenue
+    from (
+      select
+        coalesce(oi.product_id, linked.product_id, listing.product_id) as product_id,
+        oi.quantity,
+        coalesce(oi.total, oi.unit_price * oi.quantity, 0) as line_total
+      from order_items oi
+      join orders o on o.id=oi.order_id
+      left join falabella_orders fo
+        on fo.company_id=o.company_id and fo.order_id=o.external_order_id
+      left join product_listings linked on linked.id=oi.listing_id
+      left join lateral (
+        select l.product_id
+        from product_listings l
+        where l.company_id=o.company_id
+          and l.status='active'
+          and (
+            (nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku)
+            or (nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku)
+            or (nullif(trim(oi.sku), '') is not null and l.shop_sku=oi.sku)
+          )
+        order by
+          case
+            when nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku then 0
+            when nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku then 1
+            else 2
+          end,
+          l.id
+        limit 1
+      ) listing on true
+      where o.order_status in ('confirmed','completed')
+        and coalesce(o.fulfillment_status, '') <> 'returned'
+        and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
+        and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'
+        and o.ordered_at >= now() - interval '30 days'
+    ) mapped
+    where mapped.product_id is not null
+    group by mapped.product_id
+  )`;
+}
+
+export async function getCatalogSummary(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  return summarizeProducts(filters, target);
+}
+
+async function summarizeProducts(filters = {}, db) {
+  const { values, where } = catalogListConstraints(filters);
+  const clause = where.length ? `where ${where.join(' and ')}` : '';
+  const scope = catalogSummaryScope(filters);
+  const totalScope = catalogSummaryTotalScope(filters);
+  const result = await db.query(
+    `with ${catalogSales30Cte()}
+     select
+       count(*) filter (where ${scope}) as scoped_total,
+       count(*) filter (where ${totalScope}) as total,
+       count(*) filter (where ${activeProductCondition()}) as active,
+       count(*) filter (where ${inactiveProductCondition()}) as inactive,
+       count(*) filter (where p.status = 'archived') as archived,
+       count(*) filter (where ${scope} and coverage.sellers_count = 1) as single_seller,
+       count(*) filter (where ${scope} and coverage.sellers_count > 1) as multiple_sellers,
+       count(*) filter (where ${scope} and coverage.sellers_count > 0 and coverage.seller_stock_total = 0) as out_of_stock,
+       count(*) filter (where ${scope} and coverage.sellers_count = 0) as unpublished,
+       count(*) filter (where ${scope} and ${inventoryStatusSql('lowStock')}) as low_stock,
+       count(*) filter (where ${scope} and ${inventoryStatusSql('inStock')}) as with_stock,
+       count(*) filter (where ${scope} and ${inventoryStatusSql('outOfStock')}) as without_stock,
+       count(*) filter (where ${scope} and coalesce(sales30.sold, 0) = 0) as without_sales,
+       coalesce(sum(i.quantity_on_hand - i.quantity_reserved) filter (where ${scope}), 0) as units_available,
+       coalesce(sum(i.quantity_reserved) filter (where ${scope}), 0) as units_reserved,
+       coalesce(sum(greatest(0, coalesce(i.reorder_point, sales30.sold, 0) - (i.quantity_on_hand - i.quantity_reserved))) filter (where ${scope}), 0) as units_to_reorder,
+       coalesce(sum((i.quantity_on_hand - i.quantity_reserved) * coalesce(coverage.listing_price, p.reference_price, 0)) filter (where ${scope}), 0) as inventory_value,
+       coalesce(sum(sales30.sold) filter (where ${scope}), 0) as units_sold_30,
+       coalesce(sum(sales30.revenue) filter (where ${scope}), 0) as revenue_30
+     from products p
+     join product_inventory i on i.product_id=p.id
+     left join sales30 on sales30.product_id=p.id
+     cross join lateral (
+       select
+         count(distinct l.company_id) as sellers_count,
+         coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total,
+         min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
+           filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as listing_price
+       from product_listings l
+       where l.product_id=p.id
+     ) coverage
+     ${clause}`,
+    values,
+  );
+  return mapCatalogSummary(result.rows[0]);
 }
 
 const TODAY_SALES_SORTS = {
@@ -59,99 +439,83 @@ function todaySalesOrderSql(filters = {}) {
 
 export async function listProducts(filters = {}, db) {
   const target = db || (await loadCore()).pool;
-  const values = [];
-  const where = [];
   const { limit, offset } = limitOffset(filters);
-  const search = String(filters.search || '').trim();
-  if (search) {
-    values.push(`%${search}%`);
-    where.push(`(
-      p.main_sku ilike $${values.length}
-      or p.name ilike $${values.length}
-      or p.brand ilike $${values.length}
-      or exists (
-        select 1 from product_listings search_listing
-        where search_listing.product_id=p.id
-          and (search_listing.seller_sku ilike $${values.length}
-            or search_listing.shop_sku ilike $${values.length})
-      )
-    )`);
-  }
-  if (filters.status && filters.status !== 'all') {
-    values.push(productStatus(filters.status));
-    where.push(`p.status=$${values.length}`);
-  } else if (filters.includeArchived !== 'true' && filters.includeArchived !== true) {
-    where.push(`p.status <> 'archived'`);
-  }
-  if (filters.channelCode && filters.channelCode !== 'all') {
-    values.push(String(filters.channelCode).trim().toLowerCase());
-    where.push(`exists (
-      select 1 from product_listings channel_listing
-      where channel_listing.product_id=p.id and channel_listing.channel_code=$${values.length}
-        and channel_listing.status='active'
-    )`);
-  }
-  if (filters.lowStock === 'true' || filters.lowStock === true) {
-    where.push(`i.reorder_point is not null and i.quantity_on_hand - i.quantity_reserved <= i.reorder_point`);
-  }
-  if (filters.companyId) {
-    values.push(positiveInt(filters.companyId, 'companyId'));
-    where.push(`exists (
-      select 1 from product_listings company_listing
-      where company_listing.product_id=p.id and company_listing.company_id=$${values.length}
-        and company_listing.status='active'
-    )`);
-  }
-  const sellerCoverage = String(filters.sellerCoverage || 'all').trim().toLowerCase();
-  if (!['all', 'single', 'multiple'].includes(sellerCoverage)) throw httpError('sellerCoverage inválido.');
-  if (sellerCoverage !== 'all') {
-    where.push(`(
-      select count(distinct coverage_listing.company_id)
-      from product_listings coverage_listing
-      where coverage_listing.product_id=p.id and coverage_listing.status='active'
-    ) ${sellerCoverage === 'single' ? '= 1' : '> 1'}`);
-  }
+  const { values, where } = catalogListConstraints(filters);
   const clause = where.length ? `where ${where.join(' and ')}` : '';
-  values.push(limit, offset);
-  const result = await target.query(
-    `select page.*,
-       listing_stats.listings_count,
-       listing_stats.sellers_count,
-       listing_stats.channels,
-       listing_stats.seller_price_min,
-       listing_stats.seller_price_max,
-       listing_stats.seller_stock_total
-     from (
-       select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
+  const pageValues = [...values, limit, offset];
+  const order = catalogOrder(filters);
+  const catalogSql = order.requiresListingStats
+    ? `select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
          i.quantity_on_hand - i.quantity_reserved as available,
-         count(*) over() as total_count
+         count(*) over() as total_count,
+         listing_stats.listings_count,
+         listing_stats.sellers_count,
+         listing_stats.channels,
+         listing_stats.seller_price_min,
+         listing_stats.seller_price_max,
+         listing_stats.seller_stock_total
        from products p
        join product_inventory i on i.product_id=p.id
+       cross join lateral (${listingStatsSql('p.id')}) listing_stats
        ${clause}
-       order by p.updated_at desc, p.id desc
-       limit $${values.length - 1} offset $${values.length}
-     ) page
-     cross join lateral (
-       select
-         count(l.id) filter (where l.status='active') as listings_count,
-         count(distinct l.company_id) filter (where l.status='active') as sellers_count,
-         coalesce(array_agg(distinct l.channel_code) filter (where l.status='active'), '{}') as channels,
-         min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
-           filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
-         max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
-           filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
-         coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total
-       from product_listings l
-       where l.product_id=page.id
-     ) listing_stats
-     order by page.updated_at desc, page.id desc`,
-    values,
-  );
+       order by ${order.catalog}
+       limit $${pageValues.length - 1} offset $${pageValues.length}`
+    : `select page.*,
+         listing_stats.listings_count,
+         listing_stats.sellers_count,
+         listing_stats.channels,
+         listing_stats.seller_price_min,
+         listing_stats.seller_price_max,
+         listing_stats.seller_stock_total
+       from (
+         select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
+           i.quantity_on_hand - i.quantity_reserved as available,
+           count(*) over() as total_count
+         from products p
+         join product_inventory i on i.product_id=p.id
+         ${clause}
+         order by ${order.catalog}
+         limit $${pageValues.length - 1} offset $${pageValues.length}
+       ) page
+       cross join lateral (${listingStatsSql('page.id')}) listing_stats
+       order by ${order.page}`;
+  const [result, summary] = await Promise.all([
+    target.query(catalogSql, pageValues),
+    summarizeProducts(filters, target),
+  ]);
+  const products = result.rows.map(mapProduct);
+  if (products.length) {
+    try {
+      const listingsResult = await target.query(
+        `select l.id, l.product_id, l.channel_code, l.company_id,
+           coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+           l.seller_sku, l.shop_sku, l.title, l.status, l.marketplace_quantity,
+           l.metadata
+         from product_listings l
+         join companies c on c.id = l.company_id
+         where l.product_id = any($1::int[])
+         order by l.channel_code, company_name, l.id`,
+        [products.map((product) => product.id)],
+      );
+      const listingsByProductId = new Map(products.map((product) => [product.id, []]));
+      for (const row of listingsResult.rows) {
+        const listing = mapCompactListing(row);
+        if (!listing) continue;
+        listingsByProductId.get(listing.productId)?.push(listing);
+      }
+      for (const product of products) {
+        product.listings = listingsByProductId.get(product.id) || [];
+      }
+    } catch {
+      // Leave listings unset so expand can fall back to GET /products/:id.
+    }
+  }
   return {
-    products: result.rows.map(mapProduct),
+    products,
     totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,
     limit,
     offset,
+    summary,
   };
 }
 
@@ -172,14 +536,14 @@ export async function getProduct(id, db) {
        join product_inventory i on i.product_id=p.id
        cross join lateral (
          select
-           count(l.id) filter (where l.status='active') as listings_count,
-           count(distinct l.company_id) filter (where l.status='active') as sellers_count,
-           coalesce(array_agg(distinct l.channel_code) filter (where l.status='active'), '{}') as channels,
+           count(l.id) as listings_count,
+           count(distinct l.company_id) as sellers_count,
+           coalesce(array_agg(distinct l.channel_code), '{}') as channels,
            min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
              filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
            max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
              filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
-           coalesce(sum(l.marketplace_quantity) filter (where l.status='active'), 0) as seller_stock_total
+           coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total
          from product_listings l
          where l.product_id=p.id
        ) listing_stats

@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createProduct } from './product-service.js';
+import { createProduct, syncProductStatusesFromListings } from './product-service.js';
+import { syncProductInventoryFromListings } from './inventory-service.js';
 import { upsertListing } from './listing-service.js';
-import { falabellaPublicationSnapshot } from './listing-snapshot-service.js';
+import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './listing-snapshot-service.js';
 import { falabellaAssociationProfile, groupFalabellaCatalogRecords } from './catalog-association.js';
 import { httpError, inTransaction, loadCore, positiveInt } from './utils.js';
 
@@ -51,18 +52,13 @@ function normalizedIdentityPart(value) {
     .replace(/\s+/g, ' ');
 }
 
-function falabellaUnit(remote) {
-  const units = Array.isArray(remote?.businessUnits) ? remote.businessUnits : [];
-  return units.find((unit) => String(unit?.operatorCode || '').toLowerCase() === 'fape') || units[0] || null;
-}
-
 export function isFalabellaActivePublished(remote) {
-  const unit = falabellaUnit(remote);
-  if (!unit) return false;
-  return String(remote?.status || '').trim().toLowerCase() === 'active'
-    && String(unit.status || '').trim().toLowerCase() === 'active'
-    && String(unit.isPublished || '').trim() === '1'
-    && String(remote?.qcStatus || '').trim().toLowerCase() === 'approved';
+  const publication = falabellaPublicationState(remote);
+  return publication.hasBusinessUnit
+    && publication.productStatus === 'active'
+    && publication.businessUnitStatus === 'active'
+    && publication.isPublished === true
+    && publication.qcStatus === 'approved';
 }
 
 export function falabellaCanonicalIdentity(remote) {
@@ -140,30 +136,30 @@ async function attachPrimaryImageFingerprints(records) {
 async function fetchCompanyCatalog(core, company) {
   const products = await fetchFalabellaCatalog(core, Number(company.id));
   const activeProducts = products.filter(isFalabellaActivePublished);
-  const sellerSkus = activeProducts.map((product) => String(product.sellerSku || '').trim()).filter(Boolean);
-  const stockResponse = sellerSkus.length
-    ? await core.falabellaGetStock({ companyId: Number(company.id), sellerSkus, limit: sellerSkus.length })
-    : { stocks: [] };
-  if (stockResponse?.error || stockResponse?.ok === false) {
-    const message = stockResponse?.error?.Head?.ErrorMessage || stockResponse?.error?.message || stockResponse?.error;
-    throw httpError(`Falabella no pudo entregar el stock: ${message || 'error desconocido'}`, 502);
-  }
-  const stockBySku = new Map((stockResponse.stocks || []).map((stock) => [String(stock.sellerSku), stock]));
+  const returnedProducts = products.filter((product) => String(product.sellerSku || '').trim());
+  const sellerSkus = returnedProducts.map((product) => String(product.sellerSku).trim());
+  const stocks = await fetchFalabellaStocks(core, Number(company.id), sellerSkus);
+  const stockBySku = new Map(stocks.map((stock) => [String(stock.sellerSku), stock]));
+  const recordFor = (remote) => ({
+    company,
+    remote,
+    identity: falabellaCanonicalIdentity(remote),
+    snapshot: falabellaPublicationSnapshot(remote, stockBySku.get(String(remote.sellerSku))),
+  });
   return {
     company,
     received: products.length,
-    records: activeProducts.map((remote) => ({
-      company,
-      remote,
-      identity: falabellaCanonicalIdentity(remote),
-      snapshot: falabellaPublicationSnapshot(remote, stockBySku.get(String(remote.sellerSku))),
-    })),
+    returnedProducts,
+    records: activeProducts.map(recordFor),
+    nonSellableRecords: returnedProducts.filter((remote) => !isFalabellaActivePublished(remote)).map(recordFor),
   };
 }
 
 /**
  * Descubre y reconcilia el catálogo completo de Falabella sin escribir en el seller.
- * Solo conserva listings que la API reporta activos, publicados y aprobados por QC.
+ * Publica en el catálogo los listings activos/publicados/aprobados; los listings
+ * existentes que Falabella devuelve como no vendibles conservan el stock
+ * reportado y su estado de autorización para que operaciones pueda corregirlos.
  */
 export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
   const core = await loadCore();
@@ -204,6 +200,10 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
        from product_listings where channel_code='falabella' order by id`,
     )).rows;
     const productById = new Map(existingProducts.map((product) => [Number(product.id), product]));
+    const listingBySeller = new Map(existingListings.map((listing) => [
+      `${Number(listing.company_id)}:${String(listing.seller_sku)}`,
+      listing,
+    ]));
     const productByListing = new Map(existingListings.map((listing) => [
       `${Number(listing.company_id)}:${String(listing.seller_sku)}`,
       productById.get(Number(listing.product_id)),
@@ -229,6 +229,7 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
     let productsReused = 0;
     let listingsUpserted = 0;
     let listingsDeactivated = 0;
+    let nonSellableListingsUpdated = 0;
     let multisignalAssociations = 0;
     const assignedProductIds = new Set();
 
@@ -323,19 +324,53 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
             associationSignals: record.association?.signals || [],
             catalogSyncBatchId: batchId,
           },
-        }, client);
+        }, client, { syncInventory: false });
         listingsUpserted += 1;
       }
     }
 
     for (const result of successful) {
-      const activeSkus = result.records.map((record) => String(record.remote.sellerSku));
+      for (const record of result.nonSellableRecords) {
+        const listing = listingBySeller.get(`${record.company.id}:${String(record.remote.sellerSku)}`);
+        if (!listing) continue;
+        const snapshot = record.snapshot;
+        await client.query(
+          `update product_listings set
+             shop_sku=coalesce($1, shop_sku),
+             external_product_id=coalesce($2, external_product_id),
+             title=coalesce($3, title),
+             status=case when status='unlinked' then status else 'active' end,
+             marketplace_quantity=$4,
+             marketplace_synced_at=now(),
+             metadata=coalesce(metadata, '{}'::jsonb) || $5::jsonb,
+             updated_at=now()
+           where id=$6`,
+          [
+            snapshot.shopSku,
+            snapshot.externalProductId,
+            snapshot.title,
+            snapshot.availableQuantity,
+            JSON.stringify({
+              ...snapshot.metadata,
+              sourceCompanyId: record.company.id,
+              sourceCompanyName: record.company.name,
+              catalogSyncBatchId: batchId,
+            }),
+            listing.id,
+          ],
+        );
+        nonSellableListingsUpdated += 1;
+      }
+    }
+
+    for (const result of successful) {
+      const returnedSkus = result.returnedProducts.map((product) => String(product.sellerSku));
       const deactivated = await client.query(
         `update product_listings set status='inactive', updated_at=now()
          where channel_code='falabella' and company_id=$1 and status='active'
            and not (seller_sku = any($2::text[]))
          returning id`,
-        [result.company.id, activeSkus],
+        [result.company.id, returnedSkus],
       );
       listingsDeactivated += deactivated.rows.length;
     }
@@ -350,6 +385,13 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
       [actorUserId ? String(actorUserId) : null],
     );
 
+    const synchronizedProductIds = [
+      ...existingProducts.map((product) => Number(product.id)),
+      ...assignedProductIds,
+    ];
+    await syncProductInventoryFromListings(client, synchronizedProductIds);
+    await syncProductStatusesFromListings(client, synchronizedProductIds);
+
     return {
       batchId,
       companiesRequested: companies.length,
@@ -362,6 +404,7 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
       productsCreated,
       productsReused,
       listingsUpserted,
+      nonSellableListingsUpdated,
       listingsDeactivated,
       sellers: successful.map((result) => ({
         companyId: result.company.id,
@@ -382,6 +425,7 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
 
   return inTransaction(db, async (client) => {
     const summary = { batchId: randomUUID(), received: remoteProducts.length, productsCreated: 0, productsReused: 0, listingsUpserted: 0, skipped: [] };
+    const affectedProductIds = new Set();
     for (const remote of remoteProducts) {
       const sellerSku = String(remote.sellerSku || '').trim();
       if (!sellerSku) {
@@ -424,6 +468,14 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
         }
         summary.productsReused += 1;
       }
+      const reportedQuantity = remote.quantity ?? remote.businessUnits?.[0]?.stock ?? null;
+      const snapshot = falabellaPublicationSnapshot(remote, {
+        sellerWarehouseQuantity: reportedQuantity,
+        fulfillmentQuantity: remote.fulfillmentQuantity ?? 0,
+        availableQuantity: remote.availableQuantity ?? reportedQuantity,
+        sellerWarehouses: remote.sellerWarehouses || [],
+        fulfillmentWarehouses: remote.fulfillmentWarehouses || [],
+      }, new Date(), { stockSource: 'falabella_get_products' });
       await upsertListing(productRow.id, {
         channelCode: 'falabella',
         companyId,
@@ -431,17 +483,18 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
         shopSku: remote.shopSku || null,
         externalProductId: remote.productId || null,
         title: remote.name || sellerSku,
-        marketplaceQuantity: remote.quantity ?? remote.businessUnits?.[0]?.stock ?? null,
+        marketplaceQuantity: snapshot.availableQuantity,
         marketplaceSyncedAt: new Date().toISOString(),
         metadata: {
-          status: remote.status || null,
-          qcStatus: remote.qcStatus || null,
-          url: remote.url || null,
+          ...snapshot.metadata,
           importBatchId: summary.batchId,
         },
-      }, client);
+      }, client, { syncInventory: false });
+      affectedProductIds.add(Number(productRow.id));
       summary.listingsUpserted += 1;
     }
+    await syncProductInventoryFromListings(client, [...affectedProductIds]);
+    await syncProductStatusesFromListings(client, [...affectedProductIds]);
     return summary;
   });
 }

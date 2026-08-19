@@ -1,4 +1,6 @@
 import { httpError, loadCore, positiveInt } from './utils.js';
+import { syncProductInventoryFromListings } from './inventory-service.js';
+import { syncProductStatusesFromListings } from './product-service.js';
 
 function providerError(response) {
   return response?.error?.Head?.ErrorMessage
@@ -12,6 +14,45 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizedStatus(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function booleanOrNull(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['1', 'true', 'yes'].includes(normalized)) return true;
+  if (['0', 'false', 'no'].includes(normalized)) return false;
+  return null;
+}
+
+export function falabellaPublicationState(remote = {}) {
+  const units = Array.isArray(remote?.businessUnits) ? remote.businessUnits : [];
+  const unit = units.find((candidate) => String(candidate?.operatorCode || '').toLowerCase() === 'fape')
+    || units[0]
+    || null;
+  const productStatus = normalizedStatus(remote?.status);
+  const businessUnitStatus = normalizedStatus(unit?.status);
+  const qcStatus = normalizedStatus(remote?.qcStatus);
+  const isPublished = booleanOrNull(unit?.isPublished);
+  const sellabilityReasons = [];
+  if (productStatus && productStatus !== 'active') sellabilityReasons.push('product_not_active');
+  if (businessUnitStatus && businessUnitStatus !== 'active') sellabilityReasons.push('business_unit_not_active');
+  if (qcStatus && qcStatus !== 'approved') sellabilityReasons.push('qc_not_approved');
+  if (isPublished === false) sellabilityReasons.push('not_published');
+  return {
+    hasBusinessUnit: Boolean(unit),
+    productStatus: productStatus || null,
+    businessUnitStatus: businessUnitStatus || null,
+    qcStatus: qcStatus || null,
+    isPublished,
+    isSellable: sellabilityReasons.length === 0,
+    sellabilityReason: sellabilityReasons[0] || null,
+    sellabilityReasons,
+    unit: unit || {},
+  };
+}
+
 function dateIsActive(fromValue, toValue, now = new Date()) {
   const parse = (value) => {
     if (!value) return null;
@@ -23,11 +64,24 @@ function dateIsActive(fromValue, toValue, now = new Date()) {
   return (!from || from <= now) && (!to || now <= to);
 }
 
-export function falabellaPublicationSnapshot(remote, stock, now = new Date()) {
-  const units = Array.isArray(remote?.businessUnits) ? remote.businessUnits : [];
-  const unit = units.find((candidate) => String(candidate?.operatorCode || '').toLowerCase() === 'fape')
-    || units[0]
-    || {};
+export async function fetchFalabellaStocks(core, companyId, sellerSkus = []) {
+  const normalizedSkus = [...new Set(sellerSkus.map((sku) => String(sku || '').trim()).filter(Boolean))];
+  const stocks = [];
+  for (let offset = 0; offset < normalizedSkus.length; offset += 1000) {
+    const batch = normalizedSkus.slice(offset, offset + 1000);
+    const response = await core.falabellaGetStock({ companyId, sellerSkus: batch, limit: batch.length });
+    const error = providerError(response);
+    if (error || response?.ok === false) {
+      throw httpError(`GetStock: ${error || 'respuesta inválida'}`, 502);
+    }
+    stocks.push(...(response?.stocks || []));
+  }
+  return stocks;
+}
+
+export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { stockSource = 'falabella_get_stock' } = {}) {
+  const publication = falabellaPublicationState(remote);
+  const unit = publication.unit;
   const regularPrice = numberOrNull(unit.price ?? remote?.price);
   const offerPrice = numberOrNull(unit.specialPrice ?? remote?.salePrice);
   const specialFromDate = unit.specialFromDate ?? unit.raw?.SpecialFromDate ?? null;
@@ -36,8 +90,12 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date()) {
   const effectivePrice = offerIsActive ? offerPrice : regularPrice;
   const sellerWarehouseQuantity = numberOrNull(stock?.sellerWarehouseQuantity) ?? 0;
   const fulfillmentQuantity = numberOrNull(stock?.fulfillmentQuantity) ?? 0;
-  const availableQuantity = numberOrNull(stock?.availableQuantity)
+  const reportedAvailableQuantity = numberOrNull(stock?.availableQuantity)
     ?? sellerWarehouseQuantity + fulfillmentQuantity;
+  // Stock y vendibilidad son dimensiones distintas. Falabella puede reportar
+  // inventario para una publicación rechazada o inactiva; conservamos ese dato
+  // y usamos isSellable exclusivamente para representar su estado comercial.
+  const availableQuantity = reportedAvailableQuantity;
   return {
     title: remote?.name || null,
     shopSku: remote?.shopSku || null,
@@ -52,15 +110,22 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date()) {
       specialFromDate,
       specialToDate,
       priceSource: 'falabella_get_products',
-      stockSource: 'falabella_get_stock',
+      stockSource,
       sellerWarehouseQuantity,
       fulfillmentQuantity,
+      reportedAvailableQuantity,
+      isSellable: publication.isSellable,
+      sellabilityReason: publication.sellabilityReason,
+      sellabilityReasons: publication.sellabilityReasons,
+      productStatus: publication.productStatus,
+      businessUnitStatus: publication.businessUnitStatus,
+      contentScore: numberOrNull(remote?.contentScore),
       sellerWarehouses: stock?.sellerWarehouses || [],
       fulfillmentWarehouses: stock?.fulfillmentWarehouses || [],
       status: remote?.status || null,
-      qcStatus: remote?.qcStatus || null,
+      qcStatus: publication.qcStatus,
       marketplaceStatus: unit.status || remote?.status || null,
-      isPublished: String(unit.isPublished ?? '').trim() === '1',
+      isPublished: publication.isPublished,
       url: remote?.url || null,
       color: remote?.color || null,
       size: remote?.size || null,
@@ -80,7 +145,7 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
     `select l.id, l.product_id, l.company_id, l.seller_sku
      from product_listings l
      join products p on p.id=l.product_id
-     where l.channel_code='falabella' and l.status='active' and p.status='active'
+     where l.channel_code='falabella' and l.status='active' and p.status<>'archived'
        ${productId == null ? '' : 'and l.product_id=$1'}
      order by l.company_id, l.id`,
     values,
@@ -93,22 +158,21 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
   }
 
   const summary = { requested: listings.length, refreshed: 0, missing: [], errors: [] };
+  const refreshedProductIds = new Set();
   for (const [companyId, companyListings] of groups) {
     const sellerSkus = companyListings.map((listing) => listing.seller_sku);
     try {
-      const [productsResponse, stockResponse] = await Promise.all([
+      const [productsResponse, stocks] = await Promise.all([
         core.falabellaGetProducts({
           companyId,
           filters: { filter: 'all', skuSellerList: sellerSkus, limit: Math.max(sellerSkus.length, 1) },
         }),
-        core.falabellaGetStock({ companyId, sellerSkus, limit: Math.max(sellerSkus.length, 1) }),
+        fetchFalabellaStocks(core, companyId, sellerSkus),
       ]);
       const productsError = providerError(productsResponse);
-      const stockError = providerError(stockResponse);
       if (productsError || productsResponse?.ok === false) throw httpError(`GetProducts: ${productsError || 'respuesta inválida'}`, 502);
-      if (stockError || stockResponse?.ok === false) throw httpError(`GetStock: ${stockError || 'respuesta inválida'}`, 502);
       const productsBySku = new Map((productsResponse.products || []).map((product) => [String(product.sellerSku), product]));
-      const stockBySku = new Map((stockResponse.stocks || []).map((stock) => [String(stock.sellerSku), stock]));
+      const stockBySku = new Map(stocks.map((stock) => [String(stock.sellerSku), stock]));
       for (const listing of companyListings) {
         const sellerSku = String(listing.seller_sku);
         const remote = productsBySku.get(sellerSku);
@@ -137,10 +201,13 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
           ],
         );
         summary.refreshed += 1;
+        refreshedProductIds.add(Number(listing.product_id));
       }
     } catch (error) {
       summary.errors.push({ companyId, message: error?.message || String(error) });
     }
   }
+  await syncProductInventoryFromListings(target, [...refreshedProductIds]);
+  await syncProductStatusesFromListings(target, [...refreshedProductIds]);
   return summary;
 }

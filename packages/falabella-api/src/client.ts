@@ -147,6 +147,7 @@ export class FalabellaApiClient {
         Accept: format === 'JSON' ? 'application/json' : 'application/xml',
         'Content-Type': 'application/x-www-form-urlencoded',
       },
+      signal: options.signal,
     });
     const rawText = await response.text();
     const contentType = response.headers.get('content-type') || '';

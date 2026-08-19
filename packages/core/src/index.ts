@@ -143,7 +143,7 @@ export {
 export type { CreateCreditNoteFromBoletaOptions, CreateCreditNoteFromFacturaOptions } from './services/credit-note.service';
 export { getCorrelatives } from './services/correlative-query.service';
 export {
-  falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
+  falabellaGetOrders, falabellaGetOrderItems, falabellaGetShippingLabel, falabellaCheckReadyToShipStatus, falabellaSetStatusToReadyToShip, falabellaBuildBoletaVenta, falabellaBuildFacturaVenta, falabellaResolveOrderIds,
   falabellaGetProducts, falabellaGetStock, falabellaCreateProduct,
   falabellaGetFeeds, falabellaGetFeedStatus,
   falabellaResolveDocument, falabellaUploadInvoicePdf, falabellaUploadBoletaPdf, falabellaMonthSummary,

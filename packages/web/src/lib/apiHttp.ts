@@ -107,7 +107,8 @@ const apiHttp = {
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>
     req(`/orders-inbox${qs(filter)}`),
   getOrdersInboxCompanies: () => req('/orders-inbox/companies'),
-  syncOrdersInbox: () => req('/orders-inbox/sync', { method: 'POST' }),
+  syncOrdersInbox: (data: { date?: string } = {}) =>
+    req('/orders-inbox/sync', { method: 'POST', body: JSON.stringify(data) }),
 
   // Pedidos multicanal
   listOrderChannels: () => req('/order-management/channels'),
@@ -129,6 +130,15 @@ const apiHttp = {
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
+  updateManagedOrderPayment: (id: number, data: {
+    paymentMethod: string;
+    paymentStatus?: string;
+    receivedBy?: string;
+    paymentProof?: { name: string; type: string; dataUrl: string } | null;
+  }) => req(`/order-management/orders/${id}/payment`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
   createManagedOrder: (data: any) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return req('/order-management/orders/manual', {
@@ -141,10 +151,23 @@ const apiHttp = {
   // Catálogo canónico e inventario compartido
   listCatalogProducts: (filter: {
     search?: string; status?: string; channelCode?: string;
-    companyId?: number;
-    sellerCoverage?: 'all' | 'single' | 'multiple';
+    companyId?: number; companyIds?: number[];
+    sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
+    inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
+    publicationStatus?: 'all' | 'published' | 'unpublished';
+    special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
+    sortBy?: string; sortDir?: 'asc' | 'desc';
     includeArchived?: boolean; limit?: number; offset?: number;
   } = {}) => req(`/products${qs(filter)}`),
+  getCatalogSummary: (filter: {
+    search?: string; status?: string; channelCode?: string;
+    companyId?: number; companyIds?: number[];
+    sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
+    inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
+    publicationStatus?: 'all' | 'published' | 'unpublished';
+    special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
+    includeArchived?: boolean;
+  } = {}) => req(`/products/summary${qs(filter)}`),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
   listTodayProductSales: (filter: {

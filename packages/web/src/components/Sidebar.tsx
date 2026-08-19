@@ -35,16 +35,10 @@ import {
   SidebarRail,
 } from './ui/sidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { EnvBadge, ZentoFactMark } from './ZentoFactBrand';
+import { isProductionApp, runtimeEnvironmentLabel } from '../lib/runtimeEnv';
 
 const APP_VERSION = webPackage.version;
-
-function runtimeEnvironment() {
-  const env = (import.meta as any).env || {};
-  const forcedSunat = String(env.VITE_SUNAT_ENV || '').trim().toLowerCase();
-  const appEnv = env.VITE_APP_ENV === 'production' ? 'Producción' : env.DEV ? 'Local' : 'Desarrollo';
-  const sunatEnv = forcedSunat === 'produccion' ? 'SUNAT prod.' : forcedSunat === 'beta' ? 'SUNAT beta' : '';
-  return sunatEnv ? `${appEnv} · ${sunatEnv}` : appEnv;
-}
 
 export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boolean }) {
   const { pathname } = useLocation();
@@ -61,11 +55,16 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" className="hover:bg-transparent">
-              <Link to="/" aria-label="ZentoFact">
+              <Link to="/" aria-label={isProductionApp() ? 'ZentoFact' : `ZentoFact (${runtimeEnvironmentLabel()})`}>
                 <ZentoFactMark />
                 <span className="hidden min-w-0 flex-1 leading-tight md:grid md:group-data-[collapsed=true]/sidebar:hidden">
-                  <span className="truncate font-semibold text-sidebar-foreground">ZentoFact</span>
-                  <span className="truncate text-xs font-normal text-sidebar-foreground/50">Ventas y facturación</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate font-semibold text-sidebar-foreground">ZentoFact</span>
+                    <EnvBadge />
+                  </span>
+                  <span className="truncate text-xs font-normal text-sidebar-foreground/50">
+                    {isProductionApp() ? 'Ventas y facturación' : runtimeEnvironmentLabel()}
+                  </span>
                 </span>
               </Link>
             </SidebarMenuButton>
@@ -124,20 +123,8 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
   );
 }
 
-function ZentoFactMark() {
-  return (
-    <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-white p-0.5" aria-hidden="true">
-      <svg viewBox="0 0 512 512" className="size-full" role="img">
-        <path d="M32 72h284v96L152 376h164v104H32v-96l164-208H32z" fill="#132238" />
-        <path d="M340 72h140v104h-56v48h44v100h-44v156h-84z" fill="#2864F0" />
-      </svg>
-    </span>
-  );
-}
-
 function RuntimeVersion({ collapsed }: { collapsed: boolean }) {
-  const env = (import.meta as any).env || {};
-  const label = env.PROD ? `v${APP_VERSION}` : `v${APP_VERSION} · ${runtimeEnvironment()}`;
+  const label = isProductionApp() ? `v${APP_VERSION}` : `v${APP_VERSION} · ${runtimeEnvironmentLabel()}`;
 
   return (
     <p
