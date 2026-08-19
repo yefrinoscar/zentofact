@@ -540,6 +540,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
        where company_id=$1`,
       [companyId, message],
     ).catch(() => {});
+    if (runId && error && typeof error === 'object') error.runId = runId;
     throw error;
   } finally {
     if (locked) await db.query('select pg_advisory_unlock($1,$2)', [LOCK_NAMESPACE, Number(companyId)]).catch(() => {});
