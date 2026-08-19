@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
 import { Button } from '../components/ui/button';
 import {
@@ -123,7 +124,7 @@ function Choice<T extends string>({
   onChange,
   ariaLabel,
 }: {
-  value: T;
+  value: T | '';
   options: ReadonlyArray<{ value: T; label: string }>;
   onChange: (value: T) => void;
   ariaLabel: string;
@@ -192,6 +193,7 @@ export default function RegistrarVenta() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lines, setLines] = useState<SaleLine[]>([]);
   const [delivery, setDelivery] = useState<'recojo' | 'envio'>('envio');
+  const [shippingCarrier, setShippingCarrier] = useState<ShippingCarrier | ''>('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
   const [shippingNote, setShippingNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<(typeof PAYMENT_METHODS)[number]['value']>('despues');
@@ -307,6 +309,10 @@ export default function RegistrarVenta() {
       setCreateError('Revisa cantidad y precio de cada producto.');
       return;
     }
+    if (delivery === 'envio' && !shippingCarrier) {
+      setCreateError('Elige el reparto: Marvisuar, Shaloom o Dinsides.');
+      return;
+    }
     if (delivery === 'envio' && !dropoffPlace) {
       setCreateError('Marca la dirección de envío en el mapa.');
       return;
@@ -334,6 +340,7 @@ export default function RegistrarVenta() {
         },
         shipping: {
           type: delivery,
+          carrier: delivery === 'envio' ? shippingCarrier : undefined,
           address: delivery === 'envio' ? dropoffPlace?.label || '' : PICKUP_ADDRESS,
           district: delivery === 'envio' ? dropoffPlace?.district || '' : '',
           reference: delivery === 'envio' ? shippingNote.trim() : '',
@@ -344,6 +351,7 @@ export default function RegistrarVenta() {
           origin: 'manual_ui',
           saleSource,
           delivery,
+          shippingCarrier: delivery === 'envio' ? shippingCarrier : '',
           paymentMethod,
           receivedBy: paymentMethod === 'efectivo' ? receivedBy.trim() : '',
           paymentProof,
@@ -499,7 +507,10 @@ export default function RegistrarVenta() {
             type="button"
             role="radio"
             aria-checked={delivery === 'recojo'}
-            onClick={() => setDelivery('recojo')}
+            onClick={() => {
+              setDelivery('recojo');
+              setShippingCarrier('');
+            }}
             className={cn(
               'inline-flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium sm:h-9 sm:flex-none',
               delivery === 'recojo' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
@@ -510,6 +521,18 @@ export default function RegistrarVenta() {
         </div>
         {delivery === 'envio' ? (
           <div className="space-y-3">
+            <div className="space-y-2">
+              <div>
+                <Label>Reparto</Label>
+                <p className="mt-0.5 text-xs text-muted-foreground">Puede ser Marvisuar, Shaloom o Dinsides.</p>
+              </div>
+              <Choice
+                value={shippingCarrier}
+                options={SHIPPING_CARRIERS}
+                onChange={(value) => setShippingCarrier(value)}
+                ariaLabel="Reparto"
+              />
+            </div>
             <div className="space-y-1.5">
               <Label>Dirección de envío</Label>
               <PlacePicker value={dropoffPlace} onChange={setDropoffPlace} placeholder="Busca la calle o toca el mapa" />

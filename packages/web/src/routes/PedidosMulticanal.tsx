@@ -27,6 +27,7 @@ import {
 import falabellaLogo from '../assets/falabella.png';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { shippingCarrierLabel } from '../lib/shipping-carrier';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -135,6 +136,7 @@ type ManagedOrder = {
   customer?: { name?: string; documentNumber?: string; phone?: string };
   shipping?: {
     type?: string;
+    carrier?: string;
     trackingCode?: string;
     address?: string;
     district?: string;
@@ -146,6 +148,7 @@ type ManagedOrder = {
     paymentMethod?: string;
     saleSource?: string;
     delivery?: string;
+    shippingCarrier?: string;
     receivedBy?: string;
   };
   orderedAt?: string | null;
@@ -563,6 +566,8 @@ function originLabel(order: ManagedOrder) {
 function deliveryLabel(order: ManagedOrder) {
   const type = order.shipping?.type || order.metadata?.delivery || '';
   if (type === 'recojo') return 'Recojo';
+  const carrier = shippingCarrierLabel(order.shipping?.carrier || order.metadata?.shippingCarrier);
+  if (carrier) return carrier;
   if (type === 'envio') return 'Envío';
   if (order.shipping?.trackingCode) return 'Envío';
   if (order.channelCode !== 'manual') return 'Marketplace';
@@ -1289,6 +1294,7 @@ export default function PedidosMulticanal() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <DetailStat label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                   <DetailStat label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-sm text-muted-foreground">Sin dato</span>} />
+                  <DetailStat label="Entrega" content={<span className="text-sm font-medium">{deliveryLabel(detail)}</span>} />
                   <DetailStat label="Comprobante" content={documentBadge(detail)} />
                   <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                 </div>
