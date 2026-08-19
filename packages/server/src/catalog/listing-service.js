@@ -1,4 +1,6 @@
 import { finiteNumber, httpError, jsonObject, loadCore, mapListing, positiveInt, text } from './utils.js';
+import { syncProductInventoryFromListings } from './inventory-service.js';
+import { syncProductStatusesFromListings } from './product-service.js';
 
 const LISTING_STATUSES = ['active', 'inactive', 'unlinked'];
 
@@ -47,7 +49,7 @@ export async function listProductListings(productId, db) {
   return result.rows.map(mapListing);
 }
 
-export async function createListing(productIdInput, input, db) {
+export async function createListing(productIdInput, input, db, options = {}) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
   const companyId = positiveInt(input.companyId, 'companyId');
@@ -77,7 +79,12 @@ export async function createListing(productIdInput, input, db) {
         JSON.stringify(jsonObject(input.metadata)),
       ],
     );
-    return mapListing(result.rows[0]);
+    const listing = mapListing(result.rows[0]);
+    if (options.syncInventory !== false) {
+      await syncProductInventoryFromListings(target, [productId]);
+      await syncProductStatusesFromListings(target, [productId]);
+    }
+    return listing;
   } catch (error) {
     if (error?.code === '23505') {
       throw httpError('Ese seller SKU ya está vinculado para el canal y la empresa.', 409, 'duplicate_listing');
@@ -86,7 +93,7 @@ export async function createListing(productIdInput, input, db) {
   }
 }
 
-export async function upsertListing(productIdInput, input, db) {
+export async function upsertListing(productIdInput, input, db, options = {}) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
   const companyId = positiveInt(input.companyId, 'companyId');
@@ -119,10 +126,15 @@ export async function upsertListing(productIdInput, input, db) {
       JSON.stringify(jsonObject(input.metadata)),
     ],
   );
-  return mapListing(result.rows[0]);
+  const listing = mapListing(result.rows[0]);
+  if (options.syncInventory !== false) {
+    await syncProductInventoryFromListings(target, [productId]);
+    await syncProductStatusesFromListings(target, [productId]);
+  }
+  return listing;
 }
 
-export async function updateListing(idInput, input, db) {
+export async function updateListing(idInput, input, db, options = {}) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(idInput, 'listingId');
   const existing = (await target.query('select * from product_listings where id=$1', [id])).rows[0];
@@ -155,7 +167,13 @@ export async function updateListing(idInput, input, db) {
       id,
     ],
   );
-  return mapListing(result.rows[0]);
+  const listing = mapListing(result.rows[0]);
+  if (options.syncInventory !== false) {
+    const affectedProductIds = [Number(existing.product_id), productId];
+    await syncProductInventoryFromListings(target, affectedProductIds);
+    await syncProductStatusesFromListings(target, affectedProductIds);
+  }
+  return listing;
 }
 
 export function unlinkListing(id, db) {

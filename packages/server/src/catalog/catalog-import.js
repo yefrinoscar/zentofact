@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createProduct } from './product-service.js';
+import { createProduct, syncProductStatusesFromListings } from './product-service.js';
+import { syncProductInventoryFromListings } from './inventory-service.js';
 import { upsertListing } from './listing-service.js';
 import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './listing-snapshot-service.js';
 import { falabellaAssociationProfile, groupFalabellaCatalogRecords } from './catalog-association.js';
@@ -157,8 +158,8 @@ async function fetchCompanyCatalog(core, company) {
 /**
  * Descubre y reconcilia el catálogo completo de Falabella sin escribir en el seller.
  * Publica en el catálogo los listings activos/publicados/aprobados; los listings
- * existentes que Falabella devuelve como no vendibles se conservan con stock 0
- * y su estado de autorización para que operaciones pueda corregirlos.
+ * existentes que Falabella devuelve como no vendibles conservan el stock
+ * reportado y su estado de autorización para que operaciones pueda corregirlos.
  */
 export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
   const core = await loadCore();
@@ -323,7 +324,7 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
             associationSignals: record.association?.signals || [],
             catalogSyncBatchId: batchId,
           },
-        }, client);
+        }, client, { syncInventory: false });
         listingsUpserted += 1;
       }
     }
@@ -384,6 +385,13 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
       [actorUserId ? String(actorUserId) : null],
     );
 
+    const synchronizedProductIds = [
+      ...existingProducts.map((product) => Number(product.id)),
+      ...assignedProductIds,
+    ];
+    await syncProductInventoryFromListings(client, synchronizedProductIds);
+    await syncProductStatusesFromListings(client, synchronizedProductIds);
+
     return {
       batchId,
       companiesRequested: companies.length,
@@ -417,6 +425,7 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
 
   return inTransaction(db, async (client) => {
     const summary = { batchId: randomUUID(), received: remoteProducts.length, productsCreated: 0, productsReused: 0, listingsUpserted: 0, skipped: [] };
+    const affectedProductIds = new Set();
     for (const remote of remoteProducts) {
       const sellerSku = String(remote.sellerSku || '').trim();
       if (!sellerSku) {
@@ -480,9 +489,12 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
           ...snapshot.metadata,
           importBatchId: summary.batchId,
         },
-      }, client);
+      }, client, { syncInventory: false });
+      affectedProductIds.add(Number(productRow.id));
       summary.listingsUpserted += 1;
     }
+    await syncProductInventoryFromListings(client, [...affectedProductIds]);
+    await syncProductStatusesFromListings(client, [...affectedProductIds]);
     return summary;
   });
 }

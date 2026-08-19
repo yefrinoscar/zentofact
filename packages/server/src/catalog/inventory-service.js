@@ -58,6 +58,41 @@ function mapMovement(row) {
   };
 }
 
+/**
+ * Materializa en el producto principal el stock reportado por todas sus
+ * publicaciones asociadas. La vendibilidad de una publicación no altera su
+ * cantidad: estado comercial y stock son datos independientes.
+ */
+export async function syncProductInventoryFromListings(db, productIdsInput) {
+  if (!db?.query) throw new Error('syncProductInventoryFromListings requiere una conexión abierta.');
+  const productIds = [...new Set((productIdsInput || []).map((id) => positiveInt(id, 'productId')))];
+  if (!productIds.length) return [];
+  const result = await db.query(
+    `with listing_totals as (
+       select p.id as product_id,
+         coalesce(sum(coalesce(l.marketplace_quantity, 0)), 0) as seller_stock_total
+       from products p
+       left join product_listings l on l.product_id=p.id
+       where p.id = any($1::bigint[])
+       group by p.id
+     )
+     insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+     select product_id, seller_stock_total, 0 from listing_totals
+     on conflict (product_id) do update set
+       quantity_on_hand=excluded.quantity_on_hand + product_inventory.quantity_reserved,
+       updated_at=now()
+     returning product_id, quantity_on_hand, quantity_reserved,
+       quantity_on_hand - quantity_reserved as available`,
+    [productIds],
+  );
+  return result.rows.map((row) => ({
+    productId: Number(row.product_id),
+    quantityOnHand: Number(row.quantity_on_hand),
+    quantityReserved: Number(row.quantity_reserved),
+    available: Number(row.available),
+  }));
+}
+
 export async function applyInventoryMovement(db, input) {
   if (!db?.query) throw new Error('applyInventoryMovement requiere una transacción abierta.');
   const productId = positiveInt(input.productId, 'productId');

@@ -19,7 +19,7 @@ const COLOR_ALIASES = new Map([
   ['white', 'blanco'], ['blanco', 'blanco'], ['blanca', 'blanco'], ['blancos', 'blanco'], ['blancas', 'blanco'],
   ['blue', 'azul'], ['azul', 'azul'], ['azules', 'azul'], ['red', 'rojo'], ['rojo', 'rojo'], ['roja', 'rojo'],
   ['green', 'verde'], ['verde', 'verde'], ['gray', 'gris'], ['grey', 'gris'], ['gris', 'gris'], ['grises', 'gris'],
-  ['yellow', 'amarillo'], ['amarillo', 'amarillo'], ['amarilla', 'amarillo'], ['pink', 'rosado'], ['rosado', 'rosado'], ['rosa', 'rosado'],
+  ['yellow', 'amarillo'], ['amarillo', 'amarillo'], ['amarilla', 'amarillo'], ['pink', 'rosado'], ['rosado', 'rosado'], ['rosada', 'rosado'], ['rosa', 'rosado'],
   ['purple', 'morado'], ['morado', 'morado'], ['purpura', 'morado'], ['violeta', 'morado'],
   ['orange', 'naranja'], ['naranja', 'naranja'], ['gold', 'dorado'], ['dorado', 'dorado'], ['dorada', 'dorado'],
   ['silver', 'plateado'], ['plateado', 'plateado'], ['plateada', 'plateado'],
@@ -63,17 +63,64 @@ const VERIFIED_EQUIVALENT_FAMILIES = [
   },
 ];
 
-// La numeración N°1/N°2/N°3 no identifica de forma fiable estos adornos entre
-// sellers. Las 21 fotos verificadas forman tres diseños físicos; ShopSku fija
-// esa identidad incluso cuando el título publicado usa otro número.
+// Excepciones verificadas contra las fotos del catálogo real. ShopSku fija la
+// identidad física cuando el título publicado es ambiguo o cambia entre sellers.
 const VERIFIED_LISTING_FAMILIES = new Map([
-  ...['140437519', '140681420', '140716029', '140714631', '140377407', '140546534', '140743807']
+  ...['144952457', '144962095', '144958641', '144962778', '144957751', '144956187', '146325129']
+    .map((shopSku) => [shopSku, 'mochila-viral-usb']),
+  ...['129620781', '129756078', '129727176', '129591195', '131589787', '115743341']
+    .map((shopSku) => [shopSku, 'mochila-deportiva-40l']),
+  ...['144952628', '144959236', '144962066', '144958289', '144962740', '156499931']
+    .map((shopSku) => [shopSku, 'mochila-trekking-45l']),
+  ...['140695706', '140716145', '140715136', '140392127', '140604057', '140747083', '156581151']
+    .map((shopSku) => [shopSku, 'pilas-aa-recargables-usb-c']),
+  ...['115717657', '135891757', '155435960', '129759067', '149672431', '156500250']
+    .map((shopSku) => [shopSku, 'capucha-polar-6-en-1']),
+  ...[
+    '140456403', '140712936', '144949909', '140679978', '140542914', '144959108',
+    '144959117', '144962045', '144958250', '144962723', '144957114', '144954569',
+    '140511766', '140552072', '140747081', '156499933', '156500184',
+  ].map((shopSku) => [shopSku, 'mochila-camping-trekking-40l']),
+  ...['144949858', '144959372', '144962079', '144958577', '144962756', '144955951', '144957656', '156500047']
+    .map((shopSku) => [shopSku, 'mochila-viajera-aerolineas']),
+  ...['123383049', '131601207', '129729338', '135888450', '129647340', '129622659', '129756627', '156583836']
+    .map((shopSku) => [shopSku, 'toalla-microfibra-celeste']),
+  ...['144951810', '144962075', '144958812', '144957741', '156499963']
+    .map((shopSku) => [shopSku, 'mochila-expandible-viaje']),
+  ...['144953026', '144959434', '144962119', '144958703', '144962811', '144956638', '152680399', '156500089']
+    .map((shopSku) => [shopSku, 'bolso-gama-alta-marron']),
+  ...[
+    '118765884', '140704229', '140716398', '140715719', '140472056', '140746371', '140822979',
+    '118765883', '140704280', '140716390', '140715731', '140472053', '140746403', '140823062',
+    '118765881', '140704030', '140716278', '140715693', '140472033', '140746524', '140823005',
+    '118765880', '140704149', '140716282', '140715699', '140472001', '140746590', '140822892',
+    '140704198', '140716287', '140715706', '140511764', '140746933', '140823054',
+    '140704306', '140716408', '140715741', '140472043', '140746441', '140822955',
+    '140454972', '156576493', '156576509', '156576540', '156576302', '156576358', '156576403',
+  ].map((shopSku) => [shopSku, 'camiseta-faja-reductora-vivid-bvd']),
+  ...['128545421', '129551348', '129750004', '131876164']
+    .map((shopSku) => [shopSku, 'silla-comer-reclinable-azul']),
+  ...['128545517', '131610914', '129551254', '129750010', '136344532', '129741409', '135888322', '129645938']
+    .map((shopSku) => [shopSku, 'silla-comer-reclinable-rosada']),
+  ...['144959050', '144962663', '156582201']
+    .map((shopSku) => [shopSku, 'silla-comer-evolutiva-patas-altas']),
+  ...['140437519', '140681420', '140716029', '140714631', '140377407', '140546534', '140743807', '156581792']
     .map((shopSku) => [shopSku, 'adorno-pared-ginkgo']),
-  ...['140430971', '140681536', '140716049', '140714723', '140377163', '140546071', '140743698']
+  ...['140430971', '140681536', '140716049', '140714723', '140377163', '140546071', '140743698', '156581814']
     .map((shopSku) => [shopSku, 'adorno-pared-hojas-alargadas']),
-  ...['140432973', '140681492', '140716042', '140714636', '140377491', '140546464', '140743749']
+  ...['140432973', '140681492', '140716042', '140714636', '140377491', '140546464', '140743749', '156581830']
     .map((shopSku) => [shopSku, 'adorno-pared-ramas-finas']),
 ]);
+
+const VERIFIED_SIZELESS_FAMILIES = new Set([
+  'bolso-gama-alta-marron',
+  'capucha-polar-6-en-1',
+  'mochila-camping-trekking-40l',
+  'mochila-expandible-viaje',
+  'mochila-viajera-aerolineas',
+]);
+
+const VERIFIED_COLORLESS_FAMILIES = new Set(['silla-comer-evolutiva-patas-altas']);
 
 export function normalizeCatalogText(value) {
   return String(value || '')
@@ -95,9 +142,15 @@ function normalizeColor(value, title) {
 
 function normalizeSize(value, title) {
   const direct = normalizeCatalogText(value);
-  if (direct) return SIZE_ALIASES.get(direct) || direct.toUpperCase();
   const normalizedTitle = normalizeCatalogText(title);
   const explicit = /(?:^|\s)talla\s+(xxxl|3xl|xxl|2xl|xl|xs|s|m|l|unica)(?:\s|$)/.exec(normalizedTitle);
+  // Falabella a veces envía la cantidad del pack (por ejemplo "1") en el
+  // atributo size. Cuando el título sí declara una talla de ropa, esa señal es
+  // la variante comercial correcta.
+  if (explicit && (!direct || /^\d+(?:\.\d+)?$/.test(direct))) {
+    return SIZE_ALIASES.get(explicit[1]) || explicit[1].toUpperCase();
+  }
+  if (direct) return SIZE_ALIASES.get(direct) || direct.toUpperCase();
   if (explicit) return SIZE_ALIASES.get(explicit[1]) || explicit[1].toUpperCase();
   const trailing = /(?:^|\s)(xxxl|3xl|xxl|2xl|xl|xs|s|m|l)(?:\s|$)$/.exec(normalizedTitle);
   return trailing ? SIZE_ALIASES.get(trailing[1]) || trailing[1].toUpperCase() : '';
@@ -149,8 +202,8 @@ function verifiedEquivalentFamily(tokens, modelTokens) {
 
 export function falabellaAssociationProfile(remote = {}) {
   const title = String(remote.name || remote.title || '').trim();
-  const color = normalizeColor(remote.color, title);
-  const size = normalizeSize(remote.size, title);
+  let color = normalizeColor(remote.color, title);
+  let size = normalizeSize(remote.size, title);
   let tokens = normalizedTokens(title, color, size);
   const images = (Array.isArray(remote.images) ? remote.images : [remote.imageUrl || remote.image_url])
     .map((value) => String(value || '').trim()).filter(Boolean);
@@ -160,6 +213,8 @@ export function falabellaAssociationProfile(remote = {}) {
   const verifiedListingFamily = VERIFIED_LISTING_FAMILIES.get(String(remote.shopSku || '').trim()) || '';
   const verifiedSemanticFamily = verifiedEquivalentFamily(tokens, modelTokens);
   const verifiedFamily = verifiedListingFamily || verifiedSemanticFamily?.key || '';
+  if (VERIFIED_SIZELESS_FAMILIES.has(verifiedFamily)) size = '';
+  if (VERIFIED_COLORLESS_FAMILIES.has(verifiedFamily)) color = '';
   const ignoredTokens = verifiedListingFamily
     ? new Set(['1', '2', '3'])
     : verifiedSemanticFamily?.ignoredTokens;
@@ -216,8 +271,8 @@ export function scoreFalabellaAssociation(leftInput, rightInput) {
     && !left.modelTokens.some((token) => right.modelTokens.includes(token))) {
     return { eligible: false, confidence: 0, reason: 'model_conflict', signals: [] };
   }
-  if ((!exactImage && !exactSellerSku && (title.intersection < 3 || title.containment < 0.6))
-    || ((exactImage || exactSellerSku) && title.intersection < 1)) {
+  if (!verifiedEquivalent && ((!exactImage && !exactSellerSku && (title.intersection < 3 || title.containment < 0.6))
+    || ((exactImage || exactSellerSku) && title.intersection < 1))) {
     return { eligible: false, confidence: 0, reason: 'weak_product_family', signals: [] };
   }
   if (title.jaccard < 0.65 && !exactImage && !exactSellerSku) {
@@ -333,11 +388,14 @@ export function groupFalabellaCatalogRecords(records, { threshold = 0.82, ambigu
       const average = minimum;
       const titleSimilarity = comparisons[0].titleSimilarity || 0;
       const hasExactSellerSku = comparisons.some((comparison) => comparison.signals.includes('seller_sku:exact'));
+      const hasVerifiedFamily = comparisons.some((comparison) => (
+        comparison.signals.some((signal) => signal.startsWith('verified_family:'))
+      ));
       const colorConflict = source.profile.knownColors.length && cluster.profile.knownColors.length
         && !source.profile.knownColors.some((color) => cluster.profile.knownColors.includes(color));
       const sizeConflict = source.profile.knownSizes.length && cluster.profile.knownSizes.length
         && !source.profile.knownSizes.some((size) => cluster.profile.knownSizes.includes(size));
-      const corroboratedDuplicate = cluster.companyIds.size >= 3 && minimum >= 0.95;
+      const corroboratedDuplicate = hasVerifiedFamily || (cluster.companyIds.size >= 3 && minimum >= 0.95);
       if (colorConflict || sizeConflict) return null;
       if (overlapsSeller && !hasExactImage && !hasExactSellerSku && !corroboratedDuplicate) return null;
       return {

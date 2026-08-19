@@ -257,11 +257,6 @@ function sellerStock(product: Product) {
   return Number.isFinite(stock) ? stock : 0;
 }
 
-function availableStock(product: Product) {
-  const stock = Number(product.available);
-  return Number.isFinite(stock) ? stock : 0;
-}
-
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
@@ -987,8 +982,8 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
           <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
         </span>
         <span className="min-w-0">
-          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock interno</span>
-          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(availableStock(product))} u</span>
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock sellers</span>
+          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(sellerStock(product))} u</span>
         </span>
         <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
@@ -1056,11 +1051,11 @@ const CatalogTable = memo(function CatalogTable({
       header: 'Stock',
       cell: ({ row }) => {
         const product = row.original;
-        const stock = availableStock(product);
+        const stock = sellerStock(product);
         return <div>
           <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Inventario interno · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
+            Suma de publicaciones · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
           </p>
         </div>;
       },
@@ -1230,7 +1225,7 @@ function ProductDrawer({
 
         <TabsContent value="overview" className="min-h-0 overflow-y-auto">
           <div className="grid grid-cols-2 border-b border-border md:grid-cols-4">
-            <Metric label="Stock publicado" value={`${formatNumber(sellerStock(product))} u`} />
+            <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
             <Metric label="Precio" value={formatBasePrice(product)} />
             <Metric label="Sellers" value={String(product.sellersCount || 0)} />
             <Metric label="Publicadas" value={String(publishedListings.length)} />
@@ -1610,7 +1605,11 @@ function channelLabel(value: string) {
 }
 
 function ProductStatusBadge({ product, compact = false }: { product: Product; compact?: boolean }) {
-  const status = String(product.status || 'inactive').toLowerCase();
+  const storedStatus = String(product.status || 'inactive').toLowerCase();
+  const hasVisiblePublication = product.listings?.some(isActivelyPublished);
+  const status = storedStatus === 'archived'
+    ? 'archived'
+    : storedStatus === 'active' && hasVisiblePublication !== false ? 'active' : 'inactive';
   const label = status === 'active' ? 'Activo' : status === 'archived' ? 'Archivado' : 'Inactivo';
   const classes = status === 'active'
     ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'

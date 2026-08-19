@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyInventoryMovement, InsufficientStockError } from './catalog/inventory-service.js';
+import {
+  applyInventoryMovement,
+  InsufficientStockError,
+  syncProductInventoryFromListings,
+} from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
 import { stockPhase } from './catalog/stock-phase.js';
 import {
@@ -157,6 +161,35 @@ test('aplica un movimiento con saldo materializado e idempotencia', async () => 
   assert.equal(db.movements.size, 1);
 });
 
+test('el stock principal materializa la suma de todos los sellers asociados', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql: sql.replace(/\s+/g, ' ').trim().toLowerCase(), params });
+      return {
+        rows: [{
+          product_id: 122,
+          quantity_on_hand: '721.0000',
+          quantity_reserved: '0.0000',
+          available: '721.0000',
+        }],
+      };
+    },
+  };
+
+  const result = await syncProductInventoryFromListings(db, [122, '122']);
+
+  assert.deepEqual(calls[0].params, [[122]]);
+  assert.match(calls[0].sql, /sum\(coalesce\(l\.marketplace_quantity, 0\)\)/);
+  assert.match(calls[0].sql, /excluded\.quantity_on_hand \+ product_inventory\.quantity_reserved/);
+  assert.deepEqual(result, [{
+    productId: 122,
+    quantityOnHand: 721,
+    quantityReserved: 0,
+    available: 721,
+  }]);
+});
+
 test('snapshot Falabella separa precio regular/oferta y suma stock seller más fulfillment', () => {
   const snapshot = falabellaPublicationSnapshot({
     name: 'Producto publicado',
@@ -180,7 +213,7 @@ test('snapshot Falabella separa precio regular/oferta y suma stock seller más f
   assert.equal(snapshot.metadata.stockSource, 'falabella_get_stock');
 });
 
-test('un producto no autorizado no expone stock comercial aunque tenga inventario físico', () => {
+test('un producto no autorizado conserva el stock reportado aunque no sea vendible', () => {
   const remote = {
     name: 'Pulsera para camara Gopro accesorio',
     status: 'active',
@@ -196,7 +229,7 @@ test('un producto no autorizado no expone stock comercial aunque tenga inventari
     availableQuantity: 100,
   });
 
-  assert.equal(snapshot.availableQuantity, 0);
+  assert.equal(snapshot.availableQuantity, 100);
   assert.equal(snapshot.metadata.reportedAvailableQuantity, 100);
   assert.equal(snapshot.metadata.isSellable, false);
   assert.equal(snapshot.metadata.sellabilityReason, 'qc_not_approved');
@@ -561,6 +594,220 @@ test('asocia las mantas Mylar confirmadas aunque una publicación destaque 140x2
   assert.match(groups[0].records[1].association.signals.join(' '), /verified_family:manta-termica-mylar-140x210/);
 });
 
+test('asocia la mochila viral USB con la publicación de trabajo confirmada', () => {
+  const shopSkus = [
+    '144952457', '144962095', '144958641', '144962778',
+    '144957751', '144956187', '146325129',
+  ];
+  const groups = groupFalabellaCatalogRecords(shopSkus.map((shopSku, index) => ({
+    company: { id: index + 1 },
+    remote: {
+      name: shopSku === '146325129'
+        ? 'Mochila Para Trabajo Viaje Negocios Impermeable USB Portatil Original'
+        : 'Mochila Viral Tiktok Expandible Juvenil USB Laptop',
+      sellerSku: `MOCHILA-${index}`,
+      shopSku,
+      color: 'Negro',
+    },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 7);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-viral-usb/);
+});
+
+test('asocia las publicaciones verificadas de la mochila deportiva de 40 litros', () => {
+  const publications = [
+    ['129620781', 'Mochila Maleta Deportiva Sport Laptop Morral Viaje Camping Negra', 'Negro'],
+    ['129756078', 'Mochila Maleta Deportiva Sport Laptop Morral Viaje Camping Negra', 'Negro'],
+    ['129727176', 'Mochila Maleta Deportiva Sport Laptop Viaje Camping Negro', 'Negro'],
+    ['129591195', 'Mochila Maleta Deportiva 40 Litros Sport Viaje Laptop Negro', ''],
+    ['131589787', 'Mochila Maleta Deportiva 40 Litros Sport Viaje Laptop Negro', 'Negro'],
+    ['115743341', 'Mochila Maleta Deportiva 40 Litros Sport Laptop Viaje Negro', ''],
+  ];
+  const groups = groupFalabellaCatalogRecords(publications.map(([shopSku, name, color], index) => ({
+    company: { id: index + 1 },
+    remote: { name, color, shopSku, sellerSku: `MOC-40L-${index}` },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 6);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-deportiva-40l/);
+});
+
+test('asocia las publicaciones verificadas de la mochila trekking de 45 litros', () => {
+  const shopSkus = ['144952628', '144959236', '144962066', '144958289', '144962740', '156499931'];
+  const groups = groupFalabellaCatalogRecords(shopSkus.map((shopSku, index) => ({
+    company: { id: index + 1 },
+    remote: {
+      name: index === shopSkus.length - 1
+        ? 'Mochila Trekking Camping Senderismo 45 litros Outdoor Impermeable'
+        : 'Mochila Trekking Camping Senderismo 45L Outdoor Impermeable',
+      color: index === shopSkus.length - 1 ? 'Negro' : '',
+      shopSku,
+      sellerSku: `MOC-45L-${index}`,
+    },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 6);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-trekking-45l/);
+});
+
+test('asocia las publicaciones verificadas de las pilas AA recargables USB-C', () => {
+  const groups = groupFalabellaCatalogRecords([
+    {
+      company: { id: 9 },
+      remote: {
+        name: 'Pilas recargables AA de 15V con cable tipo C',
+        shopSku: '140747083', sellerSku: 'PILAS-AA-A',
+      },
+    },
+    {
+      company: { id: 10 },
+      remote: {
+        name: 'Pilas recargables AA de 1.5V con cable tipo C - UNIDAD',
+        shopSku: '156581151', sellerSku: 'PILAS-AA-B',
+      },
+    },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 2);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:pilas-aa-recargables-usb-c/);
+});
+
+test('mantiene separadas las tres variantes físicas verificadas de sillas de comer', () => {
+  const publications = [
+    ['128545421', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
+    ['129551348', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
+    ['129750004', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
+    ['131876164', 'Silla De Comer Multifuncional Para Bebe Reclinable Plegable'],
+    ['128545517', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['131610914', 'Silla De Comer Multifuncional Para Bebe Plegable Rosada'],
+    ['129551254', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['129750010', 'Silla De Comer Multifuncional Para Bebe Reclinable Rosa'],
+    ['136344532', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['129741409', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['135888322', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['129645938', 'Silla De Comer Multifuncional Para Bebe Plegable Rosado'],
+    ['144962663', 'Silla de Comer para Bebé Multifuncional Evolutiva Rosa'],
+  ];
+  const groups = groupFalabellaCatalogRecords(publications.map(([shopSku, name], index) => ({
+    company: { id: index + 1 },
+    remote: { name, shopSku, sellerSku: `SILLA-${index}` },
+  })));
+
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.map((group) => group.records.length).sort((left, right) => left - right), [1, 4, 8]);
+});
+
+test('asocia las sillas evolutivas verificadas aunque cambie el color', () => {
+  const groups = groupFalabellaCatalogRecords([
+    {
+      company: { id: 2 },
+      remote: {
+        name: 'Silla de Comer para Bebé Multifuncional Evolutiva Celeste',
+        color: 'Celeste', shopSku: '144959050', sellerSku: 'SILLA-CELESTE',
+      },
+    },
+    {
+      company: { id: 7 },
+      remote: {
+        name: 'Silla de Comer para Bebé Multifuncional Evolutiva Rosa',
+        color: 'Rosa', shopSku: '144962663', sellerSku: 'SILLA-ROSA',
+      },
+    },
+    {
+      company: { id: 10 },
+      remote: {
+        name: 'Silla de Comer para Bebé Multifuncional Evolutiva 3 en 1 BEIGE',
+        color: 'Beige', shopSku: '156582201', sellerSku: 'SILLA-BEIGE',
+      },
+    },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 3);
+});
+
+test('asocia el bolso verificado aunque Falabella reporte tallas espurias', () => {
+  const publications = [
+    ['144953026', 'Talla única'], ['144959434', 'Talla única'], ['144962119', 'Talla única'],
+    ['144958703', 'Talla única'], ['144962811', 'Talla única'], ['144956638', 'Talla única'],
+    ['152680399', 'M'], ['156500089', '20'],
+  ];
+  const groups = groupFalabellaCatalogRecords(publications.map(([shopSku, size], index) => ({
+    company: { id: index + 1 },
+    remote: {
+      name: 'Bolso De Gama Alta Para Mujer Dama Gran Capacidad Cartera Lujo',
+      color: 'Marrón', size, shopSku, sellerSku: `BOLSO-${index}`,
+    },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 8);
+});
+
+test('asocia las camisetas verificadas por color y talla inferida del título', () => {
+  const publications = [
+    ['118765884', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Blanco', 'M'],
+    ['156576302', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Blanco talla M', 'Blanco', '1'],
+    ['118765883', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Blanco', 'L'],
+    ['156576358', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Blanco talla L', 'Blanco', '1'],
+    ['140704306', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Blanco', 'XL'],
+    ['140454972', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho', 'Blanco', 'XL'],
+    ['156576403', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Blanco talla XL', 'Blanco', '1'],
+    ['118765881', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Negro', 'M'],
+    ['156576493', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Negra talla M', 'Negro', '1'],
+    ['118765880', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Negro', 'L'],
+    ['156576509', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Negra talla L', 'Negro', '1'],
+    ['140704198', 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd', 'Negro', 'XL'],
+    ['156576540', 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho Negra talla XL', 'Negro', '1'],
+  ];
+  const groups = groupFalabellaCatalogRecords(publications.map(([shopSku, name, color, size], index) => ({
+    company: { id: index + 1 }, remote: { name, color, size, shopSku, sellerSku: `CAMISETA-${index}` },
+  })));
+
+  assert.equal(falabellaAssociationProfile(publications.map(([shopSku, name, color, size]) => ({
+    shopSku, name, color, size,
+  }))[1]).size, 'M');
+  assert.equal(groups.length, 6);
+  assert.deepEqual(groups.map((group) => group.records.length).sort((left, right) => left - right), [2, 2, 2, 2, 2, 3]);
+});
+
+test('mantiene unidas las familias consolidadas aunque Falabella cambie atributos o títulos', () => {
+  const families = [
+    [
+      { company: { id: 1 }, remote: { shopSku: '115717657', sellerSku: 'CAP-A', name: 'Capucha Polar Cortaviento Mascara 6 En 1 Termica Deportes' } },
+      { company: { id: 1 }, remote: { shopSku: '155435960', sellerSku: 'CAP-B', name: 'Capucha Polar Cortaviento Mascara 6 En 1 Termica Deportes', color: 'Negro' } },
+      { company: { id: 3 }, remote: { shopSku: '129759067', sellerSku: 'CAP-C', name: 'Capucha Polar Cortaviento Mascara 6 En 1 Termica Deportes', color: 'Negro', size: 'Talla única' } },
+    ],
+    [
+      { company: { id: 1 }, remote: { shopSku: '144959108', sellerSku: '40L-A', name: 'Mochila de camping trekking 40L - Resistente y Ergonómico' } },
+      { company: { id: 2 }, remote: { shopSku: '140511766', sellerSku: '40L-B', name: 'Mochila de camping trekking Negra 40L - Resistente', color: 'Negro', size: 'L' } },
+    ],
+    [
+      { company: { id: 1 }, remote: { shopSku: '144959372', sellerSku: 'VIAJE-A', name: 'Mochila Viajera Multifuncional medidas aerolineas', color: 'Negro', size: 'Talla única' } },
+      { company: { id: 2 }, remote: { shopSku: '156500047', sellerSku: 'VIAJE-B', name: 'Mochila Viajera Multifuncional medidas aerolineas', color: 'Negro', size: '40' } },
+    ],
+    [
+      { company: { id: 1 }, remote: { shopSku: '131601207', sellerSku: 'TOALLA-A', name: 'Toalla Deportiva Microfibra Absorvente Camping Sport Secado', color: 'Celeste' } },
+      { company: { id: 2 }, remote: { shopSku: '156583836', sellerSku: 'TOALLA-B', name: 'Toalla de Microfibra Celeste 76x152 cm – Ultraligera, Secado Rápido y Alta Absorción' } },
+    ],
+    [
+      { company: { id: 1 }, remote: { shopSku: '144962075', sellerSku: 'EXP-A', name: 'Mochila Expandible para Viaje Oficina Equipaje de mano Aerolineas', color: 'Negro', size: 'Talla única' } },
+      { company: { id: 2 }, remote: { shopSku: '156499963', sellerSku: 'EXP-B', name: 'Mochila Expandible para Viaje Oficina Equipaje de mano', color: 'Negro', size: '50' } },
+    ],
+  ];
+
+  for (const records of families) {
+    const groups = groupFalabellaCatalogRecords(records);
+    assert.equal(groups.length, 1, records[0].remote.shopSku);
+    assert.equal(groups[0].records.length, records.length);
+  }
+});
+
 test('asocia los adornos por sus tres diseños físicos aunque los títulos intercambien N°1/N°2/N°3', () => {
   const groups = groupFalabellaCatalogRecords([
     {
@@ -591,12 +838,24 @@ test('asocia los adornos por sus tres diseños físicos aunque los títulos inte
       company: { id: 1, name: 'LIMBO' },
       remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar N°2', sellerSku: 'R-L', shopSku: '140432973' },
     },
+    {
+      company: { id: 10, name: 'LA TIENDA DEL VIAJERO' },
+      remote: { name: 'Adorno de Pared de Metal – Estilo Elegante para tu Hogar - FLORES', sellerSku: '140743808', shopSku: '156581792' },
+    },
+    {
+      company: { id: 10, name: 'LA TIENDA DEL VIAJERO' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar - HOJAS', sellerSku: '140743699', shopSku: '156581814' },
+    },
+    {
+      company: { id: 10, name: 'LA TIENDA DEL VIAJERO' },
+      remote: { name: 'Adorno de Pared de Metal Estilo Elegante para tu Hogar - RAMAS', sellerSku: '140743750', shopSku: '156581830' },
+    },
   ]);
   assert.equal(groups.length, 3);
   assert.deepEqual(groups.map((group) => group.records.map(({ remote }) => remote.sellerSku).sort()).sort(), [
-    ['A-M', 'A-Y'],
-    ['G-D', 'G-L', 'G-Y'],
-    ['R-L', 'R-Y'],
+    ['140743699', 'A-M', 'A-Y'],
+    ['140743750', 'R-L', 'R-Y'],
+    ['140743808', 'G-D', 'G-L', 'G-Y'],
   ]);
 });
 
@@ -658,6 +917,20 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   await assert.rejects(() => listProducts({ sellerCoverage: 'unknown' }, db), /sellerCoverage inválido/);
 });
 
+test('Activo exige al menos una publicación visible y no depende del stock', async () => {
+  const statements = [];
+  const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
+
+  await listProducts({ status: 'active' }, db);
+
+  const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  const summarySql = statements.find((statement) => statement.sql.includes('as single_seller'))?.sql || '';
+  assert.match(listSql, /p\.status=\$1[\s\S]*exists[\s\S]*publication_listing[\s\S]*metadata->>'isPublished'/);
+  assert.match(listSql, /publication_listing[\s\S]*metadata->>'qcStatus'[\s\S]*='approved'/);
+  assert.doesNotMatch(listSql, /publication_listing\.marketplace_quantity/);
+  assert.match(summarySql, /count\(\*\) filter \(where p\.status='active'[\s\S]*exists[\s\S]*publication_listing[\s\S]*\) as active/);
+});
+
 test('el catálogo combina facetas profesionales y ordenamiento desde SQL', async () => {
   const statements = [];
   const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
@@ -705,7 +978,7 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   await assert.rejects(() => listProducts({ sortDir: 'sideways' }, db), /sortDir inválido/);
 });
 
-test('el catálogo adjunta publicaciones activas compactas después de paginar', async () => {
+test('el catálogo adjunta todas las publicaciones compactas después de paginar', async () => {
   const statements = [];
   const db = {
     query: async (sql, params) => {
@@ -742,7 +1015,7 @@ test('el catálogo adjunta publicaciones activas compactas después de paginar',
           }],
         };
       }
-      if (sql.includes('product_id = any') && sql.includes("status = 'active'")) {
+      if (sql.includes('product_id = any')) {
         return {
           rows: [{
             id: 71,
@@ -791,7 +1064,7 @@ test('el catálogo adjunta publicaciones activas compactas después de paginar',
   const listed = await listProducts({ limit: 20, offset: 40 }, db);
   const pageQuery = statements.find((statement) => statement.sql.includes('count(*) over()'));
   const listingsQuery = statements.find((statement) => (
-    statement.sql.includes('product_id = any') && statement.sql.includes("status = 'active'")
+    statement.sql.includes('product_id = any')
   ));
   assert.ok(pageQuery);
   assert.ok(listingsQuery);
@@ -799,7 +1072,8 @@ test('el catálogo adjunta publicaciones activas compactas después de paginar',
   assert.doesNotMatch(pageQuery.sql, /nombre_comercial/);
   assert.notEqual(pageQuery.sql, listingsQuery.sql);
   assert.match(listingsQuery.sql, /l\.product_id = any\(\$1::int\[\]\)/);
-  assert.match(listingsQuery.sql, /l\.status = 'active'/);
+  assert.doesNotMatch(listingsQuery.sql, /l\.status = 'active'/);
+  assert.match(pageQuery.sql, /sum\(l\.marketplace_quantity\)(?!\s+filter)/);
   assert.deepEqual(listingsQuery.params[0], [5]);
   assert.equal(listed.products.length, 1);
   assert.equal(listed.products[0].listings.length, 1);
@@ -1083,6 +1357,8 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
           marketplace_quantity: params[8], metadata: JSON.parse(params[10]),
         }] };
       }
+      if (compact.startsWith('with listing_totals as')) return { rows: [] };
+      if (compact.startsWith('with desired_product_statuses as')) return { rows: [] };
       throw new Error(`Query no simulada: ${compact}`);
     },
   };
@@ -1109,9 +1385,11 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
   assert.equal(metadata.isPublished, true);
   assert.equal(metadata.status, 'active');
   assert.equal(metadata.marketplaceStatus, 'active');
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), true);
 });
 
-test('import no publica stock de una publicación Falabella no autorizada', async () => {
+test('import conserva el stock reportado de una publicación Falabella no autorizada', async () => {
   const queries = [];
   const db = {
     async query(sql, params = []) {
@@ -1128,6 +1406,8 @@ test('import no publica stock de una publicación Falabella no autorizada', asyn
           marketplace_quantity: params[8], metadata: JSON.parse(params[10]),
         }] };
       }
+      if (compact.startsWith('with listing_totals as')) return { rows: [] };
+      if (compact.startsWith('with desired_product_statuses as')) return { rows: [] };
       throw new Error(`Query no simulada: ${compact}`);
     },
   };
@@ -1142,8 +1422,10 @@ test('import no publica stock de una publicación Falabella no autorizada', asyn
   }, 'actor', db);
   const listingInsert = queries.find(({ sql }) => sql.startsWith('insert into product_listings'));
   const metadata = listingInsert.params[10] && JSON.parse(listingInsert.params[10]);
-  assert.equal(listingInsert.params[8], 0);
+  assert.equal(listingInsert.params[8], 100);
   assert.equal(metadata.reportedAvailableQuantity, 100);
   assert.equal(metadata.isSellable, false);
   assert.equal(metadata.sellabilityReason, 'qc_not_approved');
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), true);
 });
