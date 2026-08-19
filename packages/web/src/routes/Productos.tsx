@@ -186,6 +186,12 @@ type ReturnsSummary = ActivityResponse & {
 
 const PAGE_SIZE = 20;
 const SEARCH_DELAY_MS = 300;
+const CATALOG_COLUMN_CLASS_NAMES = {
+  product: 'w-[48%]',
+  price: 'hidden sm:table-cell sm:w-[14%]',
+  stock: 'hidden sm:table-cell sm:w-[18%]',
+  status: 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
+} as const;
 
 const initialCreate = { mainSku: '', name: '', brand: '', description: '', referencePrice: '', imageUrl: '' };
 const initialAdjust = { mode: 'delta', value: '', reason: '' };
@@ -1098,17 +1104,15 @@ const CatalogTable = memo(function CatalogTable({
           <Table className="table-fixed">
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
-                {headerGroup.headers.map((header) => <TableHead key={header.id} className={cn(
-                  header.column.id === 'product' && 'w-full sm:w-[52%]',
-                  header.column.id === 'price' && 'hidden sm:table-cell sm:w-[15%]',
-                  header.column.id === 'stock' && 'hidden sm:table-cell sm:w-[19%]',
-                  header.column.id === 'status' && 'hidden sm:table-cell sm:w-[14%]',
-                )}>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
+                {headerGroup.headers.map((header) => <TableHead
+                  key={header.id}
+                  className={cn('min-w-0', CATALOG_COLUMN_CLASS_NAMES[header.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES])}
+                >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
               </TableRow>)}
             </TableHeader>
             <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
               <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
-                {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell'}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+                {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn('min-w-0', cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell')}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
               </TableRow>
               {row.getIsExpanded() && <ExpandedProductPublications
                 productId={row.original.id}
@@ -1487,10 +1491,10 @@ function CatalogTableSkeleton() {
     <Table className="table-fixed">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[48%]"><Skeleton className="h-4 w-20" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[14%]"><Skeleton className="h-4 w-14" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[18%]"><Skeleton className="h-4 w-14" /></TableHead>
-          <TableHead className="hidden sm:table-cell sm:w-[20%]"><Skeleton className="h-4 w-24" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.product}><Skeleton className="h-4 w-20" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.price}><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.stock}><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.status}><Skeleton className="h-4 w-24" /></TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
