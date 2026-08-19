@@ -50,7 +50,7 @@ type OrderPreview = {
   document?: {
     boleta?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
     factura?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
-    creditNote?: { numeroCompleto?: string; estadoSunat?: string } | null;
+    creditNote?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
   } | null;
 };
 type Evt = { id: number; company: string; company_id?: number; order_number: string | null; event: string; processed: boolean; received_at: string };

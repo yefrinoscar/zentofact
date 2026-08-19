@@ -10,8 +10,11 @@ Estado: implementado detrás de feature flag (2026-08-08).
 - Ledger append-only y saldo materializado.
 - Ajustes manuales delta/absoluto con motivo obligatorio.
 - Importación Falabella que reutiliza un `main_sku` sanitizado existente.
-- Reconciliación de pedidos confirmados/completados, cambios de cantidad,
-  líneas eliminadas, cancelaciones, fallos y devoluciones.
+- Reconciliación de pedidos listos para enviar, enviados o entregados,
+  cambios de cantidad, líneas eliminadas, cancelaciones, fallos y
+  devoluciones. Un pedido `pending` no descuenta stock.
+- Cada movimiento de venta cita el número de pedido y el seller. El
+  descuento aplica al producto maestro asociado, no a cada publicación.
 - Cola operativa para `skipped_unmapped` y `skipped_insufficient`.
 - Acción explícita para aplicar stock a pedidos abiertos después de vincular o
   reabastecer. Vincular un listing por sí solo no modifica pedidos históricos.
@@ -55,11 +58,21 @@ CATALOG_ALLOW_NEGATIVE_MANUAL=false
    eliminación de línea, cancelación y devolución.
 5. Cambiar `CATALOG_INVENTORY_ENABLED=true` y reiniciar el servicio.
 
-Desactivar el flag detiene efectos nuevos de pedidos; no borra saldos ni
-movimientos.
+Desactivar el flag detiene el descuento en re-sync e hidratación histórica;
+no borra saldos ni movimientos. El paso a listo para enviar (webhook o
+bandeja) sigue aplicando el movimiento.
 
 ## Invariantes de stock
 
+- El stock interno se descuenta cuando el pedido pasa a `ready_to_ship`
+  (el mismo momento que habilita la boleta), no al confirmarlo ni al
+  recibirlo como `pending`. `shipped` y `delivered` también son elegibles
+  si el descuento todavía no se aplicó.
+- El webhook y la bandeja no descuentan en el request: encolan un job en
+  `inventory_stock_jobs`. Un worker aparte (lotes de 8, reintento) escribe
+  el movimiento. La cola de boletas sigue siendo otra; el mismo evento
+  `listo para enviar` alimenta las dos. Un backfill por fecha operativa
+  (`POST /catalog/inventory/apply-ready-orders`) encola el día y drena la cola.
 - `stock_applied_quantity` indica cuántas unidades de una línea ya están en el
   ledger. `stock_revision` solo aumenta cuando se inserta un movement real.
 - Las claves usan la revisión monotónica (`...:rev:N`), no la cantidad final.

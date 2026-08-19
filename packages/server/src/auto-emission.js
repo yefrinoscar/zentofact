@@ -21,7 +21,8 @@ import {
   createAndSendCreditNoteFromFactura,
 } from '@zentofact/core';
 import { FalabellaApiClient } from '@zentofact/falabella-api';
-import { upsertFalabellaWebhookOrder } from './falabella-sync.js';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
+import { attachFalabellaOrderItems, upsertFalabellaWebhookOrder } from './falabella-sync.js';
 import {
   JOB_KIND_CREDIT_NOTE,
   JOB_KIND_INVOICE,
@@ -563,13 +564,13 @@ async function fetchOrderForWebhook(companyId, orderId, orderNumber) {
   });
   if (orderId) {
     const byId = await fetchOrderById(client, orderId);
-    if (byId) return byId;
+    if (byId) return attachFalabellaOrderItems(client, byId);
   }
   if (orderNumber) {
     const dates = [today(), dateOnly(Date.now() - 24 * 60 * 60 * 1000)];
     for (const date of dates) {
       const found = await client.findOrderByOrderNumber(orderNumber, date);
-      if (found?.raw) return found.raw;
+      if (found?.raw) return attachFalabellaOrderItems(client, found.raw);
     }
   }
   return null;
@@ -686,15 +687,27 @@ export async function enqueue(companyId, orderNumber, source = 'webhook', orderI
 }
 
 // ── Webhook ──
+async function enqueueReadyStockJob(companyId, externalOrderId, orderNumber, source = 'webhook') {
+  const resolvedOrderId = String(externalOrderId || '').trim();
+  if (!resolvedOrderId) return;
+  await enqueueStockJob({
+    companyId,
+    externalOrderId: resolvedOrderId,
+    orderNumber,
+    source,
+  }).catch((error) => {
+    log(`company=${companyId} orden=${orderNumber || resolvedOrderId} no pudo encolar stock:`, error.message);
+  });
+}
+
 export async function handleWebhook(companyId, payload) {
   const { orderNumber, orderId, body } = extractOrder(payload);
   await pool.query(
     `insert into webhook_events (company_id, order_number, event, raw) values ($1,$2,$3,$4)`,
     [companyId, orderNumber || null, 'onOrderItemsStatusChanged', JSON.stringify(payload || {})],
   ).catch(() => {});
-  const enabled = await isCompanyEnabled(companyId);
-  log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${enabled ? '' : '(empresa NO activa, se ignora)'}`);
-  if (!enabled) return { ok: true, orderNumber, orderId, ignored: 'empresa no activa para emisión automática' };
+  const boletaEnabled = await isCompanyEnabled(companyId);
+  log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${boletaEnabled ? '' : '(boleta automática apagada)'}`);
 
   const payloadStatus = normStatus(statusOfOrder(body));
   const payloadKind = payloadStatus ? jobKindForStatus(payloadStatus) : null;
@@ -727,19 +740,27 @@ export async function handleWebhook(companyId, payload) {
       };
     }
     const resolvedNumber = String(authoritative.OrderNumber || orderNumber || '').trim();
+    const resolvedOrderId = String(authoritative.OrderId || orderId || '').trim();
+    if (isReadyStatus(currentStatus)) {
+      await enqueueReadyStockJob(companyId, resolvedOrderId, resolvedNumber, 'webhook');
+    }
+    if (kind === JOB_KIND_INVOICE && !boletaEnabled) {
+      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; boleta omitida`);
+      return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
+    }
     if (resolvedNumber) {
-      const queued = await enqueueIfNeeded(companyId, resolvedNumber, 'webhook', authoritative.OrderId || orderId, kind);
+      const queued = await enqueueIfNeeded(companyId, resolvedNumber, 'webhook', resolvedOrderId || orderId, kind);
       if (!queued.enqueued) {
         return {
           ok: true,
           orderNumber: resolvedNumber,
-          orderId: String(authoritative.OrderId || orderId || ''),
+          orderId: resolvedOrderId,
           kind,
           ignored: queued.ignored,
         };
       }
     }
-    return { ok: true, orderNumber: resolvedNumber, orderId: String(authoritative.OrderId || orderId || ''), kind };
+    return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
   }
 
   // Un webhook sin estado verificable no debe crear un job a ciegas (ni usar OrderId como OrderNumber).
@@ -747,6 +768,13 @@ export async function handleWebhook(companyId, payload) {
   if (!payloadKind) {
     log(`webhook company=${companyId} orden=${orderNumber || orderId || '?'} no se encola: estado no confirmado`);
     return { ok: true, orderNumber, orderId, ignored: 'estado no confirmado; lo resolverá la reconciliación' };
+  }
+  if (isReadyStatus(payloadStatus)) {
+    await enqueueReadyStockJob(companyId, orderId, orderNumber, 'webhook');
+  }
+  if (payloadKind === JOB_KIND_INVOICE && !boletaEnabled) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; boleta omitida`);
+    return { ok: true, orderNumber, orderId, kind: payloadKind };
   }
   if (orderNumber) {
     const queued = await enqueueIfNeeded(companyId, orderNumber, 'webhook', orderId, payloadKind);
@@ -1090,6 +1118,7 @@ export async function reconcile() {
           const kind = jobKindForStatus(status);
           if (kind === JOB_KIND_INVOICE && !invoiceKnown.has(on)) {
             await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null, JOB_KIND_INVOICE);
+            await enqueueReadyStockJob(company.id, order.OrderId, on, 'cron');
             invoiceKnown.add(on);
             enqueued++;
           }
