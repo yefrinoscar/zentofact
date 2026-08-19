@@ -24,6 +24,8 @@ const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
+const stockJobs = await import('./catalog/stock-jobs.js');
+await stockJobs.ensureStockJobTables();
 const insumos = await import('./insumos.js');
 await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
@@ -421,6 +423,18 @@ app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
       ...body,
       actorUserId: c.get('user')?.id,
     }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/catalog/inventory/apply-ready-orders', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const queued = await stockJobs.enqueueStockJobsForOperationalDate({
+      date: body.date,
+      source: body.source || 'catchup',
+    });
+    if (body.dryRun === true) return ok(c, { ...queued, dryRun: true });
+    const drained = await stockJobs.drainStockQueue();
+    return ok(c, { ...queued, dryRun: false, drained });
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/products/:id/inventory', async (c) => {
@@ -1412,4 +1426,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
+  stockJobs.startStockJobWorker();
 });

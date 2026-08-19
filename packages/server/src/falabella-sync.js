@@ -1,4 +1,5 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
 import {
   ensureFalabellaOrderAccount,
   ingestFalabellaOrder,
@@ -231,7 +232,23 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         source: context.source || 'sync',
         correlationId: context.correlationId,
         eventId: context.eventId,
+        catalogInventoryEnabled: context.enqueueStock ? false : context.catalogInventoryEnabled,
       }, db);
+      if (context.enqueueStock && ['ready_to_ship', 'shipped', 'delivered'].includes(lifecycleStatus)) {
+        await enqueueStockJob({
+          companyId,
+          externalOrderId: normalized.orderId,
+          orderNumber: normalized.orderNumber,
+          source: context.source || 'sync',
+        }, db).catch((error) => {
+          console.warn(JSON.stringify({
+            event: 'catalog.stock.enqueue_failed',
+            companyId,
+            orderId: normalized.orderId,
+            message: String(error?.message || error),
+          }));
+        });
+      }
     }
     upserted += 1;
   }
@@ -248,7 +265,7 @@ async function ensureState(db, companyId) {
   return (await db.query('select * from falabella_sync_state where company_id=$1', [companyId])).rows[0];
 }
 
-function extractOrderItems(document) {
+export function extractOrderItems(document) {
   const candidate = document?.SuccessResponse?.Body?.OrderItems?.OrderItem
     || document?.OrderItems?.OrderItem
     || document?.OrderItems
@@ -316,8 +333,16 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
           account,
           source: 'sync',
           correlationId: `falabella-sync-items:${companyId}`,
-          catalogInventoryEnabled: applyStock ? undefined : false,
+          catalogInventoryEnabled: false,
         }, db);
+        if (applyStock && ['ready_to_ship', 'shipped', 'delivered'].includes(canonicalLifecycleStatus(normalized.status))) {
+          await enqueueStockJob({
+            companyId,
+            externalOrderId: normalized.orderId,
+            orderNumber: normalized.orderNumber,
+            source: 'sync',
+          }, db).catch(() => {});
+        }
         if (!applyStock) {
           await db.query(
             `update order_items oi set
@@ -498,6 +523,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       upserted += await upsertOrders(db, companyId, orders, {
         source: 'sync',
         correlationId: `falabella-sync:${runId}`,
+        enqueueStock: mode === 'incremental',
       });
     });
     const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
@@ -547,14 +573,37 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
   }
 }
 
+export async function attachFalabellaOrderItems(client, order) {
+  const orderId = String(order?.OrderId || order?.orderId || '').trim();
+  if (!orderId || typeof client?.call !== 'function') return order;
+  try {
+    const response = await client.call({
+      action: 'GetOrderItems',
+      params: { OrderId: orderId },
+      accept: 'application/json',
+    });
+    if (!response?.ok) return order;
+    const items = extractOrderItems(response.data);
+    if (!items.length) return order;
+    return { ...order, OrderItems: { OrderItem: items } };
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'falabella.webhook.items_attach_failed',
+      orderId,
+      message: String(error?.message || error),
+    }));
+    return order;
+  }
+}
+
 export async function upsertFalabellaWebhookOrder(companyId, order, db) {
-  if (db) return upsertOrders(db, Number(companyId), [order], { source: 'webhook' });
+  if (db) return upsertOrders(db, Number(companyId), [order], { source: 'webhook', enqueueStock: true });
   const { pool } = await loadCore();
   const client = await pool.connect();
   try {
     await client.query('begin');
     await client.query('select pg_advisory_xact_lock($1,$2)', [LOCK_NAMESPACE, Number(companyId)]);
-    const result = await upsertOrders(client, Number(companyId), [order], { source: 'webhook' });
+    const result = await upsertOrders(client, Number(companyId), [order], { source: 'webhook', enqueueStock: true });
     await client.query('commit');
     return result;
   } catch (error) {

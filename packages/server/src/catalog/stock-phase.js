@@ -5,9 +5,13 @@ import {
 } from './inventory-service.js';
 import { resolveListing } from './sku-resolver.js';
 
-const ELIGIBLE_STATUSES = new Set(['confirmed', 'completed']);
+export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
+
+export function isStockEligibleFulfillment(status) {
+  return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());
+}
 
 function number(value) {
   const parsed = Number(value);
@@ -68,6 +72,14 @@ async function writeStock(db, item, input) {
   item.stock_revision = input.revision;
 }
 
+function orderNumberOf(order) {
+  return String(order?.external_order_number || order?.external_order_id || '').trim() || null;
+}
+
+function movementReason(orderNumber) {
+  return orderNumber ? `Pedido ${orderNumber}` : null;
+}
+
 async function reverseItem(db, itemInput, context, movementType = 'sale_reversal') {
   const item = mutableItem(itemInput);
   const already = number(item.stock_applied_quantity);
@@ -88,6 +100,7 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     productId: item.product_id,
     quantityDelta: already,
     movementType,
+    reason: movementReason(context.orderNumber),
     idempotencyKey: key,
     allowNegative: true,
     orderId: context.orderId,
@@ -97,6 +110,8 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     actorUserId: context.actorUserId,
     metadata: {
       externalItemId: item.external_item_id,
+      orderNumber: context.orderNumber,
+      sku: item.sku || item.provider_sku || null,
       from: already,
       to: 0,
       revision: nextRevision,
@@ -128,16 +143,24 @@ export async function stockPhase(input) {
     upsertedItems = [],
     doomedItems = [],
   } = input;
-  const enabled = input.enabled ?? inventoryConfig.enabled;
-  if (!enabled) return { enabled: false, applied: 0, skipped: 0, reversed: 0 };
   const source = String(input.source || 'system').toLowerCase();
   const actorUserId = input.actorUserId || null;
   const orderId = Number(persisted.id);
   const channelCode = account.channelCode || account.channel_code;
   const companyId = Number(persisted.company_id);
   const isMarketplace = MARKETPLACE_SOURCES.has(source);
-  const context = { orderId, source, actorUserId };
-  const stats = { enabled: true, applied: 0, skipped: 0, reversed: 0 };
+  const currentFulfillment = persisted.fulfillment_status;
+  const previousFulfillment = existing?.fulfillment_status;
+  const becameEligible = isStockEligibleFulfillment(currentFulfillment)
+    && (!existing || !isStockEligibleFulfillment(previousFulfillment));
+  const saleEnabled = input.enabled ?? (becameEligible ? true : inventoryConfig.enabled);
+  const context = {
+    orderId,
+    orderNumber: orderNumberOf(persisted),
+    source,
+    actorUserId,
+  };
+  const stats = { enabled: Boolean(saleEnabled), applied: 0, skipped: 0, reversed: 0, becameEligible };
 
   await db.query('select id from orders where id=$1 for update', [orderId]);
 
@@ -182,13 +205,27 @@ export async function stockPhase(input) {
     return stats;
   }
 
-  if (!ELIGIBLE_STATUSES.has(currentStatus)) return stats;
+  if (!isStockEligibleFulfillment(currentFulfillment) || !saleEnabled) return stats;
 
-  for (const row of upsertedItems) {
+  let saleItems = upsertedItems;
+  if (!saleItems.length) {
+    saleItems = (await db.query(
+      `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+         main_sku, stock_state, stock_applied_quantity, stock_revision
+       from order_items
+       where order_id=$1 and stock_state <> 'reversed'
+       for update`,
+      [orderId],
+    )).rows;
+  }
+
+  for (const row of saleItems) {
     const item = mutableItem(row);
     // Las líneas históricas recuperadas bajo demanda para analítica de ventas no
-    // deben convertirse después en movimientos de stock retroactivos.
-    if (item.stock_state === 'reversed' || item.stock_state === 'skipped_policy') continue;
+    // deben convertirse después en movimientos de stock retroactivos, salvo que
+    // el pedido acabe de pasar a listo para enviar o se pida explícitamente.
+    if (item.stock_state === 'reversed') continue;
+    if (item.stock_state === 'skipped_policy' && !input.includeSkippedPolicy && !becameEligible) continue;
     const quantity = Number(item.quantity);
     const already = number(item.stock_applied_quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -231,6 +268,7 @@ export async function stockPhase(input) {
         productId: item.product_id,
         quantityDelta: -deltaUnits,
         movementType,
+        reason: movementReason(context.orderNumber),
         idempotencyKey: key,
         allowNegative: allowNegative({ account, isMarketplace, override: input.allowNegative }),
         orderId,
@@ -240,9 +278,12 @@ export async function stockPhase(input) {
         actorUserId,
         metadata: {
           externalItemId: item.external_item_id,
+          orderNumber: context.orderNumber,
+          sku: item.sku || item.provider_sku || null,
           from: already,
           to: target,
           revision: nextRevision,
+          fulfillmentStatus: currentFulfillment,
         },
       });
       if (result.applied === true) {

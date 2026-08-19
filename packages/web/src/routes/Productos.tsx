@@ -103,6 +103,10 @@ type Movement = {
   source: string;
   createdAt: string;
   orderId?: number | null;
+  orderNumber?: string | null;
+  sku?: string | null;
+  companyName?: string | null;
+  channelCode?: string | null;
 };
 
 type ActivityResponse = {
@@ -1295,8 +1299,8 @@ function ProductDrawer({
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto">
           <div className="grid grid-cols-3 border-b border-border"><Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} /><Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} /><Metric label="Disponible" value={`${formatNumber(product.available)} u`} /></div>
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">Historial auditable del inventario.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
-          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType)}</p><p className="mt-1 text-xs text-muted-foreground">{movement.reason || movement.source}{movement.orderId ? ` · pedido ${movement.orderId}` : ''} · {formatDate(movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
+          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">Cada salida indica de qué pedido salió.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
+          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay salidas ni ajustes.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
         </TabsContent>
 
         <TabsContent value="sales" className="min-h-0 overflow-y-auto">
@@ -1625,6 +1629,16 @@ function ProductStatusBadge({ product, compact = false }: { product: Product; co
 
 function movementLabel(type: string) {
   return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', sale_reversal: 'Reversa de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', return: 'Devolución', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
+}
+
+function movementCaption(movement: Movement) {
+  const orderRef = movement.orderNumber || (movement.orderId ? String(movement.orderId) : '');
+  const parts = [
+    orderRef ? `Pedido ${orderRef}` : (movement.reason || null),
+    movement.companyName ? sellerShortName(movement.companyName) : null,
+  ].filter(Boolean);
+  if (parts.length) return parts.join(' · ');
+  return movement.source || 'sistema';
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; wide?: boolean }) {

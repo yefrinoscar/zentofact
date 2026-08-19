@@ -93,6 +93,9 @@ class InventoryDb {
     if (compact.includes('from order_items where order_id=$1') && compact.includes('stock_applied_quantity > 0')) {
       return { rows: [...this.items.values()].filter((item) => item.stock_applied_quantity > 0) };
     }
+    if (compact.includes('from order_items') && compact.includes('stock_state <> \'reversed\'')) {
+      return { rows: [...this.items.values()].filter((item) => item.stock_state !== 'reversed') };
+    }
     throw new Error(`Query no simulada: ${compact}`);
   }
 }
@@ -135,7 +138,13 @@ function phaseInput(db, upsertedItems, overrides = {}) {
   return {
     db,
     existing: null,
-    persisted: { id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending' },
+    persisted: {
+      id: 20,
+      company_id: 1,
+      order_status: 'confirmed',
+      fulfillment_status: 'ready_to_ship',
+      external_order_number: '3999111222',
+    },
     account: { id: 3, channelCode: 'falabella', settings: {} },
     upsertedItems,
     doomedItems: [],
@@ -289,7 +298,7 @@ test('reconcilia cantidades oscilantes con revisiones monotónicas sin doble des
   for (const quantity of [1, 2, 1]) {
     db.items.get(101).quantity = quantity;
     await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
-      existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+      existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
     }));
   }
   assert.equal(db.quantity, 9);
@@ -324,12 +333,83 @@ test('líneas históricas hidratadas para ventas nunca aplican stock retroactivo
   });
   db.items.set(101, historical);
   const result = await stockPhase(phaseInput(db, [{ ...historical }], {
-    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
   }));
   assert.equal(result.applied, 0);
   assert.equal(db.quantity, 10);
   assert.equal(db.movements.size, 0);
   assert.equal(db.items.get(101).stock_state, 'skipped_policy');
+});
+
+test('un pedido pending no descuenta stock hasta listo para enviar', async () => {
+  const db = new InventoryDb(10);
+  db.listings.push(listing());
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    persisted: { id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(result.applied, 0);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.movements.size, 0);
+  assert.equal(db.items.get(101).stock_state, 'none');
+});
+
+test('al pasar a listo para enviar descuenta el producto maestro y deja el pedido en el movimiento', async () => {
+  const db = new InventoryDb(10);
+  db.listings.push(listing());
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(db.quantity, 8);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+  assert.equal(db.items.get(101).product_id, 5);
+  const movement = [...db.movements.values()][0];
+  assert.equal(movement.reason, 'Pedido 3999111222');
+  assert.equal(movement.metadata.orderNumber, '3999111222');
+  assert.equal(movement.order_id, 20);
+});
+
+test('un cambio de estado sin ítems en el payload usa las líneas ya asociadas', async () => {
+  const db = new InventoryDb(10);
+  db.items.set(101, item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M' }));
+  const result = await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(db.quantity, 8);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+});
+
+test('skipped_policy sí se aplica cuando el pedido acaba de quedar listo para enviar', async () => {
+  const db = new InventoryDb(10);
+  const historical = item({
+    product_id: 5,
+    listing_id: 71,
+    main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'skipped_policy',
+  });
+  db.items.set(101, historical);
+  const result = await stockPhase(phaseInput(db, [{ ...historical }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(db.quantity, 8);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+});
+
+test('hidratación histórica con enabled false no descuenta aunque el pedido ya esté listo', async () => {
+  const db = new InventoryDb(10);
+  db.listings.push(listing());
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    enabled: false,
+  }));
+  assert.equal(result.applied, 0);
+  assert.equal(result.enabled, false);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.movements.size, 0);
 });
 
 test('línea doomed se revierte antes de borrarse y conserva el ledger', async () => {
@@ -407,7 +487,7 @@ test('hit idempotente inesperado no pisa applied quantity ni revision', async ()
     listing_id: 71, idempotency_key: 'sale_adjust:order_item:101:rev:2', metadata: {},
   });
   await stockPhase(phaseInput(db, [{ ...applied }], {
-    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
   }));
   assert.equal(db.quantity, 9);
   assert.equal(db.items.get(101).stock_applied_quantity, 1);
