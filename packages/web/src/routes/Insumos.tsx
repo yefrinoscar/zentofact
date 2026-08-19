@@ -1,10 +1,30 @@
-import { useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useRef, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Minus, PackageOpen, Plus } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import {
+  capErrorMessage,
+  formatInsumoActor,
+  formatInsumoChange,
+  formatInsumoQuantity,
+  formatInsumoWhen,
+  nextQuantity,
+} from '../lib/insumos-log';
 import { InsumoIcon, hasInsumoPhoto, type InsumoIconKey } from '../components/insumo-icons';
 import { Button } from '../components/ui/button';
+import { DataTable, DataTablePagination } from '../components/ui/data-table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
 import { Skeleton } from '../components/ui/skeleton';
 
 type Insumo = {
@@ -14,6 +34,7 @@ type Insumo = {
   unit: string;
   iconKey: InsumoIconKey | string;
   quantityOnHand: number;
+  quantityCap?: number | null;
   reorderPoint: number | null;
   status: string;
   lowStock: boolean;
@@ -24,6 +45,30 @@ type InsumosResponse = {
   items: Insumo[];
   totalCount: number;
   lowStockCount: number;
+};
+
+type InsumoMovement = {
+  id: number;
+  insumoId: number;
+  insumoName: string;
+  insumoCode: string;
+  quantityDelta: number;
+  quantityAfter: number;
+  actorName?: string | null;
+  createdAt: string;
+};
+
+type InsumoMovementsResponse = {
+  items: InsumoMovement[];
+  totalCount: number;
+};
+
+type PendingChange = {
+  id: number;
+  name: string;
+  next: number;
+  delta?: number;
+  absoluteTarget?: number;
 };
 
 const UNITS = [
@@ -57,10 +102,7 @@ const STOCK_TONE = {
 
 const METER_TICKS = 20;
 const DISPLAY_ORDER = ['cinta-fill', 'fill-pequeno', 'cinta-scotch'];
-
-function formatQuantity(value: number) {
-  return Number(value).toLocaleString('es-PE', { maximumFractionDigits: 2 });
-}
+const MOVEMENT_PAGE = 20;
 
 function unitLabel(unit: string) {
   return UNITS.find((item) => item.value === unit)?.label.toLowerCase() || unit;
@@ -70,7 +112,8 @@ function stockBands(insumo: Insumo) {
   const quantity = Math.max(0, Number(insumo.quantityOnHand) || 0);
   const reorder = Number(insumo.reorderPoint);
   const min = Number.isFinite(reorder) && reorder > 0 ? reorder : 2;
-  const full = min * 4;
+  const cap = Number(insumo.quantityCap);
+  const full = Number.isFinite(cap) && cap > 0 ? cap : min * 4;
   return { quantity, min, full, fill: Math.max(0, Math.min(1, quantity / full)) };
 }
 
@@ -100,6 +143,10 @@ function patchQuantity(payload: InsumosResponse | undefined, id: number, quantit
 
 export default function Insumos() {
   const queryClient = useQueryClient();
+  const [pending, setPending] = useState<PendingChange | null>(null);
+  const [pin, setPin] = useState('');
+  const [pageIndex, setPageIndex] = useState(0);
+  const [formError, setFormError] = useState('');
 
   const listQuery = useQuery({
     queryKey: ['insumos'],
@@ -107,42 +154,116 @@ export default function Insumos() {
     staleTime: 15_000,
   });
 
+  const movementsQuery = useQuery({
+    queryKey: ['insumos', 'movements', pageIndex],
+    queryFn: () => api.listInsumoMovements({
+      limit: MOVEMENT_PAGE,
+      offset: pageIndex * MOVEMENT_PAGE,
+    }),
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
+
   const bump = useMutation({
-    mutationFn: ({ id, delta, absoluteTarget }: { id: number; delta?: number; absoluteTarget?: number }) => (
+    mutationFn: ({ id, delta, absoluteTarget, pin: changePin }: PendingChange & { pin: string }) => (
       absoluteTarget == null
-        ? api.adjustInsumo(id, { delta })
-        : api.adjustInsumo(id, { absoluteTarget })
+        ? api.adjustInsumo(id, { delta, pin: changePin })
+        : api.adjustInsumo(id, { absoluteTarget, pin: changePin })
     ),
-    onMutate: async ({ id, delta, absoluteTarget }) => {
+    onMutate: async ({ id, next }) => {
       await queryClient.cancelQueries({ queryKey: ['insumos'] });
       const previous = queryClient.getQueryData<InsumosResponse>(['insumos']);
-      const current = previous?.items.find((item) => item.id === id)?.quantityOnHand ?? 0;
-      const next = absoluteTarget == null ? current + Number(delta) : Number(absoluteTarget);
       queryClient.setQueryData(['insumos'], patchQuantity(previous, id, next));
       return { previous };
     },
     onError: (_error, _vars, context) => {
       if (context?.previous) queryClient.setQueryData(['insumos'], context.previous);
     },
+    onSuccess: () => {
+      setPending(null);
+      setPin('');
+      setFormError('');
+    },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['insumos'] });
     },
   });
 
+  const requestChange = (insumo: Insumo, change: { delta?: number; absoluteTarget?: number }) => {
+    const next = nextQuantity(insumo.quantityOnHand, change);
+    if (!Number.isFinite(next) || next < 0) return;
+    if (next === Number(insumo.quantityOnHand)) return;
+    const cap = Number(insumo.quantityCap);
+    if (Number.isFinite(cap) && next > cap) {
+      setFormError(capErrorMessage(insumo.name, cap));
+      return;
+    }
+    setFormError('');
+    setPin('');
+    setPending({
+      id: insumo.id,
+      name: insumo.name,
+      next,
+      ...change,
+    });
+  };
+
   const payload = listQuery.data as InsumosResponse | undefined;
   const items = [...(payload?.items || [])].sort((left, right) => (
     DISPLAY_ORDER.indexOf(left.code) - DISPLAY_ORDER.indexOf(right.code)
   ));
+  const movementsPayload = movementsQuery.data as InsumoMovementsResponse | undefined;
+  const movements = movementsPayload?.items || [];
+  const movementsTotal = movementsPayload?.totalCount || 0;
   const queryError = listQuery.error instanceof Error
     ? listQuery.error.message
     : listQuery.error
       ? 'No se pudieron cargar los insumos.'
       : '';
+  const movementsError = movementsQuery.error instanceof Error
+    ? movementsQuery.error.message
+    : movementsQuery.error
+      ? 'No se pudieron cargar los movimientos.'
+      : '';
   const bumpError = bump.error instanceof Error ? bump.error.message : bump.error ? 'No se pudo actualizar.' : '';
-  const visibleError = queryError || bumpError;
+  const visibleError = formError || queryError || movementsError || (!pending && bumpError ? bumpError : '');
+
+  const columns = useMemo<ColumnDef<InsumoMovement>[]>(() => [
+    {
+      accessorKey: 'insumoName',
+      header: 'Insumo',
+      cell: ({ row }) => <span className="font-medium">{row.original.insumoName}</span>,
+    },
+    {
+      accessorKey: 'quantityDelta',
+      header: 'Cambio',
+      cell: ({ row }) => formatInsumoChange(row.original.quantityDelta, row.original.quantityAfter),
+    },
+    {
+      accessorKey: 'actorName',
+      header: 'Quién',
+      cell: ({ row }) => formatInsumoActor(row.original.actorName),
+    },
+    {
+      accessorKey: 'createdAt',
+      header: 'Hora',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatInsumoWhen(row.original.createdAt)}</span>
+      ),
+    },
+  ], []);
+
+  const table = useReactTable({
+    data: movements,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => String(row.id),
+    manualPagination: true,
+    pageCount: Math.max(1, Math.ceil(movementsTotal / MOVEMENT_PAGE)),
+  });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {visibleError ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{visibleError}</div>
       ) : null}
@@ -169,12 +290,95 @@ export default function Insumos() {
               key={insumo.id}
               insumo={insumo}
               busy={bump.isPending && bump.variables?.id === insumo.id}
-              onBump={(delta) => bump.mutate({ id: insumo.id, delta })}
-              onSet={(absoluteTarget) => bump.mutate({ id: insumo.id, absoluteTarget })}
+              onChange={(change) => requestChange(insumo, change)}
             />
           ))}
         </section>
       )}
+
+      <DataTable
+        table={table}
+        aria-label="Movimientos de insumos"
+        loading={movementsQuery.isPending && !movementsPayload}
+        fetching={movementsQuery.isFetching}
+        skeleton="plain"
+        header={(
+          <div>
+            <p className="text-sm font-medium">Movimientos</p>
+            <p className="mt-1 text-xs text-muted-foreground">Quién cambió cada cantidad y cuándo.</p>
+          </div>
+        )}
+        empty={<p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay cambios.</p>}
+        footer={movementsTotal > MOVEMENT_PAGE ? (
+          <DataTablePagination
+            pageIndex={pageIndex}
+            pageSize={MOVEMENT_PAGE}
+            totalCount={movementsTotal}
+            fetching={movementsQuery.isFetching}
+            onPageChange={setPageIndex}
+          />
+        ) : null}
+      />
+
+      <Dialog
+        open={pending != null}
+        onOpenChange={(open) => {
+          if (!open && !bump.isPending) {
+            setPending(null);
+            setPin('');
+            bump.reset();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar cambio</DialogTitle>
+            <DialogDescription>
+              {pending ? `${pending.name} pasa a ${formatInsumoQuantity(pending.next)}.` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!pending || bump.isPending) return;
+              bump.mutate({ ...pending, pin });
+            }}
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="insumo-change-pin">PIN</Label>
+              <Input
+                id="insumo-change-pin"
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                autoFocus
+                value={pin}
+                onChange={(event) => setPin(event.target.value)}
+                aria-invalid={Boolean(bumpError)}
+              />
+              {bumpError ? <p className="text-sm text-red-600">{bumpError}</p> : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={bump.isPending}
+                onClick={() => {
+                  setPending(null);
+                  setPin('');
+                  bump.reset();
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={bump.isPending || !pin.trim()}>
+                Guardar
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -182,19 +386,19 @@ export default function Insumos() {
 function InsumoMeter({
   insumo,
   busy,
-  onBump,
-  onSet,
+  onChange,
 }: {
   insumo: Insumo;
   busy: boolean;
-  onBump: (delta: number) => void;
-  onSet: (absoluteTarget: number) => void;
+  onChange: (change: { delta?: number; absoluteTarget?: number }) => void;
 }) {
   const level = stockLevel(insumo);
   const tone = STOCK_TONE[level];
   const filled = Math.round(stockBands(insumo).fill * METER_TICKS);
   const photo = hasInsumoPhoto(insumo.iconKey);
   const empty = insumo.quantityOnHand <= 0;
+  const cap = Number(insumo.quantityCap);
+  const atCap = Number.isFinite(cap) && insumo.quantityOnHand >= cap;
   const current = String(insumo.quantityOnHand);
   const [draft, setDraft] = useState(current);
   const [focused, setFocused] = useState(false);
@@ -209,7 +413,8 @@ function InsumoMeter({
       return;
     }
     if (next === Number(insumo.quantityOnHand)) return;
-    onSet(next);
+    onChange({ absoluteTarget: next });
+    setDraft(current);
   };
 
   return (
@@ -237,7 +442,7 @@ function InsumoMeter({
           size="icon"
           aria-label={`Restar 1 ${insumo.name}`}
           disabled={busy || empty}
-          onClick={() => onBump(-1)}
+          onClick={() => onChange({ delta: -1 })}
         >
           <Minus />
         </Button>
@@ -281,8 +486,8 @@ function InsumoMeter({
           variant="outline"
           size="icon"
           aria-label={`Sumar 1 ${insumo.name}`}
-          disabled={busy}
-          onClick={() => onBump(1)}
+          disabled={busy || atCap}
+          onClick={() => onChange({ delta: 1 })}
         >
           <Plus />
         </Button>
@@ -299,6 +504,9 @@ function InsumoMeter({
         {tone.label}
         <span className="ml-1 font-normal text-muted-foreground">{unitLabel(insumo.unit)}</span>
       </p>
+      {Number.isFinite(cap) ? (
+        <p className="mt-1 text-xs text-muted-foreground">máx. {cap}</p>
+      ) : null}
     </div>
   );
 }
