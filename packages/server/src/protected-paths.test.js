@@ -9,6 +9,11 @@ test('la bandeja de pedidos exige sesión para lectura y sincronización', () =>
   assert.equal(isProtectedPath('/order-management/accounts'), true);
 });
 
+test('insumos exige sesión para lectura y ajustes', () => {
+  assert.equal(isProtectedPath('/insumos'), true);
+  assert.equal(isProtectedPath('/insumos/3/adjust'), true);
+});
+
 test('el catálogo y el inventario cargan la sesión antes de validar permisos', () => {
   assert.equal(isProtectedPath('/products'), true);
   assert.equal(isProtectedPath('/products/42/inventory'), true);
