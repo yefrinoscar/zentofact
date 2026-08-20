@@ -534,13 +534,16 @@ export default function Productos() {
     setRefreshing(true);
     setError('');
     try {
-      const result = await api.syncFalabellaCatalog();
+      // Snapshot refresh only: stock, price and publication state on existing
+      // seller listings. Full catalog sync creates products and can reassign them.
+      const result = await api.refreshCatalogListingSnapshots();
       if (result.errors?.length) {
-        setError(`Se sincronizaron ${result.listingsUpserted} publicaciones; ${result.errors.length} seller(s) no respondieron.`);
+        setError(`Se actualizaron ${result.refreshed} publicaciones; ${result.errors.length} seller(s) no respondieron.`);
       }
       await reloadAll();
-    } catch (caught: any) {
-      setError(caught?.message || 'No se pudo sincronizar el catálogo publicado de Falabella.');
+    } catch (caught: unknown) {
+      const message = caught instanceof Error ? caught.message : 'No se pudieron actualizar las publicaciones.';
+      setError(message || 'No se pudieron actualizar las publicaciones.');
     } finally {
       setRefreshing(false);
     }
@@ -781,7 +784,7 @@ export default function Productos() {
           )}
         </div>}
         actions={<>
-          <Button type="button" variant="outline" size="icon" className="size-11 sm:size-9" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
+          <Button type="button" variant="outline" size="icon" className="size-11 sm:size-9" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Actualizar stock y precios" title="Actualiza stock y precios de las publicaciones. No crea productos ni cambia vínculos.">
             <RefreshCw className={cn(refreshing && 'animate-spin')} />
           </Button>
           <Button type="button" onClick={() => openModal('create')} className="h-11 flex-1 sm:h-9 sm:flex-none">
@@ -1081,10 +1084,11 @@ const CatalogTable = memo(function CatalogTable({
       cell: ({ row }) => {
         const product = row.original;
         const stock = sellerStock(product);
+        const sellers = product.sellersCount || 0;
         return <div>
           <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Suma de publicaciones · {product.sellersCount || 0} {(product.sellersCount || 0) === 1 ? 'seller' : 'sellers'}
+            {sellers} {sellers === 1 ? 'seller' : 'sellers'}
           </p>
         </div>;
       },
@@ -1463,16 +1467,15 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
             onClick={() => onOpenDetail(productId)}
             className="line-clamp-2 text-left text-sm font-medium leading-5 text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >{listing.title || productName}</button>
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <span className="line-clamp-2 font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
-            <ChannelBadge value={listing.channelCode} listing={listing} />
-            <span className="text-border" aria-hidden="true">·</span>
+          <span className="mt-1 line-clamp-2 text-xs font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
+          <div className="mt-1 flex flex-nowrap items-center gap-2 text-xs">
             <CopyableSku
               sku={listing.sellerSku}
               title="Copiar SKU del seller"
               copiedTitle="SKU copiado"
-              className="relative inline-flex items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="relative inline-flex shrink-0 items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
+            <ChannelBadge value={listing.channelCode} listing={listing} />
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:hidden">
             <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
@@ -1609,14 +1612,11 @@ function FalabellaProductLink({ href, listing, className }: { href: string; list
       title="Ver producto en Falabella"
       className={cn(
         className,
-        'falabella-product-link transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
+        'transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
       )}
     >
       <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" />
-      <span className="falabella-copy relative h-4 w-[6.8rem] sm:w-[3.55rem] sm:transition-[width] sm:duration-200 sm:ease-out motion-reduce:transition-none">
-        <span className="falabella-name absolute inset-0 hidden items-center whitespace-nowrap transition-opacity duration-150 sm:flex sm:opacity-100 motion-reduce:transition-none">Falabella</span>
-        <span className="falabella-action absolute inset-0 flex items-center whitespace-nowrap opacity-100 transition-opacity duration-150 sm:opacity-0 motion-reduce:transition-none">Ver en Falabella</span>
-      </span>
+      Falabella
       <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </a>;
 }

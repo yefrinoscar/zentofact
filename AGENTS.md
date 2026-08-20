@@ -54,14 +54,14 @@ Cuando trabajes dentro de un Git worktree, o al crear una rama/worktree nueva, e
 npm run worktree:setup
 ```
 
-Ese script (`scripts/setup-worktree.sh`) hace el arranque y no reemplaza nada que ya exista:
+Ese script (`scripts/setup-worktree.sh`) hace el arranque:
 
 - Identifica el worktree principal con `git worktree list --porcelain`.
 - Si `.env` no existe aquí y sí existe en el principal, crea un symlink hacia ese `.env`. Si el principal todavía no lo tiene, usa el primer worktree hermano que sí lo tenga.
-- Si `node_modules` no existe y el lock (`package-lock.json`, `pnpm-lock.yaml` o `yarn.lock`) es idéntico al del origen, crea un symlink hacia esos `node_modules`.
-- Si los archivos lock son diferentes, instala las dependencias en el worktree y no compartas `node_modules`.
-- Nunca reemplaces archivos o directorios existentes.
-- Verifica que los symlinks funcionen antes de continuar.
+- Comparte `node_modules` solo desde un worktree con el mismo lock y con `packages/*/node_modules` completo. npm no hoist a la raíz paquetes como `better-auth`, así que también enlaza el `node_modules` de cada `packages/*`.
+- Si ningún origen está completo, o el lock es distinto, ejecuta `npm install` en este worktree. No instales sobre un symlink: bórralo antes para no mutar al origen.
+- No reemplaza un `node_modules` que sea un directorio real. Un symlink incompleto sí se retargetea.
+- Verifica que `packages/web` y `packages/server` resuelvan `better-auth` antes de continuar.
 
 ## Agent skills
 

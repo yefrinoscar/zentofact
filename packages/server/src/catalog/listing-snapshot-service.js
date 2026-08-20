@@ -79,6 +79,26 @@ export async function fetchFalabellaStocks(core, companyId, sellerSkus = []) {
   return stocks;
 }
 
+const FALABELLA_PRODUCT_SKU_BATCH = 100;
+
+export async function fetchFalabellaProductsBySku(core, companyId, sellerSkus = []) {
+  const normalizedSkus = [...new Set(sellerSkus.map((sku) => String(sku || '').trim()).filter(Boolean))];
+  const products = [];
+  for (let offset = 0; offset < normalizedSkus.length; offset += FALABELLA_PRODUCT_SKU_BATCH) {
+    const batch = normalizedSkus.slice(offset, offset + FALABELLA_PRODUCT_SKU_BATCH);
+    const response = await core.falabellaGetProducts({
+      companyId,
+      filters: { filter: 'all', skuSellerList: batch, limit: Math.max(batch.length, 1) },
+    });
+    const error = providerError(response);
+    if (error || response?.ok === false) {
+      throw httpError(`GetProducts: ${error || 'respuesta inválida'}`, 502);
+    }
+    products.push(...(response?.products || []));
+  }
+  return products;
+}
+
 export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { stockSource = 'falabella_get_stock' } = {}) {
   const publication = falabellaPublicationState(remote);
   const unit = publication.unit;
@@ -136,8 +156,8 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { 
   };
 }
 
-export async function refreshFalabellaListingSnapshots(input = {}, db) {
-  const core = await loadCore();
+export async function refreshFalabellaListingSnapshots(input = {}, db, dependencies = {}) {
+  const core = dependencies.core || await loadCore();
   const target = db || core.pool;
   const productId = input.productId == null ? null : positiveInt(input.productId, 'productId');
   const values = productId == null ? [] : [productId];
@@ -162,16 +182,11 @@ export async function refreshFalabellaListingSnapshots(input = {}, db) {
   for (const [companyId, companyListings] of groups) {
     const sellerSkus = companyListings.map((listing) => listing.seller_sku);
     try {
-      const [productsResponse, stocks] = await Promise.all([
-        core.falabellaGetProducts({
-          companyId,
-          filters: { filter: 'all', skuSellerList: sellerSkus, limit: Math.max(sellerSkus.length, 1) },
-        }),
+      const [products, stocks] = await Promise.all([
+        fetchFalabellaProductsBySku(core, companyId, sellerSkus),
         fetchFalabellaStocks(core, companyId, sellerSkus),
       ]);
-      const productsError = providerError(productsResponse);
-      if (productsError || productsResponse?.ok === false) throw httpError(`GetProducts: ${productsError || 'respuesta inválida'}`, 502);
-      const productsBySku = new Map((productsResponse.products || []).map((product) => [String(product.sellerSku), product]));
+      const productsBySku = new Map(products.map((product) => [String(product.sellerSku), product]));
       const stockBySku = new Map(stocks.map((stock) => [String(stock.sellerSku), stock]));
       for (const listing of companyListings) {
         const sellerSku = String(listing.seller_sku);

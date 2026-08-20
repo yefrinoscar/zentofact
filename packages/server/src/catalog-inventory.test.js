@@ -13,7 +13,13 @@ import {
   isFalabellaActivePublished,
   sanitizeMainSku,
 } from './catalog/catalog-import.js';
-import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './catalog/listing-snapshot-service.js';
+import {
+  falabellaPublicationSnapshot,
+  falabellaPublicationState,
+  fetchFalabellaProductsBySku,
+  fetchFalabellaStocks,
+  refreshFalabellaListingSnapshots,
+} from './catalog/listing-snapshot-service.js';
 import { getCatalogSummary, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
@@ -1615,4 +1621,76 @@ test('import conserva el stock reportado de una publicación Falabella no autori
   assert.equal(metadata.sellabilityReason, 'qc_not_approved');
   assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
   assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), true);
+});
+
+test('GetProducts se consulta por lotes de 100 SKU', async () => {
+  const calls = [];
+  const sellerSkus = Array.from({ length: 101 }, (_, index) => `SKU-${index}`);
+  const products = await fetchFalabellaProductsBySku({
+    falabellaGetProducts: async (input) => {
+      calls.push(input);
+      return { ok: true, products: input.filters.skuSellerList.map((sellerSku) => ({ sellerSku })) };
+    },
+  }, 2, [...sellerSkus, sellerSkus[0]]);
+
+  assert.deepEqual(calls.map(({ filters }) => filters.skuSellerList.length), [100, 1]);
+  assert.equal(products.length, 101);
+});
+
+test('refresh de publicaciones actualiza stock y precio sin crear productos ni cambiar el vínculo', async () => {
+  const queries = [];
+  const listing = {
+    id: 40, product_id: 9, company_id: 2, seller_sku: 'LIMBO-1',
+  };
+  const db = {
+    async query(sql, params = []) {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      queries.push({ sql: compact, params });
+      if (compact.includes('from product_listings l') && compact.includes('join products p')) {
+        return { rows: [listing] };
+      }
+      if (compact.startsWith('update product_listings set')) {
+        return { rows: [] };
+      }
+      if (compact.startsWith('with listing_totals as')) return { rows: [] };
+      if (compact.startsWith('with desired_product_statuses as')) return { rows: [] };
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  };
+  const result = await refreshFalabellaListingSnapshots({}, db, {
+    core: {
+      falabellaGetProducts: async () => ({
+        ok: true,
+        products: [{
+          sellerSku: 'LIMBO-1',
+          shopSku: 'SHOP-40',
+          productId: 'EXT-40',
+          name: 'Camiseta',
+          status: 'active',
+          qcStatus: 'approved',
+          businessUnits: [{
+            operatorCode: 'fape', status: 'active', isPublished: '1', price: '39.9', stock: '17',
+          }],
+        }],
+      }),
+      falabellaGetStock: async () => ({
+        ok: true,
+        stocks: [{ sellerSku: 'LIMBO-1', availableQuantity: 17, sellerWarehouseQuantity: 17, fulfillmentQuantity: 0 }],
+      }),
+    },
+  });
+
+  assert.equal(result.requested, 1);
+  assert.equal(result.refreshed, 1);
+  assert.equal(queries.some(({ sql }) => sql.includes('insert into products')), false);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('insert into product_listings')), false);
+  const listingUpdate = queries.find(({ sql }) => sql.startsWith('update product_listings set'));
+  assert.equal(/(^|[\s,])product_id\s*=/.test(listingUpdate.sql), false);
+  assert.equal(listingUpdate.params[0], 'SHOP-40');
+  assert.equal(listingUpdate.params[3], 17);
+  assert.equal(listingUpdate.params[5], 40);
+  const metadata = JSON.parse(listingUpdate.params[4]);
+  assert.equal(metadata.effectivePrice, 39.9);
+  assert.equal(metadata.stockSource, 'falabella_get_stock');
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
 });
