@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# Drive a local ZentoFact API + web pair the way a verification agent does.
+# Never prints secrets. Cleanup kills only PIDs this script started.
+set -euo pipefail
+
+skill_dir="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(cd "$skill_dir/../../.." && pwd)"
+run_dir="$skill_dir/.run"
+artifacts_dir="$skill_dir/artifacts"
+api_url="${ZENTOFACT_API_URL:-http://127.0.0.1:3010}"
+web_url="${ZENTOFACT_WEB_URL:-http://127.0.0.1:3011}"
+cookie_jar="$run_dir/cookies.txt"
+api_pid_file="$run_dir/api.pid"
+web_pid_file="$run_dir/web.pid"
+api_log="$run_dir/api.log"
+web_log="$run_dir/web.log"
+attached_file="$run_dir/attached"
+
+mkdir -p "$run_dir" "$artifacts_dir"
+
+load_env() {
+  local env_file="$repo_root/.env"
+  if [[ ! -e "$env_file" ]]; then
+    echo "missing $env_file (run npm run worktree:setup)" >&2
+    return 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+json_get() {
+  python3 -c 'import json,sys; data=json.load(sys.stdin)
+path=sys.argv[1].split(".")
+cur=data
+for key in path:
+  if isinstance(cur, dict):
+    cur=cur.get(key)
+  else:
+    cur=None
+    break
+if cur is None:
+  sys.exit(1)
+if isinstance(cur, (dict, list)):
+  print(json.dumps(cur, ensure_ascii=False))
+else:
+  print(cur)' "$1"
+}
+
+http_code() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$@" 2>/dev/null || echo 000
+}
+
+health_body() {
+  curl -sS --max-time 5 "$api_url/health" 2>/dev/null || true
+}
+
+principal_worktree() {
+  local principal="" candidate=""
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        candidate="${line#worktree }"
+        if [[ -z "$principal" || -d "$candidate/.git" ]]; then
+          principal="$candidate"
+        fi
+        ;;
+    esac
+  done < <(git -C "$repo_root" worktree list --porcelain)
+  echo "$principal"
+}
+
+ensure_workspace_modules() {
+  local principal
+  principal="$(principal_worktree)"
+  local pkg
+  for pkg in server web; do
+    local dest="$repo_root/packages/$pkg/node_modules"
+    local src="$principal/packages/$pkg/node_modules"
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      continue
+    fi
+    if [[ -d "$src" ]]; then
+      ln -s "$src" "$dest"
+      echo "linked packages/$pkg/node_modules -> $src"
+    fi
+  done
+}
+
+web_ready() {
+  local code
+  code="$(http_code "$web_url/" || true)"
+  [[ "$code" == "200" ]]
+}
+
+api_ready() {
+  local body
+  body="$(health_body)"
+  [[ "$body" == *'"service":"zentofact-api"'* ]] || [[ "$body" == *'"ok":true'* ]]
+}
+
+cmd_doctor() {
+  local ok=0
+  echo "repo=$repo_root"
+  echo "api=$api_url"
+  echo "web=$web_url"
+  if api_ready; then
+    echo "api_health=ok"
+    health_body
+    echo
+  else
+    echo "api_health=down"
+    ok=1
+  fi
+  if web_ready; then
+    echo "web_health=ok"
+  else
+    echo "web_health=down"
+    ok=1
+  fi
+  if [[ -f "$api_pid_file" ]]; then
+    echo "api_pid=$(cat "$api_pid_file") owned_by_this_run=yes"
+  elif [[ -f "$attached_file" ]]; then
+    echo "api_owned_by_this_run=no (attached to an already-running instance)"
+  else
+    echo "api_owned_by_this_run=no"
+  fi
+  if [[ -f "$cookie_jar" ]]; then
+    if curl -sS --max-time 8 -b "$cookie_jar" -c "$cookie_jar" "$web_url/me" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+user=d.get("user") or {}
+email=user.get("email") or ""
+print("session=ok email="+email if email else "session=unauthenticated")
+' 2>/dev/null; then
+      :
+    else
+      echo "session=unauthenticated"
+    fi
+  else
+    echo "session=none"
+  fi
+  return "$ok"
+}
+
+cmd_launch() {
+  if [[ ! -e "$repo_root/.env" || ! -e "$repo_root/node_modules" ]]; then
+    (cd "$repo_root" && npm run worktree:setup)
+  fi
+  ensure_workspace_modules
+  if [[ ! -f "$repo_root/packages/core/dist/index.js" || ! -f "$repo_root/packages/falabella-api/dist/index.js" ]]; then
+    echo "building @zentofact/falabella-api and @zentofact/core"
+    (cd "$repo_root" && npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core)
+  fi
+  if api_ready && web_ready; then
+    echo "attached" > "$attached_file"
+    echo "already running at $api_url and $web_url; not starting a second pair"
+    cmd_doctor
+    return 0
+  fi
+  if api_ready || web_ready; then
+    echo "ports are half-up. Refuse to start a mixed instance. Stop the stray process or wait." >&2
+    cmd_doctor >&2 || true
+    return 1
+  fi
+  rm -f "$attached_file"
+  load_env
+  (
+    cd "$repo_root"
+    PORT=3010 npm run dev:api
+  ) >"$api_log" 2>&1 &
+  echo $! > "$api_pid_file"
+  (
+    cd "$repo_root"
+    PORT=3011 VITE_API_TARGET=http://127.0.0.1:3010 npm run dev:web
+  ) >"$web_log" 2>&1 &
+  echo $! > "$web_pid_file"
+  local i
+  for i in $(seq 1 60); do
+    if api_ready && web_ready; then
+      echo "ready api=$api_url web=$web_url"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "launch timed out. api.log and web.log are in $run_dir" >&2
+  tail -n 40 "$api_log" >&2 || true
+  tail -n 40 "$web_log" >&2 || true
+  return 1
+}
+
+cmd_stop() {
+  if [[ -f "$attached_file" ]]; then
+    echo "attached to a pre-existing instance; not killing it"
+    rm -f "$cookie_jar" "$attached_file"
+    return 0
+  fi
+  kill_tree() {
+    local pid="$1"
+    local child
+    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+      kill_tree "$child"
+    done
+    kill "$pid" 2>/dev/null || true
+  }
+  for pid_file in "$api_pid_file" "$web_pid_file"; do
+    if [[ -f "$pid_file" ]]; then
+      local pid
+      pid="$(cat "$pid_file")"
+      if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        kill_tree "$pid"
+      fi
+      rm -f "$pid_file"
+    fi
+  done
+  rm -f "$cookie_jar"
+  echo "stopped pids started by this run; artifacts kept in $artifacts_dir"
+}
+
+cmd_login() {
+  load_env
+  export ADMIN_EMAIL="${ADMIN_EMAIL:-${AUTH_SUPERADMIN_EMAIL:-}}"
+  if [[ -z "${ADMIN_EMAIL:-}" || -z "${ADMIN_PASSWORD:-}" ]]; then
+    echo "set ADMIN_EMAIL (or AUTH_SUPERADMIN_EMAIL) and ADMIN_PASSWORD in .env" >&2
+    return 1
+  fi
+  local body
+  body="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["ADMIN_EMAIL"],"password":os.environ["ADMIN_PASSWORD"]}))')"
+  local response
+  response="$(curl -sS --max-time 15 -c "$cookie_jar" -b "$cookie_jar" \
+    -H 'content-type: application/json' \
+    -H "origin: $web_url" \
+    -X POST "$web_url/api/auth/sign-in/email" \
+    --data "$body")"
+  local me
+  me="$(curl -sS --max-time 8 -c "$cookie_jar" -b "$cookie_jar" "$web_url/me")"
+  echo "$me" | python3 -c 'import json,sys
+d=json.load(sys.stdin)
+user=d.get("user") or {}
+email=user.get("email")
+if not email:
+  sys.stderr.write("login failed: /me has no user\n")
+  sys.exit(1)
+print("login=ok email="+email)
+'
+}
+
+cmd_api() {
+  local method="${1:-GET}"
+  local path="${2:-}"
+  local out="${3:-}"
+  if [[ -z "$path" ]]; then
+    echo "usage: control-zentofact api GET /products?limit=5 [out.json]" >&2
+    return 1
+  fi
+  if [[ ! -f "$cookie_jar" ]]; then
+    echo "no session cookie; run login first" >&2
+    return 1
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  local code
+  code="$(curl -sS --max-time 30 -c "$cookie_jar" -b "$cookie_jar" \
+    -H 'content-type: application/json' \
+    -o "$tmp" -w '%{http_code}' \
+    -X "$method" "$web_url$path")"
+  if [[ -n "$out" ]]; then
+    mkdir -p "$(dirname "$out")"
+    cp "$tmp" "$out"
+  fi
+  echo "status=$code path=$path"
+  python3 -c 'import json,sys
+raw=open(sys.argv[1]).read()
+try:
+  data=json.loads(raw)
+except Exception:
+  print(raw[:2000])
+  sys.exit(0)
+print(json.dumps(data, ensure_ascii=False, indent=2)[:8000])' "$tmp"
+  rm -f "$tmp"
+  [[ "$code" == 2* ]]
+}
+
+usage() {
+  cat <<'EOF'
+usage: control-zentofact <command>
+
+  doctor              Read-only: API /health, web /, optional /me session
+  launch              Start API:3010 + web:3011, or attach if already healthy
+  login               Sign in with ADMIN_EMAIL / ADMIN_PASSWORD from .env
+  api METHOD PATH [file]   Authenticated request via the web origin proxy
+  stop                Kill only PIDs this run started; keep artifacts
+EOF
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    doctor) cmd_doctor "$@" ;;
+    launch) cmd_launch "$@" ;;
+    login) cmd_login "$@" ;;
+    api) cmd_api "$@" ;;
+    stop) cmd_stop "$@" ;;
+    -h|--help|help|"") usage ;;
+    *) echo "unknown command: $cmd" >&2; usage >&2; return 1 ;;
+  esac
+}
+
+main "$@"
