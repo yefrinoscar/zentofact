@@ -361,3 +361,63 @@ test('rechaza un método de pago que no se puede registrar después', async () =
     /paymentMethod inválido/,
   );
 });
+
+function manualSale(overrides = {}) {
+  const { shipping, ...rest } = overrides;
+  return {
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: 'VTA-1',
+    externalOrderNumber: 'VTA-1',
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    total: 50,
+    customer: { name: 'Cliente' },
+    items: [{
+      externalItemId: 'LINE-1',
+      sku: 'SKU-1',
+      description: 'Producto',
+      quantity: 1,
+      unitPrice: 50,
+      total: 50,
+    }],
+    itemsComplete: true,
+    source: 'manual',
+    idempotencyKey: 'manual-1',
+    ...rest,
+    shipping: { type: 'envio', ...shipping },
+  };
+}
+
+test('rechaza una venta manual Envío sin repartidor', async () => {
+  await assert.rejects(
+    () => ingestOrder(manualSale({ shipping: { type: 'envio' } }), new IngestDb()),
+    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+  );
+});
+
+test('rechaza una venta manual Envío con un repartidor que no está en la lista', async () => {
+  await assert.rejects(
+    () => ingestOrder(manualSale({ shipping: { type: 'envio', carrier: 'otro' } }), new IngestDb()),
+    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+  );
+});
+
+test('acepta una venta manual Recojo sin repartidor', async () => {
+  const result = await ingestOrder(
+    manualSale({ shipping: { type: 'recojo' } }),
+    new IngestDb(),
+  );
+  assert.equal(result.created, true);
+  assert.equal(result.order.shipping.type, 'recojo');
+  assert.equal(result.order.shipping.carrier, undefined);
+});
+
+test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async () => {
+  const result = await ingestOrder(
+    manualSale({ shipping: { type: 'envio', carrier: 'shaloom' } }),
+    new IngestDb(),
+  );
+  assert.equal(result.created, true);
+  assert.equal(result.order.shipping.carrier, 'shaloom');
+});
