@@ -94,7 +94,18 @@ class RestockDb {
       return { rows: [{ status }] };
     }
     if (compact.includes('from falabella_orders') && compact.includes('pending|ready_to_ship')) {
-      return { rows: this.falabellaOrders.filter((order) => /pending|ready_to_ship/i.test(order.status)) };
+      const includeAppliedStock = compact.includes('stock_applied_quantity');
+      return {
+        rows: this.falabellaOrders.filter((order) => {
+          if (/pending|ready_to_ship/i.test(order.status)) return true;
+          if (!includeAppliedStock) return false;
+          const persisted = [...this.orders.values()].find((row) => String(row.external_order_id) === String(order.order_id));
+          if (!persisted) return false;
+          return [...this.items.values()].some((item) => (
+            Number(item.order_id) === Number(persisted.id) && Number(item.stock_applied_quantity) > 0
+          ));
+        }),
+      };
     }
     if (compact.includes('from falabella_orders fo') && compact.includes('not exists')) {
       return { rows: [] };
@@ -508,6 +519,72 @@ test('el sync de GetOrders reintegra una unidad al devolver un pedido ya enviado
   }, db);
   assert.equal(db.quantity, 5);
   assert.equal([...db.movements.values()].filter((row) => row.movement_type === 'return').length, 1);
+});
+
+test('el sync reintegra stock cuando GetOrderItems pasa un pedido ya enviado a devuelto', async () => {
+  const db = new RestockDb(5);
+  const account = accountRow();
+  await ingestFalabellaOrder({
+    companyId: 7,
+    account,
+    source: 'sync',
+    catalogInventoryEnabled: true,
+    normalized: {
+      orderId: '99',
+      orderNumber: '3248709095',
+      status: 'shipped',
+      falabellaCreatedAt: '2026-08-18T15:00:00Z',
+      falabellaUpdatedAt: '2026-08-18T17:00:00Z',
+      grandTotal: 129.9,
+      currency: 'PEN',
+      raw: falabellaOrder({
+        status: 'shipped',
+        items: [orderItem({ quantity: 1, status: 'shipped' })],
+        updatedAt: '2026-08-18T17:00:00Z',
+      }),
+    },
+  }, db);
+  assert.equal(db.quantity, 4);
+  db.falabellaOrders = [{
+    order_id: '99',
+    order_number: '3248709095',
+    status: 'shipped',
+    falabella_created_at: '2026-08-18T15:00:00Z',
+    falabella_updated_at: '2026-08-18T17:00:00Z',
+    raw_data: falabellaOrder({ status: 'shipped', items: [orderItem({ quantity: 1, status: 'shipped' })] }),
+    label_count: 1,
+  }];
+
+  const client = {
+    async getOrdersV2() {
+      return { ok: true, status: 200, data: { orders: [] } };
+    },
+    async call() {
+      return {
+        ok: true,
+        status: 200,
+        data: { SuccessResponse: { Body: { OrderItems: { OrderItem: [orderItem({ quantity: 1, status: 'returned' })] } } } },
+      };
+    },
+  };
+
+  await syncFalabellaOrders(7, { now: '2026-08-18T20:00:00Z' }, {
+    pool: { connect: async () => db },
+    getCompany: async () => ({
+      id: 7,
+      activo: true,
+      falabellaApiUserId: 'seller',
+      falabellaApiKey: 'secret',
+    }),
+    clientFor: () => client,
+    orderItemsClientFor: () => client,
+  });
+
+  assert.equal(db.quantity, 5);
+  const movement = [...db.movements.values()].find((row) => row.movement_type === 'return');
+  assert.equal(movement.quantity_delta, 1);
+  assert.equal(movement.reason, 'Devolución del pedido 3248709095');
+  assert.equal([...db.items.values()][0].stock_state, 'reversed');
 });
 
 test('el sync reintegra stock cuando GetOrderItems pasa un pedido listo para enviar a cancelado', async () => {

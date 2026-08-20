@@ -509,6 +509,48 @@ test('una línea cancelada o devuelta reintegra stock aunque el pedido siga list
   assert.equal(returnedDb.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3248709095');
 });
 
+test('un segundo sync de un pedido ya cancelado o devuelto todavía reintegra stock aplicado', async () => {
+  const cancelledDb = new InventoryDb(8);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  });
+  cancelledDb.items.set(101, { ...applied });
+  await stockPhase(phaseInput(cancelledDb, [], {
+    existing: { order_status: 'cancelled', fulfillment_status: 'cancelled' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(cancelledDb.quantity, 10);
+  assert.equal(cancelledDb.items.get(101).stock_state, 'reversed');
+  assert.equal(cancelledDb.movements.get('sale_reversal:order_item:101:rev:2').reason, 'Cancelación del pedido 3248709095');
+
+  await stockPhase(phaseInput(cancelledDb, [], {
+    existing: { order_status: 'cancelled', fulfillment_status: 'cancelled' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(cancelledDb.quantity, 10);
+  assert.deepEqual([...cancelledDb.movements.keys()], ['sale_reversal:order_item:101:rev:2']);
+
+  const returnedDb = new InventoryDb(8);
+  returnedDb.items.set(101, { ...applied });
+  const returnedOrder = {
+    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
+    external_order_number: '3248709095',
+  };
+  await stockPhase(phaseInput(returnedDb, [], {
+    existing: returnedOrder,
+    persisted: returnedOrder,
+  }));
+  assert.equal(returnedDb.quantity, 10);
+  assert.equal(returnedDb.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3248709095');
+});
+
 test('una cancelación reintegra stock aplicado aunque el catálogo esté apagado', async () => {
   const db = new InventoryDb(4);
   const applied = item({

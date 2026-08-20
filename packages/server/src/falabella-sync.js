@@ -215,6 +215,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         normalized.grandTotal, normalized.currency, JSON.stringify(normalized.raw)],
     );
     const lifecycleStatus = canonicalLifecycleStatus(upsertResult.rows[0]?.status || normalized.status);
+    const restockNow = ['canceled', 'returned', 'failed'].includes(lifecycleStatus);
     await recordOrderLifecycle(db, {
       companyId,
       orderId: normalized.orderId,
@@ -232,7 +233,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         source: context.source || 'sync',
         correlationId: context.correlationId,
         eventId: context.eventId,
-        catalogInventoryEnabled: context.enqueueStock ? false : context.catalogInventoryEnabled,
+        catalogInventoryEnabled: restockNow ? true : (context.enqueueStock ? false : context.catalogInventoryEnabled),
       }, db);
       if (context.enqueueStock && ['ready_to_ship', 'shipped', 'delivered'].includes(lifecycleStatus)) {
         await enqueueStockJob({
@@ -409,10 +410,22 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
          then greatest((raw_data->>'LabelCount')::int, 1)
          else 1
        end as label_count
-     from falabella_orders
-     where company_id=$1
-       and lower(coalesce(status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)'
-     order by falabella_updated_at desc nulls last
+     from falabella_orders fo
+     where fo.company_id=$1
+       and (
+         lower(coalesce(fo.status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)'
+         or exists (
+           select 1
+           from orders o
+           join order_items oi on oi.order_id=o.id
+           where o.company_id=fo.company_id
+             and o.external_order_id=fo.order_id
+             and oi.stock_applied_quantity > 0
+         )
+       )
+     order by
+       case when lower(coalesce(fo.status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)' then 0 else 1 end,
+       fo.falabella_updated_at desc nulls last
      limit 500`,
     [companyId],
   );

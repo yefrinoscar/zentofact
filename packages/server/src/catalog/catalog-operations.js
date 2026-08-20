@@ -133,10 +133,36 @@ export async function applyReadyOrderStock(input = {}, db) {
       [companyId, externalOrderId],
     )).rows[0];
     if (!order) return { applied: 0, skipped: 0, reversed: 0, missing: true };
-    if (['cancelled', 'failed'].includes(order.order_status)) {
-      return { applied: 0, skipped: 0, reversed: 0, ignored: order.order_status };
-    }
     const existing = { ...order };
+    if (
+      ['cancelled', 'failed'].includes(order.order_status)
+      || order.fulfillment_status === 'returned'
+    ) {
+      const items = (await client.query(
+        `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+           main_sku, stock_state, stock_applied_quantity, stock_revision, provider_status
+         from order_items where order_id=$1 for update`,
+        [order.id],
+      )).rows;
+      const result = await stockPhase({
+        db: client,
+        existing,
+        persisted: order,
+        account: { id: order.account_id, channelCode: order.channel_code, settings: order.settings || {} },
+        upsertedItems: items,
+        doomedItems: [],
+        source: input.source || 'webhook',
+        actorUserId: input.actorUserId,
+        enabled: true,
+        allowNegative: input.allowNegative,
+      });
+      return {
+        ...result,
+        orderId: Number(order.id),
+        orderNumber: order.external_order_number,
+        itemCount: items.length,
+      };
+    }
     if (!STOCK_ELIGIBLE_FULFILLMENT.has(String(order.fulfillment_status || ''))) {
       const updated = await client.query(
         `update orders
