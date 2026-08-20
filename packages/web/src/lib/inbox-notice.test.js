@@ -60,3 +60,22 @@ test('HTTP errors surface the server logId as a tracking id', () => {
     refs: [{ label: 'ID de seguimiento', logId: 'log_dddddddddddd' }],
   });
 });
+
+test('scanner lookup errors keep the copyable tracking id from the API', () => {
+  const error = new ApiError('No encontramos una etiqueta u orden asociada a 240121000011723360.', {
+    logId: 'log_ffffffffffff',
+  });
+  assert.deepEqual(noticeFromError(error, 'No pudimos encontrar la etiqueta.'), {
+    tone: 'error',
+    message: 'No encontramos una etiqueta u orden asociada a 240121000011723360.',
+    refs: [{ label: 'ID de seguimiento', logId: 'log_ffffffffffff' }],
+  });
+});
+
+test('client validation errors do not invent a tracking id', () => {
+  assert.deepEqual(noticeFromError(new Error('Escanea un QR o escribe el número de tracking u orden.'), 'No pudimos encontrar la etiqueta.'), {
+    tone: 'error',
+    message: 'Escanea un QR o escribe el número de tracking u orden.',
+    refs: [],
+  });
+});
