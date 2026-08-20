@@ -218,23 +218,6 @@
   }
 }
 
-@media (min-width: 40rem) {
-  .falabella-product-link:hover .falabella-copy,
-  .falabella-product-link:focus .falabella-copy {
-    width: 6.8rem;
-  }
-
-  .falabella-product-link:hover .falabella-name,
-  .falabella-product-link:focus .falabella-name {
-    opacity: 0;
-  }
-
-  .falabella-product-link:hover .falabella-action,
-  .falabella-product-link:focus .falabella-action {
-    opacity: 1;
-  }
-}
-
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.153 0.006 107.1);
