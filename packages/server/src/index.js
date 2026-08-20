@@ -39,6 +39,7 @@ const catalogImport = await import('./catalog/catalog-import.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
+const ripleyCatalog = await import('./ripley-catalog.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -474,6 +475,13 @@ app.post('/catalog/refresh-listing-snapshots', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     return ok(c, await listingSnapshotService.refreshFalabellaListingSnapshots(body));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/ripley/:companyId/products', requirePermission('productos'), async (c) => {
+  try {
+    return ok(c, await ripleyCatalog.listRipleyProducts(c.req.param('companyId'), c.req.query(), {
+      getCompany: core.getCompany,
+    }));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/catalog/unmapped-skus', async (c) => {

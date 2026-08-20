@@ -115,6 +115,17 @@ const apiHttp = {
   listOrderChannels: () => req('/order-management/channels'),
   listOrderChannelAccounts: (filter: { companyId?: number; channelCode?: string; active?: boolean } = {}) =>
     req(`/order-management/accounts${qs(filter)}`),
+  configureOrderChannelAccount: (data: {
+    companyId: number;
+    channelCode: 'falabella' | 'ripley';
+    externalAccountId: 'default';
+    displayName: string;
+    autoCreateOrders: boolean;
+    documentRequirement: 'disabled' | 'required';
+    documentTypePolicy: 'automatic';
+    settings: { autoEmitDocuments: boolean };
+    active: boolean;
+  }) => req('/order-management/accounts', { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;
@@ -204,6 +215,7 @@ const apiHttp = {
   importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
+  ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
   listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
 
   listInsumos: (filter: {

@@ -24,6 +24,8 @@ const DDL = `
     seller_password TEXT,
     falabella_api_user_id TEXT,
     falabella_api_key TEXT,
+    ripley_api_key TEXT,
+    ripley_shop_id TEXT,
     logo_path TEXT,
     activo BOOLEAN DEFAULT TRUE,
     created_at BIGINT,
@@ -1466,6 +1468,10 @@ const DDL = `
 
 export async function runMigrations(pool: Pool): Promise<void> {
   await pool.query(DDL);
+  await pool.query(`
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_api_key TEXT;
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_shop_id TEXT;
+  `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
 }

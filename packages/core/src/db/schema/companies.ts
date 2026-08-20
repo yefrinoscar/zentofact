@@ -21,6 +21,8 @@ export const companies = pgTable('companies', {
   sellerPassword: text('seller_password'),
   falabellaApiUserId: text('falabella_api_user_id'),
   falabellaApiKey: text('falabella_api_key'),
+  ripleyApiKey: text('ripley_api_key'),
+  ripleyShopId: text('ripley_shop_id'),
   logoPath: text('logo_path'),
   activo: boolean('activo').default(true),
   createdAt: bigint('created_at', { mode: 'number' }),
