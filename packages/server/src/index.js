@@ -24,6 +24,8 @@ const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
 await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
+const stockJobs = await import('./catalog/stock-jobs.js');
+await stockJobs.ensureStockJobTables();
 const insumos = await import('./insumos.js');
 await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
@@ -41,6 +43,7 @@ const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
 const readyToShipOperation = await import('./falabella-ready-to-ship-operation.js');
+const { operationalErrorBody } = await import('./error-log.js');
 const {
   normalizeFalabellaManifestDocumentRequests,
   normalizeFalabellaManifestOrders,
@@ -179,10 +182,10 @@ app.use('/falabella', falabellaAccessGuard);
 app.use('/falabella/*', falabellaAccessGuard);
 
 const ok = (c, data, status = 200) => c.json(data, status);
-const fail = (c, e, status = 500) => {
-  console.error('[API ERROR]', c.req.method, c.req.path, '→', (e && e.stack) || e);
-  return c.json({ error: String((e && e.message) || e) }, status);
-};
+const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
+  operation: 'api',
+  context: { method: c.req.method, path: c.req.path, status },
+}), status);
 
 function publicFalabellaManifestJob(job) {
   if (!job) return null;
@@ -423,6 +426,18 @@ app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
     }));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.post('/catalog/inventory/apply-ready-orders', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const queued = await stockJobs.enqueueStockJobsForOperationalDate({
+      date: body.date,
+      source: body.source || 'catchup',
+    });
+    if (body.dryRun === true) return ok(c, { ...queued, dryRun: true });
+    const drained = await stockJobs.drainStockQueue();
+    return ok(c, { ...queued, dryRun: false, drained });
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.get('/products/:id/inventory', async (c) => {
   try { return ok(c, await inventoryService.getInventory(c.req.param('id'))); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
@@ -546,14 +561,23 @@ app.get('/insumos', async (c) => {
     }));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.get('/insumos/movements', async (c) => {
+  try {
+    return ok(c, await insumos.listInsumoMovements({
+      insumoId: c.req.query('insumoId'),
+      limit: c.req.query('limit'),
+      offset: c.req.query('offset'),
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/insumos', async (c) => {
-  try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')?.id), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/insumos/:id', async (c) => {
-  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/insumos/:id/adjust', async (c) => {
-  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user')?.id)); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──
@@ -784,7 +808,12 @@ app.post('/falabella/:companyId/orders/:orderId/ready-to-ship', async (c) => {
       reconcile: core.falabellaCheckReadyToShipStatus,
       signal: c.req.raw.signal,
     });
-    if (outcome.kind !== 'success') return c.json({ error: outcome.error }, outcome.status);
+    if (outcome.kind !== 'success') {
+      return c.json(operationalErrorBody(outcome.error, {
+        operation: 'falabella.ready-to-ship',
+        context: { companyId, orderId, status: outcome.status },
+      }), outcome.status);
+    }
     dashboard.clearDashboardResponseCache();
     return ok(c, outcome.result);
   } catch (e) {
@@ -806,7 +835,10 @@ app.get('/falabella/:companyId/orders/:orderId/shipping-label', async (c) => {
     if (result?.error) {
       const providerStatus = Number(result.status || 0);
       const status = providerStatus === 401 || providerStatus === 429 || providerStatus >= 500 ? 502 : providerStatus >= 400 ? providerStatus : 400;
-      return c.json({ error: result.error }, status);
+      return c.json(operationalErrorBody(result.error, {
+        operation: 'falabella.shipping-label',
+        context: { companyId, orderId, status },
+      }), status);
     }
     c.header('Cache-Control', 'private, no-store');
     return ok(c, result);
@@ -1412,4 +1444,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
+  stockJobs.startStockJobWorker();
 });

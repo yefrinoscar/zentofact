@@ -674,6 +674,15 @@ function dayLabel(date: string) {
   return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00`));
 }
 
+function pedidoCountLabel(count: number) {
+  return `${count} ${count === 1 ? 'pedido' : 'pedidos'}`;
+}
+
+function ordersHeading(count: number, date: string) {
+  const when = date === todayInLima() ? 'hoy' : `el ${dayLabel(date)}`;
+  return `${pedidoCountLabel(count)} ${when}`;
+}
+
 function demoDetail(order: ManagedOrder): OrderDetail {
   const createdAt = order.orderedAt || new Date().toISOString();
   return {
@@ -860,7 +869,7 @@ export default function PedidosMulticanal() {
     const sellers = salesPulse?.sellers || [];
     return [...sellers].sort((left, right) => {
       if ((right.ordersCount > 0) !== (left.ordersCount > 0)) return left.ordersCount > 0 ? -1 : 1;
-      if (right.salesTotal !== left.salesTotal) return right.salesTotal - left.salesTotal;
+      if (right.ordersCount !== left.ordersCount) return right.ordersCount - left.ordersCount;
       return left.companyName.localeCompare(right.companyName, 'es');
     });
   }, [salesPulse]);
@@ -1089,20 +1098,18 @@ export default function PedidosMulticanal() {
     <div className="space-y-4">
       <DayStrip value={date} onChange={setDate} />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold">Ventas de {dayLabel(date)}</h2>
+            {pulseLoading ? (
+              <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+            ) : (
+              <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
+                {ordersHeading(salesPulse ? salesPulse.ordersCount : displayedTotal, date)}
+              </h2>
+            )}
             {demoMode && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><WandSparkles /> Demo</Badge>}
           </div>
-          {pulseLoading ? (
-            <div className="mt-1 h-8 w-64 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-          ) : (
-            <div className="mt-1 flex flex-wrap items-baseline gap-x-5 gap-y-1">
-              <p className="text-2xl font-semibold tracking-tight tabular-nums">{salesPulse ? formatMoney(salesPulse.salesTotal) : '—'}</p>
-              <p className="text-sm text-muted-foreground">{salesPulse ? salesPulse.ordersCount : displayedTotal} {Number(salesPulse?.ordersCount ?? displayedTotal) === 1 ? 'pedido' : 'pedidos'}</p>
-            </div>
-          )}
           {pulseError && (
             <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
               Reintentar
@@ -1500,7 +1507,7 @@ function SellerList({
               ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
               : <CircleDashed className="size-3.5 shrink-0" />}
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{titleCaseSeller(seller.companyName)}</span>
-            {sold && <span className="shrink-0 text-xs font-semibold tabular-nums">{formatMoney(seller.salesTotal)}</span>}
+            {sold && <span className="shrink-0 text-xs font-semibold tabular-nums">{pedidoCountLabel(seller.ordersCount)}</span>}
           </button>
         );
       })}

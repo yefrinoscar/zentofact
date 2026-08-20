@@ -1,6 +1,14 @@
 import { inventoryConfig } from './inventory-service.js';
-import { stockPhase } from './stock-phase.js';
-import { httpError, inTransaction, loadCore, positiveInt } from './utils.js';
+import { limaDate, limaDaySql, limaToday } from './product-service.js';
+import { STOCK_ELIGIBLE_FULFILLMENT, stockPhase } from './stock-phase.js';
+import { httpError, inTransaction, loadCore, positiveInt, text } from './utils.js';
+
+const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
+
+function limaOffset(days) {
+  const [year, month, day] = limaToday().split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
 
 export async function listUnmappedSkus(filters = {}, db) {
   const target = db || (await loadCore()).pool;
@@ -69,6 +77,7 @@ export async function applyStockToOpenOrders(listingIdInput, input = {}, db) {
        join order_channels ch on ch.id=a.channel_id
        where o.company_id=$1 and ch.code=$2
          and o.order_status in ('confirmed','completed')
+         and o.fulfillment_status in ('ready_to_ship','shipped','delivered')
          and oi.stock_state in ('skipped_unmapped','skipped_insufficient')
          and (oi.sku=$3 or (nullif($4, '') is not null and oi.provider_sku=$4))
        order by o.id, oi.id for update of oi`,
@@ -108,4 +117,143 @@ export async function applyStockToOpenOrders(listingIdInput, input = {}, db) {
     }
     return { listingId, matched: rows.length, applied, skipped };
   });
+}
+
+export async function applyReadyOrderStock(input = {}, db) {
+  const companyId = positiveInt(input.companyId, 'companyId');
+  const externalOrderId = text(input.externalOrderId, 'externalOrderId', 300);
+  return inTransaction(db, async (client) => {
+    const order = (await client.query(
+      `select o.*, a.id as account_id, a.settings, ch.code as channel_code
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       where o.company_id=$1 and o.external_order_id=$2
+       for update of o`,
+      [companyId, externalOrderId],
+    )).rows[0];
+    if (!order) return { applied: 0, skipped: 0, reversed: 0, missing: true };
+    if (['cancelled', 'failed'].includes(order.order_status)) {
+      return { applied: 0, skipped: 0, reversed: 0, ignored: order.order_status };
+    }
+    const existing = { ...order };
+    if (!STOCK_ELIGIBLE_FULFILLMENT.has(String(order.fulfillment_status || ''))) {
+      const updated = await client.query(
+        `update orders
+         set fulfillment_status='ready_to_ship',
+             order_status=case when order_status in ('cancelled','failed') then order_status else 'confirmed' end,
+             updated_at=now()
+         where id=$1
+         returning *`,
+        [order.id],
+      );
+      Object.assign(order, updated.rows[0]);
+    }
+    const items = (await client.query(
+      `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
+         main_sku, stock_state, stock_applied_quantity, stock_revision, provider_status
+       from order_items where order_id=$1 for update`,
+      [order.id],
+    )).rows;
+    const result = await stockPhase({
+      db: client,
+      existing,
+      persisted: order,
+      account: { id: order.account_id, channelCode: order.channel_code, settings: order.settings || {} },
+      upsertedItems: items,
+      doomedItems: [],
+      source: input.source || 'webhook',
+      actorUserId: input.actorUserId,
+      enabled: true,
+      includeSkippedPolicy: input.includeSkippedPolicy === true,
+      allowNegative: input.allowNegative,
+    });
+    return {
+      ...result,
+      orderId: Number(order.id),
+      orderNumber: order.external_order_number,
+      itemCount: items.length,
+    };
+  });
+}
+
+export async function applyStockForOperationalDate(input = {}, db) {
+  const date = limaDate(input.date || limaOffset(-1));
+  const dryRun = input.dryRun === true;
+  const target = db || (await loadCore()).pool;
+  const orders = await target.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+       o.fulfillment_status, o.order_status,
+       count(oi.id)::int as item_count,
+       count(oi.id) filter (
+         where oi.stock_applied_quantity = 0
+           and oi.stock_state in ('none','skipped_policy','skipped_unmapped','skipped_insufficient')
+       )::int as pending_count
+     from orders o
+     join order_items oi on oi.order_id=o.id
+     left join falabella_orders fo
+       on fo.company_id=o.company_id and fo.order_id=o.external_order_id
+     where o.order_status not in ('cancelled','failed')
+       and (
+         o.fulfillment_status in (${READY_FULFILLMENT_SQL})
+         or lower(coalesce(fo.status, '')) ~ '(ready_to_ship|shipped|delivered)'
+       )
+       and ${limaDaySql('coalesce(o.promised_shipping_at, o.ordered_at)')}
+     group by o.id
+     order by o.id`,
+    [date],
+  );
+  const preview = orders.rows.map((row) => ({
+    orderId: Number(row.id),
+    companyId: Number(row.company_id),
+    externalOrderId: row.external_order_id,
+    orderNumber: row.external_order_number,
+    fulfillmentStatus: row.fulfillment_status,
+    itemCount: Number(row.item_count),
+    pendingCount: Number(row.pending_count),
+  }));
+  if (dryRun) {
+    return {
+      date,
+      dryRun: true,
+      orders: preview.length,
+      pendingOrders: preview.filter((order) => order.pendingCount > 0).length,
+      pendingItems: preview.reduce((sum, order) => sum + order.pendingCount, 0),
+      sample: preview.filter((order) => order.pendingCount > 0).slice(0, 20),
+    };
+  }
+  const stats = {
+    date,
+    dryRun: false,
+    orders: 0,
+    applied: 0,
+    skipped: 0,
+    reversed: 0,
+    missing: 0,
+    errors: [],
+  };
+  for (const order of preview.filter((row) => row.pendingCount > 0)) {
+    try {
+      const result = await applyReadyOrderStock({
+        companyId: order.companyId,
+        externalOrderId: order.externalOrderId,
+        source: input.source || 'system',
+        actorUserId: input.actorUserId,
+        includeSkippedPolicy: true,
+        allowNegative: input.allowNegative,
+      }, db);
+      stats.orders += 1;
+      stats.applied += Number(result.applied || 0);
+      stats.skipped += Number(result.skipped || 0);
+      stats.reversed += Number(result.reversed || 0);
+      if (result.missing) stats.missing += 1;
+    } catch (error) {
+      stats.errors.push({
+        orderId: order.orderId,
+        orderNumber: order.orderNumber,
+        message: String(error?.message || error),
+      });
+    }
+  }
+  return stats;
 }

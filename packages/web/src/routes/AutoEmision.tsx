@@ -30,7 +30,7 @@ type Config = {
 };
 type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
-  status: string; source: string; attempts: number; result: string | null;
+  status: string; source: string; kind?: string | null; attempts: number; result: string | null;
   last_error: string | null; boleta_numero: string | null; current_step?: string | null; updated_at: string;
 };
 type OrderPreview = {
@@ -50,6 +50,7 @@ type OrderPreview = {
   document?: {
     boleta?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
     factura?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
+    creditNote?: { numeroCompleto?: string; estadoSunat?: string; total?: string | number | null } | null;
   } | null;
 };
 type Evt = { id: number; company: string; company_id?: number; order_number: string | null; event: string; processed: boolean; received_at: string };
@@ -113,9 +114,28 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
+function KindBadge({ kind }: { kind?: string | null }) {
+  const creditNote = kind === 'credit_note';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        creditNote
+          ? 'border-violet-200 bg-violet-50 text-violet-700'
+          : 'border-sky-200 bg-sky-50 text-sky-700',
+      )}
+    >
+      {creditNote ? 'Nota de crédito' : 'Comprobante'}
+    </span>
+  );
+}
+
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
   const order = preview?.order;
-  const document = preview?.document?.boleta || preview?.document?.factura || null;
+  const document = preview?.document?.creditNote
+    || preview?.document?.boleta
+    || preview?.document?.factura
+    || null;
   return (
     <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
       {loading ? (
@@ -686,7 +706,7 @@ export default function AutoEmision() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Emisiones automáticas</h2>
-            <p className="text-xs text-muted-foreground">Boletas y facturas de las órdenes que llegan de Falabella.</p>
+            <p className="text-xs text-muted-foreground">Boletas, facturas y notas de crédito de las órdenes de Falabella.</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se actualiza sola cada 3s">
@@ -758,6 +778,7 @@ export default function AutoEmision() {
                     <th className="px-5 py-2.5 font-medium">Empresa</th>
                     <th className="px-5 py-2.5 font-medium">Orden</th>
                     <th className="px-5 py-2.5 font-medium">Estado</th>
+                    <th className="px-5 py-2.5 font-medium">Tipo</th>
                     <th className="px-5 py-2.5 font-medium">Origen</th>
                     <th className="px-5 py-2.5 font-medium">Detalle</th>
                     <th className="px-5 py-2.5 font-medium">Cuándo</th>
@@ -771,6 +792,7 @@ export default function AutoEmision() {
                         <td className="px-5 py-2.5 text-foreground">{j.company}</td>
                         <td className="px-5 py-2.5"><SearchableOrderNumber job={j} /></td>
                         <td className="px-5 py-2.5"><StatusBadge status={j.status} /></td>
+                        <td className="px-5 py-2.5"><KindBadge kind={j.kind} /></td>
                         <td className="px-5 py-2.5"><SourceBadge source={j.source} /></td>
                         <td className="px-5 py-2.5 text-xs">
                           {j.boleta_numero && <span className="font-medium text-foreground">{j.boleta_numero} </span>}
@@ -816,7 +838,7 @@ export default function AutoEmision() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">Red de seguridad</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Revisa Falabella cada cierto tiempo y encola las órdenes listas que el webhook no haya atrapado.</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Revisa Falabella y encola comprobantes o notas de crédito que el webhook no haya atrapado.</p>
                   </div>
                   <Switch checked={config.cron.enabled} onCheckedChange={(v) => setCron({ enabled: v })} />
                 </div>

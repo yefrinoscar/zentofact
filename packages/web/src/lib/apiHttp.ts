@@ -1,5 +1,6 @@
 // Cliente HTTP del frontend web. Vite redirige el API al backend manteniendo
 // las cookies bajo el mismo origen del navegador.
+import { apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 
 const BASE = '';
@@ -56,14 +57,14 @@ async function req(path: string, init?: RequestInit, attempt = 0) {
   try {
     data = text ? JSON.parse(text) : null;
   } catch (parseError: any) {
-    if (!res.ok) throw new Error(text.trim() || `HTTP ${res.status}`);
+    if (!res.ok) throw apiErrorFromResponse(null, res.status, text.trim() || `HTTP ${res.status}`);
     console.error('[REQ JSON PARSE ERROR]', path, res.status, 'response text:', text?.slice(0, 500));
     throw new Error(`Error al parsear respuesta de ${path}: ${parseError?.message}. Response: ${text?.slice(0, 200)}`);
   }
   rememberCsrfToken(data);
   if (res.status === 401) {
     handleUnauthorized(path);
-    throw new Error((data && data.error) || 'Sesión expirada. Inicia sesión de nuevo.');
+    throw apiErrorFromResponse(data, res.status, 'Sesión expirada. Inicia sesión de nuevo.');
   }
   if (
     res.status === 403
@@ -74,7 +75,7 @@ async function req(path: string, init?: RequestInit, attempt = 0) {
     clearCsrfToken();
     return req(path, init, 1);
   }
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
 }
 const qs = (o: Record<string, any> = {}) => {
@@ -219,6 +220,7 @@ const apiHttp = {
     iconKey?: string;
     quantityOnHand?: number;
     reorderPoint?: number | null;
+    pin: string;
   }) => req('/insumos', { method: 'POST', body: JSON.stringify(data) }),
   updateInsumo: (id: number, data: {
     name?: string;
@@ -226,12 +228,19 @@ const apiHttp = {
     iconKey?: string;
     reorderPoint?: number | null;
     status?: string;
+    pin: string;
   }) => req(`/insumos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   adjustInsumo: (id: number, data: {
     delta?: number;
     absoluteTarget?: number;
     note?: string;
+    pin: string;
   }) => req(`/insumos/${id}/adjust`, { method: 'POST', body: JSON.stringify(data) }),
+  listInsumoMovements: (filter: {
+    insumoId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/insumos/movements${qs(filter)}`),
 
   // Empresas
   listCompanies: () => req('/companies'),
