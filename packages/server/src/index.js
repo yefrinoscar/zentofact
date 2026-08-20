@@ -39,6 +39,7 @@ const catalogImport = await import('./catalog/catalog-import.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
+const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
@@ -781,8 +782,13 @@ app.get('/falabella/:companyId/products', requirePermission('productos'), async 
   catch (e) { return fail(c, e); }
 });
 app.post('/falabella/:companyId/products', requirePermission('productos'), async (c) => {
-  try { const product = await c.req.json(); return ok(c, await core.falabellaCreateProduct({ companyId: Number(c.req.param('companyId')), product })); }
-  catch (e) { return fail(c, e, 400); }
+  try {
+    const product = await c.req.json();
+    return ok(c, await marketplacePublication.createMarketplaceProduct(
+      core.falabellaCreateProduct,
+      { companyId: Number(c.req.param('companyId')), product },
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/falabella/:companyId/feeds', async (c) => {
   try { const filters = JSON.parse(c.req.query('filters') || '{}'); return ok(c, await core.falabellaGetFeeds({ companyId: Number(c.req.param('companyId')), filters })); }
