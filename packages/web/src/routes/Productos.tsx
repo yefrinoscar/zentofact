@@ -1609,14 +1609,11 @@ function FalabellaProductLink({ href, listing, className }: { href: string; list
       title="Ver producto en Falabella"
       className={cn(
         className,
-        'group transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
+        'transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
       )}
     >
       <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" />
-      <span className="relative h-4 w-[6.8rem] sm:w-[3.55rem] sm:transition-[width] sm:duration-200 sm:ease-out sm:group-hover:w-[6.8rem] sm:group-focus-visible:w-[6.8rem] motion-reduce:transition-none">
-        <span className="absolute inset-0 hidden items-center whitespace-nowrap sm:flex sm:group-hover:opacity-0 sm:group-focus-visible:opacity-0 motion-reduce:transition-none">Falabella</span>
-        <span className="absolute inset-0 flex items-center whitespace-nowrap sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100 motion-reduce:transition-none">Ver en Falabella</span>
-      </span>
+      Falabella
       <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </a>;
 }
