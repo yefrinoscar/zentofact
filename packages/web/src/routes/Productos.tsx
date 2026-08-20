@@ -534,13 +534,16 @@ export default function Productos() {
     setRefreshing(true);
     setError('');
     try {
-      const result = await api.syncFalabellaCatalog();
+      // Snapshot refresh only: stock, price and publication state on existing
+      // seller listings. Full catalog sync creates products and can reassign them.
+      const result = await api.refreshCatalogListingSnapshots();
       if (result.errors?.length) {
-        setError(`Se sincronizaron ${result.listingsUpserted} publicaciones; ${result.errors.length} seller(s) no respondieron.`);
+        setError(`Se actualizaron ${result.refreshed} publicaciones; ${result.errors.length} seller(s) no respondieron.`);
       }
       await reloadAll();
-    } catch (caught: any) {
-      setError(caught?.message || 'No se pudo sincronizar el catálogo publicado de Falabella.');
+    } catch (caught: unknown) {
+      const message = caught instanceof Error ? caught.message : 'No se pudieron actualizar las publicaciones.';
+      setError(message || 'No se pudieron actualizar las publicaciones.');
     } finally {
       setRefreshing(false);
     }
@@ -781,7 +784,7 @@ export default function Productos() {
           )}
         </div>}
         actions={<>
-          <Button type="button" variant="outline" size="icon" className="size-11 sm:size-9" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Sincronizar productos publicados" title="Sincronizar productos, precios y stock publicados">
+          <Button type="button" variant="outline" size="icon" className="size-11 sm:size-9" onClick={refreshMarketplaceSnapshots} disabled={refreshing} aria-label="Actualizar stock y precios" title="Actualiza stock y precios de las publicaciones. No crea productos ni cambia vínculos.">
             <RefreshCw className={cn(refreshing && 'animate-spin')} />
           </Button>
           <Button type="button" onClick={() => openModal('create')} className="h-11 flex-1 sm:h-9 sm:flex-none">
