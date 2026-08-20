@@ -817,6 +817,7 @@ test('asocia las publicaciones verificadas de la mochila deportiva de 40 litros'
     ['129591195', 'Mochila Maleta Deportiva 40 Litros Sport Viaje Laptop Negro', ''],
     ['131589787', 'Mochila Maleta Deportiva 40 Litros Sport Viaje Laptop Negro', 'Negro'],
     ['115743341', 'Mochila Maleta Deportiva 40 Litros Sport Laptop Viaje Negro', ''],
+    ['129647156', 'Mochila Maleta Deportiva Sport Laptop Viaje Camping Negro', 'Negro'],
   ];
   const groups = groupFalabellaCatalogRecords(publications.map(([shopSku, name, color], index) => ({
     company: { id: index + 1 },
@@ -824,27 +825,108 @@ test('asocia las publicaciones verificadas de la mochila deportiva de 40 litros'
   })));
 
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].records.length, 6);
+  assert.equal(groups[0].records.length, 7);
   assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-deportiva-40l/);
 });
 
 test('asocia las publicaciones verificadas de la mochila trekking de 45 litros', () => {
-  const shopSkus = ['144952628', '144959236', '144962066', '144958289', '144962740', '156499931'];
+  const shopSkus = [
+    '144952628', '144959236', '144962066', '144958289', '144962740', '156499931',
+    '144959232', '144962068', '144958529', '144962742', '144957836', '144957838', '144956330', '144956349',
+  ];
   const groups = groupFalabellaCatalogRecords(shopSkus.map((shopSku, index) => ({
-    company: { id: index + 1 },
+    company: { id: (index % 9) + 1 },
     remote: {
-      name: index === shopSkus.length - 1
+      name: shopSku === '156499931'
         ? 'Mochila Trekking Camping Senderismo 45 litros Outdoor Impermeable'
         : 'Mochila Trekking Camping Senderismo 45L Outdoor Impermeable',
-      color: index === shopSkus.length - 1 ? 'Negro' : '',
+      color: shopSku === '156499931' ? 'Negro' : '',
       shopSku,
       sellerSku: `MOC-45L-${index}`,
     },
   })));
 
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].records.length, 6);
+  assert.equal(groups[0].records.length, 14);
   assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-trekking-45l/);
+});
+
+test('asocia las capuchas polar verificadas aunque falte el color en un seller', () => {
+  const shopSkus = [
+    '115717657', '135891757', '155435960', '129759067', '149672431', '156500250', '140708239', '129646966',
+  ];
+  const groups = groupFalabellaCatalogRecords(shopSkus.map((shopSku, index) => ({
+    company: { id: index + 1 },
+    remote: {
+      name: 'Capucha Polar Cortaviento Mascara 6 En 1 Termica Deportes',
+      color: shopSku === '140708239' ? '' : 'Negro',
+      shopSku,
+      sellerSku: `CAP-${index}`,
+    },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 8);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:capucha-polar-6-en-1/);
+});
+
+test('asocia la mochila expandible verificada de Higher con el resto de sellers', () => {
+  const shopSkus = ['144951810', '144962075', '144958812', '144957741', '156499963', '144957048'];
+  const groups = groupFalabellaCatalogRecords(shopSkus.map((shopSku, index) => ({
+    company: { id: index + 1 },
+    remote: {
+      name: shopSku === '144951810'
+        ? 'Mochila Expandible para Viaje Oficina Laptop USB Equipaje de mano Aerolineas'
+        : 'Mochila Expandible para Viaje Oficina Equipaje de mano Aerolineas',
+      color: 'Negro',
+      shopSku,
+      sellerSku: `EXP-${index}`,
+    },
+  })));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].records.length, 6);
+  assert.match(groups[0].records.at(-1).association.signals.join(' '), /verified_family:mochila-expandible-viaje/);
+});
+
+test('asocia la bici de equilibrio blanca aunque Falabella mande BLANCO CON NEGRO', () => {
+  const whites = [
+    ['156503857', 'Blanco'],
+    ['131594395', 'blanco'],
+    ['129623394', 'Blanco'],
+    ['129767451', 'Blanco'],
+    ['129724281', 'Blanco'],
+    ['140547656', 'Blanco'],
+    ['129646414', 'Blanco'],
+    ['156581461', 'BLANCO CON NEGRO'],
+  ];
+  const groups = groupFalabellaCatalogRecords([
+    ...whites.map(([shopSku, color], index) => ({
+      company: { id: index + 1 },
+      remote: {
+        name: shopSku === '156581461'
+          ? 'Bicicleta Para Niños Equilibrio Balance Bike Sin Pedales BLANCO'
+          : 'Bicicleta Para Niños Equilibrio Balance Sin Pedales Blanco',
+        color,
+        shopSku,
+        sellerSku: `BICI-BLANCO-${index}`,
+      },
+    })),
+    {
+      company: { id: 20 },
+      remote: {
+        name: 'Bicicleta Para Niños Equilibrio Balance Sin Pedales Negro',
+        color: 'Negro',
+        shopSku: '999999001',
+        sellerSku: 'BICI-NEGRO',
+      },
+    },
+  ]);
+
+  assert.equal(groups.length, 2);
+  const white = groups.find((group) => group.records.length === 8);
+  assert.ok(white);
+  assert.match(white.records[0].association.signals.join(' '), /verified_family:bici-equilibrio-blanco/);
 });
 
 test('asocia las publicaciones verificadas de las pilas AA recargables USB-C', () => {

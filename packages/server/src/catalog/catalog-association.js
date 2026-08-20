@@ -68,13 +68,15 @@ const VERIFIED_EQUIVALENT_FAMILIES = [
 const VERIFIED_LISTING_FAMILIES = new Map([
   ...['144952457', '144962095', '144958641', '144962778', '144957751', '144956187', '146325129']
     .map((shopSku) => [shopSku, 'mochila-viral-usb']),
-  ...['129620781', '129756078', '129727176', '129591195', '131589787', '115743341']
+  ...['129620781', '129756078', '129727176', '129591195', '131589787', '115743341', '129647156']
     .map((shopSku) => [shopSku, 'mochila-deportiva-40l']),
-  ...['144952628', '144959236', '144962066', '144958289', '144962740', '156499931']
-    .map((shopSku) => [shopSku, 'mochila-trekking-45l']),
+  ...[
+    '144952628', '144959236', '144962066', '144958289', '144962740', '156499931',
+    '144959232', '144962068', '144958529', '144962742', '144957836', '144957838', '144956330', '144956349',
+  ].map((shopSku) => [shopSku, 'mochila-trekking-45l']),
   ...['140695706', '140716145', '140715136', '140392127', '140604057', '140747083', '156581151']
     .map((shopSku) => [shopSku, 'pilas-aa-recargables-usb-c']),
-  ...['115717657', '135891757', '155435960', '129759067', '149672431', '156500250']
+  ...['115717657', '135891757', '155435960', '129759067', '149672431', '156500250', '140708239', '129646966']
     .map((shopSku) => [shopSku, 'capucha-polar-6-en-1']),
   ...[
     '140456403', '140712936', '144949909', '140679978', '140542914', '144959108',
@@ -85,8 +87,10 @@ const VERIFIED_LISTING_FAMILIES = new Map([
     .map((shopSku) => [shopSku, 'mochila-viajera-aerolineas']),
   ...['123383049', '131601207', '129729338', '135888450', '129647340', '129622659', '129756627', '156583836']
     .map((shopSku) => [shopSku, 'toalla-microfibra-celeste']),
-  ...['144951810', '144962075', '144958812', '144957741', '156499963']
+  ...['144951810', '144962075', '144958812', '144957741', '156499963', '144957048']
     .map((shopSku) => [shopSku, 'mochila-expandible-viaje']),
+  ...['156503857', '131594395', '129623394', '129767451', '129724281', '140547656', '129646414', '156581461']
+    .map((shopSku) => [shopSku, 'bici-equilibrio-blanco']),
   ...['144953026', '144959434', '144962119', '144958703', '144962811', '144956638', '152680399', '156500089']
     .map((shopSku) => [shopSku, 'bolso-gama-alta-marron']),
   ...[
@@ -120,7 +124,10 @@ const VERIFIED_SIZELESS_FAMILIES = new Set([
   'mochila-viajera-aerolineas',
 ]);
 
-const VERIFIED_COLORLESS_FAMILIES = new Set(['silla-comer-evolutiva-patas-altas']);
+const VERIFIED_COLORLESS_FAMILIES = new Set([
+  'bici-equilibrio-blanco',
+  'silla-comer-evolutiva-patas-altas',
+]);
 
 export function normalizeCatalogText(value) {
   return String(value || '')
