@@ -31,6 +31,11 @@ import {
   type InboxNotice,
   type InboxNoticeRef,
 } from '../lib/inbox-notice';
+import {
+  displayedPendingOrders,
+  inboxVisibleCountLabel,
+  pendingBoardEmptyCopy,
+} from '../lib/inbox-pending';
 import { sellerShortName } from '../lib/seller-name';
 import { CopyableLogId } from '../components/CopyableLogId';
 import { usePermissions } from '../hooks/usePermissions';
@@ -1146,7 +1151,7 @@ export default function Pedidos() {
   const [companyId, setCompanyId] = useState('all');
   const [boardView, setBoardView] = useState<BoardView>('deadline');
   const [flowStage, setFlowStage] = useState<OrderFlowStage>('pending');
-  const [pendingDeadlineTab, setPendingDeadlineTab] = useState('today');
+  const [pendingDeadlineTab, setPendingDeadlineTab] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const manifestScopeKey = `${companyId}:${search.trim().toLowerCase()}`;
@@ -1427,11 +1432,13 @@ export default function Pedidos() {
       orders: pendingDeadlineGroups[key] || [],
     }))];
   }, [flowGroups.pending, pendingDeadlineGroups, now]);
-  const displayedFlowOrders = flowStage === 'pending'
-    ? pendingDeadlineTab === 'all'
-      ? flowGroups.pending
-      : pendingDeadlineGroups[pendingDeadlineTab] || []
-    : flowOrders;
+  const pendingBoard = displayedPendingOrders({
+    selectedTab: pendingDeadlineTab,
+    pendingOrders: flowGroups.pending,
+    groups: pendingDeadlineGroups,
+  });
+  const resolvedPendingDeadlineTab = pendingBoard.tab;
+  const displayedFlowOrders = flowStage === 'pending' ? pendingBoard.orders : flowOrders;
   const globalDeadlineCounts = openOrders.reduce<Record<UrgencyKey, number>>((counts, order) => {
     counts[urgencyFor(order, now)] += labelCountFor(order);
     return counts;
@@ -1443,7 +1450,19 @@ export default function Pedidos() {
   ];
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
   const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(displayedFlowOrders), [displayedFlowOrders]);
-  const filteredCountLabel = `${filteredFlowOrders.length} etiqueta${filteredFlowOrders.length === 1 ? '' : 's'}`;
+  const visiblePendingOrderCount = useMemo(
+    () => new Set(displayedFlowOrders.map((order) => orderKey(order))).size,
+    [displayedFlowOrders],
+  );
+  const filteredCountLabel = inboxVisibleCountLabel(
+    flowStage,
+    flowStage === 'pending' ? visiblePendingOrderCount : filteredFlowOrders.length,
+  );
+  const pendingEmptyCopy = pendingBoardEmptyCopy({
+    visibleCount: visiblePendingOrderCount,
+    pendingCount: flowGroups.pending.length,
+    selectedTab: resolvedPendingDeadlineTab,
+  }) || 'No hay pedidos con estos filtros.';
   const sellerOrderCounts = useMemo(() => {
     const uniqueOrders = new Map(displayedFlowOrders.map((order) => [orderKey(order), order]));
     const counts = new Map<number, { companyId: number; name: string; count: number }>();
@@ -2409,7 +2428,7 @@ export default function Pedidos() {
               const active = flowStage === tab.value;
               const orders = flowGroups[tab.value];
               const count = tab.value === 'shipped' ? shippedTotal : countLabels(orders);
-              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => { setFlowStage(tab.value); if (tab.value === 'pending') setPendingDeadlineTab('today'); }} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
+              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => { setFlowStage(tab.value); if (tab.value === 'pending') setPendingDeadlineTab(null); }} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
             })}
           </div>
         </div>
@@ -2454,7 +2473,7 @@ export default function Pedidos() {
                         size="sm"
                         onClick={() => setBulkReadySelection({
                           columnKey: 'pending',
-                          columnTitle: pendingDeadlineTabLabel(pendingDeadlineTab, now),
+                          columnTitle: pendingDeadlineTabLabel(resolvedPendingDeadlineTab, now),
                           orders: visiblePendingCandidates,
                         })}
                       >
@@ -2471,7 +2490,7 @@ export default function Pedidos() {
             <div className="border-b border-border bg-background px-4 py-2.5">
               <div role="tablist" aria-label="Pendientes por fecha de entrega" className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1">
                 {pendingDeadlineTabs.map((tab) => {
-                  const active = pendingDeadlineTab === tab.value;
+                  const active = resolvedPendingDeadlineTab === tab.value;
                   const count = countLabels(tab.orders);
                   return (
                     <button
@@ -2490,7 +2509,7 @@ export default function Pedidos() {
               </div>
               {sellerOrderCounts.length > 0 && (
                 <div className="mt-2 flex min-w-0" aria-label="Pedidos por seller">
-                  <div key={pendingDeadlineTab} className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
+                  <div key={resolvedPendingDeadlineTab} className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
                     {sellerOrderCounts.map((seller) => (
                       <span
                         key={seller.companyId}
@@ -2522,7 +2541,7 @@ export default function Pedidos() {
                 canDispatch={canDispatch}
               />
             ))}
-            {filteredFlowOrders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</p>}
+            {filteredFlowOrders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">{flowStage === 'pending' ? pendingEmptyCopy : 'No hay pedidos con estos filtros.'}</p>}
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1260px] text-sm">
@@ -2600,7 +2619,7 @@ export default function Pedidos() {
                     </tr>
                   );
                 })}
-                {filteredFlowOrders.length === 0 && <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</td></tr>}
+                {filteredFlowOrders.length === 0 && <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">{flowStage === 'pending' ? pendingEmptyCopy : 'No hay pedidos con estos filtros.'}</td></tr>}
               </tbody>
             </table>
           </div>
