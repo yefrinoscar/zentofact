@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import api from '../lib/api';
+import { noticeFromError } from '../lib/inbox-notice';
+import { CopyableLogId } from '../components/CopyableLogId';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -120,6 +122,7 @@ export default function ScannerArmado() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [errorLogId, setErrorLogId] = useState<string | undefined>();
   const [result, setResult] = useState<PickingResult | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -139,17 +142,21 @@ export default function ScannerArmado() {
     const scanned = String(value || '').trim();
     if (!scanned) {
       setError('Escanea un QR o escribe el número de tracking u orden.');
+      setErrorLogId(undefined);
       return;
     }
     stopCamera();
     setCode(scanned);
     setLoading(true);
     setError('');
+    setErrorLogId(undefined);
     setResult(null);
     try {
       setResult(await api.scanPickingTicket(scanned));
-    } catch (lookupError: any) {
-      setError(lookupError?.message || 'No pudimos encontrar la etiqueta.');
+    } catch (lookupError: unknown) {
+      const notice = noticeFromError(lookupError, 'No pudimos encontrar la etiqueta.');
+      setError(notice.message);
+      setErrorLogId(notice.refs.find((ref) => ref.logId)?.logId);
     } finally {
       setLoading(false);
     }
@@ -208,6 +215,7 @@ export default function ScannerArmado() {
     stopCamera();
     setCode('');
     setError('');
+    setErrorLogId(undefined);
     setResult(null);
     setCameraError('');
     setShowManualSearch(false);
@@ -352,6 +360,12 @@ export default function ScannerArmado() {
             <div>
               <p className="font-semibold text-destructive">No encontramos la etiqueta</p>
               <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+              {errorLogId && (
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                  <span className="font-medium">ID de seguimiento</span>
+                  <CopyableLogId logId={errorLogId} />
+                </p>
+              )}
             </div>
             <Button variant="outline" onClick={reset}><RotateCcw />Intentar otra vez</Button>
           </CardContent>
