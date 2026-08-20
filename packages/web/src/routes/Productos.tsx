@@ -272,6 +272,11 @@ function sellerStock(product: Product) {
   return Number.isFinite(stock) ? stock : 0;
 }
 
+function sellerCountCopy(product: Product) {
+  const sellers = product.sellersCount || 0;
+  return `${sellers} ${sellers === 1 ? 'seller' : 'sellers'}`;
+}
+
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
@@ -1011,8 +1016,9 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
           <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
         </span>
         <span className="min-w-0">
-          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock sellers</span>
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock</span>
           <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(sellerStock(product))} u</span>
+          <span className="mt-0.5 block text-[11px] text-muted-foreground">{sellerCountCopy(product)}</span>
         </span>
         <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
@@ -1080,13 +1086,9 @@ const CatalogTable = memo(function CatalogTable({
       header: 'Stock',
       cell: ({ row }) => {
         const product = row.original;
-        const stock = sellerStock(product);
-        const sellers = product.sellersCount || 0;
         return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(stock)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {sellers} {sellers === 1 ? 'seller' : 'sellers'}
-          </p>
+          <p className="text-lg font-semibold leading-none">{formatNumber(sellerStock(product))} <span className="text-xs font-normal text-muted-foreground">u</span></p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{sellerCountCopy(product)}</p>
         </div>;
       },
     },
