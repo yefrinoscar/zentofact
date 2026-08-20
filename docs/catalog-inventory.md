@@ -18,7 +18,9 @@ Estado: implementado detrás de feature flag (2026-08-08).
 - Cola operativa para `skipped_unmapped` y `skipped_insufficient`.
 - Acción explícita para aplicar stock a pedidos abiertos después de vincular o
   reabastecer. Vincular un listing por sí solo no modifica pedidos históricos.
-- La publicación directa a Falabella sigue disponible como acción secundaria.
+- Publicar o despublicar Falabella permanece visual-only hasta
+  `MARKETPLACE_PUBLICATION_MUTATION_ENABLED=true`. El catálogo solo simula
+  el flujo y no llama al Seller API.
 
 ### Asociación de publicaciones al producto maestro
 
