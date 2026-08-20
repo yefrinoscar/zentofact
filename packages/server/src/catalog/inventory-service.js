@@ -40,6 +40,7 @@ export class InsufficientStockError extends Error {
 }
 
 function mapMovement(row) {
+  const metadata = row.metadata || {};
   return {
     id: Number(row.id),
     productId: Number(row.product_id),
@@ -50,10 +51,14 @@ function mapMovement(row) {
     actorUserId: row.actor_user_id,
     source: row.source,
     orderId: row.order_id == null ? null : Number(row.order_id),
+    orderNumber: row.external_order_number || metadata.orderNumber || null,
     orderItemId: row.order_item_id == null ? null : Number(row.order_item_id),
     listingId: row.listing_id == null ? null : Number(row.listing_id),
+    sku: row.sku || metadata.sku || null,
+    companyName: row.company_name || null,
+    channelCode: row.channel_code || null,
     idempotencyKey: row.idempotency_key,
-    metadata: row.metadata || {},
+    metadata,
     createdAt: row.created_at,
   };
 }
@@ -189,8 +194,21 @@ export async function listMovements(productIdInput, filters = {}, db) {
   const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200);
   const offset = Math.max(Number(filters.offset) || 0, 0);
   const result = await target.query(
-    `select *, count(*) over() as total_count from inventory_movements
-     where product_id=$1 order by created_at desc, id desc limit $2 offset $3`,
+    `select m.*,
+       o.external_order_number,
+       oi.sku,
+       ch.code as channel_code,
+       coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
+       count(*) over() as total_count
+     from inventory_movements m
+     left join orders o on o.id=m.order_id
+     left join order_items oi on oi.id=m.order_item_id
+     left join companies c on c.id=o.company_id
+     left join order_channel_accounts a on a.id=o.channel_account_id
+     left join order_channels ch on ch.id=a.channel_id
+     where m.product_id=$1
+     order by m.created_at desc, m.id desc
+     limit $2 offset $3`,
     [productId, limit, offset],
   );
   return {

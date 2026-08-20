@@ -9,6 +9,7 @@ export const FULFILLMENT_STATUSES = [
   'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
 ];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
+export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides'];
 
 let corePromise;
 
@@ -53,6 +54,16 @@ function channelCode(value) {
 
 function jsonObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function assertManualEnvioCarrier(shipping, source) {
+  if (String(source || '').trim().toLowerCase() !== 'manual') return;
+  const type = String(shipping?.type || '').trim().toLowerCase();
+  if (type !== 'envio') return;
+  const carrier = String(shipping?.carrier || '').trim().toLowerCase();
+  if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
+    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides.');
+  }
 }
 
 function jsonValue(value, fallback = {}) {
@@ -564,6 +575,7 @@ async function ingestOrderInTransaction(input, db) {
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
   }, policyAccount);
+  assertManualEnvioCarrier(order.shipping, input.source);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {
     const replay = await db.query(
@@ -707,7 +719,7 @@ async function ingestOrderInTransaction(input, db) {
            metadata=order_items.metadata || excluded.metadata,
            raw_data=excluded.raw_data,
            updated_at=now()
-         returning id, external_item_id, sku, provider_sku, quantity,
+         returning id, external_item_id, sku, provider_sku, quantity, provider_status,
            product_id, listing_id, main_sku, stock_state,
            stock_applied_quantity, stock_revision`,
         [

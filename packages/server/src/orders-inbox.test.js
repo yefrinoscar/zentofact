@@ -162,6 +162,8 @@ test('sincroniza solo tiendas activas con credenciales y conserva errores por ti
       return { status: 'success' };
     },
     syncOptions: { mode: 'day', date: '2026-08-17' },
+    createLogId: () => 'log_syncfailed01',
+    log: () => {},
   });
   assert.deepEqual(seen, [
     { companyId: 1, options: { mode: 'day', date: '2026-08-17' } },
@@ -170,6 +172,9 @@ test('sincroniza solo tiendas activas con credenciales y conserva errores por ti
   assert.equal(result.stores, 2);
   assert.equal(result.successful, 1);
   assert.equal(result.failed, 1);
+  assert.equal(result.results[1].ok, false);
+  assert.equal(result.results[1].error, 'temporal');
+  assert.equal(result.results[1].logId, 'log_syncfailed01');
 });
 
 test('lista todas las tiendas Falabella aunque no tengan pedidos pendientes', async () => {

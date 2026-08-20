@@ -1,5 +1,6 @@
 // Inventario operativo de materiales de empaque y oficina.
 // No forma parte del catálogo vendible: un insumo se consume, no se publica.
+import { timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 
 export const INSUMO_UNITS = ['unidades', 'rollos', 'resmas', 'kg', 'cajas'];
@@ -8,6 +9,9 @@ export const INSUMO_ICON_KEYS = [
   'hojas-bond', 'cartuchos-tinta', 'generic',
 ];
 export const INSUMO_STATUSES = ['active', 'archived'];
+export const DEFAULT_INSUMO_CHANGE_PIN = '2324';
+export const CINTA_QUANTITY_CAP = 36;
+export const FILL_QUANTITY_CAP = 16;
 
 export const DEFAULT_INSUMOS = [
   { code: 'cinta-fill', name: 'Fill grande', unit: 'rollos', iconKey: 'cinta-fill', reorderPoint: 2 },
@@ -65,6 +69,74 @@ function oneOf(value, allowed, field) {
   return normalized;
 }
 
+export function quantityCapFor(row = {}) {
+  const haystack = [row.code, row.icon_key, row.iconKey, row.name]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  if (haystack.includes('fill')) return FILL_QUANTITY_CAP;
+  if (haystack.includes('cinta') || haystack.includes('scotch')) return CINTA_QUANTITY_CAP;
+  return null;
+}
+
+function assertQuantityWithinCap(row, quantity) {
+  const cap = quantityCapFor(row);
+  if (cap == null || quantity <= cap) return cap;
+  throw httpError(`${row.name} no puede pasar de ${cap}.`);
+}
+
+function insumoChangePin() {
+  return String(process.env.INSUMO_CHANGE_PIN || DEFAULT_INSUMO_CHANGE_PIN);
+}
+
+export function assertInsumoPin(pin) {
+  const expected = Buffer.from(insumoChangePin());
+  const received = Buffer.from(String(pin ?? '').trim());
+  if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+    throw httpError('PIN incorrecto.', 403);
+  }
+}
+
+function actorRef(actor) {
+  if (actor == null || actor === '') return { id: null, name: null };
+  if (typeof actor === 'string') {
+    return { id: text(actor, 'actorUserId', 120, { nullable: true }), name: null };
+  }
+  return {
+    id: text(actor.id, 'actorUserId', 120, { nullable: true }),
+    name: text(actor.name, 'actorName', 80, { nullable: true }),
+  };
+}
+
+async function resolveActorName(client, actor) {
+  if (actor.name) return actor.name;
+  if (!actor.id) return null;
+  const found = await client.query('select name from "user" where id = $1 limit 1', [actor.id]);
+  return found.rows[0]?.name || null;
+}
+
+async function insertMovement(client, { insumoId, quantityDelta, quantityAfter, note, actorId, actorName }) {
+  await client.query(
+    `insert into insumo_movements (insumo_id, quantity_delta, quantity_after, note, actor_user_id, actor_name)
+     values ($1,$2,$3,$4,$5,$6)`,
+    [insumoId, quantityDelta, quantityAfter, note, actorId, actorName],
+  );
+}
+
+function mapMovement(row) {
+  return {
+    id: Number(row.id),
+    insumoId: Number(row.insumo_id),
+    insumoName: row.insumo_name,
+    insumoCode: row.insumo_code,
+    quantityDelta: Number(row.quantity_delta),
+    quantityAfter: Number(row.quantity_after),
+    note: row.note,
+    actorUserId: row.actor_user_id,
+    actorName: row.actor_name || null,
+    createdAt: row.created_at,
+  };
+}
+
 export function slugifyInsumoName(name) {
   const slug = String(name || '')
     .normalize('NFD')
@@ -90,6 +162,7 @@ export function mapInsumo(row) {
     reorderPoint,
     status: row.status,
     lowStock: reorderPoint != null && quantityOnHand <= reorderPoint,
+    quantityCap: quantityCapFor(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by,
@@ -148,11 +221,13 @@ export async function ensureTables(db) {
       quantity_after numeric(14,4) not null,
       note text,
       actor_user_id text,
+      actor_name text,
       created_at timestamptz not null default now(),
       check (quantity_delta <> 0)
     );
     create index if not exists idx_insumo_movements_insumo
       on insumo_movements(insumo_id, created_at desc);
+    alter table insumo_movements add column if not exists actor_name text;
   `);
 
   await client.query(`
@@ -261,6 +336,7 @@ export async function listInsumos(filters = {}, db) {
 }
 
 export async function createInsumo(input = {}, actorUserId, db) {
+  assertInsumoPin(input.pin);
   const name = text(input.name, 'name', 80);
   const unit = oneOf(input.unit, INSUMO_UNITS, 'unit');
   const iconKey = oneOf(input.iconKey || 'generic', INSUMO_ICON_KEYS, 'iconKey');
@@ -268,7 +344,9 @@ export async function createInsumo(input = {}, actorUserId, db) {
   if (quantityOnHand < 0) throw httpError('La cantidad no puede ser negativa.');
   const reorderPoint = finiteNumber(input.reorderPoint, 'reorderPoint', { nullable: true });
   if (reorderPoint != null && reorderPoint < 0) throw httpError('El punto de reposición no puede ser negativo.');
-  const actor = text(actorUserId, 'actorUserId', 120, { nullable: true });
+  const code = slugifyInsumoName(name);
+  assertQuantityWithinCap({ code, name, icon_key: iconKey }, quantityOnHand);
+  const actor = actorRef(actorUserId);
 
   return inTransaction(db, async (client) => {
     const duplicate = await client.query(
@@ -276,20 +354,32 @@ export async function createInsumo(input = {}, actorUserId, db) {
       [name, 'active'],
     );
     if (duplicate.rows.length) throw httpError('Ya existe un insumo con ese nombre.');
-    const code = await uniqueCode(client, slugifyInsumoName(name));
+    const unique = await uniqueCode(client, code);
     const inserted = await client.query(
       `insert into insumos (code, name, unit, icon_key, quantity_on_hand, reorder_point, created_by, updated_by)
        values ($1,$2,$3,$4,$5,$6,$7,$7)
        returning *`,
-      [code, name, unit, iconKey, quantityOnHand, reorderPoint, actor],
+      [unique, name, unit, iconKey, quantityOnHand, reorderPoint, actor.id],
     );
+    if (quantityOnHand !== 0) {
+      const actorName = await resolveActorName(client, actor);
+      await insertMovement(client, {
+        insumoId: inserted.rows[0].id,
+        quantityDelta: quantityOnHand,
+        quantityAfter: quantityOnHand,
+        note: null,
+        actorId: actor.id,
+        actorName,
+      });
+    }
     return mapInsumo(inserted.rows[0]);
   });
 }
 
 export async function updateInsumo(idInput, input = {}, actorUserId, db) {
+  assertInsumoPin(input.pin);
   const id = positiveInt(idInput);
-  const actor = text(actorUserId, 'actorUserId', 120, { nullable: true });
+  const actor = actorRef(actorUserId);
   return inTransaction(db, async (client) => {
     const current = await client.query('select * from insumos where id=$1 for update', [id]);
     if (!current.rows.length) throw httpError('Insumo no encontrado.', 404);
@@ -316,19 +406,20 @@ export async function updateInsumo(idInput, input = {}, actorUserId, db) {
        set name=$1, unit=$2, icon_key=$3, reorder_point=$4, status=$5, updated_at=now(), updated_by=$6
        where id=$7
        returning *`,
-      [name, unit, iconKey, reorderPoint, status, actor, id],
+      [name, unit, iconKey, reorderPoint, status, actor.id, id],
     );
     return mapInsumo(updated.rows[0]);
   });
 }
 
 export async function adjustInsumo(idInput, input = {}, actorUserId, db) {
+  assertInsumoPin(input.pin);
   const id = positiveInt(idInput);
   const hasDelta = input.delta !== undefined && input.delta !== null && input.delta !== '';
   const hasAbsolute = input.absoluteTarget !== undefined && input.absoluteTarget !== null && input.absoluteTarget !== '';
   if (hasDelta === hasAbsolute) throw httpError('Envía delta o absoluteTarget, pero no ambos.');
   const note = text(input.note, 'note', 200, { nullable: true });
-  const actor = text(actorUserId, 'actorUserId', 120, { nullable: true });
+  const actor = actorRef(actorUserId);
 
   return inTransaction(db, async (client) => {
     const locked = await client.query('select * from insumos where id=$1 for update', [id]);
@@ -343,18 +434,49 @@ export async function adjustInsumo(idInput, input = {}, actorUserId, db) {
     if (projected < 0) {
       throw httpError(`La cantidad no puede quedar negativa. Saldo actual: ${current}.`);
     }
+    assertQuantityWithinCap(locked.rows[0], projected);
+    const actorName = await resolveActorName(client, actor);
     const updated = await client.query(
       `update insumos
        set quantity_on_hand=$1, updated_at=now(), updated_by=$2
        where id=$3
        returning *`,
-      [projected, actor, id],
+      [projected, actor.id, id],
     );
-    await client.query(
-      `insert into insumo_movements (insumo_id, quantity_delta, quantity_after, note, actor_user_id)
-       values ($1,$2,$3,$4,$5)`,
-      [id, delta, projected, note, actor],
-    );
+    await insertMovement(client, {
+      insumoId: id,
+      quantityDelta: delta,
+      quantityAfter: projected,
+      note,
+      actorId: actor.id,
+      actorName,
+    });
     return { applied: true, noChange: false, insumo: mapInsumo(updated.rows[0]) };
   });
+}
+
+export async function listInsumoMovements(filters = {}, db) {
+  const insumoId = filters.insumoId ? positiveInt(filters.insumoId, 'insumoId') : null;
+  const limit = Math.min(Math.max(Number(filters.limit) || 20, 1), 100);
+  const offset = Math.max(Number(filters.offset) || 0, 0);
+  const result = await target(db).query(
+    `select m.id, m.insumo_id, i.name as insumo_name, i.code as insumo_code,
+            m.quantity_delta, m.quantity_after, m.note, m.actor_user_id,
+            coalesce(nullif(trim(m.actor_name), ''), u.name) as actor_name,
+            m.created_at,
+            count(*) over() as total_count
+     from insumo_movements m
+     join insumos i on i.id = m.insumo_id
+     left join "user" u on u.id = m.actor_user_id
+     where ($1::bigint is null or m.insumo_id = $1)
+     order by m.created_at desc, m.id desc
+     limit $2 offset $3`,
+    [insumoId, limit, offset],
+  );
+  return {
+    items: result.rows.map(mapMovement),
+    totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,
+    limit,
+    offset,
+  };
 }

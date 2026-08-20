@@ -23,6 +23,21 @@ import {
   Truck,
 } from 'lucide-react';
 import api from '../lib/api';
+import { logIdFromUnknown } from '../lib/api-error';
+import {
+  inboxBulkReadyErrorNotice,
+  inboxSyncNotice,
+  noticeFromError,
+  type InboxNotice,
+  type InboxNoticeRef,
+} from '../lib/inbox-notice';
+import {
+  displayedPendingOrders,
+  inboxVisibleCountLabel,
+  pendingBoardEmptyCopy,
+} from '../lib/inbox-pending';
+import { sellerShortName } from '../lib/seller-name';
+import { CopyableLogId } from '../components/CopyableLogId';
 import { usePermissions } from '../hooks/usePermissions';
 import { useAppStore } from '../stores/app';
 import { Badge } from '../components/ui/badge';
@@ -1089,6 +1104,43 @@ function OrderCard({ order, now, onOpen, onViewLabel, onToggleLabel, labelLoadin
   );
 }
 
+function withShortSellerLabels(notice: InboxNotice): InboxNotice {
+  return {
+    ...notice,
+    refs: notice.refs.map((ref) => ({
+      ...ref,
+      label: ref.label ? sellerShortName(ref.label) : ref.label,
+    })),
+  };
+}
+
+function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
+  const toneClass = notice.tone === 'error'
+    ? 'border-destructive/30 bg-destructive/5 text-destructive'
+    : notice.tone === 'warning'
+      ? 'border-amber-200 bg-amber-50 text-amber-950'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  const Icon = notice.tone === 'success' ? CheckCircle2 : AlertCircle;
+  return (
+    <div className={`flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${toneClass}`} role="status">
+      <Icon className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p>{notice.message}</p>
+        {notice.refs.length > 0 && (
+          <ul className="mt-1.5 space-y-1">
+            {notice.refs.map((ref, index) => (
+              <li key={`${ref.logId || ref.label || index}`} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {ref.label && <span className="text-xs font-medium opacity-80">{ref.label}</span>}
+                {ref.logId && <CopyableLogId logId={ref.logId} />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Pedidos() {
   const navigate = useNavigate();
   const { role, loading: permissionsLoading } = usePermissions();
@@ -1099,7 +1151,7 @@ export default function Pedidos() {
   const [companyId, setCompanyId] = useState('all');
   const [boardView, setBoardView] = useState<BoardView>('deadline');
   const [flowStage, setFlowStage] = useState<OrderFlowStage>('pending');
-  const [pendingDeadlineTab, setPendingDeadlineTab] = useState('today');
+  const [pendingDeadlineTab, setPendingDeadlineTab] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const manifestScopeKey = `${companyId}:${search.trim().toLowerCase()}`;
@@ -1116,8 +1168,8 @@ export default function Pedidos() {
   const [loadedInboxScopeKey, setLoadedInboxScopeKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [syncMessage, setSyncMessage] = useState('');
+  const [errorNotice, setErrorNotice] = useState<InboxNotice | null>(null);
+  const [syncNotice, setSyncNotice] = useState<InboxNotice | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<InboxOrder | null>(null);
   const [orderProducts, setOrderProducts] = useState<Record<string, OrderProductsState>>({});
   const [labelSelectionMode, setLabelSelectionMode] = useState(false);
@@ -1147,6 +1199,7 @@ export default function Pedidos() {
   const [readyLoadingKey, setReadyLoadingKey] = useState('');
   const [confirmReady, setConfirmReady] = useState(false);
   const [orderActionError, setOrderActionError] = useState('');
+  const [orderActionErrorRefs, setOrderActionErrorRefs] = useState<InboxNoticeRef[]>([]);
   const [orderActionErrorKey, setOrderActionErrorKey] = useState('');
   const [orderActionMessage, setOrderActionMessage] = useState('');
   const [now, setNow] = useState(() => new Date());
@@ -1168,7 +1221,7 @@ export default function Pedidos() {
         if (!cancelled) setCompanies(Array.isArray(rows) ? rows : []);
       })
       .catch((nextError: any) => {
-        if (!cancelled) setError(nextError?.message || 'No se pudieron cargar las tiendas Falabella.');
+        if (!cancelled) setErrorNotice(noticeFromError(nextError, 'No se pudieron cargar las tiendas Falabella.'));
       });
     return () => { cancelled = true; };
   }, []);
@@ -1178,7 +1231,7 @@ export default function Pedidos() {
     const requestedScopeKey = manifestScopeKey;
     if (!silent && quiet) setRefreshing(true);
     else if (!silent) setLoading(true);
-    setError('');
+    setErrorNotice(null);
     try {
       const response = await api.getOrdersInbox({
         companyId: companyId === 'all' ? undefined : Number(companyId),
@@ -1192,7 +1245,7 @@ export default function Pedidos() {
       setLoadedInboxScopeKey(requestedScopeKey);
     } catch (nextError: any) {
       if (requestSequence !== inboxRequestSequenceRef.current) return;
-      setError(nextError?.message || 'No se pudieron cargar los pedidos pendientes.');
+      setErrorNotice(noticeFromError(nextError, 'No se pudieron cargar los pedidos pendientes.'));
     } finally {
       if (requestSequence === inboxRequestSequenceRef.current) {
         setLoading(false);
@@ -1221,17 +1274,14 @@ export default function Pedidos() {
 
   const syncAll = async () => {
     setRefreshing(true);
-    setError('');
-    setSyncMessage('');
+    setErrorNotice(null);
+    setSyncNotice(null);
     try {
       const result = await api.syncOrdersInbox();
-      const failed = Number(result?.failed || 0);
-      setSyncMessage(failed
-        ? `${result.successful} tiendas actualizadas; ${failed} no pudieron sincronizarse.`
-        : 'Pedidos actualizados con Falabella.');
+      setSyncNotice(withShortSellerLabels(inboxSyncNotice(result)));
       await load(true);
     } catch (nextError: any) {
-      setError(nextError?.message || 'No se pudieron sincronizar las tiendas.');
+      setErrorNotice(noticeFromError(nextError, 'No se pudieron sincronizar las tiendas.'));
     } finally {
       setRefreshing(false);
     }
@@ -1382,11 +1432,13 @@ export default function Pedidos() {
       orders: pendingDeadlineGroups[key] || [],
     }))];
   }, [flowGroups.pending, pendingDeadlineGroups, now]);
-  const displayedFlowOrders = flowStage === 'pending'
-    ? pendingDeadlineTab === 'all'
-      ? flowGroups.pending
-      : pendingDeadlineGroups[pendingDeadlineTab] || []
-    : flowOrders;
+  const pendingBoard = displayedPendingOrders({
+    selectedTab: pendingDeadlineTab,
+    pendingOrders: flowGroups.pending,
+    groups: pendingDeadlineGroups,
+  });
+  const resolvedPendingDeadlineTab = pendingBoard.tab;
+  const displayedFlowOrders = flowStage === 'pending' ? pendingBoard.orders : flowOrders;
   const globalDeadlineCounts = openOrders.reduce<Record<UrgencyKey, number>>((counts, order) => {
     counts[urgencyFor(order, now)] += labelCountFor(order);
     return counts;
@@ -1398,7 +1450,19 @@ export default function Pedidos() {
   ];
   const activeFlow = flowTabs.find((tab) => tab.value === flowStage) || flowTabs[0];
   const filteredFlowOrders = useMemo(() => expandOrdersAsLabels(displayedFlowOrders), [displayedFlowOrders]);
-  const filteredCountLabel = `${filteredFlowOrders.length} etiqueta${filteredFlowOrders.length === 1 ? '' : 's'}`;
+  const visiblePendingOrderCount = useMemo(
+    () => new Set(displayedFlowOrders.map((order) => orderKey(order))).size,
+    [displayedFlowOrders],
+  );
+  const filteredCountLabel = inboxVisibleCountLabel(
+    flowStage,
+    flowStage === 'pending' ? visiblePendingOrderCount : filteredFlowOrders.length,
+  );
+  const pendingEmptyCopy = pendingBoardEmptyCopy({
+    visibleCount: visiblePendingOrderCount,
+    pendingCount: flowGroups.pending.length,
+    selectedTab: resolvedPendingDeadlineTab,
+  }) || 'No hay pedidos con estos filtros.';
   const sellerOrderCounts = useMemo(() => {
     const uniqueOrders = new Map(displayedFlowOrders.map((order) => [orderKey(order), order]));
     const counts = new Map<number, { companyId: number; name: string; count: number }>();
@@ -1537,6 +1601,7 @@ export default function Pedidos() {
     setSelectedOrder(order);
     setConfirmReady(false);
     setOrderActionError('');
+    setOrderActionErrorRefs([]);
     setOrderActionErrorKey('');
     setOrderActionMessage('');
   };
@@ -1545,6 +1610,7 @@ export default function Pedidos() {
     setSelectedOrder(null);
     setConfirmReady(false);
     setOrderActionError('');
+    setOrderActionErrorRefs([]);
     setOrderActionErrorKey('');
     setOrderActionMessage('');
   };
@@ -1604,6 +1670,7 @@ export default function Pedidos() {
     const key = `${order.companyId}:${order.orderId}`;
     setReadyLoadingKey(key);
     setOrderActionError('');
+    setOrderActionErrorRefs([]);
     setOrderActionErrorKey(key);
     setOrderActionMessage('');
     try {
@@ -1621,7 +1688,9 @@ export default function Pedidos() {
         ? 'Falabella confirmó que el pedido ya estaba listo. La etiqueta está disponible.'
         : 'Pedido marcado como listo para envío. Ya puedes abrir la etiqueta.');
     } catch (nextError: any) {
-      setOrderActionError(nextError?.message || 'No se pudo marcar el pedido como listo para envío.');
+      const notice = noticeFromError(nextError, 'No se pudo marcar el pedido como listo para envío.');
+      setOrderActionError(notice.message);
+      setOrderActionErrorRefs(notice.refs);
       setOrderActionErrorKey(key);
     } finally {
       setReadyLoadingKey('');
@@ -1637,10 +1706,10 @@ export default function Pedidos() {
     }
 
     setBulkReadyRunning(true);
-    setError('');
-    setSyncMessage('');
+    setErrorNotice(null);
+    setSyncNotice(null);
     const succeeded = new Set<string>();
-    const failed: InboxOrder[] = [];
+    const failed: Array<{ orderNumber: string; logId?: string }> = [];
     try {
       for (let index = 0; index < candidates.length; index += 4) {
         const chunk = candidates.slice(index, index + 4);
@@ -1650,7 +1719,12 @@ export default function Pedidos() {
         results.forEach((result, resultIndex) => {
           const order = chunk[resultIndex];
           if (result.status === 'fulfilled') succeeded.add(orderKey(order));
-          else failed.push(order);
+          else {
+            failed.push({
+              orderNumber: order.orderNumber,
+              logId: logIdFromUnknown(result.reason),
+            });
+          }
         });
       }
 
@@ -1661,10 +1735,14 @@ export default function Pedidos() {
             ? { ...order, falabellaStatus: 'ready_to_ship' }
             : order),
         } : current);
-        setSyncMessage(`${succeeded.size} pedido${succeeded.size === 1 ? '' : 's'} marcado${succeeded.size === 1 ? '' : 's'} como listo${succeeded.size === 1 ? '' : 's'} para envío.`);
+        setSyncNotice({
+          tone: 'success',
+          message: `${succeeded.size} pedido${succeeded.size === 1 ? '' : 's'} marcado${succeeded.size === 1 ? '' : 's'} como listo${succeeded.size === 1 ? '' : 's'} para envío.`,
+          refs: [],
+        });
       }
       if (failed.length > 0) {
-        setError(`${failed.length} pedido${failed.length === 1 ? '' : 's'} ${failed.length === 1 ? 'no pudo actualizarse' : 'no pudieron actualizarse'}. Intenta sincronizar y vuelve a revisar.`);
+        setErrorNotice(inboxBulkReadyErrorNotice(failed));
       }
       setBulkReadySelection(null);
     } finally {
@@ -1719,7 +1797,7 @@ export default function Pedidos() {
     setBatchLabelsLoading(true);
     setPrintingLabelKey(printableOrders.length === 1 ? labelKey(printableOrders[0]) : '');
     setPrintingColumn(column);
-    setError('');
+    setErrorNotice(null);
     try {
       const result = await api.falabellaApiGetShippingLabelsA4(printableOrders.map((order) => ({
         companyId: order.companyId,
@@ -1744,7 +1822,7 @@ export default function Pedidos() {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60_000);
     } catch (nextError: any) {
       previewWindow?.close();
-      setError(nextError?.message || 'No se pudieron agrupar las etiquetas de Falabella.');
+      setErrorNotice(noticeFromError(nextError, 'No se pudieron agrupar las etiquetas de Falabella.'));
     } finally {
       setBatchLabelsLoading(false);
       setPrintingLabelKey('');
@@ -2339,18 +2417,8 @@ export default function Pedidos() {
         </div>
       )}
 
-      {error && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-      {syncMessage && !error && (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
-          <CheckCircle2 className="size-4 shrink-0" />
-          <span>{syncMessage}</span>
-        </div>
-      )}
+      {errorNotice && <InboxStatusNotice notice={errorNotice} />}
+      {syncNotice && !errorNotice && <InboxStatusNotice notice={syncNotice} />}
 
       <section>
         <div className="mb-2"><h2 className="text-sm font-semibold text-foreground">Estado del pedido</h2><p className="mt-0.5 text-xs text-muted-foreground">Selecciona la etapa operativa que quieres revisar.</p></div>
@@ -2360,7 +2428,7 @@ export default function Pedidos() {
               const active = flowStage === tab.value;
               const orders = flowGroups[tab.value];
               const count = tab.value === 'shipped' ? shippedTotal : countLabels(orders);
-              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => { setFlowStage(tab.value); if (tab.value === 'pending') setPendingDeadlineTab('today'); }} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
+              return <button key={tab.value} type="button" role="tab" aria-selected={active} onClick={() => { setFlowStage(tab.value); if (tab.value === 'pending') setPendingDeadlineTab(null); }} className={`rounded-lg px-3 py-2.5 text-left text-sm transition ${active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{tab.label}</p><p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p></div><span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${active ? tab.badgeClass : 'bg-background text-muted-foreground'}`}>{count}</span></div></button>;
             })}
           </div>
         </div>
@@ -2405,7 +2473,7 @@ export default function Pedidos() {
                         size="sm"
                         onClick={() => setBulkReadySelection({
                           columnKey: 'pending',
-                          columnTitle: pendingDeadlineTabLabel(pendingDeadlineTab, now),
+                          columnTitle: pendingDeadlineTabLabel(resolvedPendingDeadlineTab, now),
                           orders: visiblePendingCandidates,
                         })}
                       >
@@ -2422,7 +2490,7 @@ export default function Pedidos() {
             <div className="border-b border-border bg-background px-4 py-2.5">
               <div role="tablist" aria-label="Pendientes por fecha de entrega" className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1">
                 {pendingDeadlineTabs.map((tab) => {
-                  const active = pendingDeadlineTab === tab.value;
+                  const active = resolvedPendingDeadlineTab === tab.value;
                   const count = countLabels(tab.orders);
                   return (
                     <button
@@ -2441,7 +2509,7 @@ export default function Pedidos() {
               </div>
               {sellerOrderCounts.length > 0 && (
                 <div className="mt-2 flex min-w-0" aria-label="Pedidos por seller">
-                  <div key={pendingDeadlineTab} className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
+                  <div key={resolvedPendingDeadlineTab} className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
                     {sellerOrderCounts.map((seller) => (
                       <span
                         key={seller.companyId}
@@ -2473,7 +2541,7 @@ export default function Pedidos() {
                 canDispatch={canDispatch}
               />
             ))}
-            {filteredFlowOrders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</p>}
+            {filteredFlowOrders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">{flowStage === 'pending' ? pendingEmptyCopy : 'No hay pedidos con estos filtros.'}</p>}
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1260px] text-sm">
@@ -2551,7 +2619,7 @@ export default function Pedidos() {
                     </tr>
                   );
                 })}
-                {filteredFlowOrders.length === 0 && <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">No hay pedidos con estos filtros.</td></tr>}
+                {filteredFlowOrders.length === 0 && <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">{flowStage === 'pending' ? pendingEmptyCopy : 'No hay pedidos con estos filtros.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -2963,10 +3031,7 @@ export default function Pedidos() {
                 </div>
 
                 {visibleOrderActionError && (
-                  <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                    <span>{visibleOrderActionError}</span>
-                  </div>
+                  <InboxStatusNotice notice={{ tone: 'error', message: visibleOrderActionError, refs: orderActionErrorRefs }} />
                 )}
 
                 <DialogFooter>
@@ -3063,10 +3128,7 @@ export default function Pedidos() {
               </dl>
 
               {visibleOrderActionError && (
-                <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                  <span>{visibleOrderActionError}</span>
-                </div>
+                <InboxStatusNotice notice={{ tone: 'error', message: visibleOrderActionError, refs: orderActionErrorRefs }} />
               )}
               {orderActionMessage && !visibleOrderActionError && (
                 <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
@@ -3093,7 +3155,7 @@ export default function Pedidos() {
                     <TooltipContent>{labelPrintTooltip(selectedOrder)}</TooltipContent>
                   </Tooltip>
                 ) : !selectedShipped && !isFulfillmentOrder(selectedOrder) && canDispatch ? (
-                  <Button onClick={() => { setOrderActionError(''); setConfirmReady(true); }}>
+                  <Button onClick={() => { setOrderActionError(''); setOrderActionErrorRefs([]); setConfirmReady(true); }}>
                     <PackageCheck /> Marcar listo para envío
                   </Button>
                 ) : null}

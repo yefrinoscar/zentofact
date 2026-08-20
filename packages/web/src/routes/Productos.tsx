@@ -24,6 +24,11 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
 import { sellerShortName } from '../lib/seller-name';
+import {
+  UNPUBLISH_CONFIRMATION_TEXT,
+  publicationPreviewCopy,
+  simulatePublicationPreview,
+} from '../lib/publication-preview';
 import { falabellaProductUrl } from '../lib/marketplace-url';
 import {
   CatalogFilters,
@@ -103,6 +108,10 @@ type Movement = {
   source: string;
   createdAt: string;
   orderId?: number | null;
+  orderNumber?: string | null;
+  sku?: string | null;
+  companyName?: string | null;
+  channelCode?: string | null;
 };
 
 type ActivityResponse = {
@@ -669,11 +678,27 @@ export default function Productos() {
 
   const simulatePublish = (event: FormEvent) => {
     event.preventDefault();
-    setActionError('');
     const seller = companies.find((company) => String(company.id) === publishVisual.companyId);
-    setActionMessage(`Publicación preparada para ${seller ? companyName(seller) : 'el seller'}.`);
+    const preview = simulatePublicationPreview({
+      kind: 'publish',
+      sellerName: seller ? companyName(seller) : '',
+    });
+    setActionError(preview.error || '');
+    setActionMessage(preview.message || '');
   };
 
+  const simulateUnpublish = (event: FormEvent) => {
+    event.preventDefault();
+    const preview = simulatePublicationPreview({
+      kind: 'unpublish',
+      confirmation: unpublishConfirmation,
+    });
+    setActionError(preview.error || '');
+    setActionMessage(preview.message || '');
+  };
+
+  const publishCopy = publicationPreviewCopy('publish');
+  const unpublishCopy = publicationPreviewCopy('unpublish');
   const visibleError = error || (queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el catálogo.' : '');
   const visualListingExists = Boolean(selectedProduct?.listings?.some((listing) => (
     listing.id !== publishVisual.listingId
@@ -845,7 +870,8 @@ export default function Productos() {
         </div>
       </form></Modal>}
 
-      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · SKU interno ${selectedProduct.mainSku}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
+      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
+        <Notice tone="info">{publishCopy.notice}</Notice>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="label">Canal<Select value={publishVisual.channelCode} onValueChange={(value) => {
             setActionMessage('');
@@ -894,18 +920,15 @@ export default function Productos() {
         </div>
         {visualListingExists && <Notice tone="info">Este producto ya tiene una publicación asociada para esa empresa y canal.</Notice>}
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{publishVisual.listingId ? 'Guardar cambios' : 'Agregar publicación'}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{publishCopy.submit}</button></div>
       </form></Modal>}
 
-      {modal === 'unpublish_visual' && unpublishListing && <Modal title="Confirmar despublicación" subtitle="Acción sensible protegida; esta versión solo simula el flujo." onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={(event) => {
-        event.preventDefault();
-        setActionMessage('Simulación completada. La publicación continúa activa y no se envió ningún cambio.');
-      }} className="space-y-4">
+      {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={simulateUnpublish} className="space-y-4">
         <div className="rounded-lg bg-red-50 px-3 py-3 text-sm text-red-800"><ShieldAlert className="mr-2 inline h-4 w-4" />Despublicar puede detener ventas en <strong>{sellerShortName(unpublishListing.companyName)}</strong>. Requiere confirmación explícita.</div>
         <div className="grid grid-cols-2 gap-3 text-sm"><InfoValue label="Canal" value={channelLabel(unpublishListing.channelCode)} /><InfoValue label="SKU seller" value={unpublishListing.sellerSku} /></div>
-        <Field label="Escribe DESPUBLICAR para confirmar" value={unpublishConfirmation} onChange={setUnpublishConfirmation} required />
+        <Field label={`Escribe ${UNPUBLISH_CONFIRMATION_TEXT} para confirmar`} value={unpublishConfirmation} onChange={setUnpublishConfirmation} required />
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={unpublishConfirmation !== 'DESPUBLICAR'} className="inline-flex h-9 items-center justify-center rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">Simular despublicación</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT} className="inline-flex h-9 items-center justify-center rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">{unpublishCopy.submit}</button></div>
       </form></Modal>}
     </div>
   );
@@ -1295,8 +1318,8 @@ function ProductDrawer({
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto">
           <div className="grid grid-cols-3 border-b border-border"><Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} /><Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} /><Metric label="Disponible" value={`${formatNumber(product.available)} u`} /></div>
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">Historial auditable del inventario.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
-          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType)}</p><p className="mt-1 text-xs text-muted-foreground">{movement.reason || movement.source}{movement.orderId ? ` · pedido ${movement.orderId}` : ''} · {formatDate(movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
+          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">Cada movimiento indica el pedido.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
+          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
         </TabsContent>
 
         <TabsContent value="sales" className="min-h-0 overflow-y-auto">
@@ -1623,8 +1646,23 @@ function ProductStatusBadge({ product, compact = false }: { product: Product; co
   return <span title="Estado del producto en ZentoFact" className={cn('inline-flex items-center rounded-full text-xs font-medium', compact ? 'gap-1 px-2 py-0.5' : 'gap-1.5 px-2.5 py-1', classes)}><span className="h-2 w-2 rounded-full bg-current" />{label}</span>;
 }
 
-function movementLabel(type: string) {
-  return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', sale_reversal: 'Reversa de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', return: 'Devolución', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
+function movementLabel(type: string, reason?: string | null) {
+  if (type === 'return') return 'Devolución';
+  if (type === 'sale_reversal') {
+    return String(reason || '').startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
+  }
+  return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
+}
+
+function movementCaption(movement: Movement) {
+  const orderRef = movement.orderNumber || (movement.orderId ? String(movement.orderId) : '');
+  const reason = String(movement.reason || '').trim();
+  const parts = [
+    reason || (orderRef ? `Pedido ${orderRef}` : null),
+    movement.companyName ? sellerShortName(movement.companyName) : null,
+  ].filter(Boolean);
+  if (parts.length) return parts.join(' · ');
+  return movement.source || 'sistema';
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; wide?: boolean }) {

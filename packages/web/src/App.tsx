@@ -89,7 +89,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/auto-emision': {
     title: 'Automatización',
-    subtitle: 'Boletas en piloto automático desde las órdenes de Falabella.',
+    subtitle: 'Boletas y notas de crédito desde Falabella.',
   },
   '/boletas': {
     title: 'Boletas',

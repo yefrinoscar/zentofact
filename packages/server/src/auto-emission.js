@@ -1,5 +1,6 @@
-// Emisión automática de boletas Falabella.
-// Flujo: webhook (o cron) -> cola en Postgres -> worker emite INDIVIDUAL -> sube a Falabella.
+// Emisión automática Falabella: boletas/facturas y notas de crédito.
+// Flujo: webhook (o cron) -> cola en Postgres -> worker emite INDIVIDUAL.
+// Cancelada/devuelta con comprobante aceptado -> nota de crédito.
 // Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
@@ -16,9 +17,21 @@ import {
   falabellaUploadBoletaPdf,
   createFactura,
   sendFacturaToSunat,
+  createAndSendCreditNoteFromBoleta,
+  createAndSendCreditNoteFromFactura,
 } from '@zentofact/core';
 import { FalabellaApiClient } from '@zentofact/falabella-api';
-import { upsertFalabellaWebhookOrder } from './falabella-sync.js';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
+import { attachFalabellaOrderItems, upsertFalabellaWebhookOrder } from './falabella-sync.js';
+import {
+  JOB_KIND_CREDIT_NOTE,
+  JOB_KIND_INVOICE,
+  decideCreditNoteJob,
+  isPendingStatus,
+  isReadyStatus,
+  jobKindForStatus,
+  normStatus,
+} from './auto-emission-policy.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 
@@ -129,8 +142,6 @@ export async function getCompanyWebhookMeta(companyId) {
   };
 }
 
-// Estados de Falabella que habilitan la boleta (idéntico al Gestor de Sellers).
-const READY_STATUSES = ['ready_to_ship', 'shipped', 'delivered'];
 // El motor corre por defecto; solo se apaga si AUTO_EMIT_ENABLED=false (kill-switch de deploy).
 // El control fino vive en la BD (pausar cola, cron on/off, simular/emitir).
 const AUTO_ENABLED = process.env.AUTO_EMIT_ENABLED !== 'false';
@@ -139,18 +150,46 @@ const RECONCILE_ENABLED = process.env.AUTO_EMIT_RECONCILE !== 'false'; // red de
 const DEV_FAST_CRON = !process.env.RAILWAY_PUBLIC_DOMAIN && process.env.NODE_ENV !== 'production';
 const MIN_ORDER_DATE = new Date('2026-07-01T00:00:00+00:00');
 const JOB_TIMEOUT_MS = Math.max(60_000, Number(process.env.AUTO_EMIT_JOB_TIMEOUT_MS || 3 * 60_000));
+const CREDIT_NOTE_OPTIONS = {
+  codMotivo: '01',
+  desMotivo: 'ANULACION DE LA OPERACION',
+  usuarioCreacion: 'auto-emission',
+};
 
 const log = (...a) => console.log('[auto-emit]', ...a);
-const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
 const today = () => new Date().toISOString().slice(0, 10);
 const dateOnly = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? today() : d.toISOString().slice(0, 10);
 };
 const timeoutLabel = () => `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`;
-const isReadyStatus = (status) => READY_STATUSES.some((s) => String(status || '').includes(s));
-const isPendingStatus = (status) => String(status || '').includes('pending');
 const retryDelaySeconds = (attempts) => Math.min(15 * 60, 60 * (2 ** Math.max(0, Number(attempts || 1) - 1)));
+const jobKindOf = (job) => (job?.kind === JOB_KIND_CREDIT_NOTE ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE);
+
+async function hasAcceptedSalesDocument(companyId, orderNumber) {
+  const number = String(orderNumber || '').trim();
+  if (!number) return false;
+  const r = await pool.query(
+    `select 1
+     from (
+       select 1 from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
+       union all
+       select 1 from facturas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
+     ) docs
+     limit 1`,
+    [companyId, number],
+  );
+  return r.rows.length > 0;
+}
+
+async function enqueueIfNeeded(companyId, orderNumber, source, orderId, kind) {
+  if (kind === JOB_KIND_CREDIT_NOTE && !(await hasAcceptedSalesDocument(companyId, orderNumber))) {
+    log(`company=${companyId} orden=${orderNumber} no se encola NC: no hay boleta/factura aceptada`);
+    return { enqueued: false, ignored: 'no hay documento emitido; no corresponde nota de crédito' };
+  }
+  await enqueue(companyId, orderNumber, source, orderId, kind);
+  return { enqueued: true };
+}
 
 class JobTimeoutError extends Error {
   constructor(step) {
@@ -261,6 +300,7 @@ export async function ensureTables() {
       company_id integer not null,
       order_number text not null,
       order_id text,
+      kind text not null default 'invoice',
       status text not null default 'pending',
       attempts integer not null default 0,
       last_error text,
@@ -270,12 +310,43 @@ export async function ensureTables() {
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
-      next_attempt_at timestamptz,
-      unique (company_id, order_number)
+      next_attempt_at timestamptz
     );
     alter table emission_jobs add column if not exists order_id text;
     alter table emission_jobs add column if not exists current_step text;
     alter table emission_jobs add column if not exists next_attempt_at timestamptz;
+    alter table emission_jobs add column if not exists kind text not null default 'invoice';
+    do $$
+    declare rec record;
+    begin
+      for rec in
+        select c.conname
+        from pg_constraint c
+        join pg_class t on t.oid = c.conrelid
+        where t.relname = 'emission_jobs'
+          and c.contype = 'u'
+          and pg_get_constraintdef(c.oid) like '%company_id%'
+          and pg_get_constraintdef(c.oid) like '%order_number%'
+          and pg_get_constraintdef(c.oid) not like '%kind%'
+      loop
+        execute format('alter table emission_jobs drop constraint if exists %I', rec.conname);
+      end loop;
+      for rec in
+        select i.relname as idx
+        from pg_index x
+        join pg_class i on i.oid = x.indexrelid
+        join pg_class t on t.oid = x.indrelid
+        where t.relname = 'emission_jobs'
+          and x.indisunique
+          and not x.indisprimary
+          and pg_get_indexdef(x.indexrelid) like '%(company_id, order_number)%'
+          and pg_get_indexdef(x.indexrelid) not like '%kind%'
+      loop
+        execute format('drop index if exists %I', rec.idx);
+      end loop;
+    end $$;
+    create unique index if not exists emission_jobs_company_order_kind_uidx
+      on emission_jobs (company_id, order_number, kind);
     create table if not exists auto_emission_config (
       company_id integer primary key,
       enabled boolean not null default false,
@@ -447,7 +518,7 @@ async function isCompanyEnabled(companyId) {
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
     `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
-            j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.created_at, j.updated_at
+            j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.created_at, j.updated_at
      from emission_jobs j left join companies c on c.id=j.company_id
      left join lateral (
        select order_number from boletas
@@ -493,13 +564,13 @@ async function fetchOrderForWebhook(companyId, orderId, orderNumber) {
   });
   if (orderId) {
     const byId = await fetchOrderById(client, orderId);
-    if (byId) return byId;
+    if (byId) return attachFalabellaOrderItems(client, byId);
   }
   if (orderNumber) {
     const dates = [today(), dateOnly(Date.now() - 24 * 60 * 60 * 1000)];
     for (const date of dates) {
       const found = await client.findOrderByOrderNumber(orderNumber, date);
-      if (found?.raw) return found.raw;
+      if (found?.raw) return attachFalabellaOrderItems(client, found.raw);
     }
   }
   return null;
@@ -508,12 +579,13 @@ async function fetchOrderForWebhook(companyId, orderId, orderNumber) {
 async function saveResolvedOrderNumber(job, orderNumber) {
   const resolved = String(orderNumber || '').trim();
   if (!resolved || resolved === String(job.order_number || '').trim()) return null;
+  const kind = jobKindOf(job);
   const duplicate = (await pool.query(
     `select id, status, result, boleta_numero
      from emission_jobs
-     where company_id=$1 and order_number=$2 and id<>$3
+     where company_id=$1 and order_number=$2 and kind=$3 and id<>$4
      limit 1`,
-    [job.company_id, resolved, job.id],
+    [job.company_id, resolved, kind, job.id],
   )).rows[0] || null;
   if (duplicate) return duplicate;
   await pool.query(
@@ -522,9 +594,9 @@ async function saveResolvedOrderNumber(job, orderNumber) {
      where j.id=$1
        and not exists (
          select 1 from emission_jobs other
-         where other.company_id=j.company_id and other.order_number=$2 and other.id<>j.id
+         where other.company_id=j.company_id and other.order_number=$2 and other.kind=$3 and other.id<>j.id
        )`,
-    [job.id, resolved],
+    [job.id, resolved, kind],
   ).catch((e) => log(`no se pudo actualizar OrderNumber real para job ${job.id}:`, e.message));
   return null;
 }
@@ -586,17 +658,22 @@ export async function jobOrderPreview(id) {
         estadoSunat: document.factura.estadoSunat || document.factura.estado,
         total: document.factura.total,
       } : null,
+      creditNote: document.creditNote ? {
+        numeroCompleto: document.creditNote.numeroCompleto,
+        estadoSunat: document.creditNote.estadoSunat,
+      } : null,
     } : null,
   };
 }
 
 // ── Cola ──
-export async function enqueue(companyId, orderNumber, source = 'webhook', orderId = null) {
+export async function enqueue(companyId, orderNumber, source = 'webhook', orderId = null, kind = JOB_KIND_INVOICE) {
   if (!orderNumber) return;
+  const jobKind = kind === JOB_KIND_CREDIT_NOTE ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE;
   await pool.query(
-    `insert into emission_jobs (company_id, order_number, order_id, status, source, created_at, updated_at)
-     values ($1, $2, $3, 'pending', $4, now(), now())
-     on conflict (company_id, order_number) do update
+    `insert into emission_jobs (company_id, order_number, order_id, kind, status, source, created_at, updated_at)
+     values ($1, $2, $3, $5, 'pending', $4, now(), now())
+     on conflict (company_id, order_number, kind) do update
        set status = case
              when emission_jobs.status in ('failed') then 'pending'
              when emission_jobs.status = 'skipped' and emission_jobs.result like 'orden de % anterior a la fecha%' then 'skipped'
@@ -605,25 +682,38 @@ export async function enqueue(companyId, orderNumber, source = 'webhook', orderI
            end,
            order_id = coalesce(excluded.order_id, emission_jobs.order_id),
            updated_at = now()`,
-    [companyId, orderNumber, orderId || null, source],
+    [companyId, orderNumber, orderId || null, source, jobKind],
   );
 }
 
 // ── Webhook ──
+async function enqueueReadyStockJob(companyId, externalOrderId, orderNumber, source = 'webhook') {
+  const resolvedOrderId = String(externalOrderId || '').trim();
+  if (!resolvedOrderId) return;
+  await enqueueStockJob({
+    companyId,
+    externalOrderId: resolvedOrderId,
+    orderNumber,
+    source,
+  }).catch((error) => {
+    log(`company=${companyId} orden=${orderNumber || resolvedOrderId} no pudo encolar stock:`, error.message);
+  });
+}
+
 export async function handleWebhook(companyId, payload) {
   const { orderNumber, orderId, body } = extractOrder(payload);
   await pool.query(
     `insert into webhook_events (company_id, order_number, event, raw) values ($1,$2,$3,$4)`,
     [companyId, orderNumber || null, 'onOrderItemsStatusChanged', JSON.stringify(payload || {})],
   ).catch(() => {});
-  const enabled = await isCompanyEnabled(companyId);
-  log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${enabled ? '' : '(empresa NO activa, se ignora)'}`);
-  if (!enabled) return { ok: true, orderNumber, orderId, ignored: 'empresa no activa para emisión automática' };
+  const boletaEnabled = await isCompanyEnabled(companyId);
+  log(`webhook company=${companyId} orden=${orderNumber || '?'} orderId=${orderId || '?'} ${boletaEnabled ? '' : '(boleta automática apagada)'}`);
 
-  const payloadStatus = norm(statusOfOrder(body));
-  if (payloadStatus && !isReadyStatus(payloadStatus)) {
+  const payloadStatus = normStatus(statusOfOrder(body));
+  const payloadKind = payloadStatus ? jobKindForStatus(payloadStatus) : null;
+  if (payloadStatus && !payloadKind) {
     log(`webhook company=${companyId} orden=${orderNumber || orderId || '?'} no se encola: estado "${payloadStatus}"`);
-    return { ok: true, orderNumber, orderId, ignored: `estado "${payloadStatus}" aún no habilita comprobante` };
+    return { ok: true, orderNumber, orderId, ignored: `estado "${payloadStatus}" no dispara emisión automática` };
   }
 
   let authoritative = null;
@@ -638,29 +728,59 @@ export async function handleWebhook(companyId, payload) {
     await upsertFalabellaWebhookOrder(companyId, authoritative).catch((e) => {
       log(`webhook company=${companyId} no pudo guardar orden local:`, e.message);
     });
-    const currentStatus = norm(statusOfOrder(authoritative));
-    if (!isReadyStatus(currentStatus)) {
+    const currentStatus = normStatus(statusOfOrder(authoritative));
+    const kind = jobKindForStatus(currentStatus);
+    if (!kind) {
       log(`webhook company=${companyId} orden=${authoritative.OrderNumber || orderNumber || orderId || '?'} no se encola: estado "${currentStatus || 'desconocido'}"`);
       return {
         ok: true,
         orderNumber: String(authoritative.OrderNumber || orderNumber || '').trim(),
         orderId: String(authoritative.OrderId || orderId || '').trim(),
-        ignored: `estado "${currentStatus || 'desconocido'}" aún no habilita comprobante`,
+        ignored: `estado "${currentStatus || 'desconocido'}" no dispara emisión automática`,
       };
     }
     const resolvedNumber = String(authoritative.OrderNumber || orderNumber || '').trim();
-    if (resolvedNumber) await enqueue(companyId, resolvedNumber, 'webhook', authoritative.OrderId || orderId);
-    return { ok: true, orderNumber: resolvedNumber, orderId: String(authoritative.OrderId || orderId || '') };
+    const resolvedOrderId = String(authoritative.OrderId || orderId || '').trim();
+    if (isReadyStatus(currentStatus)) {
+      await enqueueReadyStockJob(companyId, resolvedOrderId, resolvedNumber, 'webhook');
+    }
+    if (kind === JOB_KIND_INVOICE && !boletaEnabled) {
+      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; boleta omitida`);
+      return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
+    }
+    if (resolvedNumber) {
+      const queued = await enqueueIfNeeded(companyId, resolvedNumber, 'webhook', resolvedOrderId || orderId, kind);
+      if (!queued.enqueued) {
+        return {
+          ok: true,
+          orderNumber: resolvedNumber,
+          orderId: resolvedOrderId,
+          kind,
+          ignored: queued.ignored,
+        };
+      }
+    }
+    return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
   }
 
   // Un webhook sin estado verificable no debe crear un job a ciegas (ni usar OrderId como OrderNumber).
   // El cron consultará las órdenes listas y las encolará con su OrderNumber real.
-  if (!payloadStatus || !isReadyStatus(payloadStatus)) {
+  if (!payloadKind) {
     log(`webhook company=${companyId} orden=${orderNumber || orderId || '?'} no se encola: estado no confirmado`);
     return { ok: true, orderNumber, orderId, ignored: 'estado no confirmado; lo resolverá la reconciliación' };
   }
-  if (orderNumber) await enqueue(companyId, orderNumber, 'webhook', orderId);
-  return { ok: true, orderNumber, orderId };
+  if (isReadyStatus(payloadStatus)) {
+    await enqueueReadyStockJob(companyId, orderId, orderNumber, 'webhook');
+  }
+  if (payloadKind === JOB_KIND_INVOICE && !boletaEnabled) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; boleta omitida`);
+    return { ok: true, orderNumber, orderId, kind: payloadKind };
+  }
+  if (orderNumber) {
+    const queued = await enqueueIfNeeded(companyId, orderNumber, 'webhook', orderId, payloadKind);
+    if (!queued.enqueued) return { ok: true, orderNumber, orderId, kind: payloadKind, ignored: queued.ignored };
+  }
+  return { ok: true, orderNumber, orderId, kind: payloadKind };
 }
 
 // ── Worker ──
@@ -708,9 +828,13 @@ async function processJob(job, setStep = async () => {}) {
     return { status: 'skipped', result: `orden de ${orderDate.toISOString().slice(0, 10)} anterior a la fecha mínima (julio 2026), se omite` };
   }
 
+  if (jobKindOf(job) === JOB_KIND_CREDIT_NOTE) {
+    return processCreditNoteJob(job, { order, orderNumber, orderDate, setStep });
+  }
+
   // 2) Condiciones (mismas que el Gestor de Sellers).
   const requiresInvoice = invoiceRequired(order);
-  const status = norm(statusOfOrder(order));
+  const status = normStatus(statusOfOrder(order));
   const ready = isReadyStatus(status);
   if (!ready) {
     // Un pending puede cambiar a delivered sin que Falabella reenvíe el webhook.
@@ -808,6 +932,37 @@ async function processJob(job, setStep = async () => {}) {
   return { status: 'done', result: `boleta ${b.numeroCompleto} ACEPTADA${uploadNote}`, boletaNumero: b.numeroCompleto };
 }
 
+async function processCreditNoteJob(job, { order, orderNumber, orderDate, setStep }) {
+  const status = normStatus(statusOfOrder(order));
+  await setStep('revisando documento existente');
+  const doc = await falabellaResolveDocument({ companyId: job.company_id, orderNumber });
+  const decided = decideCreditNoteJob({
+    status,
+    orderDate,
+    minOrderDate: MIN_ORDER_DATE,
+    boleta: doc?.boleta,
+    factura: doc?.factura,
+    creditNote: doc?.creditNote,
+    dryRun: await getDryRun(),
+  });
+
+  if (decided.action === 'retry') return { retry: true, error: decided.error };
+  if (decided.action === 'skip') return { status: 'skipped', result: decided.result, boletaNumero: decided.boletaNumero || null };
+  if (decided.action === 'fail') return { status: 'failed', result: decided.result, boletaNumero: decided.boletaNumero || null };
+  if (decided.action === 'done') return { status: 'done', result: decided.result, boletaNumero: decided.boletaNumero || null };
+
+  await setStep(decided.source === 'factura' ? 'emitiendo nota de crédito de factura' : 'emitiendo nota de crédito de boleta');
+  const sent = decided.source === 'factura'
+    ? await createAndSendCreditNoteFromFactura(decided.documentId, CREDIT_NOTE_OPTIONS)
+    : await createAndSendCreditNoteFromBoleta(decided.documentId, CREDIT_NOTE_OPTIONS);
+  if (!sent?.success) {
+    throw new Error(sent?.error?.message || sent?.message || 'SUNAT no aceptó la nota de crédito');
+  }
+  const numero = sent.numeroCompleto || decided.boletaNumero;
+  log(`orden ${orderNumber} -> nota de crédito ${numero} ACEPTADA`);
+  return { status: 'done', result: `nota de crédito ${numero} ACEPTADA`, boletaNumero: numero || null };
+}
+
 export async function processQueue(limit = 3) {
   if (await getPaused()) return 0; // cola pausada desde el panel
   const client = await pool.connect();
@@ -878,6 +1033,45 @@ export async function processQueue(limit = 3) {
   return jobs.length;
 }
 
+async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
+  const rows = (await pool.query(
+    `select distinct fo.order_number, fo.order_id
+     from falabella_orders fo
+     where fo.company_id=$1
+       and fo.order_number is not null and fo.order_number <> ''
+       and fo.status ~* '(canceled|cancelled|cancelada|returned|devuelta)'
+       and coalesce(fo.falabella_created_at, fo.first_seen_at) >= $2
+       and (
+         exists (
+           select 1 from boletas b
+           where b.company_id=fo.company_id and b.order_number=fo.order_number and b.estado_sunat='ACEPTADO'
+         )
+         or exists (
+           select 1 from facturas f
+           where f.company_id=fo.company_id and f.order_number=fo.order_number and f.estado_sunat='ACEPTADO'
+         )
+       )
+       and not exists (
+         select 1 from credit_notes cn
+         left join boletas b on b.id=cn.affected_boleta_id
+         left join facturas f on f.id=cn.affected_factura_id
+         where cn.company_id=fo.company_id
+           and cn.estado_sunat='ACEPTADO'
+           and (b.order_number=fo.order_number or f.order_number=fo.order_number)
+       )`,
+    [companyId, MIN_ORDER_DATE],
+  )).rows;
+  let enqueued = 0;
+  for (const row of rows) {
+    const orderNumber = String(row.order_number || '').trim();
+    if (!orderNumber || alreadyQueued.has(orderNumber)) continue;
+    await enqueue(companyId, orderNumber, 'cron', row.order_id ? String(row.order_id) : null, JOB_KIND_CREDIT_NOTE);
+    alreadyQueued.add(orderNumber);
+    enqueued++;
+  }
+  return enqueued;
+}
+
 // ── Reconciliación (red de seguridad): barre órdenes listas sin boleta y las encola ──
 // Solo empresas ACTIVAS en la config (auto_emission_config.enabled = true).
 export async function reconcile() {
@@ -898,34 +1092,73 @@ export async function reconcile() {
       //  - órdenes que ya tienen boleta
       //  - órdenes que ya tienen factura
       //  - órdenes activas en la cola; los skipped sin documento sí deben poder recuperarse
-      const [withBoleta, withFactura, inQueue] = await Promise.all([
+      const [withBoleta, withFactura, invoiceQueue, creditNoteQueue] = await Promise.all([
         pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
         pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query("select order_number from emission_jobs where company_id=$1 and status in ('pending','processing','done')", [company.id]),
+        pool.query("select order_number from emission_jobs where company_id=$1 and coalesce(kind, 'invoice')='invoice' and status in ('pending','processing','done')", [company.id]),
+        pool.query("select order_number from emission_jobs where company_id=$1 and kind='credit_note' and status in ('pending','processing','done')", [company.id]),
       ]);
-      const known = new Set([
+      const invoiceKnown = new Set([
         ...withBoleta.rows.map((r) => String(r.order_number)),
         ...withFactura.rows.map((r) => String(r.order_number)),
-        ...inQueue.rows.map((r) => String(r.order_number)),
+        ...invoiceQueue.rows.map((r) => String(r.order_number)),
       ]);
+      const creditNoteKnown = new Set(creditNoteQueue.rows.map((r) => String(r.order_number)));
 
       const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
       let enqueued = 0;
+      let creditNotesEnqueued = 0;
       for (let offset = 0; offset < cron.windowDays * 300 + 100; offset += 100) {
         const resp = await client.getOrdersV2({ createdAfter, limit: 100, offset });
         const orders = normalizeGetOrdersResult(resp.data).orders || [];
         for (const order of orders) {
           const on = String(order?.OrderNumber || '').trim();
-          if (!on || known.has(on)) continue; // ya tiene boleta o ya está en la cola
-          const status = norm(statusOfOrder(order));
-          if (!isReadyStatus(status)) continue;
-          await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null);
-          known.add(on);
-          enqueued++;
+          if (!on) continue;
+          const status = normStatus(statusOfOrder(order));
+          const kind = jobKindForStatus(status);
+          if (kind === JOB_KIND_INVOICE && !invoiceKnown.has(on)) {
+            await enqueue(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null, JOB_KIND_INVOICE);
+            await enqueueReadyStockJob(company.id, order.OrderId, on, 'cron');
+            invoiceKnown.add(on);
+            enqueued++;
+          }
+          if (kind === JOB_KIND_CREDIT_NOTE && !creditNoteKnown.has(on) && invoiceKnown.has(on)) {
+            const queued = await enqueueIfNeeded(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null, JOB_KIND_CREDIT_NOTE);
+            if (queued.enqueued) {
+              creditNoteKnown.add(on);
+              creditNotesEnqueued++;
+            }
+          }
         }
         if (orders.length < 100) break;
       }
-      if (enqueued) log(`cron ${company.nombre}: ${enqueued} órdenes nuevas encoladas`);
+      const creditNoteAfter = MIN_ORDER_DATE.toISOString().slice(0, 10) + 'T00:00:00+00:00';
+      for (const falabellaStatus of ['canceled', 'returned']) {
+        for (let offset = 0; offset < 3000; offset += 100) {
+          const resp = await client.getOrdersV2({
+            createdAfter: creditNoteAfter,
+            limit: 100,
+            offset,
+            status: falabellaStatus,
+          });
+          const orders = normalizeGetOrdersResult(resp.data).orders || [];
+          for (const order of orders) {
+            const on = String(order?.OrderNumber || '').trim();
+            if (!on || creditNoteKnown.has(on) || !invoiceKnown.has(on)) continue;
+            const queued = await enqueueIfNeeded(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null, JOB_KIND_CREDIT_NOTE);
+            if (queued.enqueued) {
+              creditNoteKnown.add(on);
+              creditNotesEnqueued++;
+            }
+          }
+          if (orders.length < 100) break;
+        }
+      }
+      const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
+      creditNotesEnqueued += localCreditNotes;
+      if (enqueued || creditNotesEnqueued) {
+        log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);
+      }
     } catch (e) {
       log(`cron ${company.nombre} error:`, e.message);
     }

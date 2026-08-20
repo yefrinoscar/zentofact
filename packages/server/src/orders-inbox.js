@@ -452,6 +452,8 @@ export async function syncAllOrdersInbox(dependencies = {}) {
   const core = dependencies.listCompanies && dependencies.syncOrders ? null : await loadCore();
   const listCompanies = dependencies.listCompanies || core.listCompanies;
   const syncOrders = dependencies.syncOrders || (await import('./falabella-sync.js')).syncFalabellaOrders;
+  const operationalErrorBody = dependencies.operationalErrorBody
+    || (await import('./error-log.js')).operationalErrorBody;
   const syncOptions = dependencies.syncOptions || {};
   const companies = (await listCompanies()).filter((company) => (
     company.activo && company.falabellaApiUserId?.trim() && company.falabellaApiKey?.trim()
@@ -462,7 +464,22 @@ export async function syncAllOrdersInbox(dependencies = {}) {
       const result = await syncOrders(company.id, syncOptions);
       results.push({ companyId: company.id, companyName: company.nombre || company.razonSocial, ok: true, result });
     } catch (error) {
-      results.push({ companyId: company.id, companyName: company.nombre || company.razonSocial, ok: false, error: String(error?.message || error) });
+      const companyName = company.nombre || company.razonSocial;
+      const body = operationalErrorBody(error, {
+        operation: 'falabella.inbox-sync',
+        context: {
+          companyId: company.id,
+          companyName,
+          runId: error?.runId,
+        },
+      }, dependencies);
+      results.push({
+        companyId: company.id,
+        companyName,
+        ok: false,
+        error: body.error,
+        logId: body.logId,
+      });
     }
   }
   return {

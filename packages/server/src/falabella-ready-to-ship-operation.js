@@ -1,5 +1,25 @@
+import { enqueueStockJob } from './catalog/stock-jobs.js';
+
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 const DEFAULT_RECONCILE_AFTER_MS = 60_000;
+
+async function enqueueReadyOrderStock(companyId, orderId, db) {
+  try {
+    return await enqueueStockJob({
+      companyId,
+      externalOrderId: String(orderId),
+      source: 'user',
+    }, db);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'catalog.stock.ready_to_ship_enqueue_failed',
+      companyId,
+      orderId,
+      message: String(error?.message || error),
+    }));
+    return null;
+  }
+}
 
 function providerErrorStatus(result) {
   const providerStatus = Number(result?.status || 0);
@@ -237,6 +257,7 @@ async function reconcileUnknown({
     if (result?.ready) {
       const completed = { ok: true, reconciled: true, alreadyReady: false, ...(result || {}) };
       await markCompleted(pool, companyId, orderId, completed);
+      await enqueueReadyOrderStock(companyId, orderId, pool);
       return { kind: 'success', result: completed };
     }
     const error = 'Falabella confirmó que el pedido todavía no está listo. Vuelve a intentarlo para iniciar una nueva operación.';
@@ -282,6 +303,7 @@ export async function markFalabellaOrderReadyToShip({
       };
     }
     if (state.operation_state === 'succeeded' && readyToShipReachedOrderStatus(state.order_status)) {
+      await enqueueReadyOrderStock(normalizedCompanyId, normalizedOrderId, pool);
       return { kind: 'success', result: { ok: true, alreadyReady: true } };
     }
     if (
@@ -325,6 +347,7 @@ export async function markFalabellaOrderReadyToShip({
       return { kind: 'error', status: providerErrorStatus(result), error };
     }
     await markCompleted(pool, normalizedCompanyId, normalizedOrderId, result);
+    await enqueueReadyOrderStock(normalizedCompanyId, normalizedOrderId, pool);
     return { kind: 'success', result };
   } catch (error) {
     await markUnknown(pool, normalizedCompanyId, normalizedOrderId, error);
