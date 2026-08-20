@@ -84,7 +84,12 @@ bandeja) sigue aplicando el movimiento.
   `stock_applied_quantity > 0`, aunque su estado actual sea
   `skipped_insufficient`. Esto es importante cuando una subida de cantidad no
   pudo aplicar el delta nuevo: las unidades aplicadas anteriormente todavía
-  deben devolverse. El movimiento queda en el ledger con motivo visible
+  deben devolverse. Un sync posterior de un pedido ya cancelado o devuelto
+  reintegra el saldo residual una sola vez.
+- El reconcile de `GetOrderItems` incluye pedidos `pending`/`ready_to_ship` y
+  también pedidos ya enviados o entregados que todavía tienen stock aplicado,
+  para reintegrar una cancelación o devolución tardía.
+- El movimiento queda en el ledger con motivo visible
   (`Cancelación del pedido …` o `Devolución del pedido …`).
 - El sync de Falabella reingesta un pedido listo para enviar cuando
   GetOrderItems reporta cancelación, fallo o devolución, para reintegrar el

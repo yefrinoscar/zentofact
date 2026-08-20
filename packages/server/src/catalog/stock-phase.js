@@ -203,43 +203,26 @@ export async function stockPhase(input) {
     if (result.applied) stats.reversed += 1;
   }
 
-  const previousStatus = existing?.order_status;
   const currentStatus = persisted.order_status;
-  if (existing && !TERMINAL_STATUSES.has(previousStatus) && TERMINAL_STATUSES.has(currentStatus)) {
+  const isReturned = persisted.fulfillment_status === 'returned';
+  const isTerminalNow = TERMINAL_STATUSES.has(currentStatus) || isReturned;
+  // Un pedido que llega terminal por primera vez nunca genera una venta.
+  if (!existing && isTerminalNow) return stats;
+  if (isTerminalNow) {
     const result = await db.query(
       `select id, external_item_id, product_id, listing_id, main_sku, stock_state,
          stock_applied_quantity, stock_revision
        from order_items where order_id=$1 and stock_applied_quantity > 0 for update`,
       [orderId],
     );
+    const kind = isReturned ? 'return' : currentStatus;
+    const movementType = isReturned ? 'return' : 'sale_reversal';
     for (const row of result.rows) {
       const reversed = await reverseItem(db, row, {
         ...context,
-        reason: restockReason(currentStatus, persisted),
-      });
+        reason: restockReason(kind, persisted),
+      }, movementType);
       if (reversed.applied) stats.reversed += 1;
-    }
-    return stats;
-  }
-
-  // Un pedido que llega terminal por primera vez nunca genera una venta.
-  if (!existing && TERMINAL_STATUSES.has(currentStatus)) return stats;
-
-  const becameReturned = persisted.fulfillment_status === 'returned'
-    && existing?.fulfillment_status !== 'returned';
-  if (becameReturned) {
-    const result = await db.query(
-      `select id, external_item_id, product_id, listing_id, main_sku, stock_state,
-         stock_applied_quantity, stock_revision
-       from order_items where order_id=$1 and stock_applied_quantity > 0 for update`,
-      [orderId],
-    );
-    for (const row of result.rows) {
-      const returned = await reverseItem(db, row, {
-        ...context,
-        reason: restockReason('return', persisted),
-      }, 'return');
-      if (returned.applied) stats.reversed += 1;
     }
     return stats;
   }
