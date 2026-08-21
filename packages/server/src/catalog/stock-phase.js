@@ -4,6 +4,7 @@ import {
   inventoryConfig,
 } from './inventory-service.js';
 import { resolveListing } from './sku-resolver.js';
+import { isCatalogInventoryEnabled } from '../system-config.js';
 
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
@@ -182,7 +183,9 @@ export async function stockPhase(input) {
   const previousFulfillment = existing?.fulfillment_status;
   const becameEligible = isStockEligibleFulfillment(currentFulfillment)
     && (!existing || !isStockEligibleFulfillment(previousFulfillment));
-  const saleEnabled = input.enabled ?? (becameEligible ? true : inventoryConfig.enabled);
+  // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
+  const saleEnabled = input.enabled
+    ?? (becameEligible ? true : await isCatalogInventoryEnabled(db));
   const context = {
     orderId,
     orderNumber: orderNumberOf(persisted),

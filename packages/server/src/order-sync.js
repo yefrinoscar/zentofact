@@ -5,6 +5,7 @@ import { ingestRipleyOrder } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
+import { isFalabellaSyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -462,10 +463,10 @@ export async function syncOrders(options = {}, dependencies = {}) {
 }
 
 export function startOrderSyncScheduler(dependencies = {}) {
-  const enabled = process.env.ORDER_SYNC_ENABLED ?? process.env.FALABELLA_SYNC_ENABLED ?? 'true';
-  if (String(enabled).toLowerCase() === 'false') return null;
   let running = false;
   const tick = async () => {
+    // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
+    if (!(await isFalabellaSyncEnabled(dependencies.db))) return;
     if (running) return;
     running = true;
     try {

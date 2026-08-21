@@ -1,6 +1,7 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { operationalErrorBody } from './error-log.js';
+import { isFalabellaSyncEnabled } from './system-config.js';
 import {
   ensureFalabellaOrderAccount,
   ingestFalabellaOrder,
@@ -963,9 +964,10 @@ export async function listLocalFalabellaOrders(companyId, filters = {}, db) {
 }
 
 export function startFalabellaSyncScheduler() {
-  if (String(process.env.FALABELLA_SYNC_ENABLED || 'true').toLowerCase() === 'false') return;
   let running = false;
   const tick = async () => {
+    // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
+    if (!(await isFalabellaSyncEnabled())) return;
     if (running) return;
     running = true;
     try {

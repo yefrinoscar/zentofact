@@ -17,7 +17,7 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
-const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, csrfTokenForSession } = await import('./auth.js');
+const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
@@ -26,6 +26,8 @@ const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
+const systemConfig = await import('./system-config.js');
+await systemConfig.ensureSystemConfigTable();
 const insumos = await import('./insumos.js');
 await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
@@ -627,6 +629,32 @@ app.delete('/users/:id', requirePermission('users'), async (c) => {
 });
 app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
   try { return ok(c, { permissions: PERMISSIONS, roles: ROLE_PRESETS }); } catch (e) { return fail(c, e); }
+});
+
+// ── Configuración del sistema (solo superadmin) ──
+app.get('/system/config', requireSuperadmin(), async (c) => {
+  try { return ok(c, await systemConfig.getSystemConfig()); } catch (e) { return fail(c, e); }
+});
+app.put('/system/config/:key', requireSuperadmin(), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const flag = await systemConfig.setSystemFlag(
+      c.req.param('key'),
+      body,
+      c.get('user')?.id,
+    );
+    return ok(c, { flag });
+  } catch (e) {
+    const status = Number(e?.status || 400);
+    if (e?.readiness) {
+      return c.json({
+        error: String(e?.message || e),
+        code: e.code,
+        readiness: e.readiness,
+      }, status);
+    }
+    return fail(c, e, status);
+  }
 });
 
 app.get('/insumos', async (c) => {

@@ -27,6 +27,7 @@ const apiPrefixes = [
   '/ripley',
   '/workflow',
   '/auto-emit',
+  '/system',
   '/webhooks',
 ];
 const apiProxy = Object.fromEntries(

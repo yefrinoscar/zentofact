@@ -47,18 +47,28 @@ web usa las rutas internas del servidor, igual que los módulos existentes.
 
 ## Activación segura
 
+El flag operativo vive en la tabla `system_settings` y se controla desde el
+panel **Configuración del sistema** (`/#/system-config`), visible solo para
+superadministradores. La variable de entorno `CATALOG_INVENTORY_ENABLED`
+ya no enciende la funcionalidad: actúa únicamente como **kill-switch** —
+si está explícitamente en `false` apaga el flag aunque la base de datos lo
+tenga prendido. El panel muestra un checklist con los pasos 2–4; el servidor
+rechaza encender mientras no exista al menos un listing activo.
+
 ```dotenv
 CATALOG_INVENTORY_ENABLED=false
 CATALOG_ALLOW_NEGATIVE_MARKETPLACE=false
 CATALOG_ALLOW_NEGATIVE_MANUAL=false
 ```
 
-1. Desplegar las migraciones y la UI con el hook apagado.
+1. Desplegar las migraciones y la UI con el flag apagado.
 2. Importar listings de cada seller.
 3. Registrar stock inicial mediante ajustes absolutos con motivo.
 4. Validar en staging un pedido nuevo, re-sync idéntico, cambios `2→1→2→1`,
    eliminación de línea, cancelación y devolución.
-5. Cambiar `CATALOG_INVENTORY_ENABLED=true` y reiniciar el servicio.
+5. Encender `Descuento de inventario` desde el panel superadmin (o dejar la
+   env en `true` como valor inicial del ambiente antes del primer arranque;
+   después manda la BD).
 
 Desactivar el flag detiene el descuento en re-sync e hidratación histórica;
 no borra saldos ni movimientos. El paso a listo para enviar (webhook o
