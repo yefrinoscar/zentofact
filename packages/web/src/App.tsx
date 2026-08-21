@@ -30,6 +30,7 @@ import { documentDateRangeForLastDays } from './lib/documentDateRange';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
+const SystemConfig = lazy(() => import('./routes/SystemConfig'));
 
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
@@ -120,6 +121,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Ajustes',
     subtitle: 'Configura empresas y el tema visual de la aplicación.',
   },
+  '/system-config': {
+    title: 'Configuración del sistema',
+    subtitle: 'Flags operativos de este ambiente. Solo superadministradores.',
+  },
 };
 
 function RequirePermission({
@@ -194,7 +199,7 @@ function AppLayout() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const { user, loading, can } = usePermissions();
+  const { user, loading, can, isSuperadmin } = usePermissions();
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -215,6 +220,11 @@ function AppLayout() {
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
+  const systemConfigRoute = (
+    isSuperadmin
+      ? <Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><SystemConfig /></Suspense>
+      : <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
+  );
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -274,6 +284,7 @@ function AppLayout() {
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
+              <Route path="/system-config" element={systemConfigRoute} />
               <Route path="*" element={<Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />} />
             </Routes>
           </div>

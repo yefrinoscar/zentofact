@@ -13,6 +13,7 @@ import {
   ReceiptText,
   ScanLine,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   Shuffle,
   Users,
@@ -26,7 +27,10 @@ export type NavItem = {
   icon: LucideIcon;
   img?: string;
   label: string;
-  permission: PermissionKey;
+  /** Los ítems solo para superadmin no dependen de un permiso del menú. */
+  permission?: PermissionKey;
+  description?: string;
+  superadminOnly?: boolean;
   hiddenInProduction?: boolean;
 };
 
@@ -76,6 +80,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
       { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
       { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
+      {
+        to: '/system-config',
+        icon: ShieldCheck,
+        label: 'Sistema',
+        superadminOnly: true,
+        description: 'Flags operativos del ambiente. Visible solo para superadministradores.',
+      },
     ],
   },
 ];
@@ -89,12 +100,15 @@ export function isNavItemActive(pathname: string, to: string) {
 export function visibleNavigation(
   can: (permission: PermissionKey) => boolean,
   isProd = import.meta.env.VITE_APP_ENV === 'production',
+  options: { isSuperadmin?: boolean } = {},
 ) {
   return NAV_GROUPS
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
         if (isProd && item.hiddenInProduction) return false;
+        if (item.superadminOnly) return options.isSuperadmin === true;
+        if (!item.permission) return false;
         if (item.to === '/salidas') return can('salidas') || can('productos');
         return can(item.permission);
       }),

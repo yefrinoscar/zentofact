@@ -16,6 +16,7 @@ export const PROTECTED_PATHS = [
   '/ripley',
   '/workflow',
   '/auto-emit',
+  '/system',
   '/users',
   '/me',
   '/insumos',

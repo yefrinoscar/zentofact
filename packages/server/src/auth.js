@@ -3,7 +3,7 @@
 import { betterAuth } from 'better-auth';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
-import { isAdminRole, userHasPermission } from './permissions.js';
+import { isAdminRole, isSuperadminRole, userHasPermission } from './permissions.js';
 import { isProtectedPath } from './protected-paths.js';
 import { isLocalDevelopmentOrigin, localAuthOriginPatterns, localWebOrigins } from './local-web-origins.js';
 
@@ -257,6 +257,15 @@ export function requireAnyPermission(permissionKeys, options = {}) {
 export function requireAdmin() {
   return async (c, next) => {
     if (!isAdminRole(c.get('user')?.role)) return c.json({ error: 'Se requiere administrador' }, 403);
+    return next();
+  };
+}
+
+export function requireSuperadmin() {
+  return async (c, next) => {
+    if (!isSuperadminRole(c.get('user')?.role)) {
+      return c.json({ error: 'Se requiere superadministrador' }, 403);
+    }
     return next();
   };
 }

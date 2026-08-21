@@ -20,8 +20,10 @@ function envBoolean(name, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(value);
 }
 
+// `enabled` ya no se lee aquí: el flag operativo vive en system_settings (BD)
+// y se resuelve en runtime con isCatalogInventoryEnabled(). La env
+// CATALOG_INVENTORY_ENABLED solo funciona como kill-switch de emergencia.
 export const inventoryConfig = Object.freeze({
-  enabled: envBoolean('CATALOG_INVENTORY_ENABLED', false),
   allowNegativeMarketplace: envBoolean('CATALOG_ALLOW_NEGATIVE_MARKETPLACE', false),
   allowNegativeManual: envBoolean('CATALOG_ALLOW_NEGATIVE_MANUAL', false),
 });

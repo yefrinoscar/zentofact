@@ -124,7 +124,7 @@ export async function ensureStockJobTables(db) {
         and legacy.status='done'
         and (select count(*) from orders candidate
              where candidate.company_id=legacy.company_id
-               and candidate.external_order_id=legacy.external_order_id)=1
+              and candidate.external_order_id=legacy.external_order_id)=1
     )
     update inventory_stock_jobs canonical
        set status='done', next_attempt_at=null, updated_at=now()
@@ -141,7 +141,7 @@ export async function ensureStockJobTables(db) {
       where legacy.order_id is null
         and (select count(*) from orders candidate
              where candidate.company_id=legacy.company_id
-               and candidate.external_order_id=legacy.external_order_id)=1
+              and candidate.external_order_id=legacy.external_order_id)=1
     )
     update inventory_stock_jobs legacy
        set status=case

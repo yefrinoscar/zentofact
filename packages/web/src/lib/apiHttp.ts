@@ -141,6 +141,13 @@ const apiHttp = {
   deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
   usersCatalog: () => req('/users/meta/catalog'),
 
+  // Configuración del sistema (solo superadmin)
+  getSystemConfig: () => req('/system/config'),
+  updateSystemFlag: (
+    key: string,
+    data: { enabled: boolean; confirm?: string; force?: boolean; reason?: string },
+  ) => req(`/system/config/${key}`, { method: 'PUT', body: JSON.stringify(data) }),
+
   // Dashboard consolidado
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
     req(`/dashboard${qs(filter)}`),

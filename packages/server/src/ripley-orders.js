@@ -1,6 +1,7 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { ensureRipleyOrderAccount, ingestRipleyOrder } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
+import { isRipleySyncEnabled } from './system-config.js';
 
 const RIPLEY_PERU_API_URL = 'https://ripleyperu-prod.mirakl.net';
 
@@ -104,9 +105,10 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
 }
 
 export function startRipleySyncScheduler() {
-  if (String(process.env.RIPLEY_SYNC_ENABLED || 'true').toLowerCase() === 'false') return;
   let running = false;
   const tick = async () => {
+    // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
+    if (!(await isRipleySyncEnabled())) return;
     if (running) return;
     running = true;
     try {
