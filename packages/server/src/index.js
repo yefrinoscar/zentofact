@@ -406,6 +406,10 @@ app.post('/products/:id/listings', async (c) => {
   try { return ok(c, await listingService.createListing(c.req.param('id'), await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.get('/product-listings/unlinked', async (c) => {
+  try { return ok(c, await listingService.listUnlinkedListings(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.patch('/product-listings/:id', async (c) => {
   try { return ok(c, await listingService.updateListing(c.req.param('id'), await c.req.json())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }

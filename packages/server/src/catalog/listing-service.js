@@ -1,4 +1,4 @@
-import { finiteNumber, httpError, jsonObject, loadCore, mapListing, positiveInt, text } from './utils.js';
+import { finiteNumber, httpError, inTransaction, jsonObject, loadCore, mapListing, positiveInt, text } from './utils.js';
 import { syncProductInventoryFromListings } from './inventory-service.js';
 import { syncProductStatusesFromListings } from './product-service.js';
 
@@ -45,6 +45,42 @@ export async function listProductListings(productId, db) {
      from product_listings l join companies c on c.id=l.company_id
      where l.product_id=$1 order by l.status='active' desc, l.channel_code, company_name, l.id`,
     [positiveInt(productId, 'productId')],
+  );
+  return result.rows.map(mapListing);
+}
+
+export async function listUnlinkedListings(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const values = [];
+  const where = ["l.status='unlinked'"];
+  if (filters.companyId) {
+    values.push(positiveInt(filters.companyId, 'companyId'));
+    where.push(`l.company_id=$${values.length}`);
+  }
+  if (filters.channelCode) {
+    values.push(channelCode(filters.channelCode));
+    where.push(`l.channel_code=$${values.length}`);
+  }
+  const search = String(filters.search || '').trim();
+  if (search) {
+    values.push(`%${search}%`);
+    where.push(`(
+      l.title ilike $${values.length}
+      or l.seller_sku ilike $${values.length}
+      or l.shop_sku ilike $${values.length}
+      or coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) ilike $${values.length}
+    )`);
+  }
+  const limit = Math.min(Math.max(Number(filters.limit) || 30, 1), 100);
+  values.push(limit);
+  const result = await target.query(
+    `select l.*, coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name
+     from product_listings l
+     join companies c on c.id=l.company_id
+     where ${where.join(' and ')}
+     order by l.updated_at desc, l.id desc
+     limit $${values.length}`,
+    values,
   );
   return result.rows.map(mapListing);
 }
@@ -181,6 +217,31 @@ export function unlinkListing(id, db) {
 }
 
 export async function linkListing(input, db) {
-  if (input.listingId) return updateListing(input.listingId, { productId: input.productId, status: 'active' }, db);
+  if (input.listingId) {
+    const listingId = positiveInt(input.listingId, 'listingId');
+    const productId = positiveInt(input.productId, 'productId');
+    return inTransaction(db, async (client) => {
+      const existing = (await client.query(
+        'select * from product_listings where id=$1 for update',
+        [listingId],
+      )).rows[0];
+      if (!existing) throw httpError('Listing no encontrado.', 404);
+      if (existing.status !== 'unlinked') {
+        throw httpError('Este producto ya está asociado a otro producto.', 409, 'listing_already_linked');
+      }
+      await validateRelations(client, productId, Number(existing.company_id), existing.channel_account_id);
+      const result = await client.query(
+        `update product_listings set product_id=$1, status='active', updated_at=now()
+         where id=$2 and status='unlinked'
+         returning *`,
+        [productId, listingId],
+      );
+      if (!result.rows[0]) throw httpError('Este producto ya está asociado a otro producto.', 409, 'listing_already_linked');
+      const affectedProductIds = [Number(existing.product_id), productId];
+      await syncProductInventoryFromListings(client, affectedProductIds);
+      await syncProductStatusesFromListings(client, affectedProductIds);
+      return mapListing(result.rows[0]);
+    });
+  }
   return createListing(input.productId, input, db);
 }

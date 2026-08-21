@@ -193,6 +193,8 @@ const apiHttp = {
   updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),
   listProductListings: (id: number) => req(`/products/${id}/listings`),
+  listUnlinkedProductListings: (filter: { search?: string; companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/product-listings/unlinked${qs(filter)}`),
+  linkUnlinkedProductListing: (data: { listingId: number; productId: number }) => req('/product-listings/link', { method: 'POST', body: JSON.stringify(data) }),
   createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
   updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),

@@ -12,6 +12,7 @@ import {
   Copy,
   ExternalLink,
   ImagePlus,
+  Link2,
   Loader2,
   PackagePlus,
   RefreshCw,
@@ -196,7 +197,7 @@ type ReturnsSummary = ActivityResponse & {
 const PAGE_SIZE = 20;
 const SEARCH_DELAY_MS = 300;
 const CATALOG_COLUMN_CLASS_NAMES = {
-  product: 'w-[48%]',
+  product: 'w-full sm:w-[48%]',
   price: 'hidden sm:table-cell sm:w-[14%]',
   stock: 'hidden sm:table-cell sm:w-[18%]',
   status: 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
@@ -359,7 +360,7 @@ export default function Productos() {
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
-  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'publish_visual' | 'unpublish_visual' | null>(null);
+  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -369,6 +370,9 @@ export default function Productos() {
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
+  const [associationProduct, setAssociationProduct] = useState<Product | null>(null);
+  const [associationSearch, setAssociationSearch] = useState('');
+  const [associationListing, setAssociationListing] = useState<Listing | null>(null);
   const searchTimer = useRef(0);
 
   const applySearch = (value: string, immediate = false) => {
@@ -476,6 +480,13 @@ export default function Productos() {
     staleTime: 30_000,
     retry: 1,
   });
+  const unlinkedListingsQuery = useQuery({
+    queryKey: ['catalog-unlinked-listings', associationSearch],
+    queryFn: () => api.listUnlinkedProductListings({ search: associationSearch.trim(), limit: 50 }),
+    enabled: modal === 'associate_listing',
+    staleTime: 15_000,
+    retry: 1,
+  });
 
   const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
     .filter((company) => company.activo !== false)
@@ -490,6 +501,7 @@ export default function Productos() {
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
   const returns = returnsQuery.data as ReturnsSummary | undefined;
+  const unlinkedListings: Listing[] = unlinkedListingsQuery.data || [];
   const selectedProduct = detail?.id === selectedId ? detail : products.find((product) => product.id === selectedId) || null;
   const selectedProductRef = useRef<Product | null>(null);
   selectedProductRef.current = selectedProduct;
@@ -560,6 +572,13 @@ export default function Productos() {
     setModal(next);
   };
 
+  const openListingAssociation = (product: Product) => {
+    setAssociationProduct(product);
+    setAssociationSearch('');
+    setAssociationListing(null);
+    openModal('associate_listing');
+  };
+
   const runAction = async (action: () => Promise<any>, success: (result: any) => string) => {
     setBusy(true);
     setActionError('');
@@ -609,6 +628,22 @@ export default function Productos() {
       () => imageUrl.trim() ? 'Foto principal actualizada.' : 'Foto principal eliminada.',
     );
     if (result) setModal(null);
+  };
+
+  const associateListing = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!associationProduct || !associationListing) return;
+    const linked = await runAction(
+      () => api.linkUnlinkedProductListing({
+        listingId: associationListing.id,
+        productId: associationProduct.id,
+      }),
+      () => `${associationListing.sellerSku} quedó asociado a ${associationProduct.mainSku}.`,
+    );
+    if (linked) {
+      setAssociationListing(null);
+      await queryClient.invalidateQueries({ queryKey: ['catalog-unlinked-listings'] });
+    }
   };
 
   const openProduct = useCallback((productId: number) => {
@@ -824,6 +859,7 @@ export default function Productos() {
         onPrefetch={handleCatalogPrefetch}
         onOpenProduct={openProduct}
         onTogglePublication={togglePublication}
+        onAssociate={openListingAssociation}
       />
 
       <ProductDrawer
@@ -854,6 +890,7 @@ export default function Productos() {
           openModal('image');
         }}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
+        onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onTogglePublication={togglePublication}
       />
 
@@ -877,6 +914,30 @@ export default function Productos() {
           <button type="submit" className="primary-button" disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />} Guardar foto</button>
         </div>
       </form></Modal>}
+
+      {modal === 'associate_listing' && associationProduct && <Modal title="Asociar producto" subtitle={`Elige una publicación sin asociación para vincularla a ${associationProduct.name} · ${associationProduct.mainSku}.`} onClose={() => { setModal(null); setAssociationListing(null); }}>
+        <form onSubmit={associateListing} className="space-y-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={associationSearch} onChange={(event) => { setAssociationSearch(event.target.value); setAssociationListing(null); }} placeholder="Buscar por nombre, SKU o seller" className="pl-9" aria-label="Buscar productos sin asociación" autoFocus />
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">Solo se muestran publicaciones desvinculadas. Las que ya pertenecen a otro producto no se pueden seleccionar.</p>
+          <div className="max-h-72 divide-y overflow-y-auto rounded-md border border-border" role="listbox" aria-label="Productos sin asociación">
+            {unlinkedListingsQuery.isPending ? <div className="flex items-center gap-2 px-3 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando productos…</div>
+              : unlinkedListingsQuery.isError ? <div className="px-3 py-6 text-sm text-red-700">No se pudieron cargar los productos sin asociación.</div>
+                : unlinkedListings.length === 0 ? <div className="px-3 py-6 text-sm text-muted-foreground">No hay productos sin asociación para este filtro.</div>
+                  : unlinkedListings.map((listing) => {
+                    const selected = associationListing?.id === listing.id;
+                    return <button key={listing.id} type="button" role="option" aria-selected={selected} onClick={() => setAssociationListing(listing)} className={cn('flex w-full items-start gap-3 px-3 py-3 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', selected && 'bg-primary/8')}>
+                      <span className={cn('mt-1 h-3 w-3 shrink-0 rounded-full border', selected ? 'border-primary bg-primary' : 'border-muted-foreground/50')} aria-hidden="true" />
+                      <span className="min-w-0 flex-1"><strong className="block line-clamp-2 text-sm leading-5">{listing.title || listing.sellerSku}</strong><span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-mono">{listing.sellerSku}</span><span>{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span><ChannelBadge value={listing.channelCode} listing={listing} /></span></span>
+                    </button>;
+                  })}
+          </div>
+          <ActionFeedback error={actionError} message={actionMessage} />
+          <div className="flex justify-end border-t border-border pt-4"><button type="submit" className="primary-button" disabled={!associationListing || busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />} Asociar producto</button></div>
+        </form>
+      </Modal>}
 
       {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
         <Notice tone="info">{publishCopy.notice}</Notice>
@@ -1043,6 +1104,7 @@ const CatalogTable = memo(function CatalogTable({
   onPrefetch,
   onOpenProduct,
   onTogglePublication,
+  onAssociate,
 }: {
   products: Product[];
   totalCount: number;
@@ -1054,6 +1116,7 @@ const CatalogTable = memo(function CatalogTable({
   onPrefetch: (nextPage: number) => void;
   onOpenProduct: (productId: number) => void;
   onTogglePublication: (listing: Listing) => void;
+  onAssociate: (product: Product) => void;
 }) {
   const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
   const toggleExpand = useCallback((productId: number) => {
@@ -1126,6 +1189,12 @@ const CatalogTable = memo(function CatalogTable({
       {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
         <div className="min-w-0" aria-busy={fetching}>
           <Table className="table-fixed">
+            <colgroup>
+              <col className="w-full sm:w-[48%]" />
+              <col className="hidden sm:table-column sm:w-[14%]" />
+              <col className="hidden sm:table-column sm:w-[18%]" />
+              <col className="hidden sm:table-column sm:w-[20%]" />
+            </colgroup>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
                 {headerGroup.headers.map((header) => <TableHead
@@ -1136,7 +1205,11 @@ const CatalogTable = memo(function CatalogTable({
             </TableHeader>
             <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
               <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
-                {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn('min-w-0', cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell')}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
+                {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn(
+                  'min-w-0',
+                  CATALOG_COLUMN_CLASS_NAMES[cell.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES],
+                  cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell',
+                )}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
               </TableRow>
               {row.getIsExpanded() && <ExpandedProductPublications
                 productId={row.original.id}
@@ -1144,6 +1217,7 @@ const CatalogTable = memo(function CatalogTable({
                 listings={row.original.listings}
                 onOpenDetail={onOpenProduct}
                 onTogglePublication={onTogglePublication}
+                onAssociate={() => onAssociate(row.original)}
               />}
             </Fragment>)}</TableBody>
           </Table>
@@ -1164,7 +1238,7 @@ const CatalogTable = memo(function CatalogTable({
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
-  onPreviousProduct, onNextProduct, onClose, onAdjust, onEditImage, onPublish, onTogglePublication,
+  onPreviousProduct, onNextProduct, onClose, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
 }: {
   open: boolean;
   product: Product | null;
@@ -1190,6 +1264,7 @@ function ProductDrawer({
   onAdjust: () => void;
   onEditImage: () => void;
   onPublish: () => void;
+  onAssociate: () => void;
   onTogglePublication: (listing: Listing) => void;
 }) {
   const listings = product?.listings || [];
@@ -1264,7 +1339,7 @@ function ProductDrawer({
             <Metric label="Publicadas" value={String(publishedListings.length)} />
           </div>
           <section className="border-b border-border px-5 py-5">
-            <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Publicado en</h3><p className="mt-1 text-xs text-muted-foreground">Canales y sellers con una publicación activa.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Publicado en</h3><p className="mt-1 text-xs text-muted-foreground">Canales y sellers con una publicación activa.</p></div><div className="flex items-center gap-2"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div></div>
             {publicationsByChannel.length ? <div className="mt-4 space-y-3">
               {publicationsByChannel.map(({ channelCode, sellers: channelSellers }) => <article key={channelCode} className="rounded-lg bg-muted/40 p-4">
                 <header className="flex flex-wrap items-center gap-2">
@@ -1302,7 +1377,7 @@ function ProductDrawer({
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
           <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">
             {activeListings.length} {activeListings.length === 1 ? 'publicación activa' : 'publicaciones activas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
-          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal; Falabella verifica su autorización.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal; Falabella verifica su autorización.</p></div><div className="flex shrink-0 items-center gap-2"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div></div>
           {!activeListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones activas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : activeListings.map((listing) => {
             const publication = publicationPresentation(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
@@ -1416,12 +1491,14 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   listings: providedListings,
   onOpenDetail,
   onTogglePublication,
+  onAssociate,
 }: {
   productId: number;
   productName: string;
   listings?: Listing[];
   onOpenDetail: (productId: number) => void;
   onTogglePublication: (listing: Listing) => void;
+  onAssociate: () => void;
 }) {
   const shouldFetch = providedListings === undefined;
   const detailQuery = useQuery({
@@ -1448,7 +1525,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   </TableRow>;
 
   if (!listings.length) return <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
+    <TableCell colSpan={4} className="py-3 pl-[6.5rem] pr-4 text-sm text-muted-foreground"><div className="flex flex-wrap items-center justify-between gap-3"><span>Sin publicaciones asociadas.</span><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button></div></TableCell>
   </TableRow>;
 
   return <>{listings.map((listing, index) => {
@@ -1506,7 +1583,9 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         </div>
       </TableCell>
     </TableRow>;
-  })}</>;
+  })}<TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
+    <TableCell colSpan={4} className="py-3 pl-[6.5rem] pr-4"><div className="flex justify-end"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button></div></TableCell>
+  </TableRow></>;
 });
 
 function CatalogTableSkeleton() {
