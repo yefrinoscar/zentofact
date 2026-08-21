@@ -325,14 +325,31 @@ app.post('/order-management/orders/manual', async (c) => {
     if (!idempotencyKey) {
       return c.json({ error: 'Idempotency-Key es obligatorio para registrar la venta.' }, 400);
     }
-    return ok(c, await orderManagement.ingestOrder({
+    const result = await orderManagement.ingestOrder({
       ...body,
       source: 'manual',
       automatic: false,
       actorUserId: c.get('user')?.id,
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
-    }), 201);
+    });
+    if (result?.order && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
+      try {
+        await stockJobs.enqueueStockJob({
+          companyId: result.order.companyId,
+          externalOrderId: result.order.externalOrderId,
+          orderNumber: result.order.externalOrderNumber,
+          source: 'manual',
+        });
+      } catch (queueError) {
+        console.error(JSON.stringify({
+          event: 'orders.manual.stock_job_enqueue_failed',
+          orderId: result.order.id,
+          error: queueError?.message,
+        }));
+      }
+    }
+    return ok(c, result, 201);
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/orders/:id', async (c) => {

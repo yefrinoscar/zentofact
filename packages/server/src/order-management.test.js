@@ -32,6 +32,8 @@ class IngestDb {
   constructor(accountRow = account()) {
     this.account = accountRow;
     this.queries = [];
+    this.inventory = new Map();
+    this.movements = new Map();
   }
 
   async query(sql, params = []) {
@@ -39,6 +41,33 @@ class IngestDb {
     this.queries.push({ sql: compact, params });
     if (compact.startsWith('select a.*, ch.code as channel_code')) return { rows: [this.account] };
     if (compact.startsWith('select * from orders')) return { rows: [] };
+    if (compact.startsWith('insert into product_inventory')) return { rows: [] };
+    if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
+      const onHand = this.inventory.get(Number(params[0])) ?? 100;
+      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: 0 }] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_on_hand')) {
+      this.inventory.set(Number(params[1]), Number(params[0]));
+      return { rows: [] };
+    }
+    if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
+      const row = this.movements.get(params[0]);
+      return { rows: row ? [row] : [] };
+    }
+    if (compact.startsWith('insert into inventory_movements')) {
+      const row = {
+        id: this.movements.size + 1,
+        product_id: params[0],
+        movement_type: params[1],
+        quantity_delta: params[2],
+        quantity_after: params[3],
+        idempotency_key: params[10],
+        metadata: JSON.parse(params[11]),
+      };
+      this.movements.set(params[10], row);
+      return { rows: [row] };
+    }
+    if (compact.startsWith('update order_items set product_id')) return { rows: [] };
     if (compact.startsWith('insert into orders')) {
       return { rows: [{
         id: 91,
@@ -72,6 +101,22 @@ class IngestDb {
       }] };
     }
     if (compact.startsWith('insert into order_snapshots')) return { rows: [{ id: 1 }] };
+    if (compact.startsWith('insert into order_items')) {
+      return { rows: [{
+        id: 501,
+        external_item_id: params[1],
+        sku: params[2],
+        provider_sku: params[3],
+        quantity: params[5],
+        provider_status: params[10],
+        product_id: params[13],
+        listing_id: null,
+        main_sku: null,
+        stock_state: 'none',
+        stock_applied_quantity: 0,
+        stock_revision: 0,
+      }] };
+    }
     return { rows: [] };
   }
 }
@@ -141,12 +186,38 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   assert.equal(result.order.documentDecision.type, 'factura');
   const itemUpsert = db.queries.find((query) => query.sql.startsWith('insert into order_items'));
   assert.ok(itemUpsert);
-  assert.equal(itemUpsert.sql.split(' values ')[0].includes('product_id'), false);
+  assert.equal(itemUpsert.sql.split(' values ')[0].includes('product_id'), true);
+  assert.equal(itemUpsert.params[13], null);
   assert.match(itemUpsert.sql, /returning id, external_item_id.*stock_revision/);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_snapshots')), true);
   const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
   assert.equal(event.params[1], 'order.created');
   assert.equal(event.params[4], 'request-100');
+});
+
+test('una venta manual conserva el productId del catálogo para descontar stock', async () => {
+  const db = new IngestDb(account({ channel_code: 'manual' }));
+  await ingestOrder(manualSale({
+    fulfillmentStatus: 'ready_to_ship',
+    shipping: { type: 'recojo' },
+    items: [{
+      externalItemId: 'VTA-1-1',
+      sku: 'ZEN-CAMISETA-M',
+      description: 'Camiseta M',
+      quantity: 2,
+      unitPrice: 50,
+      total: 100,
+      metadata: { productId: 42 },
+    }],
+  }), db);
+  const itemUpsert = db.queries.find((query) => query.sql.startsWith('insert into order_items'));
+  assert.ok(itemUpsert);
+  assert.equal(itemUpsert.params[13], 42);
+  const movement = [...db.movements.values()][0];
+  assert.ok(movement, 'la venta manual debe descontar inventario en el mismo ingest');
+  assert.equal(movement.movement_type, 'sale');
+  assert.equal(movement.quantity_delta, -2);
+  assert.equal(movement.product_id, 42);
 });
 
 test('respeta el apagado de creación automática por cuenta', async () => {
