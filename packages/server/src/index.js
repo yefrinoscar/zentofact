@@ -386,6 +386,7 @@ app.post('/order-management/orders/manual', async (c) => {
     if (result?.order?.companyId && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
       try {
         await stockJobs.enqueueStockJob({
+          orderId: result.order.id,
           companyId: result.order.companyId,
           externalOrderId: result.order.externalOrderId,
           orderNumber: result.order.externalOrderNumber,

@@ -8,23 +8,30 @@ import {
   Check,
   CheckCircle2,
   CircleDashed,
+  CircleDollarSign,
+  ClipboardList,
   Clock3,
   Copy,
   Eye,
   FileText,
+  Hash,
   ImagePlus,
   Loader2,
   MoreHorizontal,
   Package,
   PackageSearch,
+  PanelTop,
   Plus,
   RefreshCw,
   Search,
   Store,
+  Tags,
+  Truck,
   WandSparkles,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
+import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { shippingCarrierLabel } from '../lib/shipping-carrier';
@@ -56,6 +63,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '../components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -702,10 +710,27 @@ function channelTone(code: string) {
   }[code] || 'border-border bg-muted text-muted-foreground';
 }
 
-function ChannelMark({ code, name, size = 'sm' }: { code: string; name: string; size?: 'sm' | 'md' }) {
+function ChannelMark({
+  code,
+  name,
+  size = 'sm',
+  ripleyMark = 'initials',
+}: {
+  code: string;
+  name: string;
+  size?: 'sm' | 'md';
+  ripleyMark?: 'initials' | 'official';
+}) {
   const box = size === 'sm' ? 'size-4' : 'size-8';
   if (code === 'falabella') {
     return <img src={falabellaLogo} alt="Falabella" className={cn('shrink-0 rounded-sm object-contain', box)} />;
+  }
+  if (code === 'ripley' && ripleyMark === 'official') {
+    return (
+      <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', box)} aria-hidden="true">
+        <img src={ripleyLogo} alt="" className={size === 'sm' ? 'h-3 w-auto' : 'h-6 w-auto'} />
+      </span>
+    );
   }
   return (
     <span className={cn('grid shrink-0 place-items-center rounded-sm border font-bold', channelTone(code), size === 'sm' ? 'size-4 text-[8px]' : 'size-8 text-xs')} aria-hidden="true">
@@ -1191,12 +1216,15 @@ export default function PedidosMulticanal() {
       id: 'seller',
       header: 'Seller',
       size: 132,
-      cell: ({ row }) => (
-        <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
-          <span className="truncate">{sellerCellLabel(row.original, companyById)}</span>
-        </div>
-      ),
+      cell: ({ row }) => {
+        const seller = sellerCellLabel(row.original, companyById);
+        if (!seller) return null;
+        return (
+          <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={seller}>
+            {seller}
+          </Badge>
+        );
+      },
     },
     {
       id: 'customer',
@@ -1225,7 +1253,7 @@ export default function PedidosMulticanal() {
       size: 124,
       cell: ({ row }) => (
         <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
+          <ChannelMark code={row.original.channelCode} name={row.original.channelName} ripleyMark="official" />
           <span className="truncate">{originLabel(row.original)}</span>
         </div>
       ),
@@ -1534,147 +1562,166 @@ export default function PedidosMulticanal() {
                   </div>
                 </div>
               </SheetHeader>
-              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <DetailStat label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
-                  <DetailStat label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-sm text-muted-foreground">Sin dato</span>} />
-                  <DetailStat label="Entrega" content={<span className="text-sm font-medium">{deliveryLabel(detail)}</span>} />
-                  <DetailStat label="Comprobante" content={documentBadge(detail)} />
-                  <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
-                </div>
+              <Tabs key={detail.id} defaultValue="summary" className="min-h-0 flex-1 gap-0 overflow-hidden">
+                <TabsList variant="line" aria-label="Secciones del pedido" className="h-11 w-full shrink-0 justify-start gap-0 border-b border-border px-4 py-0">
+                  <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3">
+                    <PanelTop /> Resumen
+                  </TabsTrigger>
+                  <TabsTrigger value="products" className="h-full flex-none rounded-none px-3">
+                    <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3">
+                    <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
+                  </TabsTrigger>
+                </TabsList>
 
-                {detail.channelCode === 'ripley' && (
-                  <section>
-                    <div className="mb-3 flex items-center gap-2">
-                      <h3 className="text-sm font-medium">Flujo Ripley</h3>
-                      {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
+                <TabsContent value="summary" className="min-h-0 overflow-y-auto">
+                  <section className="px-5 py-5">
+                    <h3 className="mb-3 text-sm font-semibold">Pedido</h3>
+                    <div className="space-y-0.5">
+                      <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
+                      <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
+                      <DetailField icon={<Package />} label="Entrega" content={<span className="font-medium">{deliveryLabel(detail)}</span>} />
+                      <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
+                      <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                     </div>
-                    <div className="grid gap-3 rounded-md border border-border p-4 sm:grid-cols-2">
-                      <DetailStat label="Estado comercial (Mirakl)" content={<span className="text-sm font-medium">{detail.providerStatus || 'Sin dato'}</span>} />
-                      <DetailStat label="Estado logístico (SVC)" content={<span className="text-sm font-medium">{detail.metadata?.ripleySvc?.statusManagement || 'SVC no configurado o pendiente de sincronizar'}</span>} />
-                      <DetailStat label="Bultos" content={<span className="text-sm font-medium tabular-nums">{detail.metadata?.ripleySvc?.packages ?? '—'}</span>} />
-                      <DetailStat label="Orden interna SVC" content={<span className="break-all font-mono text-xs">{detail.metadata?.ripleySvc?.orderId || '—'}</span>} />
-                      <DetailStat label="Etiquetas SVC" content={<span className="text-sm font-medium tabular-nums">{ripleyLogistics?.labels ?? '—'}</span>} />
-                      <DetailStat label="Manifiestos SVC" content={<span className="text-sm font-medium tabular-nums">{ripleyLogistics?.manifests ?? '—'}</span>} />
-                    </div>
-                    {ripleyLogistics && !ripleyLogistics.error && (
-                      <div className="mt-3 space-y-3 border-t border-border pt-3">
-                        <div className="flex flex-wrap items-end gap-2">
-                          <div className="w-28 space-y-1">
-                            <Label htmlFor="ripley-packages" className="text-xs">Bultos</Label>
-                            <Input
-                              id="ripley-packages"
-                              type="number"
-                              min={1}
-                              value={ripleyPackages}
-                              onChange={(event) => setRipleyPackages(event.target.value)}
-                              disabled={Boolean(ripleyLogistics.manifestId)}
-                            />
-                          </div>
-                          <Button
-                            variant="outline"
-                            onClick={updateRipleyPackages}
-                            disabled={Boolean(ripleyAction) || Boolean(ripleyLogistics.manifestId) || Number(ripleyPackages) < 1}
-                          >
-                            {ripleyAction === 'packages' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Regenerar etiqueta
-                          </Button>
-                          <Button variant="outline" onClick={downloadRipleyLabels} disabled={Boolean(ripleyAction) || !ripleyLogistics.labelId}>
-                            {ripleyAction === 'labels' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Descargar etiquetas
-                          </Button>
-                        </div>
-
-                        {!ripleyLogistics.manifestId && Number(ripleyLogistics.eligibleLabels) > 0 && (
-                          <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)_auto] sm:items-end">
-                            <div className="space-y-1">
-                              <Label htmlFor="ripley-pickup-date" className="text-xs">Fecha de recojo</Label>
-                              <Input id="ripley-pickup-date" type="date" value={ripleyPickupDate} onChange={(event) => setRipleyPickupDate(event.target.value)} />
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor="ripley-warehouse" className="text-xs">Dirección de almacén</Label>
-                              <Input id="ripley-warehouse" value={ripleyWarehouseAddress} onChange={(event) => setRipleyWarehouseAddress(event.target.value)} />
-                            </div>
-                            <Button onClick={createRipleyManifest} disabled={Boolean(ripleyAction) || !ripleyPickupDate || !ripleyWarehouseAddress.trim()}>
-                              {ripleyAction === 'manifest' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Agendar y crear manifiesto
-                            </Button>
-                          </div>
-                        )}
-
-                        {ripleyLogistics.manifestId && (
-                          <div className="flex flex-wrap gap-2">
-                            <Button onClick={downloadRipleyManifest} disabled={Boolean(ripleyAction)}>
-                              {ripleyAction === 'manifest-pdf' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Descargar manifiesto
-                            </Button>
-                            <Button variant="outline" onClick={detachRipleyLabel} disabled={Boolean(ripleyAction)}>
-                              {ripleyAction === 'detach' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Excluir etiqueta
-                            </Button>
-                          </div>
-                        )}
-                        {ripleyActionNote && <p className="text-xs text-muted-foreground">{ripleyActionNote}</p>}
-                      </div>
-                    )}
-                    {ripleyLogistics?.error && <p className="mt-2 text-xs text-amber-700">{ripleyLogistics.error}</p>}
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {ripleyLogistics?.sandbox
-                        ? 'Vista de prueba local: no consulta Seller Center ni modifica pedidos reales.'
-                        : 'Las etiquetas y manifiestos pertenecen a Seller Center; se sincronizan por polling separado de la orden comercial.'}
-                    </p>
                   </section>
-                )}
 
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">Productos</h3>
-                  <div className="divide-y divide-border rounded-md border border-border">
+                  {detail.channelCode === 'ripley' && (
+                    <section className="border-t border-border px-5 py-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <h3 className="text-sm font-semibold">Logística Ripley</h3>
+                        {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
+                      </div>
+                      <div className="space-y-0.5">
+                        <DetailField icon={<Store />} label="Estado comercial" content={<span className="font-medium">{detail.providerStatus || 'Sin dato'}</span>} />
+                        <DetailField icon={<Truck />} label="Estado logístico" content={<span className="font-medium">{detail.metadata?.ripleySvc?.statusManagement || 'SVC no configurado o pendiente de sincronizar'}</span>} />
+                        <DetailField icon={<Package />} label="Bultos" content={<span className="font-medium tabular-nums">{detail.metadata?.ripleySvc?.packages ?? '—'}</span>} />
+                        <DetailField icon={<Hash />} label="Orden interna SVC" content={<span className="break-all font-mono text-xs">{detail.metadata?.ripleySvc?.orderId || '—'}</span>} />
+                        <DetailField icon={<Tags />} label="Etiquetas SVC" content={<span className="font-medium tabular-nums">{ripleyLogistics?.labels ?? '—'}</span>} />
+                        <DetailField icon={<ClipboardList />} label="Manifiestos SVC" content={<span className="font-medium tabular-nums">{ripleyLogistics?.manifests ?? '—'}</span>} />
+                      </div>
+
+                      {ripleyLogistics && !ripleyLogistics.error && (
+                        <div className="mt-5 space-y-3">
+                          <p className="text-xs font-medium text-muted-foreground">Acciones logísticas</p>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div className="w-28 space-y-1">
+                              <Label htmlFor="ripley-packages" className="text-xs">Bultos</Label>
+                              <Input
+                                id="ripley-packages"
+                                type="number"
+                                min={1}
+                                value={ripleyPackages}
+                                onChange={(event) => setRipleyPackages(event.target.value)}
+                                disabled={Boolean(ripleyLogistics.manifestId)}
+                              />
+                            </div>
+                            <Button
+                              variant="outline"
+                              onClick={updateRipleyPackages}
+                              disabled={Boolean(ripleyAction) || Boolean(ripleyLogistics.manifestId) || Number(ripleyPackages) < 1}
+                            >
+                              {ripleyAction === 'packages' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Regenerar etiqueta
+                            </Button>
+                            <Button variant="outline" onClick={downloadRipleyLabels} disabled={Boolean(ripleyAction) || !ripleyLogistics.labelId}>
+                              {ripleyAction === 'labels' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Descargar etiquetas
+                            </Button>
+                          </div>
+
+                          {!ripleyLogistics.manifestId && Number(ripleyLogistics.eligibleLabels) > 0 && (
+                            <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)_auto] sm:items-end">
+                              <div className="space-y-1">
+                                <Label htmlFor="ripley-pickup-date" className="text-xs">Fecha de recojo</Label>
+                                <Input id="ripley-pickup-date" type="date" value={ripleyPickupDate} onChange={(event) => setRipleyPickupDate(event.target.value)} />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor="ripley-warehouse" className="text-xs">Dirección de almacén</Label>
+                                <Input id="ripley-warehouse" value={ripleyWarehouseAddress} onChange={(event) => setRipleyWarehouseAddress(event.target.value)} />
+                              </div>
+                              <Button onClick={createRipleyManifest} disabled={Boolean(ripleyAction) || !ripleyPickupDate || !ripleyWarehouseAddress.trim()}>
+                                {ripleyAction === 'manifest' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Agendar y crear manifiesto
+                              </Button>
+                            </div>
+                          )}
+
+                          {ripleyLogistics.manifestId && (
+                            <div className="flex flex-wrap gap-2">
+                              <Button onClick={downloadRipleyManifest} disabled={Boolean(ripleyAction)}>
+                                {ripleyAction === 'manifest-pdf' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Descargar manifiesto
+                              </Button>
+                              <Button variant="outline" onClick={detachRipleyLabel} disabled={Boolean(ripleyAction)}>
+                                {ripleyAction === 'detach' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Excluir etiqueta
+                              </Button>
+                            </div>
+                          )}
+                          {ripleyActionNote && <p className="text-xs text-muted-foreground">{ripleyActionNote}</p>}
+                        </div>
+                      )}
+                      {ripleyLogistics?.error && <p className="mt-3 text-xs text-amber-700">{ripleyLogistics.error}</p>}
+                      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                        {ripleyLogistics?.sandbox
+                          ? 'Vista de prueba local: no consulta Seller Center ni modifica pedidos reales.'
+                          : 'Las etiquetas y manifiestos pertenecen a Seller Center; se sincronizan por polling separado de la orden comercial.'}
+                      </p>
+                    </section>
+                  )}
+
+                  {detail.documents.length > 0 && (
+                    <section className="border-t border-border px-5 py-5">
+                      <h3 className="mb-3 text-sm font-semibold">Comprobantes vinculados</h3>
+                      <div className="space-y-3">
+                        {detail.documents.map((document) => (
+                          <div key={document.id} className="flex items-center gap-3 text-sm">
+                            <FileText className="size-4 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0 flex-1 truncate font-medium">{document.number || document.kind}</span>
+                            <span className="shrink-0 text-muted-foreground">{DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="products" className="min-h-0 overflow-y-auto px-5 py-5">
+                  <h3 className="mb-3 text-sm font-semibold">Productos del pedido</h3>
+                  <div className="space-y-1">
                     {detail.items.length ? detail.items.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted"><Package className="size-4 text-muted-foreground" /></span>
+                      <div key={item.id} className="flex items-start justify-between gap-4 py-2.5">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <Package className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                           <div className="min-w-0">
-                            <p className="truncate font-medium">{item.description || item.sku || 'Producto'}</p>
-                            <p className="text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
+                            <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
                           </div>
                         </div>
-                        <span className="shrink-0 tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                        <span className="shrink-0 font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
                       </div>
-                    )) : <p className="px-4 py-5 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
+                    )) : <p className="py-3 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
                   </div>
-                </section>
+                </TabsContent>
 
-                {detail.documents.length > 0 && (
-                  <section>
-                    <h3 className="mb-3 text-sm font-medium">Comprobantes vinculados</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.documents.map((document) => (
-                        <Badge key={document.id} variant="outline" className="h-auto rounded-md px-3 py-2">
-                          <FileText /> {document.number || document.kind} · {DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}
-                        </Badge>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">Actividad</h3>
-                  <div className="space-y-3">
+                <TabsContent value="activity" className="min-h-0 overflow-y-auto px-5 py-5">
+                  <h3 className="mb-3 text-sm font-semibold">Actividad del pedido</h3>
+                  <div className="space-y-1">
                     {[...detail.events].reverse().map((event) => (
-                      <div key={event.id} className="flex gap-3">
-                        <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted">
-                          {event.eventType.includes('created') ? <CheckCircle2 className="size-4 text-emerald-600" /> : <Clock3 className="size-4 text-muted-foreground" />}
-                        </div>
-                        <div className="min-w-0 border-b border-border pb-3">
+                      <div key={event.id} className="flex gap-3 py-2.5">
+                        {event.eventType.includes('created') ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
                           <p className="font-medium">{EVENT_LABELS[event.eventType] || event.eventType}</p>
-                          <p className="text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
                         </div>
                       </div>
                     ))}
                     {!detail.events.length && <p className="text-sm text-muted-foreground">Todavía no hay eventos registrados.</p>}
                   </div>
-                </section>
-              </div>
+                </TabsContent>
+              </Tabs>
             </>
           ) : null}
         </SheetContent>
@@ -1835,11 +1882,14 @@ function SellerList({
   );
 }
 
-function DetailStat({ label, content }: { label: string; content: React.ReactNode }) {
+function DetailField({ icon, label, content }: { icon: React.ReactNode; label: string; content: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
-      <p className="mb-2 text-xs text-muted-foreground">{label}</p>
-      {content}
+    <div className="grid min-h-10 grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-4 py-2">
+      <p className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0">
+        {icon}
+        <span>{label}</span>
+      </p>
+      <div className="min-w-0 text-sm text-foreground">{content}</div>
     </div>
   );
 }

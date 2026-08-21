@@ -246,7 +246,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
           externalOrderId: normalized.orderId,
           orderNumber: normalized.orderNumber,
           source: context.source || 'sync',
-          }, db).catch((error) => {
+          }, context.stockDb || db).catch((error) => {
             console.warn(JSON.stringify({
             event: 'catalog.stock.enqueue_failed',
             companyId,
@@ -413,7 +413,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
             externalOrderId: normalized.orderId,
             orderNumber: normalized.orderNumber,
             source: 'sync',
-          }, db).catch(() => {});
+          }, options.stockDb || db).catch(() => {});
         }
         if (!applyStock) {
           await db.query(
@@ -667,6 +667,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
           applyRecentStock: Boolean(state.last_successful_sync_at),
           observedSince,
+          stockDb: dbPool,
         });
         const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient);
         return { status: 'success', skipped: 'already_current', itemHydration, reconciliation, sync: await getFalabellaSyncStatus(companyId, db) };
@@ -696,6 +697,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         seller: company.nombreComercial || company.nombre || company.razonSocial,
         runId,
         failures: orderFailures,
+        stockDb: dbPool,
       });
     });
     const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
@@ -703,6 +705,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       observedSince,
       seller: company.nombreComercial || company.nombre || company.razonSocial,
       runId,
+      stockDb: dbPool,
     });
     const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
       seller: company.nombreComercial || company.nombre || company.razonSocial,

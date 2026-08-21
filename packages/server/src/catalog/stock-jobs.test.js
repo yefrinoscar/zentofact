@@ -15,6 +15,13 @@ class JobDb {
 
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (compact.includes('pg_advisory_lock') || compact.includes('pg_advisory_xact_lock')) {
+      return { rows: [{ pg_advisory_lock: true }] };
+    }
+    if (compact.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+    if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
+      return { rows: [] };
+    }
     if (compact.startsWith('create table') || compact.startsWith('create index')) return { rows: [] };
     if (compact.includes('where status=\'processing\'') && compact.includes('timeout')) {
       return { rows: [] };
@@ -146,4 +153,6 @@ test('la cola separa la identidad canónica de la compatibilidad legacy', async 
 
   assert.match(migrationSql, /drop constraint if exists inventory_stock_jobs_company_id_external_order_id_key/i);
   assert.match(migrationSql, /where order_id is null/i);
+  assert.match(migrationSql, /matched_orders[\s\S]*having count\(\*\)=1/i);
+  assert.match(migrationSql, /existing\.order_id=matched\.order_id/i);
 });
