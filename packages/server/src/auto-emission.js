@@ -166,20 +166,21 @@ const timeoutLabel = () => `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`;
 const retryDelaySeconds = (attempts) => Math.min(15 * 60, 60 * (2 ** Math.max(0, Number(attempts || 1) - 1)));
 const jobKindOf = (job) => (job?.kind === JOB_KIND_CREDIT_NOTE ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE);
 
-async function hasAcceptedSalesDocument(companyId, orderNumber) {
+export async function hasAcceptedSalesDocument(companyId, orderNumber, db = pool) {
   const number = String(orderNumber || '').trim();
   if (!number) return false;
-  const r = await pool.query(
-    `select 1
-     from (
-       select 1 from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
-       union all
-       select 1 from facturas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
-     ) docs
-     limit 1`,
+  const r = await db.query(
+    `select
+       exists (
+         select 1 from boletas
+         where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO'
+       ) or exists (
+         select 1 from facturas
+         where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO'
+       ) as accepted`,
     [companyId, number],
   );
-  return r.rows.length > 0;
+  return r.rows[0]?.accepted === true;
 }
 
 async function enqueueIfNeeded(companyId, orderNumber, source, orderId, kind) {

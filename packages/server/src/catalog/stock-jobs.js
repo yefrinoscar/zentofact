@@ -23,9 +23,50 @@ async function target(db) {
   return db || (await loadCore()).pool;
 }
 
+function isPool(source) {
+  return typeof source?.connect === 'function' && typeof source?.totalCount === 'number';
+}
+
+async function withPinnedClient(db, work) {
+  const source = await target(db);
+  if (!isPool(source)) return work(source, false);
+  const client = await source.connect();
+  try {
+    return await work(client, true);
+  } finally {
+    client.release();
+  }
+}
+
+function identityLockKey(companyId, externalOrderId) {
+  return `inventory-stock:${companyId}:${externalOrderId}`;
+}
+
+async function withIdentityLock(db, companyId, externalOrderId, work) {
+  const source = await target(db);
+  const ownsConnection = isPool(source);
+  const client = ownsConnection ? await source.connect() : source;
+  const lockKey = identityLockKey(companyId, externalOrderId);
+  if (ownsConnection) await client.query('begin');
+  try {
+    await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [lockKey]);
+    const result = await work(client);
+    if (ownsConnection) await client.query('commit');
+    return result;
+  } catch (error) {
+    if (ownsConnection) await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    if (ownsConnection) client.release();
+  }
+}
+
 export async function ensureStockJobTables(db) {
-  const client = await target(db);
-  await client.query(`
+  await withPinnedClient(db, async (client, ownsTransaction) => {
+    if (ownsTransaction) await client.query('begin');
+    try {
+      await client.query("select pg_advisory_xact_lock(hashtextextended('inventory-stock-job-migration', 0))");
+      await client.query(`
     create table if not exists inventory_stock_jobs (
       id bigserial primary key,
       order_id bigint references orders(id) on delete cascade,
@@ -45,7 +86,12 @@ export async function ensureStockJobTables(db) {
       add column if not exists order_id bigint references orders(id) on delete cascade;
     alter table inventory_stock_jobs
       drop constraint if exists inventory_stock_jobs_company_id_external_order_id_key;
-    with unique_matches as (
+    lock table inventory_stock_jobs in share row exclusive mode;
+    create unique index if not exists idx_inventory_stock_jobs_order
+      on inventory_stock_jobs (order_id) where order_id is not null;
+    create unique index if not exists idx_inventory_stock_jobs_legacy_identity
+      on inventory_stock_jobs (company_id, external_order_id) where order_id is null;
+    with matched_orders as (
       select job.id as job_id, min(order_row.id) as order_id
       from inventory_stock_jobs job
       join orders order_row
@@ -54,53 +100,171 @@ export async function ensureStockJobTables(db) {
       where job.order_id is null
       group by job.id
       having count(*)=1
+    ), unique_matches as (
+      select matched.job_id, matched.order_id
+      from matched_orders matched
+      where not exists (
+        select 1
+        from inventory_stock_jobs existing
+        where existing.order_id=matched.order_id
+      )
     )
     update inventory_stock_jobs job
        set order_id=matched.order_id, updated_at=now()
       from unique_matches matched
      where job.id=matched.job_id;
-    create unique index if not exists idx_inventory_stock_jobs_order
-      on inventory_stock_jobs (order_id) where order_id is not null;
-    create unique index if not exists idx_inventory_stock_jobs_legacy_identity
-      on inventory_stock_jobs (company_id, external_order_id) where order_id is null;
+    with completed_duplicates as (
+      select legacy.id as legacy_id, canonical.id as canonical_id
+      from inventory_stock_jobs legacy
+      join orders order_row
+        on order_row.company_id=legacy.company_id
+       and order_row.external_order_id=legacy.external_order_id
+      join inventory_stock_jobs canonical on canonical.order_id=order_row.id
+      where legacy.order_id is null
+        and legacy.status='done'
+        and (select count(*) from orders candidate
+             where candidate.company_id=legacy.company_id
+               and candidate.external_order_id=legacy.external_order_id)=1
+    )
+    update inventory_stock_jobs canonical
+       set status='done', next_attempt_at=null, updated_at=now()
+      from completed_duplicates duplicate
+     where canonical.id=duplicate.canonical_id
+       and canonical.status in ('pending','processing','failed','skipped');
+    with duplicates as (
+      select legacy.id as legacy_id, canonical.order_id
+      from inventory_stock_jobs legacy
+      join orders order_row
+        on order_row.company_id=legacy.company_id
+       and order_row.external_order_id=legacy.external_order_id
+      join inventory_stock_jobs canonical on canonical.order_id=order_row.id
+      where legacy.order_id is null
+        and (select count(*) from orders candidate
+             where candidate.company_id=legacy.company_id
+               and candidate.external_order_id=legacy.external_order_id)=1
+    )
+    update inventory_stock_jobs legacy
+       set status=case
+             when legacy.status in ('pending','processing','failed') then 'skipped'
+             else legacy.status
+           end,
+           last_error=null,
+           next_attempt_at=null,
+           result=coalesce(legacy.result, '{}'::jsonb) || jsonb_build_object(
+             'supersededByOrderId', duplicate.order_id,
+             'supersededAt', now()
+           ),
+           updated_at=now()
+      from duplicates duplicate
+     where legacy.id=duplicate.legacy_id
+       and (
+         legacy.status in ('pending','processing','failed')
+         or legacy.result->>'supersededByOrderId' is distinct from duplicate.order_id::text
+       );
     create index if not exists idx_inventory_stock_jobs_pending
       on inventory_stock_jobs (created_at)
       where status = 'pending';
   `);
+      if (ownsTransaction) await client.query('commit');
+    } catch (error) {
+      if (ownsTransaction) await client.query('rollback').catch(() => {});
+      throw error;
+    }
+  });
 }
 
-export async function enqueueStockJob(input = {}, db) {
-  const orderId = input.orderId == null ? null : Number(input.orderId);
-  const companyId = Number(input.companyId);
-  const externalOrderId = text(input.externalOrderId);
-  if (
-    (orderId != null && (!Number.isInteger(orderId) || orderId <= 0))
-    || (!orderId && (!Number.isInteger(companyId) || companyId <= 0 || !externalOrderId))
-  ) {
-    return { enqueued: false, ignored: 'pedido inválido' };
-  }
-  const client = await target(db);
-  const result = orderId ? await client.query(
-    `insert into inventory_stock_jobs (
-       order_id, company_id, external_order_id, order_number, status, source, created_at, updated_at
+async function enqueueCanonicalStockJob(orderId, source, client) {
+  return client.query(
+    `with canonical_order as (
+       select id, company_id, external_order_id, external_order_number
+       from orders where id=$1
+     ), legacy as materialized (
+       select job.*
+       from inventory_stock_jobs job
+       join canonical_order order_row
+         on job.order_id is null
+        and job.company_id=order_row.company_id
+        and job.external_order_id=order_row.external_order_id
+     ), promoted as (
+       update inventory_stock_jobs job
+          set order_id=order_row.id,
+              company_id=order_row.company_id,
+              external_order_id=order_row.external_order_id,
+              order_number=order_row.external_order_number,
+              status=case when job.status in ('failed','skipped') then 'pending' else job.status end,
+              next_attempt_at=case when job.status in ('failed','skipped') then null else job.next_attempt_at end,
+              updated_at=now()
+         from canonical_order order_row
+        where job.order_id is null
+          and job.company_id=order_row.company_id
+          and job.external_order_id=order_row.external_order_id
+          and not exists (
+            select 1 from inventory_stock_jobs existing where existing.order_id=order_row.id
+          )
+       returning job.*
+     ), upserted as (
+       insert into inventory_stock_jobs (
+         order_id, company_id, external_order_id, order_number, status, source, created_at, updated_at
+       )
+       select order_row.id, order_row.company_id, order_row.external_order_id,
+         order_row.external_order_number,
+         case when exists (select 1 from legacy where status='done') then 'done' else 'pending' end,
+         $2, now(), now()
+       from canonical_order order_row
+       where not exists (select 1 from promoted)
+       on conflict (order_id) where order_id is not null do update set
+         order_number=excluded.order_number,
+         status=case
+           when exists (select 1 from legacy where status='done') then 'done'
+           when inventory_stock_jobs.status='processing' then 'processing'
+           when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
+           else inventory_stock_jobs.status
+         end,
+         next_attempt_at=case
+           when exists (select 1 from legacy where status='done') then null
+           when inventory_stock_jobs.status in ('failed','skipped') then null
+           else inventory_stock_jobs.next_attempt_at
+         end,
+         updated_at=now()
+       returning inventory_stock_jobs.*
+     ), survivor as (
+       select * from promoted
+       union all
+       select * from upserted
+     ), superseded as (
+       update inventory_stock_jobs job
+          set status=case
+                when job.status in ('pending','processing','failed') then 'skipped'
+                else job.status
+              end,
+              last_error=null,
+              next_attempt_at=null,
+              result=coalesce(job.result, '{}'::jsonb) || jsonb_build_object(
+                'supersededByOrderId', survivor.order_id,
+                'supersededAt', now()
+              ),
+              updated_at=now()
+         from survivor
+        where job.order_id is null
+          and job.company_id=survivor.company_id
+          and job.external_order_id=survivor.external_order_id
+          and job.id<>survivor.id
+          and (
+            job.status in ('pending','processing','failed')
+            or job.result->>'supersededByOrderId' is distinct from survivor.order_id::text
+          )
+       returning job.id
      )
-     select o.id, o.company_id, o.external_order_id, o.external_order_number,
-       'pending', $2, now(), now()
-     from orders o where o.id=$1
-     on conflict (order_id) where order_id is not null do update set
-       order_number=excluded.order_number,
-       status=case
-         when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
-         else inventory_stock_jobs.status
-       end,
-       next_attempt_at=case
-         when inventory_stock_jobs.status in ('failed','skipped') then null
-         else inventory_stock_jobs.next_attempt_at
-       end,
-       updated_at=now()
-     returning *`,
-    [orderId, text(input.source, 50) || 'system'],
-  ) : await client.query(
+     select survivor.*
+     from survivor
+     left join (select count(*) from superseded) completed on true
+     limit 1`,
+    [orderId, source],
+  );
+}
+
+async function enqueueLegacyStockJob(input, client) {
+  return client.query(
     `insert into inventory_stock_jobs (
        company_id, external_order_id, order_number, status, source, created_at, updated_at
      ) values ($1,$2,$3,'pending',$4,now(),now())
@@ -116,9 +280,63 @@ export async function enqueueStockJob(input = {}, db) {
        end,
        updated_at=now()
      returning *`,
-    [companyId, externalOrderId, text(input.orderNumber) || null, text(input.source, 50) || 'system'],
+    [input.companyId, input.externalOrderId, input.orderNumber, input.source],
+  );
+}
+
+export async function enqueueStockJob(input = {}, db) {
+  let orderId = input.orderId == null ? null : Number(input.orderId);
+  const companyId = Number(input.companyId);
+  const externalOrderId = text(input.externalOrderId);
+  if (
+    (orderId != null && (!Number.isInteger(orderId) || orderId <= 0))
+    || (!orderId && (!Number.isInteger(companyId) || companyId <= 0 || !externalOrderId))
+  ) {
+    return { enqueued: false, ignored: 'pedido inválido' };
+  }
+  const source = text(input.source, 50) || 'system';
+  let identity = orderId ? (await (await target(db)).query(
+    `select id, company_id, external_order_id, external_order_number
+     from orders where id=$1`,
+    [orderId],
+  )).rows[0] : { company_id: companyId, external_order_id: externalOrderId };
+  if (!identity) return { enqueued: false, ignored: 'pedido inexistente' };
+  const result = await withIdentityLock(
+    db,
+    Number(identity.company_id),
+    identity.external_order_id,
+    async (client) => {
+      if (orderId) {
+        identity = (await client.query(
+          `select id, company_id, external_order_id, external_order_number
+           from orders where id=$1`,
+          [orderId],
+        )).rows[0];
+        if (!identity) return { rows: [] };
+      } else {
+        const matches = await client.query(
+          `select id, company_id, external_order_id, external_order_number
+           from orders
+           where company_id=$1 and external_order_id=$2
+           order by id limit 2`,
+          [companyId, externalOrderId],
+        );
+        if (matches.rows.length === 1) {
+          [identity] = matches.rows;
+          orderId = Number(identity.id);
+        }
+      }
+      if (orderId) return enqueueCanonicalStockJob(orderId, source, client);
+      return enqueueLegacyStockJob({
+        companyId,
+        externalOrderId,
+        orderNumber: text(input.orderNumber) || null,
+        source,
+      }, client);
+    },
   );
   const job = result.rows[0];
+  if (!job) return { enqueued: false, ignored: 'pedido inexistente' };
   return {
     enqueued: job?.status === 'pending',
     already: job?.status !== 'pending',
@@ -179,8 +397,22 @@ export async function processStockQueue(input = {}, db) {
   const claimed = await client.query(
     `update inventory_stock_jobs set status='processing', attempts=attempts+1, updated_at=now()
      where id in (
-       select id from inventory_stock_jobs
-       where status='pending' and (next_attempt_at is null or next_attempt_at <= now())
+       select candidate.id from inventory_stock_jobs candidate
+       where candidate.status='pending'
+         and (candidate.next_attempt_at is null or candidate.next_attempt_at <= now())
+         and (
+           candidate.order_id is not null
+           or not exists (
+             select 1
+             from orders order_row
+             join inventory_stock_jobs canonical on canonical.order_id=order_row.id
+             where order_row.company_id=candidate.company_id
+               and order_row.external_order_id=candidate.external_order_id
+               and (select count(*) from orders matched
+                    where matched.company_id=candidate.company_id
+                      and matched.external_order_id=candidate.external_order_id)=1
+           )
+         )
        order by created_at asc
        limit $1
        for update skip locked

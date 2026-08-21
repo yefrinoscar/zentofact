@@ -47,6 +47,7 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 3011,
+    strictPort: true,
     proxy: apiProxy,
   },
   preview: {
