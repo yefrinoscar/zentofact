@@ -239,6 +239,32 @@ test('una venta manual conserva el productId del catálogo para descontar stock'
   assert.equal(movement.product_id, 42);
 });
 
+test('una venta manual sin companyId nace sin seller asociado', async () => {
+  const db = new IngestDb(account({ channel_code: 'manual' }));
+  const { companyId: _omitted, ...sale } = manualSale({
+    fulfillmentStatus: 'ready_to_ship',
+    shipping: { type: 'recojo' },
+    items: [{
+      externalItemId: 'VTA-1-1',
+      sku: 'ZEN-CAMISETA-M',
+      description: 'Camiseta M',
+      quantity: 2,
+      unitPrice: 50,
+      total: 100,
+      metadata: { productId: 42 },
+    }],
+  });
+  const result = await ingestOrder(sale, db);
+  assert.equal(result.order.companyId, null);
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(insert);
+  assert.equal(insert.params[0], null);
+  const movement = [...db.movements.values()][0];
+  assert.ok(movement, 'la venta manual sin seller igual descuenta inventario');
+  assert.equal(movement.movement_type, 'sale');
+  assert.equal(movement.product_id, 42);
+});
+
 test('respeta el apagado de creación automática por cuenta', async () => {
   const db = new IngestDb(account({ auto_create_orders: false }));
   const result = await ingestOrder({

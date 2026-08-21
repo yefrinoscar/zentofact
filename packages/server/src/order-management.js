@@ -440,6 +440,10 @@ function changeSet(previous, current) {
   return { before, after };
 }
 
+function isManualWithoutSeller(input) {
+  return String(input.source || '').trim().toLowerCase() === 'manual' && input.companyId == null;
+}
+
 function normalizeOrderInput(input, account) {
   const requestedDocumentType = input.requestedDocumentType == null
     ? null
@@ -457,7 +461,7 @@ function normalizeOrderInput(input, account) {
     : suppliedDocumentStatus || (decision.required || requestedDocumentType ? 'pending' : 'not_requested');
 
   return {
-    companyId: positiveInt(input.companyId ?? account.companyId, 'companyId'),
+    companyId: isManualWithoutSeller(input) ? null : positiveInt(input.companyId ?? account.companyId, 'companyId'),
     channelAccountId: account.id,
     externalOrderId: requiredText(input.externalOrderId, 'externalOrderId', 300),
     externalOrderNumber: requiredText(
@@ -524,7 +528,7 @@ function normalizeOrderRow(row) {
   if (!row) return null;
   const normalized = {
     id: Number(row.id),
-    companyId: Number(row.company_id),
+    companyId: row.company_id == null ? null : Number(row.company_id),
     channelAccountId: Number(row.channel_account_id),
     channelCode: row.channel_code,
     channelName: row.channel_name,
