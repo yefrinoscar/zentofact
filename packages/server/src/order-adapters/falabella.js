@@ -45,7 +45,10 @@ export function mapFalabellaCanonicalStatus(status) {
   if (includesStatus(status, 'ready_to_ship')) {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' };
   }
-  return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
+  if (includesStatus(status, 'pending')) {
+    return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
+  }
+  return { orderStatus: 'confirmed', fulfillmentStatus: 'unmapped' };
 }
 
 function customerFrom(raw) {

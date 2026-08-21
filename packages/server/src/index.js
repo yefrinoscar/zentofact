@@ -31,6 +31,7 @@ await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const orderManagement = await import('./order-management.js');
+const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
 const inventoryService = await import('./catalog/inventory-service.js');
@@ -280,6 +281,10 @@ app.get('/order-management/accounts', async (c) => {
   try { return ok(c, await orderManagement.listOrderChannelAccounts(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/sync-status', async (c) => {
+  try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
 app.post('/order-management/accounts', requirePermission('companies'), async (c) => {
   try { return ok(c, await orderManagement.configureOrderChannelAccount(await c.req.json()), 201); }
   catch (e) { return fail(c, e, 400); }
@@ -303,18 +308,7 @@ app.get('/order-management/sales-pulse', async (c) => {
 app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const date = String(body?.date || '').trim();
-    const [falabella, ripley] = await Promise.all([
-      ordersInbox.syncAllOrdersInbox({ syncOptions: date ? { mode: 'day', date } : {} }),
-      ripleyOrders.syncAllRipleyOrders(date ? { date } : {}),
-    ]);
-    dashboard.clearDashboardResponseCache();
-    return ok(c, {
-      channels: { falabella, ripley },
-      stores: Number(falabella.stores || 0) + Number(ripley.stores || 0),
-      successful: Number(falabella.successful || 0) + Number(ripley.successful || 0),
-      failed: Number(falabella.failed || 0) + Number(ripley.failed || 0),
-    });
+    return ok(c, await orderSync.syncOrders(body));
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/ripley/:companyId/logistics/labels', requirePermission('order_management'), async (c) => {
@@ -1513,6 +1507,6 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
-  ripleyOrders.startRipleySyncScheduler();
+  orderSync.startOrderSyncScheduler();
   stockJobs.startStockJobWorker();
 });

@@ -23,6 +23,10 @@ test('el catálogo y el inventario cargan la sesión antes de validar permisos',
   assert.equal(isProtectedPath('/catalog/unmapped-skus'), true);
 });
 
+test('Ripley carga la sesión antes de validar el permiso de pedidos', () => {
+  assert.equal(isProtectedPath('/ripley/1/orders'), true);
+});
+
 test('no protege rutas públicas con prefijos parecidos', () => {
   assert.equal(isProtectedPath('/orders-inbox-public'), false);
   assert.equal(isProtectedPath('/health'), false);

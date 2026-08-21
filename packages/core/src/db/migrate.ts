@@ -1499,6 +1499,47 @@ const DDL = `
     SELECT 1 FROM order_documents od
     WHERE od.order_id = o.id AND od.document_kind IN ('boleta', 'factura')
   );
+
+  CREATE TABLE IF NOT EXISTS order_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    cursor_from TEXT,
+    cursor_to TEXT,
+    received_count INTEGER NOT NULL DEFAULT 0,
+    upserted_count INTEGER NOT NULL DEFAULT 0,
+    pages_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    log_id TEXT,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    CHECK (status IN ('running', 'success', 'error', 'partial'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_sync_runs_account_started
+    ON order_sync_runs(channel_account_id, started_at DESC);
+
+  CREATE TABLE IF NOT EXISTS order_sync_state (
+    channel_account_id BIGINT PRIMARY KEY REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    cursor_updated_at TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ,
+    last_started_at TIMESTAMPTZ,
+    last_finished_at TIMESTAMPTZ,
+    last_successful_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_log_id TEXT,
+    last_run_id BIGINT REFERENCES order_sync_runs(id) ON DELETE SET NULL,
+    last_pages_processed INTEGER NOT NULL DEFAULT 0,
+    last_orders_received INTEGER NOT NULL DEFAULT 0,
+    last_orders_upserted INTEGER NOT NULL DEFAULT 0,
+    last_orders_failed INTEGER NOT NULL DEFAULT 0,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (status IN ('pending', 'running', 'success', 'partial', 'error')),
+    CHECK (sync_interval_minutes > 0)
+  );
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

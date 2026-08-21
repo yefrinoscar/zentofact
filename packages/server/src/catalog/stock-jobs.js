@@ -28,6 +28,7 @@ export async function ensureStockJobTables(db) {
   await client.query(`
     create table if not exists inventory_stock_jobs (
       id bigserial primary key,
+      order_id bigint references orders(id) on delete cascade,
       company_id integer not null,
       external_order_id text not null,
       order_number text,
@@ -38,9 +39,30 @@ export async function ensureStockJobTables(db) {
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
-      next_attempt_at timestamptz,
-      unique (company_id, external_order_id)
+      next_attempt_at timestamptz
     );
+    alter table inventory_stock_jobs
+      add column if not exists order_id bigint references orders(id) on delete cascade;
+    alter table inventory_stock_jobs
+      drop constraint if exists inventory_stock_jobs_company_id_external_order_id_key;
+    with unique_matches as (
+      select job.id as job_id, min(order_row.id) as order_id
+      from inventory_stock_jobs job
+      join orders order_row
+        on order_row.company_id=job.company_id
+       and order_row.external_order_id=job.external_order_id
+      where job.order_id is null
+      group by job.id
+      having count(*)=1
+    )
+    update inventory_stock_jobs job
+       set order_id=matched.order_id, updated_at=now()
+      from unique_matches matched
+     where job.id=matched.job_id;
+    create unique index if not exists idx_inventory_stock_jobs_order
+      on inventory_stock_jobs (order_id) where order_id is not null;
+    create unique index if not exists idx_inventory_stock_jobs_legacy_identity
+      on inventory_stock_jobs (company_id, external_order_id) where order_id is null;
     create index if not exists idx_inventory_stock_jobs_pending
       on inventory_stock_jobs (created_at)
       where status = 'pending';
@@ -48,17 +70,41 @@ export async function ensureStockJobTables(db) {
 }
 
 export async function enqueueStockJob(input = {}, db) {
+  const orderId = input.orderId == null ? null : Number(input.orderId);
   const companyId = Number(input.companyId);
   const externalOrderId = text(input.externalOrderId);
-  if (!Number.isInteger(companyId) || companyId <= 0 || !externalOrderId) {
+  if (
+    (orderId != null && (!Number.isInteger(orderId) || orderId <= 0))
+    || (!orderId && (!Number.isInteger(companyId) || companyId <= 0 || !externalOrderId))
+  ) {
     return { enqueued: false, ignored: 'pedido inválido' };
   }
   const client = await target(db);
-  const result = await client.query(
+  const result = orderId ? await client.query(
+    `insert into inventory_stock_jobs (
+       order_id, company_id, external_order_id, order_number, status, source, created_at, updated_at
+     )
+     select o.id, o.company_id, o.external_order_id, o.external_order_number,
+       'pending', $2, now(), now()
+     from orders o where o.id=$1
+     on conflict (order_id) where order_id is not null do update set
+       order_number=excluded.order_number,
+       status=case
+         when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
+         else inventory_stock_jobs.status
+       end,
+       next_attempt_at=case
+         when inventory_stock_jobs.status in ('failed','skipped') then null
+         else inventory_stock_jobs.next_attempt_at
+       end,
+       updated_at=now()
+     returning *`,
+    [orderId, text(input.source, 50) || 'system'],
+  ) : await client.query(
     `insert into inventory_stock_jobs (
        company_id, external_order_id, order_number, status, source, created_at, updated_at
      ) values ($1,$2,$3,'pending',$4,now(),now())
-     on conflict (company_id, external_order_id) do update set
+     on conflict (company_id, external_order_id) where order_id is null do update set
        order_number=coalesce(nullif(excluded.order_number, ''), inventory_stock_jobs.order_number),
        status=case
          when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
@@ -84,6 +130,7 @@ function mapJob(row) {
   if (!row) return null;
   return {
     id: Number(row.id),
+    orderId: row.order_id == null ? null : Number(row.order_id),
     companyId: Number(row.company_id),
     externalOrderId: row.external_order_id,
     orderNumber: row.order_number,
@@ -146,6 +193,7 @@ export async function processStockQueue(input = {}, db) {
     const job = mapJob(row);
     try {
       const result = await apply({
+        orderId: job.orderId,
         companyId: job.companyId,
         externalOrderId: job.externalOrderId,
         source: job.source || 'webhook',
@@ -181,7 +229,7 @@ export async function enqueueStockJobsForOperationalDate(input = {}, db) {
   const date = limaDate(input.date || limaOffset(-1));
   const client = await target(db);
   const orders = await client.query(
-    `select o.company_id, o.external_order_id, o.external_order_number
+    `select o.id as order_id, o.company_id, o.external_order_id, o.external_order_number
      from orders o
      left join falabella_orders fo
        on fo.company_id=o.company_id and fo.order_id=o.external_order_id
@@ -201,6 +249,7 @@ export async function enqueueStockJobsForOperationalDate(input = {}, db) {
   let already = 0;
   for (const row of orders.rows) {
     const result = await enqueueStockJob({
+      orderId: row.order_id,
       companyId: row.company_id,
       externalOrderId: row.external_order_id,
       orderNumber: row.external_order_number,

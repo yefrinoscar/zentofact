@@ -120,17 +120,22 @@ export async function applyStockToOpenOrders(listingIdInput, input = {}, db) {
 }
 
 export async function applyReadyOrderStock(input = {}, db) {
-  const companyId = positiveInt(input.companyId, 'companyId');
-  const externalOrderId = text(input.externalOrderId, 'externalOrderId', 300);
+  const orderId = input.orderId == null ? null : positiveInt(input.orderId, 'orderId');
+  const companyId = orderId ? null : positiveInt(input.companyId, 'companyId');
+  const externalOrderId = orderId ? null : text(input.externalOrderId, 'externalOrderId', 300);
   return inTransaction(db, async (client) => {
     const order = (await client.query(
       `select o.*, a.id as account_id, a.settings, ch.code as channel_code
        from orders o
        join order_channel_accounts a on a.id=o.channel_account_id
        join order_channels ch on ch.id=a.channel_id
-       where o.company_id=$1 and o.external_order_id=$2
+       where ${orderId
+    ? 'o.id=$1'
+    : `o.company_id=$1 and o.external_order_id=$2
+       and (select count(*) from orders candidate
+            where candidate.company_id=$1 and candidate.external_order_id=$2)=1`}
        for update of o`,
-      [companyId, externalOrderId],
+      orderId ? [orderId] : [companyId, externalOrderId],
     )).rows[0];
     if (!order) return { applied: 0, skipped: 0, reversed: 0, missing: true };
     const existing = { ...order };

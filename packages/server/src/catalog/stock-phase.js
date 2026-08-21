@@ -193,6 +193,7 @@ export async function stockPhase(input) {
   const stats = { enabled: Boolean(saleEnabled), applied: 0, skipped: 0, reversed: 0, becameEligible };
 
   await db.query('select id from orders where id=$1 for update', [orderId]);
+  if (persisted.items_status === 'pending' || persisted.items_status === 'error') return stats;
 
   // A. Revertir las líneas ausentes mientras sus FKs todavía existen.
   for (const row of doomedItems) {
