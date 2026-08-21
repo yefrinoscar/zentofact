@@ -1105,13 +1105,15 @@ export default function PedidosMulticanal() {
   };
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders({ date }),
+    mutationFn: () => api.syncManagedOrders(),
     onMutate: () => {
       setSyncNote('');
     },
     onSuccess: async (result) => {
-      const failed = Number(result?.failed || 0);
-      if (result?.status === 'already_running') markSyncNote('En curso');
+      const outcomes = result.results || [];
+      const failed = outcomes.filter((entry) => entry.status === 'error' || entry.status === 'partial').length;
+      const running = outcomes.some((entry) => entry.status === 'already_running');
+      if (running) markSyncNote('En curso');
       else markSyncNote(failed ? 'Incompleto' : 'Actualizado');
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),

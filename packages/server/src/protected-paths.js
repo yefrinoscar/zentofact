@@ -13,6 +13,7 @@ export const PROTECTED_PATHS = [
   '/documentos',
   '/credit-notes',
   '/falabella',
+  '/ripley',
   '/workflow',
   '/auto-emit',
   '/users',

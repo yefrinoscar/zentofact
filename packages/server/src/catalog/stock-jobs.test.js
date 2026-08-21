@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueueStockJob, processStockQueue } from './stock-jobs.js';
+import { enqueueStockJob, ensureStockJobTables, processStockQueue } from './stock-jobs.js';
 
 class JobDb {
   constructor() {
@@ -133,4 +133,17 @@ test('si el pedido aún no está, reintenta; al sexto intento falla', async () =
   const last = await processStockQueue({ apply: async () => ({ missing: true }) }, db);
   assert.equal(last.failed, 1);
   assert.equal([...db.jobs.values()][0].status, 'failed');
+});
+
+test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
+  let migrationSql = '';
+  await ensureStockJobTables({
+    async query(sql) {
+      migrationSql += sql;
+      return { rows: [] };
+    },
+  });
+
+  assert.match(migrationSql, /drop constraint if exists inventory_stock_jobs_company_id_external_order_id_key/i);
+  assert.match(migrationSql, /where order_id is null/i);
 });

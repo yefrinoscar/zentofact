@@ -24,6 +24,7 @@ const apiPrefixes = [
   '/documentos',
   '/credit-notes',
   '/falabella',
+  '/ripley',
   '/workflow',
   '/auto-emit',
   '/webhooks',

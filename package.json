@@ -26,6 +26,7 @@
     "check:net": "node scripts/check-connectivity.mjs",
     "r2:backfill": "node scripts/upload-archives-to-r2.mjs",
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
+    "verify:order-sync": "node scripts/verify-unified-order-sync.mjs",
     "r2:pull": "node scripts/pull-r2-to-minio.mjs",
     "worktree:setup": "bash scripts/setup-worktree.sh"
   },

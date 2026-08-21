@@ -6,8 +6,9 @@ export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'custom
 export const ORDER_STATUSES = ['new', 'confirmed', 'completed', 'cancelled', 'failed'];
 export const PAYMENT_STATUSES = ['unknown', 'pending', 'paid', 'partially_refunded', 'refunded', 'failed'];
 export const FULFILLMENT_STATUSES = [
-  'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
+  'unmapped', 'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
 ];
+export const ORDER_ITEMS_STATUSES = ['pending', 'complete', 'error'];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
 export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides'];
 
@@ -405,6 +406,8 @@ const TRACKED_ORDER_COLUMNS = {
   fulfillment_status: 'fulfillmentStatus',
   document_status: 'documentStatus',
   provider_status: 'providerStatus',
+  items_status: 'itemsStatus',
+  items_error: 'itemsError',
   requested_document_type: 'requestedDocumentType',
   currency: 'currency',
   subtotal: 'subtotal',
@@ -472,6 +475,12 @@ function normalizeOrderInput(input, account) {
     ),
     documentStatus,
     providerStatus: optionalText(input.providerStatus, 300),
+    itemsStatus: input.itemsComplete === true
+      ? 'complete'
+      : input.itemsError
+        ? 'error'
+        : 'pending',
+    itemsError: optionalText(input.itemsError, 2000),
     requestedDocumentType: account.documentRequirement === 'disabled' ? null : requestedDocumentType,
     currency: requiredText(input.currency || 'PEN', 'currency', 10).toUpperCase(),
     subtotal: nullableNumber(input.subtotal, 'subtotal'),
@@ -527,6 +536,8 @@ function normalizeOrderRow(row) {
     fulfillmentStatus: row.fulfillment_status,
     documentStatus: row.document_status,
     providerStatus: row.provider_status,
+    itemsStatus: row.items_status || 'pending',
+    itemsError: row.items_error || null,
     documentRequirement: row.document_requirement,
     documentTypePolicy: row.document_type_policy,
     requestedDocumentType: row.requested_document_type,
@@ -619,9 +630,10 @@ async function ingestOrderInTransaction(input, db) {
          order_status, payment_status, fulfillment_status, document_status, provider_status,
          document_requirement, document_type_policy, requested_document_type,
          currency, subtotal, shipping_amount, discount_amount, total,
-         customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at
+         customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
+         items_status, items_error
        ) values (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
        )
        on conflict (channel_account_id, external_order_id) do update set
          external_order_number=excluded.external_order_number,
@@ -634,6 +646,15 @@ async function ingestOrderInTransaction(input, db) {
            else excluded.document_status
          end,
          provider_status=excluded.provider_status,
+         items_status=case
+           when excluded.items_status='complete' then 'complete'
+           when orders.items_status='complete' then 'complete'
+           else excluded.items_status
+         end,
+         items_error=case
+           when excluded.items_status='complete' or orders.items_status='complete' then null
+           else excluded.items_error
+         end,
          requested_document_type=coalesce(excluded.requested_document_type, orders.requested_document_type),
          currency=excluded.currency,
          subtotal=coalesce(excluded.subtotal, orders.subtotal),
@@ -673,6 +694,8 @@ async function ingestOrderInTransaction(input, db) {
         order.orderedAt,
         order.promisedShippingAt,
         order.providerUpdatedAt,
+        order.itemsStatus,
+        order.itemsError,
       ],
     );
     persisted = result.rows[0];
@@ -847,6 +870,17 @@ export async function listOrders(filters = {}, db) {
   const where = [];
   const companyId = optionalPositiveInt(filters.companyId, 'companyId');
   const channelAccountId = optionalPositiveInt(filters.channelAccountId, 'channelAccountId');
+  const connectedOnly = filters.connectedOnly === true
+    || String(filters.connectedOnly || '').toLowerCase() === 'true';
+  if (connectedOnly) {
+    where.push('c.activo=true');
+    where.push('a.active=true');
+    where.push(`case ch.code
+      when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
+        and nullif(trim(c.falabella_api_key), '') is not null
+      when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      else true end`);
+  }
   if (companyId) {
     values.push(companyId);
     where.push(`o.company_id=$${values.length}`);
@@ -897,6 +931,7 @@ export async function listOrders(filters = {}, db) {
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
+     join companies c on c.id=o.company_id
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by o.ordered_at desc nulls last, o.id desc
      limit $${values.length - 1} offset $${values.length}`,
@@ -1045,7 +1080,7 @@ export async function getSalesPulse(filters = {}, db) {
 export async function getOrder(orderId, db) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(orderId, 'orderId');
-  const [orderResult, itemsResult, eventsResult, documentsResult] = await Promise.all([
+  const [orderResult, itemsResult, eventsResult, documentsResult, snapshotsResult] = await Promise.all([
     target.query(
       `select o.*, ch.code as channel_code, ch.name as channel_name,
          a.display_name as channel_account_name
@@ -1079,6 +1114,11 @@ export async function getOrder(orderId, db) {
        left join facturas f on f.id=od.factura_id
        left join credit_notes cn on cn.id=od.credit_note_id
        where od.order_id=$1 order by od.created_at, od.id`,
+      [id],
+    ),
+    target.query(
+      `select id, payload_hash, raw_payload, provider_updated_at, correlation_id, observed_at
+       from order_snapshots where order_id=$1 order by observed_at desc, id desc`,
       [id],
     ),
   ]);
@@ -1132,6 +1172,14 @@ export async function getOrder(orderId, db) {
       number: row.document_number,
       status: row.document_status,
       createdAt: row.created_at,
+    })),
+    snapshots: snapshotsResult.rows.map((row) => ({
+      id: Number(row.id),
+      payloadHash: row.payload_hash,
+      rawPayload: row.raw_payload || {},
+      providerUpdatedAt: row.provider_updated_at,
+      correlationId: row.correlation_id,
+      observedAt: row.observed_at,
     })),
   };
 }

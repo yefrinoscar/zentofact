@@ -1,14 +1,15 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
+import { operationalErrorBody } from './error-log.js';
 import {
   ensureFalabellaOrderAccount,
   ingestFalabellaOrder,
 } from './order-adapters/falabella.js';
+import { providerFetch } from './provider-request.js';
+import { resolveIncrementalOrderWindow } from './order-sync-policy.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
-const OVERLAP_MS = 10 * 60_000;
-const SAFETY_LAG_MS = 60_000;
 const LOCK_NAMESPACE = 0x46414c41; // "FALA"
 let corePromise;
 
@@ -150,6 +151,8 @@ function limaDayWindow(date) {
 function resolveSyncMode(options = {}) {
   if (options.mode === 'month') return 'month';
   if (options.mode === 'day' || options.date) return 'day';
+  if (options.mode === 'range') return 'range';
+  if (options.mode === 'range_created') return 'range_created';
   return 'incremental';
 }
 
@@ -181,9 +184,10 @@ async function upsertOrders(db, companyId, orders, context = {}) {
   let upserted = 0;
   let canonicalAccount = context.account || null;
   for (const order of orders) {
-    const normalized = normalizeFalabellaOrder(order);
-    if (!normalized) continue;
-    const upsertResult = await db.query(
+    try {
+      const normalized = normalizeFalabellaOrder(order);
+      if (!normalized) continue;
+      const upsertResult = await db.query(
       `insert into falabella_orders (
          company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
          status, invoice_required, grand_total, currency, raw_data,
@@ -214,9 +218,9 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         normalized.falabellaUpdatedAt, normalized.status, normalized.invoiceRequired,
         normalized.grandTotal, normalized.currency, JSON.stringify(normalized.raw)],
     );
-    const lifecycleStatus = canonicalLifecycleStatus(upsertResult.rows[0]?.status || normalized.status);
-    const restockNow = ['canceled', 'returned', 'failed'].includes(lifecycleStatus);
-    await recordOrderLifecycle(db, {
+      const lifecycleStatus = canonicalLifecycleStatus(upsertResult.rows[0]?.status || normalized.status);
+      const restockNow = ['canceled', 'returned', 'failed'].includes(lifecycleStatus);
+      await recordOrderLifecycle(db, {
       companyId,
       orderId: normalized.orderId,
       orderNumber: normalized.orderNumber,
@@ -224,9 +228,9 @@ async function upsertOrders(db, companyId, orders, context = {}) {
       pendingAt: normalized.falabellaCreatedAt,
       providerUpdatedAt: normalized.falabellaUpdatedAt,
     });
-    if (context.canonical !== false) {
-      canonicalAccount ||= await ensureFalabellaOrderAccount(db, companyId);
-      await ingestFalabellaOrder({
+      if (context.canonical !== false) {
+        canonicalAccount ||= await ensureFalabellaOrderAccount(db, companyId);
+        const ingested = await ingestFalabellaOrder({
         companyId,
         normalized,
         account: canonicalAccount,
@@ -235,23 +239,40 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         eventId: context.eventId,
         catalogInventoryEnabled: restockNow ? true : (context.enqueueStock ? false : context.catalogInventoryEnabled),
       }, db);
-      if (context.enqueueStock && ['ready_to_ship', 'shipped', 'delivered'].includes(lifecycleStatus)) {
-        await enqueueStockJob({
+        if (context.enqueueStock && ['ready_to_ship', 'shipped', 'delivered'].includes(lifecycleStatus)) {
+          await enqueueStockJob({
+          orderId: ingested.order.id,
           companyId,
           externalOrderId: normalized.orderId,
           orderNumber: normalized.orderNumber,
           source: context.source || 'sync',
-        }, db).catch((error) => {
-          console.warn(JSON.stringify({
+          }, db).catch((error) => {
+            console.warn(JSON.stringify({
             event: 'catalog.stock.enqueue_failed',
             companyId,
             orderId: normalized.orderId,
             message: String(error?.message || error),
-          }));
-        });
+            }));
+          });
+        }
       }
+      upserted += 1;
+    } catch (error) {
+      if (!context.failures) throw error;
+      const logged = operationalErrorBody(error, {
+        operation: 'order_sync_order',
+        context: {
+          seller: context.seller,
+          companyId,
+          channelAccountId: canonicalAccount?.id,
+          channelCode: 'falabella',
+          runId: context.runId,
+          externalOrderId: order?.OrderId || order?.orderId,
+        },
+      });
+      context.failures.count += 1;
+      context.failures.lastLogId = logged.logId;
     }
-    upserted += 1;
   }
   return upserted;
 }
@@ -276,6 +297,15 @@ export function extractOrderItems(document) {
   if (Array.isArray(candidate)) return candidate;
   if (candidate && typeof candidate === 'object') return [candidate];
   return [];
+}
+
+async function markFalabellaItemsError(db, accountId, externalOrderId, message) {
+  if (!accountId) return;
+  await db.query(
+    `update orders set items_status='error', items_error=$3, updated_at=now()
+     where channel_account_id=$1 and external_order_id=$2 and items_status <> 'complete'`,
+    [accountId, externalOrderId, String(message || 'No se pudieron sincronizar los items.').slice(0, 2000)],
+  );
 }
 
 async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
@@ -306,6 +336,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
   let checked = 0;
   let hydrated = 0;
   let failed = 0;
+  let lastLogId = null;
   await Promise.all(Array.from({ length: Math.min(6, candidates.rows.length) }, async () => {
     while (cursor < candidates.rows.length) {
       const order = candidates.rows[cursor++];
@@ -317,11 +348,50 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
         });
         if (!response.ok || getFalabellaError(response.data)) {
           failed += 1;
+          await markFalabellaItemsError(
+            db,
+            account.id,
+            order.order_id,
+            'Falabella no devolvió los items del pedido.',
+          );
+          const logged = operationalErrorBody(new Error('Falabella no devolvió los items del pedido.'), {
+            operation: 'order_sync_items',
+            context: {
+              seller: options.seller,
+              companyId,
+              channelAccountId: account?.id,
+              channelCode: 'falabella',
+              runId: options.runId,
+              externalOrderId: order.order_id,
+            },
+          });
+          lastLogId = logged.logId;
           continue;
         }
         checked += 1;
         const items = extractOrderItems(response.data);
-        if (!items.length) continue;
+        if (!items.length) {
+          failed += 1;
+          await markFalabellaItemsError(
+            db,
+            account.id,
+            order.order_id,
+            'Falabella devolvió el pedido sin items.',
+          );
+          const logged = operationalErrorBody(new Error('Falabella devolvió el pedido sin items.'), {
+            operation: 'order_sync_items',
+            context: {
+              seller: options.seller,
+              companyId,
+              channelAccountId: account.id,
+              channelCode: 'falabella',
+              runId: options.runId,
+              externalOrderId: order.order_id,
+            },
+          });
+          lastLogId = logged.logId;
+          continue;
+        }
         const normalized = normalizeFalabellaOrder({
           ...(order.raw_data || {}),
           OrderItems: { OrderItem: items },
@@ -338,6 +408,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
         }, db);
         if (applyStock && ['ready_to_ship', 'shipped', 'delivered'].includes(canonicalLifecycleStatus(normalized.status))) {
           await enqueueStockJob({
+            orderId: ingested.order.id,
             companyId,
             externalOrderId: normalized.orderId,
             orderNumber: normalized.orderNumber,
@@ -361,16 +432,23 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
         hydrated += 1;
       } catch (error) {
         failed += 1;
-        console.warn(JSON.stringify({
-          event: 'falabella.sync.item_hydration_failed',
-          companyId,
-          orderId: order.order_id,
-          message: String(error?.message || error),
-        }));
+        await markFalabellaItemsError(db, account.id, order.order_id, error?.message).catch(() => {});
+        const logged = operationalErrorBody(error, {
+          operation: 'order_sync_items',
+          context: {
+            seller: options.seller,
+            companyId,
+            channelAccountId: account?.id,
+            channelCode: 'falabella',
+            runId: options.runId,
+            externalOrderId: order.order_id,
+          },
+        });
+        lastLogId = logged.logId;
       }
     }
   }));
-  return { candidates: candidates.rows.length, checked, hydrated, failed };
+  return { candidates: candidates.rows.length, checked, hydrated, failed, lastLogId };
 }
 
 function itemNeedsStockRestock(item) {
@@ -402,7 +480,7 @@ async function ingestReconciledOrder(db, companyId, order, items, status, accoun
   }, db);
 }
 
-async function reconcileActionableOrderStatuses(db, companyId, client) {
+async function reconcileActionableOrderStatuses(db, companyId, client, options = {}) {
   if (typeof client?.call !== 'function') return { checked: 0, updated: 0, failed: 0 };
   const candidates = await db.query(
     `select order_id, order_number, status, falabella_created_at, falabella_updated_at, raw_data,
@@ -431,6 +509,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
   );
   let updated = 0;
   let failed = 0;
+  let lastLogId = null;
   let account = null;
   for (const order of candidates.rows) {
     try {
@@ -441,6 +520,18 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
       });
       if (!response.ok || getFalabellaError(response.data)) {
         failed += 1;
+        const logged = operationalErrorBody(new Error('Falabella no devolvió el estado de los items del pedido.'), {
+          operation: 'order_sync_reconcile',
+          context: {
+            seller: options.seller,
+            companyId,
+            channelAccountId: account?.id,
+            channelCode: 'falabella',
+            runId: options.runId,
+            externalOrderId: order.order_id,
+          },
+        });
+        lastLogId = logged.logId;
         continue;
       }
       const items = extractOrderItems(response.data);
@@ -487,15 +578,21 @@ async function reconcileActionableOrderStatuses(db, companyId, client) {
       }
     } catch (error) {
       failed += 1;
-      console.warn(JSON.stringify({
-        event: 'falabella.sync.reconcile_failed',
-        companyId,
-        orderId: order.order_id,
-        message: String(error?.message || error),
-      }));
+      const logged = operationalErrorBody(error, {
+        operation: 'order_sync_reconcile',
+        context: {
+          seller: options.seller,
+          companyId,
+          channelAccountId: account?.id,
+          channelCode: 'falabella',
+          runId: options.runId,
+          externalOrderId: order.order_id,
+        },
+      });
+      lastLogId = logged.logId;
     }
   }
-  return { checked: candidates.rows.length, updated, failed };
+  return { checked: candidates.rows.length, updated, failed, lastLogId };
 }
 
 function clientFor(company) {
@@ -504,6 +601,7 @@ function clientFor(company) {
     apiKey: company.falabellaApiKey,
     version: '2.0',
     defaultFormat: 'JSON',
+    fetchImpl: providerFetch(),
   });
 }
 
@@ -513,6 +611,7 @@ function orderItemsClientFor(company) {
     apiKey: company.falabellaApiKey,
     version: '1.0',
     defaultFormat: 'JSON',
+    fetchImpl: providerFetch(),
   });
 }
 
@@ -551,10 +650,19 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     } else if (mode === 'day') {
       ({ from: windowFrom, to: windowTo } = limaDayWindow(options.date));
       filters = { createdAfter: windowFrom.toISOString(), createdBefore: new Date(windowTo.getTime() - 1).toISOString(), sortDirection: 'ASC' };
+    } else if (mode === 'range' || mode === 'range_created') {
+      windowFrom = new Date(options.from);
+      windowTo = new Date(options.to);
+      if (Number.isNaN(windowFrom.getTime()) || Number.isNaN(windowTo.getTime()) || windowFrom >= windowTo) {
+        throw new Error('Rango de sincronización inválido.');
+      }
+      filters = mode === 'range_created'
+        ? { createdAfter: windowFrom.toISOString(), createdBefore: windowTo.toISOString(), sortDirection: 'ASC' }
+        : { updatedAfter: windowFrom.toISOString(), updatedBefore: windowTo.toISOString(), sortDirection: 'ASC' };
     } else {
-      windowTo = new Date(now.getTime() - SAFETY_LAG_MS);
-      const cursor = state.cursor_updated_at ? new Date(state.cursor_updated_at) : new Date(now.getTime() - 31 * 86_400_000);
-      windowFrom = new Date(cursor.getTime() - OVERLAP_MS);
+      const window = resolveIncrementalOrderWindow({ now, cursor: state.cursor_updated_at });
+      windowFrom = new Date(window.from);
+      windowTo = new Date(window.to);
       if (windowFrom >= windowTo) {
         const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
           applyRecentStock: Boolean(state.last_successful_sync_at),
@@ -579,33 +687,54 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     );
 
     let upserted = 0;
+    const orderFailures = { count: 0, lastLogId: null };
     const stats = await fetchFalabellaPages(client, filters, async (orders) => {
       upserted += await upsertOrders(db, companyId, orders, {
         source: 'sync',
         correlationId: `falabella-sync:${runId}`,
         enqueueStock: mode === 'incremental',
+        seller: company.nombreComercial || company.nombre || company.razonSocial,
+        runId,
+        failures: orderFailures,
       });
     });
     const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
       applyRecentStock: mode === 'incremental' && Boolean(state.last_successful_sync_at),
       observedSince,
+      seller: company.nombreComercial || company.nombre || company.razonSocial,
+      runId,
     });
-    const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient);
+    const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
+      seller: company.nombreComercial || company.nombre || company.razonSocial,
+      runId,
+    });
+    const failed = orderFailures.count + itemHydration.failed + reconciliation.failed;
+    const syncStatus = failed > 0 ? 'partial' : 'success';
 
     await db.query(
-      `update falabella_sync_runs set status='success', pages_processed=$2, orders_received=$3,
-       orders_upserted=$4, finished_at=now() where id=$1`,
-      [runId, stats.pages, stats.received, upserted],
+      `update falabella_sync_runs set status=$2, pages_processed=$3, orders_received=$4,
+       orders_upserted=$5, finished_at=now() where id=$1`,
+      [runId, syncStatus, stats.pages, stats.received, upserted],
     );
     await db.query(
-      `update falabella_sync_state set status='success', last_finished_at=now(),
-       last_successful_sync_at=now(), last_error=null, last_pages_processed=$2,
+      `update falabella_sync_state set status=$7, last_finished_at=now(),
+       last_successful_sync_at=case when $7='success' then now() else last_successful_sync_at end,
+       last_error=case when $7='partial' then $8 else null end, last_pages_processed=$2,
        last_orders_received=$3, last_orders_upserted=$4,
-       cursor_updated_at=case when $5='incremental' then $6 else cursor_updated_at end,
+       cursor_updated_at=case when $7='success' and $5='incremental' then $6 else cursor_updated_at end,
        updated_at=now() where company_id=$1`,
-      [companyId, stats.pages, stats.received, upserted, mode, windowTo.toISOString()],
+      [
+        companyId,
+        stats.pages,
+        stats.received,
+        upserted,
+        mode,
+        windowTo.toISOString(),
+        syncStatus,
+        syncStatus === 'partial' ? `${failed} pedido(s) requieren reintento.` : null,
+      ],
     );
-    if (mode === 'month') {
+    if (mode === 'month' && syncStatus === 'success') {
       await db.query(
         `insert into falabella_sync_windows (company_id, month, last_successful_sync_at, orders_received)
          values ($1,$2,now(),$3)
@@ -614,7 +743,18 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         [companyId, options.month, stats.received],
       );
     }
-    return { status: 'success', runId, mode, ...stats, upserted, itemHydration, reconciliation, sync: await getFalabellaSyncStatus(companyId, db) };
+    return {
+      status: syncStatus,
+      runId,
+      mode,
+      ...stats,
+      upserted,
+      failed,
+      lastLogId: reconciliation.lastLogId || itemHydration.lastLogId || orderFailures.lastLogId,
+      itemHydration,
+      reconciliation,
+      sync: await getFalabellaSyncStatus(companyId, db),
+    };
   } catch (error) {
     const message = String(error?.message || error).slice(0, 2000);
     if (runId) await db.query(

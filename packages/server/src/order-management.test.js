@@ -94,6 +94,8 @@ class IngestDb {
         ordered_at: params[20],
         promised_shipping_at: params[21],
         provider_updated_at: params[22],
+        items_status: params[23],
+        items_error: params[24],
         first_seen_at: '2026-07-30T15:00:00Z',
         last_seen_at: '2026-07-30T15:00:00Z',
         created_at: '2026-07-30T15:00:00Z',
@@ -183,6 +185,7 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   assert.equal(result.order.documentRequirement, 'required');
   assert.equal(result.order.documentTypePolicy, 'customer_choice');
   assert.equal(result.order.documentStatus, 'pending');
+  assert.equal(result.order.itemsStatus, 'complete');
   assert.equal(result.order.documentDecision.type, 'factura');
   const itemUpsert = db.queries.find((query) => query.sql.startsWith('insert into order_items'));
   assert.ok(itemUpsert);
@@ -193,6 +196,22 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
   assert.equal(event.params[1], 'order.created');
   assert.equal(event.params[4], 'request-100');
+});
+
+test('persiste una cabecera con items pendientes sin ejecutar efectos de stock', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: 'WEB-PENDING',
+    fulfillmentStatus: 'ready_to_ship',
+    itemsError: 'El proveedor no devolvió las líneas.',
+    source: 'sync',
+    rawPayload: { id: 'WEB-PENDING' },
+  }, db);
+  assert.equal(result.order.itemsStatus, 'error');
+  assert.equal(result.order.itemsError, 'El proveedor no devolvió las líneas.');
+  assert.equal(db.queries.some((query) => query.sql.startsWith('insert into inventory_movements')), false);
 });
 
 test('una venta manual conserva el productId del catálogo para descontar stock', async () => {
@@ -356,6 +375,19 @@ test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () 
   const result = await listOrders({ from: '2026-08-12', to: '2026-08-12', limit: 10 }, db);
   assert.equal(result.totalCount, 0);
   assert.deepEqual(result.orders, []);
+});
+
+test('la vista por defecto limita marketplaces a sellers activos y conectados', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /join companies c on c\.id=o\.company_id/i);
+      assert.match(sql, /c\.activo=true/i);
+      assert.match(sql, /c\.ripley_api_key/i);
+      assert.match(sql, /c\.falabella_api_key/i);
+      return { rows: [] };
+    },
+  };
+  await listOrders({ connectedOnly: true }, db);
 });
 
 test('registra el pago de un pedido pendiente y deja el método en metadata', async () => {

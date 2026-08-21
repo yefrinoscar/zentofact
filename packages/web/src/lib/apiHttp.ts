@@ -7,6 +7,48 @@ const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
 
+export type OrderSyncAccountStatus = {
+  channelAccountId: number;
+  companyId: number;
+  channelCode: string;
+  displayName: string;
+  enabled: boolean;
+  status: string;
+  dataUpdatedThrough?: string | null;
+  lastAttemptAt?: string | null;
+  lastStartedAt?: string | null;
+  lastFinishedAt?: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  lastError?: string | null;
+  pagesProcessed?: number;
+  ordersReceived?: number;
+  ordersUpserted?: number;
+  syncIntervalMinutes?: number;
+  lastRunId?: number | null;
+  lastLogId?: string | null;
+};
+
+export type OrderSyncStatusResponse = {
+  accounts?: OrderSyncAccountStatus[];
+};
+
+export type OrderSyncResult = {
+  channelAccountId: number;
+  companyId: number;
+  channelCode: string;
+  status: string;
+  runId?: number | null;
+  logId?: string | null;
+  pages?: number;
+  received?: number;
+  upserted?: number;
+  failed?: number;
+};
+
+export type OrderSyncResponse = {
+  results?: OrderSyncResult[];
+};
+
 function rememberCsrfToken(data: any) {
   if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
 }
@@ -39,7 +81,7 @@ async function ensureCsrfToken() {
   return csrfToken;
 }
 
-async function req(path: string, init?: RequestInit, attempt = 0) {
+async function req<T = any>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
   const method = String(init?.method || 'GET').toUpperCase();
   const csrfHeaders = UNSAFE_METHODS.has(method)
     ? { 'x-csrf-token': await ensureCsrfToken() }
@@ -73,7 +115,7 @@ async function req(path: string, init?: RequestInit, attempt = 0) {
     && String(data?.error || '').toLowerCase().includes('csrf')
   ) {
     clearCsrfToken();
-    return req(path, init, 1);
+    return req<T>(path, init, 1);
   }
   if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
@@ -115,6 +157,18 @@ const apiHttp = {
   listOrderChannels: () => req('/order-management/channels'),
   listOrderChannelAccounts: (filter: { companyId?: number; channelCode?: string; active?: boolean } = {}) =>
     req(`/order-management/accounts${qs(filter)}`),
+  getManagedOrderSyncStatus: (filter: { companyId?: number; channelAccountId?: number } = {}) =>
+    req<OrderSyncStatusResponse>(`/order-management/sync-status${qs(filter)}`),
+  syncManagedOrders: (data: {
+    companyId?: number;
+    channelAccountId?: number;
+    mode?: 'incremental' | 'backfill';
+    from?: string;
+    to?: string;
+  } = {}) => req<OrderSyncResponse>('/order-management/sync', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   configureOrderChannelAccount: (data: {
     companyId: number;
     channelCode: 'falabella' | 'ripley';
@@ -133,6 +187,7 @@ const apiHttp = {
     orderStatus?: string;
     fulfillmentStatus?: string;
     documentStatus?: string;
+    connectedOnly?: boolean;
     from?: string;
     to?: string;
     search?: string;
@@ -141,8 +196,6 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
-  syncManagedOrders: (data: { date?: string } = {}) =>
-    req('/order-management/sync', { method: 'POST', body: JSON.stringify(data) }),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
   listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
@@ -238,6 +291,7 @@ const apiHttp = {
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
   ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
+  ripleyApiGetOrders: (companyId: number, filters: { max?: number; offset?: number; orderStateCodes?: string; startUpdateDate?: string; endUpdateDate?: string } = {}) => req(`/ripley/${companyId}/orders${qs(filters)}`),
   listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
 
   listInsumos: (filter: {

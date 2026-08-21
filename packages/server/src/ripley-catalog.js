@@ -1,6 +1,5 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
-
-const RIPLEY_PERU_API_URL = 'https://ripleyperu-prod.mirakl.net';
+import { ripleyApiUrl } from './ripley-api-url.js';
 
 function positiveCompanyId(value) {
   const companyId = Number(value);
@@ -14,7 +13,7 @@ function configuredClient(company) {
     throw new Error('La empresa no tiene configurada la API key de Ripley.');
   }
   return new RipleyApiClient({
-    baseUrl: RIPLEY_PERU_API_URL,
+    baseUrl: ripleyApiUrl(),
     apiKey: company.ripleyApiKey,
     shopId: company.ripleyShopId || undefined,
   });
