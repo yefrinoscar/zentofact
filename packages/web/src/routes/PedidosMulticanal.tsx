@@ -111,7 +111,7 @@ type OrderEvent = {
 
 type ManagedOrder = {
   id: number;
-  companyId: number;
+  companyId: number | null;
   channelAccountId: number;
   channelCode: string;
   channelName: string;
@@ -318,6 +318,11 @@ function companyName(company: Company) {
       .trim());
   const name = candidates.sort((left, right) => left.length - right.length)[0];
   return name ? titleCaseSeller(name) : `Empresa ${company.id}`;
+}
+
+function sellerCellLabel(order: { companyId: number | null }, companyById: Map<number, string>) {
+  if (order.companyId == null) return '';
+  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
 }
 
 function formatMoney(value: number | null | undefined, currency = 'PEN') {
@@ -927,6 +932,20 @@ export default function PedidosMulticanal() {
   }, [location.pathname, location.state, navigate, queryClient]);
 
   const loadRipleyLogistics = async (order: ManagedOrder, sandbox: boolean) => {
+    if (order.companyId == null) {
+      const overview: RipleyLogisticsOverview = {
+        labels: null,
+        manifests: null,
+        eligibleLabels: null,
+        labelId: '',
+        manifestId: '',
+        packages: null,
+        sandbox,
+        error: 'Este pedido no tiene seller asociado.',
+      };
+      setRipleyLogistics(overview);
+      return overview;
+    }
     try {
       const [labelsResult, eligibleResult, manifestsResult] = await Promise.all([
         api.listRipleyLogisticsLabels(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
@@ -1012,9 +1031,10 @@ export default function PedidosMulticanal() {
   };
 
   const updateRipleyPackages = () => {
-    if (!detail) return;
+    if (!detail || detail.companyId == null) return;
+    const { companyId } = detail;
     void runRipleyAction('packages', async () => {
-      await api.editRipleyPackages(detail.companyId, {
+      await api.editRipleyPackages(companyId, {
         orderId: detail.externalOrderId,
         svcOrderId: detail.metadata?.ripleySvc?.orderId || '',
         packages: Number(ripleyPackages),
@@ -1026,9 +1046,10 @@ export default function PedidosMulticanal() {
   };
 
   const downloadRipleyLabels = () => {
-    if (!detail || !ripleyLogistics?.labelId) return;
+    if (!detail || detail.companyId == null || !ripleyLogistics?.labelId) return;
+    const { companyId } = detail;
     void runRipleyAction('labels', async () => {
-      const result = await api.downloadRipleyLabels(detail.companyId, {
+      const result = await api.downloadRipleyLabels(companyId, {
         orderId: detail.externalOrderId,
         documentIds: [ripleyLogistics.labelId],
         sandbox: ripleyLogistics.sandbox,
@@ -1041,9 +1062,10 @@ export default function PedidosMulticanal() {
   };
 
   const createRipleyManifest = () => {
-    if (!detail || !ripleyLogistics?.labelId) return;
+    if (!detail || detail.companyId == null || !ripleyLogistics?.labelId) return;
+    const { companyId } = detail;
     void runRipleyAction('manifest', async () => {
-      await api.scheduleRipleyManifest(detail.companyId, {
+      await api.scheduleRipleyManifest(companyId, {
         orderId: detail.externalOrderId,
         labelIds: [ripleyLogistics.labelId],
         pickupDate: ripleyPickupDate,
@@ -1056,18 +1078,20 @@ export default function PedidosMulticanal() {
   };
 
   const downloadRipleyManifest = () => {
-    if (!detail || !ripleyLogistics?.manifestId) return;
+    if (!detail || detail.companyId == null || !ripleyLogistics?.manifestId) return;
+    const { companyId } = detail;
     void runRipleyAction('manifest-pdf', async () => {
-      const result = await api.downloadRipleyManifest(detail.companyId, ripleyLogistics.manifestId, { sandbox: ripleyLogistics.sandbox });
+      const result = await api.downloadRipleyManifest(companyId, ripleyLogistics.manifestId, { sandbox: ripleyLogistics.sandbox });
       downloadPdf(svcPdf(result, ['pdf', 'manifest', 'document']), `manifiesto-ripley-${detail.externalOrderNumber}.pdf`);
       return 'PDF del manifiesto descargado.';
     });
   };
 
   const detachRipleyLabel = () => {
-    if (!detail || !ripleyLogistics?.manifestId || !ripleyLogistics.labelId) return;
+    if (!detail || detail.companyId == null || !ripleyLogistics?.manifestId || !ripleyLogistics.labelId) return;
+    const { companyId } = detail;
     void runRipleyAction('detach', async () => {
-      await api.detachRipleyManifestLabels(detail.companyId, ripleyLogistics.manifestId, {
+      await api.detachRipleyManifestLabels(companyId, ripleyLogistics.manifestId, {
         labelIds: [ripleyLogistics.labelId],
         sandbox: ripleyLogistics.sandbox,
       });
@@ -1168,7 +1192,7 @@ export default function PedidosMulticanal() {
       cell: ({ row }) => (
         <div className="flex min-w-0 items-center gap-1.5">
           <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
-          <span className="truncate">{companyById.get(row.original.companyId) || `Empresa ${row.original.companyId}`}</span>
+          <span className="truncate">{sellerCellLabel(row.original, companyById)}</span>
         </div>
       ),
     },
@@ -1503,7 +1527,7 @@ export default function PedidosMulticanal() {
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">
-                      {detail.channelName} · {companyById.get(detail.companyId) || `Empresa ${detail.companyId}`}
+                      {detail.channelName}{detail.companyId == null ? '' : ` · ${sellerCellLabel(detail, companyById)}`}
                     </SheetDescription>
                   </div>
                 </div>

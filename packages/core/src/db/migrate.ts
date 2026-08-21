@@ -1057,6 +1057,9 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
     ON orders(promised_shipping_at)
     WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
+  -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
+  -- para asociarlo más adelante.
+  ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
 
   CREATE TABLE IF NOT EXISTS order_items (
     id BIGSERIAL PRIMARY KEY,

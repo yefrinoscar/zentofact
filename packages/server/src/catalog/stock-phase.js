@@ -176,7 +176,7 @@ export async function stockPhase(input) {
   const actorUserId = input.actorUserId || null;
   const orderId = Number(persisted.id);
   const channelCode = account.channelCode || account.channel_code;
-  const companyId = Number(persisted.company_id);
+  const companyId = persisted.company_id == null ? null : Number(persisted.company_id);
   const isMarketplace = MARKETPLACE_SOURCES.has(source);
   const currentFulfillment = persisted.fulfillment_status;
   const previousFulfillment = existing?.fulfillment_status;
@@ -275,6 +275,11 @@ export async function stockPhase(input) {
     }
 
     if (!item.product_id) {
+      if (companyId == null) {
+        await writeResolution(db, item, { stockState: 'skipped_unmapped' });
+        stats.skipped += 1;
+        continue;
+      }
       const resolved = await resolveListing(db, {
         channelCode,
         companyId,

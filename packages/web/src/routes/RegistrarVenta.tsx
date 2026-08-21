@@ -29,13 +29,6 @@ import {
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 
-type Company = {
-  id: number;
-  nombre?: string | null;
-  nombreComercial?: string | null;
-  razonSocial?: string | null;
-};
-
 type ChannelAccount = {
   id: number;
   companyId: number;
@@ -182,7 +175,6 @@ function ProductPhoto({ url, shopSku, sku, name }: { url?: string | null; shopSk
 export default function RegistrarVenta() {
   const navigate = useNavigate();
 
-  const [companies, setCompanies] = useState<Company[]>([]);
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
   const [saleSource, setSaleSource] = useState<(typeof SALE_SOURCES)[number]['value']>('marketplace');
@@ -203,11 +195,7 @@ export default function RegistrarVenta() {
   const [createError, setCreateError] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      api.listCompanies(),
-      api.listOrderChannelAccounts({ active: true }),
-    ]).then(([companyRows, accountRows]) => {
-      setCompanies(Array.isArray(companyRows) ? companyRows : []);
+    api.listOrderChannelAccounts({ active: true }).then((accountRows) => {
       setAccounts(Array.isArray(accountRows) ? accountRows : []);
     }).catch((error: any) => {
       setLoadError(error?.message || 'No se pudo cargar el canal de venta manual.');
@@ -235,10 +223,6 @@ export default function RegistrarVenta() {
   const manualAccount = useMemo(
     () => accounts.find((account) => account.channelCode === 'manual' && account.active) || null,
     [accounts],
-  );
-  const defaultCompany = useMemo(
-    () => companies.find((company) => company.id === manualAccount?.companyId) || companies[0] || null,
-    [companies, manualAccount],
   );
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
   const total = lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
@@ -293,7 +277,7 @@ export default function RegistrarVenta() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setCreateError('');
-    if (!manualAccount || !defaultCompany) {
+    if (!manualAccount) {
       setCreateError('Todavía no hay un canal de venta manual habilitado.');
       return;
     }
@@ -323,7 +307,6 @@ export default function RegistrarVenta() {
       const paidNow = paymentMethod !== 'despues';
       const orderNumber = `VTA-${new Date().toISOString().replace(/\D/g, '').slice(2, 14)}`;
       await api.createManagedOrder({
-        companyId: defaultCompany.id,
         channelAccountId: manualAccount.id,
         externalOrderId: orderNumber,
         externalOrderNumber: orderNumber,
