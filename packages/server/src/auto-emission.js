@@ -511,7 +511,31 @@ export async function setCompanyEnabled(companyId, enabled) {
 
 async function isCompanyEnabled(companyId) {
   const r = await pool.query('select enabled from auto_emission_config where company_id=$1', [companyId]);
-  return r.rows[0]?.enabled === true;
+  if (r.rows[0]?.enabled !== true) return false;
+  return (await falabellaDocumentPolicy(companyId)).enabled;
+}
+
+async function falabellaDocumentPolicy(companyId) {
+  const r = await pool.query(
+    `select account.document_requirement, account.document_type_policy
+     from order_channel_accounts account
+     join order_channels channel on channel.id=account.channel_id
+     where account.company_id=$1
+       and account.external_account_id='default'
+       and account.active=true
+       and channel.code='falabella'
+     limit 1`,
+    [companyId],
+  );
+  const row = r.rows[0];
+  if (!row) return { enabled: true, typePolicy: 'automatic' };
+  const typePolicy = ['automatic', 'boleta', 'factura'].includes(row.document_type_policy)
+    ? row.document_type_policy
+    : 'automatic';
+  return {
+    enabled: row.document_requirement !== 'disabled',
+    typePolicy,
+  };
 }
 
 // Últimos jobs y eventos (para el panel).
@@ -744,8 +768,8 @@ export async function handleWebhook(companyId, payload) {
     if (isReadyStatus(currentStatus)) {
       await enqueueReadyStockJob(companyId, resolvedOrderId, resolvedNumber, 'webhook');
     }
-    if (kind === JOB_KIND_INVOICE && !boletaEnabled) {
-      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; boleta omitida`);
+    if (!boletaEnabled) {
+      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; comprobante omitido`);
       return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
     }
     if (resolvedNumber) {
@@ -772,8 +796,8 @@ export async function handleWebhook(companyId, payload) {
   if (isReadyStatus(payloadStatus)) {
     await enqueueReadyStockJob(companyId, orderId, orderNumber, 'webhook');
   }
-  if (payloadKind === JOB_KIND_INVOICE && !boletaEnabled) {
-    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; boleta omitida`);
+  if (!boletaEnabled) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; comprobante omitido`);
     return { ok: true, orderNumber, orderId, kind: payloadKind };
   }
   if (orderNumber) {
@@ -833,7 +857,9 @@ async function processJob(job, setStep = async () => {}) {
   }
 
   // 2) Condiciones (mismas que el Gestor de Sellers).
-  const requiresInvoice = invoiceRequired(order);
+  const documentPolicy = await falabellaDocumentPolicy(job.company_id);
+  const requiresInvoice = documentPolicy.typePolicy === 'factura'
+    || (documentPolicy.typePolicy !== 'boleta' && invoiceRequired(order));
   const status = normStatus(statusOfOrder(order));
   const ready = isReadyStatus(status);
   if (!ready) {
@@ -1073,15 +1099,22 @@ async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
 }
 
 // ── Reconciliación (red de seguridad): barre órdenes listas sin boleta y las encola ──
-// Solo empresas ACTIVAS en la config (auto_emission_config.enabled = true).
+// Solo empresas activas cuya configuración permite emitir comprobantes Falabella.
 export async function reconcile() {
   const cron = await getCron();
   if (!cron.enabled) return;
   const enabledRows = (await pool.query('select company_id from auto_emission_config where enabled=true')).rows;
   const enabledIds = new Set(enabledRows.map((r) => r.company_id));
-  const companies = (await listCompanies()).filter(
+  const configuredCompanies = (await listCompanies()).filter(
     (c) => enabledIds.has(c.id) && c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim(),
   );
+  const policyChecks = await Promise.all(configuredCompanies.map(async (company) => ({
+    company,
+    policy: await falabellaDocumentPolicy(company.id),
+  })));
+  const companies = policyChecks
+    .filter(({ policy }) => policy.enabled)
+    .map(({ company }) => company);
   if (!companies.length) return;
   const { normalizeGetOrdersResult } = await import('@zentofact/falabella-api');
   const rawAfter = new Date(Math.max(Date.now() - cron.windowDays * 24 * 3600 * 1000, MIN_ORDER_DATE.getTime()));

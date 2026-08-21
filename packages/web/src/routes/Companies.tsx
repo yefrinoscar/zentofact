@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
   TablePanelHeader, TableRow,
@@ -46,6 +47,11 @@ type CompanyForm = {
   sellerPassword: string;
   falabellaApiUserId: string;
   falabellaApiKey: string;
+  ripleyApiKey: string;
+  ripleyShopId: string;
+  ripleySvcUsername: string;
+  ripleySvcPassword: string;
+  ripleySvcBaseUrl: string;
 };
 
 type CompanyRow = {
@@ -59,13 +65,30 @@ type CompanyRow = {
   usuarioSol?: string | null;
   sellerUsername?: string | null;
   falabellaApiUserId?: string | null;
+  ripleyShopId?: string | null;
+  ripleySvcUsername?: string | null;
+  ripleySvcBaseUrl?: string | null;
 
   activo?: boolean | null;
   hasSolCredentials?: boolean;
   hasCertificate?: boolean;
   hasSellerPassword?: boolean;
   hasFalabellaCredentials?: boolean;
+  hasRipleyCredentials?: boolean;
+  hasRipleySvcCredentials?: boolean;
 };
+
+type ChannelAutoEmission = { falabella: boolean; ripley: boolean };
+type ChannelAutoCreateOrders = { falabella: boolean; ripley: boolean };
+type ChannelAccount = {
+  channelCode?: string;
+  autoCreateOrders?: boolean;
+  documentRequirement?: string;
+  settings?: { autoEmitDocuments?: boolean };
+};
+
+const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false };
+const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true };
 
 const initialForm: CompanyForm = {
   nombre: '',
@@ -80,6 +103,11 @@ const initialForm: CompanyForm = {
   sellerPassword: '',
   falabellaApiUserId: '',
   falabellaApiKey: '',
+  ripleyApiKey: '',
+  ripleyShopId: '',
+  ripleySvcUsername: '',
+  ripleySvcPassword: '',
+  ripleySvcBaseUrl: '',
 };
 
 function hasFalabellaApi(c: CompanyRow) {
@@ -128,6 +156,50 @@ function SetupBadge({
   );
 }
 
+function isChannelAccount(value: unknown): value is ChannelAccount {
+  if (!value || typeof value !== 'object') return false;
+  const channelCode = Reflect.get(value, 'channelCode');
+  const autoCreateOrders = Reflect.get(value, 'autoCreateOrders');
+  const documentRequirement = Reflect.get(value, 'documentRequirement');
+  const settings = Reflect.get(value, 'settings');
+  const autoEmitDocuments = settings && typeof settings === 'object'
+    ? Reflect.get(settings, 'autoEmitDocuments')
+    : undefined;
+  return (channelCode === undefined || typeof channelCode === 'string')
+    && (autoCreateOrders === undefined || typeof autoCreateOrders === 'boolean')
+    && (documentRequirement === undefined || typeof documentRequirement === 'string')
+    && (autoEmitDocuments === undefined || typeof autoEmitDocuments === 'boolean');
+}
+
+function billingInput(
+  companyId: number,
+  channelCode: 'falabella' | 'ripley',
+  autoCreateOrders: boolean,
+  autoEmitDocuments: boolean,
+): {
+  companyId: number;
+  channelCode: 'falabella' | 'ripley';
+  externalAccountId: 'default';
+  displayName: string;
+  autoCreateOrders: boolean;
+  documentRequirement: 'disabled' | 'required';
+  documentTypePolicy: 'automatic';
+  settings: { autoEmitDocuments: boolean };
+  active: boolean;
+} {
+  return {
+    companyId,
+    channelCode,
+    externalAccountId: 'default',
+    displayName: channelCode === 'falabella' ? 'Falabella' : 'Ripley',
+    autoCreateOrders,
+    documentRequirement: autoEmitDocuments ? 'required' : 'disabled',
+    documentTypePolicy: 'automatic',
+    settings: { autoEmitDocuments },
+    active: true,
+  };
+}
+
 export default function Companies() {
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
@@ -147,7 +219,13 @@ export default function Companies() {
   const [showClaveSol, setShowClaveSol] = useState(false);
   const [showSellerPassword, setShowSellerPassword] = useState(false);
   const [showFalabellaApiKey, setShowFalabellaApiKey] = useState(false);
+  const [showRipleyApiKey, setShowRipleyApiKey] = useState(false);
+  const [showRipleySvcPassword, setShowRipleySvcPassword] = useState(false);
   const [showCertPassword, setShowCertPassword] = useState(false);
+  const [channelAutoEmission, setChannelAutoEmission] = useState<ChannelAutoEmission>(initialAutoEmission);
+  const [channelAutoCreateOrders, setChannelAutoCreateOrders] = useState<ChannelAutoCreateOrders>(initialAutoCreateOrders);
+  const [loadingBilling, setLoadingBilling] = useState(false);
+  const [initialFalabellaAutoEmission, setInitialFalabellaAutoEmission] = useState(false);
   const [search, setSearch] = useState('');
   const [setupFilter, setSetupFilter] = useState('all');
 
@@ -179,7 +257,13 @@ export default function Companies() {
     setShowClaveSol(false);
     setShowSellerPassword(false);
     setShowFalabellaApiKey(false);
+    setShowRipleyApiKey(false);
+    setShowRipleySvcPassword(false);
     setShowCertPassword(false);
+    setChannelAutoEmission(initialAutoEmission);
+    setChannelAutoCreateOrders(initialAutoCreateOrders);
+    setLoadingBilling(false);
+    setInitialFalabellaAutoEmission(false);
     if (certInputRef.current) certInputRef.current.value = '';
   };
 
@@ -228,6 +312,36 @@ export default function Companies() {
     return null;
   };
 
+  const saveBilling = async (companyId: number, hasFalabellaCredentials: boolean) => {
+    const enablingFalabellaEmission = channelAutoEmission.falabella;
+    if (enablingFalabellaEmission && !hasFalabellaCredentials) {
+      throw new Error('Configura las credenciales API de Falabella antes de activar la emisión automática.');
+    }
+    await Promise.all([
+      api.configureOrderChannelAccount(billingInput(
+        companyId,
+        'falabella',
+        channelAutoCreateOrders.falabella,
+        channelAutoEmission.falabella,
+      )),
+      api.configureOrderChannelAccount(billingInput(
+        companyId,
+        'ripley',
+        channelAutoCreateOrders.ripley,
+        channelAutoEmission.ripley,
+      )),
+      api.autoEmitSetCompany(companyId, enablingFalabellaEmission),
+    ]);
+  };
+
+  const confirmFalabellaEmission = () => {
+    const enabling = channelAutoEmission.falabella;
+    if (!enabling || initialFalabellaAutoEmission) return true;
+    return window.confirm(
+      'La emisión automática creará comprobantes reales para los pedidos Falabella listos para enviar. ¿Activarla?',
+    );
+  };
+
   const handleCreate = async () => {
     const nextForm = readFormSnapshot();
     setForm(nextForm);
@@ -238,21 +352,24 @@ export default function Companies() {
       return;
     }
 
+    if (!certBase64) {
+      setError('Debes seleccionar un certificado digital (.pfx o .p12).');
+      return;
+    }
+    if (!confirmFalabellaEmission()) return;
+
     setSaving(true);
     setError('');
 
-    if (!certBase64) {
-      setError('Debes seleccionar un certificado digital (.pfx o .p12).');
-      setSaving(false);
-      return;
-    }
-
     try {
-      await api.createCompany({
+      const created = await api.createCompany({
         ...nextForm,
         certificado: certBase64,
         ...(certPass ? { certificadoPassword: certPass } : {}),
       });
+      await saveBilling(Number(created.id), Boolean(
+        nextForm.falabellaApiUserId.trim() && nextForm.falabellaApiKey.trim(),
+      ));
       closeEditor();
       load();
     } catch (e: any) {
@@ -278,6 +395,7 @@ export default function Companies() {
       setError(validationError);
       return;
     }
+    if (!confirmFalabellaEmission()) return;
 
     setSaving(true);
     setError('');
@@ -294,14 +412,22 @@ export default function Companies() {
         usuarioSol: nextForm.usuarioSol,
         sellerUsername: nextForm.sellerUsername,
         falabellaApiUserId: nextForm.falabellaApiUserId,
+        ripleyShopId: nextForm.ripleyShopId,
+        ripleySvcUsername: nextForm.ripleySvcUsername,
+        ripleySvcBaseUrl: nextForm.ripleySvcBaseUrl,
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
       if (nextForm.falabellaApiKey.trim()) updateData.falabellaApiKey = nextForm.falabellaApiKey;
+      if (nextForm.ripleyApiKey.trim()) updateData.ripleyApiKey = nextForm.ripleyApiKey;
+      if (nextForm.ripleySvcPassword.trim()) updateData.ripleySvcPassword = nextForm.ripleySvcPassword;
       if (certBase64) updateData.certificado = certBase64;
       if (certPass.trim()) updateData.certificadoPassword = certPass;
 
       await api.updateCompany(editing.id, updateData);
+      await saveBilling(editing.id, Boolean(
+        nextForm.falabellaApiUserId.trim() && (nextForm.falabellaApiKey.trim() || editing.hasFalabellaCredentials),
+      ));
       closeEditor();
       load();
     } catch (e: any) {
@@ -457,7 +583,35 @@ export default function Companies() {
       sellerPassword: '',
       falabellaApiUserId: company.falabellaApiUserId || '',
       falabellaApiKey: '',
+      ripleyApiKey: '',
+      ripleyShopId: company.ripleyShopId || '',
+      ripleySvcUsername: company.ripleySvcUsername || '',
+      ripleySvcPassword: '',
+      ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
+    setLoadingBilling(true);
+    void Promise.all([
+      api.listOrderChannelAccounts({ companyId: company.id }),
+      api.autoEmitGetConfig(),
+    ]).then(([accounts, autoEmission]) => {
+      const channelAccounts = Array.isArray(accounts) ? accounts.filter(isChannelAccount) : [];
+      const falabella = channelAccounts.find((account) => account.channelCode === 'falabella');
+      const ripley = channelAccounts.find((account) => account.channelCode === 'ripley');
+      const configuredCompanies = Array.isArray(autoEmission?.companies) ? autoEmission.companies : [];
+      const automatic = configuredCompanies.find((configured: { id?: number; enabled?: boolean }) => configured.id === company.id)?.enabled === true;
+      setChannelAutoCreateOrders({
+        falabella: falabella?.autoCreateOrders !== false,
+        ripley: ripley?.autoCreateOrders !== false,
+      });
+      setChannelAutoEmission({
+        falabella: automatic,
+        ripley: ripley?.settings?.autoEmitDocuments === true,
+      });
+      setInitialFalabellaAutoEmission(automatic);
+    }).catch((caught: unknown) => {
+      const message = caught instanceof Error ? caught.message : 'No se pudo cargar la configuración de canales.';
+      setError(message);
+    }).finally(() => setLoadingBilling(false));
   };
 
   const field = (
@@ -473,7 +627,7 @@ export default function Companies() {
         <input
           name={key}
           type={options?.revealable ? (options.revealed ? 'text' : 'password') : type}
-          value={form[key] as string}
+          value={form[key]}
           onChange={(e) => setForm({ ...form, [key]: e.target.value })}
           placeholder={placeholder}
           className={`w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none transition focus:border-ring ${
@@ -492,6 +646,11 @@ export default function Companies() {
         )}
       </div>
     </div>
+  );
+
+  const falabellaCredentialsReady = Boolean(
+    form.falabellaApiUserId.trim()
+    && (form.falabellaApiKey.trim() || editing?.hasFalabellaCredentials),
   );
 
   return (
@@ -606,6 +765,82 @@ export default function Companies() {
                 </div>
               </div>
 
+              <div className="mt-4 pt-4 border-t border-border">
+                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Ripley (Mirakl)</p>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {field('Shop ID (opcional)', 'ripleyShopId', 'text', 'Se usa cuando la key accede a varias tiendas')}
+                  <div className="md:col-span-2">{field(
+                    'API Key',
+                    'ripleyApiKey',
+                    'password',
+                    editing?.hasRipleyCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    {
+                      revealable: true,
+                      revealed: showRipleyApiKey,
+                      onToggleReveal: () => setShowRipleyApiKey((value) => !value),
+                    },
+                  )}</div>
+                </div>
+                <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
+                  {field(
+                    'Contraseña SVC',
+                    'ripleySvcPassword',
+                    'password',
+                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    {
+                      revealable: true,
+                      revealed: showRipleySvcPassword,
+                      onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
+                    },
+                  )}
+                  <div className="md:col-span-2">
+                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
+              </div>
+
+              <div className="mt-4 border-t border-border pt-4">
+                <p className="text-sm font-medium text-muted-foreground">Comprobantes por canal</p>
+                <div className="mt-1 divide-y divide-border">
+                  <div className="flex items-center justify-between gap-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium">Falabella</p>
+                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                    </div>
+                    <Switch
+                      checked={channelAutoEmission.falabella}
+                      disabled={loadingBilling || !falabellaCredentialsReady}
+                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, falabella: checked }))}
+                      aria-label="Emitir boletas y facturas automáticamente para Falabella"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium">Ripley</p>
+                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                    </div>
+                    <Switch
+                      checked={channelAutoEmission.ripley}
+                      disabled={loadingBilling}
+                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
+                      aria-label="Emitir boletas y facturas automáticamente para Ripley"
+                    />
+                  </div>
+                </div>
+                {!falabellaCredentialsReady && (
+                  <p className="mt-1 text-xs text-muted-foreground">Configura la API de Falabella para activar la emisión automática.</p>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">Ripley se activará al sincronizar pedidos.</p>
+                {loadingBilling && (
+                  <p className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" /> Cargando configuración
+                  </p>
+                )}
+              </div>
+
               <div className="mt-4 space-y-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-foreground">
@@ -679,7 +914,7 @@ export default function Companies() {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || loadingBilling}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
                 >
                   {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear empresa'}

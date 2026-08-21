@@ -70,6 +70,7 @@ type Company = {
   nombre?: string | null;
   nombreComercial?: string | null;
   razonSocial?: string | null;
+  hasRipleySvcCredentials?: boolean;
 };
 
 type Channel = {
@@ -150,6 +151,14 @@ type ManagedOrder = {
     delivery?: string;
     shippingCarrier?: string;
     receivedBy?: string;
+    ripleySvc?: {
+      orderId?: string;
+      statusManagement?: string;
+      orderState?: string;
+      packages?: number | null;
+      shippingDeadline?: string;
+      syncedAt?: string;
+    };
   };
   orderedAt?: string | null;
   promisedShippingAt?: string | null;
@@ -167,6 +176,17 @@ type OrderDetail = ManagedOrder & {
     number?: string | null;
     status?: string | null;
   }>;
+};
+
+type RipleyLogisticsOverview = {
+  labels: number | null;
+  manifests: number | null;
+  eligibleLabels: number | null;
+  labelId: string;
+  manifestId: string;
+  packages: number | null;
+  sandbox: boolean;
+  error: string;
 };
 
 type SalesPulseSeller = {
@@ -331,6 +351,46 @@ function formatTime(value: string | null | undefined) {
     minute: '2-digit',
     hour12: false,
   }).format(date);
+}
+
+function svcResultCount(value: unknown, collectionKey: string) {
+  const root = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const nested = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root;
+  const total = Number(nested.total ?? nested.total_count);
+  if (Number.isFinite(total)) return total;
+  return Array.isArray(nested[collectionKey]) ? nested[collectionKey].length : null;
+}
+
+function svcResultData(value: unknown) {
+  const root = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root;
+}
+
+function svcResultItems(value: unknown, collectionKey: string) {
+  const items = svcResultData(value)[collectionKey];
+  return Array.isArray(items) ? items as Array<Record<string, unknown>> : [];
+}
+
+function svcResultIsSandbox(value: unknown) {
+  return svcResultData(value).sandbox === true;
+}
+
+function downloadPdf(base64: unknown, filename: string) {
+  if (typeof base64 !== 'string' || !base64.trim()) throw new Error('Ripley no devolvió el PDF esperado.');
+  const link = document.createElement('a');
+  link.href = `data:application/pdf;base64,${base64}`;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function svcPdf(value: unknown, keys: string[]): string | null {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) if (typeof record[key] === 'string') return record[key];
+  return record.data === value ? null : svcPdf(record.data, keys);
 }
 
 function limaDate(value: string | null | undefined) {
@@ -687,6 +747,19 @@ function demoDetail(order: ManagedOrder): OrderDetail {
   const createdAt = order.orderedAt || new Date().toISOString();
   return {
     ...order,
+    ...(order.channelCode === 'ripley' ? {
+      providerStatus: 'SHIPPING',
+      metadata: {
+        ...order.metadata,
+        ripleySvc: {
+          orderId: `sandbox-order-${order.externalOrderId}`,
+          statusManagement: 'TO_PICKUP',
+          orderState: 'SHIPPING',
+          packages: 1,
+          syncedAt: createdAt,
+        },
+      },
+    } : {}),
     items: order.demoItems || [],
     events: [
       { id: order.id * 10, eventType: 'order.created', source: order.channelCode === 'manual' ? 'manual' : 'webhook', createdAt },
@@ -716,6 +789,12 @@ export default function PedidosMulticanal() {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [ripleyLogistics, setRipleyLogistics] = useState<RipleyLogisticsOverview | null>(null);
+  const [ripleyPackages, setRipleyPackages] = useState('1');
+  const [ripleyPickupDate, setRipleyPickupDate] = useState(() => hoursAgo(-24).slice(0, 10));
+  const [ripleyWarehouseAddress, setRipleyWarehouseAddress] = useState('Almacén principal');
+  const [ripleyAction, setRipleyAction] = useState('');
+  const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [productsOpen, setProductsOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
   const [demoPaymentOverrides, setDemoPaymentOverrides] = useState<Record<number, { paymentStatus: string; paymentMethod: string }>>({});
@@ -847,22 +926,154 @@ export default function PedidosMulticanal() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, queryClient]);
 
+  const loadRipleyLogistics = async (order: ManagedOrder, sandbox: boolean) => {
+    try {
+      const [labelsResult, eligibleResult, manifestsResult] = await Promise.all([
+        api.listRipleyLogisticsLabels(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+        api.listRipleyManifestLabels(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+        api.listRipleyManifests(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+      ]);
+      const label = svcResultItems(labelsResult, 'labels')[0] || {};
+      const labelId = String(label._id || '');
+      const manifest = svcResultItems(manifestsResult, 'manifests').find((item) => {
+        const ids = Array.isArray(item.labels) ? item.labels.map(String) : [];
+        const embedded = Array.isArray(item._labels) ? item._labels as Array<Record<string, unknown>> : [];
+        return ids.includes(labelId) || embedded.some((entry) => String(entry._id || '') === labelId);
+      }) || {};
+      const overview = {
+        labels: svcResultCount(labelsResult, 'labels'),
+        manifests: svcResultCount(manifestsResult, 'manifests'),
+        eligibleLabels: svcResultCount(eligibleResult, 'labels'),
+        labelId,
+        manifestId: String(manifest._id || ''),
+        packages: Number.isFinite(Number(label.packages)) ? Number(label.packages) : null,
+        sandbox: svcResultIsSandbox(labelsResult) || svcResultIsSandbox(manifestsResult),
+        error: '',
+      } satisfies RipleyLogisticsOverview;
+      setRipleyLogistics(overview);
+      if (overview.packages) setRipleyPackages(String(overview.packages));
+      return overview;
+    } catch (error: unknown) {
+      const overview: RipleyLogisticsOverview = {
+        labels: null,
+        manifests: null,
+        eligibleLabels: null,
+        labelId: '',
+        manifestId: '',
+        packages: null,
+        sandbox,
+        error: error instanceof Error ? error.message : 'No se pudo consultar Seller Center.',
+      };
+      setRipleyLogistics(overview);
+      return overview;
+    }
+  };
+
   const openDetail = async (order: ManagedOrder) => {
     setDetailOpen(true);
     setDetail(null);
+    setRipleyLogistics(null);
+    setRipleyActionNote('');
+    const useRipleySandbox = order.channelCode === 'ripley'
+      && (order.demo || companies.find((company) => company.id === order.companyId)?.hasRipleySvcCredentials !== true);
     if (order.demo) {
       setDetail(demoDetail(order));
       setDetailLoading(false);
+      if (order.channelCode === 'ripley') await loadRipleyLogistics(order, true);
       return;
     }
     setDetailLoading(true);
     try {
-      setDetail(await api.getManagedOrder(order.id));
+      const [loadedDetail, logistics] = await Promise.all([
+        api.getManagedOrder(order.id),
+        order.channelCode === 'ripley'
+          ? loadRipleyLogistics(order, useRipleySandbox)
+          : Promise.resolve(null),
+      ]);
+      setDetail(loadedDetail);
+      if (logistics) setRipleyLogistics(logistics);
     } catch (error: any) {
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const runRipleyAction = async (action: string, operation: () => Promise<string>) => {
+    setRipleyAction(action);
+    setRipleyActionNote('');
+    try {
+      setRipleyActionNote(await operation());
+    } catch (error: unknown) {
+      setRipleyActionNote(error instanceof Error ? error.message : 'No se pudo completar la operación logística.');
+    } finally {
+      setRipleyAction('');
+    }
+  };
+
+  const updateRipleyPackages = () => {
+    if (!detail) return;
+    void runRipleyAction('packages', async () => {
+      await api.editRipleyPackages(detail.companyId, {
+        orderId: detail.externalOrderId,
+        svcOrderId: detail.metadata?.ripleySvc?.orderId || '',
+        packages: Number(ripleyPackages),
+        sandbox: ripleyLogistics?.sandbox,
+      });
+      await loadRipleyLogistics(detail, Boolean(ripleyLogistics?.sandbox));
+      return 'Bultos actualizados. La etiqueta quedó regenerada.';
+    });
+  };
+
+  const downloadRipleyLabels = () => {
+    if (!detail || !ripleyLogistics?.labelId) return;
+    void runRipleyAction('labels', async () => {
+      const result = await api.downloadRipleyLabels(detail.companyId, {
+        orderId: detail.externalOrderId,
+        documentIds: [ripleyLogistics.labelId],
+        sandbox: ripleyLogistics.sandbox,
+      });
+      const data = svcResultData(result);
+      downloadPdf(svcPdf(result, ['labels_generated', 'pdf', 'document']), `etiquetas-ripley-${detail.externalOrderNumber}.pdf`);
+      const failures = Array.isArray(data.orders_without_labels) ? data.orders_without_labels.length : 0;
+      return failures ? `PDF descargado con ${failures} etiqueta(s) observada(s).` : 'PDF de etiquetas descargado.';
+    });
+  };
+
+  const createRipleyManifest = () => {
+    if (!detail || !ripleyLogistics?.labelId) return;
+    void runRipleyAction('manifest', async () => {
+      await api.scheduleRipleyManifest(detail.companyId, {
+        orderId: detail.externalOrderId,
+        labelIds: [ripleyLogistics.labelId],
+        pickupDate: ripleyPickupDate,
+        warehouseAddress: ripleyWarehouseAddress,
+        sandbox: ripleyLogistics.sandbox,
+      });
+      await loadRipleyLogistics(detail, ripleyLogistics.sandbox);
+      return 'Recojo agendado y manifiesto creado.';
+    });
+  };
+
+  const downloadRipleyManifest = () => {
+    if (!detail || !ripleyLogistics?.manifestId) return;
+    void runRipleyAction('manifest-pdf', async () => {
+      const result = await api.downloadRipleyManifest(detail.companyId, ripleyLogistics.manifestId, { sandbox: ripleyLogistics.sandbox });
+      downloadPdf(svcPdf(result, ['pdf', 'manifest', 'document']), `manifiesto-ripley-${detail.externalOrderNumber}.pdf`);
+      return 'PDF del manifiesto descargado.';
+    });
+  };
+
+  const detachRipleyLabel = () => {
+    if (!detail || !ripleyLogistics?.manifestId || !ripleyLogistics.labelId) return;
+    void runRipleyAction('detach', async () => {
+      await api.detachRipleyManifestLabels(detail.companyId, ripleyLogistics.manifestId, {
+        labelIds: [ripleyLogistics.labelId],
+        sandbox: ripleyLogistics.sandbox,
+      });
+      await loadRipleyLogistics(detail, ripleyLogistics.sandbox);
+      return 'Etiqueta desvinculada; vuelve a estar disponible para agendar.';
+    });
   };
 
   const pulseSellers = useMemo(() => {
@@ -894,7 +1105,7 @@ export default function PedidosMulticanal() {
   };
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncOrdersInbox({ date }),
+    mutationFn: () => api.syncManagedOrders({ date }),
     onMutate: () => {
       setSyncNote('');
     },
@@ -1305,6 +1516,89 @@ export default function PedidosMulticanal() {
                   <DetailStat label="Comprobante" content={documentBadge(detail)} />
                   <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                 </div>
+
+                {detail.channelCode === 'ripley' && (
+                  <section>
+                    <div className="mb-3 flex items-center gap-2">
+                      <h3 className="text-sm font-medium">Flujo Ripley</h3>
+                      {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
+                    </div>
+                    <div className="grid gap-3 rounded-md border border-border p-4 sm:grid-cols-2">
+                      <DetailStat label="Estado comercial (Mirakl)" content={<span className="text-sm font-medium">{detail.providerStatus || 'Sin dato'}</span>} />
+                      <DetailStat label="Estado logístico (SVC)" content={<span className="text-sm font-medium">{detail.metadata?.ripleySvc?.statusManagement || 'SVC no configurado o pendiente de sincronizar'}</span>} />
+                      <DetailStat label="Bultos" content={<span className="text-sm font-medium tabular-nums">{detail.metadata?.ripleySvc?.packages ?? '—'}</span>} />
+                      <DetailStat label="Orden interna SVC" content={<span className="break-all font-mono text-xs">{detail.metadata?.ripleySvc?.orderId || '—'}</span>} />
+                      <DetailStat label="Etiquetas SVC" content={<span className="text-sm font-medium tabular-nums">{ripleyLogistics?.labels ?? '—'}</span>} />
+                      <DetailStat label="Manifiestos SVC" content={<span className="text-sm font-medium tabular-nums">{ripleyLogistics?.manifests ?? '—'}</span>} />
+                    </div>
+                    {ripleyLogistics && !ripleyLogistics.error && (
+                      <div className="mt-3 space-y-3 border-t border-border pt-3">
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="w-28 space-y-1">
+                            <Label htmlFor="ripley-packages" className="text-xs">Bultos</Label>
+                            <Input
+                              id="ripley-packages"
+                              type="number"
+                              min={1}
+                              value={ripleyPackages}
+                              onChange={(event) => setRipleyPackages(event.target.value)}
+                              disabled={Boolean(ripleyLogistics.manifestId)}
+                            />
+                          </div>
+                          <Button
+                            variant="outline"
+                            onClick={updateRipleyPackages}
+                            disabled={Boolean(ripleyAction) || Boolean(ripleyLogistics.manifestId) || Number(ripleyPackages) < 1}
+                          >
+                            {ripleyAction === 'packages' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Regenerar etiqueta
+                          </Button>
+                          <Button variant="outline" onClick={downloadRipleyLabels} disabled={Boolean(ripleyAction) || !ripleyLogistics.labelId}>
+                            {ripleyAction === 'labels' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Descargar etiquetas
+                          </Button>
+                        </div>
+
+                        {!ripleyLogistics.manifestId && Number(ripleyLogistics.eligibleLabels) > 0 && (
+                          <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)_auto] sm:items-end">
+                            <div className="space-y-1">
+                              <Label htmlFor="ripley-pickup-date" className="text-xs">Fecha de recojo</Label>
+                              <Input id="ripley-pickup-date" type="date" value={ripleyPickupDate} onChange={(event) => setRipleyPickupDate(event.target.value)} />
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor="ripley-warehouse" className="text-xs">Dirección de almacén</Label>
+                              <Input id="ripley-warehouse" value={ripleyWarehouseAddress} onChange={(event) => setRipleyWarehouseAddress(event.target.value)} />
+                            </div>
+                            <Button onClick={createRipleyManifest} disabled={Boolean(ripleyAction) || !ripleyPickupDate || !ripleyWarehouseAddress.trim()}>
+                              {ripleyAction === 'manifest' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Agendar y crear manifiesto
+                            </Button>
+                          </div>
+                        )}
+
+                        {ripleyLogistics.manifestId && (
+                          <div className="flex flex-wrap gap-2">
+                            <Button onClick={downloadRipleyManifest} disabled={Boolean(ripleyAction)}>
+                              {ripleyAction === 'manifest-pdf' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Descargar manifiesto
+                            </Button>
+                            <Button variant="outline" onClick={detachRipleyLabel} disabled={Boolean(ripleyAction)}>
+                              {ripleyAction === 'detach' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Excluir etiqueta
+                            </Button>
+                          </div>
+                        )}
+                        {ripleyActionNote && <p className="text-xs text-muted-foreground">{ripleyActionNote}</p>}
+                      </div>
+                    )}
+                    {ripleyLogistics?.error && <p className="mt-2 text-xs text-amber-700">{ripleyLogistics.error}</p>}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {ripleyLogistics?.sandbox
+                        ? 'Vista de prueba local: no consulta Seller Center ni modifica pedidos reales.'
+                        : 'Las etiquetas y manifiestos pertenecen a Seller Center; se sincronizan por polling separado de la orden comercial.'}
+                    </p>
+                  </section>
+                )}
 
                 <section>
                   <h3 className="mb-3 text-sm font-medium">Productos</h3>

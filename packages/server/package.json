@@ -15,6 +15,7 @@
     "@hono/node-server": "^1.13.7",
     "@zentofact/core": "*",
     "@zentofact/falabella-api": "*",
+    "@zentofact/ripley-api": "*",
     "better-auth": "^1.6.23",
     "dotenv": "^16.4.5",
     "drizzle-orm": "0.45.2",

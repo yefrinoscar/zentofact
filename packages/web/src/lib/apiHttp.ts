@@ -115,6 +115,17 @@ const apiHttp = {
   listOrderChannels: () => req('/order-management/channels'),
   listOrderChannelAccounts: (filter: { companyId?: number; channelCode?: string; active?: boolean } = {}) =>
     req(`/order-management/accounts${qs(filter)}`),
+  configureOrderChannelAccount: (data: {
+    companyId: number;
+    channelCode: 'falabella' | 'ripley';
+    externalAccountId: 'default';
+    displayName: string;
+    autoCreateOrders: boolean;
+    documentRequirement: 'disabled' | 'required';
+    documentTypePolicy: 'automatic';
+    settings: { autoEmitDocuments: boolean };
+    active: boolean;
+  }) => req('/order-management/accounts', { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;
@@ -130,6 +141,26 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
+  syncManagedOrders: (data: { date?: string } = {}) =>
+    req('/order-management/sync', { method: 'POST', body: JSON.stringify(data) }),
+  listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
+  listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifest-labels${qs(filter)}`),
+  listRipleyManifests: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests${qs(filter)}`),
+  editRipleyPackages: (companyId: number, data: { orderId: string; svcOrderId: string; packages: number; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/packages`, { method: 'POST', body: JSON.stringify(data) }),
+  downloadRipleyLabels: (companyId: number, data: { orderId: string; documentIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/labels/download`, { method: 'POST', body: JSON.stringify(data) }),
+  scheduleRipleyManifest: (companyId: number, data: { orderId: string; labelIds: string[]; pickupDate: string; warehouseAddress: string; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests`, { method: 'POST', body: JSON.stringify(data) }),
+  getRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}${qs(filter)}`),
+  downloadRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/download${qs(filter)}`),
+  detachRipleyManifestLabels: (companyId: number, manifestId: string, data: { labelIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
   updateManagedOrderPayment: (id: number, data: {
     paymentMethod: string;
@@ -206,6 +237,7 @@ const apiHttp = {
   importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
+  ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
   listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
 
   listInsumos: (filter: {

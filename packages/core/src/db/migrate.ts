@@ -24,11 +24,21 @@ const DDL = `
     seller_password TEXT,
     falabella_api_user_id TEXT,
     falabella_api_key TEXT,
+    ripley_api_key TEXT,
+    ripley_shop_id TEXT,
+    ripley_svc_username TEXT,
+    ripley_svc_password TEXT,
+    ripley_svc_base_url TEXT,
     logo_path TEXT,
     activo BOOLEAN DEFAULT TRUE,
     created_at BIGINT,
     updated_at BIGINT
   );
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_api_key TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_shop_id TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_username TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_password TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_base_url TEXT;
 
   CREATE TABLE IF NOT EXISTS branches (
     id SERIAL PRIMARY KEY,
@@ -837,6 +847,20 @@ const DDL = `
     sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS ripley_sync_state (
+    company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    last_attempt_at TIMESTAMPTZ,
+    last_started_at TIMESTAMPTZ,
+    last_finished_at TIMESTAMPTZ,
+    last_successful_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_orders_received INTEGER NOT NULL DEFAULT 0,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   DO $$
   BEGIN
     IF EXISTS (
@@ -908,7 +932,7 @@ const DDL = `
   VALUES
     ('falabella', 'Falabella', TRUE, '{"ingestion":["polling","webhook"],"actions":["ready_to_ship","shipping_label"]}'::jsonb),
     ('mercado_libre', 'Mercado Libre', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
-    ('ripley', 'Ripley', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
+    ('ripley', 'Ripley', TRUE, '{"ingestion":["polling"],"actions":["shipping_label","manifest"]}'::jsonb),
     ('manual', 'Venta manual', FALSE, '{"ingestion":["manual"]}'::jsonb),
     ('external', 'Pedido externo', FALSE, '{"ingestion":["api","manual","file"]}'::jsonb)
   ON CONFLICT (code) DO UPDATE SET
@@ -955,6 +979,19 @@ const DDL = `
   ) OR EXISTS (
     SELECT 1 FROM falabella_orders fo WHERE fo.company_id = c.id
   )
+  ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
+
+  INSERT INTO order_channel_accounts (
+    company_id, channel_id, external_account_id, display_name,
+    auto_create_orders, document_requirement, document_type_policy, settings
+  )
+  SELECT
+    c.id, ch.id, coalesce(nullif(trim(c.ripley_shop_id), ''), 'default'),
+    coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Ripley'),
+    TRUE, 'required', 'automatic', '{"origin":"ripley_mirakl_or11"}'::jsonb
+  FROM companies c
+  JOIN order_channels ch ON ch.code = 'ripley'
+  WHERE nullif(trim(c.ripley_api_key), '') IS NOT NULL
   ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
 
   -- Toda empresa puede registrar ventas desde la interfaz sin depender de
