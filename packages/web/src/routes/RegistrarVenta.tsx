@@ -329,7 +329,7 @@ export default function RegistrarVenta() {
         externalOrderNumber: orderNumber,
         orderStatus: 'confirmed',
         paymentStatus: paidNow ? 'paid' : 'pending',
-        fulfillmentStatus: 'pending',
+        fulfillmentStatus: 'ready_to_ship',
         requestedDocumentType: 'boleta',
         currency: 'PEN',
         subtotal: total,

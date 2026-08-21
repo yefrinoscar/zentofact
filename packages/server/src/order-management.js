@@ -497,6 +497,8 @@ function normalizeOrderInput(input, account) {
 }
 
 function normalizeItem(item, index) {
+  const rawProductId = item?.productId ?? item?.metadata?.productId;
+  const productIdNumber = Number(rawProductId);
   return {
     externalItemId: requiredText(
       item?.externalItemId || item?.id || `line-${index + 1}`,
@@ -514,6 +516,7 @@ function normalizeItem(item, index) {
     providerStatus: optionalText(item?.providerStatus, 300),
     metadata: jsonObject(item?.metadata),
     rawData: jsonValue(item?.rawData, {}),
+    productId: Number.isInteger(productIdNumber) && productIdNumber > 0 ? productIdNumber : null,
   };
 }
 
@@ -727,8 +730,9 @@ async function ingestOrderInTransaction(input, db) {
       const itemResult = await db.query(
         `insert into order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
-           unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data,
+           product_id
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          on conflict (order_id, external_item_id) do update set
            sku=excluded.sku,
            provider_sku=excluded.provider_sku,
@@ -741,6 +745,7 @@ async function ingestOrderInTransaction(input, db) {
            provider_status=excluded.provider_status,
            metadata=order_items.metadata || excluded.metadata,
            raw_data=excluded.raw_data,
+           product_id=coalesce(excluded.product_id, order_items.product_id),
            updated_at=now()
          returning id, external_item_id, sku, provider_sku, quantity, provider_status,
            product_id, listing_id, main_sku, stock_state,
@@ -759,6 +764,7 @@ async function ingestOrderInTransaction(input, db) {
           item.providerStatus,
           JSON.stringify(item.metadata),
           JSON.stringify(item.rawData),
+          item.productId,
         ],
       );
       if (itemResult.rows[0]) upsertedItems.push(itemResult.rows[0]);

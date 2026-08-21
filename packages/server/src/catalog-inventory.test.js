@@ -377,6 +377,36 @@ test('al pasar a listo para enviar descuenta el producto maestro y deja el pedid
   assert.equal(movement.order_id, 20);
 });
 
+test('una venta manual nace lista para enviar y descuenta con el producto indicado sin depender del flag', async () => {
+  const db = new InventoryDb(10);
+  db.items.set(101, item({ product_id: 5 }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    account: { id: 9, channelCode: 'manual', settings: {} },
+    source: 'manual',
+    enabled: undefined,
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(result.becameEligible, true);
+  assert.equal(db.quantity, 8);
+  const movement = [...db.movements.values()][0];
+  assert.equal(movement.movement_type, 'sale');
+  assert.equal(movement.source, 'manual');
+});
+
+test('una venta manual sin productId ni listing asociado queda marcada como no mapeada', async () => {
+  const db = new InventoryDb(10);
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    account: { id: 9, channelCode: 'manual', settings: {} },
+    source: 'manual',
+    enabled: undefined,
+  }));
+  assert.equal(result.applied, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.items.get(101).stock_state, 'skipped_unmapped');
+});
+
 test('un cambio de estado sin ítems en el payload usa las líneas ya asociadas', async () => {
   const db = new InventoryDb(10);
   db.items.set(101, item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M' }));
