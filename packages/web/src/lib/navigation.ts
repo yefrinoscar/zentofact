@@ -51,7 +51,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'orders',
     label: 'Pedidos',
     items: [
-      { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management', hiddenInProduction: true },
+      { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
     ],

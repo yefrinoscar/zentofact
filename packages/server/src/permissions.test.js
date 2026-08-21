@@ -42,7 +42,7 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
   assert.equal(keys.has('insumos'), true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'salidas')?.section, 'operation');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'insumos')?.section, 'operation');
-  assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
+  assert.notEqual(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'productos')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.section, 'orders');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.section, 'orders');

@@ -141,6 +141,26 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
+  syncManagedOrders: (data: { date?: string } = {}) =>
+    req('/order-management/sync', { method: 'POST', body: JSON.stringify(data) }),
+  listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
+  listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifest-labels${qs(filter)}`),
+  listRipleyManifests: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests${qs(filter)}`),
+  editRipleyPackages: (companyId: number, data: { orderId: string; svcOrderId: string; packages: number; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/packages`, { method: 'POST', body: JSON.stringify(data) }),
+  downloadRipleyLabels: (companyId: number, data: { orderId: string; documentIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/labels/download`, { method: 'POST', body: JSON.stringify(data) }),
+  scheduleRipleyManifest: (companyId: number, data: { orderId: string; labelIds: string[]; pickupDate: string; warehouseAddress: string; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests`, { method: 'POST', body: JSON.stringify(data) }),
+  getRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}${qs(filter)}`),
+  downloadRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/download${qs(filter)}`),
+  detachRipleyManifestLabels: (companyId: number, manifestId: string, data: { labelIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
   updateManagedOrderPayment: (id: number, data: {
     paymentMethod: string;

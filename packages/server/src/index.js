@@ -40,6 +40,8 @@ const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
 const ripleyCatalog = await import('./ripley-catalog.js');
+const ripleyOrders = await import('./ripley-orders.js');
+const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -296,6 +298,59 @@ app.get('/order-management/orders', async (c) => {
 });
 app.get('/order-management/sales-pulse', async (c) => {
   try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const date = String(body?.date || '').trim();
+    const [falabella, ripley] = await Promise.all([
+      ordersInbox.syncAllOrdersInbox({ syncOptions: date ? { mode: 'day', date } : {} }),
+      ripleyOrders.syncAllRipleyOrders(date ? { date } : {}),
+    ]);
+    dashboard.clearDashboardResponseCache();
+    return ok(c, {
+      channels: { falabella, ripley },
+      stores: Number(falabella.stores || 0) + Number(ripley.stores || 0),
+      successful: Number(falabella.successful || 0) + Number(ripley.successful || 0),
+      failed: Number(falabella.failed || 0) + Number(ripley.failed || 0),
+    });
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcLabels(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifest-labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcEligibleLabels(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcManifests(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/packages', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.editRipleySvcPackages(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/labels/download', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.downloadRipleySvcLabels(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/manifests', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.scheduleRipleySvcManifest(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests/:manifestId', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.getRipleySvcManifest(c.req.param('companyId'), c.req.param('manifestId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests/:manifestId/download', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.downloadRipleySvcManifest(c.req.param('companyId'), c.req.param('manifestId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.patch('/ripley/:companyId/logistics/manifests/:manifestId/labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.detachRipleySvcManifestLabels(c.req.param('companyId'), c.req.param('manifestId'), await c.req.json())); }
   catch (e) { return fail(c, e, 400); }
 });
 app.post('/order-management/orders/ingest', async (c) => {
@@ -1458,5 +1513,6 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
+  ripleyOrders.startRipleySyncScheduler();
   stockJobs.startStockJobWorker();
 });

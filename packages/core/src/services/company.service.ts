@@ -27,6 +27,9 @@ export interface CreateCompanyInput {
   falabellaApiKey?: string;
   ripleyApiKey?: string;
   ripleyShopId?: string;
+  ripleySvcUsername?: string;
+  ripleySvcPassword?: string;
+  ripleySvcBaseUrl?: string;
 }
 
 export interface UpdateCompanyInput extends Partial<CreateCompanyInput> {}
@@ -51,6 +54,8 @@ export type PublicCompany = {
   sellerUsername: string | null;
   falabellaApiUserId: string | null;
   ripleyShopId: string | null;
+  ripleySvcUsername: string | null;
+  ripleySvcBaseUrl: string | null;
   logoPath: string | null;
   activo: boolean | null;
   createdAt: number | null;
@@ -60,6 +65,7 @@ export type PublicCompany = {
   hasSellerPassword: boolean;
   hasFalabellaCredentials: boolean;
   hasRipleyCredentials: boolean;
+  hasRipleySvcCredentials: boolean;
 };
 
 export interface TestSunatConnectionResult {
@@ -96,6 +102,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
   const hasSellerPassword = hasText(row.sellerPassword);
   const hasFalabellaApiKey = hasText(row.falabellaApiKey);
   const hasRipleyApiKey = hasText(row.ripleyApiKey);
+  const hasRipleySvcPassword = hasText(row.ripleySvcPassword);
   return {
     id: row.id,
     nombre: row.nombre ?? null,
@@ -113,6 +120,8 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     sellerUsername: row.sellerUsername ?? null,
     falabellaApiUserId: row.falabellaApiUserId ?? null,
     ripleyShopId: row.ripleyShopId ?? null,
+    ripleySvcUsername: row.ripleySvcUsername ?? null,
+    ripleySvcBaseUrl: row.ripleySvcBaseUrl ?? null,
     logoPath: row.logoPath ?? null,
     activo: row.activo ?? null,
     createdAt: row.createdAt ?? null,
@@ -122,6 +131,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     hasSellerPassword,
     hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
     hasRipleyCredentials: hasRipleyApiKey,
+    hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword && hasText(row.ripleySvcBaseUrl),
   };
 }
 
@@ -170,6 +180,9 @@ export async function createCompany(data: CreateCompanyInput): Promise<PublicCom
     falabellaApiKey: data.falabellaApiKey,
     ripleyApiKey: data.ripleyApiKey,
     ripleyShopId: data.ripleyShopId,
+    ripleySvcUsername: data.ripleySvcUsername,
+    ripleySvcPassword: data.ripleySvcPassword,
+    ripleySvcBaseUrl: data.ripleySvcBaseUrl,
     activo: true,
     createdAt: now,
     updatedAt: now,
@@ -221,8 +234,12 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
   const falabellaApiKey = nonEmptySecret(data.falabellaApiKey);
   if (falabellaApiKey !== undefined) updates.falabellaApiKey = falabellaApiKey;
   if (data.ripleyShopId !== undefined) updates.ripleyShopId = data.ripleyShopId;
+  if (data.ripleySvcUsername !== undefined) updates.ripleySvcUsername = data.ripleySvcUsername;
+  if (data.ripleySvcBaseUrl !== undefined) updates.ripleySvcBaseUrl = data.ripleySvcBaseUrl;
   const ripleyApiKey = nonEmptySecret(data.ripleyApiKey);
   if (ripleyApiKey !== undefined) updates.ripleyApiKey = ripleyApiKey;
+  const ripleySvcPassword = nonEmptySecret(data.ripleySvcPassword);
+  if (ripleySvcPassword !== undefined) updates.ripleySvcPassword = ripleySvcPassword;
 
   const updated = await db.update(companies).set(updates).where(eq(companies.id, id)).returning();
   const row = updated[0];

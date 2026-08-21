@@ -49,6 +49,9 @@ type CompanyForm = {
   falabellaApiKey: string;
   ripleyApiKey: string;
   ripleyShopId: string;
+  ripleySvcUsername: string;
+  ripleySvcPassword: string;
+  ripleySvcBaseUrl: string;
 };
 
 type CompanyRow = {
@@ -63,6 +66,8 @@ type CompanyRow = {
   sellerUsername?: string | null;
   falabellaApiUserId?: string | null;
   ripleyShopId?: string | null;
+  ripleySvcUsername?: string | null;
+  ripleySvcBaseUrl?: string | null;
 
   activo?: boolean | null;
   hasSolCredentials?: boolean;
@@ -70,6 +75,7 @@ type CompanyRow = {
   hasSellerPassword?: boolean;
   hasFalabellaCredentials?: boolean;
   hasRipleyCredentials?: boolean;
+  hasRipleySvcCredentials?: boolean;
 };
 
 type ChannelAutoEmission = { falabella: boolean; ripley: boolean };
@@ -99,6 +105,9 @@ const initialForm: CompanyForm = {
   falabellaApiKey: '',
   ripleyApiKey: '',
   ripleyShopId: '',
+  ripleySvcUsername: '',
+  ripleySvcPassword: '',
+  ripleySvcBaseUrl: '',
 };
 
 function hasFalabellaApi(c: CompanyRow) {
@@ -211,6 +220,7 @@ export default function Companies() {
   const [showSellerPassword, setShowSellerPassword] = useState(false);
   const [showFalabellaApiKey, setShowFalabellaApiKey] = useState(false);
   const [showRipleyApiKey, setShowRipleyApiKey] = useState(false);
+  const [showRipleySvcPassword, setShowRipleySvcPassword] = useState(false);
   const [showCertPassword, setShowCertPassword] = useState(false);
   const [channelAutoEmission, setChannelAutoEmission] = useState<ChannelAutoEmission>(initialAutoEmission);
   const [channelAutoCreateOrders, setChannelAutoCreateOrders] = useState<ChannelAutoCreateOrders>(initialAutoCreateOrders);
@@ -248,6 +258,7 @@ export default function Companies() {
     setShowSellerPassword(false);
     setShowFalabellaApiKey(false);
     setShowRipleyApiKey(false);
+    setShowRipleySvcPassword(false);
     setShowCertPassword(false);
     setChannelAutoEmission(initialAutoEmission);
     setChannelAutoCreateOrders(initialAutoCreateOrders);
@@ -402,11 +413,14 @@ export default function Companies() {
         sellerUsername: nextForm.sellerUsername,
         falabellaApiUserId: nextForm.falabellaApiUserId,
         ripleyShopId: nextForm.ripleyShopId,
+        ripleySvcUsername: nextForm.ripleySvcUsername,
+        ripleySvcBaseUrl: nextForm.ripleySvcBaseUrl,
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
       if (nextForm.falabellaApiKey.trim()) updateData.falabellaApiKey = nextForm.falabellaApiKey;
       if (nextForm.ripleyApiKey.trim()) updateData.ripleyApiKey = nextForm.ripleyApiKey;
+      if (nextForm.ripleySvcPassword.trim()) updateData.ripleySvcPassword = nextForm.ripleySvcPassword;
       if (certBase64) updateData.certificado = certBase64;
       if (certPass.trim()) updateData.certificadoPassword = certPass;
 
@@ -571,6 +585,9 @@ export default function Companies() {
       falabellaApiKey: '',
       ripleyApiKey: '',
       ripleyShopId: company.ripleyShopId || '',
+      ripleySvcUsername: company.ripleySvcUsername || '',
+      ripleySvcPassword: '',
+      ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
     setLoadingBilling(true);
     void Promise.all([
@@ -764,6 +781,25 @@ export default function Companies() {
                     },
                   )}</div>
                 </div>
+                <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
+                  {field(
+                    'Contraseña SVC',
+                    'ripleySvcPassword',
+                    'password',
+                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    {
+                      revealable: true,
+                      revealed: showRipleySvcPassword,
+                      onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
+                    },
+                  )}
+                  <div className="md:col-span-2">
+                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
               </div>
 
               <div className="mt-4 border-t border-border pt-4">
