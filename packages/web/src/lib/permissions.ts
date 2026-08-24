@@ -46,11 +46,11 @@ export const PERMISSION_SECTIONS: Array<{ key: PermissionSectionKey; label: stri
 export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
-  { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
+  { key: 'orders_inbox', label: 'Por atender', description: 'Preparar pedidos e imprimir etiquetas de todos los canales', path: '/pedidos', section: 'orders' },
+  { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar el historial completo y registrar pedidos', path: '/orders', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
   { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'operation' },
-  { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'boletas', label: 'Boletas', description: 'Ver, emitir y reenviar boletas electrónicas', path: '/boletas', section: 'documents' },
   { key: 'facturas', label: 'Facturas', description: 'Ver, emitir y reenviar facturas electrónicas', path: '/facturas', section: 'documents' },

@@ -32,6 +32,7 @@ const insumos = await import('./insumos.js');
 await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
+const orderAttention = await import('./order-attention.js');
 const orderManagement = await import('./order-management.js');
 const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
@@ -120,6 +121,7 @@ app.use('*', requireCsrf());
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
   ['/orders-inbox', 'orders_inbox'],
+  ['/order-attention', 'orders_inbox'],
   ['/order-management', 'order_management'],
   ['/facturas', 'facturas'],
   ['/workflow', 'falabella_sellers'],
@@ -263,6 +265,11 @@ app.post('/orders-inbox/sync', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 
+app.get('/order-attention', async (c) => {
+  try { return ok(c, await orderAttention.listOrderAttention(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+
 app.get('/order-management/geo/maps-key', async (c) => {
   try {
     const key = String(process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
@@ -270,7 +277,7 @@ app.get('/order-management/geo/maps-key', async (c) => {
   } catch (e) { return fail(c, e); }
 });
 
-// ── Pedidos multicanal (backend nuevo; no reemplaza la bandeja actual) ──
+// ── Pedidos multicanal ──
 app.get('/order-management/channels', async (c) => {
   try { return ok(c, await orderManagement.listOrderChannels()); }
   catch (e) { return fail(c, e); }

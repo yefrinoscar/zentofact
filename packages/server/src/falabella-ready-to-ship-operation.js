@@ -212,6 +212,36 @@ async function markCompleted(pool, companyId, orderId, result) {
          last_provider_update_at=excluded.last_provider_update_at,
          last_observed_at=now()
        returning id
+     ), updated_canonical as (
+       update orders canonical
+       set fulfillment_status=case
+             when canonical.fulfillment_status in ('shipped','delivered') then canonical.fulfillment_status
+             else $4::text
+           end,
+           provider_status=case
+             when canonical.fulfillment_status in ('shipped','delivered') then canonical.provider_status
+             else $4::text
+           end,
+           metadata=jsonb_set(
+             coalesce(canonical.metadata, '{}'::jsonb),
+             '{labelCount}',
+             to_jsonb(case
+               when $3::jsonb->>'packageCount' ~ '^[0-9]+$'
+                 then greatest(($3::jsonb->>'packageCount')::int, 1)
+               when canonical.metadata->>'labelCount' ~ '^[0-9]+$'
+                 then greatest((canonical.metadata->>'labelCount')::int, 1)
+               else 1
+             end),
+             true
+           ),
+           provider_updated_at=now(), last_seen_at=now(), updated_at=now()
+       from order_channel_accounts account
+       join order_channels channel on channel.id=account.channel_id
+       where canonical.channel_account_id=account.id
+         and channel.code='falabella'
+         and canonical.company_id=$1
+         and canonical.external_order_id=$2
+       returning canonical.id
      )
      update falabella_ready_to_ship_operations
      set state='succeeded', updated_at=now(), finished_at=now(), last_error=null, result=$3::jsonb

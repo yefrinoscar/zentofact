@@ -159,6 +159,8 @@ const apiHttp = {
   getOrdersInboxCompanies: () => req('/orders-inbox/companies'),
   syncOrdersInbox: (data: { date?: string } = {}) =>
     req('/orders-inbox/sync', { method: 'POST', body: JSON.stringify(data) }),
+  listOrderAttention: (filter: { companyId?: number; channelCode?: string; search?: string } = {}) =>
+    req(`/order-attention${qs(filter)}`),
 
   // Pedidos multicanal
   listOrderChannels: () => req('/order-management/channels'),
@@ -195,6 +197,7 @@ const apiHttp = {
     fulfillmentStatus?: string;
     documentStatus?: string;
     connectedOnly?: boolean;
+    problem?: boolean;
     from?: string;
     to?: string;
     search?: string;
