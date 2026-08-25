@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createProduct, syncProductStatusesFromListings } from './product-service.js';
-import { syncProductInventoryFromListings } from './inventory-service.js';
+import { createProduct } from './product-service.js';
 import { upsertListing } from './listing-service.js';
-import { falabellaPublicationSnapshot, falabellaPublicationState, fetchFalabellaStocks } from './listing-snapshot-service.js';
+import {
+  falabellaPublicationSnapshot,
+  falabellaPublicationState,
+  fetchFalabellaPublicAvailabilities,
+  fetchFalabellaStocks,
+} from './listing-snapshot-service.js';
 import { falabellaAssociationProfile, groupFalabellaCatalogRecords } from './catalog-association.js';
 import { httpError, inTransaction, loadCore, positiveInt } from './utils.js';
 
@@ -139,12 +143,18 @@ async function fetchCompanyCatalog(core, company) {
   const returnedProducts = products.filter((product) => String(product.sellerSku || '').trim());
   const sellerSkus = returnedProducts.map((product) => String(product.sellerSku).trim());
   const stocks = await fetchFalabellaStocks(core, Number(company.id), sellerSkus);
+  const publicAvailabilityBySku = await fetchFalabellaPublicAvailabilities(returnedProducts);
   const stockBySku = new Map(stocks.map((stock) => [String(stock.sellerSku), stock]));
   const recordFor = (remote) => ({
     company,
     remote,
     identity: falabellaCanonicalIdentity(remote),
-    snapshot: falabellaPublicationSnapshot(remote, stockBySku.get(String(remote.sellerSku))),
+    snapshot: falabellaPublicationSnapshot(
+      remote,
+      stockBySku.get(String(remote.sellerSku)),
+      new Date(),
+      { publicAvailability: publicAvailabilityBySku.get(String(remote.sellerSku)) },
+    ),
   });
   return {
     company,
@@ -324,7 +334,7 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
             associationSignals: record.association?.signals || [],
             catalogSyncBatchId: batchId,
           },
-        }, client, { syncInventory: false });
+        }, client);
         listingsUpserted += 1;
       }
     }
@@ -375,23 +385,6 @@ export async function syncAllFalabellaCatalog(input = {}, actorUserId, db) {
       listingsDeactivated += deactivated.rows.length;
     }
 
-    await client.query(
-      `update products p set status='inactive', updated_at=now(), updated_by=$1
-       where p.status='active'
-         and (p.attributes->>'imported_from'='falabella' or p.attributes->>'source'='falabella_real_catalog')
-         and not exists (
-           select 1 from product_listings l where l.product_id=p.id and l.status='active'
-         )`,
-      [actorUserId ? String(actorUserId) : null],
-    );
-
-    const synchronizedProductIds = [
-      ...existingProducts.map((product) => Number(product.id)),
-      ...assignedProductIds,
-    ];
-    await syncProductInventoryFromListings(client, synchronizedProductIds);
-    await syncProductStatusesFromListings(client, synchronizedProductIds);
-
     return {
       batchId,
       companiesRequested: companies.length,
@@ -425,7 +418,6 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
 
   return inTransaction(db, async (client) => {
     const summary = { batchId: randomUUID(), received: remoteProducts.length, productsCreated: 0, productsReused: 0, listingsUpserted: 0, skipped: [] };
-    const affectedProductIds = new Set();
     for (const remote of remoteProducts) {
       const sellerSku = String(remote.sellerSku || '').trim();
       if (!sellerSku) {
@@ -489,12 +481,9 @@ export async function importFalabellaCatalog(input, actorUserId, db) {
           ...snapshot.metadata,
           importBatchId: summary.batchId,
         },
-      }, client, { syncInventory: false });
-      affectedProductIds.add(Number(productRow.id));
+      }, client);
       summary.listingsUpserted += 1;
     }
-    await syncProductInventoryFromListings(client, [...affectedProductIds]);
-    await syncProductStatusesFromListings(client, [...affectedProductIds]);
     return summary;
   });
 }

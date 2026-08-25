@@ -5,6 +5,7 @@
 import { loadCore } from './catalog/utils.js';
 
 export const SYSTEM_CONFIG_CACHE_TTL_MS = 5_000;
+const AUGUST_INVENTORY_START_AT = '2026-08-01T05:00:00.000Z';
 
 // Registro de flags operables desde el panel. Cualquier flag nuevo se agrega aquí.
 // envVars: variables en orden de precedencia; la primera con valor explícito gana
@@ -91,13 +92,24 @@ export function resolveFlagState({ envRaw, dbEnabled }) {
 export function summarizeCatalogInventoryReadiness(counts) {
   const safe = counts && typeof counts === 'object' ? counts : {};
   const number = (value) => Math.max(0, Number(value) || 0);
+  const noun = (value, singular, plural) => Number(value) === 1 ? singular : plural;
   const products = number(safe.products);
   const listings = number(safe.activeListings);
   const sellers = number(safe.sellersWithListings);
   const seededMovements = number(safe.seededMovements);
   const pendingJobs = number(safe.pendingStockJobs);
   const skippedUnmapped = number(safe.skippedUnmappedItems);
+  const skippedOrders = number(safe.skippedUnmappedOrders);
+  const skippedUnits = number(safe.skippedUnmappedUnits);
+  const shortageItems = number(safe.insufficientStockItems);
+  const shortageOrders = number(safe.insufficientStockOrders);
+  const shortageUnits = number(safe.insufficientStockUnits);
+  const driftProducts = number(safe.inventoryDriftProducts);
   const negativeProducts = number(safe.negativeProducts);
+  const oldestUnmapped = safe.skippedUnmappedOldest
+    ? new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'America/Lima' })
+      .format(new Date(safe.skippedUnmappedOldest)).replace('.', '')
+    : null;
   return [
     {
       id: 'listings_imported',
@@ -128,11 +140,22 @@ export function summarizeCatalogInventoryReadiness(counts) {
     },
     {
       id: 'mapping_clean',
-      label: 'Líneas sin mapeo resueltas',
+      label: 'Ventas Falabella mapeadas desde agosto',
       detail: skippedUnmapped > 0
-        ? `${skippedUnmapped} línea(s) skipped_unmapped esperando vínculo listing↔producto.`
-        : 'Sin líneas sin mapeo.',
+        ? `${skippedUnmapped} ${noun(skippedUnmapped, 'línea', 'líneas')} de ${skippedOrders} ${noun(skippedOrders, 'pedido', 'pedidos')} (${skippedUnits} ${noun(skippedUnits, 'unidad', 'unidades')}) desde agosto no descontaron stock porque no tenían producto maestro al importarse.${oldestUnmapped ? ` La más antigua es del ${oldestUnmapped}.` : ''}`
+        : shortageItems > 0
+          ? `Todas tienen producto maestro. ${shortageItems} ${noun(shortageItems, 'línea', 'líneas')} de ${shortageOrders} ${noun(shortageOrders, 'pedido', 'pedidos')} (${shortageUnits} ${noun(shortageUnits, 'unidad', 'unidades')}) encontraron el stock maestro en 0; el saldo se mantuvo en 0 para evitar negativos.`
+          : 'Todas tienen producto maestro y están reflejadas en el inventario.',
       ok: skippedUnmapped === 0,
+      blocking: false,
+    },
+    {
+      id: 'inventory_ledger_clean',
+      label: 'Saldos auditables',
+      detail: driftProducts > 0
+        ? `${driftProducts} productos tienen un saldo que no coincide con sus movimientos. Cuenta el stock físico y usa Productos → Inventario → Ajustar stock → Fijar saldo absoluto.`
+        : 'Los saldos coinciden con sus movimientos.',
+      ok: driftProducts === 0,
       blocking: false,
     },
     {
@@ -255,7 +278,73 @@ export async function readinessCatalogInventory(db) {
         select count(*)::int as pending from inventory_stock_jobs where status='pending'
       ),
       unmapped as (
-        select count(*)::int as skipped from order_items where stock_state='skipped_unmapped'
+        select count(*)::int as skipped,
+               count(distinct oi.order_id)::int as orders,
+               coalesce(sum(oi.quantity),0) as units,
+               min(o.ordered_at) as oldest
+          from order_items oi
+          join orders o on o.id=oi.order_id
+          join order_channel_accounts a on a.id=o.channel_account_id
+          join order_channels ch on ch.id=a.channel_id
+         where oi.stock_state='skipped_unmapped'
+           and ch.code='falabella'
+           and o.ordered_at >= $1::timestamptz
+      ),
+      insufficient as (
+        select count(*)::int as items,
+               count(distinct oi.order_id)::int as orders,
+               coalesce(sum(oi.quantity),0) as units
+          from order_items oi
+          join orders o on o.id=oi.order_id
+          join order_channel_accounts a on a.id=o.channel_account_id
+          join order_channels ch on ch.id=a.channel_id
+         where oi.stock_state='skipped_insufficient'
+           and ch.code='falabella'
+           and o.ordered_at >= $1::timestamptz
+      ),
+      movement_sequence as (
+        select id, product_id, quantity_delta, quantity_after,
+               lag(quantity_after) over(partition by product_id order by created_at,id) as previous_after
+          from inventory_movements
+      ),
+      latest_absolute_baselines as (
+        select distinct on(product_id) product_id,id as baseline_id
+          from inventory_movements
+         where metadata->>'mode'='absolute'
+         order by product_id,created_at desc,id desc
+      ),
+      movement_breaks as (
+        select distinct ms.product_id from movement_sequence ms
+        left join latest_absolute_baselines b using(product_id)
+         where ms.id > coalesce(b.baseline_id,0)
+           and ms.previous_after is not null
+           and ms.quantity_after <> ms.previous_after + ms.quantity_delta
+      ),
+      latest_movements as (
+        select distinct on(product_id) product_id,quantity_after,created_at
+          from inventory_movements order by product_id,created_at desc,id desc
+      ),
+      current_breaks as (
+        select pi.product_id
+          from product_inventory pi
+          left join latest_movements lm using(product_id)
+          left join lateral (
+            select a.target_quantity,r.applied_at
+              from inventory_reconciliation_anchors a
+              join inventory_reconciliation_runs r on r.id=a.run_id
+             where a.product_id=pi.product_id
+             order by r.applied_at desc,r.id desc limit 1
+          ) anchor on true
+         where pi.quantity_on_hand <> case
+           when anchor.applied_at is not null
+             and (lm.created_at is null or anchor.applied_at >= lm.created_at)
+             then anchor.target_quantity
+           else coalesce(lm.quantity_after,anchor.target_quantity,0)
+         end
+      ),
+      drift as (
+        select count(distinct product_id)::int as products
+          from (select product_id from movement_breaks union all select product_id from current_breaks) affected
       ),
       products_agg as (
         select count(*)::int as products from products where status='active'
@@ -263,9 +352,14 @@ export async function readinessCatalogInventory(db) {
       negatives as (
         select count(*)::int as products from product_inventory where quantity_on_hand < 0
       )
-      select p.products, l.listings, l.sellers, s.movements, j.pending, u.skipped, n.products as negative_products
-        from products_agg p cross join active_listings l cross join seeded s cross join jobs j cross join unmapped u cross join negatives n
-    `);
+      select p.products, l.listings, l.sellers, s.movements, j.pending,
+             u.skipped, u.orders as unmapped_orders, u.units as unmapped_units, u.oldest as unmapped_oldest,
+             insufficient.items as insufficient_items, insufficient.orders as insufficient_orders,
+             insufficient.units as insufficient_units,
+             d.products as drift_products, n.products as negative_products
+        from products_agg p cross join active_listings l cross join seeded s cross join jobs j
+        cross join unmapped u cross join insufficient cross join drift d cross join negatives n
+    `, [AUGUST_INVENTORY_START_AT]);
     const row = result.rows[0] || {};
     const counts = {
       products: row.products,
@@ -274,6 +368,13 @@ export async function readinessCatalogInventory(db) {
       seededMovements: row.movements,
       pendingStockJobs: row.pending,
       skippedUnmappedItems: row.skipped,
+      skippedUnmappedOrders: row.unmapped_orders,
+      skippedUnmappedUnits: row.unmapped_units,
+      skippedUnmappedOldest: row.unmapped_oldest,
+      insufficientStockItems: row.insufficient_items,
+      insufficientStockOrders: row.insufficient_orders,
+      insufficientStockUnits: row.insufficient_units,
+      inventoryDriftProducts: row.drift_products,
       negativeProducts: row.negative_products,
     };
     return { counts, steps: summarizeCatalogInventoryReadiness(counts), error: null };

@@ -36,9 +36,11 @@ const orderManagement = await import('./order-management.js');
 const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
+const associationCandidateService = await import('./catalog/association-candidate-service.js');
 const inventoryService = await import('./catalog/inventory-service.js');
 const skuResolver = await import('./catalog/sku-resolver.js');
 const catalogImport = await import('./catalog/catalog-import.js');
+const ripleyCatalogImport = await import('./catalog/ripley-catalog-import.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
@@ -476,8 +478,8 @@ app.post('/products/:id/listings', async (c) => {
   try { return ok(c, await listingService.createListing(c.req.param('id'), await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
-app.get('/product-listings/unlinked', async (c) => {
-  try { return ok(c, await listingService.listUnlinkedListings(c.req.query())); }
+app.get('/product-listings/association-candidates', async (c) => {
+  try { return ok(c, await associationCandidateService.listLiveAssociationCandidates(c.req.query())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/product-listings/:id', async (c) => {
@@ -490,6 +492,10 @@ app.post('/product-listings/:id/unlink', async (c) => {
 });
 app.post('/product-listings/link', async (c) => {
   try { return ok(c, await listingService.linkListing(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/link-batch', async (c) => {
+  try { return ok(c, await listingService.linkListingsBatch(await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
@@ -544,10 +550,16 @@ app.post('/catalog/sync/falabella', async (c) => {
     return ok(c, await catalogImport.syncAllFalabellaCatalog(body, c.get('user')?.id));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.post('/catalog/sync/ripley', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await ripleyCatalogImport.syncRipleyCatalog(body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/catalog/refresh-listing-snapshots', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    return ok(c, await listingSnapshotService.refreshFalabellaListingSnapshots(body));
+    return ok(c, await listingSnapshotService.refreshMarketplaceListingSnapshots(body));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/ripley/:companyId/products', requirePermission('productos'), async (c) => {

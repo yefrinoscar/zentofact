@@ -1,6 +1,5 @@
 import { httpError, loadCore, positiveInt } from './utils.js';
-import { syncProductInventoryFromListings } from './inventory-service.js';
-import { syncProductStatusesFromListings } from './product-service.js';
+import { listRipleyProducts } from '../ripley-catalog.js';
 
 function providerError(response) {
   return response?.error?.Head?.ErrorMessage
@@ -80,6 +79,130 @@ export async function fetchFalabellaStocks(core, companyId, sellerSkus = []) {
 }
 
 const FALABELLA_PRODUCT_SKU_BATCH = 100;
+const FALABELLA_PUBLIC_AVAILABILITY_CONCURRENCY = 10;
+const FALABELLA_PUBLIC_REQUEST_TIMEOUT_MS = 8_000;
+
+function parseFalabellaProductUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.falabella.com.pe')) return null;
+    const parts = url.pathname.split('/').filter(Boolean);
+    const productIndex = parts.indexOf('product');
+    if (productIndex < 1) return null;
+    const site = parts[productIndex - 1];
+    const productId = parts[productIndex + 1];
+    const productName = parts[productIndex + 2];
+    const variantId = parts[productIndex + 3];
+    if (!site || !productId || !productName || !variantId) return null;
+    return { origin: url.origin, site, productId, productName, variantId, pageUrl: url.toString() };
+  } catch {
+    return null;
+  }
+}
+
+function publicAvailabilityFromProductData(productData, checkedAt) {
+  const isPublished = typeof productData?.isPublished === 'boolean' ? productData.isPublished : null;
+  const isOutOfStock = typeof productData?.isOutOfStock === 'boolean' ? productData.isOutOfStock : null;
+  const unavailable = isPublished === false || isOutOfStock === true;
+  const available = isPublished === true && isOutOfStock === false;
+  return {
+    status: unavailable ? 'unavailable' : available ? 'available' : 'unknown',
+    checkedAt,
+    isPublished,
+    isOutOfStock,
+  };
+}
+
+function parseNextDataDocument(document) {
+  const match = String(document || '').match(
+    /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function falabellaNextDataUrl(product, buildId) {
+  const url = new URL(`/_next/data/${encodeURIComponent(buildId)}/product.json`, product.origin);
+  url.searchParams.set('site', product.site);
+  url.searchParams.set('productId', product.productId);
+  url.searchParams.set('productName', product.productName);
+  url.searchParams.set('variantId', product.variantId);
+  return url.toString();
+}
+
+async function mapConcurrent(items, concurrency, worker) {
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await worker(items[index], index);
+    }
+  }));
+}
+
+export async function fetchFalabellaPublicAvailabilities(remotes, options = {}) {
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const concurrency = Math.min(
+    Math.max(Number(options.concurrency) || FALABELLA_PUBLIC_AVAILABILITY_CONCURRENCY, 1),
+    20,
+  );
+  const timeoutMs = Number(options.timeoutMs) || FALABELLA_PUBLIC_REQUEST_TIMEOUT_MS;
+  const checkedAt = (options.now || new Date()).toISOString();
+  const candidates = remotes.map((remote) => ({
+    sellerSku: String(remote?.sellerSku || '').trim(),
+    product: parseFalabellaProductUrl(remote?.url),
+  })).filter(({ sellerSku, product }) => sellerSku && product);
+  const availabilityBySku = new Map();
+  if (!candidates.length) return availabilityBySku;
+
+  let buildId = null;
+  let bootstrapCandidate = null;
+  for (const candidate of candidates) {
+    try {
+      const response = await fetchImpl(candidate.product.pageUrl, {
+        headers: { accept: 'text/html', 'user-agent': 'ZentoFact catalog availability sync' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) continue;
+      const nextData = parseNextDataDocument(await response.text());
+      if (!nextData?.buildId) continue;
+      buildId = String(nextData.buildId);
+      bootstrapCandidate = candidate;
+      availabilityBySku.set(candidate.sellerSku, publicAvailabilityFromProductData(
+        nextData?.props?.pageProps?.productData,
+        checkedAt,
+      ));
+      break;
+    } catch {
+      // La tienda pública es una segunda fuente. Si no responde, conservamos
+      // el stock de Seller Center en vez de convertir una falla de red en cero.
+    }
+  }
+  if (!buildId) return availabilityBySku;
+
+  const remaining = candidates.filter((candidate) => candidate !== bootstrapCandidate);
+  await mapConcurrent(remaining, concurrency, async (candidate) => {
+    try {
+      const response = await fetchImpl(falabellaNextDataUrl(candidate.product, buildId), {
+        headers: { accept: 'application/json', 'user-agent': 'ZentoFact catalog availability sync' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) return;
+      const nextData = JSON.parse(await response.text());
+      availabilityBySku.set(candidate.sellerSku, publicAvailabilityFromProductData(
+        nextData?.pageProps?.productData,
+        checkedAt,
+      ));
+    } catch {
+      // Un producto que no respondió queda con el valor de Seller Center.
+    }
+  });
+  return availabilityBySku;
+}
 
 export async function fetchFalabellaProductsBySku(core, companyId, sellerSkus = []) {
   const normalizedSkus = [...new Set(sellerSkus.map((sku) => String(sku || '').trim()).filter(Boolean))];
@@ -99,7 +222,10 @@ export async function fetchFalabellaProductsBySku(core, companyId, sellerSkus = 
   return products;
 }
 
-export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { stockSource = 'falabella_get_stock' } = {}) {
+export function falabellaPublicationSnapshot(remote, stock, now = new Date(), {
+  stockSource = 'falabella_get_stock',
+  publicAvailability,
+} = {}) {
   const publication = falabellaPublicationState(remote);
   const unit = publication.unit;
   const regularPrice = numberOrNull(unit.price ?? remote?.price);
@@ -112,10 +238,10 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { 
   const fulfillmentQuantity = numberOrNull(stock?.fulfillmentQuantity) ?? 0;
   const reportedAvailableQuantity = numberOrNull(stock?.availableQuantity)
     ?? sellerWarehouseQuantity + fulfillmentQuantity;
-  // Stock y vendibilidad son dimensiones distintas. Falabella puede reportar
-  // inventario para una publicación rechazada o inactiva; conservamos ese dato
-  // y usamos isSellable exclusivamente para representar su estado comercial.
-  const availableQuantity = reportedAvailableQuantity;
+  const publicAvailabilityStatus = publicAvailability?.status;
+  const availableQuantity = publicAvailabilityStatus === 'unavailable'
+    ? 0
+    : reportedAvailableQuantity;
   return {
     title: remote?.name || null,
     shopSku: remote?.shopSku || null,
@@ -134,6 +260,10 @@ export function falabellaPublicationSnapshot(remote, stock, now = new Date(), { 
       sellerWarehouseQuantity,
       fulfillmentQuantity,
       reportedAvailableQuantity,
+      publicAvailabilityStatus,
+      publicAvailabilityCheckedAt: publicAvailability?.checkedAt,
+      publicIsPublished: publicAvailability?.isPublished,
+      publicIsOutOfStock: publicAvailability?.isOutOfStock,
       isSellable: publication.isSellable,
       sellabilityReason: publication.sellabilityReason,
       sellabilityReasons: publication.sellabilityReasons,
@@ -165,7 +295,7 @@ export async function refreshFalabellaListingSnapshots(input = {}, db, dependenc
     `select l.id, l.product_id, l.company_id, l.seller_sku
      from product_listings l
      join products p on p.id=l.product_id
-     where l.channel_code='falabella' and l.status='active' and p.status<>'archived'
+     where l.channel_code='falabella' and l.status <> 'unlinked' and p.status<>'archived'
        ${productId == null ? '' : 'and l.product_id=$1'}
      order by l.company_id, l.id`,
     values,
@@ -178,14 +308,19 @@ export async function refreshFalabellaListingSnapshots(input = {}, db, dependenc
   }
 
   const summary = { requested: listings.length, refreshed: 0, missing: [], errors: [] };
-  const refreshedProductIds = new Set();
   for (const [companyId, companyListings] of groups) {
     const sellerSkus = companyListings.map((listing) => listing.seller_sku);
     try {
-      const [products, stocks] = await Promise.all([
-        fetchFalabellaProductsBySku(core, companyId, sellerSkus),
-        fetchFalabellaStocks(core, companyId, sellerSkus),
-      ]);
+      const products = await fetchFalabellaProductsBySku(core, companyId, sellerSkus);
+      const returnedSellerSkus = [...new Set(products
+        .map((product) => String(product?.sellerSku || '').trim())
+        .filter(Boolean))];
+      const stocks = returnedSellerSkus.length
+        ? await fetchFalabellaStocks(core, companyId, returnedSellerSkus)
+        : [];
+      const fetchPublicAvailabilities = dependencies.fetchPublicAvailabilities
+        || fetchFalabellaPublicAvailabilities;
+      const publicAvailabilityBySku = await fetchPublicAvailabilities(products);
       const productsBySku = new Map(products.map((product) => [String(product.sellerSku), product]));
       const stockBySku = new Map(stocks.map((stock) => [String(stock.sellerSku), stock]));
       for (const listing of companyListings) {
@@ -193,11 +328,31 @@ export async function refreshFalabellaListingSnapshots(input = {}, db, dependenc
         const remote = productsBySku.get(sellerSku);
         if (!remote) {
           summary.missing.push({ listingId: Number(listing.id), companyId, sellerSku, reason: 'not_returned_by_get_products' });
+          await target.query(
+            `update product_listings set
+               status='inactive', marketplace_quantity=0, marketplace_synced_at=now(),
+               metadata=coalesce(metadata, '{}'::jsonb) || $1::jsonb,
+               updated_at=now()
+             where id=$2`,
+            [JSON.stringify({
+              isPublished: false,
+              isSellable: false,
+              marketplaceStatus: 'inactive',
+              sellabilityReason: 'not_returned_by_falabella_catalog',
+            }), listing.id],
+          );
+          summary.refreshed += 1;
           continue;
         }
-        const snapshot = falabellaPublicationSnapshot(remote, stockBySku.get(sellerSku));
+        const snapshot = falabellaPublicationSnapshot(
+          remote,
+          stockBySku.get(sellerSku),
+          new Date(),
+          { publicAvailability: publicAvailabilityBySku.get(sellerSku) },
+        );
         await target.query(
           `update product_listings set
+             status='active',
              shop_sku=coalesce($1, shop_sku),
              external_product_id=coalesce($2, external_product_id),
              title=coalesce($3, title),
@@ -216,13 +371,102 @@ export async function refreshFalabellaListingSnapshots(input = {}, db, dependenc
           ],
         );
         summary.refreshed += 1;
-        refreshedProductIds.add(Number(listing.product_id));
       }
     } catch (error) {
       summary.errors.push({ companyId, message: error?.message || String(error) });
     }
   }
-  await syncProductInventoryFromListings(target, [...refreshedProductIds]);
-  await syncProductStatusesFromListings(target, [...refreshedProductIds]);
   return summary;
+}
+
+export async function refreshRipleyListingSnapshots(input = {}, db, dependencies = {}) {
+  const core = dependencies.core || await loadCore();
+  const target = db || core.pool;
+  const productId = input.productId == null ? null : positiveInt(input.productId, 'productId');
+  const values = productId == null ? [] : [productId];
+  const listings = (await target.query(
+    `select l.id,l.product_id,l.company_id,l.seller_sku
+     from product_listings l join products p on p.id=l.product_id
+     where l.channel_code='ripley' and l.status <> 'unlinked' and p.status<>'archived'
+       ${productId == null ? '' : 'and l.product_id=$1'}
+     order by l.company_id,l.id`,
+    values,
+  )).rows;
+  const groups = new Map();
+  for (const listing of listings) {
+    const companyId = Number(listing.company_id);
+    const current = groups.get(companyId) || [];
+    current.push(listing);
+    groups.set(companyId, current);
+  }
+  const summary = { requested: listings.length, refreshed: 0, missing: [], errors: [] };
+  const fetchProducts = dependencies.listRipleyProducts || ((companyId) => listRipleyProducts(
+    companyId,
+    { all: true },
+    { getCompany: core.getCompany },
+  ));
+  for (const [companyId, companyListings] of groups) {
+    try {
+      const response = await fetchProducts(companyId);
+      const offers = Array.isArray(response?.offers) ? response.offers : [];
+      const offersBySku = new Map(offers.map((offer) => [String(offer.sellerSku || '').trim(), offer]));
+      for (const listing of companyListings) {
+        const offer = offersBySku.get(String(listing.seller_sku || '').trim());
+        const active = offer?.active === true;
+        const metadata = offer ? {
+          price: offer.price ?? null,
+          imageUrl: offer.imageUrl || null,
+          isPublished: active,
+          isSellable: active,
+          marketplaceStatus: active ? 'active' : 'inactive',
+          sellabilityReason: active ? null : 'ripley_offer_inactive',
+        } : {
+          isPublished: false,
+          isSellable: false,
+          marketplaceStatus: 'inactive',
+          sellabilityReason: 'not_returned_by_ripley_catalog',
+        };
+        await target.query(
+          `update product_listings set
+             shop_sku=coalesce($1,shop_sku),
+             external_product_id=coalesce($2,external_product_id),
+             title=coalesce($3,title),status=$4,marketplace_quantity=$5,
+             marketplace_synced_at=now(),metadata=coalesce(metadata,'{}'::jsonb) || $6::jsonb,
+             updated_at=now()
+           where id=$7`,
+          [
+            offer?.productSku || null,
+            offer?.productSku || offer?.offerId || null,
+            offer?.productTitle || null,
+            active ? 'active' : 'inactive',
+            active ? Number(offer.quantity || 0) : 0,
+            JSON.stringify(metadata),
+            listing.id,
+          ],
+        );
+        if (!offer) summary.missing.push({
+          listingId: Number(listing.id), companyId, sellerSku: listing.seller_sku,
+          reason: 'not_returned_by_ripley_catalog',
+        });
+        summary.refreshed += 1;
+      }
+    } catch (error) {
+      summary.errors.push({ companyId, message: error?.message || String(error) });
+    }
+  }
+  return summary;
+}
+
+export async function refreshMarketplaceListingSnapshots(input = {}, db, dependencies = {}) {
+  const [falabella, ripley] = await Promise.all([
+    refreshFalabellaListingSnapshots(input, db, dependencies.falabella || dependencies),
+    refreshRipleyListingSnapshots(input, db, dependencies.ripley || dependencies),
+  ]);
+  return {
+    requested: falabella.requested + ripley.requested,
+    refreshed: falabella.refreshed + ripley.refreshed,
+    missing: [...falabella.missing, ...ripley.missing],
+    errors: [...falabella.errors, ...ripley.errors],
+    channels: { falabella, ripley },
+  };
 }
