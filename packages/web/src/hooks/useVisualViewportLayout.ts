@@ -1,41 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
-type VisualViewportLayout = {
-  height: number;
-  offsetTop: number;
-};
+const CSS_VAR = '--picker-vvh';
 
-function readVisualViewportLayout(): VisualViewportLayout {
-  const viewport = window.visualViewport;
-  return {
-    height: viewport?.height ?? window.innerHeight,
-    offsetTop: viewport?.offsetTop ?? 0,
-  };
-}
-
-/** Tracks the visible viewport so full-screen overlays can stay above the mobile keyboard. */
-export function useVisualViewportLayout(enabled = true) {
-  const [layout, setLayout] = useState<VisualViewportLayout>(() => (
-    enabled ? readVisualViewportLayout() : { height: window.innerHeight, offsetTop: 0 }
-  ));
-
+/** Keeps a CSS viewport height variable in sync with the mobile keyboard without React re-renders. */
+export function useVisualViewportCssVar(enabled = true) {
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      document.documentElement.style.removeProperty(CSS_VAR);
+      return;
+    }
 
     const viewport = window.visualViewport;
     if (!viewport) return;
 
-    const update = () => setLayout(readVisualViewportLayout());
+    let frame = 0;
+    let lastHeight = 0;
 
-    viewport.addEventListener('resize', update);
-    viewport.addEventListener('scroll', update);
-    update();
+    const apply = () => {
+      frame = 0;
+      const height = Math.round(viewport.height);
+      if (height === lastHeight) return;
+      lastHeight = height;
+      document.documentElement.style.setProperty(CSS_VAR, `${height}px`);
+    };
+
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(apply);
+    };
+
+    viewport.addEventListener('resize', schedule);
+    apply();
 
     return () => {
-      viewport.removeEventListener('resize', update);
-      viewport.removeEventListener('scroll', update);
+      viewport.removeEventListener('resize', schedule);
+      if (frame) window.cancelAnimationFrame(frame);
+      document.documentElement.style.removeProperty(CSS_VAR);
     };
   }, [enabled]);
-
-  return layout;
 }
+
+export { CSS_VAR as PICKER_VIEWPORT_HEIGHT_VAR };
