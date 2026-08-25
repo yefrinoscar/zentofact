@@ -1061,6 +1061,8 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_created_by
     ON orders(created_by)
     WHERE created_by IS NOT NULL;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_status TEXT;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_error TEXT;
   -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
   -- para asociarlo más adelante.
   ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
