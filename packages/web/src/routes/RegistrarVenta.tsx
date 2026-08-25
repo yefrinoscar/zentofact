@@ -5,20 +5,37 @@ import {
   AlertCircle,
   ArrowLeft,
   Banknote,
+  CalendarDays,
   ImagePlus,
   Loader2,
   Package,
   Search,
-  Store,
   Trash2,
-  Truck,
   X,
 } from 'lucide-react';
+import { es } from 'date-fns/locale';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import {
+  PAYMENT_METHODS,
+  PICKUP_ADDRESS,
+  SALE_SOURCES,
+  buildManualSaleOrderPayload,
+  formatProductStock,
+  limaTodayKey,
+  productPrice,
+  productStock,
+  saleLinesTotal,
+  validateManualSale,
+  type CatalogProductForSale,
+  type PaymentMethod,
+  type SaleLine,
+  type SaleSource,
+} from '../lib/registrar-venta';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
 import { Button } from '../components/ui/button';
+import { Calendar } from '../components/ui/calendar';
 import {
   Dialog,
   DialogContent,
@@ -28,6 +45,8 @@ import {
 } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { dateFromKey } from '../lib/documentDateRange';
 
 type ChannelAccount = {
   id: number;
@@ -36,45 +55,7 @@ type ChannelAccount = {
   active: boolean;
 };
 
-type CatalogProduct = {
-  id: number;
-  mainSku: string;
-  name: string;
-  imageUrl?: string | null;
-  referencePrice?: number | null;
-  sellerPriceMin?: number | null;
-  available?: number | null;
-  listings?: Array<{ shopSku?: string | null }>;
-};
-
-type SaleLine = {
-  id: string;
-  productId: number;
-  sku: string;
-  name: string;
-  imageUrl?: string | null;
-  shopSku?: string | null;
-  catalogPrice: number;
-  unitPrice: number;
-  quantity: number;
-};
-
-const SALE_SOURCES = [
-  { value: 'marketplace', label: 'Marketplace' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'telefono', label: 'Teléfono' },
-  { value: 'otro', label: 'Otro' },
-] as const;
-
-const PAYMENT_METHODS = [
-  { value: 'despues', label: 'Después' },
-  { value: 'efectivo', label: 'Efectivo' },
-  { value: 'yape_plin', label: 'Yape / Plin' },
-  { value: 'transferencia', label: 'Transferencia' },
-] as const;
-
-const PICKUP_ADDRESS = 'Av. La Marina 2055, San Miguel';
+type CatalogProduct = CatalogProductForSale;
 
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
 
@@ -86,9 +67,76 @@ function formatMoney(value: number) {
   }
 }
 
-function productPrice(product: CatalogProduct) {
-  const value = Number(product.sellerPriceMin ?? product.referencePrice ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+function formatDeliveryDateLabel(value: string, nowKey = limaTodayKey()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Elegir fecha';
+  const date = dateFromKey(value);
+  const sameYear = value.slice(0, 4) === nowKey.slice(0, 4);
+  return new Intl.DateTimeFormat('es-PE', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' as const }),
+  }).format(date).replace(/\.$/, '').toLocaleLowerCase('es-PE');
+}
+
+function DeliveryDatePicker({
+  value,
+  onChange,
+  minDateKey,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  minDateKey: string;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = /^\d{4}-\d{2}-\d{2}$/.test(value) ? dateFromKey(value) : undefined;
+  const minDate = dateFromKey(minDateKey);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          id="delivery-date"
+          aria-label={ariaLabel}
+          className={cn(
+            'h-11 w-full justify-between gap-2 px-3 font-normal tabular-nums sm:h-9 sm:w-44',
+            !selected && 'text-muted-foreground',
+          )}
+        >
+          <span className="truncate">{formatDeliveryDateLabel(value, minDateKey)}</span>
+          <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto p-2">
+        <Calendar
+          mode="single"
+          required
+          numberOfMonths={1}
+          timeZone="America/Lima"
+          noonSafe
+          locale={es}
+          selected={selected}
+          disabled={{ before: minDate }}
+          onSelect={(date) => {
+            if (!date) return;
+            onChange(new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'America/Lima',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(date));
+            setOpen(false);
+          }}
+          classNames={{ months: 'relative flex' }}
+          autoFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function falabellaMediaUrl(shopSku?: string | null) {
@@ -177,7 +225,7 @@ export default function RegistrarVenta() {
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [saleSource, setSaleSource] = useState<(typeof SALE_SOURCES)[number]['value']>('marketplace');
+  const [saleSource, setSaleSource] = useState<SaleSource>('marketplace');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [search, setSearch] = useState('');
@@ -185,10 +233,11 @@ export default function RegistrarVenta() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lines, setLines] = useState<SaleLine[]>([]);
   const [delivery, setDelivery] = useState<'recojo' | 'envio'>('envio');
+  const [deliveryDate, setDeliveryDate] = useState(limaTodayKey);
   const [shippingCarrier, setShippingCarrier] = useState<ShippingCarrier | ''>('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
   const [shippingNote, setShippingNote] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<(typeof PAYMENT_METHODS)[number]['value']>('despues');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
   const [receivedBy, setReceivedBy] = useState('');
   const [paymentProof, setPaymentProof] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
   const [creating, setCreating] = useState(false);
@@ -225,7 +274,7 @@ export default function RegistrarVenta() {
     [accounts],
   );
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
-  const total = lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
+  const total = saleLinesTotal(lines);
 
   const addProduct = (product: CatalogProduct) => {
     const sku = String(product.mainSku || '').trim();
@@ -277,82 +326,45 @@ export default function RegistrarVenta() {
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setCreateError('');
-    if (!manualAccount) {
-      setCreateError('Todavía no hay un canal de venta manual habilitado.');
-      return;
-    }
-    if (!customerName.trim()) {
-      setCreateError('Escribe el nombre del cliente.');
-      return;
-    }
-    if (!lines.length) {
-      setCreateError('Agrega al menos un producto.');
-      return;
-    }
-    if (lines.some((line) => line.quantity < 1 || line.unitPrice < 0)) {
-      setCreateError('Revisa cantidad y precio de cada producto.');
-      return;
-    }
-    if (delivery === 'envio' && !shippingCarrier) {
-      setCreateError('Elige el reparto: Marvisuar, Shaloom o Dinsides.');
-      return;
-    }
-    if (delivery === 'envio' && !dropoffPlace) {
-      setCreateError('Marca la dirección de envío en el mapa.');
+    const validationError = validateManualSale({
+      channelAccountId: manualAccount?.id,
+      customerName,
+      customerPhone,
+      lines,
+      delivery,
+      deliveryDate,
+      shippingCarrier,
+      dropoffPlace,
+      shippingNote,
+      saleSource,
+      paymentMethod,
+      receivedBy,
+      paymentProof,
+    });
+    if (validationError) {
+      setCreateError(validationError);
       return;
     }
 
     setCreating(true);
     try {
-      const paidNow = paymentMethod !== 'despues';
-      const orderNumber = `VTA-${new Date().toISOString().replace(/\D/g, '').slice(2, 14)}`;
-      await api.createManagedOrder({
-        channelAccountId: manualAccount.id,
-        externalOrderId: orderNumber,
-        externalOrderNumber: orderNumber,
-        orderStatus: 'confirmed',
-        paymentStatus: paidNow ? 'paid' : 'pending',
-        fulfillmentStatus: 'ready_to_ship',
-        requestedDocumentType: 'boleta',
-        currency: 'PEN',
-        subtotal: total,
-        total,
-        customer: {
-          name: customerName.trim(),
-          phone: customerPhone.trim(),
-        },
-        shipping: {
-          type: delivery,
-          carrier: delivery === 'envio' ? shippingCarrier : undefined,
-          address: delivery === 'envio' ? dropoffPlace?.label || '' : PICKUP_ADDRESS,
-          district: delivery === 'envio' ? dropoffPlace?.district || '' : '',
-          reference: delivery === 'envio' ? shippingNote.trim() : '',
-          lat: delivery === 'envio' ? dropoffPlace?.lat : undefined,
-          lng: delivery === 'envio' ? dropoffPlace?.lng : undefined,
-        },
-        metadata: {
-          origin: 'manual_ui',
-          saleSource,
-          delivery,
-          shippingCarrier: delivery === 'envio' ? shippingCarrier : '',
-          paymentMethod,
-          receivedBy: paymentMethod === 'efectivo' ? receivedBy.trim() : '',
-          paymentProof,
-          catalog: 'real',
-        },
-        orderedAt: new Date().toISOString(),
-        itemsComplete: true,
-        items: lines.map((line, index) => ({
-          externalItemId: `${orderNumber}-${index + 1}`,
-          sku: line.sku,
-          description: line.name,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          total: line.unitPrice * line.quantity,
-          metadata: { productId: line.productId, catalogPrice: line.catalogPrice },
-        })),
+      const payload = buildManualSaleOrderPayload({
+        channelAccountId: manualAccount!.id,
+        customerName,
+        customerPhone,
+        lines,
+        delivery,
+        deliveryDate,
+        shippingCarrier,
+        dropoffPlace,
+        shippingNote,
+        saleSource,
+        paymentMethod,
+        receivedBy,
+        paymentProof,
       });
-      navigate('/orders', { replace: true, state: { registered: orderNumber } });
+      await api.createManagedOrder(payload);
+      navigate('/orders', { replace: true, state: { registered: payload.externalOrderNumber } });
     } catch (error: any) {
       setCreateError(error?.message || 'No se pudo registrar la venta.');
     } finally {
@@ -469,56 +481,82 @@ export default function RegistrarVenta() {
       </section>
 
       <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">Entrega</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Recojo en tienda o envío a domicilio.</p>
-        </div>
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Método de entrega">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={delivery === 'envio'}
-            onClick={() => setDelivery('envio')}
-            className={cn(
-              'inline-flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium sm:h-9 sm:flex-none',
-              delivery === 'envio' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
-            )}
+        <h2 className="text-sm font-medium">Entrega</h2>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div
+            className="inline-flex w-full overflow-hidden rounded-md border border-border sm:w-auto"
+            role="radiogroup"
+            aria-label="Método de entrega"
           >
-            <Truck className="size-4" /> Envío
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={delivery === 'recojo'}
-            onClick={() => {
-              setDelivery('recojo');
-              setShippingCarrier('');
-            }}
-            className={cn(
-              'inline-flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium sm:h-9 sm:flex-none',
-              delivery === 'recojo' ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
-            )}
-          >
-            <Store className="size-4" /> Recojo
-          </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={delivery === 'envio'}
+              onClick={() => setDelivery('envio')}
+              className={cn(
+                'h-11 min-w-0 flex-1 cursor-pointer border-r border-border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
+                delivery === 'envio' ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
+              )}
+            >
+              Envío
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={delivery === 'recojo'}
+              onClick={() => {
+                setDelivery('recojo');
+                setShippingCarrier('');
+                setDropoffPlace(null);
+                setShippingNote('');
+              }}
+              className={cn(
+                'h-11 min-w-0 flex-1 cursor-pointer px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
+                delivery === 'recojo' ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
+              )}
+            >
+              Recojo
+            </button>
+          </div>
+          <DeliveryDatePicker
+            value={deliveryDate}
+            onChange={setDeliveryDate}
+            minDateKey={limaTodayKey()}
+            ariaLabel={delivery === 'envio' ? 'Fecha de entrega' : 'Fecha de recojo'}
+          />
         </div>
+
         {delivery === 'envio' ? (
           <div className="space-y-3">
-            <div className="space-y-2">
-              <div>
-                <Label>Reparto</Label>
-                <p className="mt-0.5 text-xs text-muted-foreground">Puede ser Marvisuar, Shaloom o Dinsides.</p>
-              </div>
-              <Choice
-                value={shippingCarrier}
-                options={SHIPPING_CARRIERS}
-                onChange={(value) => setShippingCarrier(value)}
-                ariaLabel="Reparto"
-              />
+            <div
+              className="inline-flex w-full overflow-hidden rounded-md border border-border sm:w-auto"
+              role="radiogroup"
+              aria-label="Reparto"
+            >
+              {SHIPPING_CARRIERS.map((carrier, index) => {
+                const selected = shippingCarrier === carrier.value;
+                return (
+                  <button
+                    key={carrier.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setShippingCarrier(carrier.value)}
+                    className={cn(
+                      'h-11 min-w-0 flex-1 cursor-pointer truncate px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
+                      index < SHIPPING_CARRIERS.length - 1 && 'border-r border-border',
+                      selected ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
+                    )}
+                  >
+                    {carrier.label}
+                  </button>
+                );
+              })}
             </div>
             <div className="space-y-1.5">
-              <Label>Dirección de envío</Label>
-              <PlacePicker value={dropoffPlace} onChange={setDropoffPlace} placeholder="Busca la calle o toca el mapa" />
+              <Label>Dirección</Label>
+              <PlacePicker value={dropoffPlace} onChange={setDropoffPlace} placeholder="Calle o toca el mapa" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>
@@ -626,7 +664,16 @@ export default function RegistrarVenta() {
                         <span className="block truncate text-sm font-medium">{product.name}</span>
                         <span className="block truncate font-mono text-[11px] text-muted-foreground">{product.mainSku}</span>
                       </span>
-                      <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(productPrice(product))}</span>
+                      <span className="shrink-0 text-right">
+                        <span className="block text-sm font-medium tabular-nums">{formatMoney(productPrice(product))}</span>
+                        <span className={cn(
+                          'block text-[11px] tabular-nums',
+                          productStock(product) <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
+                        )}
+                        >
+                          {formatProductStock(product)}
+                        </span>
+                      </span>
                     </button>
                   </li>
                 ))}

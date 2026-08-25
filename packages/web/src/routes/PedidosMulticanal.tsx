@@ -34,7 +34,7 @@ import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { shippingCarrierLabel } from '../lib/shipping-carrier';
+import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -636,15 +636,16 @@ function originLabel(order: ManagedOrder) {
   return order.channelName;
 }
 
-function deliveryLabel(order: ManagedOrder) {
-  const type = order.shipping?.type || order.metadata?.delivery || '';
-  if (type === 'recojo') return 'Recojo';
-  const carrier = shippingCarrierLabel(order.shipping?.carrier || order.metadata?.shippingCarrier);
-  if (carrier) return carrier;
-  if (type === 'envio') return 'Envío';
-  if (order.shipping?.trackingCode) return 'Envío';
-  if (order.channelCode !== 'manual') return 'Marketplace';
-  return '—';
+function deliveryBadge(order: ManagedOrder) {
+  const label = deliveryLabel(order);
+  if (!deliveryShowsAsTag(label)) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={label}>
+      {label}
+    </Badge>
+  );
 }
 
 function shippingAddress(shipping?: ManagedOrder['shipping']) {
@@ -1205,7 +1206,8 @@ export default function PedidosMulticanal() {
     },
   });
 
-  const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => [
+  const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => {
+    const defs: ColumnDef<ManagedOrder>[] = [
     {
       id: 'order',
       header: 'Pedido',
@@ -1240,14 +1242,6 @@ export default function PedidosMulticanal() {
       ),
     },
     {
-      id: 'phone',
-      header: 'Teléfono',
-      size: 116,
-      cell: ({ row }) => (
-        <span className="truncate font-mono text-[13px] tabular-nums text-muted-foreground">{row.original.customer?.phone || '—'}</span>
-      ),
-    },
-    {
       id: 'origin',
       header: 'Origen',
       size: 124,
@@ -1262,7 +1256,7 @@ export default function PedidosMulticanal() {
       id: 'delivery',
       header: 'Entrega',
       size: 108,
-      cell: ({ row }) => <span className="truncate">{deliveryLabel(row.original)}</span>,
+      cell: ({ row }) => deliveryBadge(row.original),
     },
     {
       id: 'address',
@@ -1347,7 +1341,13 @@ export default function PedidosMulticanal() {
         </div>
       ),
     },
-  ], [companyById]);
+  ];
+    const columnIds = defs.map((column) => column.id);
+    if (columnIds.join() !== MANAGED_ORDER_TABLE_COLUMNS.join()) {
+      throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
+    }
+    return defs;
+  }, [companyById]);
 
   const table = useReactTable({
     data: displayedOrders,
@@ -1581,7 +1581,7 @@ export default function PedidosMulticanal() {
                     <div className="space-y-0.5">
                       <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
-                      <DetailField icon={<Package />} label="Entrega" content={<span className="font-medium">{deliveryLabel(detail)}</span>} />
+                      <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
                       <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                     </div>

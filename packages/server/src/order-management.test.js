@@ -406,7 +406,7 @@ test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () 
 test('la vista por defecto limita marketplaces a sellers activos y conectados', async () => {
   const db = {
     async query(sql) {
-      assert.match(sql, /join companies c on c\.id=o\.company_id/i);
+      assert.match(sql, /left join companies c on c\.id=o\.company_id/i);
       assert.match(sql, /c\.activo=true/i);
       assert.match(sql, /c\.ripley_api_key/i);
       assert.match(sql, /c\.falabella_api_key/i);
@@ -414,6 +414,58 @@ test('la vista por defecto limita marketplaces a sellers activos y conectados', 
     },
   };
   await listOrders({ connectedOnly: true }, db);
+});
+
+test('regresión: lista ventas manuales aunque no tengan seller (company_id null)', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /left join companies c on c\.id=o\.company_id/i);
+      return {
+        rows: [{
+          id: 77,
+          company_id: null,
+          channel_account_id: 22,
+          external_order_id: 'VTA-260825040928',
+          external_order_number: 'VTA-260825040928',
+          order_status: 'confirmed',
+          payment_status: 'pending',
+          fulfillment_status: 'ready_to_ship',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'disabled',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 50,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 50,
+          customer: { name: 'Ana' },
+          shipping: { type: 'envio', carrier: 'shaloom' },
+          metadata: { origin: 'manual_ui' },
+          ordered_at: '2026-08-25T04:09:28.000Z',
+          promised_shipping_at: '2026-08-25T17:00:00.000Z',
+          provider_updated_at: null,
+          items_status: 'complete',
+          items_error: null,
+          first_seen_at: '2026-08-25T04:09:28.000Z',
+          last_seen_at: '2026-08-25T04:09:28.000Z',
+          created_at: '2026-08-25T04:09:28.000Z',
+          updated_at: '2026-08-25T04:09:28.000Z',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          total_count: 1,
+        }],
+      };
+    },
+  };
+
+  const result = await listOrders({ from: '2026-08-24', to: '2026-08-24', limit: 50 }, db);
+  assert.equal(result.totalCount, 1);
+  assert.equal(result.orders[0].externalOrderNumber, 'VTA-260825040928');
+  assert.equal(result.orders[0].companyId, null);
+  assert.equal(result.orders[0].channelCode, 'manual');
 });
 
 test('registra el pago de un pedido pendiente y deja el método en metadata', async () => {
@@ -549,4 +601,28 @@ test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async (
   );
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'shaloom');
+});
+
+test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {
+  const db = new IngestDb(account({ channel_code: 'manual' }));
+  const result = await ingestOrder(manualSale({
+    shipping: { type: 'envio', carrier: 'marvisuar' },
+    promisedShippingAt: '2026-08-25T12:00:00-05:00',
+    metadata: {
+      origin: 'manual_ui',
+      delivery: 'envio',
+      deliveryDate: '2026-08-25',
+      shippingCarrier: 'marvisuar',
+      paymentMethod: 'despues',
+    },
+  }), db);
+
+  assert.equal(result.created, true);
+  assert.equal(result.order.promisedShippingAt, '2026-08-25T17:00:00.000Z');
+  assert.equal(result.order.metadata.deliveryDate, '2026-08-25');
+  assert.equal(result.order.metadata.origin, 'manual_ui');
+
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(insert, 'debe persistir el pedido');
+  assert.equal(insert.params[21], '2026-08-25T17:00:00.000Z');
 });
