@@ -14,7 +14,7 @@ import {
   roleRank,
   userHasPermission,
 } from './permissions.js';
-import { authAccounts, authSessions, authUsers, userAuditLog } from './db-schema.js';
+import { authAccounts, authSessions, authUsers, LOCAL_CREDENTIAL_ISSUER, userAuditLog } from './db-schema.js';
 
 const PASSWORD_MIN_LENGTH = 12;
 const USER_ADMIN_LOCK = 917204;
@@ -251,6 +251,7 @@ export async function createUser({ name, email, password, role = 'operator', per
       id: accountId,
       accountId: userId,
       providerId: 'credential',
+      issuer: LOCAL_CREDENTIAL_ISSUER,
       userId,
       password: hashed,
       createdAt: now,
