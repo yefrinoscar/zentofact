@@ -271,6 +271,7 @@ const apiHttp = {
   listCatalogProducts: (filter: {
     search?: string; status?: string; channelCode?: string;
     companyId?: number; companyIds?: number[];
+    profitOwner?: string;
     sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
     inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
     publicationStatus?: 'all' | 'published' | 'unpublished';
@@ -281,12 +282,14 @@ const apiHttp = {
   getCatalogSummary: (filter: {
     search?: string; status?: string; channelCode?: string;
     companyId?: number; companyIds?: number[];
+    profitOwner?: string;
     sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
     inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
     publicationStatus?: 'all' | 'published' | 'unpublished';
     special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
     includeArchived?: boolean;
   } = {}) => req(`/products/summary${qs(filter)}`),
+  listCatalogProfitOwners: () => req<{ items: string[] }>('/products/profit-owners'),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
   listTodayProductSales: (filter: {

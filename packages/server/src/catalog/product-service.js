@@ -174,6 +174,24 @@ function specialFilter(filters = {}) {
   return 'none';
 }
 
+function profitOwnerFilter(filters = {}) {
+  if (filters.profitOwner === undefined || filters.profitOwner === null) return null;
+  const raw = String(filters.profitOwner).trim();
+  if (!raw || raw === 'all') return null;
+  if (raw === 'none' || raw === '__none__') return { kind: 'none' };
+  return { kind: 'named', value: text(raw, 'profitOwner', 80) };
+}
+
+function commissionAmount(value) {
+  const amount = finiteNumber(value, 'commissionAmount', { nullable: true });
+  if (amount != null && amount < 0) throw httpError('commissionAmount no puede ser negativo.', 400);
+  return amount;
+}
+
+function profitOwnerValue(value) {
+  return text(value, 'profitOwner', 80, { nullable: true });
+}
+
 function appendCatalogSearch(filters = {}, values, where) {
   const search = String(filters.search || '').trim();
   if (search) {
@@ -213,6 +231,13 @@ function appendCatalogSearch(filters = {}, values, where) {
       where company_listing.product_id=p.id and company_listing.company_id=any(${companyIdsParameter}::int[])
         and company_listing.status='active'
     )`);
+  }
+  const selectedProfitOwner = profitOwnerFilter(filters);
+  if (selectedProfitOwner?.kind === 'none') {
+    where.push('p.profit_owner is null');
+  } else if (selectedProfitOwner?.kind === 'named') {
+    values.push(selectedProfitOwner.value);
+    where.push(`p.profit_owner=$${values.length}`);
   }
   return { selectedCompanyIds, companyIdsParameter };
 }
@@ -1032,6 +1057,20 @@ export async function listTodayProductSales(filters = {}, db) {
   };
 }
 
+export async function listProfitOwners(db) {
+  const target = db || (await loadCore()).pool;
+  const result = await target.query(
+    `select profit_owner as name
+     from products
+     where profit_owner is not null
+     group by profit_owner
+     order by lower(profit_owner) asc, profit_owner asc`,
+  );
+  return {
+    items: result.rows.map((row) => row.name),
+  };
+}
+
 export async function createProduct(input, actorUserId, db) {
   return inTransaction(db, async (client) => {
     const mainSku = text(input.mainSku, 'mainSku', 64).toUpperCase();
@@ -1041,8 +1080,9 @@ export async function createProduct(input, actorUserId, db) {
       result = await client.query(
         `insert into products (
            main_sku, name, description, brand, status, attributes, barcode,
-           image_url, reference_price, created_by, updated_by
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+           image_url, reference_price, commission_amount, profit_owner,
+           created_by, updated_by
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
          returning *`,
         [
           mainSku,
@@ -1054,6 +1094,8 @@ export async function createProduct(input, actorUserId, db) {
           text(input.barcode, 'barcode', 200, { nullable: true }),
           text(input.imageUrl, 'imageUrl', 2000, { nullable: true }),
           finiteNumber(input.referencePrice, 'referencePrice', { nullable: true }),
+          commissionAmount(input.commissionAmount),
+          profitOwnerValue(input.profitOwner),
           actorUserId ? String(actorUserId) : null,
         ],
       );
@@ -1088,6 +1130,8 @@ export async function updateProduct(id, input, actorUserId, db) {
   if (input.barcode !== undefined) add('barcode', text(input.barcode, 'barcode', 200, { nullable: true }));
   if (input.imageUrl !== undefined) add('image_url', text(input.imageUrl, 'imageUrl', 2000, { nullable: true }));
   if (input.referencePrice !== undefined) add('reference_price', finiteNumber(input.referencePrice, 'referencePrice', { nullable: true }));
+  if (input.commissionAmount !== undefined) add('commission_amount', commissionAmount(input.commissionAmount));
+  if (input.profitOwner !== undefined) add('profit_owner', profitOwnerValue(input.profitOwner));
   if (!fields.length) return getProduct(productId, target);
   add('updated_by', actorUserId ? String(actorUserId) : null);
   values.push(productId);

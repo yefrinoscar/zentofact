@@ -59,3 +59,11 @@ _Avoid_: confirmed, pending
 **Movimiento de inventario**:
 Registro auditable de una entrada o salida del stock de un Producto. Si sale por un Pedido listo para enviar, queda ligado a ese pedido.
 _Avoid_: Bitácora, kardex
+
+**Comisión**:
+Monto fijo configurado en el Producto para calcular la ganancia al venderlo.
+_Avoid_: Margen, fee, comisión del marketplace
+
+**Beneficiario**:
+Persona a la que se atribuye la ganancia del Producto al filtrar o exportar reportes.
+_Avoid_: Flag, tag, dueño, owner, seller

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Boxes, Layers3, ListFilter, PackageCheck, Search, Store, X } from 'lucide-react';
+import { Boxes, Layers3, ListFilter, PackageCheck, Search, Store, UserRound, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -97,11 +97,14 @@ export function CatalogFilters({
   sellerCoverage,
   companyIds,
   companies,
+  profitOwner,
+  profitOwners,
   onStatusChange,
   onInventoryStatusChange,
   onPublicationStatusChange,
   onSellerCoverageChange,
   onCompanyIdsChange,
+  onProfitOwnerChange,
   onClearFilters,
 }: {
   searchControl: ReactNode;
@@ -112,11 +115,14 @@ export function CatalogFilters({
   sellerCoverage: SellerCoverageFilter;
   companyIds: number[];
   companies: CompanyOption[];
+  profitOwner: string;
+  profitOwners: string[];
   onStatusChange: (value: CatalogStatusFilter) => void;
   onInventoryStatusChange: (value: InventoryStatusFilter) => void;
   onPublicationStatusChange: (value: PublicationStatusFilter) => void;
   onSellerCoverageChange: (value: SellerCoverageFilter) => void;
   onCompanyIdsChange: (value: number[]) => void;
+  onProfitOwnerChange: (value: string) => void;
   onClearFilters: () => void;
 }) {
   const [sellerSearch, setSellerSearch] = useState('');
@@ -129,12 +135,18 @@ export function CatalogFilters({
     + Number(inventoryStatus !== 'all')
     + Number(publicationStatus !== 'all')
     + Number(sellerCoverage !== 'all')
-    + Number(companyIds.length > 0);
+    + Number(companyIds.length > 0)
+    + Number(profitOwner !== 'all');
   const sellerSummary = selectedCompanies.length === 0
     ? 'Todos'
     : selectedCompanies.length <= 2
       ? selectedCompanies.map((company) => company.name).join(', ')
       : `${selectedCompanies.length} seleccionados`;
+  const profitOwnerSummary = profitOwner === 'all'
+    ? 'Todos'
+    : profitOwner === 'none'
+      ? 'Sin beneficiario'
+      : profitOwner;
   const publicationScope = selectedCompanies.length > 0
     ? `en ${selectedCompanies.length === 1 ? selectedCompanies[0].name : 'los sellers elegidos'}`
     : 'en cualquier seller y canal';
@@ -255,6 +267,20 @@ export function CatalogFilters({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
+            <DropdownMenuSub>
+              <FacetTrigger icon={<UserRound />} label="Beneficiario" value={profitOwnerSummary} />
+              <DropdownMenuSubContent className={`max-h-[var(--radix-dropdown-menu-content-available-height)] w-72 overflow-y-auto rounded-xl ${MOBILE_FACET_POSITION}`}>
+                <DropdownMenuLabel className="px-2 py-2 leading-4">Persona a la que se atribuye la ganancia del producto.</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={profitOwner} onValueChange={onProfitOwnerChange}>
+                  <RadioOption value="all" label="Todos" />
+                  <RadioOption value="none" label="Sin beneficiario" description="Productos sin persona asignada." />
+                  {profitOwners.map((owner) => (
+                    <RadioOption key={owner} value={owner} label={owner} />
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+
             {activeFilterCount > 0 && (
               <>
                 <DropdownMenuSeparator />
@@ -271,6 +297,7 @@ export function CatalogFilters({
         {publicationStatus !== 'all' && <AppliedFilter label="Publicación" value={PUBLICATION_LABELS[publicationStatus]} onRemove={() => onPublicationStatusChange('all')} />}
         {companyIds.length > 0 && <AppliedFilter label="Seller" operator="es cualquiera de" value={sellerSummary} onRemove={() => onCompanyIdsChange([])} />}
         {sellerCoverage !== 'all' && <AppliedFilter label="Cantidad de sellers" value={SELLER_COUNT_LABELS[sellerCoverage]} onRemove={() => onSellerCoverageChange('all')} />}
+        {profitOwner !== 'all' && <AppliedFilter label="Beneficiario" value={profitOwnerSummary} onRemove={() => onProfitOwnerChange('all')} />}
         {activeFilterCount > 0 && (
           <Button type="button" variant="ghost" size="sm" onClick={onClearFilters} className="h-9 px-3 text-sm text-muted-foreground">
             Limpiar todo
