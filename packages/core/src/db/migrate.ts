@@ -1061,6 +1061,17 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_created_by
     ON orders(created_by)
     WHERE created_by IS NOT NULL;
+  -- Completitud de ítems: pending hasta hidratar líneas; complete cuando ya
+  -- están; error si falló la consulta al marketplace. stockPhase no descuenta
+  -- mientras el pedido siga pending/error.
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_status TEXT NOT NULL DEFAULT 'pending';
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_error TEXT;
+  ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_items_status_check;
+  ALTER TABLE orders ADD CONSTRAINT orders_items_status_check
+    CHECK (items_status IN ('pending', 'complete', 'error'));
+  CREATE INDEX IF NOT EXISTS idx_orders_items_incomplete
+    ON orders(items_status, updated_at DESC)
+    WHERE items_status IN ('pending', 'error');
   -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
   -- para asociarlo más adelante.
   ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
@@ -1086,6 +1097,15 @@ const DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku);
+  -- Pedidos que ya tenían líneas hidratadas antes de items_status no deben
+  -- quedar bloqueados en pending (stockPhase no descuenta en ese estado).
+  -- Corre después de crear order_items para no fallar en DBs nuevas (PR preview).
+  UPDATE orders o
+     SET items_status = 'complete',
+         items_error = NULL,
+         updated_at = NOW()
+   WHERE o.items_status = 'pending'
+     AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id);
 
   -- Catálogo canónico multi-seller. El producto representa la unidad física y
   -- su inventario es compartido por todos los listings de la instancia.

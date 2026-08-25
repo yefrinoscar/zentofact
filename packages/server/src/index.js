@@ -41,6 +41,7 @@ if (shouldSeedPreview()) {
   console.log('[SEED] Preview seed omitido (SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true); no se crea nada');
 } else {
   await users.ensureUserColumns();
+  await users.ensureBootstrapAdmin();
 }
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
