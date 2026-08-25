@@ -1060,9 +1060,10 @@ export async function listTodayProductSales(filters = {}, db) {
 export async function listProfitOwners(db) {
   const target = db || (await loadCore()).pool;
   const result = await target.query(
-    `select distinct profit_owner as name
+    `select profit_owner as name
      from products
      where profit_owner is not null
+     group by profit_owner
      order by lower(profit_owner) asc, profit_owner asc`,
   );
   return {
