@@ -36,6 +36,12 @@ if (shouldSeedPreview()) {
   const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
   await bootstrapPreviewIfNeeded();
 } else {
+  if (isRailwayPrPreview()) {
+    // DB vacía del PR: solo schema de auth, sin datos demo.
+    const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
+    console.log('[SEED] Preview seed omitido (SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true)');
+    await ensureAuthSchema();
+  }
   await users.ensureUserColumns();
 }
 const autoEmit = await import('./auto-emission.js');

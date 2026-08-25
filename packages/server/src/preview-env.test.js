@@ -26,3 +26,22 @@ test('siembra PR preview automáticamente y SEED_PREVIEW en no-prod', () => {
   assert.equal(shouldSeedPreview({ SEED_PREVIEW: 'true' }), true);
   assert.equal(shouldSeedPreview({ RAILWAY_ENVIRONMENT_NAME: 'development' }), false);
 });
+
+test('permite saltar el seed en PR con SEED_PREVIEW=false o SKIP_PREVIEW_SEED', () => {
+  assert.equal(shouldSeedPreview({
+    RAILWAY_ENVIRONMENT_NAME: 'zentofact-pr-1',
+    SEED_PREVIEW: 'false',
+  }), false);
+  assert.equal(shouldSeedPreview({
+    RAILWAY_ENVIRONMENT_NAME: 'zentofact-pr-1',
+    SEED_PREVIEW: '0',
+  }), false);
+  assert.equal(shouldSeedPreview({
+    RAILWAY_ENVIRONMENT_NAME: 'zentofact-pr-1',
+    SKIP_PREVIEW_SEED: 'true',
+  }), false);
+  assert.equal(shouldSeedPreview({
+    RAILWAY_ENVIRONMENT_NAME: 'zentofact-pr-1',
+    SKIP_PREVIEW_SEED: '1',
+  }), false);
+});

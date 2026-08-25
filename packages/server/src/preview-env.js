@@ -1,5 +1,17 @@
 // Detección de entornos Railway PR preview y flags de seed de demo.
 
+function envFlag(env, name) {
+  return String(env[name] || '').trim().toLowerCase();
+}
+
+function isTruthy(value) {
+  return ['1', 'true', 'yes', 'on'].includes(value);
+}
+
+function isFalsy(value) {
+  return ['0', 'false', 'no', 'off'].includes(value);
+}
+
 export function railwayEnvironmentName(env = process.env) {
   return String(env.RAILWAY_ENVIRONMENT_NAME || '').trim();
 }
@@ -16,10 +28,19 @@ export function isProductionEnvironment(env = process.env) {
   return false;
 }
 
-/** Seed automático solo en PR preview, o con SEED_PREVIEW=true fuera de production. */
+/**
+ * Seed automático de datos demo:
+ * - En PR preview (`zentofact-pr-*`) corre por defecto.
+ * - `SEED_PREVIEW=false` o `SKIP_PREVIEW_SEED=true` lo apaga (incluso en PR).
+ * - `SEED_PREVIEW=true` lo fuerza fuera de production (p. ej. local).
+ * - Nunca corre en production.
+ */
 export function shouldSeedPreview(env = process.env) {
   if (isProductionEnvironment(env)) return false;
-  const flag = String(env.SEED_PREVIEW || '').trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(flag)) return true;
+
+  const seedFlag = envFlag(env, 'SEED_PREVIEW');
+  const skipFlag = envFlag(env, 'SKIP_PREVIEW_SEED');
+  if (isFalsy(seedFlag) || isTruthy(skipFlag)) return false;
+  if (isTruthy(seedFlag)) return true;
   return isRailwayPrPreview(env);
 }

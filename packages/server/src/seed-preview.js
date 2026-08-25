@@ -578,7 +578,10 @@ export async function seedPreviewData({ force = false } = {}) {
 }
 
 export async function bootstrapPreviewIfNeeded() {
-  if (!shouldSeedPreview()) return { ran: false };
+  if (!shouldSeedPreview()) {
+    console.log('[SEED] Omitido: SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true');
+    return { ran: false, skipped: true };
+  }
   const envName = String(process.env.RAILWAY_ENVIRONMENT_NAME || 'local').trim() || 'local';
   console.log(`[SEED] Bootstrap de preview en ${envName}`);
   await ensureAuthSchema();
