@@ -1,6 +1,6 @@
-import { FormEvent, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
   BarChart3,
@@ -26,6 +26,7 @@ import {
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
+import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
 import {
   UNPUBLISH_CONFIRMATION_TEXT,
   publicationPreviewCopy,
@@ -957,6 +958,8 @@ export default function Productos() {
         onPrefetch={handleCatalogPrefetch}
         onOpenProduct={openProduct}
         onOpenImage={openProductImage}
+        onAssociateProduct={openListingAssociation}
+        onTogglePublication={togglePublication}
       />
 
       <ProductDrawer
@@ -1181,15 +1184,32 @@ function CopyableSku({
 
 const CatalogProductIdentity = memo(function CatalogProductIdentity({
   product,
+  expanded,
+  onToggleExpand,
   onOpenProduct,
   onOpenImage,
 }: {
   product: Product;
+  expanded: boolean;
+  onToggleExpand: (productId: number) => void;
   onOpenProduct: (productId: number) => void;
   onOpenImage: (product: Product) => void;
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
+    <div className="grid min-w-0 grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleExpand(product.id);
+        }}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`${expanded ? 'Contraer' : 'Expandir'} publicaciones de ${product.name}`}
+        aria-expanded={expanded}
+      >
+        <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
+      </button>
       {product.imageUrl
         ? <button
             type="button"
@@ -1209,14 +1229,17 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
       <span className="min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => onOpenProduct(product.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenProduct(product.id);
+          }}
           className="block w-full text-left hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
         </button>
         <CopyableSku sku={product.mainSku} />
       </span>
-      <span className="col-span-2 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
+      <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
         <span className="min-w-0">
           <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
           <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
@@ -1246,6 +1269,8 @@ const CatalogTable = memo(function CatalogTable({
   onPrefetch,
   onOpenProduct,
   onOpenImage,
+  onAssociateProduct,
+  onTogglePublication,
 }: {
   products: Product[];
   totalCount: number;
@@ -1257,7 +1282,20 @@ const CatalogTable = memo(function CatalogTable({
   onPrefetch: (nextPage: number) => void;
   onOpenProduct: (productId: number) => void;
   onOpenImage: (product: Product) => void;
+  onAssociateProduct: (product: Product) => void;
+  onTogglePublication: (listing: Listing) => void;
 }) {
+  const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
+  const toggleExpand = useCallback((productId: number) => {
+    const rowId = String(productId);
+    setExpandedRows((current) => {
+      const next = typeof current === 'object' ? { ...current } : {};
+      if (next[rowId]) delete next[rowId];
+      else next[rowId] = true;
+      return next;
+    });
+  }, []);
+
   const columns = useMemo<ColumnDef<Product>[]>(() => [
     {
       id: 'product',
@@ -1265,6 +1303,8 @@ const CatalogTable = memo(function CatalogTable({
       cell: ({ row }) => (
         <CatalogProductIdentity
           product={row.original}
+          expanded={row.getIsExpanded()}
+          onToggleExpand={toggleExpand}
           onOpenProduct={onOpenProduct}
           onOpenImage={onOpenImage}
         />
@@ -1291,16 +1331,20 @@ const CatalogTable = memo(function CatalogTable({
       header: 'Estado del producto',
       cell: ({ row }) => <ProductStatusBadge product={row.original} />,
     },
-  ], [onOpenImage, onOpenProduct]);
+  ], [onOpenImage, onOpenProduct, toggleExpand]);
 
   const table = useReactTable({
     data: products,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    getRowCanExpand: () => true,
     getRowId: (product) => String(product.id),
+    onExpandedChange: setExpandedRows,
     manualPagination: true,
     rowCount: totalCount,
     state: {
+      expanded: expandedRows,
       pagination: {
         pageIndex,
         pageSize,
@@ -1327,15 +1371,32 @@ const CatalogTable = memo(function CatalogTable({
                 >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
               </TableRow>)}
             </TableHeader>
-            <TableBody>{table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} className="align-middle">
+            <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
+              <TableRow
+                className={cn('cursor-pointer align-middle focus-visible:bg-muted/30 focus-visible:outline-none', row.getIsExpanded() && 'border-b-0 bg-muted/20')}
+                tabIndex={0}
+                onClick={() => onOpenProduct(row.original.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenProduct(row.original.id);
+                  }
+                }}
+              >
                 {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn(
                   'min-w-0',
                   CATALOG_COLUMN_CLASS_NAMES[cell.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES],
                   cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell',
                 )}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
               </TableRow>
-            ))}</TableBody>
+              {row.getIsExpanded() && <ExpandedProductPublications
+                product={row.original}
+                listings={row.original.listings}
+                onOpenDetail={onOpenProduct}
+                onAssociateProduct={onAssociateProduct}
+                onTogglePublication={onTogglePublication}
+              />}
+            </Fragment>)}</TableBody>
           </Table>
         </div>
       )}
@@ -1349,6 +1410,114 @@ const CatalogTable = memo(function CatalogTable({
       /> : null}
     </TablePanel>
   );
+});
+
+const ExpandedProductPublications = memo(function ExpandedProductPublications({
+  product,
+  listings: providedListings,
+  onOpenDetail,
+  onAssociateProduct,
+  onTogglePublication,
+}: {
+  product: Product;
+  listings?: Listing[];
+  onOpenDetail: (productId: number) => void;
+  onAssociateProduct: (product: Product) => void;
+  onTogglePublication: (listing: Listing) => void;
+}) {
+  const shouldFetch = providedListings === undefined;
+  const detailQuery = useQuery({
+    queryKey: ['catalog-product-detail', product.id],
+    queryFn: () => api.getCatalogProduct(product.id),
+    enabled: shouldFetch,
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const sourceListings = providedListings ?? ((detailQuery.data as Product | undefined)?.listings || []);
+  const listings = useMemo(() => sourceListings.filter((listing) => listing.status !== 'unlinked'), [sourceListings]);
+
+  if (shouldFetch && detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15" onClick={(event) => event.stopPropagation()}>
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
+    </TableCell>
+  </TableRow>;
+
+  if (shouldFetch && detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60" onClick={(event) => event.stopPropagation()}>
+    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
+  </TableRow>;
+
+  return <>
+    {listings.length ? listings.map((listing, index) => {
+      const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
+      const publication = publicationPresentation(listing);
+      const isLast = index === listings.length - 1;
+      return <TableRow
+        key={listing.id}
+        className={cn(
+          'bg-muted/15 hover:bg-muted/30',
+          sellerPublicationRowBorderClass(isLast),
+        )}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
+          <div className="min-w-0 pl-[4.5rem]">
+            <button
+              type="button"
+              onClick={() => onOpenDetail(product.id)}
+              className="line-clamp-2 text-left text-sm font-medium leading-5 text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >{listing.title || product.name}</button>
+            <span className="mt-1 line-clamp-2 text-xs font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
+            <div className="mt-1 flex flex-nowrap items-center gap-2 text-xs">
+              <CopyableSku
+                sku={listing.sellerSku}
+                title="Copiar SKU del seller"
+                copiedTitle="SKU copiado"
+                className="relative inline-flex shrink-0 items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <ChannelBadge value={listing.channelCode} listing={listing} />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:hidden">
+              <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
+              <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
+              <div className="col-span-2 flex items-center justify-between border-t border-border/60 pt-2">
+                <span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span>
+                <Switch
+                  checked={publication.visible}
+                  onCheckedChange={() => onTogglePublication(listing)}
+                  aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+                />
+              </div>
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerPrice listing={listing} /></TableCell>
+        <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerStock listing={listing} /></TableCell>
+        <TableCell className="hidden py-2.5 align-middle sm:table-cell">
+          <div className="flex items-center gap-2">
+            <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
+            <Switch
+              checked={publication.visible}
+              onCheckedChange={() => onTogglePublication(listing)}
+              aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+            />
+          </div>
+        </TableCell>
+      </TableRow>;
+    }) : <TableRow className={cn(sellerPublicationRowBorderClass(false), 'bg-muted/15 hover:bg-muted/15')} onClick={(event) => event.stopPropagation()}>
+      <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
+    </TableRow>}
+    <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/30')} onClick={(event) => event.stopPropagation()}>
+      <TableCell colSpan={4} className="h-11 py-0 pl-[6.5rem]">
+        <button
+          type="button"
+          onClick={() => onAssociateProduct(product)}
+          className="-ml-2 inline-flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto
+        </button>
+      </TableCell>
+    </TableRow>
+  </>;
 });
 
 function ProductDrawer({
