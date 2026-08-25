@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { applyTheme, getStoredTheme } from './lib/theme';
 import { applyDevBranding } from './lib/runtimeEnv';
+import { OperatorSnackbarProvider } from '@/components/OperatorSnackbar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@fontsource-variable/inter';
@@ -25,9 +26,11 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
+      <OperatorSnackbarProvider>
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      </OperatorSnackbarProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 );

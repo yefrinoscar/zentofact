@@ -9,7 +9,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test src/*.test.js",
     "auth:migrate": "node src/migrate-auth.js",
-    "auth:seed-admin": "node src/seed-admin.js"
+    "auth:seed-admin": "node src/seed-admin.js",
+    "seed:preview": "node src/seed-preview.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
