@@ -1100,6 +1100,8 @@ const DDL = `
     barcode TEXT,
     image_url TEXT,
     reference_price NUMERIC(14,2),
+    commission_amount NUMERIC(14,2),
+    profit_owner TEXT,
     unit TEXT NOT NULL DEFAULT 'each',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1107,10 +1109,33 @@ const DDL = `
     updated_by TEXT,
     CHECK (char_length(trim(main_sku)) BETWEEN 1 AND 64),
     CHECK (status IN ('active', 'inactive', 'archived')),
-    CHECK (unit IN ('each'))
+    CHECK (unit IN ('each')),
+    CHECK (commission_amount IS NULL OR commission_amount >= 0),
+    CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80)
   );
   CREATE INDEX IF NOT EXISTS idx_products_status_updated
     ON products(status, updated_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_products_profit_owner
+    ON products(profit_owner)
+    WHERE profit_owner IS NOT NULL;
+
+  -- Comisión y beneficiario en productos existentes.
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS profit_owner TEXT;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_commission_amount_nonnegative
+      CHECK (commission_amount IS NULL OR commission_amount >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_profit_owner_length
+      CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
 
   -- Búsqueda operacional del catálogo. Trigram mantiene rápidas las búsquedas
   -- parciales por SKU/nombre cuando la tabla crece.

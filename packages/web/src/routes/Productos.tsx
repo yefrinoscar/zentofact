@@ -95,6 +95,8 @@ type Product = {
   status: 'active' | 'inactive' | 'archived';
   imageUrl?: string | null;
   referencePrice?: number | null;
+  commissionAmount?: number | null;
+  profitOwner?: string | null;
   sellerPriceMin?: number | null;
   sellerPriceMax?: number | null;
   sellerStockTotal?: number;
@@ -220,7 +222,17 @@ const CATALOG_COLUMN_CLASS_NAMES = {
   status: 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
 } as const;
 
-const initialCreate = { mainSku: '', name: '', brand: '', description: '', referencePrice: '', imageUrl: '' };
+const initialCreate = {
+  mainSku: '',
+  name: '',
+  brand: '',
+  description: '',
+  referencePrice: '',
+  commissionAmount: '',
+  profitOwner: '',
+  imageUrl: '',
+};
+const initialCommercial = { commissionAmount: '', profitOwner: '' };
 const initialAdjust = { mode: 'delta', value: '', reason: '' };
 const initialPublishVisual = {
   listingId: null as number | null,
@@ -376,6 +388,7 @@ export default function Productos() {
   const [publicationStatus, setPublicationStatus] = useState<PublicationStatusFilter>('all');
   const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
   const [companyIds, setCompanyIds] = useState<number[]>([]);
+  const [profitOwner, setProfitOwner] = useState('all');
   const [sort] = useState<CatalogSort>('updated_desc');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -384,11 +397,12 @@ export default function Productos() {
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
-  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
+  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'commercial' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
   const [createForm, setCreateForm] = useState(initialCreate);
+  const [commercialForm, setCommercialForm] = useState(initialCommercial);
   const [adjustForm, setAdjustForm] = useState(initialAdjust);
   const [imageUrl, setImageUrl] = useState('');
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
@@ -443,9 +457,10 @@ export default function Productos() {
     publicationStatus,
     sellerCoverage,
     companyIds,
+    profitOwner,
     sort,
     offset,
-  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, sort, offset]);
+  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, profitOwner, sort, offset]);
   const tableResetKey = JSON.stringify({
     submittedSearch,
     status,
@@ -453,6 +468,7 @@ export default function Productos() {
     publicationStatus,
     sellerCoverage,
     companyIds,
+    profitOwner,
     sort,
   });
   const listRequest = useMemo(() => ({
@@ -462,9 +478,10 @@ export default function Productos() {
     publicationStatus,
     sellerCoverage,
     companyIds: companyIds.length ? companyIds : undefined,
+    profitOwner: profitOwner === 'all' ? undefined : profitOwner,
     ...CATALOG_SORT_REQUESTS[sort],
     limit: PAGE_SIZE,
-  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, sort]);
+  }), [submittedSearch, status, inventoryStatus, publicationStatus, sellerCoverage, companyIds, profitOwner, sort]);
   const productsQuery = useQuery({
     queryKey: ['catalog-products', productFilters],
     queryFn: () => api.listCatalogProducts({
@@ -482,6 +499,7 @@ export default function Productos() {
     publicationStatus,
     sellerCoverage,
     companyIds: companyIds.length ? companyIds : undefined,
+    profitOwner: profitOwner === 'all' ? undefined : profitOwner,
   };
   const summaryQuery = useQuery({
     queryKey: ['catalog-summary', summaryFilters],
@@ -494,6 +512,12 @@ export default function Productos() {
     queryKey: ['catalog-companies'],
     queryFn: () => api.listCompanies(),
     staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const profitOwnersQuery = useQuery({
+    queryKey: ['catalog-profit-owners'],
+    queryFn: () => api.listCatalogProfitOwners(),
+    staleTime: 60_000,
     retry: 1,
   });
   const detailQuery = useQuery({
@@ -602,6 +626,7 @@ export default function Productos() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['catalog-products'] }),
       queryClient.invalidateQueries({ queryKey: ['catalog-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['catalog-profit-owners'] }),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-detail', selectedId] }) : Promise.resolve(),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-movements', selectedId] }) : Promise.resolve(),
       selectedId ? queryClient.invalidateQueries({ queryKey: ['catalog-product-sales', selectedId] }) : Promise.resolve(),
@@ -666,11 +691,26 @@ export default function Productos() {
     const created = await runAction(() => api.createCatalogProduct({
       ...createForm,
       referencePrice: createForm.referencePrice || null,
+      commissionAmount: createForm.commissionAmount || null,
+      profitOwner: createForm.profitOwner || null,
     }), (result) => `Producto ${result.mainSku} creado con stock inicial 0.`);
     if (created) {
       setCreateForm(initialCreate);
       setSelectedId(created.id);
     }
+  };
+
+  const updateProductCommercial = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedId) return;
+    const result = await runAction(
+      () => api.updateCatalogProduct(selectedId, {
+        commissionAmount: commercialForm.commissionAmount === '' ? null : commercialForm.commissionAmount,
+        profitOwner: commercialForm.profitOwner.trim() || null,
+      }),
+      () => 'Comisión y beneficiario actualizados.',
+    );
+    if (result) setModal(null);
   };
 
   const adjustInventory = async (event: FormEvent) => {
@@ -884,7 +924,21 @@ export default function Productos() {
     setPublicationStatus('all');
     setSellerCoverage('all');
     setCompanyIds([]);
+    setProfitOwner('all');
     resetListView();
+  };
+
+  const applyProfitOwner = (next: string) => {
+    resetListView();
+    setProfitOwner(next);
+  };
+
+  const openCommercialEditor = (product: Product) => {
+    setCommercialForm({
+      commissionAmount: product.commissionAmount == null ? '' : String(product.commissionAmount),
+      profitOwner: product.profitOwner || '',
+    });
+    openModal('commercial');
   };
 
   return (
@@ -935,11 +989,14 @@ export default function Productos() {
         sellerCoverage={sellerCoverage}
         companyIds={companyIds}
         companies={companyOptions}
+        profitOwner={profitOwner}
+        profitOwners={profitOwnersQuery.data?.items || []}
         onStatusChange={applyStatus}
         onInventoryStatusChange={applyInventoryStatus}
         onPublicationStatusChange={applyPublicationStatus}
         onSellerCoverageChange={applyCoverage}
         onCompanyIdsChange={applyCompanyIds}
+        onProfitOwnerChange={applyProfitOwner}
         onClearFilters={clearFilters}
       />
 
@@ -987,6 +1044,7 @@ export default function Productos() {
           setImageUrl(selectedProduct?.imageUrl || '');
           openModal('image');
         }}
+        onEditCommercial={() => selectedProduct && openCommercialEditor(selectedProduct)}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -995,7 +1053,9 @@ export default function Productos() {
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
-      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
+      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
+
+      {modal === 'commercial' && selectedProduct && <Modal title="Comisión y beneficiario" subtitle={`${selectedProduct.name} · SKU interno ${selectedProduct.mainSku}`} onClose={() => setModal(null)}><form onSubmit={updateProductCommercial} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="Comisión" type="number" value={commercialForm.commissionAmount} onChange={(value) => setCommercialForm({ ...commercialForm, commissionAmount: value })} /><Field label="Beneficiario" value={commercialForm.profitOwner} onChange={(value) => setCommercialForm({ ...commercialForm, profitOwner: value })} list="profit-owner-options" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><p className="text-xs leading-5 text-muted-foreground">La comisión es el monto fijo del producto. El beneficiario agrupa la ganancia en reportes.</p><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Guardar</Submit></form></Modal>}
 
       {modal === 'adjust' && selectedProduct && <Modal title={`Ajustar stock · ${selectedProduct.mainSku}`} subtitle={`Saldo actual: ${formatNumber(selectedProduct.quantityOnHand)}. El movimiento queda auditado.`} onClose={() => setModal(null)}><form onSubmit={adjustInventory} className="space-y-4"><Select value={adjustForm.mode} onValueChange={(value) => setAdjustForm({ ...adjustForm, mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="delta">Sumar o restar (delta)</SelectItem><SelectItem value="absolute">Fijar saldo absoluto</SelectItem></SelectContent></Select><Field label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'} type="number" value={adjustForm.value} onChange={(value) => setAdjustForm({ ...adjustForm, value })} required /><TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Registrar ajuste</Submit></form></Modal>}
 
@@ -1354,7 +1414,7 @@ const CatalogTable = memo(function CatalogTable({
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
-  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
+  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onEditCommercial, onPublish, onAssociate, onTogglePublication,
   onDisassociate,
 }: {
   open: boolean;
@@ -1381,6 +1441,7 @@ function ProductDrawer({
   onOpenImage: (product: Product) => void;
   onAdjust: () => void;
   onEditImage: () => void;
+  onEditCommercial: () => void;
   onPublish: () => void;
   onAssociate: () => void;
   onDisassociate: (listing: Listing) => void;
@@ -1486,11 +1547,16 @@ function ProductDrawer({
           <section className="border-b border-border px-5 py-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold">Información</h3>
-              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={onEditCommercial} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Comisión</button>
+                <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
+              </div>
             </div>
             <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
               <InfoValue label="SKU interno" value={product.mainSku} />
               <InfoValue label="Marca" value={usableBrand(product.brand) || '—'} />
+              <InfoValue label="Comisión" value={product.commissionAmount == null ? '—' : formatMoney(product.commissionAmount)} />
+              <InfoValue label="Beneficiario" value={product.profitOwner || '—'} />
               <InfoValue label="Unidad" value="Unidad" />
               <InfoValue label="Actualizado" value={formatDate(product.updatedAt)} />
               <InfoValue label="Stock disponible" value={`${formatNumber(product.available)} u`} />
@@ -1846,8 +1912,28 @@ function Modal({ title, subtitle, onClose, children, wide = false }: { title: st
   </Dialog>;
 }
 
-function Field({ label, value, onChange, required, type = 'text', className }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string; className?: string }) {
-  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} required={required} /></label>;
+function Field({
+  label,
+  value,
+  onChange,
+  required,
+  type = 'text',
+  className,
+  list,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+  type?: string;
+  className?: string;
+  list?: string;
+}) {
+  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} required={required} list={list} min={type === 'number' ? '0' : undefined} /></label>;
+}
+
+function ProfitOwnerOptions({ owners }: { owners: string[] }) {
+  return <datalist id="profit-owner-options">{owners.map((owner) => <option key={owner} value={owner} />)}</datalist>;
 }
 
 function TextArea({ label, value, onChange, required }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {

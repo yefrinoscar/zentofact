@@ -475,6 +475,10 @@ app.get('/products/summary', async (c) => {
   try { return ok(c, await productService.getCatalogSummary(c.req.query())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.get('/products/profit-owners', async (c) => {
+  try { return ok(c, await productService.listProfitOwners()); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/products', async (c) => {
   try { return ok(c, await productService.createProduct(await c.req.json(), c.get('user')?.id), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
