@@ -15,11 +15,16 @@ export const authUsers = pgTable('user', {
   updatedAt: timestamp('updatedAt', { withTimezone: true }),
 });
 
+/** Better Auth ≥1.7 scopes credential accounts by issuer (`local:credential`). */
+export const LOCAL_CREDENTIAL_ISSUER = 'local:credential';
+
 export const authAccounts = pgTable('account', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull(),
   providerId: text('providerId').notNull(),
   userId: text('userId').notNull(),
+  /** Required by Better Auth 1.7 account identity; credential logins use local:credential. */
+  issuer: text('issuer').notNull().default(LOCAL_CREDENTIAL_ISSUER),
   password: text('password'),
   accessToken: text('accessToken'),
   refreshToken: text('refreshToken'),
