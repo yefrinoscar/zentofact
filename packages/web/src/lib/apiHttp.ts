@@ -514,6 +514,14 @@ const apiHttp = {
   autoEmitRotateWebhookSecret: (companyId: number) => req(`/auto-emit/webhooks/${companyId}/rotate-secret`, { method: 'POST' }),
   autoEmitDeleteWebhook: (companyId: number, webhookId: string) => req(`/auto-emit/webhooks/${companyId}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' }),
 
+  // Cola de descuentos de stock
+  stockJobsGetConfig: () => req('/catalog/stock-jobs/config'),
+  stockJobsList: (limit = 60) => req(`/catalog/stock-jobs/jobs${qs({ limit })}`),
+  stockJobsSetPaused: (paused: boolean) => req('/catalog/stock-jobs/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
+  stockJobsRetry: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/retry`, { method: 'POST' }),
+  stockJobsOrderPreview: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/order-preview`),
+  stockJobsRun: (limit = 8) => req(`/catalog/stock-jobs/run${qs({ limit })}`, { method: 'POST' }),
+
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },
 };
 
