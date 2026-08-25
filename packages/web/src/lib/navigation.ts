@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 import type { PermissionKey } from './permissions';
+import { isNavItemActive, mobileNavPathname } from './nav-path';
+
+export { isNavItemActive, mobileNavPathname };
 
 export type NavItem = {
   to: string;
@@ -90,12 +93,6 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
-
-export function isNavItemActive(pathname: string, to: string) {
-  const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  if (to === '/credit-notes') return activePath === to;
-  return activePath === to || activePath.startsWith(`${to}/`);
-}
 
 export function visibleNavigation(
   can: (permission: PermissionKey) => boolean,

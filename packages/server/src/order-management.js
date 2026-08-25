@@ -925,6 +925,11 @@ export async function listOrders(filters = {}, db) {
     values.push(requiredText(filters.createdBy, 'createdBy', 300));
     where.push(`o.created_by=$${values.length}`);
   }
+  if (filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true') {
+    where.push(`o.order_status not in ('cancelled', 'failed')`);
+    where.push(`o.payment_status not in ('refunded', 'failed')`);
+    where.push(`o.fulfillment_status not in ('cancelled', 'returned', 'failed')`);
+  }
   for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
     const value = String(filters[filterName] || '').trim();
     if (!value) continue;
@@ -1150,6 +1155,7 @@ export async function getSalespersonHome(filters = {}, db) {
     from,
     to,
     limit: filters.limit || 50,
+    salesOnly: true,
   }, target);
   const row = kpi.rows[0] || {};
   return {
