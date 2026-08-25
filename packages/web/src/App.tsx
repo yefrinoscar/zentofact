@@ -16,7 +16,6 @@ import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
-import PedidosRipley from './routes/PedidosRipley';
 import PedidosMulticanal from './routes/PedidosMulticanal';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
@@ -49,10 +48,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/pedidos': {
     title: 'Bandeja Falabella',
     subtitle: 'Pedidos de Falabella que debes preparar y despachar.',
-  },
-  '/pedidos-ripley': {
-    title: 'Bandeja Ripley',
-    subtitle: 'Consulta y revisa los pedidos de Ripley Perú en Mirakl.',
   },
   '/orders': {
     title: 'Pedidos',
@@ -266,7 +261,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
-              <Route path="/pedidos-ripley" element={<RequirePermission permission="orders_inbox" {...permissionState}><PedidosRipley /></RequirePermission>} />
+              <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />

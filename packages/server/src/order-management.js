@@ -942,7 +942,7 @@ export async function listOrders(filters = {}, db) {
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
-     join companies c on c.id=o.company_id
+     left join companies c on c.id=o.company_id
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by o.ordered_at desc nulls last, o.id desc
      limit $${values.length - 1} offset $${values.length}`,
