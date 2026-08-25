@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowLeft,
@@ -172,7 +172,7 @@ function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={ariaLabel}>
+    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" role="radiogroup" aria-label={ariaLabel}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -183,7 +183,7 @@ function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'h-11 min-w-0 flex-1 cursor-pointer rounded-md border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
+              'h-11 min-w-0 cursor-pointer rounded-md border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
               selected
                 ? 'border-foreground bg-foreground text-background'
                 : 'border-border bg-background text-foreground hover:bg-muted',
@@ -195,6 +195,48 @@ function Choice<T extends string>({
       })}
     </div>
   );
+}
+
+const PROOF_MAX_BYTES = 1_500_000;
+
+async function readPaymentProof(file: File): Promise<{ name: string; type: string; dataUrl: string }> {
+  if (file.size <= PROOF_MAX_BYTES) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('No se pudo leer la constancia.'));
+      reader.readAsDataURL(file);
+    });
+    return { name: file.name, type: file.type || 'image/jpeg', dataUrl };
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const maxEdge = 1600;
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    bitmap.close();
+    throw new Error('No se pudo comprimir la constancia en este dispositivo.');
+  }
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+
+  let quality = 0.82;
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+  while (dataUrl.length * 0.75 > PROOF_MAX_BYTES && quality > 0.45) {
+    quality -= 0.12;
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+  }
+  if (dataUrl.length * 0.75 > PROOF_MAX_BYTES) {
+    throw new Error('La constancia sigue pesando demasiado. Usa una foto más liviana.');
+  }
+  const baseName = file.name.replace(/\.[^.]+$/, '') || 'constancia';
+  return { name: `${baseName}.jpg`, type: 'image/jpeg', dataUrl };
 }
 
 function ProductPhoto({ url, shopSku, sku, name }: { url?: string | null; shopSku?: string | null; sku?: string | null; name: string }) {
@@ -223,6 +265,7 @@ function ProductPhoto({ url, shopSku, sku, name }: { url?: string | null; shopSk
 
 export default function RegistrarVenta() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { can } = usePermissions();
   const afterSavePath = can('salesperson') && !can('order_management') ? '/mis-ventas' : '/orders';
 
@@ -314,16 +357,14 @@ export default function RegistrarVenta() {
       setCreateError('La constancia debe ser una foto o captura.');
       return;
     }
-    if (file.size > 1_500_000) {
-      setCreateError('La constancia pesa más de 1.5 MB. Usa una foto más liviana.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPaymentProof({ name: file.name, type: file.type, dataUrl: String(reader.result || '') });
-      setCreateError('');
-    };
-    reader.readAsDataURL(file);
+    void readPaymentProof(file)
+      .then((proof) => {
+        setPaymentProof(proof);
+        setCreateError('');
+      })
+      .catch((error: Error) => {
+        setCreateError(error.message || 'No se pudo adjuntar la constancia.');
+      });
   };
 
   const submit = async (event: React.FormEvent) => {
@@ -367,6 +408,11 @@ export default function RegistrarVenta() {
         paymentProof,
       });
       await api.createManagedOrder(payload);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['salesperson-home'] }),
+        queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
+      ]);
       navigate(afterSavePath, { replace: true, state: { registered: payload.externalOrderNumber } });
     } catch (error: any) {
       setCreateError(error?.message || 'No se pudo registrar la venta.');
@@ -375,17 +421,20 @@ export default function RegistrarVenta() {
     }
   };
 
+  const channelMissing = !loadError && accounts.length > 0 && !manualAccount;
+
   return (
-    <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-24 sm:space-y-8 sm:pb-4">
+    <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-4">
       <div>
         <Button type="button" variant="ghost" className="-ml-2 h-11 cursor-pointer px-2 sm:h-9" onClick={() => navigate(afterSavePath)}>
           <ArrowLeft /> Volver
         </Button>
       </div>
 
-      {(loadError || createError) && (
-        <div role="alert" className="flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
-          <AlertCircle className="size-4 shrink-0" /> {createError || loadError}
+      {(loadError || createError || channelMissing) && (
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          {createError || loadError || 'Todavía no hay un canal de venta manual habilitado.'}
         </div>
       )}
 
@@ -614,13 +663,13 @@ export default function RegistrarVenta() {
         )}
       </section>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Total</p>
-            <p className="text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+            <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
           </div>
-          <Button type="submit" className="h-11 cursor-pointer" disabled={creating || !lines.length}>
+          <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !lines.length || !!loadError || channelMissing}>
             {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {creating ? 'Registrando…' : 'Registrar venta'}
           </Button>
@@ -628,7 +677,13 @@ export default function RegistrarVenta() {
       </div>
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <DialogContent
+          className={cn(
+            'flex flex-col gap-0 overflow-hidden p-0',
+            'inset-x-0 bottom-0 top-auto left-0 max-h-[min(92dvh,100%)] w-full max-w-none translate-x-0 translate-y-0 rounded-b-none rounded-t-2xl',
+            'sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:max-h-[88vh] sm:w-full sm:max-w-xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-[min(var(--radius-4xl),24px)]',
+          )}
+        >
           <DialogHeader className="border-b border-border px-5 py-4 pr-14">
             <DialogTitle>Elegir producto</DialogTitle>
             <DialogDescription>Busca por nombre o SKU y toca para agregarlo.</DialogDescription>
@@ -642,11 +697,11 @@ export default function RegistrarVenta() {
                 placeholder="Buscar por nombre o SKU"
                 aria-label="Buscar producto"
                 className="h-11 pl-9"
-                autoFocus
+                autoFocus={typeof window !== 'undefined' ? window.matchMedia('(min-width: 640px)').matches : false}
               />
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
             {productsQuery.isFetching && !products.length ? (
               <p className="px-5 py-10 text-center text-sm text-muted-foreground">Buscando productos…</p>
             ) : !products.length ? (

@@ -1381,7 +1381,7 @@ export default function PedidosMulticanal() {
             </Button>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
           <Button
             type="button"
             variant="outline"
@@ -1389,7 +1389,7 @@ export default function PedidosMulticanal() {
             disabled={syncing}
             aria-live="polite"
             className={cn(
-              'h-9 min-w-36 cursor-pointer',
+              'h-11 min-w-0 cursor-pointer sm:h-9 sm:min-w-36',
               syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
               (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
             )}
@@ -1397,7 +1397,7 @@ export default function PedidosMulticanal() {
             {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
             {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
           </Button>
-          <Button onClick={() => navigate('/orders/nueva')} className="h-9 cursor-pointer">
+          <Button onClick={() => navigate('/orders/nueva')} className="h-11 min-w-0 cursor-pointer sm:h-9">
             <Plus /> Registrar venta
           </Button>
         </div>

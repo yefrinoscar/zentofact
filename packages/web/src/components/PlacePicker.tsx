@@ -298,8 +298,12 @@ export function PlacePicker({
   }, [query, ready]);
 
   const useMyLocation = () => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setError('Este dispositivo no permite compartir la ubicación.');
+      return;
+    }
     setLocating(true);
+    setError('');
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const lat = position.coords.latitude;
@@ -310,7 +314,10 @@ export function PlacePicker({
         applyLatLng(lat, lng);
         setLocating(false);
       },
-      () => setLocating(false),
+      () => {
+        setLocating(false);
+        setError('No se pudo obtener tu ubicación. Activa el GPS o marca el punto en el mapa.');
+      },
       { enableHighAccuracy: true, timeout: 8000 },
     );
   };
@@ -368,7 +375,7 @@ export function PlacePicker({
           </Button>
         </div>
         {predictions.length > 0 && (
-          <ul className="absolute inset-x-0 top-[calc(100%+0.5rem)] z-20 overflow-hidden rounded-xl border border-border bg-background py-1 shadow-lg">
+          <ul className="absolute inset-x-0 top-[calc(100%+0.5rem)] z-40 max-h-64 overflow-y-auto rounded-xl border border-border bg-background py-1 shadow-lg">
             {predictions.map((prediction, index) => (
               <li key={prediction.placeId}>
                 <button

@@ -717,4 +717,6 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
   assert.equal(queries[0].params[0], 'seller-9');
   assert.match(queries[0].sql, /created_by=\$1/);
   assert.match(queries[0].sql, /cancelled/);
+  assert.match(queries[1].sql, /created_by=/);
+  assert.match(queries[1].sql, /cancelled/);
 });
