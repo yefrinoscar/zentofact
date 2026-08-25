@@ -21,10 +21,8 @@ import {
   PICKUP_ADDRESS,
   SALE_SOURCES,
   buildManualSaleOrderPayload,
-  formatProductStock,
   limaTodayKey,
   productPrice,
-  productStock,
   saleLinesTotal,
   validateManualSale,
   type CatalogProductForSale,
@@ -42,16 +40,10 @@ import {
 } from '../lib/sale-feedback';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
+import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { Calendar } from '../components/ui/calendar';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -329,6 +321,10 @@ export default function RegistrarVenta() {
     const timer = window.setTimeout(() => setSubmittedSearch(search.trim()), 220);
     return () => window.clearTimeout(timer);
   }, [search]);
+
+  const submitProductSearch = () => {
+    setSubmittedSearch(search.trim());
+  };
 
   const productsQuery = useQuery({
     queryKey: ['sale-product-search', submittedSearch],
@@ -789,70 +785,17 @@ export default function RegistrarVenta() {
         </div>
       </div>
 
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent
-          className={cn(
-            'flex flex-col gap-0 overflow-hidden p-0',
-            'inset-x-0 bottom-0 top-auto left-0 max-h-[min(92dvh,100%)] w-full max-w-none translate-x-0 translate-y-0 rounded-b-none rounded-t-2xl',
-            'sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:max-h-[88vh] sm:w-full sm:max-w-xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-[min(var(--radius-4xl),24px)]',
-          )}
-        >
-          <DialogHeader className="border-b border-border px-5 py-4 pr-14">
-            <DialogTitle>Elegir producto</DialogTitle>
-            <DialogDescription>Busca por nombre o SKU y toca para agregarlo.</DialogDescription>
-          </DialogHeader>
-          <div className="border-b border-border px-5 py-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por nombre o SKU"
-                aria-label="Buscar producto"
-                className="h-11 pl-9"
-                autoFocus={typeof window !== 'undefined' ? window.matchMedia('(min-width: 640px)').matches : false}
-              />
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
-            {productsQuery.isFetching && !products.length ? (
-              <p className="px-5 py-10 text-center text-sm text-muted-foreground">Buscando productos…</p>
-            ) : !products.length ? (
-              <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                {submittedSearch ? 'No hay productos con esa búsqueda.' : 'Escribe para buscar en el catálogo.'}
-              </p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {products.map((product) => (
-                  <li key={product.id}>
-                    <button
-                      type="button"
-                      onClick={() => addProduct(product)}
-                      className="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left hover:bg-muted/50"
-                    >
-                      <ProductPhoto url={product.imageUrl} shopSku={product.listings?.[0]?.shopSku} sku={product.mainSku} name={product.name} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{product.name}</span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">{product.mainSku}</span>
-                      </span>
-                      <span className="shrink-0 text-right">
-                        <span className="block text-sm font-medium tabular-nums">{formatMoney(productPrice(product))}</span>
-                        <span className={cn(
-                          'block text-[11px] tabular-nums',
-                          productStock(product) <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
-                        )}
-                        >
-                          {formatProductStock(product)}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ProductSearchPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        search={search}
+        onSearchChange={setSearch}
+        onSubmitSearch={submitProductSearch}
+        products={products}
+        isFetching={productsQuery.isFetching}
+        submittedSearch={submittedSearch}
+        onSelect={addProduct}
+      />
     </form>
   );
 }

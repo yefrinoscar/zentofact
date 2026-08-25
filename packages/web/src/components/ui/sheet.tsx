@@ -29,29 +29,46 @@ function SheetOverlay({
   )
 }
 
+const sheetSideClasses = {
+  right:
+    "inset-y-0 right-0 h-full w-full max-w-xl border-l data-open:slide-in-from-right data-closed:slide-out-to-right",
+  bottom:
+    "inset-x-0 bottom-0 w-full max-h-[100dvh] rounded-t-[1.25rem] border-t data-open:slide-in-from-bottom data-closed:slide-out-to-bottom",
+} as const
+
 function SheetContent({
   className,
   children,
+  side = "right",
+  showCloseButton = true,
+  style,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Content>) {
+}: React.ComponentProps<typeof SheetPrimitive.Content> & {
+  side?: keyof typeof sheetSideClasses
+  showCloseButton?: boolean
+}) {
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-xl flex-col border-l border-border bg-background text-foreground shadow-2xl outline-none duration-200 data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right",
+          "fixed z-50 flex flex-col bg-background text-foreground shadow-2xl outline-none duration-200 data-open:animate-in data-closed:animate-out",
+          sheetSideClasses[side],
           className,
         )}
+        style={style}
         {...props}
       >
         {children}
-        <SheetPrimitive.Close asChild>
-          <Button variant="ghost" size="icon-sm" className="absolute right-4 top-4 bg-secondary">
-            <XIcon />
-            <span className="sr-only">Cerrar</span>
-          </Button>
-        </SheetPrimitive.Close>
+        {showCloseButton && (
+          <SheetPrimitive.Close asChild>
+            <Button variant="ghost" size="icon-sm" className="absolute right-4 top-4 bg-secondary">
+              <XIcon />
+              <span className="sr-only">Cerrar</span>
+            </Button>
+          </SheetPrimitive.Close>
+        )}
       </SheetPrimitive.Content>
     </SheetPortal>
   )
