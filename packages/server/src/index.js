@@ -18,23 +18,29 @@ const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
 
-// Permitir el alta del admin de bootstrap antes de cargar Better Auth.
+// Solo en PR previews de Railway (Postgres vacío). No corre en development/production.
+const railwayEnvironmentName = String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim();
+const isRailwayPrPreview = /^zentofact-pr-\d+$/i.test(railwayEnvironmentName)
+  || /^pr-\d+$/i.test(railwayEnvironmentName);
 const bootstrapEmailEarly = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim();
 const bootstrapPasswordEarly = String(process.env.ADMIN_PASSWORD || '').trim();
-if (bootstrapEmailEarly && bootstrapPasswordEarly) {
+if (isRailwayPrPreview && bootstrapEmailEarly && bootstrapPasswordEarly) {
   process.env.AUTH_ALLOW_SIGNUP = 'true';
 }
 
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
-const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
-await ensureAuthSchema();
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
+if (isRailwayPrPreview) {
+  const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
+  console.log(`[AUTH] Bootstrap de preview en ${railwayEnvironmentName}`);
+  await ensureAuthSchema();
+}
 await users.ensureUserColumns();
 
-// En previews/DB vacías: crear el superadmin si hay credenciales de bootstrap.
-if (bootstrapEmailEarly && bootstrapPasswordEarly) {
+// Solo preview: crear el superadmin si hay credenciales de bootstrap.
+if (isRailwayPrPreview && bootstrapEmailEarly && bootstrapPasswordEarly) {
   try {
     await auth.api.signUpEmail({
       body: { email: bootstrapEmailEarly, password: bootstrapPasswordEarly, name: 'Admin' },
