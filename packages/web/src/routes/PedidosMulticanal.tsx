@@ -27,7 +27,6 @@ import {
   Store,
   Tags,
   Truck,
-  WandSparkles,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
@@ -171,8 +170,6 @@ type ManagedOrder = {
   orderedAt?: string | null;
   promisedShippingAt?: string | null;
   providerUpdatedAt?: string | null;
-  demo?: boolean;
-  demoItems?: OrderItem[];
 };
 
 type OrderDetail = ManagedOrder & {
@@ -406,172 +403,8 @@ function svcPdf(value: unknown, keys: string[]): string | null {
   return record.data === value ? null : svcPdf(record.data, keys);
 }
 
-function limaDate(value: string | null | undefined) {
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(date);
-}
-
 function hoursAgo(hours: number) {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-}
-
-function documentDecision(type: 'boleta' | 'factura' | null = 'boleta') {
-  return { enabled: true, required: false, type, needsCustomerChoice: false };
-}
-
-function createDemoOrders(companyId: number): ManagedOrder[] {
-  return [
-    {
-      id: -101,
-      companyId,
-      channelAccountId: -11,
-      channelCode: 'mercado_libre',
-      channelName: 'Mercado Libre',
-      channelAccountName: 'Tienda principal',
-      externalOrderId: 'ML-200483',
-      externalOrderNumber: 'ML-200483',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'preparing',
-      documentStatus: 'pending',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      requestedDocumentType: 'factura',
-      documentDecision: documentDecision('factura'),
-      currency: 'PEN',
-      total: 219.8,
-      customer: { name: 'María Salazar', documentNumber: '20548796321' },
-      orderedAt: hoursAgo(1.2),
-      promisedShippingAt: hoursAgo(-22),
-      demo: true,
-      demoItems: [
-        { id: -1, sku: 'ZF-AUD-002', description: 'Audífonos Bluetooth Pro', quantity: 1, total: 89.9 },
-        { id: -2, sku: 'ZF-MOC-001', description: 'Mochila urbana impermeable', quantity: 1, total: 129.9 },
-      ],
-    },
-    {
-      id: -102,
-      companyId,
-      channelAccountId: -12,
-      channelCode: 'falabella',
-      channelName: 'Falabella',
-      channelAccountName: 'Seller principal',
-      externalOrderId: 'FAL-78432',
-      externalOrderNumber: 'FAL-78432',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'ready_to_ship',
-      documentStatus: 'accepted',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 159,
-      customer: { name: 'José Ramírez', documentNumber: '74261835' },
-      shipping: { trackingCode: 'FALPE983201' },
-      orderedAt: hoursAgo(3.5),
-      promisedShippingAt: hoursAgo(-18),
-      demo: true,
-      demoItems: [{ id: -3, sku: 'ZF-CAM-004', description: 'Cámara WiFi para hogar', quantity: 1, total: 159 }],
-    },
-    {
-      id: -103,
-      companyId,
-      channelAccountId: -13,
-      channelCode: 'ripley',
-      channelName: 'Ripley',
-      channelAccountName: 'Marketplace Ripley',
-      externalOrderId: 'RIP-99104',
-      externalOrderNumber: 'RIP-99104',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'pending',
-      documentStatus: 'not_requested',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision(null),
-      currency: 'PEN',
-      total: 72.5,
-      customer: { name: 'Lucía Torres', documentNumber: '46128730' },
-      orderedAt: hoursAgo(6),
-      promisedShippingAt: hoursAgo(-30),
-      demo: true,
-      demoItems: [{ id: -4, sku: 'ZF-ORG-005', description: 'Organizador modular 3 niveles', quantity: 1, total: 72.5 }],
-    },
-    {
-      id: -104,
-      companyId,
-      channelAccountId: -14,
-      channelCode: 'manual',
-      channelName: 'Venta manual',
-      channelAccountName: 'Tienda física',
-      externalOrderId: 'VTA-1042',
-      externalOrderNumber: 'VTA-1042',
-      orderStatus: 'completed',
-      paymentStatus: 'pending',
-      fulfillmentStatus: 'delivered',
-      documentStatus: 'accepted',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 109.8,
-      customer: { name: 'Carlos Vega', documentNumber: '41876532' },
-      shipping: { type: 'recojo', address: 'Av. La Marina 2055, San Miguel' },
-      metadata: { paymentMethod: 'despues', saleSource: 'whatsapp', delivery: 'recojo' },
-      orderedAt: hoursAgo(19),
-      demo: true,
-      demoItems: [{ id: -5, sku: 'ZF-BOT-003', description: 'Botella térmica 750 ml', quantity: 2, total: 109.8 }],
-    },
-    {
-      id: -105,
-      companyId,
-      channelAccountId: -11,
-      channelCode: 'mercado_libre',
-      channelName: 'Mercado Libre',
-      channelAccountName: 'Tienda principal',
-      externalOrderId: 'ML-200419',
-      externalOrderNumber: 'ML-200419',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'shipped',
-      documentStatus: 'issued',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 129.9,
-      customer: { name: 'Andrea Flores', documentNumber: '72519480' },
-      shipping: { trackingCode: 'MELI1028841' },
-      orderedAt: hoursAgo(28),
-      demo: true,
-      demoItems: [{ id: -6, sku: 'ZF-MOC-001', description: 'Mochila urbana impermeable', quantity: 1, total: 129.9 }],
-    },
-    {
-      id: -106,
-      companyId,
-      channelAccountId: -12,
-      channelCode: 'falabella',
-      channelName: 'Falabella',
-      channelAccountName: 'Seller principal',
-      externalOrderId: 'FAL-78398',
-      externalOrderNumber: 'FAL-78398',
-      orderStatus: 'cancelled',
-      paymentStatus: 'refunded',
-      fulfillmentStatus: 'cancelled',
-      documentStatus: 'cancelled',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 89.9,
-      customer: { name: 'Pedro Campos', documentNumber: '47821096' },
-      orderedAt: hoursAgo(36),
-      demo: true,
-      demoItems: [{ id: -7, sku: 'ZF-AUD-002', description: 'Audífonos Bluetooth Pro', quantity: 1, total: 89.9 }],
-    },
-  ];
 }
 
 function fulfillmentBadge(status: string) {
@@ -774,36 +607,6 @@ function ordersHeading(count: number, date: string) {
   return `${pedidoCountLabel(count)} ${when}`;
 }
 
-function demoDetail(order: ManagedOrder): OrderDetail {
-  const createdAt = order.orderedAt || new Date().toISOString();
-  return {
-    ...order,
-    ...(order.channelCode === 'ripley' ? {
-      providerStatus: 'SHIPPING',
-      metadata: {
-        ...order.metadata,
-        ripleySvc: {
-          orderId: `sandbox-order-${order.externalOrderId}`,
-          statusManagement: 'TO_PICKUP',
-          orderState: 'SHIPPING',
-          packages: 1,
-          syncedAt: createdAt,
-        },
-      },
-    } : {}),
-    items: order.demoItems || [],
-    events: [
-      { id: order.id * 10, eventType: 'order.created', source: order.channelCode === 'manual' ? 'manual' : 'webhook', createdAt },
-      ...(['preparing', 'ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillmentStatus)
-        ? [{ id: order.id * 10 - 1, eventType: 'order.updated', source: 'system', createdAt: hoursAgo(0.5) }]
-        : []),
-    ],
-    documents: ['issued', 'accepted'].includes(order.documentStatus)
-      ? [{ id: order.id * 100, kind: order.documentDecision.type || 'boleta', number: order.documentDecision.type === 'factura' ? 'F001-001284' : 'B001-004821', status: order.documentStatus }]
-      : [],
-  };
-}
-
 export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -814,7 +617,6 @@ export default function PedidosMulticanal() {
   const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
-  const [hasRealOrders, setHasRealOrders] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [syncNote, setSyncNote] = useState('');
   const [detail, setDetail] = useState<OrderDetail | null>(null);
@@ -828,7 +630,6 @@ export default function PedidosMulticanal() {
   const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [productsOpen, setProductsOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
-  const [demoPaymentOverrides, setDemoPaymentOverrides] = useState<Record<number, { paymentStatus: string; paymentMethod: string }>>({});
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
 
@@ -911,36 +712,9 @@ export default function PedidosMulticanal() {
   const pulseLoading = pulseQuery.isPending && !pulseQuery.data;
   const pulseError = (pulseQuery.error as Error | undefined)?.message || '';
 
-  useEffect(() => {
-    if (totalCount > 0) setHasRealOrders(true);
-  }, [totalCount]);
-
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
   )), [channels]);
-
-  const demoOrders = useMemo(
-    () => createDemoOrders(Number(companyId === 'all' ? companies[0]?.id || 1 : companyId)).map((order) => {
-      const override = demoPaymentOverrides[order.id];
-      return override ? { ...order, paymentStatus: override.paymentStatus, metadata: { ...order.metadata, paymentMethod: override.paymentMethod } } : order;
-    }),
-    [companies, companyId, demoPaymentOverrides],
-  );
-
-  const filteredDemoOrders = useMemo(() => {
-    const term = submittedSearch.toLowerCase();
-    return demoOrders.filter((order) => (
-      (channelCode === 'all' || order.channelCode === channelCode)
-      && (fulfillmentStatus === 'all' || order.fulfillmentStatus === fulfillmentStatus)
-      && limaDate(order.orderedAt) === date
-      && (!term || [order.externalOrderNumber, order.customer?.name, order.customer?.documentNumber, order.customer?.phone]
-        .some((value) => String(value || '').toLowerCase().includes(term)))
-    ));
-  }, [channelCode, date, demoOrders, fulfillmentStatus, submittedSearch]);
-
-  const demoMode = !loading && !loadError && !hasRealOrders;
-  const displayedOrders = demoMode ? filteredDemoOrders : orders;
-  const displayedTotal = demoMode ? filteredDemoOrders.length : totalCount;
 
   const companyById = useMemo(
     () => new Map(companies.map((company) => [company.id, companyName(company)])),
@@ -951,7 +725,6 @@ export default function PedidosMulticanal() {
     const registered = (location.state as { registered?: string } | null)?.registered;
     if (!registered) return;
     setSuccessMessage(`Venta ${registered} registrada.`);
-    setHasRealOrders(true);
     void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
     void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
     navigate(location.pathname, { replace: true, state: null });
@@ -1020,13 +793,7 @@ export default function PedidosMulticanal() {
     setRipleyLogistics(null);
     setRipleyActionNote('');
     const useRipleySandbox = order.channelCode === 'ripley'
-      && (order.demo || companies.find((company) => company.id === order.companyId)?.hasRipleySvcCredentials !== true);
-    if (order.demo) {
-      setDetail(demoDetail(order));
-      setDetailLoading(false);
-      if (order.channelCode === 'ripley') await loadRipleyLogistics(order, true);
-      return;
-    }
+      && companies.find((company) => company.id === order.companyId)?.hasRipleySvcCredentials !== true;
     setDetailLoading(true);
     try {
       const [loadedDetail, logistics] = await Promise.all([
@@ -1181,26 +948,14 @@ export default function PedidosMulticanal() {
       paymentMethod: string;
       receivedBy: string;
       paymentProof: { name: string; type: string; dataUrl: string } | null;
-    }) => {
-      if (input.order.demo) {
-        return { ...input.order, paymentStatus: 'paid', metadata: { ...input.order.metadata, paymentMethod: input.paymentMethod } };
-      }
-      return api.updateManagedOrderPayment(input.order.id, {
-        paymentMethod: input.paymentMethod,
-        receivedBy: input.receivedBy || undefined,
-        paymentProof: input.paymentProof,
-      });
-    },
+    }) => api.updateManagedOrderPayment(input.order.id, {
+      paymentMethod: input.paymentMethod,
+      receivedBy: input.receivedBy || undefined,
+      paymentProof: input.paymentProof,
+    }),
     onSuccess: (updated, input) => {
-      if (input.order.demo) {
-        setDemoPaymentOverrides((current) => ({
-          ...current,
-          [input.order.id]: { paymentStatus: 'paid', paymentMethod: input.paymentMethod },
-        }));
-      } else {
-        void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
-        void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
-      }
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
       setPaymentOrder(null);
       setSuccessMessage(`Pago de ${updated.externalOrderNumber || input.order.externalOrderNumber} registrado.`);
     },
@@ -1350,7 +1105,7 @@ export default function PedidosMulticanal() {
   }, [companyById]);
 
   const table = useReactTable({
-    data: displayedOrders,
+    data: orders,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (order) => String(order.id),
@@ -1370,10 +1125,9 @@ export default function PedidosMulticanal() {
               <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
             ) : (
               <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
-                {ordersHeading(salesPulse ? salesPulse.ordersCount : displayedTotal, date)}
+                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date)}
               </h2>
             )}
-            {demoMode && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><WandSparkles /> Demo</Badge>}
           </div>
           {pulseError && (
             <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
@@ -1504,7 +1258,6 @@ export default function PedidosMulticanal() {
             {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
           </div>
         )}
-        {demoMode && <p className="text-xs text-muted-foreground">La muestra desaparece cuando registres o sincronices el primer pedido real.</p>}
       </div>
 
       <OrdersVirtualTable
@@ -1524,7 +1277,7 @@ export default function PedidosMulticanal() {
         footer={(
           <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             {fetching && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
-            {displayedTotal} {displayedTotal === 1 ? 'pedido' : 'pedidos'}
+            {totalCount} {totalCount === 1 ? 'pedido' : 'pedidos'}
           </p>
         )}
       />
