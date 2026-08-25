@@ -31,7 +31,8 @@ export function isProductionEnvironment(env = process.env) {
 /**
  * Seed automático de datos demo:
  * - En PR preview (`zentofact-pr-*`) corre por defecto.
- * - `SEED_PREVIEW=false` o `SKIP_PREVIEW_SEED=true` lo apaga (incluso en PR).
+ * - `SEED_PREVIEW=false` o `SKIP_PREVIEW_SEED=true` lo apaga por completo
+ *   (ni schema de auth, ni admin, ni datos demo).
  * - `SEED_PREVIEW=true` lo fuerza fuera de production (p. ej. local).
  * - Nunca corre en production.
  */

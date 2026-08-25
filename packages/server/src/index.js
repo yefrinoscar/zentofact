@@ -22,7 +22,8 @@ await core.runMigrations(core.pool);
 const { shouldSeedPreview, isRailwayPrPreview } = await import('./preview-env.js');
 const bootstrapEmailEarly = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim();
 const bootstrapPasswordEarly = String(process.env.ADMIN_PASSWORD || process.env.SEED_USER_PASSWORD || '').trim();
-if (isRailwayPrPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
+// Solo si vamos a sembrar: permitir signup del admin bootstrap.
+if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
   process.env.AUTH_ALLOW_SIGNUP = 'true';
 }
 
@@ -35,13 +36,10 @@ await insumos.ensureTables();
 if (shouldSeedPreview()) {
   const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
   await bootstrapPreviewIfNeeded();
+} else if (isRailwayPrPreview()) {
+  // Skip explícito: no migrar auth, no admin, no datos demo.
+  console.log('[SEED] Preview seed omitido (SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true); no se crea nada');
 } else {
-  if (isRailwayPrPreview()) {
-    // DB vacía del PR: solo schema de auth, sin datos demo.
-    const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
-    console.log('[SEED] Preview seed omitido (SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true)');
-    await ensureAuthSchema();
-  }
   await users.ensureUserColumns();
 }
 const autoEmit = await import('./auto-emission.js');
