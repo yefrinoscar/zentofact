@@ -61,43 +61,9 @@ function mapMovement(row) {
     channelCode: row.channel_code || null,
     idempotencyKey: row.idempotency_key,
     metadata,
+    effectiveAt: row.effective_at,
     createdAt: row.created_at,
   };
-}
-
-/**
- * Materializa en el producto principal el stock reportado por todas sus
- * publicaciones asociadas. La vendibilidad de una publicación no altera su
- * cantidad: estado comercial y stock son datos independientes.
- */
-export async function syncProductInventoryFromListings(db, productIdsInput) {
-  if (!db?.query) throw new Error('syncProductInventoryFromListings requiere una conexión abierta.');
-  const productIds = [...new Set((productIdsInput || []).map((id) => positiveInt(id, 'productId')))];
-  if (!productIds.length) return [];
-  const result = await db.query(
-    `with listing_totals as (
-       select p.id as product_id,
-         coalesce(sum(coalesce(l.marketplace_quantity, 0)), 0) as seller_stock_total
-       from products p
-       left join product_listings l on l.product_id=p.id
-       where p.id = any($1::bigint[])
-       group by p.id
-     )
-     insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
-     select product_id, seller_stock_total, 0 from listing_totals
-     on conflict (product_id) do update set
-       quantity_on_hand=excluded.quantity_on_hand + product_inventory.quantity_reserved,
-       updated_at=now()
-     returning product_id, quantity_on_hand, quantity_reserved,
-       quantity_on_hand - quantity_reserved as available`,
-    [productIds],
-  );
-  return result.rows.map((row) => ({
-    productId: Number(row.product_id),
-    quantityOnHand: Number(row.quantity_on_hand),
-    quantityReserved: Number(row.quantity_reserved),
-    available: Number(row.available),
-  }));
 }
 
 export async function applyInventoryMovement(db, input) {
@@ -136,8 +102,8 @@ export async function applyInventoryMovement(db, input) {
   const inserted = await db.query(
     `insert into inventory_movements (
        product_id, movement_type, quantity_delta, quantity_after, reason, actor_user_id,
-       source, order_id, order_item_id, listing_id, idempotency_key, metadata
-     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       source, order_id, order_item_id, listing_id, idempotency_key, metadata, effective_at
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      on conflict (idempotency_key) do nothing returning *`,
     [
       productId,
@@ -152,6 +118,7 @@ export async function applyInventoryMovement(db, input) {
       input.listingId ? positiveInt(input.listingId, 'listingId') : null,
       idempotencyKey,
       JSON.stringify(jsonObject(input.metadata)),
+      input.effectiveAt || new Date(),
     ],
   );
   if (!inserted.rows.length) {
@@ -196,7 +163,14 @@ export async function listMovements(productIdInput, filters = {}, db) {
   const limit = Math.min(Math.max(Number(filters.limit) || 50, 1), 200);
   const offset = Math.max(Number(filters.offset) || 0, 0);
   const result = await target.query(
-    `select m.*,
+    `with latest_reconciliation as (
+       select r.id, r.applied_at
+         from inventory_reconciliation_anchors anchor
+         join inventory_reconciliation_runs r on r.id=anchor.run_id
+        where anchor.product_id=$1
+        order by r.applied_at desc,r.id desc limit 1
+     )
+     select m.*,
        o.external_order_number,
        oi.sku,
        ch.code as channel_code,
@@ -208,8 +182,12 @@ export async function listMovements(productIdInput, filters = {}, db) {
      left join companies c on c.id=o.company_id
      left join order_channel_accounts a on a.id=o.channel_account_id
      left join order_channels ch on ch.id=a.channel_id
+     left join latest_reconciliation lr on true
      where m.product_id=$1
-     order by m.created_at desc, m.id desc
+       and (lr.id is null
+         or m.metadata->>'reconciliationRunId'=lr.id::text
+         or m.created_at>lr.applied_at)
+     order by m.effective_at desc, m.id desc
      limit $2 offset $3`,
     [productId, limit, offset],
   );

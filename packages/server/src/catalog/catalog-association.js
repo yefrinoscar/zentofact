@@ -12,6 +12,7 @@ const TOKEN_ALIASES = new Map([
   ['moldeadora', 'remodela'], ['moldeador', 'remodela'], ['moldear', 'remodela'],
   ['reductoras', 'reductora'], ['termico', 'termica'], ['termicas', 'termica'], ['termicos', 'termica'],
   ['munequera', 'pulsera'], ['munecuera', 'pulsera'], ['accesorios', 'accesorio'],
+  ['scanner', 'escaner'], ['touchscreen', 'tactil'],
 ]);
 
 const COLOR_ALIASES = new Map([
@@ -45,6 +46,18 @@ const SIZE_ALIASES = new Map([
 // publicaciones con nombres distintos para la misma unidad física; estas
 // reglas eliminan solo los descriptores que el seller usa como título/modelo.
 const VERIFIED_EQUIVALENT_FAMILIES = [
+  {
+    key: 'botella-acero-madera',
+    requiredTokens: ['botella', 'acero', 'inoxidable'],
+    anyTokens: ['500ml', 'diseno', 'estilo'],
+    ignoredTokens: new Set(['500ml', 'camping', 'deportes', 'diseno', 'estilo', 'limbo', 'portatil', 'trekking']),
+  },
+  {
+    key: 'camiseta-faja-reductora',
+    requiredTokens: ['camiseta', 'remodela', 'abdomen', 'hombre'],
+    anyTokens: ['faja', 'reductora'],
+    ignoredTokens: new Set(['bividi', 'bvd', 'faja', 'medidas', 'pecho', 'vivid']),
+  },
   {
     key: 'manta-termica-mylar-140x210',
     requiredTokens: ['manta', 'termica', 'emergencia'],
@@ -106,8 +119,9 @@ const VERIFIED_LISTING_FAMILIES = new Map([
     .map((shopSku) => [shopSku, 'silla-comer-reclinable-azul']),
   ...['128545517', '131610914', '129551254', '129750010', '136344532', '129741409', '135888322', '129645938']
     .map((shopSku) => [shopSku, 'silla-comer-reclinable-rosada']),
-  ...['144959050', '144962663', '156582201']
-    .map((shopSku) => [shopSku, 'silla-comer-evolutiva-patas-altas']),
+  ['144959050', 'silla-comer-evolutiva-celeste'],
+  ['144962663', 'silla-comer-evolutiva-rosa'],
+  ['156582201', 'silla-comer-evolutiva-beige'],
   ...['140437519', '140681420', '140716029', '140714631', '140377407', '140546534', '140743807', '156581792']
     .map((shopSku) => [shopSku, 'adorno-pared-ginkgo']),
   ...['140430971', '140681536', '140716049', '140714723', '140377163', '140546071', '140743698', '156581814']
@@ -126,7 +140,6 @@ const VERIFIED_SIZELESS_FAMILIES = new Set([
 
 const VERIFIED_COLORLESS_FAMILIES = new Set([
   'bici-equilibrio-blanco',
-  'silla-comer-evolutiva-patas-altas',
 ]);
 
 export function normalizeCatalogText(value) {
@@ -195,6 +208,11 @@ function comparableCategory(value) {
   return normalizeCatalogText(value).split(' ').filter((token) => token && !STOP_WORDS.has(token));
 }
 
+function comparableBrand(value) {
+  const brand = normalizeCatalogText(value);
+  return ['generico', 'generic', 'sin marca', 'no brand'].includes(brand) ? '' : brand;
+}
+
 function verifiedEquivalentFamily(tokens, modelTokens) {
   const tokenSet = new Set(tokens);
   return VERIFIED_EQUIVALENT_FAMILIES.find((family) => {
@@ -235,7 +253,7 @@ export function falabellaAssociationProfile(remote = {}) {
     color,
     size,
     tokens,
-    brand: normalizeCatalogText(remote.brand),
+    brand: comparableBrand(remote.brand),
     categoryTokens: comparableCategory(remote.primaryCategory || remote.category),
     modelTokens,
     verifiedFamily,
@@ -282,7 +300,8 @@ export function scoreFalabellaAssociation(leftInput, rightInput) {
     || ((exactImage || exactSellerSku) && title.intersection < 1))) {
     return { eligible: false, confidence: 0, reason: 'weak_product_family', signals: [] };
   }
-  if (title.jaccard < 0.65 && !exactImage && !exactSellerSku) {
+  const strongContainment = title.intersection >= 4 && title.containment >= 0.95;
+  if (title.jaccard < 0.65 && !strongContainment && !exactImage && !exactSellerSku) {
     return { eligible: false, confidence: 0, reason: 'ambiguous_product_family', signals: [] };
   }
 

@@ -29,7 +29,7 @@ export async function listRipleyProducts(companyIdInput, filters = {}, dependenc
   const all = filters.all === true || filters.all === 'true';
   if (all) {
     const offers = await client.listAllOffers();
-    return { companyId, totalCount: offers.length, offers };
+    return { companyId, totalCount: offers.length, offers: await enrichOffers(client, offers) };
   }
   const page = await client.listOffers({
     max: filters.max == null ? undefined : Number(filters.max),
@@ -38,5 +38,20 @@ export async function listRipleyProducts(companyIdInput, filters = {}, dependenc
     sku: typeof filters.sku === 'string' ? filters.sku : undefined,
     productId: typeof filters.productId === 'string' ? filters.productId : undefined,
   });
-  return { companyId, ...page };
+  return { companyId, ...page, offers: await enrichOffers(client, page.offers) };
+}
+
+async function enrichOffers(client, offers) {
+  const productSkus = offers.map((offer) => offer.productSku).filter(Boolean);
+  if (!productSkus.length) return offers;
+  const contents = await client.listProductContents(productSkus);
+  const contentBySku = new Map(contents.map((content) => [content.productSku, content]));
+  return offers.map((offer) => {
+    const content = contentBySku.get(offer.productSku);
+    return {
+      ...offer,
+      productTitle: content?.productTitle || offer.productTitle,
+      imageUrl: content?.imageUrl || null,
+    };
+  });
 }

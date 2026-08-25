@@ -49,6 +49,31 @@ export type OrderSyncResponse = {
   results?: OrderSyncResult[];
 };
 
+export type ProductAssociationCandidate = {
+  id: number;
+  productId: number;
+  companyId: number;
+  companyName: string;
+  channelCode: 'falabella' | 'ripley';
+  sellerSku: string;
+  shopSku: string | null;
+  title: string | null;
+  status: 'active' | 'inactive';
+  marketplaceQuantity: number | null;
+  metadata: Record<string, unknown>;
+  imageUrl: string | null;
+  candidateSource: 'catalog' | 'remote';
+};
+
+export type ProductAssociationCandidatesResponse = {
+  candidates: ProductAssociationCandidate[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  source: 'marketplaces_live';
+  hiddenByAvailabilityCount: number;
+};
+
 function rememberCsrfToken(data: any) {
   if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
 }
@@ -286,8 +311,10 @@ const apiHttp = {
   updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),
   listProductListings: (id: number) => req(`/products/${id}/listings`),
-  listUnlinkedProductListings: (filter: { search?: string; companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/product-listings/unlinked${qs(filter)}`),
-  linkUnlinkedProductListing: (data: { listingId: number; productId: number }) => req('/product-listings/link', { method: 'POST', body: JSON.stringify(data) }),
+  listProductAssociationCandidates: (filter: { productId: number; search?: string; companyId?: number; channelCode?: string; channelCodes?: string; availability?: 'recommended' | 'all'; limit?: number; offset?: number }) => req<ProductAssociationCandidatesResponse>(`/product-listings/association-candidates${qs(filter)}`),
+  associateProductListing: (data: { listingId: number; productId: number }) => req('/product-listings/link', { method: 'POST', body: JSON.stringify(data) }),
+  associateProductListings: (data: { productId: number; listings: Array<Record<string, unknown>> }) => req('/product-listings/link-batch', { method: 'POST', body: JSON.stringify(data) }),
+  listRipleyProducts: (companyId: number, filter: { max?: number; offset?: number } = {}) => req(`/ripley/${companyId}/products${qs(filter)}`),
   createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
   updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),
@@ -298,6 +325,7 @@ const apiHttp = {
   resolveCatalogSku: (data: any) => req('/inventory/resolve-sku', { method: 'POST', body: JSON.stringify(data) }),
   importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
+  syncRipleyCatalog: (data: { dryRun?: boolean } = {}) => req('/catalog/sync/ripley', { method: 'POST', body: JSON.stringify(data) }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
   ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
   ripleyApiGetOrders: (companyId: number, filters: { max?: number; offset?: number; orderStateCodes?: string; startUpdateDate?: string; endUpdateDate?: string } = {}) => req(`/ripley/${companyId}/orders${qs(filters)}`),

@@ -70,6 +70,38 @@ CATALOG_ALLOW_NEGATIVE_MANUAL=false
    env en `true` como valor inicial del ambiente antes del primer arranque;
    después manda la BD).
 
+### Preparar un ambiente de producción
+
+Sigue este orden cuando un ambiente ya tiene pedidos o publicaciones:
+
+1. Despliega la versión que separa `product_inventory.quantity_on_hand` de
+   `product_listings.marketplace_quantity`. Una sincronización de catálogo no
+   debe cambiar el stock físico.
+2. Abre **Configuración del sistema** y pulsa **Revisar catálogo Ripley**. La
+   vista previa muestra las publicaciones que se asociarán, los productos
+   maestros que se crearán y las publicaciones desasociadas que no se tocarán.
+3. Revisa la vista previa y pulsa **Aplicar cambios**. El proceso importa solo
+   ofertas activas. Compara título, SKU, marca, categoría, precio, color, talla
+   y la huella del archivo de imagen. Una coincidencia ambigua crea un producto
+   maestro separado.
+4. Fija el stock físico actual con un ajuste absoluto para cada producto que
+   aparezca en **Saldos auditables**. Usa un conteo del almacén, no la suma del
+   stock publicado por los sellers.
+5. Elige cómo cerrar las ventas anteriores al conteo físico:
+   - Si el conteo representa el stock actual, no vuelvas a descontar esas
+     ventas. El conteo ya incluye las unidades que salieron del almacén.
+   - Si el saldo corresponde a una fecha anterior a esas ventas, concilia las
+     ventas para aplicar sus movimientos en orden.
+
+No concilies ventas históricas sobre un saldo copiado del marketplace. Esa
+operación puede descontar dos veces una venta o conservar un saldo inflado.
+
+**Saldos auditables** no significa que el producto esté negativo. El aviso
+indica que `quantity_on_hand` cambió sin un registro equivalente en
+`inventory_movements`. Un ajuste absoluto establece un punto de partida
+auditable: registra el saldo contado, la diferencia aplicada, el motivo y el
+usuario que hizo el cambio.
+
 Desactivar el flag detiene el descuento en re-sync e hidratación histórica;
 no borra saldos ni movimientos. El paso a listo para enviar (webhook o
 bandeja) sigue aplicando el movimiento.

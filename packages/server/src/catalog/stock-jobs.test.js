@@ -117,6 +117,22 @@ test('el worker descuenta en lote y marca el job como done', async () => {
   assert.equal([...db.jobs.values()].every((job) => job.status === 'done'), true);
 });
 
+test('un job explícito reintenta las líneas históricas que ya están listas para enviar', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1', source: 'catchup' }, db);
+  const inputs = [];
+
+  await processStockQueue({
+    apply: async (input) => {
+      inputs.push(input);
+      return { applied: 1, skipped: 0, orderId: 10 };
+    },
+  }, db);
+
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].includeSkippedPolicy, true);
+});
+
 test('un job done no se vuelve a procesar al reencolar', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);

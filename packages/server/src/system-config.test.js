@@ -66,6 +66,7 @@ test('checklist de inventario: bloquea solo cuando no hay listings', () => {
     seededMovements: 5,
     pendingStockJobs: 0,
     skippedUnmappedItems: 0,
+    inventoryDriftProducts: 0,
     negativeProducts: 0,
   });
   for (const step of sembrado) {
@@ -82,11 +83,45 @@ test('checklist de inventario marca avisos sin bloquear', () => {
     seededMovements: 0,
     pendingStockJobs: 7,
     skippedUnmappedItems: 2,
+    skippedUnmappedOrders: 2,
+    skippedUnmappedUnits: 3,
+    skippedUnmappedOldest: '2026-08-20T10:00:00.000Z',
+    inventoryDriftProducts: 4,
     negativeProducts: 1,
   });
   const bloqueos = conAvisos.filter((step) => step.blocking && !step.ok);
   assert.deepEqual(bloqueos.map((step) => step.id), []);
   assert.equal(conAvisos.find((step) => step.id === 'stock_seeded').ok, false);
   assert.equal(conAvisos.find((step) => step.id === 'queue_clean').detail, '7 trabajo(s) pendiente(s) en inventory_stock_jobs.');
-  assert.match(conAvisos.find((step) => step.id === 'mapping_clean').detail, /skipped_unmapped/);
+  assert.equal(
+    conAvisos.find((step) => step.id === 'mapping_clean').detail,
+    '2 líneas de 2 pedidos (3 unidades) desde agosto no descontaron stock porque no tenían producto maestro al importarse. La más antigua es del 20 ago 2026.',
+  );
+  assert.equal(
+    conAvisos.find((step) => step.id === 'inventory_ledger_clean').detail,
+    '4 productos tienen un saldo que no coincide con sus movimientos. Cuenta el stock físico y usa Productos → Inventario → Ajustar stock → Fijar saldo absoluto.',
+  );
+});
+
+test('checklist de inventario explica ventas mapeadas que encontraron stock cero', () => {
+  const steps = summarizeCatalogInventoryReadiness({
+    products: 3,
+    activeListings: 4,
+    sellersWithListings: 1,
+    seededMovements: 1,
+    pendingStockJobs: 0,
+    skippedUnmappedItems: 0,
+    insufficientStockItems: 4,
+    insufficientStockOrders: 3,
+    insufficientStockUnits: 4,
+    inventoryDriftProducts: 0,
+    negativeProducts: 0,
+  });
+  const mapping = steps.find((step) => step.id === 'mapping_clean');
+  assert.equal(mapping.ok, true);
+  assert.equal(mapping.label, 'Ventas Falabella mapeadas desde agosto');
+  assert.equal(
+    mapping.detail,
+    'Todas tienen producto maestro. 4 líneas de 3 pedidos (4 unidades) encontraron el stock maestro en 0; el saldo se mantuvo en 0 para evitar negativos.',
+  );
 });

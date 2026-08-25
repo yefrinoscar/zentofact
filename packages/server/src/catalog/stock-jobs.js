@@ -429,6 +429,11 @@ export async function processStockQueue(input = {}, db) {
         companyId: job.companyId,
         externalOrderId: job.externalOrderId,
         source: job.source || 'webhook',
+        // Un job representa una solicitud explícita de aplicar el stock. Esto
+        // permite recuperar líneas hidratadas como históricas que ya estaban
+        // listas cuando entraron a la cola, sin convertir los syncs de ventas
+        // históricos en descuentos automáticos.
+        includeSkippedPolicy: true,
       }, db);
       if (result?.missing) {
         const next = await finishJob(client, job, 'pending', {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  catalogInventoryEnabledForSync,
   effectiveFalabellaItemStatus,
   falabellaLabelCount,
   fetchFalabellaPages,
@@ -9,6 +10,13 @@ import {
   normalizeFalabellaStatus,
   syncFalabellaOrders,
 } from './falabella-sync.js';
+
+test('una sincronización histórica nunca mueve inventario aunque encuentre cancelaciones', () => {
+  assert.equal(catalogInventoryEnabledForSync('month', true), false);
+  assert.equal(catalogInventoryEnabledForSync('day', true), false);
+  assert.equal(catalogInventoryEnabledForSync('range_created', true), false);
+  assert.equal(catalogInventoryEnabledForSync('incremental', true), true);
+});
 
 function response(orders, overrides = {}) {
   return {
@@ -187,15 +195,21 @@ test('no avanza el cursor cuando Falabella falla', async () => {
 
 test('una sincronización mensual guarda órdenes y registra cobertura del mes', async () => {
   const db = new FakeDb();
+  let seenFilters = null;
   const client = {
-    getOrdersV2: async () => response([{
-      OrderId: '10', OrderNumber: 'ORD-10', CreatedAt: '2026-07-03T10:00:00Z',
-      UpdatedAt: '2026-07-03T10:05:00Z', GrandTotal: 50, Statuses: [{ Status: 'pending' }],
-    }]),
+    getOrdersV2: async (filters) => {
+      seenFilters = filters;
+      return response([{
+        OrderId: '10', OrderNumber: 'ORD-10', CreatedAt: '2026-07-03T10:00:00Z',
+        UpdatedAt: '2026-07-03T10:05:00Z', GrandTotal: 50, Statuses: [{ Status: 'pending' }],
+      }]);
+    },
   };
   const result = await syncFalabellaOrders(7, { mode: 'month', month: '2026-07' }, fakeDependencies(db, client));
   assert.equal(result.status, 'success');
   assert.equal(result.received, 1);
+  assert.equal(seenFilters.createdAfter, '2026-07-01T05:00:00.000Z');
+  assert.equal(seenFilters.createdBefore, '2026-08-01T04:59:59.999Z');
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_events')), true);

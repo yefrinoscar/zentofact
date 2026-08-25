@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyInventoryMovement,
   InsufficientStockError,
-  syncProductInventoryFromListings,
+  listMovements,
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
 import { stockPhase } from './catalog/stock-phase.js';
@@ -16,9 +16,11 @@ import {
 import {
   falabellaPublicationSnapshot,
   falabellaPublicationState,
+  fetchFalabellaPublicAvailabilities,
   fetchFalabellaProductsBySku,
   fetchFalabellaStocks,
   refreshFalabellaListingSnapshots,
+  refreshRipleyListingSnapshots,
 } from './catalog/listing-snapshot-service.js';
 import { getCatalogSummary, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
@@ -106,6 +108,35 @@ class InventoryDb {
   }
 }
 
+test('el historial muestra la conciliación autoritativa y los movimientos posteriores', async () => {
+  let statement = '';
+  const db = {
+    async query(sql) {
+      statement = sql.replace(/\s+/g, ' ').trim();
+      return { rows: [{
+        id: 1,
+        product_id: 5,
+        movement_type: 'sale',
+        quantity_delta: '-1',
+        quantity_after: '8',
+        source: 'reconciliation',
+        metadata: { reconciliationRunId: 1 },
+        effective_at: '2026-08-21T20:00:00.000Z',
+        created_at: '2026-08-24T21:25:34.429Z',
+        total_count: '1',
+      }] };
+    },
+  };
+
+  const result = await listMovements(5, {}, db);
+
+  assert.match(statement, /with latest_reconciliation as/i);
+  assert.match(statement, /m\.metadata->>'reconciliationRunId'=lr\.id::text/i);
+  assert.match(statement, /m\.created_at>lr\.applied_at/i);
+  assert.equal(result.movements[0].effectiveAt, '2026-08-21T20:00:00.000Z');
+  assert.equal(result.totalCount, 1);
+});
+
 function listing(overrides = {}) {
   return {
     listing_id: 71,
@@ -176,35 +207,6 @@ test('aplica un movimiento con saldo materializado e idempotencia', async () => 
   assert.equal(db.movements.size, 1);
 });
 
-test('el stock principal materializa la suma de todos los sellers asociados', async () => {
-  const calls = [];
-  const db = {
-    async query(sql, params) {
-      calls.push({ sql: sql.replace(/\s+/g, ' ').trim().toLowerCase(), params });
-      return {
-        rows: [{
-          product_id: 122,
-          quantity_on_hand: '721.0000',
-          quantity_reserved: '0.0000',
-          available: '721.0000',
-        }],
-      };
-    },
-  };
-
-  const result = await syncProductInventoryFromListings(db, [122, '122']);
-
-  assert.deepEqual(calls[0].params, [[122]]);
-  assert.match(calls[0].sql, /sum\(coalesce\(l\.marketplace_quantity, 0\)\)/);
-  assert.match(calls[0].sql, /excluded\.quantity_on_hand \+ product_inventory\.quantity_reserved/);
-  assert.deepEqual(result, [{
-    productId: 122,
-    quantityOnHand: 721,
-    quantityReserved: 0,
-    available: 721,
-  }]);
-});
-
 test('snapshot Falabella separa precio regular/oferta y suma stock seller más fulfillment', () => {
   const snapshot = falabellaPublicationSnapshot({
     name: 'Producto publicado',
@@ -226,6 +228,72 @@ test('snapshot Falabella separa precio regular/oferta y suma stock seller más f
   assert.equal(snapshot.metadata.offerIsActive, true);
   assert.equal(snapshot.availableQuantity, 5);
   assert.equal(snapshot.metadata.stockSource, 'falabella_get_stock');
+});
+
+test('snapshot Falabella muestra cero cuando la tienda pública no ofrece la publicación', () => {
+  const snapshot = falabellaPublicationSnapshot({
+    name: 'Bastón de trekking',
+    status: 'active',
+    qcStatus: 'approved',
+    businessUnits: [{
+      operatorCode: 'fape', status: 'active', isPublished: '1', price: '24.00',
+    }],
+  }, {
+    sellerWarehouseQuantity: 200,
+    fulfillmentQuantity: 0,
+    availableQuantity: 200,
+  }, new Date('2026-08-24T12:00:00Z'), {
+    publicAvailability: {
+      status: 'unavailable',
+      isPublished: false,
+      isOutOfStock: true,
+      checkedAt: '2026-08-24T12:00:00.000Z',
+    },
+  });
+
+  assert.equal(snapshot.availableQuantity, 0);
+  assert.equal(snapshot.metadata.reportedAvailableQuantity, 200);
+  assert.equal(snapshot.metadata.publicAvailabilityStatus, 'unavailable');
+  assert.equal(snapshot.metadata.publicIsPublished, false);
+  assert.equal(snapshot.metadata.publicIsOutOfStock, true);
+});
+
+test('consulta la disponibilidad pública de Falabella usando los datos livianos de Next', async () => {
+  const requests = [];
+  const responses = [
+    `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      buildId: 'build-123',
+      props: { pageProps: { productData: { isPublished: false, isOutOfStock: true } } },
+    })}</script>`,
+    JSON.stringify({
+      pageProps: { productData: { isPublished: true, isOutOfStock: false } },
+    }),
+  ];
+  const fetchImpl = async (url) => {
+    requests.push(String(url));
+    return {
+      ok: true,
+      text: async () => responses.shift(),
+    };
+  };
+
+  const availability = await fetchFalabellaPublicAvailabilities([
+    {
+      sellerSku: 'BEAUTY-1',
+      url: 'https://www.falabella.com.pe/falabella-pe/product/100/baston-negro/101',
+    },
+    {
+      sellerSku: 'LIMBO-1',
+      url: 'https://www.falabella.com.pe/falabella-pe/product/200/baston-rojo/201',
+    },
+  ], { fetchImpl, now: new Date('2026-08-24T12:00:00Z'), concurrency: 1 });
+
+  assert.equal(availability.get('BEAUTY-1')?.status, 'unavailable');
+  assert.equal(availability.get('LIMBO-1')?.status, 'available');
+  assert.equal(requests.length, 2);
+  assert.match(requests[1], /\/_next\/data\/build-123\/product\.json/);
+  assert.match(requests[1], /productId=200/);
+  assert.match(requests[1], /variantId=201/);
 });
 
 test('un producto no autorizado conserva el stock reportado aunque no sea vendible', () => {
@@ -475,6 +543,19 @@ test('stock insuficiente marketplace conserva el pedido y marca la línea para o
   assert.equal(db.items.get(101).stock_revision, 0);
 });
 
+test('una reparación del sistema conserva la semántica marketplace del canal', async () => {
+  const db = new InventoryDb(0);
+  db.listings.push(listing({ quantity_on_hand: 0 }));
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    source: 'system',
+    includeSkippedPolicy: true,
+  }));
+  assert.equal(result.skipped, 1);
+  assert.equal(db.quantity, 0);
+  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
+});
+
 test('cancelación y devolución revierten cantidades aplicadas una sola vez', async () => {
   const cancelledDb = new InventoryDb(8);
   const applied = item({ product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M', stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1 });
@@ -543,6 +624,25 @@ test('una línea cancelada o devuelta reintegra stock aunque el pedido siga list
   }));
   assert.equal(returnedDb.quantity, 10);
   assert.equal(returnedDb.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3248709095');
+});
+
+test('una línea REFUNDED de Ripley se trata como devolución y no como venta', async () => {
+  const db = new InventoryDb(8);
+  const refunded = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+    provider_status: 'REFUNDED',
+  });
+  db.items.set(101, refunded);
+  await stockPhase(phaseInput(db, [{ ...refunded }], {
+    persisted: {
+      id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'delivered',
+      external_order_number: '7902232701-A',
+    },
+  }));
+  assert.equal(db.quantity, 10);
+  assert.equal(db.items.get(101).stock_state, 'reversed');
+  assert.equal(db.movements.get('return:order_item:101:rev:2').quantity_delta, 2);
 });
 
 test('un segundo sync de un pedido ya cancelado o devuelto todavía reintegra stock aplicado', async () => {
@@ -692,6 +792,30 @@ test('la asociación multiseñal infiere la variante y une títulos comerciales 
   assert.ok(match.confidence >= 0.82);
 });
 
+test('marca genérica no bloquea una asociación entre canales', () => {
+  const match = scoreFalabellaAssociation({
+    name: 'Bicicleta Para Niños Equilibrio Balance Sin Pedales Blanco',
+    brand: 'GENERICO',
+  }, {
+    name: 'Bicicleta para niños equilibrio balance bike sin pedales blanco',
+    brand: 'LIMBO',
+  });
+
+  assert.equal(match.eligible, true);
+  assert.notEqual(match.reason, 'brand_conflict');
+});
+
+test('acepta un título existente contenido en una descripción comercial más larga', () => {
+  const match = scoreFalabellaAssociation({
+    name: 'Mochila Limbo camping impermeable trekking negra 40L resistente y con diseño ergonómico',
+  }, {
+    name: 'Mochila de camping trekking negra 40L resistente',
+  });
+
+  assert.equal(match.eligible, true);
+  assert.ok(match.confidence >= 0.82);
+});
+
 test('asocia las tres publicaciones verificadas de la pulsera para cámara', () => {
   const groups = groupFalabellaCatalogRecords([
     {
@@ -731,7 +855,7 @@ test('asocia las tres publicaciones verificadas de la pulsera para cámara', () 
   assert.equal(variantGroups.length, 2);
 });
 
-test('la asociación no mezcla variantes ni familias ambiguas', () => {
+test('la asociación no mezcla variantes ni familias distintas', () => {
   const canonical = {
     name: 'Camiseta Faja Reductora Remodela Abdomen Hombres Vivid Bvd',
     color: 'Blanco',
@@ -743,11 +867,11 @@ test('la asociación no mezcla variantes ni familias ambiguas', () => {
     price: 23.98,
   }).reason, 'variant_conflict');
   assert.equal(scoreFalabellaAssociation(canonical, {
-    name: 'Camiseta Reductora Masculina para Moldear Abdomen y Pecho',
+    name: 'Camiseta deportiva para hombre entrenamiento diario',
     color: 'Blanco',
     size: 'XL',
     price: 23.98,
-  }).reason, 'ambiguous_product_family');
+  }).eligible, false);
 });
 
 test('el agrupador no fusiona publicaciones parecidas del mismo seller por heurística', () => {
@@ -1007,7 +1131,7 @@ test('mantiene separadas las tres variantes físicas verificadas de sillas de co
   assert.deepEqual(groups.map((group) => group.records.length).sort((left, right) => left - right), [1, 4, 8]);
 });
 
-test('asocia las sillas evolutivas verificadas aunque cambie el color', () => {
+test('mantiene separadas las sillas evolutivas por color', () => {
   const groups = groupFalabellaCatalogRecords([
     {
       company: { id: 2 },
@@ -1032,8 +1156,8 @@ test('asocia las sillas evolutivas verificadas aunque cambie el color', () => {
     },
   ]);
 
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].records.length, 3);
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.map((group) => group.records.length), [1, 1, 1]);
 });
 
 test('asocia el bolso verificado aunque Falabella reporte tallas espurias', () => {
@@ -1222,7 +1346,18 @@ test('el catálogo filtra productos con uno o varios sellers desde SQL', async (
   await assert.rejects(() => listProducts({ sellerCoverage: 'unknown' }, db), /sellerCoverage inválido/);
 });
 
-test('Activo exige al menos una publicación visible y no depende del stock', async () => {
+test('el buscador del catálogo incluye códigos secundarios del Excel', async () => {
+  const statements = [];
+  const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
+
+  await listProducts({ search: 'G24CA', status: 'active' }, db);
+
+  const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(listSql, /jsonb_array_elements_text[\s\S]*excel_codes/);
+  assert.equal(statements.some((statement) => statement.params.includes('%G24CA%')), true);
+});
+
+test('el estado del maestro no depende de la publicación del canal', async () => {
   const statements = [];
   const db = { query: async (sql, params) => { statements.push({ sql, params }); return { rows: [] }; } };
 
@@ -1230,10 +1365,10 @@ test('Activo exige al menos una publicación visible y no depende del stock', as
 
   const listSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   const summarySql = statements.find((statement) => statement.sql.includes('as single_seller'))?.sql || '';
-  assert.match(listSql, /p\.status=\$1[\s\S]*exists[\s\S]*publication_listing[\s\S]*metadata->>'isPublished'/);
-  assert.match(listSql, /publication_listing[\s\S]*metadata->>'qcStatus'[\s\S]*='approved'/);
+  assert.match(listSql, /p\.status=\$1/);
+  assert.doesNotMatch(listSql, /p\.status=\$1[\s\S]*publication_listing/);
   assert.doesNotMatch(listSql, /publication_listing\.marketplace_quantity/);
-  assert.match(summarySql, /count\(\*\) filter \(where p\.status='active'[\s\S]*exists[\s\S]*publication_listing[\s\S]*\) as active/);
+  assert.match(summarySql, /count\(\*\) filter \(where p\.status='active'\) as active/);
 });
 
 test('el catálogo combina facetas profesionales y ordenamiento desde SQL', async () => {
@@ -1377,8 +1512,8 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
   assert.doesNotMatch(pageQuery.sql, /nombre_comercial/);
   assert.notEqual(pageQuery.sql, listingsQuery.sql);
   assert.match(listingsQuery.sql, /l\.product_id = any\(\$1::int\[\]\)/);
-  assert.doesNotMatch(listingsQuery.sql, /l\.status = 'active'/);
-  assert.match(pageQuery.sql, /sum\(l\.marketplace_quantity\)(?!\s+filter)/);
+  assert.match(listingsQuery.sql, /l\.status <> 'unlinked'/);
+  assert.match(pageQuery.sql, /sum\(l\.marketplace_quantity\) filter/);
   assert.deepEqual(listingsQuery.params[0], [5]);
   assert.equal(listed.products.length, 1);
   assert.equal(listed.products[0].listings.length, 1);
@@ -1472,11 +1607,11 @@ test('el catálogo resume grupos y aplica filtros especiales desde SQL', async (
   assert.match(summarySql, /coalesce\(coverage\.listing_price, p\.reference_price, 0\)/);
   const outOfStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(outOfStockSql, /marketplace_quantity[\s\S]*= 0/);
-  assert.match(outOfStockSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*> 0/);
+  assert.match(outOfStockSql, /exists[\s\S]*publication_listing[\s\S]*metadata->>'isPublished'/);
   statements.length = 0;
   await listProducts({ special: 'unpublished', status: 'active' }, db);
   const unpublishedSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
-  assert.match(unpublishedSql, /count\(distinct coverage_listing\.company_id\)[\s\S]*= 0/);
+  assert.match(unpublishedSql, /not exists[\s\S]*publication_listing[\s\S]*metadata->>'isPublished'/);
   statements.length = 0;
   await listProducts({ lowStock: true, status: 'active' }, db);
   const lowStockSql = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
@@ -1690,8 +1825,8 @@ test('import con SKU sanitizado colisionado reutiliza el producto y crea el list
   assert.equal(metadata.isPublished, true);
   assert.equal(metadata.status, 'active');
   assert.equal(metadata.marketplaceStatus, 'active');
-  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
-  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), true);
+  assert.equal(queries.some(({ sql }) => sql.includes('product_inventory')), false);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), false);
 });
 
 test('import conserva el stock reportado de una publicación Falabella no autorizada', async () => {
@@ -1731,8 +1866,8 @@ test('import conserva el stock reportado de una publicación Falabella no autori
   assert.equal(metadata.reportedAvailableQuantity, 100);
   assert.equal(metadata.isSellable, false);
   assert.equal(metadata.sellabilityReason, 'qc_not_approved');
-  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
-  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), true);
+  assert.equal(queries.some(({ sql }) => sql.includes('product_inventory')), false);
+  assert.equal(queries.some(({ sql }) => sql.startsWith('with desired_product_statuses as')), false);
 });
 
 test('GetProducts se consulta por lotes de 100 SKU', async () => {
@@ -1780,6 +1915,7 @@ test('refresh de publicaciones actualiza stock y precio sin crear productos ni c
           name: 'Camiseta',
           status: 'active',
           qcStatus: 'approved',
+          url: 'https://www.falabella.com.pe/falabella-pe/product/100/camiseta/101',
           businessUnits: [{
             operatorCode: 'fape', status: 'active', isPublished: '1', price: '39.9', stock: '17',
           }],
@@ -1790,6 +1926,12 @@ test('refresh de publicaciones actualiza stock y precio sin crear productos ni c
         stocks: [{ sellerSku: 'LIMBO-1', availableQuantity: 17, sellerWarehouseQuantity: 17, fulfillmentQuantity: 0 }],
       }),
     },
+    fetchPublicAvailabilities: async () => new Map([['LIMBO-1', {
+      status: 'unavailable',
+      isPublished: false,
+      isOutOfStock: true,
+      checkedAt: '2026-08-24T12:00:00.000Z',
+    }]]),
   });
 
   assert.equal(result.requested, 1);
@@ -1799,10 +1941,88 @@ test('refresh de publicaciones actualiza stock y precio sin crear productos ni c
   const listingUpdate = queries.find(({ sql }) => sql.startsWith('update product_listings set'));
   assert.equal(/(^|[\s,])product_id\s*=/.test(listingUpdate.sql), false);
   assert.equal(listingUpdate.params[0], 'SHOP-40');
-  assert.equal(listingUpdate.params[3], 17);
+  assert.equal(listingUpdate.params[3], 0);
   assert.equal(listingUpdate.params[5], 40);
   const metadata = JSON.parse(listingUpdate.params[4]);
   assert.equal(metadata.effectivePrice, 39.9);
   assert.equal(metadata.stockSource, 'falabella_get_stock');
-  assert.equal(queries.some(({ sql }) => sql.startsWith('with listing_totals as')), true);
+  assert.equal(metadata.reportedAvailableQuantity, 17);
+  assert.equal(metadata.publicAvailabilityStatus, 'unavailable');
+  assert.equal(queries.some(({ sql }) => sql.includes('product_inventory')), false);
+});
+
+test('refresh Falabella pone en cero una publicación que ya no existe en el catálogo remoto', async () => {
+  const updates = [];
+  let stockCalls = 0;
+  const db = {
+    async query(sql, params = []) {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from product_listings l') && compact.includes("l.channel_code='falabella'")) {
+        return { rows: [{ id: 40, product_id: 9, company_id: 2, seller_sku: 'AUSENTE' }] };
+      }
+      if (compact.startsWith('update product_listings set')) {
+        updates.push({ sql: compact, params });
+        return { rows: [] };
+      }
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  };
+
+  const result = await refreshFalabellaListingSnapshots({}, db, {
+    core: {
+      falabellaGetProducts: async () => ({ ok: true, products: [] }),
+      falabellaGetStock: async () => {
+        stockCalls += 1;
+        return { ok: true, stocks: [] };
+      },
+    },
+    fetchPublicAvailabilities: async () => new Map(),
+  });
+
+  assert.equal(result.refreshed, 1);
+  assert.equal(result.missing.length, 1);
+  assert.equal(stockCalls, 0);
+  assert.match(updates[0].sql, /status='inactive'.*marketplace_quantity=0/);
+  assert.equal(updates[0].params[1], 40);
+  const metadata = JSON.parse(updates[0].params[0]);
+  assert.equal(metadata.isPublished, false);
+  assert.equal(metadata.sellabilityReason, 'not_returned_by_falabella_catalog');
+});
+
+test('refresh Ripley actualiza existentes y pone en cero una oferta ausente sin crear maestros', async () => {
+  const updates = [];
+  const db = {
+    async query(sql, params = []) {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes("where l.channel_code='ripley'")) {
+        return { rows: [
+          { id: 80, product_id: 9, company_id: 2, seller_sku: 'R-ACTIVO' },
+          { id: 81, product_id: 10, company_id: 2, seller_sku: 'R-AUSENTE' },
+        ] };
+      }
+      if (compact.startsWith('update product_listings set')) {
+        updates.push({ sql: compact, params });
+        return { rows: [] };
+      }
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  };
+
+  const result = await refreshRipleyListingSnapshots({}, db, {
+    core: {},
+    async listRipleyProducts() {
+      return { offers: [{
+        sellerSku: 'R-ACTIVO', productSku: 'P-1', productTitle: 'Mochila',
+        active: true, quantity: 7, price: 29.9, imageUrl: 'https://cdn.example/r.jpg',
+      }] };
+    },
+  });
+
+  assert.equal(result.refreshed, 2);
+  assert.equal(result.missing.length, 1);
+  assert.deepEqual(updates.map(({ params }) => ({ status: params[3], stock: params[4], id: params[6] })), [
+    { status: 'active', stock: 7, id: 80 },
+    { status: 'inactive', stock: 0, id: 81 },
+  ]);
+  assert.equal(updates.some(({ sql }) => sql.includes('insert into products')), false);
 });

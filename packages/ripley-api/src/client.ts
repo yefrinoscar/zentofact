@@ -4,6 +4,7 @@ import type {
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
+  RipleyProductContent,
   RipleyOrder,
   RipleyOrderPage,
   RipleySvcClientOptions,
@@ -66,6 +67,21 @@ export class RipleyApiClient {
       if (page.totalCount != null && page.offset + page.max >= page.totalCount) return offers;
       if (page.offers.length < MAX_PAGE_SIZE) return offers;
     }
+  }
+
+  /** Mirakl P11: enriches OF21 offers with product content and media. */
+  async listProductContents(productSkus: string[]): Promise<RipleyProductContent[]> {
+    const uniqueSkus = [...new Set(productSkus.map((sku) => sku.trim()).filter(Boolean))];
+    const contents: RipleyProductContent[] = [];
+    for (let start = 0; start < uniqueSkus.length; start += MAX_PAGE_SIZE) {
+      const url = new URL('/api/products/offers', this.baseUrl);
+      url.searchParams.set('product_ids', uniqueSkus.slice(start, start + MAX_PAGE_SIZE).join(','));
+      const body = await this.getJson(url);
+      const page = objectRecord(body);
+      if (!page || !Array.isArray(page.products)) throw new Error('Ripley no devolvió el contenido de los productos.');
+      contents.push(...page.products.map(normalizeProductContent).filter((product): product is RipleyProductContent => product !== null));
+    }
+    return contents;
   }
 
   async listOrders(options: ListOrdersOptions = {}): Promise<RipleyOrderPage> {
@@ -327,8 +343,28 @@ function normalizeOffer(value: unknown): RipleyOffer | null {
     active: typeof offer.active === 'boolean' ? offer.active : null,
     quantity: finiteNumber(offer.quantity),
     price: finiteNumber(offer.price) ?? finiteNumber(pricing?.price),
+    imageUrl: null,
     raw: value,
   };
+}
+
+function normalizeProductContent(value: unknown): RipleyProductContent | null {
+  const product = objectRecord(value);
+  if (!product) return null;
+  const productSku = nonEmptyText(product.product_sku ?? product.productSku);
+  if (!productSku) return null;
+  const media = objectRecord(product.product_media ?? product.productMedia);
+  return {
+    productSku,
+    productTitle: nonEmptyText(product.product_title ?? product.productTitle),
+    imageUrl: httpsUrl(media?.dam_url ?? media?.damUrl) ?? httpsUrl(media?.media_url ?? media?.mediaUrl),
+    raw: value,
+  };
+}
+
+function httpsUrl(value: unknown): string | null {
+  const url = nonEmptyText(value);
+  return url && /^https:\/\//i.test(url) ? url : null;
 }
 
 function normalizeOrder(value: unknown): RipleyOrder | null {
