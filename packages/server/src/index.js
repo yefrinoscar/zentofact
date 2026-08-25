@@ -32,32 +32,8 @@ const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission,
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
-if (isRailwayPrPreview) {
-  const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
-  console.log(`[AUTH] Bootstrap de preview en ${railwayEnvironmentName}`);
-  await ensureAuthSchema();
-}
 await users.ensureUserColumns();
-
-// Solo preview: crear el superadmin si hay credenciales de bootstrap.
-if (isRailwayPrPreview && bootstrapEmailEarly && bootstrapPasswordEarly) {
-  try {
-    await auth.api.signUpEmail({
-      body: { email: bootstrapEmailEarly, password: bootstrapPasswordEarly, name: 'Admin' },
-    });
-    console.log('[AUTH] Admin bootstrap creado:', bootstrapEmailEarly);
-  } catch (error) {
-    const message = String(error?.message || error || '');
-    if (!/already exists|existe/i.test(message)) {
-      console.warn('[AUTH] Admin bootstrap no creado:', message.slice(0, 160));
-    }
-  }
-  try {
-    await users.promoteSuperadminByEmail(bootstrapEmailEarly, 'system.bootstrap');
-  } catch (error) {
-    console.warn('[AUTH] No se pudo marcar superadmin:', String(error?.message || error).slice(0, 160));
-  }
-}
+await users.ensureBootstrapAdmin();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
