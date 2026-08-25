@@ -1069,14 +1069,6 @@ const DDL = `
   ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_items_status_check;
   ALTER TABLE orders ADD CONSTRAINT orders_items_status_check
     CHECK (items_status IN ('pending', 'complete', 'error'));
-  -- Pedidos que ya tenían líneas hidratadas antes de esta columna no deben
-  -- quedar bloqueados en pending (stockPhase no descuenta en ese estado).
-  UPDATE orders o
-     SET items_status = 'complete',
-         items_error = NULL,
-         updated_at = NOW()
-   WHERE o.items_status = 'pending'
-     AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id);
   CREATE INDEX IF NOT EXISTS idx_orders_items_incomplete
     ON orders(items_status, updated_at DESC)
     WHERE items_status IN ('pending', 'error');
@@ -1105,6 +1097,15 @@ const DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku);
+  -- Pedidos que ya tenían líneas hidratadas antes de items_status no deben
+  -- quedar bloqueados en pending (stockPhase no descuenta en ese estado).
+  -- Corre después de crear order_items para no fallar en DBs nuevas (PR preview).
+  UPDATE orders o
+     SET items_status = 'complete',
+         items_error = NULL,
+         updated_at = NOW()
+   WHERE o.items_status = 'pending'
+     AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id);
 
   -- Catálogo canónico multi-seller. El producto representa la unidad física y
   -- su inventario es compartido por todos los listings de la instancia.
