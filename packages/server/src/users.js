@@ -152,8 +152,24 @@ async function assertAdminInvariants(tx, current, nextRole, nextActive) {
   }
 }
 
+export async function ensureAuthSchema() {
+  // Better Auth crea "user"/session/account; sin esto un Postgres vacío
+  // (p. ej. Railway PR preview) rompe el boot en ensureUserColumns.
+  const { getMigrations } = await import('better-auth/db/migration');
+  const { auth } = await import('./auth.js');
+  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
+  if (toBeCreated?.length || toBeAdded?.length) {
+    console.log(
+      '[auth] migrando schema:',
+      (toBeCreated || []).map((t) => t.table || t.name || Object.keys(t)[0]).join(', ') || '(sin tablas nuevas)',
+    );
+  }
+  await runMigrations();
+}
+
 export async function ensureUserColumns() {
   // DDL de compatibilidad para tablas de Better Auth; el CRUD usa Drizzle.
+  await ensureAuthSchema();
   await pool.query(`
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'operator';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS permissions TEXT DEFAULT '[]';
@@ -179,6 +195,28 @@ export async function ensureUserColumns() {
     } catch (error) {
       console.error('[AUTH] No se pudo aplicar AUTH_SUPERADMIN_EMAIL:', error?.message || error);
     }
+  }
+}
+
+export async function ensureBootstrapAdmin() {
+  // Solo para Postgres vacíos (p. ej. Railway PR preview): crea el primer
+  // superadmin si ADMIN_EMAIL/ADMIN_PASSWORD están definidos y no hay usuarios.
+  const email = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.ADMIN_PASSWORD || '').trim();
+  if (!email || password.length < 12) return;
+  const existing = await pool.query('select count(*)::int as n from "user"');
+  if (Number(existing.rows[0]?.n || 0) > 0) return;
+  if (process.env.AUTH_ALLOW_SIGNUP !== 'true') {
+    console.warn('[auth] ADMIN_* definidos pero AUTH_ALLOW_SIGNUP!=true; no se crea el bootstrap admin.');
+    return;
+  }
+  try {
+    const { auth } = await import('./auth.js');
+    await auth.api.signUpEmail({ body: { email, password, name: 'Admin' } });
+    await promoteSuperadminByEmail(email, 'system.bootstrap');
+    console.log('[auth] bootstrap admin creado:', email);
+  } catch (error) {
+    console.error('[auth] No se pudo crear bootstrap admin:', error?.message || error);
   }
 }
 
