@@ -720,7 +720,7 @@ export default function RegistrarVenta() {
             <p className="text-xs text-muted-foreground">Total</p>
             <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
           </div>
-          <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !lines.length || !!loadError || channelMissing}>
+          <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !!loadError || channelMissing}>
             {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {creating ? 'Listo…' : 'Registrar venta'}
           </Button>
