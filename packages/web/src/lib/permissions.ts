@@ -1,6 +1,7 @@
 export type PermissionKey =
   | 'dashboard'
   | 'falabella_sellers'
+  | 'salesperson'
   | 'order_management'
   | 'productos'
   | 'salidas'
@@ -24,6 +25,7 @@ export type AppRole =
   | 'falabella_manager'
   | 'operator'
   | 'billing'
+  | 'vendedor'
   | 'viewer';
 
 export type PermissionDef = {
@@ -46,6 +48,7 @@ export const PERMISSION_SECTIONS: Array<{ key: PermissionSectionKey; label: stri
 export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
+  { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
@@ -90,6 +93,11 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
     description: 'Gestiona comprobantes, automatización y anulaciones',
     permissions: ['boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk'],
   },
+  vendedor: {
+    label: 'Vendedor',
+    description: 'Registra ventas y consulta su comisión',
+    permissions: ['salesperson'],
+  },
   viewer: {
     label: 'Perfil anterior',
     description: 'Perfil anterior conservado por compatibilidad',
@@ -97,12 +105,13 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
   },
 };
 
-export const SELECTABLE_ROLES: AppRole[] = ['superadmin', 'admin', 'operator', 'billing'];
+export const SELECTABLE_ROLES: AppRole[] = ['superadmin', 'admin', 'operator', 'billing', 'vendedor'];
 
 export const ROLE_RANK: Record<AppRole, number> = {
   viewer: 10,
   operator: 20,
   billing: 20,
+  vendedor: 20,
   falabella_manager: 20,
   admin: 80,
   superadmin: 100,
@@ -153,6 +162,11 @@ export function isSuperadminRole(role: unknown) {
   return normalizeRole(role) === 'superadmin';
 }
 
+export function isPermissionsLocked(role: unknown) {
+  const normalized = normalizeRole(role);
+  return isAdminRole(normalized) || normalized === 'vendedor';
+}
+
 export type AppUser = {
   id: string;
   name: string;
@@ -160,11 +174,13 @@ export type AppUser = {
   role?: string;
   permissions?: string[] | string;
   active?: boolean;
+  commissionPercent?: number;
 };
 
 export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey[] {
   if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
   const normalizedRole = normalizeRole(role);
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
   let list: string[] = [];
   if (Array.isArray(raw)) list = raw.map(String);
   else if (typeof raw === 'string') {
@@ -198,7 +214,7 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
     const clean = key.trim();
     return LEGACY_PERMISSION_MAP[clean] || [clean];
   });
-  const allowed = new Set<PermissionKey>(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users'));
+  const allowed = new Set<PermissionKey>(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users' && key !== 'salesperson'));
   return [...new Set(expanded.filter((key): key is PermissionKey => allowed.has(key as PermissionKey)))];
 }
 
@@ -213,6 +229,7 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
 
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';

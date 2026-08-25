@@ -49,4 +49,3 @@ La fila debe compartir la indentación izquierda de la publicación seller. No d
 - **Botón primario.** Compite con las acciones principales de la página aunque solo abre un flujo contextual.
 - **Toolbar de la tabla.** Carbon reserva ese lugar para acciones que afectan la tabla completa.
 - **Acción en el menú de cada seller.** Asociar agrega una publicación al master; no opera sobre un seller existente.
-
