@@ -10,18 +10,21 @@ import {
   type SalespersonHome,
 } from '../lib/mis-ventas-presentation';
 import {
-  flashFromMisVentasState,
   humanizeSaleError,
+  registeredFromMisVentasState,
+  saleSavedSnackbarMessage,
+  saleSaveFailedSnackbarMessage,
   type MisVentasLocationState,
-  type SaleFlash,
 } from '../lib/sale-feedback';
-import { SaleFlashNotice } from '../components/SaleFlashNotice';
+import { useOperatorSnackbar } from '../components/OperatorSnackbar';
+import { cn } from '../lib/cn';
 import { Button } from '../components/ui/button';
 
 export default function MisVentas() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [flash, setFlash] = useState<SaleFlash | null>(null);
+  const { showSnackbar } = useOperatorSnackbar();
+  const [highlightOrder, setHighlightOrder] = useState('');
   const homeQuery = useQuery({
     queryKey: ['salesperson-home'],
     queryFn: () => api.getSalespersonHome() as Promise<SalespersonHome>,
@@ -35,13 +38,32 @@ export default function MisVentas() {
 
   useEffect(() => {
     const state = location.state as MisVentasLocationState | null;
-    const next = flashFromMisVentasState(state);
-    if (!next && !state?.registered && !state?.flash) return;
-    if (next) setFlash(next);
-    // Optimistic cache already updated in Nueva venta; do not refetch here or the
-    // sale can vanish before the create request finishes.
+    if (!state?.registered && !state?.saveFailed) return;
+
+    const registered = registeredFromMisVentasState(state);
+    if (registered && !state.saveFailed) {
+      setHighlightOrder(String(registered.number || '').trim());
+      showSnackbar({
+        message: saleSavedSnackbarMessage(registered),
+        tone: 'success',
+      });
+      window.setTimeout(() => setHighlightOrder(''), 2800);
+    }
+
+    if (state.saveFailed) {
+      showSnackbar({
+        message: saleSaveFailedSnackbarMessage(state.saveError),
+        tone: 'error',
+        duration: null,
+        action: {
+          label: 'Reintentar',
+          onClick: () => navigate('/orders/nueva'),
+        },
+      });
+    }
+
     navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, location.state, navigate]);
+  }, [location.pathname, location.state, navigate, showSnackbar]);
 
   return (
     <div className="space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -51,19 +73,6 @@ export default function MisVentas() {
           Registrar venta
         </Button>
       </div>
-
-      {flash && <SaleFlashNotice flash={flash} onDismiss={() => setFlash(null)} />}
-
-      {loadError && (
-        <SaleFlashNotice
-          flash={{
-            tone: 'error',
-            title: 'No se pudo cargar',
-            detail: loadError,
-            hint: 'Desliza hacia abajo o vuelve a entrar.',
-          }}
-        />
-      )}
 
       <section aria-label="Indicadores personales" className="grid grid-cols-2 gap-3">
         {kpis.map((kpi) => (
@@ -81,6 +90,21 @@ export default function MisVentas() {
         ))}
       </section>
 
+      {loadError && (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-3 text-sm text-destructive">
+          <p>{loadError}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2 h-9 cursor-pointer"
+            onClick={() => void homeQuery.refetch()}
+          >
+            Reintentar
+          </Button>
+        </div>
+      )}
+
       {homeQuery.isPending && !homeQuery.data ? (
         <div className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
@@ -96,8 +120,15 @@ export default function MisVentas() {
         <ul className="divide-y divide-border">
           {orders.map((order, index) => {
             const row = saleListRow(order);
+            const highlighted = highlightOrder && row.number === highlightOrder;
             return (
-              <li key={`${row.number}-${index}`} className="flex items-start justify-between gap-3 py-3">
+              <li
+                key={`${row.number}-${index}`}
+                className={cn(
+                  'flex items-start justify-between gap-3 py-3 transition-colors duration-700',
+                  highlighted && 'rounded-lg bg-primary/8 px-2 -mx-2',
+                )}
+              >
                 <div className="min-w-0">
                   <p className="truncate font-medium">{row.number}</p>
                   <p className="truncate text-sm text-muted-foreground">{row.customer}</p>

@@ -1,22 +1,16 @@
-export type SaleFlashTone = 'success' | 'error';
-
-export type SaleFlash = {
-  tone: SaleFlashTone;
-  title: string;
-  detail: string;
-  hint?: string;
-};
-
 export type RegisteredSaleFlash = {
   number: string;
   customer: string;
   total: number;
 };
 
+export type SaleValidationField = 'channel' | 'customer' | 'products' | 'lines' | 'delivery';
+
 /** Location state passed from Nueva venta → Mis ventas. */
 export type MisVentasLocationState = {
   registered?: RegisteredSaleFlash | string | null;
-  flash?: SaleFlash | null;
+  saveFailed?: boolean;
+  saveError?: string | null;
 };
 
 export type OptimisticSale = {
@@ -43,41 +37,51 @@ function formatMoney(value: number) {
   }
 }
 
-export function saleRegisteredFlash(sale: RegisteredSaleFlash): SaleFlash {
-  const number = String(sale.number || '').trim() || '—';
-  const customer = String(sale.customer || '').trim() || 'Sin nombre';
-  return {
-    tone: 'success',
-    title: 'Venta lista',
-    detail: `${number} · ${customer} · ${formatMoney(sale.total)}`,
-    hint: 'Ya aparece en tu lista de hoy.',
-  };
+/** POS-style toast: one line, the list is the real confirmation. */
+export function saleSavedSnackbarMessage(sale: RegisteredSaleFlash) {
+  const amount = formatMoney(sale.total);
+  const customer = String(sale.customer || '').trim();
+  if (customer) return `Venta guardada · ${customer} · ${amount}`;
+  return `Venta guardada · ${amount}`;
 }
 
-export function saleFailedFlash(reason?: string): SaleFlash {
-  return {
-    tone: 'error',
-    title: 'No se guardó la venta',
-    detail: humanizeSaleError(reason),
-    hint: 'Revisa los datos e inténtalo de nuevo.',
-  };
+export function saleSaveFailedSnackbarMessage(reason?: string | null) {
+  return humanizeSaleError(reason);
 }
 
-export function flashFromMisVentasState(state: MisVentasLocationState | null | undefined): SaleFlash | null {
-  if (!state) return null;
-  if (state.flash?.title) return state.flash;
-  const registered = state.registered;
+export function registeredFromMisVentasState(
+  state: MisVentasLocationState | null | undefined,
+): RegisteredSaleFlash | null {
+  const registered = state?.registered;
   if (!registered) return null;
   if (typeof registered === 'string') {
-    return saleRegisteredFlash({ number: registered, customer: '', total: 0 });
+    return { number: registered, customer: '', total: 0 };
   }
-  return saleRegisteredFlash(registered);
+  return registered;
+}
+
+/** Map validation copy to the form section that should show it inline. */
+export function saleValidationField(message: string | null | undefined): SaleValidationField | null {
+  const value = String(message || '').trim();
+  if (!value) return null;
+  if (value.includes('canal de venta manual')) return 'channel';
+  if (value.includes('nombre del cliente')) return 'customer';
+  if (value.includes('producto')) return 'products';
+  if (value.includes('cantidad') || value.includes('precio')) return 'lines';
+  if (
+    value.includes('fecha de entrega')
+    || value.includes('reparto')
+    || value.includes('dirección')
+  ) {
+    return 'delivery';
+  }
+  return null;
 }
 
 /** Map raw backend/SQL noise to operator language. Validation messages pass through. */
 export function humanizeSaleError(raw?: string | null) {
   const message = String(raw || '').trim();
-  if (!message) return 'Algo falló al guardar. Inténtalo de nuevo.';
+  if (!message) return 'No se pudo guardar. Inténtalo otra vez.';
 
   const lower = message.toLowerCase();
   if (
@@ -89,17 +93,16 @@ export function humanizeSaleError(raw?: string | null) {
     || lower.includes('network')
     || lower.includes('fetch')
   ) {
-    return 'No pudimos guardar ahora. Inténtalo de nuevo en un momento.';
+    return 'No se pudo guardar. Inténtalo otra vez.';
   }
-  if (lower.includes('csrf')) return 'La sesión expiró. Vuelve a ingresar e inténtalo.';
+  if (lower.includes('csrf')) return 'Sesión expirada. Vuelve a ingresar.';
   if (lower.includes('no autenticado') || lower.includes('unauthorized')) {
-    return 'La sesión expiró. Vuelve a ingresar.';
+    return 'Sesión expirada. Vuelve a ingresar.';
   }
-  // Keep short validation copy from the form as-is.
   if (message.length <= 120 && !lower.includes('stack') && !lower.includes('at async')) {
     return message;
   }
-  return 'No pudimos guardar ahora. Inténtalo de nuevo en un momento.';
+  return 'No se pudo guardar. Inténtalo otra vez.';
 }
 
 export function buildOptimisticSale(input: {

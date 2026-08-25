@@ -36,13 +36,13 @@ import {
   applyOptimisticSale,
   buildOptimisticSale,
   humanizeSaleError,
-  saleFailedFlash,
-  saleRegisteredFlash,
+  saleValidationField,
   type OptimisticHome,
+  type SaleValidationField,
 } from '../lib/sale-feedback';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
-import { SaleFlashNotice } from '../components/SaleFlashNotice';
+import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { Calendar } from '../components/ui/calendar';
 import {
@@ -271,9 +271,15 @@ function ProductPhoto({ url, shopSku, sku, name }: { url?: string | null; shopSk
   );
 }
 
+function FieldHint({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="text-sm text-destructive">{message}</p>;
+}
+
 export default function RegistrarVenta() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { showSnackbar } = useOperatorSnackbar();
   const { can } = usePermissions();
   const afterSavePath = can('salesperson') && !can('order_management') ? '/mis-ventas' : '/orders';
 
@@ -295,7 +301,21 @@ export default function RegistrarVenta() {
   const [receivedBy, setReceivedBy] = useState('');
   const [paymentProof, setPaymentProof] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
   const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<SaleValidationField, string>>>({});
+
+  const clearFieldError = (field: SaleValidationField) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const showFieldError = (message: string) => {
+    const field = saleValidationField(message) ?? 'customer';
+    setFieldErrors({ [field]: message });
+  };
 
   useEffect(() => {
     api.listOrderChannelAccounts({ active: true }).then((accountRows) => {
@@ -333,6 +353,8 @@ export default function RegistrarVenta() {
   const addProduct = (product: CatalogProduct) => {
     const sku = String(product.mainSku || '').trim();
     const price = productPrice(product);
+    clearFieldError('products');
+    clearFieldError('lines');
     setLines((current) => {
       const existing = current.find((line) => line.productId === product.id);
       if (existing) {
@@ -356,28 +378,32 @@ export default function RegistrarVenta() {
   };
 
   const updateLine = (id: string, patch: Partial<SaleLine>) => {
+    clearFieldError('lines');
     setLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line));
   };
 
   const attachProof = (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      setCreateError('La constancia debe ser una foto o captura.');
+      showSnackbar({ message: 'La constancia debe ser una foto o captura.', tone: 'error', duration: 6000 });
       return;
     }
     void readPaymentProof(file)
       .then((proof) => {
         setPaymentProof(proof);
-        setCreateError('');
       })
       .catch((error: Error) => {
-        setCreateError(error.message || 'No se pudo adjuntar la constancia.');
+        showSnackbar({
+          message: humanizeSaleError(error.message || 'No se pudo adjuntar la constancia.'),
+          tone: 'error',
+          duration: 6000,
+        });
       });
   };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setCreateError('');
+    setFieldErrors({});
     const validationError = validateManualSale({
       channelAccountId: manualAccount?.id,
       customerName,
@@ -394,7 +420,7 @@ export default function RegistrarVenta() {
       paymentProof,
     });
     if (validationError) {
-      setCreateError(validationError);
+      showFieldError(validationError);
       return;
     }
 
@@ -416,7 +442,7 @@ export default function RegistrarVenta() {
         paymentProof,
       });
     } catch (error: any) {
-      setCreateError(humanizeSaleError(error?.message));
+      showFieldError(humanizeSaleError(error?.message));
       return;
     }
 
@@ -441,7 +467,7 @@ export default function RegistrarVenta() {
     setCreating(true);
     navigate(afterSavePath, {
       replace: true,
-      state: { registered, flash: saleRegisteredFlash(registered) },
+      state: { registered },
     });
 
     try {
@@ -455,7 +481,7 @@ export default function RegistrarVenta() {
       queryClient.setQueryData(['salesperson-home'], previousHome);
       navigate(afterSavePath, {
         replace: true,
-        state: { flash: saleFailedFlash(error?.message) },
+        state: { saveFailed: true, saveError: error?.message },
       });
     } finally {
       setCreating(false);
@@ -463,18 +489,11 @@ export default function RegistrarVenta() {
   };
 
   const channelMissing = !loadError && accounts.length > 0 && !manualAccount;
-  const formAlert = createError
-    ? { tone: 'error' as const, title: 'Falta un dato', detail: humanizeSaleError(createError) }
-    : loadError
-      ? { tone: 'error' as const, title: 'No se pudo preparar el formulario', detail: humanizeSaleError(loadError), hint: 'Vuelve e inténtalo otra vez.' }
-      : channelMissing
-        ? {
-          tone: 'error' as const,
-          title: 'Canal manual no listo',
-          detail: 'Todavía no hay un canal de venta manual habilitado.',
-          hint: 'Pide a un admin que lo active.',
-        }
-        : null;
+  const setupError = loadError
+    ? humanizeSaleError(loadError)
+    : channelMissing
+      ? 'Todavía no hay un canal de venta manual habilitado.'
+      : '';
 
   return (
     <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-[calc(9rem+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-4">
@@ -484,7 +503,11 @@ export default function RegistrarVenta() {
         </Button>
       </div>
 
-      {formAlert && <SaleFlashNotice flash={formAlert} />}
+      {setupError && (
+        <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+          {setupError}
+        </p>
+      )}
 
       <section className="space-y-3">
         <div>
@@ -502,13 +525,24 @@ export default function RegistrarVenta() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="customer-name">Nombre</Label>
-            <Input id="customer-name" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Nombre del cliente" autoComplete="name" />
+            <Input
+              id="customer-name"
+              value={customerName}
+              onChange={(event) => {
+                setCustomerName(event.target.value);
+                clearFieldError('customer');
+              }}
+              placeholder="Nombre del cliente"
+              autoComplete="name"
+              aria-invalid={!!fieldErrors.customer}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="customer-phone">Teléfono</Label>
             <Input id="customer-phone" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="999 999 999" inputMode="tel" autoComplete="tel" />
           </div>
         </div>
+        <FieldHint message={fieldErrors.customer} />
       </section>
 
       <section className="space-y-3">
@@ -527,6 +561,7 @@ export default function RegistrarVenta() {
             Aún no hay productos. Ábrelo y elige del catálogo.
           </p>
         )}
+        <FieldHint message={fieldErrors.products} />
 
         {lines.length > 0 && (
           <ul className="divide-y divide-border rounded-md border border-border">
@@ -578,6 +613,7 @@ export default function RegistrarVenta() {
             ))}
           </ul>
         )}
+        <FieldHint message={fieldErrors.lines} />
       </section>
 
       <section className="space-y-3">
@@ -593,7 +629,10 @@ export default function RegistrarVenta() {
               type="button"
               role="radio"
               aria-checked={delivery === 'envio'}
-              onClick={() => setDelivery('envio')}
+              onClick={() => {
+                setDelivery('envio');
+                clearFieldError('delivery');
+              }}
               className={cn(
                 'h-11 min-w-0 flex-1 cursor-pointer border-r border-border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
                 delivery === 'envio' ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
@@ -610,6 +649,7 @@ export default function RegistrarVenta() {
                 setShippingCarrier('');
                 setDropoffPlace(null);
                 setShippingNote('');
+                clearFieldError('delivery');
               }}
               className={cn(
                 'h-11 min-w-0 flex-1 cursor-pointer px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
@@ -621,7 +661,10 @@ export default function RegistrarVenta() {
           </div>
           <DeliveryDatePicker
             value={deliveryDate}
-            onChange={setDeliveryDate}
+            onChange={(value) => {
+              setDeliveryDate(value);
+              clearFieldError('delivery');
+            }}
             minDateKey={limaTodayKey()}
             ariaLabel={delivery === 'envio' ? 'Fecha de entrega' : 'Fecha de recojo'}
           />
@@ -642,7 +685,10 @@ export default function RegistrarVenta() {
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => setShippingCarrier(carrier.value)}
+                    onClick={() => {
+                      setShippingCarrier(carrier.value);
+                      clearFieldError('delivery');
+                    }}
                     className={cn(
                       'h-11 min-w-0 flex-1 cursor-pointer truncate px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
                       index < SHIPPING_CARRIERS.length - 1 && 'border-r border-border',
@@ -656,16 +702,32 @@ export default function RegistrarVenta() {
             </div>
             <div className="space-y-1.5">
               <Label>Dirección</Label>
-              <PlacePicker value={dropoffPlace} onChange={setDropoffPlace} placeholder="Calle o toca el mapa" />
+              <PlacePicker
+                value={dropoffPlace}
+                onChange={(place) => {
+                  setDropoffPlace(place);
+                  clearFieldError('delivery');
+                }}
+                placeholder="Calle o toca el mapa"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>
-              <Input id="shipping-note" value={shippingNote} onChange={(event) => setShippingNote(event.target.value)} placeholder="Dpto, color de puerta…" />
+              <Input
+                id="shipping-note"
+                value={shippingNote}
+                onChange={(event) => {
+                  setShippingNote(event.target.value);
+                  clearFieldError('delivery');
+                }}
+                placeholder="Dpto, color de puerta…"
+              />
             </div>
           </div>
         ) : (
           <p className="pb-1 text-sm leading-6 text-muted-foreground sm:pb-0">{PICKUP_ADDRESS}</p>
         )}
+        <FieldHint message={fieldErrors.delivery} />
       </section>
 
       <section className="space-y-3">

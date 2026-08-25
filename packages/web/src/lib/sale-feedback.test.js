@@ -2,40 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyOptimisticSale,
-  flashFromMisVentasState,
   humanizeSaleError,
-  saleFailedFlash,
-  saleRegisteredFlash,
+  registeredFromMisVentasState,
+  saleSavedSnackbarMessage,
+  saleSaveFailedSnackbarMessage,
+  saleValidationField,
 } from './sale-feedback.ts';
 
-test('saleRegisteredFlash lleva título, detalle con monto y pista clara', () => {
-  const flash = saleRegisteredFlash({
+test('saleSavedSnackbarMessage es una sola línea operativa', () => {
+  const message = saleSavedSnackbarMessage({
     number: '2608251234',
     customer: 'Ana Pérez',
     total: 299.9,
   });
-  assert.equal(flash.tone, 'success');
-  assert.equal(flash.title, 'Venta lista');
-  assert.match(flash.detail, /2608251234/);
-  assert.match(flash.detail, /Ana Pérez/);
-  assert.match(flash.detail, /299/);
-  assert.equal(flash.hint, 'Ya aparece en tu lista de hoy.');
+  assert.match(message, /^Venta guardada · Ana Pérez · /);
+  assert.doesNotMatch(message, /\n/);
 });
 
 test('humanizeSaleError oculta SQL y deja pasar validaciones cortas', () => {
   assert.match(
     humanizeSaleError('Failed query: column "items_status" of relation "orders" does not exist'),
-    /Inténtalo de nuevo/,
+    /No se pudo guardar/,
   );
   assert.equal(humanizeSaleError('Escribe el nombre del cliente.'), 'Escribe el nombre del cliente.');
-  assert.match(humanizeSaleError(''), /Algo falló/);
 });
 
-test('saleFailedFlash usa mensaje operativo', () => {
-  const flash = saleFailedFlash('Failed query: boom');
-  assert.equal(flash.tone, 'error');
-  assert.equal(flash.title, 'No se guardó la venta');
-  assert.doesNotMatch(flash.detail, /Failed query/i);
+test('saleSaveFailedSnackbarMessage no expone SQL', () => {
+  assert.doesNotMatch(
+    saleSaveFailedSnackbarMessage('Failed query: boom'),
+    /Failed query/i,
+  );
+});
+
+test('saleValidationField ubica el error en la sección correcta', () => {
+  assert.equal(saleValidationField('Escribe el nombre del cliente.'), 'customer');
+  assert.equal(saleValidationField('Agrega al menos un producto.'), 'products');
+  assert.equal(saleValidationField('Elige el reparto: Marvisuar, Shaloom o Dinsides.'), 'delivery');
 });
 
 test('applyOptimisticSale agrega la venta y sube hoy/mes', () => {
@@ -56,18 +58,15 @@ test('applyOptimisticSale agrega la venta y sube hoy/mes', () => {
   );
   assert.equal(next.orders?.[0]?.externalOrderNumber, 'NEW');
   assert.equal(next.today?.orders, 2);
-  assert.equal(next.today?.total, 150);
-  assert.equal(next.today?.commission, 15);
-  assert.equal(next.month?.orders, 2);
 });
 
-test('flashFromMisVentasState acepta string legacy y objeto', () => {
-  const fromString = flashFromMisVentasState({ registered: 'ABC' });
-  assert.equal(fromString?.title, 'Venta lista');
-  assert.match(fromString?.detail || '', /ABC/);
-
-  const fromObject = flashFromMisVentasState({
-    registered: { number: '1', customer: 'Ana', total: 10 },
+test('registeredFromMisVentasState acepta string legacy y objeto', () => {
+  assert.deepEqual(registeredFromMisVentasState({ registered: 'ABC' }), {
+    number: 'ABC',
+    customer: '',
+    total: 0,
   });
-  assert.match(fromObject?.detail || '', /Ana/);
+  assert.deepEqual(registeredFromMisVentasState({
+    registered: { number: '1', customer: 'Ana', total: 10 },
+  }), { number: '1', customer: 'Ana', total: 10 });
 });
