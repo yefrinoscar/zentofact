@@ -1115,9 +1115,6 @@ const DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_products_status_updated
     ON products(status, updated_at DESC, id DESC);
-  CREATE INDEX IF NOT EXISTS idx_products_profit_owner
-    ON products(profit_owner)
-    WHERE profit_owner IS NOT NULL;
 
   -- Comisión y beneficiario en productos existentes.
   ALTER TABLE products
@@ -1136,6 +1133,9 @@ const DDL = `
       CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80);
   EXCEPTION WHEN duplicate_object THEN NULL;
   END $$;
+  CREATE INDEX IF NOT EXISTS idx_products_profit_owner
+    ON products(profit_owner)
+    WHERE profit_owner IS NOT NULL;
 
   -- Búsqueda operacional del catálogo. Trigram mantiene rápidas las búsquedas
   -- parciales por SKU/nombre cuando la tabla crece.
