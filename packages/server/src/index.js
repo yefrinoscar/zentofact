@@ -22,6 +22,7 @@ const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 await users.ensureUserColumns();
+await users.ensureBootstrapAdmin();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
