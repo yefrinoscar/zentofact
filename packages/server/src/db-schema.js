@@ -1,5 +1,5 @@
 // Tablas que Better Auth administra, definidas aquí para consultas Drizzle del servidor.
-import { bigserial, boolean, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { bigserial, boolean, jsonb, numeric, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 export const authUsers = pgTable('user', {
   id: text('id').primaryKey(),
@@ -10,6 +10,7 @@ export const authUsers = pgTable('user', {
   role: text('role'),
   permissions: text('permissions'),
   active: boolean('active'),
+  commissionPercent: numeric('commission_percent', { precision: 5, scale: 2 }),
   createdAt: timestamp('createdAt', { withTimezone: true }),
   updatedAt: timestamp('updatedAt', { withTimezone: true }),
 });

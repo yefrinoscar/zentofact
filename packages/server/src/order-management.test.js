@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  estimatedCommission,
   getSalesPulse,
+  getSalespersonHome,
   ingestOrder,
   listOrders,
   resolveDocumentDecision,
@@ -96,6 +98,7 @@ class IngestDb {
         provider_updated_at: params[22],
         items_status: params[23],
         items_error: params[24],
+        created_by: params[25] ?? null,
         first_seen_at: '2026-07-30T15:00:00Z',
         last_seen_at: '2026-07-30T15:00:00Z',
         created_at: '2026-07-30T15:00:00Z',
@@ -549,4 +552,93 @@ test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async (
   );
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'shaloom');
+});
+
+test('ingresa created_by del actor y no lo pisa en actualizaciones posteriores', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder(manualSale({
+    shipping: { type: 'recojo' },
+    actorUserId: 'seller-9',
+  }), db);
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(insert.sql.includes('created_by'));
+  assert.equal(insert.params[25], 'seller-9');
+  assert.match(insert.sql, /created_by=coalesce\(orders\.created_by, excluded\.created_by\)/);
+  assert.equal(result.order.createdBy, 'seller-9');
+});
+
+test('lista pedidos filtrando por createdBy', async () => {
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /o\.created_by=\$1/);
+      assert.equal(params[0], 'seller-9');
+      return { rows: [] };
+    },
+  };
+  const result = await listOrders({ createdBy: 'seller-9', limit: 20 }, db);
+  assert.equal(result.totalCount, 0);
+});
+
+test('la comisión estimada es el porcentaje sobre el total', () => {
+  assert.equal(estimatedCommission(200, 10), 20);
+  assert.equal(estimatedCommission(99.99, 0), 0);
+  assert.equal(estimatedCommission(100, 5.5), 5.5);
+});
+
+test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      const compact = sql.replace(/\s+/g, ' ').trim();
+      queries.push({ sql: compact, params });
+      if (compact.includes('today_orders')) {
+        return { rows: [{ today_orders: 2, today_total: '200.00', month_orders: 5, month_total: '800.00' }] };
+      }
+      return { rows: [{
+        id: 91,
+        company_id: 7,
+        channel_account_id: 22,
+        external_order_id: 'VTA-1',
+        external_order_number: 'VTA-1',
+        order_status: 'confirmed',
+        payment_status: 'paid',
+        fulfillment_status: 'ready_to_ship',
+        document_status: 'pending',
+        provider_status: null,
+        document_requirement: 'optional',
+        document_type_policy: 'automatic',
+        requested_document_type: 'boleta',
+        currency: 'PEN',
+        subtotal: 200,
+        shipping_amount: null,
+        discount_amount: null,
+        total: 200,
+        customer: { name: 'Ana' },
+        shipping: { type: 'recojo' },
+        metadata: { paymentMethod: 'efectivo' },
+        ordered_at: '2026-08-24T15:00:00Z',
+        promised_shipping_at: null,
+        provider_updated_at: null,
+        first_seen_at: '2026-08-24T15:00:00Z',
+        last_seen_at: '2026-08-24T15:00:00Z',
+        created_at: '2026-08-24T15:00:00Z',
+        updated_at: '2026-08-24T15:00:00Z',
+        created_by: 'seller-9',
+        channel_code: 'manual',
+        channel_name: 'Venta manual',
+        channel_account_name: 'Mostrador',
+        total_count: 1,
+      }] };
+    },
+  };
+  const result = await getSalespersonHome({
+    userId: 'seller-9',
+    commissionPercent: 10,
+  }, db);
+  assert.deepEqual(result.today, { orders: 2, total: 200, commission: 20 });
+  assert.deepEqual(result.month, { orders: 5, total: 800, commission: 80 });
+  assert.equal(result.orders[0].createdBy, 'seller-9');
+  assert.equal(queries[0].params[0], 'seller-9');
+  assert.match(queries[0].sql, /created_by=\$1/);
+  assert.match(queries[0].sql, /cancelled/);
 });
