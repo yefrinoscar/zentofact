@@ -17,19 +17,33 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
+
+// PR previews de Railway nacen con Postgres vacío: auth + datos demo antes del resto.
+const { shouldSeedPreview, isRailwayPrPreview } = await import('./preview-env.js');
+const bootstrapEmailEarly = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim();
+const bootstrapPasswordEarly = String(process.env.ADMIN_PASSWORD || process.env.SEED_USER_PASSWORD || '').trim();
+if (isRailwayPrPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
+  process.env.AUTH_ALLOW_SIGNUP = 'true';
+}
+
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
-await users.ensureUserColumns();
+const insumos = await import('./insumos.js');
+await insumos.ensureTables();
+if (shouldSeedPreview()) {
+  const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
+  await bootstrapPreviewIfNeeded();
+} else {
+  await users.ensureUserColumns();
+}
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
-const insumos = await import('./insumos.js');
-await insumos.ensureTables();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const orderManagement = await import('./order-management.js');
