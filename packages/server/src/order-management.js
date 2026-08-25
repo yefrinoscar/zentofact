@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
-import {
-  ORDER_PACKAGE_MAPPING_PROBLEM_SQL,
-  ORDER_PROBLEM_SQL,
-  orderProblemMessage,
-} from './order-problem.js';
 
 export const DOCUMENT_REQUIREMENTS = ['disabled', 'optional', 'required'];
 export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'customer_choice'];
@@ -538,11 +533,6 @@ function normalizeOrderRow(row) {
     channelCode: row.channel_code,
     channelName: row.channel_name,
     channelAccountName: row.channel_account_name,
-    companyName: row.company_id == null
-      ? (row.channel_account_name || 'Sin tienda')
-      : (row.nombre_comercial || row.nombre || row.razon_social
-        ? shortSellerName(row)
-        : (row.channel_account_name || `Empresa ${row.company_id}`)),
     externalOrderId: row.external_order_id,
     externalOrderNumber: row.external_order_number,
     orderStatus: row.order_status,
@@ -570,7 +560,6 @@ function normalizeOrderRow(row) {
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    problem: orderProblemMessage(row),
   };
   normalized.documentDecision = resolveDocumentDecision(normalized);
   return normalized;
@@ -920,11 +909,6 @@ export async function listOrders(filters = {}, db) {
     values.push(enumValue(filters.documentStatus, DOCUMENT_STATUSES, 'documentStatus'));
     where.push(`o.document_status=$${values.length}`);
   }
-  if (filters.problem !== undefined && filters.problem !== '') {
-    const problem = String(filters.problem).trim().toLowerCase();
-    if (!['true', 'false'].includes(problem)) throw new Error('problem inválido.');
-    where.push(problem === 'true' ? ORDER_PROBLEM_SQL : `not ${ORDER_PROBLEM_SQL}`);
-  }
   if (filters.search) {
     values.push(String(filters.search).trim().slice(0, 120));
     where.push(`(
@@ -932,15 +916,6 @@ export async function listOrders(filters = {}, db) {
       or o.external_order_number ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'name', '') ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
-      or exists (
-        select 1 from order_items search_item
-        where search_item.order_id=o.id
-          and (
-            coalesce(search_item.sku, '') ilike '%' || $${values.length} || '%'
-            or coalesce(search_item.provider_sku, '') ilike '%' || $${values.length} || '%'
-            or coalesce(search_item.description, '') ilike '%' || $${values.length} || '%'
-          )
-      )
     )`);
   }
   for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
@@ -956,13 +931,11 @@ export async function listOrders(filters = {}, db) {
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
-       c.nombre_comercial, c.nombre, c.razon_social,
-       ${ORDER_PACKAGE_MAPPING_PROBLEM_SQL} as package_mapping_problem,
        count(*) over()::int as total_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
-     left join companies c on c.id=o.company_id
+     join companies c on c.id=o.company_id
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by o.ordered_at desc nulls last, o.id desc
      limit $${values.length - 1} offset $${values.length}`,
@@ -1114,13 +1087,10 @@ export async function getOrder(orderId, db) {
   const [orderResult, itemsResult, eventsResult, documentsResult, snapshotsResult] = await Promise.all([
     target.query(
       `select o.*, ch.code as channel_code, ch.name as channel_name,
-         ${ORDER_PACKAGE_MAPPING_PROBLEM_SQL} as package_mapping_problem,
-         a.display_name as channel_account_name,
-         c.nombre_comercial, c.nombre, c.razon_social
+         a.display_name as channel_account_name
        from orders o
        join order_channel_accounts a on a.id=o.channel_account_id
        join order_channels ch on ch.id=a.channel_id
-       left join companies c on c.id=o.company_id
        where o.id=$1`,
       [id],
     ),

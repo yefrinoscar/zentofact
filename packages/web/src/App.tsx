@@ -15,8 +15,9 @@ import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import Documentos from './routes/Documentos';
-import PedidosPorAtender from './routes/PedidosPorAtender';
-import TodosPedidos from './routes/TodosPedidos';
+import Pedidos from './routes/Pedidos';
+import PedidosRipley from './routes/PedidosRipley';
+import PedidosMulticanal from './routes/PedidosMulticanal';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
@@ -45,16 +46,16 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Selecciona el módulo que necesitas usar.',
   },
   '/pedidos': {
-    title: 'Por atender',
-    subtitle: 'Prepara pedidos e imprime etiquetas de todos tus marketplaces.',
+    title: 'Bandeja Falabella',
+    subtitle: 'Pedidos de Falabella que debes preparar y despachar.',
   },
   '/pedidos-ripley': {
-    title: 'Por atender',
-    subtitle: 'Prepara pedidos e imprime etiquetas de todos tus marketplaces.',
+    title: 'Bandeja Ripley',
+    subtitle: 'Consulta y revisa los pedidos de Ripley Perú en Mirakl.',
   },
   '/orders': {
-    title: 'Todos los pedidos',
-    subtitle: 'Consulta el historial completo de pedidos de todos tus canales.',
+    title: 'Pedidos',
+    subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
   },
   '/orders/nueva': {
     title: 'Nueva venta',
@@ -259,10 +260,10 @@ function AppLayout() {
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
-              <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><PedidosPorAtender /></RequirePermission>} />
-              <Route path="/pedidos-ripley" element={<Navigate to="/pedidos" replace />} />
+              <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route path="/pedidos-ripley" element={<RequirePermission permission="orders_inbox" {...permissionState}><PedidosRipley /></RequirePermission>} />
               <Route path="/orders/nueva" element={<RequirePermission permission="order_management" {...permissionState}><RegistrarVenta /></RequirePermission>} />
-              <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><TodosPedidos /></RequirePermission>} />
+              <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />

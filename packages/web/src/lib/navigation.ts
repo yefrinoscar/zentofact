@@ -8,6 +8,7 @@ import {
   ListOrdered,
   PackageMinus,
   PackageOpen,
+  PackageCheck,
   PackageSearch,
   ReceiptText,
   ScanLine,
@@ -55,8 +56,9 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'orders',
     label: 'Pedidos',
     items: [
-      { to: '/pedidos', icon: Inbox, label: 'Por atender', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
+      { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
+      { to: '/pedidos-ripley', icon: PackageCheck, label: 'Bandeja Ripley', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
     ],
   },
