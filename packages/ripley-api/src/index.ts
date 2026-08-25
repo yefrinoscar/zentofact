@@ -5,6 +5,7 @@ export type {
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
+  RipleyProductContent,
   RipleyOrder,
   RipleyOrderPage,
   RipleySvcClientOptions,

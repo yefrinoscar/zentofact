@@ -23,6 +23,7 @@ export interface RipleyOffer {
   active: boolean | null;
   quantity: number | null;
   price: number | null;
+  imageUrl: string | null;
   raw: unknown;
 }
 
@@ -31,6 +32,13 @@ export interface RipleyOfferPage {
   totalCount: number | null;
   offset: number;
   max: number;
+}
+
+export interface RipleyProductContent {
+  productSku: string;
+  productTitle: string | null;
+  imageUrl: string | null;
+  raw: unknown;
 }
 
 export interface ListOrdersOptions {

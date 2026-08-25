@@ -1,6 +1,6 @@
 # Catálogo de Ripley mediante Mirakl
 
-Investigado el 2026-08-20. Alcance: primera importación de las publicaciones de un seller de Ripley, sin crear, actualizar ni despublicar nada.
+Investigado el 2026-08-20 y revisado el 2026-08-21. Alcance: primera importación de las publicaciones de un seller de Ripley, sin crear, actualizar ni despublicar nada.
 
 ## Decisión
 
@@ -8,7 +8,30 @@ Para traer el catálogo de un seller se debe usar la API de **ofertas**, no `GET
 
 `GET /api/products` es P31. Exige `product_references`, devuelve como máximo 100 coincidencias y no acepta `SHOP_SKU` ni `SKU` como tipo de referencia. Es una consulta puntual de productos del catálogo de Mirakl, no un listado completo de lo que el seller publica. [P31, Mirakl](https://developer.mirakl.com/content/product/mmp/rest/seller/openapi3/products)
 
-Cada oferta contiene los datos que necesita el catálogo local: `offer_id`, `active`, `product_sku`, `shop_sku`, `product_title`, marca, descripción, referencias, precio, cantidad y estado. [OF21, Mirakl](https://developer.mirakl.com/content/product/mmp/rest/seller/openapi3/offers/of21)
+Cada oferta contiene `offer_id`, `active`, `product_sku`, `shop_sku`, `product_title`, marca, descripción, referencias, precio, cantidad y estado. **OF21 no contiene imágenes ni un campo `product_media`**; inspeccionar recursivamente su respuesta no puede recuperar una foto que el contrato no devuelve. [OF21, Mirakl](https://developer.mirakl.com/content/product/mmp/rest/seller/openapi3/offers/of21)
+
+## Imágenes de producto
+
+La imagen debe enriquecerse con **P11**, `GET /api/products/offers`, después de leer la página de ofertas con OF21. P11 acepta hasta 100 productos y permite consultarlos de dos maneras:
+
+- `product_ids=<product_sku>,<product_sku>,...`, usando los `product_sku` devueltos por OF21.
+- `product_references=<reference_type>|<reference>,...`, usando literalmente cada objeto `product_references[]` de OF21. El orden es tipo y luego valor; por ejemplo, `EAN|3120201243238`.
+
+La respuesta de P11 contiene `products[]`. Cada producto incluye `product_sku` para correlacionarlo con OF21 y `product_media` con `dam_url`, `media_url` y `type`. Mirakl indica usar `dam_url` cuando esté disponible y, en caso contrario, `media_url`. [P11, Mirakl](https://developer.mirakl.com/content/product/mmp/rest/seller/openapi3/offers/p11)
+
+Flujo paginado recomendado para una pantalla:
+
+```text
+OF21 GET /api/offers?max=20&offset=N
+  -> recoger offers[].product_sku
+P11  GET /api/products/offers?product_ids=<lista de product_sku>
+  -> indexar products[] por product_sku
+  -> imagen = product_media.dam_url ?? product_media.media_url
+```
+
+P31, `GET /api/products`, **no es la alternativa para obtener las imágenes**. Además de estar pensado para consultas puntuales, su contrato de respuesta no incluye `product_media`. Su parámetro obligatorio `product_references` acepta referencias del operador, como EAN o UPC, y rechaza expresamente `SHOP_SKU` y `SKU`. [P31, Mirakl](https://developer.mirakl.com/content/product/mmp/rest/seller/openapi3/products/p31)
+
+Por tanto, no se debe inferir una URL desde el SKU ni buscar campos arbitrarios dentro de OF21. La implementación debe combinar OF21 y P11 y conservar la paginación de OF21; una llamada P11 por página de 20 resultados queda dentro del límite de 100 productos documentado por P11.
 
 ## Lecturas necesarias
 

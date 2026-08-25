@@ -96,6 +96,8 @@ export function mapListing(row) {
 const COMPACT_LISTING_METADATA_KEYS = [
   'effectivePrice', 'price', 'regularPrice', 'offerPrice', 'offerIsActive',
   'sellerWarehouseQuantity', 'fulfillmentQuantity', 'stockSource',
+  'reportedAvailableQuantity', 'publicAvailabilityStatus',
+  'publicAvailabilityCheckedAt', 'publicIsPublished', 'publicIsOutOfStock',
   'isSellable', 'sellabilityReason', 'contentScore',
   'isPublished', 'status', 'marketplaceStatus', 'qcStatus',
   'url',

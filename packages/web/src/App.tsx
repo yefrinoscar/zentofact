@@ -18,6 +18,7 @@ import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import PedidosMulticanal from './routes/PedidosMulticanal';
 import RegistrarVenta from './routes/RegistrarVenta';
+import MisVentas from './routes/MisVentas';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
@@ -51,6 +52,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/orders': {
     title: 'Pedidos',
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
+  },
+  '/mis-ventas': {
+    title: 'Mis ventas',
+    subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
   },
   '/orders/nueva': {
     title: 'Nueva venta',
@@ -257,8 +262,9 @@ function AppLayout() {
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
-              <Route path="/orders/nueva" element={<RequirePermission permission="order_management" {...permissionState}><RegistrarVenta /></RequirePermission>} />
+              <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
+              <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />

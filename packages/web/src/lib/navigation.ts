@@ -16,6 +16,7 @@ import {
   ShoppingBag,
   Shuffle,
   Users,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
@@ -55,6 +56,7 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'orders',
     label: 'Pedidos',
     items: [
+      { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },

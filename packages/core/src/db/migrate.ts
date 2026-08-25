@@ -1057,6 +1057,10 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
     ON orders(promised_shipping_at)
     WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by TEXT;
+  CREATE INDEX IF NOT EXISTS idx_orders_created_by
+    ON orders(created_by)
+    WHERE created_by IS NOT NULL;
   -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
   -- para asociarlo más adelante.
   ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
@@ -1201,6 +1205,7 @@ const DDL = `
     listing_id BIGINT REFERENCES product_listings(id) ON DELETE SET NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    effective_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (movement_type IN (
       'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
@@ -1208,12 +1213,43 @@ const DDL = `
     )),
     CHECK (quantity_delta <> 0)
   );
+  ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS effective_at TIMESTAMPTZ;
+  UPDATE inventory_movements SET effective_at=created_at WHERE effective_at IS NULL;
+  ALTER TABLE inventory_movements ALTER COLUMN effective_at SET DEFAULT NOW();
+  ALTER TABLE inventory_movements ALTER COLUMN effective_at SET NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_created
     ON inventory_movements(product_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_effective
+    ON inventory_movements(product_id, effective_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order
     ON inventory_movements(order_id) WHERE order_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
     ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
+
+  -- An applied reconciliation is immutable evidence. Current stock remains in
+  -- product_inventory and every delta remains in inventory_movements.
+  CREATE TABLE IF NOT EXISTS inventory_reconciliation_runs (
+    id BIGSERIAL PRIMARY KEY,
+    run_key TEXT NOT NULL UNIQUE,
+    plan_hash TEXT NOT NULL UNIQUE,
+    reconciliation_kind TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    cutoff_at TIMESTAMPTZ NOT NULL,
+    as_of TIMESTAMPTZ NOT NULL,
+    summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (as_of >= cutoff_at)
+  );
+  CREATE TABLE IF NOT EXISTS inventory_reconciliation_anchors (
+    run_id BIGINT NOT NULL REFERENCES inventory_reconciliation_runs(id),
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    cutoff_quantity NUMERIC(14,4) NOT NULL,
+    target_quantity NUMERIC(14,4) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (run_id, product_id),
+    CHECK (cutoff_quantity >= 0),
+    CHECK (target_quantity >= 0)
+  );
 
   CREATE TABLE IF NOT EXISTS order_events (
     id BIGSERIAL PRIMARY KEY,
@@ -1543,6 +1579,17 @@ const DDL = `
     CHECK (status IN ('pending', 'running', 'success', 'partial', 'error')),
     CHECK (sync_interval_minutes > 0)
   );
+
+  UPDATE orders o
+  SET created_by = e.actor_user_id
+  FROM (
+    SELECT DISTINCT ON (order_id) order_id, actor_user_id
+    FROM order_events
+    WHERE event_type = 'order.created'
+      AND nullif(trim(actor_user_id), '') IS NOT NULL
+    ORDER BY order_id, id
+  ) e
+  WHERE o.id = e.order_id AND o.created_by IS NULL;
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

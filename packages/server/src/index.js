@@ -20,7 +20,7 @@ await core.runMigrations(core.pool);
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
-const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
+const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 await users.ensureUserColumns();
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
@@ -36,9 +36,11 @@ const orderManagement = await import('./order-management.js');
 const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
+const associationCandidateService = await import('./catalog/association-candidate-service.js');
 const inventoryService = await import('./catalog/inventory-service.js');
 const skuResolver = await import('./catalog/sku-resolver.js');
 const catalogImport = await import('./catalog/catalog-import.js');
+const ripleyCatalogImport = await import('./catalog/ripley-catalog-import.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
@@ -120,7 +122,6 @@ app.use('*', requireCsrf());
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
   ['/orders-inbox', 'orders_inbox'],
-  ['/order-management', 'order_management'],
   ['/facturas', 'facturas'],
   ['/workflow', 'falabella_sellers'],
   ['/auto-emit', 'auto_emision'],
@@ -131,14 +132,24 @@ for (const [prefix, perm] of moduleGuards) {
   app.use(prefix, permissionGuard);
   app.use(`${prefix}/*`, permissionGuard);
 }
+const orderManagementGuard = requireAnyPermission(['order_management', 'salesperson']);
+app.use('/order-management', orderManagementGuard);
+app.use('/order-management/*', orderManagementGuard);
 
 const catalogGuard = (c, next) => {
+  const path = c.req.path;
   if (
-    c.req.path === '/catalog/sales/today'
-    || c.req.path === '/catalog/sales/today/refresh'
-    || c.req.path === '/catalog/image'
+    path === '/catalog/sales/today'
+    || path === '/catalog/sales/today/refresh'
+    || path === '/catalog/image'
   ) {
-    return requireAnyPermission(['productos', 'salidas'])(c, next);
+    const keys = path === '/catalog/image'
+      ? ['productos', 'salidas', 'salesperson']
+      : ['productos', 'salidas'];
+    return requireAnyPermission(keys)(c, next);
+  }
+  if (c.req.method === 'GET' && path === '/products') {
+    return requireAnyPermission(['productos', 'salesperson'])(c, next);
   }
   return requirePermission('productos')(c, next);
 };
@@ -193,6 +204,20 @@ const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
   operation: 'api',
   context: { method: c.req.method, path: c.req.path, status },
 }), status);
+
+function salespersonOnlyUserId(c) {
+  const user = c.get('user');
+  if (!user?.id) return null;
+  if (userHasPermission(user, 'salesperson') && !userHasPermission(user, 'order_management')) {
+    return String(user.id);
+  }
+  return null;
+}
+
+function scopedOrderFilters(c, filters = {}) {
+  const createdBy = salespersonOnlyUserId(c);
+  return createdBy ? { ...filters, createdBy } : filters;
+}
 
 function publicFalabellaManifestJob(job) {
   if (!job) return null;
@@ -283,7 +308,7 @@ app.get('/order-management/accounts', async (c) => {
   try { return ok(c, await orderManagement.listOrderChannelAccounts(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
-app.get('/order-management/sync-status', async (c) => {
+app.get('/order-management/sync-status', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
@@ -300,12 +325,24 @@ app.patch('/order-management/accounts/:id', requirePermission('companies'), asyn
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/orders', async (c) => {
-  try { return ok(c, await orderManagement.listOrders(c.req.query())); }
+  try { return ok(c, await orderManagement.listOrders(scopedOrderFilters(c, c.req.query()))); }
   catch (e) { return fail(c, e, 400); }
 });
-app.get('/order-management/sales-pulse', async (c) => {
+app.get('/order-management/sales-pulse', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/my-sales', requirePermission('salesperson'), async (c) => {
+  try {
+    const sessionUser = c.get('user');
+    const full = sessionUser?.id ? await users.getUserById(sessionUser.id) : null;
+    const createdBy = salespersonOnlyUserId(c) || sessionUser?.id;
+    return ok(c, await orderManagement.getSalespersonHome({
+      ...c.req.query(),
+      userId: createdBy,
+      commissionPercent: full?.commissionPercent ?? 0,
+    }));
+  } catch (e) { return fail(c, e, 400); }
 });
 app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
   try {
@@ -349,7 +386,7 @@ app.patch('/ripley/:companyId/logistics/manifests/:manifestId/labels', requirePe
   try { return ok(c, await ripleyLogistics.detachRipleySvcManifestLabels(c.req.param('companyId'), c.req.param('manifestId'), await c.req.json())); }
   catch (e) { return fail(c, e, 400); }
 });
-app.post('/order-management/orders/ingest', async (c) => {
+app.post('/order-management/orders/ingest', requirePermission('order_management'), async (c) => {
   try {
     const body = await c.req.json();
     const idempotencyKey = String(
@@ -408,11 +445,18 @@ app.post('/order-management/orders/manual', async (c) => {
 app.get('/order-management/orders/:id', async (c) => {
   try {
     const order = await orderManagement.getOrder(Number(c.req.param('id')));
+    const ownerId = salespersonOnlyUserId(c);
+    if (ownerId && order?.createdBy !== ownerId) return c.json({ error: 'Pedido no encontrado.' }, 404);
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });
 app.patch('/order-management/orders/:id/payment', async (c) => {
   try {
+    const current = await orderManagement.getOrder(Number(c.req.param('id')));
+    const ownerId = salespersonOnlyUserId(c);
+    if (!current || (ownerId && current.createdBy !== ownerId)) {
+      return c.json({ error: 'Pedido no encontrado.' }, 404);
+    }
     const body = await c.req.json();
     const order = await orderManagement.updateOrderPayment(Number(c.req.param('id')), {
       ...body,
@@ -476,8 +520,8 @@ app.post('/products/:id/listings', async (c) => {
   try { return ok(c, await listingService.createListing(c.req.param('id'), await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
-app.get('/product-listings/unlinked', async (c) => {
-  try { return ok(c, await listingService.listUnlinkedListings(c.req.query())); }
+app.get('/product-listings/association-candidates', async (c) => {
+  try { return ok(c, await associationCandidateService.listLiveAssociationCandidates(c.req.query())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/product-listings/:id', async (c) => {
@@ -490,6 +534,10 @@ app.post('/product-listings/:id/unlink', async (c) => {
 });
 app.post('/product-listings/link', async (c) => {
   try { return ok(c, await listingService.linkListing(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/link-batch', async (c) => {
+  try { return ok(c, await listingService.linkListingsBatch(await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
@@ -544,10 +592,16 @@ app.post('/catalog/sync/falabella', async (c) => {
     return ok(c, await catalogImport.syncAllFalabellaCatalog(body, c.get('user')?.id));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.post('/catalog/sync/ripley', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await ripleyCatalogImport.syncRipleyCatalog(body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/catalog/refresh-listing-snapshots', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    return ok(c, await listingSnapshotService.refreshFalabellaListingSnapshots(body));
+    return ok(c, await listingSnapshotService.refreshMarketplaceListingSnapshots(body));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/ripley/:companyId/products', requirePermission('productos'), async (c) => {

@@ -1,6 +1,6 @@
-import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { FormEvent, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
+import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
   BarChart3,
@@ -12,9 +12,11 @@ import {
   Copy,
   ExternalLink,
   ImagePlus,
-  Link2,
   Loader2,
+  Maximize2,
+  MoreHorizontal,
   PackagePlus,
+  Plus,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -23,14 +25,13 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { sellerPublicationRowBorderClass } from '../lib/seller-publication-row';
 import { sellerShortName } from '../lib/seller-name';
 import {
   UNPUBLISH_CONFIRMATION_TEXT,
   publicationPreviewCopy,
   simulatePublicationPreview,
 } from '../lib/publication-preview';
-import { falabellaProductUrl } from '../lib/marketplace-url';
+import { marketplaceProductUrl } from '../lib/marketplace-url';
 import {
   CatalogFilters,
   CATALOG_SORT_REQUESTS,
@@ -51,6 +52,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
+import { Checkbox } from '../components/ui/checkbox';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import falabellaIcon from '../assets/falabella.png';
 
 type Company = {
@@ -60,6 +63,7 @@ type Company = {
   razonSocial?: string | null;
   activo?: boolean;
   hasFalabellaCredentials?: boolean;
+  hasRipleyCredentials?: boolean;
 };
 
 type Listing = {
@@ -75,8 +79,13 @@ type Listing = {
   marketplaceQuantity?: number | null;
   marketplaceSyncedAt?: string | null;
   metadata?: Record<string, unknown>;
+  candidateKey?: string;
+  candidateSource?: 'catalog' | 'remote';
+  imageUrl?: string | null;
 };
 
+type AssociationAvailability = 'recommended' | 'all';
+type AssociationChannel = 'all' | 'falabella' | 'ripley';
 type Product = {
   id: number;
   mainSku: string;
@@ -100,6 +109,12 @@ type Product = {
   updatedAt?: string;
 };
 
+type ProductImagePreview = {
+  src: string;
+  productName: string;
+  sku: string;
+};
+
 type Movement = {
   id: number;
   movementType: string;
@@ -107,6 +122,7 @@ type Movement = {
   quantityAfter: number;
   reason?: string | null;
   source: string;
+  effectiveAt?: string | null;
   createdAt: string;
   orderId?: number | null;
   orderNumber?: string | null;
@@ -195,6 +211,7 @@ type ReturnsSummary = ActivityResponse & {
 };
 
 const PAGE_SIZE = 20;
+const ASSOCIATION_PAGE_SIZE = 20;
 const SEARCH_DELAY_MS = 300;
 const CATALOG_COLUMN_CLASS_NAMES = {
   product: 'w-full sm:w-[48%]',
@@ -273,11 +290,6 @@ function sellerStock(product: Product) {
   return Number.isFinite(stock) ? stock : 0;
 }
 
-function sellerCountCopy(product: Product) {
-  const sellers = product.sellersCount || 0;
-  return `${sellers} ${sellers === 1 ? 'seller' : 'sellers'}`;
-}
-
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
@@ -343,12 +355,23 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
+function listingImageUrl(listing: Listing) {
+  if (listing.imageUrl) return listing.imageUrl;
+  const images = listing.metadata?.images;
+  if (Array.isArray(images)) {
+    const first = images.find((image): image is string => typeof image === 'string' && image.startsWith('https://'));
+    if (first) return first;
+  }
+  const candidate = listing.metadata?.imageUrl ?? listing.metadata?.primaryImageUrl;
+  return typeof candidate === 'string' && candidate.startsWith('https://') ? candidate : null;
+}
+
 export default function Productos() {
   const queryClient = useQueryClient();
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
-  const [status, setStatus] = useState<CatalogStatusFilter>('active');
+  const [status, setStatus] = useState<CatalogStatusFilter>('all');
   const [inventoryStatus, setInventoryStatus] = useState<InventoryStatusFilter>('all');
   const [publicationStatus, setPublicationStatus] = useState<PublicationStatusFilter>('all');
   const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
@@ -357,6 +380,7 @@ export default function Productos() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [imagePreview, setImagePreview] = useState<ProductImagePreview | null>(null);
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
@@ -372,8 +396,14 @@ export default function Productos() {
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
   const [associationProduct, setAssociationProduct] = useState<Product | null>(null);
   const [associationSearch, setAssociationSearch] = useState('');
-  const [associationListing, setAssociationListing] = useState<Listing | null>(null);
+  const [associationSubmittedSearch, setAssociationSubmittedSearch] = useState('');
+  const [associationListingIds, setAssociationListingIds] = useState<string[]>([]);
+  const [associationChannel, setAssociationChannel] = useState<AssociationChannel>('all');
+  const [associationAvailability, setAssociationAvailability] = useState<AssociationAvailability>('recommended');
+  const [associationPage, setAssociationPage] = useState(0);
+  const [unlinkListing, setUnlinkListing] = useState<Listing | null>(null);
   const searchTimer = useRef(0);
+  const associationSearchTimer = useRef(0);
 
   const applySearch = (value: string, immediate = false) => {
     setSearch(value);
@@ -390,6 +420,20 @@ export default function Productos() {
   const resetListView = () => {
     setSelectedId(null);
     setOffset(0);
+  };
+
+  const applyAssociationSearch = (value: string, immediate = false) => {
+    setAssociationSearch(value);
+    window.clearTimeout(associationSearchTimer.current);
+    const commit = () => {
+      const normalized = value.trim();
+      setAssociationSubmittedSearch(normalized);
+      if (normalized && associationAvailability === 'recommended') setAssociationAvailability('all');
+      setAssociationListingIds([]);
+      setAssociationPage(0);
+    };
+    if (immediate) commit();
+    else associationSearchTimer.current = window.setTimeout(commit, SEARCH_DELAY_MS);
   };
 
   const productFilters = useMemo(() => ({
@@ -480,17 +524,27 @@ export default function Productos() {
     staleTime: 30_000,
     retry: 1,
   });
+  const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
+    .filter((company) => company.activo !== false)
+    .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
   const unlinkedListingsQuery = useQuery({
-    queryKey: ['catalog-unlinked-listings', associationSearch],
-    queryFn: () => api.listUnlinkedProductListings({ search: associationSearch.trim(), limit: 50 }),
+    queryKey: ['catalog-association-candidates', associationProduct?.id, associationSubmittedSearch, associationChannel, associationAvailability, associationPage],
+    queryFn: async () => {
+      if (!associationProduct) throw new Error('Selecciona un producto master antes de buscar publicaciones.');
+      return api.listProductAssociationCandidates({
+        productId: associationProduct.id,
+        search: associationSubmittedSearch,
+        channelCode: associationChannel === 'all' ? undefined : associationChannel,
+        channelCodes: associationChannel === 'all' ? 'falabella,ripley' : undefined,
+        availability: associationAvailability,
+        limit: ASSOCIATION_PAGE_SIZE,
+        offset: associationPage * ASSOCIATION_PAGE_SIZE,
+      });
+    },
     enabled: modal === 'associate_listing',
     staleTime: 15_000,
     retry: 1,
   });
-
-  const companies = useMemo(() => ((companiesQuery.data || []) as Company[])
-    .filter((company) => company.activo !== false)
-    .sort((left, right) => companyName(left).localeCompare(companyName(right), 'es')), [companiesQuery.data]);
   const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
   const products = useMemo(() => (productsQuery.data?.products || []) as Product[], [productsQuery.data?.products]);
   const productsByIdRef = useRef(new Map<number, Product>());
@@ -501,7 +555,15 @@ export default function Productos() {
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
   const returns = returnsQuery.data as ReturnsSummary | undefined;
-  const unlinkedListings: Listing[] = unlinkedListingsQuery.data || [];
+  const unlinkedListings: Listing[] = (unlinkedListingsQuery.data?.candidates || []).map((listing) => ({
+    ...listing,
+    candidateKey: listing.candidateSource === 'catalog'
+      ? `listing:${listing.id}`
+      : `remote:${listing.channelCode}:${listing.companyId}:${listing.sellerSku}`,
+  }));
+  const associationCandidateTotal = Number(unlinkedListingsQuery.data?.totalCount || 0);
+  const hiddenAssociationCandidateTotal = Number(unlinkedListingsQuery.data?.hiddenByAvailabilityCount || 0);
+  const hasNextAssociationPage = (associationPage + 1) * ASSOCIATION_PAGE_SIZE < associationCandidateTotal;
   const selectedProduct = detail?.id === selectedId ? detail : products.find((product) => product.id === selectedId) || null;
   const selectedProductRef = useRef<Product | null>(null);
   selectedProductRef.current = selectedProduct;
@@ -551,8 +613,7 @@ export default function Productos() {
     setRefreshing(true);
     setError('');
     try {
-      // Snapshot refresh only: stock, price and publication state on existing
-      // seller listings. Full catalog sync creates products and can reassign them.
+      // Refresca Falabella y Ripley sin crear maestros ni cambiar asociaciones.
       const result = await api.refreshCatalogListingSnapshots();
       if (result.errors?.length) {
         setError(`Se actualizaron ${result.refreshed} publicaciones; ${result.errors.length} seller(s) no respondieron.`);
@@ -575,7 +636,12 @@ export default function Productos() {
   const openListingAssociation = (product: Product) => {
     setAssociationProduct(product);
     setAssociationSearch('');
-    setAssociationListing(null);
+    setAssociationSubmittedSearch('');
+    window.clearTimeout(associationSearchTimer.current);
+    setAssociationListingIds([]);
+    setAssociationChannel('all');
+    setAssociationAvailability('recommended');
+    setAssociationPage(0);
     openModal('associate_listing');
   };
 
@@ -632,17 +698,43 @@ export default function Productos() {
 
   const associateListing = async (event: FormEvent) => {
     event.preventDefault();
-    if (!associationProduct || !associationListing) return;
+    if (!associationProduct || associationListingIds.length === 0) return;
+    const selectedListings = unlinkedListings.filter((listing) => listing.candidateKey && associationListingIds.includes(listing.candidateKey));
     const linked = await runAction(
-      () => api.linkUnlinkedProductListing({
-        listingId: associationListing.id,
+      () => api.associateProductListings({
         productId: associationProduct.id,
+        listings: selectedListings.map((listing) => listing.candidateSource === 'remote'
+          ? {
+              channelCode: listing.channelCode,
+              companyId: listing.companyId,
+              sellerSku: listing.sellerSku,
+              shopSku: listing.shopSku,
+              title: listing.title,
+              marketplaceQuantity: listing.marketplaceQuantity,
+              metadata: { ...listing.metadata, imageUrl: listing.imageUrl },
+            }
+          : { listingId: listing.id }),
       }),
-      () => `${associationListing.sellerSku} quedó asociado a ${associationProduct.mainSku}.`,
+      () => `${selectedListings.length} ${selectedListings.length === 1 ? 'producto asociado' : 'productos asociados'} a ${associationProduct.mainSku}.`,
     );
     if (linked) {
-      setAssociationListing(null);
-      await queryClient.invalidateQueries({ queryKey: ['catalog-unlinked-listings'] });
+      setAssociationListingIds([]);
+      await queryClient.invalidateQueries({ queryKey: ['catalog-association-candidates'] });
+      setModal(null);
+      setAssociationProduct(null);
+    }
+  };
+
+  const disassociateListing = async () => {
+    if (!unlinkListing) return;
+    const listing = unlinkListing;
+    const unlinked = await runAction(
+      () => api.unlinkProductListing(listing.id),
+      () => `${listing.sellerSku} quedó sin asociación.`,
+    );
+    if (unlinked) {
+      setUnlinkListing(null);
+      await queryClient.invalidateQueries({ queryKey: ['catalog-association-candidates'] });
     }
   };
 
@@ -650,6 +742,12 @@ export default function Productos() {
     setSelectedId(productId);
     setDetailTab('overview');
     setSalesRange('30');
+  }, []);
+
+  const openProductImage = useCallback((product: Product) => {
+    const src = product.imageUrl?.trim();
+    if (!src) return;
+    setImagePreview({ src, productName: product.name, sku: product.mainSku });
   }, []);
 
   const navigateProduct = async (direction: 'previous' | 'next') => {
@@ -858,8 +956,7 @@ export default function Productos() {
         onPageChange={handleCatalogPageChange}
         onPrefetch={handleCatalogPrefetch}
         onOpenProduct={openProduct}
-        onTogglePublication={togglePublication}
-        onAssociate={openListingAssociation}
+        onOpenImage={openProductImage}
       />
 
       <ProductDrawer
@@ -884,6 +981,7 @@ export default function Productos() {
         onPreviousProduct={() => void navigateProduct('previous')}
         onNextProduct={() => void navigateProduct('next')}
         onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
+        onOpenImage={openProductImage}
         onAdjust={() => openModal('adjust')}
         onEditImage={() => {
           setImageUrl(selectedProduct?.imageUrl || '');
@@ -891,8 +989,11 @@ export default function Productos() {
         }}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
+        onDisassociate={setUnlinkListing}
         onTogglePublication={togglePublication}
       />
+
+      <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
       {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
 
@@ -915,29 +1016,72 @@ export default function Productos() {
         </div>
       </form></Modal>}
 
-      {modal === 'associate_listing' && associationProduct && <Modal title="Asociar producto" subtitle={`Elige una publicación sin asociación para vincularla a ${associationProduct.name} · ${associationProduct.mainSku}.`} onClose={() => { setModal(null); setAssociationListing(null); }}>
-        <form onSubmit={associateListing} className="space-y-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={associationSearch} onChange={(event) => { setAssociationSearch(event.target.value); setAssociationListing(null); }} placeholder="Buscar por nombre, SKU o seller" className="pl-9" aria-label="Buscar productos sin asociación" autoFocus />
-          </div>
-          <p className="text-xs leading-5 text-muted-foreground">Solo se muestran publicaciones desvinculadas. Las que ya pertenecen a otro producto no se pueden seleccionar.</p>
-          <div className="max-h-72 divide-y overflow-y-auto rounded-md border border-border" role="listbox" aria-label="Productos sin asociación">
-            {unlinkedListingsQuery.isPending ? <div className="flex items-center gap-2 px-3 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando productos…</div>
-              : unlinkedListingsQuery.isError ? <div className="px-3 py-6 text-sm text-red-700">No se pudieron cargar los productos sin asociación.</div>
-                : unlinkedListings.length === 0 ? <div className="px-3 py-6 text-sm text-muted-foreground">No hay productos sin asociación para este filtro.</div>
-                  : unlinkedListings.map((listing) => {
-                    const selected = associationListing?.id === listing.id;
-                    return <button key={listing.id} type="button" role="option" aria-selected={selected} onClick={() => setAssociationListing(listing)} className={cn('flex w-full items-start gap-3 px-3 py-3 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', selected && 'bg-primary/8')}>
-                      <span className={cn('mt-1 h-3 w-3 shrink-0 rounded-full border', selected ? 'border-primary bg-primary' : 'border-muted-foreground/50')} aria-hidden="true" />
-                      <span className="min-w-0 flex-1"><strong className="block line-clamp-2 text-sm leading-5">{listing.title || listing.sellerSku}</strong><span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-mono">{listing.sellerSku}</span><span>{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span><ChannelBadge value={listing.channelCode} listing={listing} /></span></span>
-                    </button>;
-                  })}
-          </div>
-          <ActionFeedback error={actionError} message={actionMessage} />
-          <div className="flex justify-end border-t border-border pt-4"><button type="submit" className="primary-button" disabled={!associationListing || busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />} Asociar producto</button></div>
-        </form>
-      </Modal>}
+      <Sheet open={modal === 'associate_listing' && associationProduct != null} onOpenChange={(open) => { if (!open) { window.clearTimeout(associationSearchTimer.current); setModal(null); setAssociationProduct(null); setAssociationListingIds([]); } }}>
+        <SheetContent className="sm:max-w-2xl">
+          <SheetHeader className="border-b border-border px-5 py-4 pr-16">
+            <SheetTitle>Asociar productos</SheetTitle>
+            <SheetDescription className="truncate">{associationProduct ? `${associationProduct.name} · SKU ${associationProduct.mainSku}` : ''}</SheetDescription>
+          </SheetHeader>
+          <form onSubmit={associateListing} className="flex min-h-0 flex-1 flex-col">
+            <div className="grid grid-cols-2 gap-2 border-b border-border px-5 py-3 sm:grid-cols-[minmax(0,1fr)_10.5rem_11rem]">
+              <div className="relative col-span-2 min-w-0 sm:col-span-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={associationSearch}
+                  onChange={(event) => applyAssociationSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      applyAssociationSearch(associationSearch, true);
+                    }
+                  }}
+                  placeholder="Buscar nombre o SKU"
+                  className="h-10 pl-9"
+                  aria-label="Buscar por nombre, SKU o seller"
+                  autoFocus
+                />
+              </div>
+              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem></SelectContent></Select>
+              <Select value={associationAvailability} onValueChange={(value: AssociationAvailability) => { setAssociationAvailability(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por disponibilidad"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recommended">Activos con stock</SelectItem><SelectItem value="all">Cualquier estado</SelectItem></SelectContent></Select>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Productos disponibles para asociar">
+              {unlinkedListingsQuery.isPending ? <AssociationCandidatesSkeleton />
+                : unlinkedListingsQuery.isError ? <div className="px-5 py-10 text-sm text-red-700">No se pudieron cargar los productos de los canales.</div>
+                  : unlinkedListings.length === 0 ? <div className="px-5 py-10 text-center"><Store className="mx-auto h-7 w-7 text-muted-foreground" />
+                    {hiddenAssociationCandidateTotal > 0
+                      ? <><p className="mt-3 text-sm font-medium">Hay {formatNumber(hiddenAssociationCandidateTotal)} productos fuera del filtro</p><p className="mt-1 text-xs text-muted-foreground">Están inactivos o sin stock.</p><Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setAssociationAvailability('all'); setAssociationPage(0); }}>Mostrar cualquier estado</Button></>
+                      : <><p className="mt-3 text-sm font-medium">No hay productos para estos filtros</p><p className="mt-1 text-xs text-muted-foreground">Prueba otro canal o quita los filtros.</p></>}
+                  </div>
+                    : unlinkedListings.map((listing) => {
+                      const candidateKey = listing.candidateKey || `listing:${listing.id}`;
+                      const selected = associationListingIds.includes(candidateKey);
+                      const toggle = () => setAssociationListingIds((current) => selected ? current.filter((id) => id !== candidateKey) : [...current, candidateKey]);
+                      const candidateImage = listingImageUrl(listing);
+                      return <label key={candidateKey} className={cn('flex cursor-pointer items-start gap-3 border-b border-border px-5 py-3 hover:bg-muted/50', selected && 'bg-primary/5')}>
+                        <Checkbox checked={selected} onCheckedChange={toggle} aria-label={`Seleccionar ${listing.title || listing.sellerSku}`} className="mt-1" />
+                        {candidateImage ? <img src={candidateImage} alt="" className="h-14 w-14 shrink-0 rounded-md bg-muted object-contain" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-md bg-muted"><Boxes className="h-5 w-5 text-muted-foreground" /></span>}
+                        <span className="min-w-0 flex-1"><strong className="block line-clamp-2 text-sm leading-5">{listing.title || listing.sellerSku}</strong><span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-mono">{listing.sellerSku}</span><span>{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span><ChannelBadge value={listing.channelCode} listing={listing} /><span>{formatNumber(listing.marketplaceQuantity)} u</span></span></span>
+                      </label>;
+                    })}
+            </div>
+            <div className="border-t border-border bg-background px-5 py-3">
+              <ActionFeedback error={actionError} message={actionMessage} />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center"><Button type="button" variant="ghost" size="sm" disabled={associationPage === 0 || busy} onClick={() => { setAssociationPage((page) => Math.max(0, page - 1)); setAssociationListingIds([]); }} aria-label="Página anterior"><ChevronLeft /></Button><span className="min-w-20 text-center text-xs text-muted-foreground">Página {associationPage + 1}</span><Button type="button" variant="ghost" size="sm" disabled={!hasNextAssociationPage || busy} onClick={() => { setAssociationPage((page) => page + 1); setAssociationListingIds([]); }} aria-label="Página siguiente"><ChevronRight /></Button></div>
+                <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">{associationListingIds.length} seleccionados</span><button type="submit" className="primary-button" disabled={associationListingIds.length === 0 || busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />} Asociar</button></div>
+              </div>
+            </div>
+          </form>
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={unlinkListing != null} onOpenChange={(open) => { if (!open) setUnlinkListing(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Desasociar producto</DialogTitle><DialogDescription>{unlinkListing ? `${unlinkListing.title || unlinkListing.sellerSku} dejará de pertenecer al producto master. La publicación no se elimina del canal.` : ''}</DialogDescription></DialogHeader>
+          <ActionFeedback error={actionError} message="" />
+          <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setUnlinkListing(null)} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={() => void disassociateListing()} disabled={busy}>{busy && <Loader2 className="animate-spin" />} Desasociar</Button></div>
+        </DialogContent>
+      </Dialog>
 
       {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
         <Notice tone="info">{publishCopy.notice}</Notice>
@@ -1037,32 +1181,30 @@ function CopyableSku({
 
 const CatalogProductIdentity = memo(function CatalogProductIdentity({
   product,
-  expanded,
-  onToggleExpand,
   onOpenProduct,
+  onOpenImage,
 }: {
   product: Product;
-  expanded: boolean;
-  onToggleExpand: (productId: number) => void;
   onOpenProduct: (productId: number) => void;
+  onOpenImage: (product: Product) => void;
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
-      <button
-        type="button"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onToggleExpand(product.id);
-        }}
-        className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`${expanded ? 'Contraer' : 'Expandir'} ${product.name}`}
-        aria-expanded={expanded}
-      >
-        <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
-      </button>
+    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
       {product.imageUrl
-        ? <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+        ? <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenImage(product);
+            }}
+            className="group relative h-12 w-12 shrink-0 cursor-zoom-in overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label={`Ampliar foto de ${product.name}`}
+            title="Ampliar foto"
+          >
+            <img src={product.imageUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105" />
+            <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true"><Maximize2 className="h-4 w-4" /></span>
+          </button>
         : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted"><Boxes className="h-4 w-4" /></span>}
       <span className="min-w-0 flex-1">
         <button
@@ -1074,15 +1216,15 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
         </button>
         <CopyableSku sku={product.mainSku} />
       </span>
-      <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
+      <span className="col-span-2 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
         <span className="min-w-0">
           <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
           <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
         </span>
         <span className="min-w-0">
-          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock</span>
-          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(sellerStock(product))} u</span>
-          <span className="mt-0.5 block text-[11px] text-muted-foreground">{sellerCountCopy(product)}</span>
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock maestro</span>
+          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(product.available)} u</span>
+          <span className="mt-0.5 block text-[11px] text-muted-foreground">disponible</span>
         </span>
         <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
           <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
@@ -1103,8 +1245,7 @@ const CatalogTable = memo(function CatalogTable({
   onPageChange,
   onPrefetch,
   onOpenProduct,
-  onTogglePublication,
-  onAssociate,
+  onOpenImage,
 }: {
   products: Product[];
   totalCount: number;
@@ -1115,20 +1256,8 @@ const CatalogTable = memo(function CatalogTable({
   onPageChange: (nextPage: number) => void;
   onPrefetch: (nextPage: number) => void;
   onOpenProduct: (productId: number) => void;
-  onTogglePublication: (listing: Listing) => void;
-  onAssociate: (product: Product) => void;
+  onOpenImage: (product: Product) => void;
 }) {
-  const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
-  const toggleExpand = useCallback((productId: number) => {
-    const rowId = String(productId);
-    setExpandedRows((current) => {
-      const next = typeof current === 'object' ? { ...current } : {};
-      if (next[rowId]) delete next[rowId];
-      else next[rowId] = true;
-      return next;
-    });
-  }, []);
-
   const columns = useMemo<ColumnDef<Product>[]>(() => [
     {
       id: 'product',
@@ -1136,9 +1265,8 @@ const CatalogTable = memo(function CatalogTable({
       cell: ({ row }) => (
         <CatalogProductIdentity
           product={row.original}
-          expanded={row.getIsExpanded()}
-          onToggleExpand={toggleExpand}
           onOpenProduct={onOpenProduct}
+          onOpenImage={onOpenImage}
         />
       ),
     },
@@ -1149,12 +1277,12 @@ const CatalogTable = memo(function CatalogTable({
     },
     {
       id: 'stock',
-      header: 'Stock',
+      header: 'Stock maestro',
       cell: ({ row }) => {
         const product = row.original;
         return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(sellerStock(product))} <span className="text-xs font-normal text-muted-foreground">u</span></p>
-          <p className="mt-1 text-[11px] text-muted-foreground">{sellerCountCopy(product)}</p>
+          <p className="text-lg font-semibold leading-none">{formatNumber(product.available)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
+          <p className="mt-1 text-[11px] text-muted-foreground">disponible</p>
         </div>;
       },
     },
@@ -1163,20 +1291,16 @@ const CatalogTable = memo(function CatalogTable({
       header: 'Estado del producto',
       cell: ({ row }) => <ProductStatusBadge product={row.original} />,
     },
-  ], [onOpenProduct, toggleExpand]);
+  ], [onOpenImage, onOpenProduct]);
 
   const table = useReactTable({
     data: products,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getRowCanExpand: () => true,
     getRowId: (product) => String(product.id),
-    onExpandedChange: setExpandedRows,
     manualPagination: true,
     rowCount: totalCount,
     state: {
-      expanded: expandedRows,
       pagination: {
         pageIndex,
         pageSize,
@@ -1203,23 +1327,15 @@ const CatalogTable = memo(function CatalogTable({
                 >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
               </TableRow>)}
             </TableHeader>
-            <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
-              <TableRow className={cn('align-middle', row.getIsExpanded() && 'border-b-0 bg-muted/20')}>
+            <TableBody>{table.getRowModel().rows.map((row) => (
+              <TableRow key={row.id} className="align-middle">
                 {row.getVisibleCells().map((cell) => <TableCell key={cell.id} className={cn(
                   'min-w-0',
                   CATALOG_COLUMN_CLASS_NAMES[cell.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES],
                   cell.column.id === 'product' ? 'whitespace-normal' : 'hidden sm:table-cell',
                 )}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>)}
               </TableRow>
-              {row.getIsExpanded() && <ExpandedProductPublications
-                productId={row.original.id}
-                productName={row.original.name}
-                listings={row.original.listings}
-                onOpenDetail={onOpenProduct}
-                onTogglePublication={onTogglePublication}
-                onAssociate={() => onAssociate(row.original)}
-              />}
-            </Fragment>)}</TableBody>
+            ))}</TableBody>
           </Table>
         </div>
       )}
@@ -1238,7 +1354,8 @@ const CatalogTable = memo(function CatalogTable({
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
-  onPreviousProduct, onNextProduct, onClose, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
+  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
+  onDisassociate,
 }: {
   open: boolean;
   product: Product | null;
@@ -1261,15 +1378,16 @@ function ProductDrawer({
   onPreviousProduct: () => void;
   onNextProduct: () => void;
   onClose: () => void;
+  onOpenImage: (product: Product) => void;
   onAdjust: () => void;
   onEditImage: () => void;
   onPublish: () => void;
   onAssociate: () => void;
+  onDisassociate: (listing: Listing) => void;
   onTogglePublication: (listing: Listing) => void;
 }) {
-  const listings = product?.listings || [];
-  const activeListings = listings.filter((listing) => listing.status === 'active');
-  const publishedListings = activeListings.filter(isActivelyPublished);
+  const associatedListings = product?.listings || [];
+  const publishedListings = associatedListings.filter(isActivelyPublished);
   const publicationsByChannel = [...publishedListings.reduce((groups, listing) => {
     const current = groups.get(listing.channelCode) || [];
     current.push(listing);
@@ -1296,12 +1414,16 @@ function ProductDrawer({
     <SheetContent className="sm:max-w-3xl">
       <SheetHeader className="border-b border-border px-5 py-4 pr-16">
         <div className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto]">
-          <button type="button" onClick={onEditImage} className="group relative h-14 w-14 overflow-hidden rounded-lg bg-muted" aria-label="Cambiar foto del producto" title="Cambiar foto">
-            {product?.imageUrl
-              ? <img src={product.imageUrl} alt="" className="h-full w-full object-cover" />
-              : <span className="grid h-full w-full place-items-center"><Boxes className="h-5 w-5" /></span>}
-            <span className="absolute inset-x-0 bottom-0 grid h-5 place-items-center bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><ImagePlus className="h-3.5 w-3.5" /></span>
-          </button>
+          {product?.imageUrl ? <button
+            type="button"
+            onClick={() => onOpenImage(product)}
+            className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label={`Ampliar foto de ${product.name}`}
+            title="Ampliar foto"
+          >
+            <img src={product.imageUrl} alt="" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105" />
+            <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true"><Maximize2 className="h-4 w-4" /></span>
+          </button> : <span className="grid h-14 w-14 place-items-center rounded-lg bg-muted"><Boxes className="h-5 w-5" /></span>}
           <div className="min-w-0">
             <SheetTitle className="pr-2 leading-6">{product?.name || 'Producto'}</SheetTitle>
             <SheetDescription className="mt-1 flex flex-wrap items-center gap-2">
@@ -1324,7 +1446,7 @@ function ProductDrawer({
         <div className="shrink-0 border-b border-border px-5 py-3">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{activeListings.length}</span></TabsTrigger>
+            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{associatedListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory">Inventario</TabsTrigger>
             <TabsTrigger value="sales">Ventas</TabsTrigger>
             <TabsTrigger value="returns">Devoluciones</TabsTrigger>
@@ -1339,7 +1461,7 @@ function ProductDrawer({
             <Metric label="Publicadas" value={String(publishedListings.length)} />
           </div>
           <section className="border-b border-border px-5 py-5">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Publicado en</h3><p className="mt-1 text-xs text-muted-foreground">Canales y sellers con una publicación activa.</p></div><div className="flex items-center gap-2"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div></div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Publicado en</h3><p className="mt-1 text-xs text-muted-foreground">Canales y sellers con una publicación activa.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
             {publicationsByChannel.length ? <div className="mt-4 space-y-3">
               {publicationsByChannel.map(({ channelCode, sellers: channelSellers }) => <article key={channelCode} className="rounded-lg bg-muted/40 p-4">
                 <header className="flex flex-wrap items-center gap-2">
@@ -1359,9 +1481,13 @@ function ProductDrawer({
                 </ul>
               </article>)}
             </div> : <p className="mt-4 text-sm text-muted-foreground">Ninguna publicación está visible en un seller y canal.</p>}
+            <div className="mt-4 border-t border-border pt-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
           </section>
           <section className="border-b border-border px-5 py-5">
-            <h3 className="text-sm font-semibold">Información</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Información</h3>
+              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
+            </div>
             <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
               <InfoValue label="SKU interno" value={product.mainSku} />
               <InfoValue label="Marca" value={usableBrand(product.brand) || '—'} />
@@ -1376,14 +1502,14 @@ function ProductDrawer({
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
           <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">
-            {activeListings.length} {activeListings.length === 1 ? 'publicación activa' : 'publicaciones activas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
-          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal; Falabella verifica su autorización.</p></div><div className="flex shrink-0 items-center gap-2"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div></div>
-          {!activeListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones activas</p><p className="mt-1 text-xs text-muted-foreground">Prepara una publicación para Falabella, Ripley o Mercado Libre.</p></div> : activeListings.map((listing) => {
+            {associatedListings.length} {associatedListings.length === 1 ? 'publicación asociada' : 'publicaciones asociadas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
+          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          {!associatedListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div> : associatedListings.map((listing) => {
             const publication = publicationPresentation(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} listing={listing} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
-                <div className="flex shrink-0 items-center gap-3"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /></div>
+                <div className="flex shrink-0 items-center gap-2"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
               </div>
               <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                 <dl className="grid min-w-0 grid-cols-2 gap-4">
@@ -1395,12 +1521,13 @@ function ProductDrawer({
               </div>
             </article>;
           })}
+          <div className="border-t border-border px-5 py-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
         </TabsContent>
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto">
           <div className="grid grid-cols-3 border-b border-border"><Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} /><Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} /><Metric label="Disponible" value={`${formatNumber(product.available)} u`} /></div>
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">Cada movimiento indica el pedido.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
-          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
+          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">La fecha indica cuándo ocurrió la salida, el reintegro o el ajuste.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
+          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.effectiveAt || movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
         </TabsContent>
 
         <TabsContent value="sales" className="min-h-0 overflow-y-auto">
@@ -1485,108 +1612,9 @@ function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
   </section>;
 }
 
-const ExpandedProductPublications = memo(function ExpandedProductPublications({
-  productId,
-  productName,
-  listings: providedListings,
-  onOpenDetail,
-  onTogglePublication,
-  onAssociate,
-}: {
-  productId: number;
-  productName: string;
-  listings?: Listing[];
-  onOpenDetail: (productId: number) => void;
-  onTogglePublication: (listing: Listing) => void;
-  onAssociate: () => void;
-}) {
-  const shouldFetch = providedListings === undefined;
-  const detailQuery = useQuery({
-    queryKey: ['catalog-product-detail', productId],
-    queryFn: () => api.getCatalogProduct(productId),
-    enabled: shouldFetch,
-    staleTime: 30_000,
-    retry: 1,
-  });
-  const sourceListings = providedListings ?? ((detailQuery.data as Product | undefined)?.listings || []);
-  const listings = useMemo(
-    () => sourceListings.filter((listing) => listing.status === 'active'),
-    [sourceListings],
-  );
-
-  if (shouldFetch && detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15">
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
-      <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
-    </TableCell>
-  </TableRow>;
-
-  if (shouldFetch && detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60">
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
-  </TableRow>;
-
-  if (!listings.length) return <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
-    <TableCell colSpan={4} className="py-3 pl-[6.5rem] pr-4 text-sm text-muted-foreground"><div className="flex flex-wrap items-center justify-between gap-3"><span>Sin publicaciones asociadas.</span><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button></div></TableCell>
-  </TableRow>;
-
-  return <>{listings.map((listing, index) => {
-    const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
-    const publication = publicationPresentation(listing);
-    const isLast = index === listings.length - 1;
-    return <TableRow
-      key={listing.id}
-      className={cn(
-        'bg-muted/15 hover:bg-muted/30',
-        sellerPublicationRowBorderClass(isLast),
-      )}
-    >
-      <TableCell className="whitespace-normal py-2.5 pr-3 align-middle">
-        <div className="min-w-0 pl-[4.5rem]">
-          <button
-            type="button"
-            onClick={() => onOpenDetail(productId)}
-            className="line-clamp-2 text-left text-sm font-medium leading-5 text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >{listing.title || productName}</button>
-          <span className="mt-1 line-clamp-2 text-xs font-semibold text-foreground" title={listing.companyName || undefined}>{sellerName}</span>
-          <div className="mt-1 flex flex-nowrap items-center gap-2 text-xs">
-            <CopyableSku
-              sku={listing.sellerSku}
-              title="Copiar SKU del seller"
-              copiedTitle="SKU copiado"
-              className="relative inline-flex shrink-0 items-center gap-1 font-mono font-medium tabular-nums text-muted-foreground after:absolute after:-inset-2 hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <ChannelBadge value={listing.channelCode} listing={listing} />
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:hidden">
-            <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
-            <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock publicado</span><SellerStock listing={listing} /></div>
-            <div className="col-span-2 flex items-center justify-between border-t border-border/60 pt-2">
-              <span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span>
-              <Switch
-                checked={publication.visible}
-                onCheckedChange={() => onTogglePublication(listing)}
-                aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
-              />
-            </div>
-          </div>
-        </div>
-      </TableCell>
-      <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerPrice listing={listing} /></TableCell>
-      <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerStock listing={listing} /></TableCell>
-      <TableCell className="hidden py-2.5 align-middle sm:table-cell">
-        <div className="flex items-center gap-2">
-          <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
-          <Switch
-            checked={publication.visible}
-            onCheckedChange={() => onTogglePublication(listing)}
-            aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
-          />
-        </div>
-      </TableCell>
-    </TableRow>;
-  })}<TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/15')}>
-    <TableCell colSpan={4} className="py-3 pl-[6.5rem] pr-4"><div className="flex justify-end"><button type="button" onClick={onAssociate} className="secondary-button h-8 px-3"><Link2 className="h-4 w-4" /> Asociar producto</button></div></TableCell>
-  </TableRow></>;
-});
+function ListingActions({ listing, onDisassociate }: { listing: Listing; onDisassociate: (listing: Listing) => void }) {
+  return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Acciones de ${listing.sellerSku}`}><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem variant="destructive" onClick={() => onDisassociate(listing)}>Desasociar producto</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
+}
 
 function CatalogTableSkeleton() {
   return <div className="min-w-0" aria-label="Cargando productos" aria-busy="true">
@@ -1602,11 +1630,10 @@ function CatalogTableSkeleton() {
       <TableBody>
         {Array.from({ length: 8 }, (_, row) => <TableRow key={row} className="hover:bg-transparent">
           <TableCell className="whitespace-normal py-4">
-            <div className="grid grid-cols-[2.5rem_3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
-              <Skeleton className="h-10 w-10" />
+            <div className="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
               <Skeleton className="h-12 w-12 rounded-lg" />
               <div className="min-w-0 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-24" /></div>
-              <div className="col-span-3 grid grid-cols-2 gap-5 border-t border-border/60 pt-3 sm:hidden">
+              <div className="col-span-2 grid grid-cols-2 gap-5 border-t border-border/60 pt-3 sm:hidden">
                 <Skeleton className="h-8 w-full" />
                 <Skeleton className="h-8 w-full" />
                 <Skeleton className="col-span-2 h-7 w-full" />
@@ -1619,6 +1646,24 @@ function CatalogTableSkeleton() {
         </TableRow>)}
       </TableBody>
     </Table>
+  </div>;
+}
+
+function AssociationCandidatesSkeleton() {
+  return <div aria-label="Cargando productos" aria-busy="true">
+    {Array.from({ length: 6 }, (_, index) => <div key={index} className="flex items-start gap-3 border-b border-border px-5 py-3">
+      <Skeleton className="mt-1 h-4 w-4 shrink-0 rounded" />
+      <Skeleton className="h-14 w-14 shrink-0 rounded-md" />
+      <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+        <Skeleton className={cn('h-4', index % 3 === 0 ? 'w-4/5' : index % 3 === 1 ? 'w-2/3' : 'w-3/4')} />
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-6 w-20 rounded-md" />
+          <Skeleton className="h-3 w-10" />
+        </div>
+      </div>
+    </div>)}
   </div>;
 }
 
@@ -1649,15 +1694,19 @@ function SellerStock({ listing }: { listing: Listing }) {
   const fulfillmentStock = metadataNumber(listing, 'fulfillmentQuantity');
   const fromGetStock = listing.metadata?.stockSource === 'falabella_get_stock';
   const isSellable = listing.metadata?.isSellable;
+  const publiclyUnavailable = listing.metadata?.publicAvailabilityStatus === 'unavailable';
   const contentScore = metadataNumber(listing, 'contentScore');
   return <div>
     <strong className="block text-sm">{formatNumber(listing.marketplaceQuantity)} u</strong>
+    {publiclyUnavailable && <small className="block leading-4 text-amber-700" title="La tienda pública de Falabella no ofrece esta publicación, aunque Seller Center reporte unidades.">
+      Sin stock en Falabella
+    </small>}
     {isSellable === false && <small className="block leading-4 text-amber-700" title="El stock físico no se ofrece hasta que Falabella autorice la publicación.">
       {sellabilityLabel(listing)}{contentScore != null ? ` · score ${formatNumber(contentScore, 0)}` : ''}
     </small>}
     <small className="block leading-4 text-muted-foreground">
       {fromGetStock
-        ? `Seller ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
+        ? `${publiclyUnavailable ? 'Seller Center reporta' : 'Seller'} ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
         : 'stock publicado'}
     </small>
   </div>;
@@ -1667,37 +1716,45 @@ function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) 
   const normalized = String(value || 'externo').toLowerCase();
   const compact = normalized.replace(/[\s_-]+/g, '');
   if (compact === 'falabella') {
-    const href = listing ? falabellaProductUrl(listing.channelCode, listing.metadata) : null;
+    const href = listing ? marketplaceProductUrl(listing) : null;
     const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-muted px-1.5 text-[11px] font-medium text-muted-foreground sm:min-h-6';
     if (!listing || !href) return <span className={badgeClassName} title="Falabella">
       <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" /> Falabella
     </span>;
 
-    return <FalabellaProductLink href={href} listing={listing} className={badgeClassName} />;
+    return <MarketplaceProductLink href={href} listing={listing} marketplace="Falabella" className={badgeClassName}>
+      <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" /> Falabella
+    </MarketplaceProductLink>;
   }
-  const classes = compact === 'ripley'
-    ? 'bg-fuchsia-50 text-fuchsia-700'
-    : compact === 'mercadolibre'
+  if (compact === 'ripley') {
+    const href = listing ? marketplaceProductUrl(listing) : null;
+    const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700 sm:min-h-6';
+    if (!listing || !href) return <span className={badgeClassName} title="Ripley">Ripley</span>;
+
+    return <MarketplaceProductLink href={href} listing={listing} marketplace="Ripley" className={badgeClassName}>
+      Ripley
+    </MarketplaceProductLink>;
+  }
+  const classes = compact === 'mercadolibre'
       ? 'bg-amber-50 text-amber-800'
       : 'bg-slate-100 text-slate-700';
   return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', classes)}>{channelLabel(normalized)}</span>;
 }
 
-function FalabellaProductLink({ href, listing, className }: { href: string; listing: Listing; className: string }) {
+function MarketplaceProductLink({ href, listing, marketplace, className, children }: { href: string; listing: Listing; marketplace: 'Falabella' | 'Ripley'; className: string; children: ReactNode }) {
   return <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(event) => event.stopPropagation()}
-      aria-label={`Ver ${listing.title || listing.sellerSku} en Falabella; abre en una pestaña nueva`}
-      title="Ver producto en Falabella"
+      aria-label={`Ver ${listing.title || listing.sellerSku} en ${marketplace}; abre en una pestaña nueva`}
+      title={`Ver producto en ${marketplace}`}
       className={cn(
         className,
-        'transition-colors duration-200 hover:bg-lime-50 hover:text-lime-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-lime-950/40 dark:hover:text-lime-300 motion-reduce:transition-none',
+        'transition-colors duration-200 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none',
       )}
     >
-      <img src={falabellaIcon} alt="" className="h-3.5 w-3.5 rounded-[3px]" />
-      Falabella
+      {children}
       <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
     </a>;
 }
@@ -1714,10 +1771,7 @@ function channelLabel(value: string) {
 
 function ProductStatusBadge({ product, compact = false }: { product: Product; compact?: boolean }) {
   const storedStatus = String(product.status || 'inactive').toLowerCase();
-  const hasVisiblePublication = product.listings?.some(isActivelyPublished);
-  const status = storedStatus === 'archived'
-    ? 'archived'
-    : storedStatus === 'active' && hasVisiblePublication !== false ? 'active' : 'inactive';
+  const status = storedStatus === 'active' || storedStatus === 'archived' ? storedStatus : 'inactive';
   const label = status === 'active' ? 'Activo' : status === 'archived' ? 'Archivado' : 'Inactivo';
   const classes = status === 'active'
     ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
@@ -1744,6 +1798,31 @@ function movementCaption(movement: Movement) {
   ].filter(Boolean);
   if (parts.length) return parts.join(' · ');
   return movement.source || 'sistema';
+}
+
+function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview | null; onClose: () => void }) {
+  return <Dialog open={preview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+    <DialogContent
+      overlayClassName="z-[90] bg-black/70"
+      className="z-[90] max-h-[94vh] gap-0 overflow-hidden bg-zinc-950 p-0 text-white sm:max-w-5xl [&_[data-slot=dialog-close]]:bg-white/10 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-white/20"
+    >
+      {preview ? <>
+        <DialogHeader className="sr-only">
+          <DialogTitle>Foto de {preview.productName}</DialogTitle>
+          <DialogDescription>Vista ampliada del producto con SKU {preview.sku}.</DialogDescription>
+        </DialogHeader>
+        <figure className="min-h-0">
+          <div className="flex min-h-64 items-center justify-center overflow-hidden p-4 sm:min-h-[32rem] sm:p-8">
+            <img src={preview.src} alt={preview.productName} className="max-h-[calc(94vh-8rem)] max-w-full object-contain" />
+          </div>
+          <figcaption className="border-t border-white/10 bg-black/30 px-5 py-4 pr-16">
+            <p className="line-clamp-2 text-sm font-medium text-white">{preview.productName}</p>
+            <p className="mt-1 font-mono text-xs text-white/60">SKU {preview.sku}</p>
+          </figcaption>
+        </figure>
+      </> : null}
+    </DialogContent>
+  </Dialog>;
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; wide?: boolean }) {

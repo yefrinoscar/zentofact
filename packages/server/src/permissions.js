@@ -4,6 +4,7 @@
 export const PERMISSIONS = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
+  { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
@@ -48,6 +49,11 @@ export const ROLE_PRESETS = {
     description: 'Gestiona comprobantes, automatización y anulaciones',
     permissions: ['boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk'],
   },
+  vendedor: {
+    label: 'Vendedor',
+    description: 'Registra ventas y consulta su comisión',
+    permissions: ['salesperson'],
+  },
   viewer: {
     label: 'Perfil anterior',
     description: 'Perfil anterior conservado por compatibilidad',
@@ -55,12 +61,13 @@ export const ROLE_PRESETS = {
   },
 };
 
-export const SELECTABLE_ROLES = ['superadmin', 'admin', 'operator', 'billing'];
+export const SELECTABLE_ROLES = ['superadmin', 'admin', 'operator', 'billing', 'vendedor'];
 
 export const ROLE_RANK = {
   viewer: 10,
   operator: 20,
   billing: 20,
+  vendedor: 20,
   falabella_manager: 20,
   admin: 80,
   superadmin: 100,
@@ -113,9 +120,15 @@ export function isSuperadminRole(role) {
   return normalizeRole(role) === 'superadmin';
 }
 
+export function isPermissionsLocked(role) {
+  const normalized = normalizeRole(role);
+  return isAdminRole(normalized) || normalized === 'vendedor';
+}
+
 export function normalizePermissions(input, role = 'operator') {
   const normalizedRole = normalizeRole(role);
   if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
   const list = Array.isArray(input)
     ? input
     : typeof input === 'string'
@@ -151,7 +164,7 @@ export function normalizePermissions(input, role = 'operator') {
     const clean = String(key || '').trim();
     return LEGACY_PERMISSION_MAP[clean] || [clean];
   });
-  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users'));
+  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users' && key !== 'salesperson'));
   return [...new Set(expanded.filter((key) => allowed.has(key)))];
 }
 
@@ -174,6 +187,7 @@ export function userHasPermission(user, key) {
 export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';

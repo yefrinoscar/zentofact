@@ -9,6 +9,7 @@ import { isCatalogInventoryEnabled } from '../system-config.js';
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
+const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley']);
 
 export function isStockEligibleFulfillment(status) {
   return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());
@@ -39,7 +40,7 @@ function itemTerminalKind(status) {
   if (!value) return null;
   if (value.includes('cancel')) return 'cancelled';
   if (value.includes('failed')) return 'failed';
-  if (value.includes('returned') || value.includes('return_shipped')) return 'returned';
+  if (value.includes('returned') || value.includes('return_shipped') || value.includes('refund')) return 'returned';
   return null;
 }
 
@@ -178,7 +179,8 @@ export async function stockPhase(input) {
   const orderId = Number(persisted.id);
   const channelCode = account.channelCode || account.channel_code;
   const companyId = persisted.company_id == null ? null : Number(persisted.company_id);
-  const isMarketplace = MARKETPLACE_SOURCES.has(source);
+  const isMarketplace = MARKETPLACE_SOURCES.has(source)
+    || MARKETPLACE_CHANNELS.has(String(channelCode || '').trim().toLowerCase());
   const currentFulfillment = persisted.fulfillment_status;
   const previousFulfillment = existing?.fulfillment_status;
   const becameEligible = isStockEligibleFulfillment(currentFulfillment)

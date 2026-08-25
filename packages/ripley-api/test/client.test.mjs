@@ -24,8 +24,23 @@ test('lista las ofertas de Ripley con autenticación y paginación Mirakl', asyn
   assert.equal(request.init.headers.Authorization, 'secret');
   assert.deepEqual(page.offers[0], {
     offerId: '11', sellerSku: 'SELLER-1', productSku: 'P-1', productTitle: 'Producto', active: true, quantity: 4, price: 29.9,
-    raw: { offer_id: 11, sku: 'SELLER-1', product_sku: 'P-1', product_title: 'Producto', active: true, quantity: 4, price: 29.9 },
+    imageUrl: null, raw: { offer_id: 11, sku: 'SELLER-1', product_sku: 'P-1', product_title: 'Producto', active: true, quantity: 4, price: 29.9 },
   });
+});
+
+test('obtiene imágenes con P11 y prefiere dam_url', async () => {
+  let request;
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret',
+    fetchImpl: async (url) => {
+      request = new URL(url);
+      return response({ products: [{ product_sku: 'P-1', product_title: 'Producto', product_media: { dam_url: 'https://dam.ripley.test/p-1.jpg', media_url: 'https://media.ripley.test/p-1.jpg', type: 'large' } }] });
+    },
+  });
+  const products = await client.listProductContents(['P-1']);
+  assert.equal(request.pathname, '/api/products/offers');
+  assert.equal(request.searchParams.get('product_ids'), 'P-1');
+  assert.equal(products[0].imageUrl, 'https://dam.ripley.test/p-1.jpg');
 });
 
 test('trae todas las páginas de ofertas', async () => {

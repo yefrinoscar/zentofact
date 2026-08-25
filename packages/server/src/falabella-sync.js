@@ -135,9 +135,13 @@ function monthWindow(month) {
   const year = Number(match[1]);
   const monthIndex = Number(match[2]) - 1;
   if (monthIndex < 0 || monthIndex > 11) throw new Error('Mes inválido; usa YYYY-MM.');
+  const nextYear = monthIndex === 11 ? year + 1 : year;
+  const nextMonth = monthIndex === 11 ? 1 : monthIndex + 2;
+  const startMonth = String(monthIndex + 1).padStart(2, '0');
+  const endMonth = String(nextMonth).padStart(2, '0');
   return {
-    from: new Date(Date.UTC(year, monthIndex, 1)),
-    to: new Date(Date.UTC(year, monthIndex + 1, 1)),
+    from: new Date(`${year}-${startMonth}-01T00:00:00-05:00`),
+    to: new Date(`${nextYear}-${endMonth}-01T00:00:00-05:00`),
   };
 }
 
@@ -155,6 +159,10 @@ function resolveSyncMode(options = {}) {
   if (options.mode === 'range') return 'range';
   if (options.mode === 'range_created') return 'range_created';
   return 'incremental';
+}
+
+export function catalogInventoryEnabledForSync(mode, restockNow) {
+  return mode === 'incremental' && restockNow === true;
 }
 
 export async function fetchFalabellaPages(client, filters, onPage, pageSize = PAGE_SIZE) {
@@ -238,7 +246,9 @@ async function upsertOrders(db, companyId, orders, context = {}) {
         source: context.source || 'sync',
         correlationId: context.correlationId,
         eventId: context.eventId,
-        catalogInventoryEnabled: restockNow ? true : (context.enqueueStock ? false : context.catalogInventoryEnabled),
+        catalogInventoryEnabled: context.syncMode
+          ? catalogInventoryEnabledForSync(context.syncMode, restockNow)
+          : (restockNow ? true : (context.enqueueStock ? false : context.catalogInventoryEnabled)),
       }, db);
         if (context.enqueueStock && ['ready_to_ship', 'shipped', 'delivered'].includes(lifecycleStatus)) {
           await enqueueStockJob({
@@ -460,7 +470,7 @@ function itemNeedsStockRestock(item) {
     || status.includes('return_shipped');
 }
 
-async function ingestReconciledOrder(db, companyId, order, items, status, account) {
+async function ingestReconciledOrder(db, companyId, order, items, status, account, inventoryEnabled) {
   const raw = order.raw_data && typeof order.raw_data === 'object' ? order.raw_data : {};
   const normalized = normalizeFalabellaOrder({
     ...raw,
@@ -477,7 +487,7 @@ async function ingestReconciledOrder(db, companyId, order, items, status, accoun
     account,
     source: 'sync',
     correlationId: `falabella-reconcile:${companyId}:${order.order_id}`,
-    catalogInventoryEnabled: true,
+    catalogInventoryEnabled: inventoryEnabled,
   }, db);
 }
 
@@ -575,7 +585,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
         await ingestReconciledOrder(db, companyId, {
           ...order,
           falabella_updated_at: updatedAt || order.falabella_updated_at,
-        }, items, status, account);
+        }, items, status, account, catalogInventoryEnabledForSync(options.syncMode || 'incremental', true));
       }
     } catch (error) {
       failed += 1;
@@ -693,6 +703,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     const stats = await fetchFalabellaPages(client, filters, async (orders) => {
       upserted += await upsertOrders(db, companyId, orders, {
         source: 'sync',
+        syncMode: mode,
         correlationId: `falabella-sync:${runId}`,
         enqueueStock: mode === 'incremental',
         seller: company.nombreComercial || company.nombre || company.razonSocial,
@@ -711,6 +722,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
       seller: company.nombreComercial || company.nombre || company.razonSocial,
       runId,
+      syncMode: mode,
     });
     const failed = orderFailures.count + itemHydration.failed + reconciliation.failed;
     const syncStatus = failed > 0 ? 'partial' : 'success';

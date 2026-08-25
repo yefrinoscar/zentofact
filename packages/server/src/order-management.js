@@ -560,6 +560,7 @@ function normalizeOrderRow(row) {
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    createdBy: row.created_by || null,
   };
   normalized.documentDecision = resolveDocumentDecision(normalized);
   return normalized;
@@ -635,9 +636,9 @@ async function ingestOrderInTransaction(input, db) {
          document_requirement, document_type_policy, requested_document_type,
          currency, subtotal, shipping_amount, discount_amount, total,
          customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
-         items_status, items_error
+         items_status, items_error, created_by
        ) values (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
        )
        on conflict (channel_account_id, external_order_id) do update set
          external_order_number=excluded.external_order_number,
@@ -671,6 +672,7 @@ async function ingestOrderInTransaction(input, db) {
          ordered_at=coalesce(excluded.ordered_at, orders.ordered_at),
          promised_shipping_at=coalesce(excluded.promised_shipping_at, orders.promised_shipping_at),
          provider_updated_at=coalesce(excluded.provider_updated_at, orders.provider_updated_at),
+         created_by=coalesce(orders.created_by, excluded.created_by),
          last_seen_at=now(),
          updated_at=now()
        returning *`,
@@ -700,6 +702,7 @@ async function ingestOrderInTransaction(input, db) {
         order.providerUpdatedAt,
         order.itemsStatus,
         order.itemsError,
+        optionalText(input.actorUserId, 300),
       ],
     );
     persisted = result.rows[0];
@@ -918,6 +921,10 @@ export async function listOrders(filters = {}, db) {
       or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
     )`);
   }
+  if (filters.createdBy) {
+    values.push(requiredText(filters.createdBy, 'createdBy', 300));
+    where.push(`o.created_by=$${values.length}`);
+  }
   for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
     const value = String(filters[filterName] || '').trim();
     if (!value) continue;
@@ -1078,6 +1085,78 @@ export async function getSalesPulse(filters = {}, db) {
     sellers,
     topProducts,
     channels,
+  };
+}
+
+const SALES_EXCLUSIONS = `
+  o.order_status not in ('cancelled', 'failed')
+  and o.payment_status not in ('refunded', 'failed')
+  and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+`;
+
+function limaDateKey(value = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(value);
+}
+
+function addCalendarDays(dateKey, days) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + days));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+
+function periodStats(orders, total, commissionPercent) {
+  const salesTotal = Number(total) || 0;
+  return {
+    orders: Number(orders) || 0,
+    total: salesTotal,
+    commission: estimatedCommission(salesTotal, commissionPercent),
+  };
+}
+
+export function estimatedCommission(total, percent) {
+  const amount = Number(total) || 0;
+  const rate = Number(percent) || 0;
+  if (amount <= 0 || rate <= 0) return 0;
+  return Math.round(amount * rate) / 100;
+}
+
+export async function getSalespersonHome(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const userId = requiredText(filters.userId, 'userId', 300);
+  const commissionPercent = Number(filters.commissionPercent) || 0;
+  const today = limaDateKey();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const from = String(filters.from || '').trim() || addCalendarDays(today, -29);
+  const to = String(filters.to || '').trim() || today;
+  if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('from inválido.');
+  if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('to inválido.');
+
+  const kpi = await target.query(
+    `select
+       count(*) filter (where d.lima_date = $2::date)::int as today_orders,
+       coalesce(sum(o.total) filter (where d.lima_date = $2::date), 0)::numeric as today_total,
+       count(*) filter (where d.lima_date >= $3::date)::int as month_orders,
+       coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total
+     from orders o
+     cross join lateral (
+       select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+     ) d
+     where o.created_by=$1
+       and ${SALES_EXCLUSIONS}`,
+    [userId, today, monthStart],
+  );
+  const listed = await listOrders({
+    createdBy: userId,
+    from,
+    to,
+    limit: filters.limit || 50,
+  }, target);
+  const row = kpi.rows[0] || {};
+  return {
+    today: periodStats(row.today_orders, row.today_total, commissionPercent),
+    month: periodStats(row.month_orders, row.month_total, commissionPercent),
+    orders: listed.orders,
+    commissionPercent,
   };
 }
 

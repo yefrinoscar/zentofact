@@ -69,6 +69,7 @@ function sellerCountSql() {
     select count(distinct coverage_listing.company_id)
     from product_listings coverage_listing
     where coverage_listing.product_id=p.id
+      and coverage_listing.status <> 'unlinked'
   )`;
 }
 
@@ -77,6 +78,7 @@ function sellerStockSql() {
     select coalesce(sum(stock_listing.marketplace_quantity), 0)
     from product_listings stock_listing
     where stock_listing.product_id=p.id
+      and ${publishedListingCondition('stock_listing')}
   )`;
 }
 
@@ -109,35 +111,11 @@ export function publishedListingCondition(alias) {
 }
 
 function activeProductCondition() {
-  return `p.status='active' and ${publicationExistsSql()}`;
+  return `p.status='active'`;
 }
 
 function inactiveProductCondition() {
-  return `(p.status='inactive' or (p.status='active' and not ${publicationExistsSql()}))`;
-}
-
-export async function syncProductStatusesFromListings(db, productIdsInput) {
-  if (!db?.query) throw new Error('syncProductStatusesFromListings requiere una conexión abierta.');
-  const productIds = [...new Set((productIdsInput || []).map((id) => positiveInt(id, 'productId')))];
-  if (!productIds.length) return [];
-  const result = await db.query(
-    `with desired_product_statuses as (
-       select p.id,
-         case when exists (
-           select 1 from product_listings status_listing
-           where status_listing.product_id=p.id
-             and ${publishedListingCondition('status_listing')}
-         ) then 'active' else 'inactive' end as status
-       from products p
-       where p.id=any($1::bigint[]) and p.status<>'archived'
-     )
-     update products p set status=desired.status, updated_at=now()
-     from desired_product_statuses desired
-     where p.id=desired.id and p.status is distinct from desired.status
-     returning p.id, p.main_sku, p.status`,
-    [productIds],
-  );
-  return result.rows.map((row) => ({ id: Number(row.id), mainSku: row.main_sku, status: row.status }));
+  return `p.status='inactive'`;
 }
 
 function publicationExistsSql(companyIdsParameter = '') {
@@ -174,14 +152,14 @@ function catalogOrder(filters = {}) {
 
 function listingStatsSql(productId) {
   return `select
-    count(l.id) as listings_count,
-    count(distinct l.company_id) as sellers_count,
-    coalesce(array_agg(distinct l.channel_code), '{}') as channels,
+    count(l.id) filter (where l.status <> 'unlinked') as listings_count,
+    count(distinct l.company_id) filter (where l.status <> 'unlinked') as sellers_count,
+    coalesce(array_agg(distinct l.channel_code) filter (where l.status <> 'unlinked'), '{}') as channels,
     min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
       filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
     max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
       filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
-    coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total
+    coalesce(sum(l.marketplace_quantity) filter (where ${publishedListingCondition('l')}), 0) as seller_stock_total
   from product_listings l
   where l.product_id=${productId}`;
 }
@@ -204,6 +182,11 @@ function appendCatalogSearch(filters = {}, values, where) {
       p.main_sku ilike $${values.length}
       or p.name ilike $${values.length}
       or p.brand ilike $${values.length}
+      or exists (
+        select 1
+        from jsonb_array_elements_text(coalesce(p.attributes->'excel_codes', '[]'::jsonb)) excel_code
+        where excel_code ilike $${values.length}
+      )
       or exists (
         select 1 from product_listings search_listing
         where search_listing.product_id=p.id
@@ -242,9 +225,9 @@ function catalogListConstraints(filters = {}) {
     const selectedStatus = productStatus(filters.status);
     values.push(selectedStatus);
     if (selectedStatus === 'active') {
-      where.push(`p.status=$${values.length} and ${publicationExistsSql()}`);
+      where.push(`p.status=$${values.length}`);
     } else if (selectedStatus === 'inactive') {
-      where.push(`(p.status=$${values.length} or (p.status='active' and not ${publicationExistsSql()}))`);
+      where.push(`p.status=$${values.length}`);
     } else {
       where.push(`p.status=$${values.length}`);
     }
@@ -271,10 +254,10 @@ function catalogListConstraints(filters = {}) {
 
   const special = specialFilter(filters);
   if (special === 'outOfStock') {
-    where.push(`${sellerCountSql()} > 0`);
+    where.push(publicationExistsSql());
     where.push(`${sellerStockSql()} = 0`);
   } else if (special === 'unpublished') {
-    where.push(`${sellerCountSql()} = 0`);
+    where.push(`not ${publicationExistsSql()}`);
   } else if (special === 'lowStock') {
     where.push(lowStockSql());
   }
@@ -394,8 +377,8 @@ async function summarizeProducts(filters = {}, db) {
        count(*) filter (where p.status = 'archived') as archived,
        count(*) filter (where ${scope} and coverage.sellers_count = 1) as single_seller,
        count(*) filter (where ${scope} and coverage.sellers_count > 1) as multiple_sellers,
-       count(*) filter (where ${scope} and coverage.sellers_count > 0 and coverage.seller_stock_total = 0) as out_of_stock,
-       count(*) filter (where ${scope} and coverage.sellers_count = 0) as unpublished,
+       count(*) filter (where ${scope} and coverage.published_sellers_count > 0 and coverage.seller_stock_total = 0) as out_of_stock,
+       count(*) filter (where ${scope} and coverage.published_sellers_count = 0) as unpublished,
        count(*) filter (where ${scope} and ${inventoryStatusSql('lowStock')}) as low_stock,
        count(*) filter (where ${scope} and ${inventoryStatusSql('inStock')}) as with_stock,
        count(*) filter (where ${scope} and ${inventoryStatusSql('outOfStock')}) as without_stock,
@@ -411,8 +394,9 @@ async function summarizeProducts(filters = {}, db) {
      left join sales30 on sales30.product_id=p.id
      cross join lateral (
        select
-         count(distinct l.company_id) as sellers_count,
-         coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total,
+         count(distinct l.company_id) filter (where l.status <> 'unlinked') as sellers_count,
+         count(distinct l.company_id) filter (where ${publishedListingCondition('l')}) as published_sellers_count,
+         coalesce(sum(l.marketplace_quantity) filter (where ${publishedListingCondition('l')}), 0) as seller_stock_total,
          min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
            filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as listing_price
        from product_listings l
@@ -493,7 +477,7 @@ export async function listProducts(filters = {}, db) {
            l.metadata
          from product_listings l
          join companies c on c.id = l.company_id
-         where l.product_id = any($1::int[])
+         where l.product_id = any($1::int[]) and l.status <> 'unlinked'
          order by l.channel_code, company_name, l.id`,
         [products.map((product) => product.id)],
       );
@@ -536,14 +520,14 @@ export async function getProduct(id, db) {
        join product_inventory i on i.product_id=p.id
        cross join lateral (
          select
-           count(l.id) as listings_count,
-           count(distinct l.company_id) as sellers_count,
-           coalesce(array_agg(distinct l.channel_code), '{}') as channels,
+           count(l.id) filter (where l.status <> 'unlinked') as listings_count,
+           count(distinct l.company_id) filter (where l.status <> 'unlinked') as sellers_count,
+           coalesce(array_agg(distinct l.channel_code) filter (where l.status <> 'unlinked'), '{}') as channels,
            min((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
              filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_min,
            max((coalesce(l.metadata->>'effectivePrice', l.metadata->>'price'))::numeric)
              filter (where l.status='active' and coalesce(l.metadata->>'effectivePrice', l.metadata->>'price') ~ '^[0-9]+([.][0-9]+)?$') as seller_price_max,
-           coalesce(sum(l.marketplace_quantity), 0) as seller_stock_total
+           coalesce(sum(l.marketplace_quantity) filter (where ${publishedListingCondition('l')}), 0) as seller_stock_total
          from product_listings l
          where l.product_id=p.id
        ) listing_stats
@@ -553,7 +537,8 @@ export async function getProduct(id, db) {
     target.query(
       `select l.*, coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name
        from product_listings l join companies c on c.id=l.company_id
-       where l.product_id=$1 order by l.status='active' desc, l.channel_code, company_name, l.id`,
+       where l.product_id=$1 and l.status <> 'unlinked'
+       order by l.status='active' desc, l.channel_code, company_name, l.id`,
       [productId],
     ),
   ]);

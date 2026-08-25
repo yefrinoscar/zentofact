@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isPermissionsLocked,
   normalizePermissions,
   pathPermission,
   PERMISSIONS,
@@ -76,8 +77,10 @@ test('los permisos antiguos se expanden al catálogo nuevo', () => {
 });
 
 test('los perfiles representan áreas reales de trabajo', () => {
-  assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing']);
+  assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing', 'vendedor']);
   assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos']);
+  assert.deepEqual(ROLE_PRESETS.vendedor.permissions, ['salesperson']);
+  assert.equal(ROLE_PRESETS.vendedor.label, 'Vendedor');
   assert.deepEqual(ROLE_PRESETS.billing.permissions, [
     'boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk',
   ]);
@@ -158,4 +161,24 @@ test('los presets generales anteriores migran a los nuevos perfiles acotados', (
     normalizePermissions(['boletas', 'facturas', 'credit_notes_manage'], 'billing'),
     ROLE_PRESETS.billing.permissions,
   );
+});
+
+test('el vendedor conserva el preset fijo y no admite permisos extra', () => {
+  const salespersonIndex = PERMISSIONS.findIndex(({ key }) => key === 'salesperson');
+  const ordersIndex = PERMISSIONS.findIndex(({ key }) => key === 'order_management');
+  assert.equal(PERMISSIONS[salespersonIndex].path, '/mis-ventas');
+  assert.equal(PERMISSIONS[salespersonIndex].section, 'orders');
+  assert.ok(salespersonIndex >= 0 && salespersonIndex < ordersIndex);
+  assert.equal(pathPermission('/mis-ventas'), 'salesperson');
+  assert.equal(isPermissionsLocked('vendedor'), true);
+  assert.equal(isPermissionsLocked('admin'), true);
+  assert.equal(isPermissionsLocked('operator'), false);
+  assert.deepEqual(normalizePermissions(['order_management', 'boletas'], 'vendedor'), ['salesperson']);
+  assert.deepEqual(normalizePermissions([], 'vendedor'), ['salesperson']);
+  assert.deepEqual(normalizePermissions('[]', 'vendedor'), ['salesperson']);
+  const vendedor = { role: 'vendedor', active: true, permissions: ['order_management', 'users'] };
+  assert.equal(userHasPermission(vendedor, 'salesperson'), true);
+  assert.equal(userHasPermission(vendedor, 'order_management'), false);
+  assert.equal(userHasPermission(vendedor, 'dashboard'), false);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['salesperson'] }, 'salesperson'), false);
 });
