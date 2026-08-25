@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '../lib/api';
+import { usePermissions } from '../hooks/usePermissions';
 import { cn } from '../lib/cn';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
@@ -174,6 +175,8 @@ function ProductPhoto({ url, shopSku, sku, name }: { url?: string | null; shopSk
 
 export default function RegistrarVenta() {
   const navigate = useNavigate();
+  const { can } = usePermissions();
+  const afterSavePath = can('salesperson') && !can('order_management') ? '/mis-ventas' : '/orders';
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
@@ -352,7 +355,7 @@ export default function RegistrarVenta() {
           metadata: { productId: line.productId, catalogPrice: line.catalogPrice },
         })),
       });
-      navigate('/orders', { replace: true, state: { registered: orderNumber } });
+      navigate(afterSavePath, { replace: true, state: { registered: orderNumber } });
     } catch (error: any) {
       setCreateError(error?.message || 'No se pudo registrar la venta.');
     } finally {
@@ -363,7 +366,7 @@ export default function RegistrarVenta() {
   return (
     <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-24 sm:space-y-8 sm:pb-4">
       <div>
-        <Button type="button" variant="ghost" className="-ml-2 h-11 cursor-pointer px-2 sm:h-9" onClick={() => navigate('/orders')}>
+        <Button type="button" variant="ghost" className="-ml-2 h-11 cursor-pointer px-2 sm:h-9" onClick={() => navigate(afterSavePath)}>
           <ArrowLeft /> Volver
         </Button>
       </div>

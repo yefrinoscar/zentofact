@@ -41,6 +41,7 @@ function serializeUser(row) {
     role,
     permissions: parsePermissions(row.permissions, role),
     active: isActive(row.active),
+    commissionPercent: Number(row.commissionPercent ?? 0) || 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -55,8 +56,18 @@ function normalizeRequestedRole(role, fallback = 'operator') {
 
 function normalizeRequestedPermissions(input, role, fallback) {
   if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
+  if (normalizeRole(role) === 'vendedor') return permissionsForRole(role);
   return normalizePermissions(input != null ? input : fallback, role)
     .filter((key) => key !== 'users' && key !== 'dashboard');
+}
+
+function normalizeCommissionPercent(value, fallback = 0) {
+  if (value == null || value === '') return Number(fallback) || 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+    throw new Error('La comisión debe estar entre 0 y 100');
+  }
+  return Math.round(amount * 100) / 100;
 }
 
 function validatePassword(password) {
@@ -147,6 +158,8 @@ export async function ensureUserColumns() {
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'operator';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS permissions TEXT DEFAULT '[]';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
+    ALTER TABLE "user" ADD COLUMN IF NOT EXISTS commission_percent NUMERIC(5,2) DEFAULT 0;
+    UPDATE "user" SET commission_percent = 0 WHERE commission_percent IS NULL;
     CREATE TABLE IF NOT EXISTS user_audit_log (
       id BIGSERIAL PRIMARY KEY,
       actor_id TEXT,
@@ -204,7 +217,7 @@ export async function promoteSuperadminByEmail(email, actorId = null) {
   });
 }
 
-export async function createUser({ name, email, password, role = 'operator', permissions, active = true }, actorId) {
+export async function createUser({ name, email, password, role = 'operator', permissions, active = true, commissionPercent }, actorId) {
   const actor = await getUserById(actorId);
   const cleanEmail = validateEmail(email);
   const cleanName = String(name || '').trim() || cleanEmail.split('@')[0];
@@ -214,6 +227,7 @@ export async function createUser({ name, email, password, role = 'operator', per
   const roleKey = normalizeRequestedRole(role);
   assertCanAssignRole(actor, roleKey);
   const perms = normalizeRequestedPermissions(permissions, roleKey, permissionsForRole(roleKey));
+  const commission = normalizeCommissionPercent(commissionPercent, 0);
   const userId = newId();
   const accountId = newId();
   const now = new Date();
@@ -229,6 +243,7 @@ export async function createUser({ name, email, password, role = 'operator', per
       role: roleKey,
       permissions: JSON.stringify(perms),
       active: !!active,
+      commissionPercent: String(commission),
       createdAt: now,
       updatedAt: now,
     });
@@ -263,13 +278,23 @@ export async function updateUser(id, patch = {}, actorId) {
       : current.permissions;
     const permissions = normalizeRequestedPermissions(patch.permissions, role, permissionFallback);
     const active = patch.active != null ? !!patch.active : current.active;
+    const commissionPercent = patch.commissionPercent != null
+      ? normalizeCommissionPercent(patch.commissionPercent)
+      : Number(current.commissionPercent || 0);
     const passwordChanged = patch.password != null && String(patch.password) !== '';
     if (passwordChanged) validatePassword(patch.password);
 
     await assertAdminInvariants(tx, current, role, active);
     await tx
       .update(authUsers)
-      .set({ name, role, permissions: JSON.stringify(permissions), active, updatedAt: new Date() })
+      .set({
+        name,
+        role,
+        permissions: JSON.stringify(permissions),
+        active,
+        commissionPercent: String(commissionPercent),
+        updatedAt: new Date(),
+      })
       .where(eq(authUsers.id, id));
 
     if (passwordChanged) {

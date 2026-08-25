@@ -1057,6 +1057,10 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
     ON orders(promised_shipping_at)
     WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by TEXT;
+  CREATE INDEX IF NOT EXISTS idx_orders_created_by
+    ON orders(created_by)
+    WHERE created_by IS NOT NULL;
   -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
   -- para asociarlo más adelante.
   ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
@@ -1543,6 +1547,17 @@ const DDL = `
     CHECK (status IN ('pending', 'running', 'success', 'partial', 'error')),
     CHECK (sync_interval_minutes > 0)
   );
+
+  UPDATE orders o
+  SET created_by = e.actor_user_id
+  FROM (
+    SELECT DISTINCT ON (order_id) order_id, actor_user_id
+    FROM order_events
+    WHERE event_type = 'order.created'
+      AND nullif(trim(actor_user_id), '') IS NOT NULL
+    ORDER BY order_id, id
+  ) e
+  WHERE o.id = e.order_id AND o.created_by IS NULL;
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {
