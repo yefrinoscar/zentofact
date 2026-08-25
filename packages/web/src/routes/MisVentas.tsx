@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle2, Loader2, Plus, ShoppingBag } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Loader2, Plus, ShoppingBag } from 'lucide-react';
 import api from '../lib/api';
 import {
   formatSaleMoney,
@@ -9,13 +9,19 @@ import {
   salespersonKpis,
   type SalespersonHome,
 } from '../lib/mis-ventas-presentation';
+import {
+  flashFromMisVentasState,
+  humanizeSaleError,
+  type MisVentasLocationState,
+  type SaleFlash,
+} from '../lib/sale-feedback';
+import { SaleFlashNotice } from '../components/SaleFlashNotice';
 import { Button } from '../components/ui/button';
 
 export default function MisVentas() {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
-  const [successMessage, setSuccessMessage] = useState('');
+  const [flash, setFlash] = useState<SaleFlash | null>(null);
   const homeQuery = useQuery({
     queryKey: ['salesperson-home'],
     queryFn: () => api.getSalespersonHome() as Promise<SalespersonHome>,
@@ -23,15 +29,19 @@ export default function MisVentas() {
   });
   const kpis = salespersonKpis(homeQuery.data);
   const orders = homeQuery.data?.orders || [];
-  const error = (homeQuery.error as Error | undefined)?.message || '';
+  const loadError = homeQuery.error
+    ? humanizeSaleError((homeQuery.error as Error).message || 'No se pudieron cargar tus ventas.')
+    : '';
 
   useEffect(() => {
-    const registered = (location.state as { registered?: string } | null)?.registered;
-    if (!registered) return;
-    setSuccessMessage(`Venta ${registered} registrada.`);
-    void queryClient.invalidateQueries({ queryKey: ['salesperson-home'] });
+    const state = location.state as MisVentasLocationState | null;
+    const next = flashFromMisVentasState(state);
+    if (!next && !state?.registered && !state?.flash) return;
+    if (next) setFlash(next);
+    // Optimistic cache already updated in Nueva venta; do not refetch here or the
+    // sale can vanish before the create request finishes.
     navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, location.state, navigate, queryClient]);
+  }, [location.pathname, location.state, navigate]);
 
   return (
     <div className="space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -42,23 +52,17 @@ export default function MisVentas() {
         </Button>
       </div>
 
-      {successMessage && (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
-          <span role="status" aria-live="polite" className="flex min-w-0 items-center gap-2">
-            <CheckCircle2 className="size-4 shrink-0" />
-            <span className="min-w-0 break-words">{successMessage}</span>
-          </span>
-          <Button type="button" variant="ghost" size="xs" className="h-11 shrink-0 cursor-pointer sm:h-6" onClick={() => setSuccessMessage('')}>
-            Cerrar
-          </Button>
-        </div>
-      )}
+      {flash && <SaleFlashNotice flash={flash} onDismiss={() => setFlash(null)} />}
 
-      {error && (
-        <div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          {error}
-        </div>
+      {loadError && (
+        <SaleFlashNotice
+          flash={{
+            tone: 'error',
+            title: 'No se pudo cargar',
+            detail: loadError,
+            hint: 'Desliza hacia abajo o vuelve a entrar.',
+          }}
+        />
       )}
 
       <section aria-label="Indicadores personales" className="grid grid-cols-2 gap-3">

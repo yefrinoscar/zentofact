@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle,
   ArrowLeft,
   Banknote,
   CalendarDays,
@@ -33,8 +32,17 @@ import {
   type SaleLine,
   type SaleSource,
 } from '../lib/registrar-venta';
+import {
+  applyOptimisticSale,
+  buildOptimisticSale,
+  humanizeSaleError,
+  saleFailedFlash,
+  saleRegisteredFlash,
+  type OptimisticHome,
+} from '../lib/sale-feedback';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
+import { SaleFlashNotice } from '../components/SaleFlashNotice';
 import { Button } from '../components/ui/button';
 import { Calendar } from '../components/ui/calendar';
 import {
@@ -390,9 +398,9 @@ export default function RegistrarVenta() {
       return;
     }
 
-    setCreating(true);
+    let payload;
     try {
-      const payload = buildManualSaleOrderPayload({
+      payload = buildManualSaleOrderPayload({
         channelAccountId: manualAccount!.id,
         customerName,
         customerPhone,
@@ -407,36 +415,76 @@ export default function RegistrarVenta() {
         receivedBy,
         paymentProof,
       });
+    } catch (error: any) {
+      setCreateError(humanizeSaleError(error?.message));
+      return;
+    }
+
+    const registered = {
+      number: payload.externalOrderNumber,
+      customer: String(payload.customer?.name || customerName).trim(),
+      total: Number(payload.total) || 0,
+    };
+    const optimisticSale = buildOptimisticSale({
+      orderNumber: registered.number,
+      customerName: registered.customer,
+      total: registered.total,
+      paymentMethod,
+      orderedAt: payload.orderedAt,
+    });
+    const previousHome = queryClient.getQueryData<OptimisticHome>(['salesperson-home']);
+    queryClient.setQueryData<OptimisticHome>(['salesperson-home'], (current) => (
+      applyOptimisticSale(current ?? previousHome, optimisticSale, Number(previousHome?.commissionPercent) || 0)
+    ));
+
+    // Optimistic: show the list with the new sale right away, then confirm in the background.
+    setCreating(true);
+    navigate(afterSavePath, {
+      replace: true,
+      state: { registered, flash: saleRegisteredFlash(registered) },
+    });
+
+    try {
       await api.createManagedOrder(payload);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['salesperson-home'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
       ]);
-      navigate(afterSavePath, { replace: true, state: { registered: payload.externalOrderNumber } });
     } catch (error: any) {
-      setCreateError(error?.message || 'No se pudo registrar la venta.');
+      queryClient.setQueryData(['salesperson-home'], previousHome);
+      navigate(afterSavePath, {
+        replace: true,
+        state: { flash: saleFailedFlash(error?.message) },
+      });
     } finally {
       setCreating(false);
     }
   };
 
   const channelMissing = !loadError && accounts.length > 0 && !manualAccount;
+  const formAlert = createError
+    ? { tone: 'error' as const, title: 'Falta un dato', detail: humanizeSaleError(createError) }
+    : loadError
+      ? { tone: 'error' as const, title: 'No se pudo preparar el formulario', detail: humanizeSaleError(loadError), hint: 'Vuelve e inténtalo otra vez.' }
+      : channelMissing
+        ? {
+          tone: 'error' as const,
+          title: 'Canal manual no listo',
+          detail: 'Todavía no hay un canal de venta manual habilitado.',
+          hint: 'Pide a un admin que lo active.',
+        }
+        : null;
 
   return (
-    <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-4">
+    <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-[calc(9rem+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-4">
       <div>
         <Button type="button" variant="ghost" className="-ml-2 h-11 cursor-pointer px-2 sm:h-9" onClick={() => navigate(afterSavePath)}>
           <ArrowLeft /> Volver
         </Button>
       </div>
 
-      {(loadError || createError || channelMissing) && (
-        <div role="alert" className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          {createError || loadError || 'Todavía no hay un canal de venta manual habilitado.'}
-        </div>
-      )}
+      {formAlert && <SaleFlashNotice flash={formAlert} />}
 
       <section className="space-y-3">
         <div>
@@ -616,7 +664,7 @@ export default function RegistrarVenta() {
             </div>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">{PICKUP_ADDRESS}</p>
+          <p className="pb-1 text-sm leading-6 text-muted-foreground sm:pb-0">{PICKUP_ADDRESS}</p>
         )}
       </section>
 
@@ -663,7 +711,10 @@ export default function RegistrarVenta() {
         )}
       </section>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
+      {/* Spacer so the fixed bar never covers the last fields on mobile. */}
+      <div className="h-2 sm:hidden" aria-hidden="true" />
+
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
           <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Total</p>
@@ -671,7 +722,7 @@ export default function RegistrarVenta() {
           </div>
           <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !lines.length || !!loadError || channelMissing}>
             {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
-            {creating ? 'Registrando…' : 'Registrar venta'}
+            {creating ? 'Listo…' : 'Registrar venta'}
           </Button>
         </div>
       </div>
