@@ -17,11 +17,41 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
+
+// Permitir el alta del admin de bootstrap antes de cargar Better Auth.
+const bootstrapEmailEarly = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim();
+const bootstrapPasswordEarly = String(process.env.ADMIN_PASSWORD || '').trim();
+if (bootstrapEmailEarly && bootstrapPasswordEarly) {
+  process.env.AUTH_ALLOW_SIGNUP = 'true';
+}
+
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
+const { ensureAuthSchema } = await import('./ensure-auth-schema.js');
+await ensureAuthSchema();
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 await users.ensureUserColumns();
+
+// En previews/DB vacías: crear el superadmin si hay credenciales de bootstrap.
+if (bootstrapEmailEarly && bootstrapPasswordEarly) {
+  try {
+    await auth.api.signUpEmail({
+      body: { email: bootstrapEmailEarly, password: bootstrapPasswordEarly, name: 'Admin' },
+    });
+    console.log('[AUTH] Admin bootstrap creado:', bootstrapEmailEarly);
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (!/already exists|existe/i.test(message)) {
+      console.warn('[AUTH] Admin bootstrap no creado:', message.slice(0, 160));
+    }
+  }
+  try {
+    await users.promoteSuperadminByEmail(bootstrapEmailEarly, 'system.bootstrap');
+  } catch (error) {
+    console.warn('[AUTH] No se pudo marcar superadmin:', String(error?.message || error).slice(0, 160));
+  }
+}
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
