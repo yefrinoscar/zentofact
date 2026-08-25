@@ -18,6 +18,12 @@ async function insertOrder(pool, orderId) {
      ) values (7, $1, $1, 'pending', '{"Statuses":"pending"}'::jsonb)`,
     [orderId],
   );
+  await pool.query(
+    `insert into orders (
+       company_id, channel_account_id, external_order_id, fulfillment_status, metadata
+     ) values (7, 1, $1, 'pending', '{}'::jsonb)`,
+    [orderId],
+  );
 }
 
 test('PostgreSQL real: concurrencia, estado terminal y reconciliación no agotan el pool', {
@@ -68,6 +74,28 @@ test('PostgreSQL real: concurrencia, estado terminal y reconciliación no agotan
           references falabella_orders(company_id, order_id) on delete cascade,
         check (state in ('processing', 'reconciling', 'succeeded', 'failed', 'unknown'))
       );
+      create table order_channels (
+        id integer primary key,
+        code text not null
+      );
+      insert into order_channels (id, code) values (1, 'falabella');
+      create table order_channel_accounts (
+        id integer primary key,
+        channel_id integer not null
+      );
+      insert into order_channel_accounts (id, channel_id) values (1, 1);
+      create table orders (
+        id bigserial primary key,
+        company_id integer,
+        channel_account_id integer not null,
+        external_order_id text not null,
+        fulfillment_status text not null,
+        provider_status text,
+        metadata jsonb not null default '{}'::jsonb,
+        provider_updated_at timestamptz,
+        last_seen_at timestamptz,
+        updated_at timestamptz not null default now()
+      );
     `);
 
     await insertOrder(pool, 'ORDER-CONCURRENT');
@@ -96,6 +124,10 @@ test('PostgreSQL real: concurrencia, estado terminal y reconciliación no agotan
     assert.equal(pool.totalCount - pool.idleCount, 0, 'el proveedor no debe retener conexiones PostgreSQL');
     provider.resolve({ ok: true, alreadyReady: false });
     assert.equal((await owner).kind, 'success');
+    const canonicalReady = await pool.query(
+      `select fulfillment_status from orders where external_order_id='ORDER-CONCURRENT'`,
+    );
+    assert.equal(canonicalReady.rows[0].fulfillment_status, 'ready_to_ship');
 
     await insertOrder(pool, 'ORDER-TERMINAL-RACE');
     await pool.query(

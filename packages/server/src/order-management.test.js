@@ -403,6 +403,40 @@ test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () 
   assert.deepEqual(result.orders, []);
 });
 
+test('el histórico expone tienda corta y el problema operativo con su explicación', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /package_mapping_problem/);
+      return { rows: [{
+        id: 17,
+        company_id: 7,
+        channel_account_id: 22,
+        channel_code: 'falabella',
+        channel_name: 'Falabella',
+        channel_account_name: 'TIENDAS YAKURUNA S.A.C.',
+        nombre_comercial: 'TIENDAS YAKURUNA S.A.C.',
+        external_order_id: 'ORDER-17',
+        external_order_number: 'ORDER-17',
+        order_status: 'confirmed',
+        payment_status: 'paid',
+        fulfillment_status: 'ready_to_ship',
+        document_status: 'pending',
+        items_status: 'ready',
+        currency: 'PEN',
+        metadata: { labelCount: 3 },
+        customer: {},
+        shipping: {},
+        package_mapping_problem: true,
+        total_count: 1,
+      }] };
+    },
+  };
+
+  const result = await listOrders({}, db);
+  assert.equal(result.orders[0].companyName, 'Yakuruna');
+  assert.equal(result.orders[0].problem, 'No se pudieron asociar con seguridad los productos a cada etiqueta del pedido.');
+});
+
 test('la vista por defecto limita marketplaces a sellers activos y conectados', async () => {
   const db = {
     async query(sql) {
