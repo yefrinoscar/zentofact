@@ -367,14 +367,15 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'profitOwner';
+type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'description';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'description'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
   patch: Record<string, unknown>;
   optimistic: {
     field: ProductEditableField;
-    patch: Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>;
+    patch: ProductFieldPatch;
   };
 };
 
@@ -387,7 +388,7 @@ type CatalogProductsPage = {
 function patchProductCaches(
   queryClient: ReturnType<typeof useQueryClient>,
   productId: number,
-  patch: Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>,
+  patch: ProductFieldPatch,
 ) {
   queryClient.setQueryData(['catalog-product-detail', productId], (current: Product | undefined) => (
     current?.id === productId ? { ...current, ...patch } : current
@@ -1012,6 +1013,18 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveDescription = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const normalized = raw.trim() || null;
+    const current = selectedProduct.description || '';
+    if ((normalized || '') === current) return;
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { description: normalized },
+      optimistic: { field: 'description', patch: { description: normalized } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   return (
     <div className="space-y-4">
       <CatalogInventoryKpis
@@ -1122,6 +1135,7 @@ export default function Productos() {
         fieldError={fieldError}
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
+        onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1656,7 +1670,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSaveDescription,
 }: {
   open: boolean;
   product: Product | null;
@@ -1691,30 +1705,10 @@ function ProductDrawer({
   fieldError: string;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
+  onSaveDescription: (value: string) => void;
 }) {
   const associatedListings = product?.listings || [];
   const publishedListings = associatedListings.filter(isActivelyPublished);
-  const publicationsByChannel = [...publishedListings.reduce((groups, listing) => {
-    const current = groups.get(listing.channelCode) || [];
-    current.push(listing);
-    groups.set(listing.channelCode, current);
-    return groups;
-  }, new Map<string, Listing[]>())]
-    .map(([channelCode, channelListings]) => {
-      const sellers = [...channelListings.reduce((groups, listing) => {
-        const current = groups.get(listing.companyId) || {
-          companyId: listing.companyId,
-          name: sellerShortName(listing.companyName || `Empresa ${listing.companyId}`),
-          listings: [] as Listing[],
-        };
-        current.listings.push(listing);
-        groups.set(listing.companyId, current);
-        return groups;
-      }, new Map<number, { companyId: number; name: string; listings: Listing[] }>()).values()]
-        .sort((a, b) => a.name.localeCompare(b.name, 'es'));
-      return { channelCode, sellers };
-    })
-    .sort((a, b) => channelLabel(a.channelCode).localeCompare(channelLabel(b.channelCode), 'es'));
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
@@ -1726,17 +1720,8 @@ function ProductDrawer({
       }}
     >
       <SheetHeader className="border-b border-border px-5 py-4 pr-16">
-        <div className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto]">
-          {product?.imageUrl ? <button
-            type="button"
-            onClick={() => onOpenImage(product)}
-            className="group relative h-14 w-14 cursor-zoom-in overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            aria-label={`Ampliar foto de ${product.name}`}
-            title="Ampliar foto"
-          >
-            <img src={product.imageUrl} alt="" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105" />
-            <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true"><Maximize2 className="h-4 w-4" /></span>
-          </button> : <span className="grid h-14 w-14 place-items-center rounded-lg bg-muted"><Boxes className="h-5 w-5" /></span>}
+        <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[5rem_minmax(0,1fr)_auto]">
+          <ProductPhoto product={product} onOpenImage={onOpenImage} onEditImage={onEditImage} />
           <div className="min-w-0">
             <SheetTitle className="pr-2 leading-6">{product?.name || 'Producto'}</SheetTitle>
             <SheetDescription className="mt-1 flex flex-wrap items-center gap-2">
@@ -1773,50 +1758,29 @@ function ProductDrawer({
             <Metric label="Sellers" value={String(product.sellersCount || 0)} />
             <Metric label="Publicadas" value={String(publishedListings.length)} />
           </div>
-          <section className="border-b border-border px-5 py-5">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Publicado en</h3><p className="mt-1 text-xs text-muted-foreground">Canales y sellers con una publicación activa.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
-            {publicationsByChannel.length ? <div className="mt-4 space-y-3">
-              {publicationsByChannel.map(({ channelCode, sellers: channelSellers }) => <article key={channelCode} className="rounded-lg bg-muted/40 p-4">
-                <header className="flex flex-wrap items-center gap-2">
-                  <ChannelBadge value={channelCode} />
-                  <span className="text-xs text-muted-foreground">{channelSellers.length} seller{channelSellers.length === 1 ? '' : 's'}</span>
-                </header>
-                <ul className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
-                  {channelSellers.map((seller) => <li key={seller.companyId} className="flex min-w-0 items-start gap-2.5">
-                    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
-                    <div className="min-w-0">
-                      <p className="line-clamp-2 text-sm font-semibold leading-5">{seller.name}</p>
-                      <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                        {seller.listings.length === 1 ? `SKU ${seller.listings[0].sellerSku}` : `${seller.listings.length} publicaciones`}
-                      </p>
-                    </div>
-                  </li>)}
-                </ul>
-              </article>)}
-            </div> : <p className="mt-4 text-sm text-muted-foreground">Ninguna publicación está visible en un seller y canal.</p>}
-            <div className="mt-4 border-t border-border pt-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
-          </section>
-          <section className="border-b border-border px-5 py-5">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold">Detalles</h3>
-              <button type="button" onClick={onEditImage} className="-mr-2 inline-flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
-            </div>
+          <div className="px-5 py-5">
             <ProductProperties
               product={product}
               profitOwners={profitOwners}
               savingField={savingField}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
+              onSaveDescription={onSaveDescription}
             />
             {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
-          </section>
-          <section className="px-5 py-5"><h3 className="text-sm font-semibold">Descripción</h3><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{product.description || 'Sin descripción.'}</p></section>
+          </div>
         </TabsContent>
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">
-            {associatedListings.length} {associatedListings.length === 1 ? 'publicación asociada' : 'publicaciones asociadas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
-          </p><p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p></div><button type="button" onClick={onPublish} className="primary-button h-8 px-3"><PackagePlus className="h-4 w-4" /> Nueva publicación</button></div>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <p className="text-sm font-semibold">
+                {associatedListings.length} {associatedListings.length === 1 ? 'publicación asociada' : 'publicaciones asociadas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p>
+            </div>
+            <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
+          </div>
           {!associatedListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div> : associatedListings.map((listing) => {
             const publication = publicationPresentation(listing);
             return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
@@ -1834,7 +1798,6 @@ function ProductDrawer({
               </div>
             </article>;
           })}
-          <div className="border-t border-border px-5 py-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
         </TabsContent>
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto">
@@ -1988,49 +1951,110 @@ function InfoValue({ label, value }: { label: string; value: ReactNode }) {
   return <div><p className="text-xs text-muted-foreground">{label}</p><div className="mt-1 text-sm font-medium">{value}</div></div>;
 }
 
+function ProductPhoto({
+  product,
+  onOpenImage,
+  onEditImage,
+}: {
+  product: Product | null;
+  onOpenImage: (product: Product) => void;
+  onEditImage: () => void;
+}) {
+  return (
+    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
+      {product?.imageUrl ? (
+        <button
+          type="button"
+          onClick={() => onOpenImage(product)}
+          className="absolute inset-0 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Ampliar foto de ${product.name}`}
+          title="Ampliar foto"
+        >
+          <img src={product.imageUrl} alt="" className="h-full w-full object-cover" />
+        </button>
+      ) : (
+        <span className="grid h-full w-full place-items-center pb-6"><Boxes className="h-5 w-5 text-muted-foreground" /></span>
+      )}
+      <button
+        type="button"
+        onClick={onEditImage}
+        disabled={!product}
+        className="absolute inset-x-0 bottom-0 z-10 flex min-h-7 items-center justify-center bg-black/65 px-1 py-1 text-center text-[10px] font-medium leading-tight text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+        aria-label="Cambiar foto"
+        title="Cambiar foto"
+      >
+        Cambiar foto
+      </button>
+    </div>
+  );
+}
+
+function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+      <button type="button" onClick={onAssociate} className="secondary-button h-8 px-3">
+        <Plus className="h-4 w-4" /> Asociar producto
+      </button>
+      <button type="button" onClick={onPublish} className="primary-button h-8 px-3">
+        <PackagePlus className="h-4 w-4" /> Nueva publicación
+      </button>
+    </div>
+  );
+}
+
 function ProductProperties({
   product,
   profitOwners,
   savingField,
   onSaveCommission,
   onSaveProfitOwner,
+  onSaveDescription,
 }: {
   product: Product;
   profitOwners: string[];
   savingField: ProductEditableField | null;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
+  onSaveDescription: (value: string) => void;
 }) {
   return (
-    <dl className="mt-3">
-      <ProductInlineField
-        label="Comisión"
+    <>
+      <dl>
+        <ProductInlineField
+          label="Comisión"
+          productId={product.id}
+          field="commissionAmount"
+          value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+          type="number"
+          placeholder="Sin comisión"
+          prefix="S/"
+          saving={savingField === 'commissionAmount'}
+          onSave={onSaveCommission}
+        />
+        <ProductInlineField
+          label="Beneficiario"
+          productId={product.id}
+          field="profitOwner"
+          value={product.profitOwner || ''}
+          placeholder="Sin beneficiario"
+          list="profit-owner-inline-options"
+          saving={savingField === 'profitOwner'}
+          onSave={onSaveProfitOwner}
+        />
+        <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+        <PropertyRow label="Marca">{usableBrand(product.brand) || <PropertyEmpty>Sin marca</PropertyEmpty>}</PropertyRow>
+        <PropertyRow label="Unidad">Unidad</PropertyRow>
+        <PropertyRow label="Stock disponible">{formatNumber(product.available)} u</PropertyRow>
+        <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
+        <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
+      </dl>
+      <ProductDescriptionField
         productId={product.id}
-        field="commissionAmount"
-        value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
-        type="number"
-        placeholder="Sin comisión"
-        prefix="S/"
-        saving={savingField === 'commissionAmount'}
-        onSave={onSaveCommission}
+        value={product.description || ''}
+        saving={savingField === 'description'}
+        onSave={onSaveDescription}
       />
-      <ProductInlineField
-        label="Beneficiario"
-        productId={product.id}
-        field="profitOwner"
-        value={product.profitOwner || ''}
-        placeholder="Sin beneficiario"
-        list="profit-owner-inline-options"
-        saving={savingField === 'profitOwner'}
-        onSave={onSaveProfitOwner}
-      />
-      <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-      <PropertyRow label="Marca">{usableBrand(product.brand) || <PropertyEmpty>Sin marca</PropertyEmpty>}</PropertyRow>
-      <PropertyRow label="Unidad">Unidad</PropertyRow>
-      <PropertyRow label="Stock disponible">{formatNumber(product.available)} u</PropertyRow>
-      <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
-      <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
-    </dl>
+    </>
   );
 }
 
@@ -2120,6 +2144,65 @@ function ProductInlineField({
           }}
         />
         {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+      </span>
+    </label>
+  );
+}
+
+function ProductDescriptionField({
+  productId,
+  value,
+  saving,
+  onSave,
+}: {
+  productId: number;
+  value: string;
+  saving?: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+  const focused = draft !== null;
+  const displayed = draft ?? value;
+
+  return (
+    <label className="mt-6 block cursor-text">
+      <span className="flex items-baseline justify-between gap-3">
+        <span className="text-sm text-muted-foreground">Descripción</span>
+        {saving
+          ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+          : <span className="text-xs text-muted-foreground">Del producto interno</span>}
+      </span>
+      <span className={cn(
+        'mt-2 block rounded-md px-2 py-2 transition-colors duration-150',
+        'hover:bg-muted',
+        focused && 'bg-muted',
+      )}>
+        <textarea
+          key={`${productId}-description`}
+          className={cn(
+            'min-h-24 w-full resize-y border-0 bg-transparent p-0 text-sm leading-6 text-foreground shadow-none outline-none ring-0',
+            'placeholder:text-muted-foreground/70',
+            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+          )}
+          value={displayed}
+          placeholder="Sin descripción"
+          aria-label="Descripción del producto interno"
+          onFocus={() => setDraft(value)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
+            cancelledRef.current = false;
+            setDraft(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation();
+              cancelledRef.current = true;
+              event.currentTarget.blur();
+            }
+          }}
+        />
       </span>
     </label>
   );
