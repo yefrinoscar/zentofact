@@ -12,7 +12,7 @@ Prove at `http://127.0.0.1:3011`. The API is `http://127.0.0.1:3010`. Railway is
 
 `install` (`bash scripts/cloud-agent-install.sh`) runs on an environment Build, not every agent. `start` plus the API/web terminals run every boot. Snapshot stores disk (`node_modules`, `dist/`, Postgres files). Processes always restart.
 
-If catalog or inbox is empty, run `.cursor/skills/verify-zentofact/scripts/control-zentofact seed` (same as `SEED_PREVIEW=true npm run seed:preview -w @zentofact/server -- --force`). Marker today is `preview-seed-v2`.
+If catalog or inbox is empty, run `.cursor/skills/verify-zentofact/scripts/control-zentofact seed` (same as `SEED_PREVIEW=true npm run seed:preview -w @zentofact/server -- --force`). Marker today is `preview-seed-v3`.
 
 ## Password
 
@@ -58,11 +58,11 @@ Inbox reads `falabella_orders`, not the unified `orders` table.
 |---|---|---|
 | PV-10001 | `pending` | `#/pedidos` tab Pendientes |
 | PV-10003 | `ready_to_ship` | `#/pedidos` tab Listos para enviar |
-| PV-10002 | `shipped` | not in open inbox; promised shipping today feeds `#/salidas` |
+| PV-10002 | `shipped` | not the pending tab; promised shipping today feeds `#/salidas` with AG301 |
 
-Proof: as operator or admin, `GET /orders-inbox?view=open` includes PV-10001. Promised shipping time is "now" so `#/salidas` and `GET /catalog/sales/today` can list AG301. Do not click **Marcar listo para enviar**. Do not `POST /orders-inbox/sync`.
+Proof: as operator or admin, `GET /orders-inbox?view=open` includes PV-10001. Inbox `order_id` matches the unified `orders.external_order_id`. Promised shipping is noon America/Lima today, so `#/salidas` and `GET /catalog/sales/today` list AG301. Do not click **Marcar listo para enviar**. Do not `POST /orders-inbox/sync`.
 
-Unified sample orders PV-10001 / PV-10002 also exist on LIMBO's Falabella channel account for `#/orders`.
+Unified sample orders PV-10001, PV-10002, and PV-10003 exist on LIMBO's Falabella channel account for `#/orders`.
 
 ## Flags
 

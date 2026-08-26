@@ -19,7 +19,7 @@ Preconditions:
 
 - Baseline launch, doctor, and login have succeeded.
 - The signed-in user can open `salidas` (seeded operator, admin, or superadmin).
-- Seeded Falabella rows use promised shipping time of now, so AG301 can appear. If the JSON list is empty after seed, that is still a valid empty warehouse day only when `falabella_orders` has no rows with today's promised date.
+- Seeded Falabella and unified orders share promised shipping time of today, so AG301 appears. If the JSON list is empty after seed, run `control-zentofact seed`.
 
 - **Open the screen.** Navigate to `http://127.0.0.1:3011/#/salidas`. The header `h1` reads `Salidas de hoy`. A search box is named `Buscar SKU, producto o seller`. A region is named `Productos con salida en esta fecha`.
 - **Read the aggregation.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /catalog/sales/today .cursor/skills/verify-zentofact/artifacts/<run>/salidas.json`. HTTP 200. If the JSON lists products, at least one name or SKU is visible in the table. If the JSON list is empty, the table shows the empty state, not a spinner that never ends.
