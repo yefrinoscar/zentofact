@@ -28,7 +28,9 @@
     "r2:backfill:proxy": "node scripts/upload-archives-via-proxy.mjs",
     "verify:order-sync": "node scripts/verify-unified-order-sync.mjs",
     "r2:pull": "node scripts/pull-r2-to-minio.mjs",
-    "worktree:setup": "bash scripts/setup-worktree.sh"
+    "worktree:setup": "bash scripts/setup-worktree.sh",
+    "cloud:install": "bash scripts/cloud-agent-install.sh",
+    "cloud:start": "bash scripts/cloud-agent-start.sh"
   },
   "devDependencies": {
     "pg": "^8.21.0"

@@ -144,13 +144,14 @@ print("session=ok email="+email if email else "session=unauthenticated")
 }
 
 cmd_launch() {
-  if [[ ! -e "$repo_root/.env" || ! -e "$repo_root/node_modules" ]]; then
+  bash "$repo_root/scripts/cloud-agent-start.sh"
+  if [[ ! -e "$repo_root/node_modules" ]]; then
     (cd "$repo_root" && npm run worktree:setup)
   fi
   ensure_workspace_modules
-  if [[ ! -f "$repo_root/packages/core/dist/index.js" || ! -f "$repo_root/packages/falabella-api/dist/index.js" ]]; then
-    echo "building @zentofact/falabella-api and @zentofact/core"
-    (cd "$repo_root" && npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core)
+  if [[ ! -f "$repo_root/packages/core/dist/index.js" || ! -f "$repo_root/packages/falabella-api/dist/index.js" || ! -f "$repo_root/packages/ripley-api/dist/index.js" ]]; then
+    echo "building workspace packages"
+    bash "$repo_root/scripts/cloud-agent-install.sh"
   fi
   if api_ready && web_ready; then
     echo "attached" > "$attached_file"
@@ -176,7 +177,7 @@ cmd_launch() {
   ) >"$web_log" 2>&1 &
   echo $! > "$web_pid_file"
   local i
-  for i in $(seq 1 60); do
+  for i in $(seq 1 180); do
     if api_ready && web_ready; then
       echo "ready api=$api_url web=$web_url"
       return 0

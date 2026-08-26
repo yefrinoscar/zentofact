@@ -1,0 +1,21 @@
+{
+  "name": "ZentoFact",
+  "install": "bash scripts/cloud-agent-install.sh",
+  "start": "bash scripts/cloud-agent-start.sh",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "PORT=3010 npm run dev:api",
+      "description": "ZentoFact API on 3010. Ready when GET /health returns service zentofact-api."
+    },
+    {
+      "name": "web",
+      "command": "PORT=3011 VITE_API_TARGET=http://127.0.0.1:3010 npm run dev:web",
+      "description": "ZentoFact web on 3011. Ready when GET / returns HTTP 200."
+    }
+  ],
+  "ports": [
+    { "name": "api", "port": 3010 },
+    { "name": "web", "port": 3011 }
+  ]
+}

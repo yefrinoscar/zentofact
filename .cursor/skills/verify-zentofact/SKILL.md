@@ -11,7 +11,7 @@ This skill is for an agent that has never seen the app. Read `features/README.md
 
 ## Launch
 
-Repo root: three levels above this file (`../../../` from `.cursor/skills/verify-zentofact`). `.env` must exist (symlink it with `npm run worktree:setup` if missing). It supplies `DATABASE_URL_POSTGRES`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
+Repo root: three levels above this file (`../../../` from `.cursor/skills/verify-zentofact`). `launch` runs `scripts/cloud-agent-start.sh` so local Postgres and `.env` exist. Fixture login is `admin@zentofact.local` / `ZentoFactLocal123`.
 
 Exact start:
 
@@ -24,7 +24,7 @@ That script runs `npm run worktree:setup` when `.env` or `node_modules` is missi
 - API: `PORT=3010 npm run dev:api` — ready when `GET http://127.0.0.1:3010/health` returns JSON with `"service":"zentofact-api"`.
 - Web: `VITE_API_TARGET=http://127.0.0.1:3010 npm run dev:web` — ready when `GET http://127.0.0.1:3011/` is HTTP 200.
 
-If both ports already serve a healthy pair, the helper **attaches** and must not start a second pair. If only one port is up, it refuses. The app cannot isolate data: every instance shares `DATABASE_URL_POSTGRES`. Never run two verification drives against this database at once. Default to read-only recipes. Do not click **Marcar listo para enviar**, do not POST `/catalog/inventory/adjust`, and do not sync Falabella unless the feature file says so.
+If both ports already serve a healthy pair, the helper **attaches** and must not start a second pair. If only one port is up, it refuses. This VM's catalog lives in local Postgres. Default to read-only recipes. Do not click **Marcar listo para enviar**, do not POST `/catalog/inventory/adjust`, and do not sync Falabella unless the feature file says so.
 
 Teardown:
 
