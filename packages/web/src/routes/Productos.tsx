@@ -1790,10 +1790,7 @@ function ProductDrawer({
             <div className="mt-4 border-t border-border pt-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
           </section>
           <section className="border-b border-border px-5 py-5">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold">Configuración</h3>
-              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
-            </div>
+            <h3 className="text-sm font-semibold">Configuración</h3>
             <ProductEditableConfig
               product={product}
               profitOwners={profitOwners}
@@ -1801,10 +1798,13 @@ function ProductDrawer({
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
             />
-            {fieldError ? <p className="mt-2 text-xs text-red-600">{fieldError}</p> : null}
+            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
           </section>
           <section className="border-b border-border px-5 py-5">
-            <h3 className="text-sm font-semibold">Información</h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Información</h3>
+              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
+            </div>
             <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
               <InfoValue label="SKU interno" value={product.mainSku} />
               <InfoValue label="Marca" value={usableBrand(product.brand) || '—'} />
@@ -2006,7 +2006,7 @@ function ProductEditableConfig({
   onSaveProfitOwner: (value: string) => void;
 }) {
   return (
-    <div className="mt-4 flex flex-wrap items-start gap-x-10 gap-y-4">
+    <div className="mt-3 divide-y divide-border/60">
       <ProductInlineField
         label="Comisión"
         productId={product.id}
@@ -2014,6 +2014,7 @@ function ProductEditableConfig({
         value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
         type="number"
         placeholder="Sin comisión"
+        prefix="S/"
         saving={savingField === 'commissionAmount'}
         onSave={onSaveCommission}
       />
@@ -2041,6 +2042,7 @@ function ProductInlineField({
   type = 'text',
   placeholder,
   list,
+  prefix,
   saving,
 }: {
   label: string;
@@ -2051,44 +2053,55 @@ function ProductInlineField({
   type?: string;
   placeholder?: string;
   list?: string;
+  prefix?: string;
   saving?: boolean;
 }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  const displayed = editing ?? value;
+  const [draft, setDraft] = useState<string | null>(null);
+  const focused = draft !== null;
+  const displayed = draft ?? value;
 
   return (
-    <div className="min-w-[8rem]">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <div className="mt-1 flex items-center gap-1.5">
+    <label className="group flex cursor-text items-center gap-4 py-2.5 first:pt-1 last:pb-1">
+      <span className="w-28 shrink-0 text-sm text-muted-foreground">{label}</span>
+      <span className={cn(
+        'relative flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 transition-colors',
+        'hover:bg-muted/60',
+        focused && 'bg-muted/60',
+      )}>
+        {prefix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{prefix}</span> : null}
         <input
           key={`${productId}-${field}`}
           className={cn(
-            'w-full min-w-[6rem] border-0 bg-transparent p-0 text-sm font-medium text-foreground shadow-none outline-none placeholder:text-muted-foreground/60',
-            'rounded-sm focus:bg-muted/50 focus:px-1.5 focus:py-0.5',
+            'min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
+            'placeholder:text-muted-foreground/70',
+            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+            type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
           )}
           type={type}
+          inputMode={type === 'number' ? 'decimal' : undefined}
           step={type === 'number' ? 'any' : undefined}
           min={type === 'number' ? '0' : undefined}
           value={displayed}
           placeholder={placeholder}
           list={list}
-          onFocus={() => setEditing(value)}
-          onChange={(event) => setEditing(event.target.value)}
+          aria-label={label}
+          onFocus={() => setDraft(value)}
+          onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            if (editing !== null) onSave(editing);
-            setEditing(null);
+            if (draft !== null) onSave(draft);
+            setDraft(null);
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
             if (event.key === 'Escape') {
-              setEditing(null);
+              setDraft(null);
               event.currentTarget.blur();
             }
           }}
         />
         {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-      </div>
-    </div>
+      </span>
+    </label>
   );
 }
 
