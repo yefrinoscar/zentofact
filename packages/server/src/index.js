@@ -688,6 +688,32 @@ app.post('/catalog/sales/today/refresh', async (c) => {
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
+// ── Cola de descuentos de stock (productos) ──
+app.get('/catalog/stock-jobs/config', async (c) => {
+  try { return ok(c, await stockJobs.getConfig()); } catch (e) { return fail(c, e); }
+});
+app.post('/catalog/stock-jobs/pause', async (c) => {
+  try {
+    const { paused } = await c.req.json();
+    return ok(c, await stockJobs.setPaused(paused));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/catalog/stock-jobs/jobs', async (c) => {
+  try { return ok(c, await stockJobs.recentJobs(Number(c.req.query('limit') || 60))); } catch (e) { return fail(c, e); }
+});
+app.get('/catalog/stock-jobs/jobs/:id/order-preview', async (c) => {
+  try { return ok(c, await stockJobs.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); }
+});
+app.post('/catalog/stock-jobs/jobs/:id/retry', async (c) => {
+  try { return ok(c, await stockJobs.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); }
+});
+app.post('/catalog/stock-jobs/run', async (c) => {
+  try {
+    const stats = await stockJobs.processStockQueue({ limit: Number(c.req.query('limit') || 8) });
+    return ok(c, stats);
+  } catch (e) { return fail(c, e); }
+});
+
 // ── Usuarios (solo admin / permiso users) ──
 app.get('/users', requirePermission('users'), async (c) => {
   try { return ok(c, await users.listUsers()); } catch (e) { return fail(c, e); }

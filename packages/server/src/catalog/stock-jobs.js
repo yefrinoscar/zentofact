@@ -1,4 +1,5 @@
 import { applyReadyOrderStock } from './catalog-operations.js';
+import { inventoryConfig } from './inventory-service.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
 import { loadCore } from './utils.js';
 
@@ -164,6 +165,13 @@ export async function ensureStockJobTables(db) {
     create index if not exists idx_inventory_stock_jobs_pending
       on inventory_stock_jobs (created_at)
       where status = 'pending';
+    create table if not exists inventory_stock_state (
+      id integer primary key,
+      paused boolean not null default false,
+      updated_at timestamptz not null default now()
+    );
+    insert into inventory_stock_state (id, paused) values (1, false)
+    on conflict (id) do nothing;
   `);
       if (ownsTransaction) await client.query('commit');
     } catch (error) {
@@ -171,6 +179,134 @@ export async function ensureStockJobTables(db) {
       throw error;
     }
   });
+}
+
+export async function getPaused(db) {
+  const client = await target(db);
+  const result = await client.query('select paused from inventory_stock_state where id=1');
+  return result.rows[0]?.paused === true;
+}
+
+export async function setPaused(paused, db) {
+  const client = await target(db);
+  await client.query(
+    `insert into inventory_stock_state (id, paused, updated_at) values (1, $1, now())
+     on conflict (id) do update set paused=excluded.paused, updated_at=now()`,
+    [!!paused],
+  );
+  log(paused ? 'cola PAUSADA' : 'cola REANUDADA');
+  return { paused: !!paused };
+}
+
+export async function getConfig(db) {
+  const client = await target(db);
+  const stats = Object.fromEntries((await client.query(
+    'select status, count(*)::int as n from inventory_stock_jobs group by status',
+  )).rows.map((row) => [row.status, row.n]));
+  return {
+    inventoryEnabled: inventoryConfig.enabled,
+    paused: await getPaused(db),
+    stats,
+    workerIntervalSeconds: WORKER_INTERVAL_MS / 1000,
+    batchSize: DEFAULT_LIMIT,
+  };
+}
+
+export async function recentJobs(limit = 60, db) {
+  const client = await target(db);
+  const result = await client.query(
+    `select j.id, j.company_id, coalesce(c.nombre, c.nombre_comercial, c.razon_social) as company,
+            coalesce(nullif(j.order_number, ''), order_row.external_order_number) as order_number,
+            j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
+            j.created_at, j.updated_at
+     from inventory_stock_jobs j
+     left join companies c on c.id=j.company_id
+     left join lateral (
+       select external_order_number
+       from orders
+       where id=j.order_id
+          or (
+            j.order_id is null
+            and company_id=j.company_id
+            and external_order_id=j.external_order_id
+          )
+       order by (id=j.order_id) desc, id asc
+       limit 1
+     ) order_row on true
+     order by j.updated_at desc
+     limit $1`,
+    [Math.min(Math.max(Number(limit) || 60, 1), 200)],
+  );
+  return result.rows;
+}
+
+export async function retryJob(id, db) {
+  const jobId = Number(id);
+  if (!Number.isInteger(jobId) || jobId <= 0) throw new Error('Job inválido');
+  const client = await target(db);
+  const result = await client.query(
+    `update inventory_stock_jobs
+     set status='pending', attempts=0, last_error=null, next_attempt_at=null, updated_at=now()
+     where id=$1 and status in ('failed','skipped')
+     returning id, company_id, order_number, status`,
+    [jobId],
+  );
+  return result.rows[0] || null;
+}
+
+export async function jobOrderPreview(id, db) {
+  const jobId = Number(id);
+  if (!Number.isInteger(jobId) || jobId <= 0) return { error: 'Job inválido' };
+  const client = await target(db);
+  const jobResult = await client.query(
+    `select j.*, coalesce(c.nombre, c.nombre_comercial, c.razon_social) as company
+     from inventory_stock_jobs j
+     left join companies c on c.id=j.company_id
+     where j.id=$1`,
+    [jobId],
+  );
+  const job = jobResult.rows[0];
+  if (!job) return { error: 'Job no encontrado' };
+
+  const orderResult = await client.query(
+    `select o.external_order_number, o.order_status, o.fulfillment_status, o.total,
+            o.ordered_at, o.promised_shipping_at,
+            count(oi.id)::int as items_count,
+            coalesce(sum(oi.stock_applied_quantity), 0)::int as stock_applied
+     from orders o
+     left join order_items oi on oi.order_id=o.id
+     where o.id=coalesce($3::bigint, (
+       select id from orders
+       where company_id=$1 and external_order_id=$2
+       order by id limit 1
+     ))
+     group by o.id
+     limit 1`,
+    [job.company_id, job.external_order_id, job.order_id],
+  );
+  const order = orderResult.rows[0];
+  const result = job.result || {};
+  return {
+    source: job.source,
+    order: order ? {
+      orderNumber: order.external_order_number || job.order_number,
+      status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),
+      total: order.total,
+      itemsCount: order.items_count,
+      stockApplied: order.stock_applied,
+      orderedAt: order.ordered_at,
+      promisedShippingAt: order.promised_shipping_at,
+    } : {
+      orderNumber: job.order_number,
+      status: 'Pedido no sincronizado todavía',
+    },
+    stock: {
+      applied: result.applied ?? null,
+      skipped: result.skipped ?? null,
+      missing: result.missing ?? false,
+    },
+    company: job.company,
+  };
 }
 
 async function enqueueCanonicalStockJob(orderId, source, client) {
@@ -381,6 +517,7 @@ async function finishJob(client, job, status, { error = null, result = {}, retry
 }
 
 export async function processStockQueue(input = {}, db) {
+  if (await getPaused(db)) return { claimed: 0, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0, paused: true };
   const limit = Math.min(Math.max(Number(input.limit) || DEFAULT_LIMIT, 1), 50);
   const apply = input.apply || applyReadyOrderStock;
   const client = await target(db);
@@ -518,6 +655,7 @@ export async function drainStockQueue(input = {}, db) {
 export function startStockJobWorker() {
   let running = false;
   const tick = async () => {
+    if (!inventoryConfig.enabled) return;
     if (running) return;
     running = true;
     try {

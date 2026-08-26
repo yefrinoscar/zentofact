@@ -238,6 +238,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'boletas';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella_sellers';
   if (pathname.startsWith('/productos')) return 'productos';
+  if (pathname.startsWith('/descuentos-stock')) return 'productos';
   if (pathname.startsWith('/salidas')) return 'salidas';
   if (pathname.startsWith('/insumos')) return 'insumos';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';

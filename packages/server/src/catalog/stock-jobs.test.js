@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueueStockJob, ensureStockJobTables, processStockQueue } from './stock-jobs.js';
+import { enqueueStockJob, ensureStockJobTables, getConfig, getPaused, processStockQueue, setPaused } from './stock-jobs.js';
 
 class JobDb {
   constructor() {
     this.jobs = new Map();
     this.nextId = 1;
     this.now = Date.now();
+    this.paused = false;
   }
 
   key(companyId, externalOrderId) {
@@ -22,7 +23,14 @@ class JobDb {
     if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
       return { rows: [] };
     }
-    if (compact.startsWith('create table') || compact.startsWith('create index')) return { rows: [] };
+    if (compact.includes('select paused from inventory_stock_state')) {
+      return { rows: [{ paused: this.paused }] };
+    }
+    if (compact.includes('insert into inventory_stock_state')) {
+      this.paused = !!params[0];
+      return { rows: [] };
+    }
+    if (compact.startsWith('create table') || compact.startsWith('create index') || compact.startsWith('insert into inventory_stock_state')) return { rows: [] };
     if (compact.includes('where status=\'processing\'') && compact.includes('timeout')) {
       return { rows: [] };
     }
@@ -171,4 +179,16 @@ test('la cola separa la identidad canónica de la compatibilidad legacy', async 
   assert.match(migrationSql, /where order_id is null/i);
   assert.match(migrationSql, /matched_orders[\s\S]*having count\(\*\)=1/i);
   assert.match(migrationSql, /existing\.order_id=matched\.order_id/i);
+});
+
+test('pausar la cola detiene el procesamiento', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
+  await setPaused(true, db);
+  const stats = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(stats.paused, true);
+  assert.equal(stats.claimed, 0);
+  await setPaused(false, db);
+  const resumed = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(resumed.claimed, 1);
 });
