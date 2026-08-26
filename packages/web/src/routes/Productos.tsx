@@ -1,5 +1,5 @@
 import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
@@ -233,7 +233,6 @@ const initialCreate = {
   profitOwner: '',
   imageUrl: '',
 };
-const initialCommercial = { commissionAmount: '', profitOwner: '' };
 const initialAdjust = { mode: 'delta', value: '', reason: '' };
 const initialPublishVisual = {
   listingId: null as number | null,
@@ -368,6 +367,42 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
+type ProductEditableField = 'commissionAmount' | 'profitOwner';
+
+type UpdateProductFieldVariables = {
+  id: number;
+  patch: Record<string, unknown>;
+  optimistic: {
+    field: ProductEditableField;
+    patch: Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>;
+  };
+};
+
+type CatalogProductsPage = {
+  products: Product[];
+  totalCount: number;
+  summary?: CatalogInventorySummary;
+};
+
+function patchProductCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+  productId: number,
+  patch: Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>,
+) {
+  queryClient.setQueryData(['catalog-product-detail', productId], (current: Product | undefined) => (
+    current?.id === productId ? { ...current, ...patch } : current
+  ));
+  queryClient.setQueriesData({ queryKey: ['catalog-products'] }, (current: CatalogProductsPage | undefined) => {
+    if (!current?.products?.length) return current;
+    return {
+      ...current,
+      products: current.products.map((product) => (
+        product.id === productId ? { ...product, ...patch } : product
+      )),
+    };
+  });
+}
+
 function listingImageUrl(listing: Listing) {
   if (listing.imageUrl) return listing.imageUrl;
   const images = listing.metadata?.images;
@@ -398,12 +433,13 @@ export default function Productos() {
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
-  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'commercial' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
+  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
+  const [fieldError, setFieldError] = useState('');
+  const [savingField, setSavingField] = useState<ProductEditableField | null>(null);
   const [createForm, setCreateForm] = useState(initialCreate);
-  const [commercialForm, setCommercialForm] = useState(initialCommercial);
   const [adjustForm, setAdjustForm] = useState(initialAdjust);
   const [imageUrl, setImageUrl] = useState('');
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
@@ -623,6 +659,32 @@ export default function Productos() {
     prefetchProductsPage(nextPage * PAGE_SIZE);
   }, [prefetchProductsPage]);
 
+  const updateProductField = useMutation({
+    mutationFn: ({ id, patch }: UpdateProductFieldVariables) => api.updateCatalogProduct(id, patch),
+    onMutate: async ({ id, optimistic }) => {
+      setFieldError('');
+      setSavingField(optimistic.field);
+      await queryClient.cancelQueries({ queryKey: ['catalog-product-detail', id] });
+      const previousDetail = queryClient.getQueryData<Product>(['catalog-product-detail', id]);
+      const previousLists = queryClient.getQueriesData<CatalogProductsPage>({ queryKey: ['catalog-products'] });
+      patchProductCaches(queryClient, id, optimistic.patch);
+      return { previousDetail, previousLists, id };
+    },
+    onError: (error, _variables, context) => {
+      if (context) {
+        if (context.previousDetail) queryClient.setQueryData(['catalog-product-detail', context.id], context.previousDetail);
+        context.previousLists.forEach(([key, data]) => queryClient.setQueryData(key, data));
+      }
+      setFieldError(error instanceof Error ? error.message : 'No se pudo guardar.');
+    },
+    onSettled: (_data, _error, variables) => {
+      setSavingField(null);
+      void queryClient.invalidateQueries({ queryKey: ['catalog-product-detail', variables.id] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-products'] });
+      void queryClient.invalidateQueries({ queryKey: ['catalog-profit-owners'] });
+    },
+  });
+
   const reloadAll = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['catalog-products'] }),
@@ -699,19 +761,6 @@ export default function Productos() {
       setCreateForm(initialCreate);
       setSelectedId(created.id);
     }
-  };
-
-  const updateProductCommercial = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedId) return;
-    const result = await runAction(
-      () => api.updateCatalogProduct(selectedId, {
-        commissionAmount: commercialForm.commissionAmount === '' ? null : commercialForm.commissionAmount,
-        profitOwner: commercialForm.profitOwner.trim() || null,
-      }),
-      () => 'Comisión y beneficiario actualizados.',
-    );
-    if (result) setModal(null);
   };
 
   const adjustInventory = async (event: FormEvent) => {
@@ -934,13 +983,34 @@ export default function Productos() {
     setProfitOwner(next);
   };
 
-  const openCommercialEditor = (product: Product) => {
-    setCommercialForm({
-      commissionAmount: product.commissionAmount == null ? '' : String(product.commissionAmount),
-      profitOwner: product.profitOwner || '',
+  const saveCommission = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const trimmed = raw.trim();
+    const current = selectedProduct.commissionAmount == null ? '' : String(selectedProduct.commissionAmount);
+    if (trimmed === current) return;
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && (parsed == null || !Number.isFinite(parsed) || parsed < 0)) {
+      setFieldError('La comisión debe ser un número válido.');
+      return;
+    }
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { commissionAmount: parsed },
+      optimistic: { field: 'commissionAmount', patch: { commissionAmount: parsed } },
     });
-    openModal('commercial');
-  };
+  }, [selectedId, selectedProduct, updateProductField]);
+
+  const saveProfitOwner = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const normalized = raw.trim() || null;
+    const current = selectedProduct.profitOwner || '';
+    if ((normalized || '') === current) return;
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { profitOwner: normalized },
+      optimistic: { field: 'profitOwner', patch: { profitOwner: normalized } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
 
   return (
     <div className="space-y-4">
@@ -1047,7 +1117,11 @@ export default function Productos() {
           setImageUrl(selectedProduct?.imageUrl || '');
           openModal('image');
         }}
-        onEditCommercial={() => selectedProduct && openCommercialEditor(selectedProduct)}
+        profitOwners={profitOwnersQuery.data?.items || []}
+        savingField={savingField}
+        fieldError={fieldError}
+        onSaveCommission={saveCommission}
+        onSaveProfitOwner={saveProfitOwner}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1057,8 +1131,6 @@ export default function Productos() {
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
       {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
-
-      {modal === 'commercial' && selectedProduct && <Modal title="Comisión y beneficiario" subtitle={`${selectedProduct.name} · SKU interno ${selectedProduct.mainSku}`} onClose={() => setModal(null)}><form onSubmit={updateProductCommercial} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="Comisión" type="number" value={commercialForm.commissionAmount} onChange={(value) => setCommercialForm({ ...commercialForm, commissionAmount: value })} /><Field label="Beneficiario" value={commercialForm.profitOwner} onChange={(value) => setCommercialForm({ ...commercialForm, profitOwner: value })} list="profit-owner-options" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><p className="text-xs leading-5 text-muted-foreground">La comisión es el monto fijo del producto. El beneficiario agrupa la ganancia en reportes.</p><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Guardar</Submit></form></Modal>}
 
       {modal === 'adjust' && selectedProduct && <Modal title={`Ajustar stock · ${selectedProduct.mainSku}`} subtitle={`Saldo actual: ${formatNumber(selectedProduct.quantityOnHand)}. El movimiento queda auditado.`} onClose={() => setModal(null)}><form onSubmit={adjustInventory} className="space-y-4"><Select value={adjustForm.mode} onValueChange={(value) => setAdjustForm({ ...adjustForm, mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="delta">Sumar o restar (delta)</SelectItem><SelectItem value="absolute">Fijar saldo absoluto</SelectItem></SelectContent></Select><Field label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'} type="number" value={adjustForm.value} onChange={(value) => setAdjustForm({ ...adjustForm, value })} required /><TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Registrar ajuste</Submit></form></Modal>}
 
@@ -1583,8 +1655,8 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
-  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onEditCommercial, onPublish, onAssociate, onTogglePublication,
-  onDisassociate,
+  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner,
 }: {
   open: boolean;
   product: Product | null;
@@ -1610,11 +1682,15 @@ function ProductDrawer({
   onOpenImage: (product: Product) => void;
   onAdjust: () => void;
   onEditImage: () => void;
-  onEditCommercial: () => void;
   onPublish: () => void;
   onAssociate: () => void;
   onDisassociate: (listing: Listing) => void;
   onTogglePublication: (listing: Listing) => void;
+  profitOwners: string[];
+  savingField: ProductEditableField | null;
+  fieldError: string;
+  onSaveCommission: (value: string) => void;
+  onSaveProfitOwner: (value: string) => void;
 }) {
   const associatedListings = product?.listings || [];
   const publishedListings = associatedListings.filter(isActivelyPublished);
@@ -1714,18 +1790,24 @@ function ProductDrawer({
             <div className="mt-4 border-t border-border pt-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
           </section>
           <section className="border-b border-border px-5 py-5">
+            <h3 className="text-sm font-semibold">Configuración</h3>
+            <ProductEditableConfig
+              product={product}
+              profitOwners={profitOwners}
+              savingField={savingField}
+              onSaveCommission={onSaveCommission}
+              onSaveProfitOwner={onSaveProfitOwner}
+            />
+            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
+          </section>
+          <section className="border-b border-border px-5 py-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold">Información</h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={onEditCommercial} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Comisión</button>
-                <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
-              </div>
+              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
             </div>
             <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
               <InfoValue label="SKU interno" value={product.mainSku} />
               <InfoValue label="Marca" value={usableBrand(product.brand) || '—'} />
-              <InfoValue label="Comisión" value={product.commissionAmount == null ? '—' : formatMoney(product.commissionAmount)} />
-              <InfoValue label="Beneficiario" value={product.profitOwner || '—'} />
               <InfoValue label="Unidad" value="Unidad" />
               <InfoValue label="Actualizado" value={formatDate(product.updatedAt)} />
               <InfoValue label="Stock disponible" value={`${formatNumber(product.available)} u`} />
@@ -1908,6 +1990,119 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function InfoValue({ label, value }: { label: string; value: ReactNode }) {
   return <div><p className="text-xs text-muted-foreground">{label}</p><div className="mt-1 text-sm font-medium">{value}</div></div>;
+}
+
+function ProductEditableConfig({
+  product,
+  profitOwners,
+  savingField,
+  onSaveCommission,
+  onSaveProfitOwner,
+}: {
+  product: Product;
+  profitOwners: string[];
+  savingField: ProductEditableField | null;
+  onSaveCommission: (value: string) => void;
+  onSaveProfitOwner: (value: string) => void;
+}) {
+  return (
+    <div className="mt-3 divide-y divide-border/60">
+      <ProductInlineField
+        label="Comisión"
+        productId={product.id}
+        field="commissionAmount"
+        value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+        type="number"
+        placeholder="Sin comisión"
+        prefix="S/"
+        saving={savingField === 'commissionAmount'}
+        onSave={onSaveCommission}
+      />
+      <ProductInlineField
+        label="Beneficiario"
+        productId={product.id}
+        field="profitOwner"
+        value={product.profitOwner || ''}
+        placeholder="Sin beneficiario"
+        list="profit-owner-inline-options"
+        saving={savingField === 'profitOwner'}
+        onSave={onSaveProfitOwner}
+      />
+      <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+    </div>
+  );
+}
+
+function ProductInlineField({
+  label,
+  productId,
+  field,
+  value,
+  onSave,
+  type = 'text',
+  placeholder,
+  list,
+  prefix,
+  saving,
+}: {
+  label: string;
+  productId: number;
+  field: string;
+  value: string;
+  onSave: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  list?: string;
+  prefix?: string;
+  saving?: boolean;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const focused = draft !== null;
+  const displayed = draft ?? value;
+
+  return (
+    <label className="group flex cursor-text items-center gap-4 py-2.5 first:pt-1 last:pb-1">
+      <span className="w-28 shrink-0 text-sm text-muted-foreground">{label}</span>
+      <span className={cn(
+        'relative flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 transition-colors',
+        'hover:bg-muted/60',
+        focused && 'bg-muted/60',
+      )}>
+        {prefix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{prefix}</span> : null}
+        <input
+          key={`${productId}-${field}`}
+          className={cn(
+            'min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
+            'placeholder:text-muted-foreground/70',
+            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+            type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          )}
+          type={type}
+          inputMode={type === 'number' ? 'decimal' : undefined}
+          step={type === 'number' ? 'any' : undefined}
+          min={type === 'number' ? '0' : undefined}
+          value={displayed}
+          placeholder={placeholder}
+          list={list}
+          aria-label={label}
+          onFocus={() => setDraft(value)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (draft !== null) onSave(draft);
+            setDraft(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+            if (event.key === 'Escape') {
+              setDraft(null);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+      </span>
+    </label>
+  );
 }
 
 function SellerPrice({ listing }: { listing: Listing }) {
@@ -2101,8 +2296,8 @@ function Field({
   return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} required={required} list={list} min={type === 'number' ? '0' : undefined} /></label>;
 }
 
-function ProfitOwnerOptions({ owners }: { owners: string[] }) {
-  return <datalist id="profit-owner-options">{owners.map((owner) => <option key={owner} value={owner} />)}</datalist>;
+function ProfitOwnerOptions({ owners, id = 'profit-owner-options' }: { owners: string[]; id?: string }) {
+  return <datalist id={id}>{owners.map((owner) => <option key={owner} value={owner} />)}</datalist>;
 }
 
 function TextArea({ label, value, onChange, required }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
