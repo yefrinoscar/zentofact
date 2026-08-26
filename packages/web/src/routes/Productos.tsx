@@ -1717,7 +1717,14 @@ function ProductDrawer({
     .sort((a, b) => channelLabel(a.channelCode).localeCompare(channelLabel(b.channelCode), 'es'));
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-    <SheetContent className="sm:max-w-3xl">
+    <SheetContent
+      className="sm:max-w-3xl"
+      onEscapeKeyDown={(event) => {
+        // Escape dentro de un campo solo cancela la edición; un segundo Escape cierra el drawer.
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
+      }}
+    >
       <SheetHeader className="border-b border-border px-5 py-4 pr-16">
         <div className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto]">
           {product?.imageUrl ? <button
@@ -1790,8 +1797,11 @@ function ProductDrawer({
             <div className="mt-4 border-t border-border pt-3"><button type="button" onClick={onAssociate} className="-ml-2 inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-4 w-4 text-muted-foreground" /> Asociar producto</button></div>
           </section>
           <section className="border-b border-border px-5 py-5">
-            <h3 className="text-sm font-semibold">Configuración</h3>
-            <ProductEditableConfig
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold">Detalles</h3>
+              <button type="button" onClick={onEditImage} className="-mr-2 inline-flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
+            </div>
+            <ProductProperties
               product={product}
               profitOwners={profitOwners}
               savingField={savingField}
@@ -1799,20 +1809,6 @@ function ProductDrawer({
               onSaveProfitOwner={onSaveProfitOwner}
             />
             {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
-          </section>
-          <section className="border-b border-border px-5 py-5">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-semibold">Información</h3>
-              <button type="button" onClick={onEditImage} className="secondary-button h-8 px-3"><ImagePlus className="h-4 w-4" /> Cambiar foto</button>
-            </div>
-            <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
-              <InfoValue label="SKU interno" value={product.mainSku} />
-              <InfoValue label="Marca" value={usableBrand(product.brand) || '—'} />
-              <InfoValue label="Unidad" value="Unidad" />
-              <InfoValue label="Actualizado" value={formatDate(product.updatedAt)} />
-              <InfoValue label="Stock disponible" value={`${formatNumber(product.available)} u`} />
-              <InfoValue label="Stock reservado" value={`${formatNumber(product.quantityReserved)} u`} />
-            </div>
           </section>
           <section className="px-5 py-5"><h3 className="text-sm font-semibold">Descripción</h3><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{product.description || 'Sin descripción.'}</p></section>
         </TabsContent>
@@ -1992,7 +1988,7 @@ function InfoValue({ label, value }: { label: string; value: ReactNode }) {
   return <div><p className="text-xs text-muted-foreground">{label}</p><div className="mt-1 text-sm font-medium">{value}</div></div>;
 }
 
-function ProductEditableConfig({
+function ProductProperties({
   product,
   profitOwners,
   savingField,
@@ -2006,7 +2002,7 @@ function ProductEditableConfig({
   onSaveProfitOwner: (value: string) => void;
 }) {
   return (
-    <div className="mt-3 divide-y divide-border/60">
+    <dl className="mt-3">
       <ProductInlineField
         label="Comisión"
         productId={product.id}
@@ -2029,8 +2025,26 @@ function ProductEditableConfig({
         onSave={onSaveProfitOwner}
       />
       <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+      <PropertyRow label="Marca">{usableBrand(product.brand) || <PropertyEmpty>Sin marca</PropertyEmpty>}</PropertyRow>
+      <PropertyRow label="Unidad">Unidad</PropertyRow>
+      <PropertyRow label="Stock disponible">{formatNumber(product.available)} u</PropertyRow>
+      <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
+      <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
+    </dl>
+  );
+}
+
+function PropertyRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-h-8 items-center gap-4 py-0.5">
+      <dt className="w-32 shrink-0 text-sm text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 flex-1 truncate px-2 text-sm text-foreground">{children}</dd>
     </div>
   );
+}
+
+function PropertyEmpty({ children }: { children: ReactNode }) {
+  return <span className="text-muted-foreground/70">{children}</span>;
 }
 
 function ProductInlineField({
@@ -2057,16 +2071,17 @@ function ProductInlineField({
   saving?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
   const focused = draft !== null;
   const displayed = draft ?? value;
 
   return (
-    <label className="group flex cursor-text items-center gap-4 py-2.5 first:pt-1 last:pb-1">
-      <span className="w-28 shrink-0 text-sm text-muted-foreground">{label}</span>
+    <label className="group flex min-h-8 cursor-text items-center gap-4 py-0.5">
+      <span className="w-32 shrink-0 text-sm text-muted-foreground">{label}</span>
       <span className={cn(
-        'relative flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 transition-colors',
-        'hover:bg-muted/60',
-        focused && 'bg-muted/60',
+        'flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 transition-colors duration-150',
+        'hover:bg-muted',
+        focused && 'bg-muted',
       )}>
         {prefix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{prefix}</span> : null}
         <input
@@ -2075,6 +2090,7 @@ function ProductInlineField({
             'min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
             'placeholder:text-muted-foreground/70',
             'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+            'autofill:bg-transparent',
             type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
           )}
           type={type}
@@ -2084,17 +2100,21 @@ function ProductInlineField({
           value={displayed}
           placeholder={placeholder}
           list={list}
+          autoComplete="off"
           aria-label={label}
           onFocus={() => setDraft(value)}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            if (draft !== null) onSave(draft);
+            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
+            cancelledRef.current = false;
             setDraft(null);
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
             if (event.key === 'Escape') {
-              setDraft(null);
+              // Solo cancela la edición; no dejes que Radix cierre el drawer ni que blur guarde.
+              event.stopPropagation();
+              cancelledRef.current = true;
               event.currentTarget.blur();
             }
           }}
