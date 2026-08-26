@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle, CheckCircle2, Clock, Loader2, PackageMinus, Pause, Play,
   RefreshCw, RotateCcw, XCircle,
@@ -9,6 +10,9 @@ import { cn } from '../lib/cn';
 
 type Config = {
   inventoryEnabled: boolean;
+  inventoryLabel?: string;
+  inventorySourceLabel?: string;
+  inventoryKillSwitch?: boolean;
   paused: boolean;
   stats: Record<string, number>;
   workerIntervalSeconds: number;
@@ -335,15 +339,27 @@ export default function DescuentosCola() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-          <PackageMinus className="h-4 w-4" />
-          <span>
+        <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              config.inventoryEnabled
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-amber-300 bg-amber-50 text-amber-800',
+            )}
+            title={config.inventorySourceLabel ? `Mismo interruptor que Configuración del sistema (${config.inventorySourceLabel}).` : 'Mismo interruptor que Configuración del sistema.'}
+          >
+            <span className={cn('h-1.5 w-1.5 rounded-full', config.inventoryEnabled ? 'bg-emerald-500' : 'bg-amber-500')} />
+            {config.inventoryEnabled ? 'Descuento encendido' : 'Descuento apagado'}
+          </span>
+          <span className="inline-flex items-center gap-2 text-muted-foreground">
+            <PackageMinus className="h-4 w-4" />
             Worker cada {config.workerIntervalSeconds}s · lotes de {config.batchSize}
           </span>
         </div>
         <button
           onClick={togglePaused}
-          title={config.paused ? 'Cola pausada. Clic para reanudar.' : 'Pausar el procesamiento de la cola.'}
+          title={config.paused ? 'Reanuda el worker de esta cola. No cambia el descuento del sistema.' : 'Pausa el worker de esta cola. No apaga el descuento del sistema.'}
           className={cn(
             'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition',
             config.paused
@@ -356,18 +372,28 @@ export default function DescuentosCola() {
       </div>
 
       {!config.inventoryEnabled && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>
-            <span className="font-medium">Inventario apagado.</span> Los jobs se encolan pero no se procesan hasta activar el descuento de stock.
+          <span className="min-w-0 flex-1">
+            <span className="font-medium">Descuento apagado</span>
+            {' '}en Configuración del sistema. Los pedidos se encolan y no se descuentan.
+            {config.inventoryKillSwitch ? ' Kill-switch de entorno activo.' : ''}
           </span>
+          <Link
+            to="/system-config"
+            className="shrink-0 font-medium underline decoration-amber-700/40 underline-offset-4 hover:decoration-amber-800"
+          >
+            Abrir configuración
+          </Link>
         </div>
       )}
 
       {config.paused && (
         <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
           <Pause className="h-4 w-4 shrink-0" />
-          <span className="font-medium">Cola pausada.</span> No se procesan descuentos. Los pedidos siguen encolándose.
+          <span>
+            <span className="font-medium">Cola pausada.</span> El worker no corre. El descuento del sistema no cambia.
+          </span>
         </div>
       )}
 
@@ -375,11 +401,11 @@ export default function DescuentosCola() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Descuentos de stock</h2>
-            <p className="text-xs text-muted-foreground">Pedidos listos para enviar que descuentan el producto maestro.</p>
+            <p className="text-xs text-muted-foreground">Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se actualiza sola cada 3s">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" /> En vivo
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 3 s. No indica si el descuento está encendido.">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" /> Actualizando
             </span>
             <button
               onClick={() => Promise.all([loadJobs(true), loadConfig()])}

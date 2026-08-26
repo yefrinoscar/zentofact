@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, CircleAlert, CircleCheck, Info, RefreshCw } from 'lucide-react';
 import api from '../lib/api';
 import { usePermissions } from '../hooks/usePermissions';
@@ -222,6 +223,13 @@ export default function SystemConfig() {
                         <Badge variant="outline">{flag.sourceLabel}</Badge>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{flag.description}</p>
+                      {flag.key === 'catalog_inventory' && (
+                        <p className="mt-1 text-xs">
+                          <Link to="/descuentos-stock" className="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground">
+                            Ver cola de descuentos
+                          </Link>
+                        </p>
+                      )}
                     </div>
                     <Switch
                       id={`flag-${flag.key}`}

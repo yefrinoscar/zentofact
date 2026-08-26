@@ -6,6 +6,7 @@ import {
   ensureStockJobTables,
   processStockQueue,
 } from './catalog/stock-jobs.js';
+import { invalidateSystemConfigCache } from './system-config.js';
 
 const connectionString = process.env.STOCK_JOBS_TEST_DATABASE_URL;
 
@@ -42,6 +43,18 @@ test('PostgreSQL real: la identidad de stock converge y no procesa duplicados', 
       )
     `);
     await ensureStockJobTables(pool);
+    await pool.query(`
+      create table if not exists system_settings (
+        key text primary key,
+        value jsonb not null default '{}'::jsonb,
+        updated_at timestamptz not null default now(),
+        updated_by text
+      );
+      insert into system_settings (key, value)
+      values ('catalog_inventory', jsonb_build_object('enabled', true))
+      on conflict (key) do update set value=jsonb_build_object('enabled', true);
+    `);
+    invalidateSystemConfigCache();
 
     await pool.query(
       `insert into orders (id, company_id, external_order_id, external_order_number)

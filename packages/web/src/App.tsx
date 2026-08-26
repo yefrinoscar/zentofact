@@ -88,7 +88,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/descuentos-stock': {
     title: 'Cola de descuentos',
-    subtitle: 'Descuentos de stock al listo para enviar.',
+    subtitle: 'Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.',
   },
   '/salidas': {
     title: 'Salidas de hoy',
