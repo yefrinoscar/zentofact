@@ -49,7 +49,9 @@ web usa las rutas internas del servidor, igual que los módulos existentes.
 
 El flag operativo vive en la tabla `system_settings` y se controla desde el
 panel **Configuración del sistema** (`/#/system-config`), visible solo para
-superadministradores. La variable de entorno `CATALOG_INVENTORY_ENABLED`
+superadministradores. **Cola de descuentos** (`/#/descuentos-stock`) muestra
+ese mismo interruptor: Encendido o Apagado. No hay un segundo switch. La
+variable de entorno `CATALOG_INVENTORY_ENABLED`
 ya no enciende la funcionalidad: actúa únicamente como **kill-switch** —
 si está explícitamente en `false` apaga el flag aunque la base de datos lo
 tenga prendido. El panel muestra un checklist con los pasos 2–4; el servidor

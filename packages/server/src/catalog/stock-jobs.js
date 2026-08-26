@@ -1,5 +1,5 @@
 import { applyReadyOrderStock } from './catalog-operations.js';
-import { inventoryConfig } from './inventory-service.js';
+import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
 import { loadCore } from './utils.js';
 
@@ -200,12 +200,18 @@ export async function setPaused(paused, db) {
 
 export async function getConfig(db) {
   const client = await target(db);
-  const stats = Object.fromEntries((await client.query(
-    'select status, count(*)::int as n from inventory_stock_jobs group by status',
-  )).rows.map((row) => [row.status, row.n]));
+  const [inventory, paused, statsRows] = await Promise.all([
+    catalogInventoryFlagState(db),
+    getPaused(db),
+    client.query('select status, count(*)::int as n from inventory_stock_jobs group by status'),
+  ]);
+  const stats = Object.fromEntries(statsRows.rows.map((row) => [row.status, row.n]));
   return {
-    inventoryEnabled: inventoryConfig.enabled,
-    paused: await getPaused(db),
+    inventoryEnabled: inventory.effective === true,
+    inventoryLabel: inventory.label,
+    inventorySourceLabel: inventory.sourceLabel,
+    inventoryKillSwitch: inventory.killSwitch === true,
+    paused,
     stats,
     workerIntervalSeconds: WORKER_INTERVAL_MS / 1000,
     batchSize: DEFAULT_LIMIT,
@@ -518,6 +524,9 @@ async function finishJob(client, job, status, { error = null, result = {}, retry
 
 export async function processStockQueue(input = {}, db) {
   if (await getPaused(db)) return { claimed: 0, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0, paused: true };
+  if (!(await isCatalogInventoryEnabled(db))) {
+    return { claimed: 0, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0, inventoryDisabled: true };
+  }
   const limit = Math.min(Math.max(Number(input.limit) || DEFAULT_LIMIT, 1), 50);
   const apply = input.apply || applyReadyOrderStock;
   const client = await target(db);
@@ -655,7 +664,6 @@ export async function drainStockQueue(input = {}, db) {
 export function startStockJobWorker() {
   let running = false;
   const tick = async () => {
-    if (!inventoryConfig.enabled) return;
     if (running) return;
     running = true;
     try {

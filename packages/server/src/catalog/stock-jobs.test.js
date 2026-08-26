@@ -1,6 +1,7 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { enqueueStockJob, ensureStockJobTables, getConfig, getPaused, processStockQueue, setPaused } from './stock-jobs.js';
+import { invalidateSystemConfigCache } from '../system-config.js';
 
 class JobDb {
   constructor() {
@@ -8,6 +9,7 @@ class JobDb {
     this.nextId = 1;
     this.now = Date.now();
     this.paused = false;
+    this.settings = { catalog_inventory: true };
   }
 
   key(companyId, externalOrderId) {
@@ -20,6 +22,21 @@ class JobDb {
       return { rows: [{ pg_advisory_lock: true }] };
     }
     if (compact.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+    if (compact.includes('select key, value from system_settings')) {
+      return {
+        rows: Object.entries(this.settings).map(([key, enabled]) => ({
+          key,
+          value: { enabled },
+        })),
+      };
+    }
+    if (compact.includes('from inventory_stock_jobs group by status')) {
+      const counts = new Map();
+      for (const job of this.jobs.values()) {
+        counts.set(job.status, (counts.get(job.status) || 0) + 1);
+      }
+      return { rows: [...counts.entries()].map(([status, n]) => ({ status, n })) };
+    }
     if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
       return { rows: [] };
     }
@@ -92,6 +109,10 @@ class JobDb {
     throw new Error(`Query no simulada: ${compact}`);
   }
 }
+
+beforeEach(() => {
+  invalidateSystemConfigCache();
+});
 
 test('encolar el mismo pedido dos veces no duplica el job', async () => {
   const db = new JobDb();
@@ -191,4 +212,30 @@ test('pausar la cola detiene el procesamiento', async () => {
   await setPaused(false, db);
   const resumed = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
   assert.equal(resumed.claimed, 1);
+});
+
+test('la cola muestra el mismo descuento que Configuración del sistema', async () => {
+  const db = new JobDb();
+  db.settings = { catalog_inventory: true };
+  const on = await getConfig(db);
+  assert.equal(on.inventoryEnabled, true);
+  assert.equal(on.inventoryLabel, 'Descuento de inventario al listo para enviar');
+  assert.equal(on.inventorySourceLabel, 'Base de datos');
+  assert.equal(on.inventoryKillSwitch, false);
+
+  invalidateSystemConfigCache();
+  db.settings = { catalog_inventory: false };
+  const off = await getConfig(db);
+  assert.equal(off.inventoryEnabled, false);
+  assert.equal(off.inventorySourceLabel, 'Base de datos');
+});
+
+test('con el descuento apagado el worker no procesa la cola', async () => {
+  const db = new JobDb();
+  db.settings = { catalog_inventory: false };
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1', source: 'webhook' }, db);
+  const stats = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(stats.inventoryDisabled, true);
+  assert.equal(stats.claimed, 0);
+  assert.equal([...db.jobs.values()][0].status, 'pending');
 });

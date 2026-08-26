@@ -15,7 +15,7 @@ export const SYSTEM_FLAGS = {
     key: 'catalog_inventory',
     envVar: 'CATALOG_INVENTORY_ENABLED',
     label: 'Descuento de inventario al listo para enviar',
-    description: 'Descuenta el stock del producto maestro cuando un pedido pasa a listo para enviar — Falabella, Ripley o venta manual — y reintegra en cancelación o devolución.',
+    description: 'Descuenta el producto maestro al listo para enviar y reintegra en cancelación o devolución. Es el mismo interruptor que muestra Cola de descuentos.',
     confirmWord: null,
     requireListings: true,
     docsPath: '/docs/catalog-inventory.md',
@@ -237,7 +237,13 @@ async function cachedDbFlags(db) {
 
 /** Lectura runtime del flag efectivo de inventario (para stock-phase). */
 export async function isCatalogInventoryEnabled(db) {
-  return (await effectiveFlagState(SYSTEM_FLAGS.catalog_inventory, db)).effective;
+  return (await catalogInventoryFlagState(db)).effective;
+}
+
+/** Estado público del flag de inventario: el mismo que ve Configuración del sistema. */
+export async function catalogInventoryFlagState(db) {
+  const flags = await cachedDbFlags(db);
+  return publicFlagState('catalog_inventory', { dbEnabled: flags.catalog_inventory });
 }
 
 /** Lectura runtime del flag de mutación de publicaciones. */
