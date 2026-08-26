@@ -14,6 +14,7 @@ import ProductosHoy from './routes/ProductosHoy';
 import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
+import DescuentosCola from './routes/DescuentosCola';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import PedidosMulticanal from './routes/PedidosMulticanal';
@@ -84,6 +85,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/productos': {
     title: 'Catálogo de productos',
     subtitle: 'Productos, stock y publicaciones de cada empresa.',
+  },
+  '/descuentos-stock': {
+    title: 'Cola de descuentos',
+    subtitle: 'Descuentos de stock al listo para enviar.',
   },
   '/salidas': {
     title: 'Salidas de hoy',
@@ -273,6 +278,7 @@ function AppLayout() {
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
+              <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
               <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
