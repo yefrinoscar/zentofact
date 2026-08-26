@@ -195,10 +195,28 @@ async function ensureAdminUser(credentials) {
     }
   }
   await users.promoteSuperadminByEmail(credentials.email, 'system.preview-seed');
+  await syncCredentialPassword(credentials.email, credentials.password);
   const listed = await users.listUsers();
   const admin = listed.find((user) => user.email === credentials.email);
   if (!admin) throw new Error(`No se pudo resolver el admin seed ${credentials.email}`);
   return admin;
+}
+
+async function syncCredentialPassword(email, password) {
+  const hashed = await hashPassword(password);
+  const result = await pool.query(
+    `UPDATE account AS a
+        SET password = $1, "updatedAt" = NOW()
+      FROM "user" AS u
+     WHERE a."userId" = u.id
+       AND u.email = $2
+       AND a."providerId" = 'credential'
+     RETURNING a.id`,
+    [hashed, email],
+  );
+  if (!result.rowCount) {
+    console.warn('[SEED] No hay cuenta credential para', email);
+  }
 }
 
 async function ensureRoleUser({ email, name, role, commissionPercent = 0 }, password, actorId) {
@@ -587,6 +605,7 @@ export async function bootstrapPreviewIfNeeded() {
   await ensureAuthSchema();
   await users.ensureUserColumns();
   const result = await seedPreviewData();
+  await ensureAdminUser(adminCredentials());
   return { ran: true, ...result };
 }
 

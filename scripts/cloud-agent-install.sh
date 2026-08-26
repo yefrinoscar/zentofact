@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-if [[ ! -d node_modules || ! -f packages/web/node_modules/better-auth/package.json || ! -f packages/server/node_modules/better-auth/package.json ]]; then
+if ! node -e "require.resolve('better-auth',{paths:['packages/server']})" >/dev/null 2>&1; then
   npm ci
 fi
 
