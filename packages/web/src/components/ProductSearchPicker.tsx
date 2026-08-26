@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Loader2, Package, Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
@@ -8,7 +8,7 @@ import {
   type CatalogProductForSale,
 } from '../lib/registrar-venta';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { useVisualViewportLayout } from '../hooks/useVisualViewportLayout';
+import { useVisualViewportCssVar } from '../hooks/useVisualViewportLayout';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -54,7 +54,7 @@ function productImageSrc(url?: string | null, shopSku?: string | null, sku?: str
   return value;
 }
 
-function ProductPhoto({
+const ProductPhoto = memo(function ProductPhoto({
   url,
   shopSku,
   sku,
@@ -65,12 +65,12 @@ function ProductPhoto({
   sku?: string | null;
   name: string;
 }) {
+  const [failedCount, setFailedCount] = useState(0);
   const candidates = [
     productImageSrc(url),
     productImageSrc(null, shopSku),
     productImageSrc(null, null, sku),
   ].filter((src, index, list) => src && list.indexOf(src) === index);
-  const [failedCount, setFailedCount] = useState(0);
   const src = candidates[failedCount] || '';
 
   if (!src) {
@@ -92,7 +92,7 @@ function ProductPhoto({
       className="size-11 shrink-0 rounded-lg bg-muted object-cover sm:size-12 sm:rounded-md"
     />
   );
-}
+});
 
 function SearchField({
   value,
@@ -144,6 +144,47 @@ function SearchField({
   );
 }
 
+const ProductRow = memo(function ProductRow({
+  product,
+  onSelect,
+}: {
+  product: CatalogProductForSale;
+  onSelect: (product: CatalogProductForSale) => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(product)}
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left active:bg-muted/70 sm:px-5 sm:py-3 sm:hover:bg-muted/50"
+      >
+        <ProductPhoto
+          url={product.imageUrl}
+          shopSku={product.listings?.[0]?.shopSku}
+          sku={product.mainSku}
+          name={product.name}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium leading-5 sm:text-sm">{product.name}</span>
+          <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground sm:text-[11px]">{product.mainSku}</span>
+        </span>
+        <span className="shrink-0 text-right">
+          <span className="block text-[15px] font-semibold tabular-nums sm:text-sm sm:font-medium">
+            {formatMoney(productPrice(product))}
+          </span>
+          <span className={cn(
+            'mt-0.5 block text-xs tabular-nums sm:text-[11px]',
+            productStock(product) <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
+          )}
+          >
+            {formatProductStock(product)}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+});
+
 function ProductResults({
   products,
   isFetching,
@@ -173,44 +214,64 @@ function ProductResults({
   }
 
   return (
-    <ul className="divide-y divide-border">
+    <ul className="divide-y divide-border pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {products.map((product) => (
-        <li key={product.id}>
-          <button
-            type="button"
-            onClick={() => onSelect(product)}
-            className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left active:bg-muted/70 sm:px-5 sm:py-3 sm:hover:bg-muted/50"
-          >
-            <ProductPhoto
-              url={product.imageUrl}
-              shopSku={product.listings?.[0]?.shopSku}
-              sku={product.mainSku}
-              name={product.name}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] font-medium leading-5 sm:text-sm">{product.name}</span>
-              <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground sm:text-[11px]">{product.mainSku}</span>
-            </span>
-            <span className="shrink-0 text-right">
-              <span className="block text-[15px] font-semibold tabular-nums sm:text-sm sm:font-medium">
-                {formatMoney(productPrice(product))}
-              </span>
-              <span className={cn(
-                'mt-0.5 block text-xs tabular-nums sm:text-[11px]',
-                productStock(product) <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
-              )}
-              >
-                {formatProductStock(product)}
-              </span>
-            </span>
-          </button>
-        </li>
+        <ProductRow key={product.id} product={product} onSelect={onSelect} />
       ))}
     </ul>
   );
 }
 
-function PickerBody({
+function MobilePickerChrome({
+  onClose,
+  search,
+  onSearchChange,
+  onSubmitSearch,
+  searchInputRef,
+}: {
+  onClose: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onSubmitSearch: () => void;
+  searchInputRef?: React.RefObject<HTMLInputElement | null>;
+}) {
+  return (
+    <div className="sticky top-0 z-10 border-b border-border bg-background">
+      <div className="px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div aria-hidden="true" className="mx-auto mb-3 h-1 w-10 rounded-full bg-muted-foreground/25" />
+        <div className="flex items-start gap-3 pr-2">
+          <div className="min-w-0 flex-1">
+            <SheetHeader className="gap-1 text-left">
+              <SheetTitle className="text-[17px] leading-tight">Elegir producto</SheetTitle>
+              <SheetDescription className="text-[13px] leading-snug">
+                Busca por nombre o SKU y toca para agregarlo.
+              </SheetDescription>
+            </SheetHeader>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 shrink-0 cursor-pointer px-3 text-[15px] font-medium"
+            onClick={onClose}
+          >
+            Listo
+          </Button>
+        </div>
+      </div>
+      <div className="px-4 pb-3">
+        <SearchField
+          value={search}
+          onChange={onSearchChange}
+          onSubmit={onSubmitSearch}
+          inputRef={searchInputRef}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DesktopPickerBody({
   search,
   onSearchChange,
   onSubmitSearch,
@@ -218,7 +279,6 @@ function PickerBody({
   isFetching,
   submittedSearch,
   onSelect,
-  compactHeader = false,
   searchInputRef,
 }: {
   search: string;
@@ -228,12 +288,11 @@ function PickerBody({
   isFetching: boolean;
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
-  compactHeader?: boolean;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   return (
     <>
-      <div className={cn('shrink-0 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-5', compactHeader && 'pt-2')}>
+      <div className="shrink-0 border-b border-border px-5 py-3">
         <SearchField
           value={search}
           onChange={onSearchChange}
@@ -241,7 +300,7 @@ function PickerBody({
           inputRef={searchInputRef}
         />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <ProductResults
           products={products}
           isFetching={isFetching}
@@ -276,7 +335,8 @@ export function ProductSearchPicker({
 }) {
   const isMobile = useIsMobile();
   const searchRef = useRef<HTMLInputElement>(null);
-  const viewport = useVisualViewportLayout(open && isMobile);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useVisualViewportCssVar(open && isMobile);
 
   useEffect(() => {
     if (!open) return;
@@ -286,53 +346,37 @@ export function ProductSearchPicker({
     return () => window.clearTimeout(timer);
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !isMobile) return;
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [open, isMobile, submittedSearch]);
+
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           side="bottom"
           showCloseButton={false}
-          className="gap-0 overflow-hidden border-border p-0"
-          style={{
-            height: `${viewport.height}px`,
-            maxHeight: `${viewport.height}px`,
-            top: `${viewport.offsetTop}px`,
-            bottom: 'auto',
-          }}
+          className="h-[var(--picker-vvh,100dvh)] max-h-[var(--picker-vvh,100dvh)] gap-0 overflow-hidden border-border p-0"
         >
-          <div className="flex shrink-0 flex-col border-b border-border px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-            <div aria-hidden="true" className="mx-auto mb-3 h-1 w-10 rounded-full bg-muted-foreground/25" />
-            <div className="flex items-start gap-3 pr-2">
-              <div className="min-w-0 flex-1">
-                <SheetHeader className="gap-1 text-left">
-                  <SheetTitle className="text-[17px] leading-tight">Elegir producto</SheetTitle>
-                  <SheetDescription className="text-[13px] leading-snug">
-                    Busca por nombre o SKU y toca para agregarlo.
-                  </SheetDescription>
-                </SheetHeader>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-9 shrink-0 cursor-pointer px-3 text-[15px] font-medium"
-                onClick={() => onOpenChange(false)}
-              >
-                Listo
-              </Button>
-            </div>
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]"
+          >
+            <MobilePickerChrome
+              onClose={() => onOpenChange(false)}
+              search={search}
+              onSearchChange={onSearchChange}
+              onSubmitSearch={onSubmitSearch}
+              searchInputRef={searchRef}
+            />
+            <ProductResults
+              products={products}
+              isFetching={isFetching}
+              submittedSearch={submittedSearch}
+              onSelect={onSelect}
+            />
           </div>
-          <PickerBody
-            search={search}
-            onSearchChange={onSearchChange}
-            onSubmitSearch={onSubmitSearch}
-            products={products}
-            isFetching={isFetching}
-            submittedSearch={submittedSearch}
-            onSelect={onSelect}
-            compactHeader
-            searchInputRef={searchRef}
-          />
         </SheetContent>
       </Sheet>
     );
@@ -345,7 +389,7 @@ export function ProductSearchPicker({
           <DialogTitle>Elegir producto</DialogTitle>
           <DialogDescription>Busca por nombre o SKU y toca para agregarlo.</DialogDescription>
         </DialogHeader>
-        <PickerBody
+        <DesktopPickerBody
           search={search}
           onSearchChange={onSearchChange}
           onSubmitSearch={onSubmitSearch}
