@@ -19,10 +19,11 @@ const { permissionsForRole } = await import('./permissions.js');
 const { shouldSeedPreview } = await import('./preview-env.js');
 const users = await import('./users.js');
 
-const SEED_MARKER = 'preview-seed-v1';
+const SEED_MARKER = 'preview-seed-v2';
 const DEFAULT_SEED_PASSWORD = 'ZentoFactPreview123';
 
 const SEED_USERS = [
+  { email: 'admin@preview.zentofact.local', name: 'Administrador Preview', role: 'admin' },
   { email: 'operator@preview.zentofact.local', name: 'Operador Preview', role: 'operator' },
   { email: 'vendedor@preview.zentofact.local', name: 'Vendedor Preview', role: 'vendedor', commissionPercent: 5 },
   { email: 'billing@preview.zentofact.local', name: 'Facturación Preview', role: 'billing' },
@@ -221,7 +222,20 @@ async function syncCredentialPassword(email, password) {
 
 async function ensureRoleUser({ email, name, role, commissionPercent = 0 }, password, actorId) {
   const existing = (await users.listUsers()).find((user) => user.email === email);
-  if (existing) return { user: existing, created: false };
+  if (existing) {
+    await pool.query(
+      `UPDATE "user"
+          SET name = $2,
+              role = $3,
+              permissions = $4,
+              active = true,
+              commission_percent = $5,
+              "updatedAt" = NOW()
+        WHERE id = $1`,
+      [existing.id, name, role, JSON.stringify(permissionsForRole(role)), commissionPercent],
+    );
+    return { user: await users.getUserById(existing.id), created: false };
+  }
   try {
     const user = await users.createUser({
       name,
@@ -497,6 +511,116 @@ async function ensureSampleOrders(companiesByRuc, products) {
   return { orders: 2 };
 }
 
+async function ensureFalabellaInboxOrders(limbo, product) {
+  if (!limbo || !product) return { falabellaOrders: 0 };
+  const promised = new Date().toISOString();
+  const rows = [
+    {
+      orderId: `${SEED_MARKER}-fo-pending`,
+      orderNumber: 'PV-10001',
+      status: 'pending',
+      raw: {
+        OrderId: `${SEED_MARKER}-fo-pending`,
+        OrderNumber: 'PV-10001',
+        CustomerFirstName: 'Ana',
+        CustomerLastName: 'Preview',
+        PromisedShippingTime: promised,
+        ItemsCount: '1',
+        Statuses: 'pending',
+      },
+    },
+    {
+      orderId: `${SEED_MARKER}-fo-ready`,
+      orderNumber: 'PV-10003',
+      status: 'ready_to_ship',
+      raw: {
+        OrderId: `${SEED_MARKER}-fo-ready`,
+        OrderNumber: 'PV-10003',
+        CustomerFirstName: 'Carla',
+        CustomerLastName: 'Preview',
+        PromisedShippingTime: promised,
+        ItemsCount: '1',
+        Statuses: 'ready_to_ship',
+      },
+    },
+    {
+      orderId: `${SEED_MARKER}-fo-shipped`,
+      orderNumber: 'PV-10002',
+      status: 'shipped',
+      raw: {
+        OrderId: `${SEED_MARKER}-fo-shipped`,
+        OrderNumber: 'PV-10002',
+        CustomerFirstName: 'Luis',
+        CustomerLastName: 'Preview',
+        PromisedShippingTime: promised,
+        ItemsCount: '1',
+        Statuses: 'shipped',
+      },
+    },
+  ];
+  for (const row of rows) {
+    await pool.query(
+      `INSERT INTO falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, invoice_required, grand_total, currency, raw_data
+       ) VALUES ($1,$2,$3,NOW(),NOW(),$4,false,$5,'PEN',$6::jsonb)
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         order_number = EXCLUDED.order_number,
+         raw_data = EXCLUDED.raw_data,
+         last_seen_at = NOW()`,
+      [limbo.id, row.orderId, row.orderNumber, row.status, product.referencePrice || 100, JSON.stringify(row.raw)],
+    );
+    await pool.query(
+      `INSERT INTO falabella_order_lifecycle (
+         company_id, order_id, order_number, current_status, pending_at,
+         ready_to_ship_at, shipped_at, first_observed_at, last_observed_at
+       ) VALUES (
+         $1,$2,$3,$4,NOW(),
+         CASE WHEN $4 IN ('ready_to_ship','shipped') THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'shipped' THEN NOW() ELSE NULL END,
+         NOW(), NOW()
+       )
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         current_status = EXCLUDED.current_status,
+         last_observed_at = NOW()`,
+      [limbo.id, row.orderId, row.orderNumber, row.status],
+    );
+  }
+  return { falabellaOrders: rows.length };
+}
+
+async function ensurePreviewFixtures() {
+  const credentials = adminCredentials();
+  const password = seedPassword();
+  const admin = await ensureAdminUser(credentials);
+  for (const spec of SEED_USERS) {
+    await ensureRoleUser(spec, password, admin.id);
+    await syncCredentialPassword(spec.email, password);
+  }
+  const limbo = await pool.query(
+    `SELECT id FROM companies WHERE ruc = '20990001001' LIMIT 1`,
+  );
+  const product = await pool.query(
+    `SELECT id, main_sku, name, reference_price
+       FROM products
+      WHERE main_sku = 'AG301'
+      LIMIT 1`,
+  );
+  if (limbo.rows[0] && product.rows[0]) {
+    await ensureFalabellaInboxOrders(
+      { id: Number(limbo.rows[0].id) },
+      {
+        productId: Number(product.rows[0].id),
+        mainSku: product.rows[0].main_sku,
+        name: product.rows[0].name,
+        referencePrice: Number(product.rows[0].reference_price || 100),
+      },
+    );
+  }
+  return admin;
+}
+
 async function bumpInsumosStock() {
   await pool.query(
     `UPDATE insumos
@@ -511,7 +635,8 @@ export async function seedPreviewData({ force = false } = {}) {
   await ensureSeedMarkerTable();
   const marker = await readSeedMarker();
   if (!force && marker?.marker === SEED_MARKER) {
-    console.log('[SEED] Preview ya sembrado; omitiendo (force=false).');
+    console.log('[SEED] Preview ya sembrado; reparando logins e inbox.');
+    await ensurePreviewFixtures();
     return { skipped: true, summary: marker.summary || {} };
   }
 
@@ -559,6 +684,7 @@ export async function seedPreviewData({ force = false } = {}) {
 
   const clientsCreated = await ensureClients(companies);
   const orders = await ensureSampleOrders(companiesByRuc, products);
+  const inbox = await ensureFalabellaInboxOrders(companiesByRuc.get('20990001001'), products[0]);
   const insumosModule = await import('./insumos.js');
   await insumosModule.ensureTables();
   await bumpInsumosStock();
@@ -575,9 +701,10 @@ export async function seedPreviewData({ force = false } = {}) {
       listings: product.listings,
     })),
     clientsCreated,
-    orders,
+    orders: { ...orders, ...inbox },
     loginHint: {
-      admin: credentials.email,
+      superadmin: credentials.email,
+      admin: 'admin@preview.zentofact.local',
       operator: 'operator@preview.zentofact.local',
       vendedor: 'vendedor@preview.zentofact.local',
       billing: 'billing@preview.zentofact.local',
@@ -605,7 +732,7 @@ export async function bootstrapPreviewIfNeeded() {
   await ensureAuthSchema();
   await users.ensureUserColumns();
   const result = await seedPreviewData();
-  await ensureAdminUser(adminCredentials());
+  await ensurePreviewFixtures();
   return { ran: true, ...result };
 }
 
@@ -619,11 +746,17 @@ if (isCli) {
     await users.ensureUserColumns();
     const result = await seedPreviewData({ force });
     if (result.skipped) {
-      console.log('Seed omitido (ya aplicado). Usa --force para re-aplicar datos faltantes.');
+      console.log('Seed marker ya aplicado; logins e inbox reparados. Usa --force para re-sembrar catálogo.');
     } else {
       console.log('Seed preview aplicado ✅');
-      console.log(JSON.stringify(result.summary.loginHint, null, 2));
     }
+    console.log(JSON.stringify(result.summary?.loginHint || {
+      superadmin: adminCredentials().email,
+      admin: 'admin@preview.zentofact.local',
+      operator: 'operator@preview.zentofact.local',
+      vendedor: 'vendedor@preview.zentofact.local',
+      billing: 'billing@preview.zentofact.local',
+    }, null, 2));
     process.exit(0);
   } catch (error) {
     console.error('Seed preview falló:', error);

@@ -77,14 +77,19 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Cloud Agent fixtures
+
+When proving a UI or API change on this VM, or when the task names a role, catalog, inbox, inventory, or seed: read `docs/agents/cloud-agent.md`.
+
 ## Cursor Cloud specific instructions
 
 Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway is the public host after a merge, not the proof.
 
-1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. It starts local Postgres, writes `.env` if missing, and leaves DB `zentofact` ready on `127.0.0.1:5432`.
-2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` then `login` — done when doctor prints `api_health=ok` and `web_health=ok`, and login prints `login=ok email=admin@zentofact.local`.
+1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`.
+2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` — done when doctor prints `api_health=ok` (`service=zentofact-api`) and `web_health=ok`.
+3. Pick the fixture profile that matches the task from `docs/agents/cloud-agent.md`, then `.cursor/skills/verify-zentofact/scripts/control-zentofact login <email>`. Done when stdout prints `login=ok email=<that email>` and the screen under test shows seeded rows (or the role's authorized empty view).
 
-Local fixture login: `admin@zentofact.local` / `ZentoFactLocal123`. Postgres role: `zento` / `zento`. `SEED_PREVIEW=true` fills LIMBO, MANTA RAYA, YAKURUNA, catálogo and sample inbox rows. Falabella Seller API stays off (`FALABELLA_SYNC_ENABLED=false`).
+`SEED_PREVIEW=true` fills every selectable role, LIMBO / MANTA RAYA / YAKURUNA, catalog stock, and Falabella inbox rows on boot. Falabella Seller API stays off (`FALABELLA_SYNC_ENABLED=false`).
 
 `bash scripts/cloud-agent-install.sh` refreshes `node_modules`, linux-x64 native bindings for Vite, and `dist/` for `@zentofact/falabella-api`, `@zentofact/core`, and `@zentofact/ripley-api`. A plain `npm install` does not restore those native bindings.
 

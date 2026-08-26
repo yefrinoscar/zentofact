@@ -19,10 +19,11 @@ The catalog shows canonical products, internal SKU, and on-hand stock in one ope
 Preconditions:
 
 - Baseline launch, doctor, and login have succeeded.
-- The signed-in user can open `productos` (seeded superadmin can).
+- The signed-in user can open `productos` (seeded superadmin or admin can).
+- `GET /products?search=AG301` returns that SKU with stock 12. If it does not, run `control-zentofact seed`.
 
 - **Open the screen.** Navigate to `http://127.0.0.1:3011/#/productos`. The header `h1` reads `Catálogo de productos`. The search box is named `Buscar por producto, SKU o marca`. The table is named `Catálogo de productos`.
-- **Read the working set.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /products?limit=5 .cursor/skills/verify-zentofact/artifacts/<run>/products.json`. HTTP status is 200. The JSON includes a `products` array. Each visible row's name or `mainSku` appears in that payload (or the table shows the empty state and the array is empty).
+- **Read the working set.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /products?search=AG301&limit=5 .cursor/skills/verify-zentofact/artifacts/<run>/products.json`. HTTP status is 200. The JSON includes a `products` array that contains `mainSku` AG301. Each visible row's name or `mainSku` appears in that payload.
 - **Search.** Type a SKU taken from `products.json` into `Buscar por producto, SKU o marca` and press Enter. The table shows that product. Confirm with `GET /products?search=<sku>&limit=5` saved as `products-search.json`.
 - **Proof.** Screenshot the header plus at least one product row (or the empty table). Keep both JSON files. Do not open publication switches and do not POST `/products/:id/inventory/adjust`.
 

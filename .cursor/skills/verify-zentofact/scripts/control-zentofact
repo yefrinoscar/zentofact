@@ -218,31 +218,55 @@ cmd_stop() {
   echo "stopped pids started by this run; artifacts kept in $artifacts_dir"
 }
 
+cmd_profiles() {
+  cat <<'EOF'
+password=ADMIN_PASSWORD from .env (never printed here)
+superadmin=admin@zentofact.local
+admin=admin@preview.zentofact.local
+operator=operator@preview.zentofact.local
+vendedor=vendedor@preview.zentofact.local
+billing=billing@preview.zentofact.local
+map=docs/agents/cloud-agent.md
+EOF
+}
+
+cmd_seed() {
+  load_env
+  (cd "$repo_root" && SEED_PREVIEW=true npm run seed:preview -w @zentofact/server -- --force)
+}
+
 cmd_login() {
   load_env
-  export ADMIN_EMAIL="${ADMIN_EMAIL:-${AUTH_SUPERADMIN_EMAIL:-}}"
+  local requested="${1:-}"
+  if [[ -n "$requested" ]]; then
+    ADMIN_EMAIL="$requested"
+  else
+    ADMIN_EMAIL="${ADMIN_EMAIL:-${AUTH_SUPERADMIN_EMAIL:-}}"
+  fi
+  export ADMIN_EMAIL
   if [[ -z "${ADMIN_EMAIL:-}" || -z "${ADMIN_PASSWORD:-}" ]]; then
-    echo "set ADMIN_EMAIL (or AUTH_SUPERADMIN_EMAIL) and ADMIN_PASSWORD in .env" >&2
+    echo "set ADMIN_EMAIL (or AUTH_SUPERADMIN_EMAIL) and ADMIN_PASSWORD in .env, or pass login <email>" >&2
     return 1
   fi
+  rm -f "$cookie_jar"
   local body
   body="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["ADMIN_EMAIL"],"password":os.environ["ADMIN_PASSWORD"]}))')"
-  local response
-  response="$(curl -sS --max-time 15 -c "$cookie_jar" -b "$cookie_jar" \
+  curl -sS --max-time 15 -c "$cookie_jar" -b "$cookie_jar" \
     -H 'content-type: application/json' \
     -H "origin: $web_url" \
     -X POST "$web_url/api/auth/sign-in/email" \
-    --data "$body")"
+    --data "$body" >/dev/null
   local me
   me="$(curl -sS --max-time 8 -c "$cookie_jar" -b "$cookie_jar" "$web_url/me")"
   echo "$me" | python3 -c 'import json,sys
 d=json.load(sys.stdin)
 user=d.get("user") or {}
 email=user.get("email")
+role=user.get("role") or ""
 if not email:
   sys.stderr.write("login failed: /me has no user\n")
   sys.exit(1)
-print("login=ok email="+email)
+print("login=ok email="+email+" role="+role)
 '
 }
 
@@ -288,7 +312,9 @@ usage: control-zentofact <command>
 
   doctor              Read-only: API /health, web /, optional /me session
   launch              Start API:3010 + web:3011, or attach if already healthy
-  login               Sign in with ADMIN_EMAIL / ADMIN_PASSWORD from .env
+  profiles            Print seeded emails (password stays in .env)
+  seed                Re-apply preview fixtures (roles, catalog, inbox)
+  login [email]       Sign in with that email, or ADMIN_EMAIL from .env
   api METHOD PATH [file]   Authenticated request via the web origin proxy
   stop                Kill only PIDs this run started; keep artifacts
 EOF
@@ -300,6 +326,8 @@ main() {
   case "$cmd" in
     doctor) cmd_doctor "$@" ;;
     launch) cmd_launch "$@" ;;
+    profiles) cmd_profiles "$@" ;;
+    seed) cmd_seed "$@" ;;
     login) cmd_login "$@" ;;
     api) cmd_api "$@" ;;
     stop) cmd_stop "$@" ;;

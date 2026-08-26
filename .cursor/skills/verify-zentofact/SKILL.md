@@ -1,6 +1,6 @@
 ---
 name: verify-zentofact
-description: Drive the ZentoFact web app and API the way an operator does — login, catalog, Falabella inbox, and today's outbound products. Use when proving a UI or API change, checking inventory after listo-para-enviar, or verifying local app behavior.
+description: Drive the ZentoFact web app and API the way an operator does — login as each fixture role, catalog, Falabella inbox, and today's outbound products. Use when proving a UI or API change, checking inventory after listo-para-enviar, or verifying local app behavior.
 ---
 
 # Verify ZentoFact
@@ -11,7 +11,7 @@ This skill is for an agent that has never seen the app. Read `features/README.md
 
 ## Launch
 
-Repo root: three levels above this file (`../../../` from `.cursor/skills/verify-zentofact`). `launch` runs `scripts/cloud-agent-start.sh` so local Postgres and `.env` exist. Fixture login is `admin@zentofact.local` / `ZentoFactLocal123`.
+Repo root: three levels above this file (`../../../` from `.cursor/skills/verify-zentofact`). `launch` runs `scripts/cloud-agent-start.sh` so local Postgres and `.env` exist. Fixture emails and SKUs live in `docs/agents/cloud-agent.md`. Default login is `admin@zentofact.local`; pass another seeded email to `login` when the task is a non-admin role.
 
 Exact start:
 
@@ -46,7 +46,7 @@ Worth driving only when:
 
 - `api_health=ok` and the body includes `"service":"zentofact-api"`
 - `web_health=ok`
-- after login, `session=ok` and the email matches `ADMIN_EMAIL` from `.env` (the helper prints the email, never the password)
+- after login, `session=ok` and the email matches the profile you signed in as (the helper prints the email, never the password)
 
 If doctor fails, read `.cursor/skills/verify-zentofact/.run/api.log` and `web.log` for the pair this run started.
 
@@ -55,13 +55,15 @@ If doctor fails, read `.cursor/skills/verify-zentofact/.run/api.log` and `web.lo
 Harness: `control-zentofact` for session and HTTP. Browser for screens the operator sees. Hash routes live at `http://127.0.0.1:3011/#<path>`.
 
 ```bash
+.cursor/skills/verify-zentofact/scripts/control-zentofact profiles
 .cursor/skills/verify-zentofact/scripts/control-zentofact login
-.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /products?limit=5 .cursor/skills/verify-zentofact/artifacts/<run>/products.json
-.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /orders-inbox?limit=20 .cursor/skills/verify-zentofact/artifacts/<run>/inbox.json
+.cursor/skills/verify-zentofact/scripts/control-zentofact login operator@preview.zentofact.local
+.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /products?search=AG301&limit=5 .cursor/skills/verify-zentofact/artifacts/<run>/products.json
+.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /orders-inbox?view=open&limit=20 .cursor/skills/verify-zentofact/artifacts/<run>/inbox.json
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /catalog/sales/today .cursor/skills/verify-zentofact/artifacts/<run>/salidas.json
 ```
 
-`login` POSTs to `http://127.0.0.1:3011/api/auth/sign-in/email` with `ADMIN_EMAIL` or `AUTH_SUPERADMIN_EMAIL` plus `ADMIN_PASSWORD` from `.env`, and stores cookies in `.run/cookies.txt`. All later `api` calls go through the web origin so Vite's proxy and Better Auth cookies stay on the same site. This repo's `.env` currently has the email key but not `ADMIN_PASSWORD`; the login screen can still be proved without it. Authenticated catalog/inbox recipes need that password in the environment.
+`login [email]` POSTs to `http://127.0.0.1:3011/api/auth/sign-in/email` with that email (or `ADMIN_EMAIL` / `AUTH_SUPERADMIN_EMAIL`) plus `ADMIN_PASSWORD` from `.env`, and stores cookies in `.run/cookies.txt`. All later `api` calls go through the web origin so Vite's proxy and Better Auth cookies stay on the same site. Seeded catalog/inbox rows are in `docs/agents/cloud-agent.md`. If those rows are missing, run `control-zentofact seed`.
 
 Browser (T3 preview tools, Playwright, or any CDP session) — stable handles from this repo:
 
@@ -108,7 +110,10 @@ The script is executable. Invoke it from the repo root:
 ```bash
 .cursor/skills/verify-zentofact/scripts/control-zentofact doctor
 .cursor/skills/verify-zentofact/scripts/control-zentofact launch
+.cursor/skills/verify-zentofact/scripts/control-zentofact profiles
 .cursor/skills/verify-zentofact/scripts/control-zentofact login
+.cursor/skills/verify-zentofact/scripts/control-zentofact login operator@preview.zentofact.local
+.cursor/skills/verify-zentofact/scripts/control-zentofact seed
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /me
 .cursor/skills/verify-zentofact/scripts/control-zentofact stop
 ```
