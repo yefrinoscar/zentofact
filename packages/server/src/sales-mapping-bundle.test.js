@@ -252,6 +252,49 @@ test('una línea de listing desvinculado no hereda el maestro residual', async (
   assert.equal(item.params[6], null);
 });
 
+test('ingerir conserva cantidad 0 y si el payload traía Quantity', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into product_listings')) return { rowCount: 1 };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 82 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    listings: [{
+      channel: 'falabella', companyRuc: '20607809136',
+      sellerSku: 'seller-z7', shopSku: 'shop-z7', productSku: 'Z7', status: 'active',
+    }],
+    orders: [{
+      channel: 'falabella', companyRuc: '20607809136',
+      externalOrderId: 'FAL-ZERO', orderedAt: '2026-08-22T16:00:00.000Z',
+      orderStatus: 'confirmed', fulfillmentStatus: 'shipped',
+      items: [
+        { sku: 'seller-z7', providerSku: 'shop-z7', productSku: 'Z7', quantity: 0 },
+        { sku: 'seller-z7', providerSku: 'shop-z7', productSku: 'Z7', quantity: 0, rawData: { Quantity: 0 } },
+      ],
+    }],
+  });
+  const inserts = queries.filter((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(inserts.length, 2);
+  assert.equal(inserts[0].params[5], 0);
+  assert.equal(JSON.parse(inserts[0].params[8]).Quantity, undefined);
+  assert.equal(inserts[1].params[5], 0);
+  assert.equal(JSON.parse(inserts[1].params[8]).Quantity, 0);
+  assert.match(inserts[0].sql, /raw_data/);
+});
+
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);
@@ -284,6 +327,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /'productSku'/);
   assert.match(sql, /LEFT JOIN products p ON p\.id = l\.product_id/);
   assert.match(sql, /LEFT JOIN products p ON p\.id = oi\.product_id/);
+  assert.match(sql, /raw_data \? 'Quantity'/);
+  assert.match(sql, /'rawData'/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

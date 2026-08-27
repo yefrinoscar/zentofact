@@ -136,7 +136,11 @@ order_rows AS (
         'providerSku', oi.provider_sku,
         'productSku', COALESCE(m.master, p.main_sku, oi.main_sku),
         'description', oi.description,
-        'quantity', oi.quantity
+        'quantity', oi.quantity,
+        'rawData', CASE
+          WHEN oi.raw_data ? 'Quantity' THEN jsonb_build_object('Quantity', oi.raw_data->'Quantity')
+          ELSE '{}'::jsonb
+        END
       ) ORDER BY oi.id)
       FROM order_items oi
       LEFT JOIN products p ON p.id = oi.product_id
