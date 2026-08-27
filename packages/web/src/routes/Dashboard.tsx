@@ -488,7 +488,7 @@ export default function Dashboard() {
         <KpiCard
           title="Pendiente"
           value={money.format(summary.pendingSales || 0)}
-          detail="Ventas que todavía no aparecen en el CSV"
+          detail="Ventas que Falabella todavía no liquidó"
           icon={WalletCards}
         />
         <KpiCard
