@@ -576,6 +576,7 @@ export default function Productos() {
     queryKey: ['catalog-product-sales', selectedId, salesRange],
     queryFn: () => api.getCatalogProductActivity(selectedId!, { range: salesRange, kind: 'sales' }),
     enabled: selectedId != null && detailTab === 'sales',
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
     retry: 1,
   });
@@ -583,6 +584,7 @@ export default function Productos() {
     queryKey: ['catalog-product-returns', selectedId, salesRange],
     queryFn: () => api.getCatalogProductActivity(selectedId!, { range: salesRange, kind: 'returns' }),
     enabled: selectedId != null && detailTab === 'returns',
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
     retry: 1,
   });
@@ -1707,31 +1709,41 @@ function ProductDrawer({
   onSaveProfitOwner: (value: string) => void;
   onSaveDescription: (value: string) => void;
 }) {
+  const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
   const publishedListings = associatedListings.filter(isActivelyPublished);
+  const listingRows = listingFilter === 'visible'
+    ? publishedListings
+    : listingFilter === 'hidden'
+      ? associatedListings.filter((listing) => !isActivelyPublished(listing))
+      : associatedListings;
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
-      className="sm:max-w-3xl"
+      className="border-l-0 bg-background shadow-[-24px_0_48px_-28px_rgba(15,23,42,0.28)] sm:max-w-3xl sm:rounded-l-[1.75rem]"
       onEscapeKeyDown={(event) => {
         // Escape dentro de un campo solo cancela la edición; un segundo Escape cierra el drawer.
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
     >
-      <SheetHeader className="border-b border-border px-5 py-4 pr-16">
+      <SheetHeader className="px-5 pb-3 pt-4 pr-16">
         <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[5rem_minmax(0,1fr)_auto]">
           <ProductPhoto product={product} onOpenImage={onOpenImage} onEditImage={onEditImage} />
           <div className="min-w-0">
             <SheetTitle className="pr-2 leading-6">{product?.name || 'Producto'}</SheetTitle>
             <SheetDescription className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">SKU interno</span>
-              <span className="font-mono text-sm font-semibold text-foreground">{product?.mainSku || '—'}</span>
-              {product && <StatusBadge value={product.status} />}
+              {product?.mainSku
+                ? <CopyableSku
+                    sku={product.mainSku}
+                    className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold tracking-wide text-foreground hover:text-foreground"
+                  />
+                : <span className="font-mono text-sm font-semibold text-foreground">—</span>}
+              {product && <ProductStatusBadge product={product} compact />}
             </SheetDescription>
           </div>
           <nav aria-label="Navegación entre productos" className="col-start-2 flex items-center sm:col-start-3 sm:row-start-1 sm:justify-end">
-            <div className="inline-flex h-11 items-center rounded-lg bg-muted/80 p-0.5 sm:h-9">
+            <div className="inline-flex h-11 items-center rounded-full bg-muted/80 p-0.5 sm:h-9">
               <Button variant="ghost" size="icon-sm" className="size-10 sm:size-8" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft /></Button>
               <span className="min-w-16 px-2 text-center text-xs font-medium tabular-nums text-muted-foreground" aria-live="polite">{productPosition ? `${productPosition} / ${totalProducts}` : `— / ${totalProducts}`}</span>
               <Button variant="ghost" size="icon-sm" className="size-10 sm:size-8" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="animate-spin" /> : <ChevronRight />}</Button>
@@ -1741,87 +1753,125 @@ function ProductDrawer({
       </SheetHeader>
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
-        <div className="shrink-0 border-b border-border px-5 py-3">
-          <TabsList className="w-full sm:w-auto">
-            <TabsTrigger value="overview">Resumen</TabsTrigger>
-            <TabsTrigger value="listings">Publicaciones <span className="text-xs text-muted-foreground">{associatedListings.length}</span></TabsTrigger>
-            <TabsTrigger value="inventory">Inventario</TabsTrigger>
-            <TabsTrigger value="sales">Ventas</TabsTrigger>
-            <TabsTrigger value="returns">Devoluciones</TabsTrigger>
+        <div className="shrink-0 px-5 pb-2">
+          <TabsList className="h-10 w-full justify-start gap-0.5 rounded-full bg-muted/70 p-1 sm:w-auto">
+            <TabsTrigger value="overview" className="rounded-full px-3">Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className="rounded-full px-3">Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="inventory" className="rounded-full px-3">Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className="rounded-full px-3">Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className="rounded-full px-3">Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="overview" className="min-h-0 overflow-y-auto">
-          <div className="grid grid-cols-2 border-b border-border md:grid-cols-4">
-            <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
-            <Metric label="Precio" value={formatBasePrice(product)} />
-            <Metric label="Sellers" value={String(product.sellersCount || 0)} />
-            <Metric label="Publicadas" value={String(publishedListings.length)} />
+        <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            <MetricRow>
+              <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
+              <Metric label="Precio" value={formatBasePrice(product)} />
+              <Metric label="Sellers" value={String(product.sellersCount || 0)} />
+              <Metric label="Publicadas" value={String(publishedListings.length)} />
+            </MetricRow>
+            <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
+            <div className="mt-6">
+              <ProductProperties
+                product={product}
+                profitOwners={profitOwners}
+                savingField={savingField}
+                onSaveCommission={onSaveCommission}
+                onSaveProfitOwner={onSaveProfitOwner}
+                onSaveDescription={onSaveDescription}
+              />
+              {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
+            </div>
           </div>
-          <div className="px-5 py-5">
-            <ProductProperties
-              product={product}
-              profitOwners={profitOwners}
-              savingField={savingField}
-              onSaveCommission={onSaveCommission}
-              onSaveProfitOwner={onSaveProfitOwner}
-              onSaveDescription={onSaveDescription}
-            />
-            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
-          </div>
+          <ProductOverviewActions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
         </TabsContent>
 
-        <TabsContent value="listings" className="min-h-0 overflow-y-auto">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
-            <div>
-              <p className="text-sm font-semibold">
-                {associatedListings.length} {associatedListings.length === 1 ? 'publicación asociada' : 'publicaciones asociadas'} · {publishedListings.length} {publishedListings.length === 1 ? 'visible' : 'visibles'}
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">Cada publicación pertenece a un seller y canal.</p>
-            </div>
+        <TabsContent value="listings" className="min-h-0 overflow-y-auto px-5 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <FilterChips
+              ariaLabel="Filtrar publicaciones"
+              value={listingFilter}
+              onChange={setListingFilter}
+              options={[
+                { value: 'all', label: 'Todas', count: associatedListings.length },
+                { value: 'visible', label: 'Visibles', count: publishedListings.length },
+                { value: 'hidden', label: 'Ocultas', count: associatedListings.length - publishedListings.length },
+              ]}
+            />
             <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
           </div>
-          {!associatedListings.length ? <div className="px-5 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div> : associatedListings.map((listing) => {
-            const publication = publicationPresentation(listing);
-            return <article key={listing.id} className="border-b-[6px] border-muted px-5 py-5 last:border-b-0">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} listing={listing} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
-                <div className="flex shrink-0 items-center gap-2"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
-              </div>
-              <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
-                <dl className="grid min-w-0 grid-cols-2 gap-4">
-                  <div><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">SKU del seller</dt><dd className="mt-1 truncate font-mono text-sm font-medium text-foreground">{listing.sellerSku}</dd></div>
-                  <div><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">Shop SKU</dt><dd className="mt-1 truncate font-mono text-sm text-muted-foreground">{listing.shopSku || '—'}</dd></div>
-                </dl>
-                <div><span className="text-[11px] uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
-                <div><span className="text-[11px] uppercase tracking-wide text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
-              </div>
-            </article>;
-          })}
+          {!associatedListings.length ? <div className="px-2 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div>
+            : !listingRows.length ? <p className="px-2 py-10 text-center text-sm text-muted-foreground">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
+            : <div className="mt-4 space-y-3">{listingRows.map((listing) => {
+              const publication = publicationPresentation(listing);
+              return <article key={listing.id} className="rounded-2xl bg-muted/50 px-4 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} listing={listing} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
+                  <div className="flex shrink-0 items-center gap-2"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
+                </div>
+                <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
+                  <dl className="grid min-w-0 grid-cols-2 gap-4">
+                    <div><dt className="text-xs text-muted-foreground">SKU del seller</dt><dd className="mt-1 truncate font-mono text-sm font-medium text-foreground">{listing.sellerSku}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Shop SKU</dt><dd className="mt-1 truncate font-mono text-sm text-muted-foreground">{listing.shopSku || '—'}</dd></div>
+                  </dl>
+                  <div><span className="text-xs text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
+                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
+                </div>
+              </article>;
+            })}</div>}
         </TabsContent>
 
-        <TabsContent value="inventory" className="min-h-0 overflow-y-auto">
-          <div className="grid grid-cols-3 border-b border-border"><Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} /><Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} /><Metric label="Disponible" value={`${formatNumber(product.available)} u`} /></div>
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Movimientos</p><p className="mt-0.5 text-xs text-muted-foreground">La fecha indica cuándo ocurrió la salida, el reintegro o el ajuste.</p></div><button type="button" onClick={onAdjust} className="secondary-button h-8 px-3"><CircleDollarSign className="h-4 w-4" /> Ajustar stock</button></div>
-          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 border-b border-border px-5 py-3 last:border-b-0"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.effectiveAt || movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}
+        <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-5 py-5">
+          <MetricRow columns={3}>
+            <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
+            <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
+            <Metric label="Disponible" value={`${formatNumber(product.available)} u`} />
+          </MetricRow>
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Movimientos</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Cuándo salió, volvió o se ajustó.</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onAdjust}>
+              <CircleDollarSign data-icon="inline-start" /> Ajustar stock
+            </Button>
+          </div>
+          {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : <div className="mt-3 space-y-1">{movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 rounded-xl px-3 py-3"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.effectiveAt || movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}</div>}
         </TabsContent>
 
-        <TabsContent value="sales" className="min-h-0 overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Ventas del producto</p><p className="mt-0.5 text-xs text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p></div><Select value={salesRange} onValueChange={(value) => onSalesRangeChange(value as typeof salesRange)}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">30 días</SelectItem><SelectItem value="90">90 días</SelectItem><SelectItem value="365">12 meses</SelectItem><SelectItem value="all">Todo</SelectItem></SelectContent></Select></div>
-          {salesLoading || !sales ? <LoadingBlock /> : <>
-            <div className="grid grid-cols-2 border-b border-border md:grid-cols-4"><Metric label="Unidades" value={formatNumber(sales.summary.unitsSold)} /><Metric label="Pedidos" value={formatNumber(sales.summary.ordersCount)} /><Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} /><Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} /></div>
-            {sales.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
-            {sales.hydration?.failed ? <p className="px-5 py-3 text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
-          </>}
+        <TabsContent value="sales" className="min-h-0 overflow-y-auto px-5 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p>
+            <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
+          </div>
+          {salesLoading && !sales ? <LoadingBlock /> : !sales ? <LoadingBlock /> : <div className={cn('mt-5 space-y-5', salesLoading && 'opacity-70')}>
+            <MetricRow>
+              <Metric label="Unidades" value={formatNumber(sales.summary.unitsSold)} />
+              <Metric label="Pedidos" value={formatNumber(sales.summary.ordersCount)} />
+              <Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} />
+              <Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} />
+            </MetricRow>
+            {sales.summary.ordersCount === 0 ? <div className="py-10 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
+            {sales.hydration?.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
+          </div>}
         </TabsContent>
 
-        <TabsContent value="returns" className="min-h-0 overflow-y-auto">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><p className="text-sm font-semibold">Devoluciones del producto</p><p className="mt-0.5 text-xs text-muted-foreground">{returns ? activityCaption(returns, 'pedidos devueltos') : 'Consulta bajo demanda.'}</p></div><Select value={salesRange} onValueChange={(value) => onSalesRangeChange(value as typeof salesRange)}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">30 días</SelectItem><SelectItem value="90">90 días</SelectItem><SelectItem value="365">12 meses</SelectItem><SelectItem value="all">Todo</SelectItem></SelectContent></Select></div>
-          {returnsLoading || !returns ? <LoadingBlock /> : <>
-            <div className="grid grid-cols-2 border-b border-border md:grid-cols-4"><Metric label="Unidades devueltas" value={formatNumber(returns.summary.unitsReturned)} /><Metric label="Pedidos" value={formatNumber(returns.summary.ordersCount)} /><Metric label="Monto asociado" value={formatMoney(returns.summary.amount)} /><Metric label="Sellers" value={formatNumber(returns.summary.sellersCount)} /></div>
-            {returns.summary.ordersCount === 0 ? <div className="px-5 py-12 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <section><div className="border-b border-border px-5 py-3"><h3 className="text-sm font-semibold">Devoluciones recientes</h3></div>{returns.recent.map((returned) => <div key={returned.orderId} className="flex items-start justify-between gap-4 border-b border-border px-5 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>{returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}</div><div className="shrink-0 text-right"><p className="text-sm font-semibold">{formatMoney(returned.amount)}</p><p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p></div></div>)}</section>}
-            {returns.hydration.failed ? <p className="px-5 py-3 text-xs text-amber-700">No se pudieron consultar {returns.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
-          </>}
+        <TabsContent value="returns" className="min-h-0 overflow-y-auto px-5 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">{returns ? activityCaption(returns, 'pedidos devueltos') : 'Consulta bajo demanda.'}</p>
+            <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
+          </div>
+          {returnsLoading && !returns ? <LoadingBlock /> : !returns ? <LoadingBlock /> : <div className={cn('mt-5 space-y-5', returnsLoading && 'opacity-70')}>
+            <MetricRow>
+              <Metric label="Unidades devueltas" value={formatNumber(returns.summary.unitsReturned)} />
+              <Metric label="Pedidos" value={formatNumber(returns.summary.ordersCount)} />
+              <Metric label="Monto asociado" value={formatMoney(returns.summary.amount)} />
+              <Metric label="Sellers" value={formatNumber(returns.summary.sellersCount)} />
+            </MetricRow>
+            {returns.summary.ordersCount === 0 ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{returns.hydration.coverage.complete ? 'Sin devoluciones en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{returns.hydration.coverage.complete ? `Ninguno de los ${returns.hydration.coverage.orderDetails} pedidos devueltos revisados corresponde a este producto.` : 'Faltan detalles de devoluciones por revisar; vuelve a intentarlo.'}</p></div> : <section className="space-y-1"><h3 className="px-1 text-sm font-medium">Devoluciones recientes</h3>{returns.recent.map((returned) => <div key={returned.orderId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">Pedido {returned.orderNumber || returned.orderId}</p><p className="mt-1 text-xs text-muted-foreground">{sellerShortName(returned.companyName)} · {formatDate(returned.orderedAt)}</p>{returned.reason ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{returned.reason}</p> : null}</div><div className="shrink-0 text-right"><p className="text-sm font-semibold">{formatMoney(returned.amount)}</p><p className="text-xs text-muted-foreground">{formatNumber(returned.quantity)} u</p></div></div>)}</section>}
+            {returns.hydration.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {returns.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
+          </div>}
         </TabsContent>
       </Tabs>}
     </SheetContent>
@@ -1829,62 +1879,18 @@ function ProductDrawer({
 }
 
 function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
-  return <section aria-labelledby="recent-product-sales-title">
-    <div className="border-b border-border px-5 py-3">
-      <h3 id="recent-product-sales-title" className="text-sm font-semibold">Ventas recientes</h3>
-      <p className="mt-0.5 text-xs text-muted-foreground">Detalle por pedido, vendedor y fecha.</p>
-    </div>
-
-    <div className="hidden sm:block">
-      <Table className="table-fixed">
-        <colgroup>
-          <col className="w-[24%]" />
-          <col className="w-[22%]" />
-          <col className="w-[26%]" />
-          <col className="w-[12%]" />
-          <col className="w-[16%]" />
-        </colgroup>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="h-10 px-5 text-[11px] uppercase tracking-wide">Pedido</TableHead>
-            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Vendedor</TableHead>
-            <TableHead className="h-10 px-3 text-[11px] uppercase tracking-wide">Fecha y hora</TableHead>
-            <TableHead className="h-10 px-3 text-right text-[11px] uppercase tracking-wide">Unidades</TableHead>
-            <TableHead className="h-10 px-5 text-right text-[11px] uppercase tracking-wide">Importe</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sales.map((sale) => <TableRow key={sale.orderId}>
-            <TableCell className="px-5 py-3 font-medium tabular-nums">{sale.orderNumber || sale.orderId}</TableCell>
-            <TableCell className="px-3 py-3 whitespace-normal font-medium leading-5">{sellerShortName(sale.companyName)}</TableCell>
-            <TableCell className="px-3 py-3 whitespace-normal text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</TableCell>
-            <TableCell className="px-3 py-3 text-right tabular-nums">{formatNumber(sale.quantity)}</TableCell>
-            <TableCell className="px-5 py-3 text-right font-semibold tabular-nums">{formatMoney(sale.total)}</TableCell>
-          </TableRow>)}
-        </TableBody>
-      </Table>
-    </div>
-
-    <div className="divide-y divide-border sm:hidden">
-      {sales.map((sale) => <article key={sale.orderId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 px-5 py-4">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pedido</p>
-          <p className="mt-1 truncate text-sm font-semibold tabular-nums">{sale.orderNumber || sale.orderId}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Importe</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums">{formatMoney(sale.total)}</p>
-        </div>
-        <div className="min-w-0">
-          <p className="line-clamp-2 text-sm font-medium leading-5">{sellerShortName(sale.companyName)}</p>
-          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{formatDate(sale.orderedAt)}</p>
-        </div>
-        <div className="self-end text-right">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Unidades</p>
-          <p className="mt-1 text-sm tabular-nums">{formatNumber(sale.quantity)}</p>
-        </div>
-      </article>)}
-    </div>
+  return <section className="space-y-1" aria-labelledby="recent-product-sales-title">
+    <h3 id="recent-product-sales-title" className="px-1 text-sm font-medium">Ventas recientes</h3>
+    {sales.map((sale) => <article key={sale.orderId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium tabular-nums">Pedido {sale.orderNumber || sale.orderId}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{sellerShortName(sale.companyName)} · {formatDate(sale.orderedAt)}</p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-sm font-semibold tabular-nums">{formatMoney(sale.total)}</p>
+        <p className="text-xs text-muted-foreground">{formatNumber(sale.quantity)} u</p>
+      </div>
+    </article>)}
   </section>;
 }
 
@@ -1944,7 +1950,78 @@ function AssociationCandidatesSkeleton() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0 border-r border-border px-4 py-4 last:border-r-0"><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate text-base font-semibold">{value}</p></div>;
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate text-xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function MetricRow({ children, columns = 4 }: { children: ReactNode; columns?: 3 | 4 }) {
+  return (
+    <div className={cn('grid gap-x-8 gap-y-5', columns === 3 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4')}>
+      {children}
+    </div>
+  );
+}
+
+function FilterChips<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: string; count?: number }[];
+  ariaLabel: string;
+}) {
+  return (
+    <div role="tablist" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
+      {options.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
+              selected ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {option.label}
+            {option.count != null ? <span className="tabular-nums opacity-70">{option.count}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ActivityRangeChips({
+  value,
+  onChange,
+}: {
+  value: '30' | '90' | '365' | 'all';
+  onChange: (value: '30' | '90' | '365' | 'all') => void;
+}) {
+  return (
+    <FilterChips
+      ariaLabel="Periodo"
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: '30', label: '30 días' },
+        { value: '90', label: '90 días' },
+        { value: '365', label: '12 meses' },
+        { value: 'all', label: 'Todo' },
+      ]}
+    />
+  );
 }
 
 function InfoValue({ label, value }: { label: string; value: ReactNode }) {
@@ -1961,7 +2038,7 @@ function ProductPhoto({
   onEditImage: () => void;
 }) {
   return (
-    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
+    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-muted">
       {product?.imageUrl ? (
         <button
           type="button"
@@ -1989,15 +2066,53 @@ function ProductPhoto({
   );
 }
 
+function ProductOverviewCue({ available, listingsCount }: { available: number; listingsCount: number }) {
+  const message = available <= 0
+    ? 'Quiebre. Hay que reponer.'
+    : listingsCount === 0
+      ? 'Sin publicaciones. Asocia o publica.'
+      : null;
+  if (!message) return null;
+  return <p className="mt-5 rounded-2xl bg-muted/60 px-4 py-3 text-sm text-muted-foreground">{message}</p>;
+}
+
+function ProductOverviewActions({
+  onAdjust,
+  onAssociate,
+  onPublish,
+}: {
+  onAdjust: () => void;
+  onAssociate: () => void;
+  onPublish: () => void;
+}) {
+  return (
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-4"
+      role="group"
+      aria-label="Acciones del producto"
+    >
+      <Button type="button" className="rounded-full" onClick={onAdjust}>
+        <CircleDollarSign data-icon="inline-start" /> Ajustar stock
+      </Button>
+      <Button type="button" variant="outline" className="rounded-full" onClick={onAssociate}>
+        <Plus data-icon="inline-start" /> Asociar producto
+      </Button>
+      <Button type="button" variant="outline" className="rounded-full" onClick={onPublish}>
+        <PackagePlus data-icon="inline-start" /> Nueva publicación
+      </Button>
+    </div>
+  );
+}
+
 function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-      <button type="button" onClick={onAssociate} className="secondary-button h-8 px-3">
-        <Plus className="h-4 w-4" /> Asociar producto
-      </button>
-      <button type="button" onClick={onPublish} className="primary-button h-8 px-3">
-        <PackagePlus className="h-4 w-4" /> Nueva publicación
-      </button>
+      <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onAssociate}>
+        <Plus data-icon="inline-start" /> Asociar producto
+      </Button>
+      <Button type="button" size="sm" className="rounded-full" onClick={onPublish}>
+        <PackagePlus data-icon="inline-start" /> Nueva publicación
+      </Button>
     </div>
   );
 }
@@ -2060,7 +2175,7 @@ function ProductProperties({
 
 function PropertyRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-8 items-center gap-4 py-0.5">
+    <div className="flex min-h-9 items-center gap-4 py-1.5">
       <dt className="w-32 shrink-0 text-sm text-muted-foreground">{label}</dt>
       <dd className="min-w-0 flex-1 truncate px-2 text-sm text-foreground">{children}</dd>
     </div>
@@ -2100,10 +2215,10 @@ function ProductInlineField({
   const displayed = draft ?? value;
 
   return (
-    <label className="group flex min-h-8 cursor-text items-center gap-4 py-0.5">
+    <label className="group flex min-h-9 cursor-text items-center gap-4 py-1.5">
       <span className="w-32 shrink-0 text-sm text-muted-foreground">{label}</span>
       <span className={cn(
-        'flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1 transition-colors duration-150',
+        'flex min-w-0 flex-1 items-center gap-1 rounded-xl px-2 py-1 transition-colors duration-150',
         'hover:bg-muted',
         focused && 'bg-muted',
       )}>
@@ -2174,7 +2289,7 @@ function ProductDescriptionField({
           : <span className="text-xs text-muted-foreground">Del producto interno</span>}
       </span>
       <span className={cn(
-        'mt-2 block rounded-md px-2 py-2 transition-colors duration-150',
+        'mt-2 block rounded-2xl bg-muted/50 px-3 py-3 transition-colors duration-150',
         'hover:bg-muted',
         focused && 'bg-muted',
       )}>
@@ -2418,12 +2533,6 @@ function ActionFeedback({ error, message }: { error: string; message: string }) 
 function Notice({ tone, children }: { tone: 'error' | 'success' | 'info'; children: ReactNode }) {
   const classes = tone === 'error' ? 'border-red-200 bg-red-50 text-red-700' : tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700';
   return <div className={cn('flex items-start gap-2 rounded-lg border px-3 py-2 text-sm', classes)}>{tone === 'error' && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}{children}</div>;
-}
-
-function StatusBadge({ value }: { value: string }) {
-  const normalized = String(value || '').toLowerCase();
-  const classes = normalized === 'active' || normalized === 'published' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalized === 'archived' || normalized === 'unlinked' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-700';
-  return <span className={cn('inline-flex rounded-md border px-2 py-0.5 text-xs font-medium', classes)}>{normalized === 'published' ? 'Publicado' : normalized === 'active' ? 'Activo' : normalized === 'inactive' ? 'Inactivo' : normalized === 'archived' ? 'Archivado' : normalized === 'unlinked' ? 'Desvinculado' : value}</span>;
 }
 
 function LoadingBlock() { return <div className="grid min-h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>; }
