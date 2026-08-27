@@ -5,18 +5,18 @@ export const money = new Intl.NumberFormat('es-PE', {
   maximumFractionDigits: 2,
 });
 
-export function settlementStatusLabel(status) {
+export function settlementStatusLabel(status: string) {
   return status === 'matched' ? 'Cruzada' : 'Sin cruzar';
 }
 
-export function settlementMethodLabel(method) {
+export function settlementMethodLabel(method: string | null | undefined) {
   if (method === 'order_id') return 'ID de orden';
   if (method === 'sku_date_amount') return 'SKU, fecha y monto';
   if (method === 'sku_amount') return 'SKU y monto';
   return 'Sin cruce';
 }
 
-export function unmatchedReasonLabel(reason) {
+export function unmatchedReasonLabel(reason: string | null | undefined) {
   if (reason === 'ambiguous_order_id') return 'Varias ventas con el mismo pedido';
   if (reason === 'unknown_order_id') return 'Pedido no está en las ventas';
   if (reason === 'ambiguous_sku_date_amount') return 'Varias ventas con el mismo SKU, fecha y monto';
@@ -24,20 +24,20 @@ export function unmatchedReasonLabel(reason) {
   return 'Sin match único';
 }
 
-export function paymentStatusLabel(status) {
+export function paymentStatusLabel(status: string | null | undefined) {
   const value = String(status || '').trim().toLowerCase();
   if (value === 'pagado' || value === 'paid') return 'Pagado';
   if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'No pagado';
   return status || '—';
 }
 
-export function importSummary(item) {
+export function importSummary(item: { reused?: boolean; matchedCount?: number; unmatchedCount?: number; paidSalesCount?: number } | null | undefined) {
   if (!item) return '';
   if (item.reused) return 'Este archivo ya estaba cargado.';
   return `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
 }
 
-function headerLooksLikeSettlement(text) {
+function headerLooksLikeSettlement(text: string) {
   const header = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
   const normalized = header
     .normalize('NFD')
@@ -46,7 +46,7 @@ function headerLooksLikeSettlement(text) {
   return normalized.includes('del orden') || normalized.includes('de pedido') || normalized.includes('estado de pago');
 }
 
-export function decodeSettlementCsv(buffer) {
+export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
   const utf8 = new TextDecoder('utf-8').decode(bytes);
   let latin = '';
@@ -60,3 +60,4 @@ export function decodeSettlementCsv(buffer) {
   }
   return utf8;
 }
+

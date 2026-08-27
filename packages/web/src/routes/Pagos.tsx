@@ -101,7 +101,7 @@ export default function Pagos() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {imports.map((item) => (
+            {imports.map((item: { id: number; filename: string; importedAt?: string; matchedCount: number; unmatchedCount: number; paidSalesCount: number }) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium">{item.filename}</TableCell>
                 <TableCell>{item.importedAt ? dateTime.format(new Date(item.importedAt)) : ''}</TableCell>
@@ -144,7 +144,21 @@ export default function Pagos() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lines.map((line) => (
+                {lines.map((line: {
+                  id: number;
+                  saleOrderNumber?: string | null;
+                  orderId?: string;
+                  sku?: string;
+                  date?: string | null;
+                  type?: string;
+                  paymentStatus?: string;
+                  method?: string | null;
+                  reason?: string | null;
+                  bruto?: number;
+                  commission?: number;
+                  other?: number;
+                  neto?: number;
+                }) => (
                   <TableRow key={line.id}>
                     <TableCell className="font-medium">{line.saleOrderNumber || line.orderId || '—'}</TableCell>
                     <TableCell>{line.sku || '—'}</TableCell>
