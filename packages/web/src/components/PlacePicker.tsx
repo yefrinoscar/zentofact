@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, MapPin, Navigation, Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { peruPlaceFromComponents } from '../lib/own-fleet-shipping';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 export type MapPlace = {
   label: string;
   district: string;
+  province: string;
+  department: string;
   lat: number;
   lng: number;
 };
@@ -59,18 +62,13 @@ function loadGoogleMaps(key: string) {
   return mapsLoader;
 }
 
-function districtFromComponents(components: Array<{ long_name?: string; longText?: string; types: string[] }> = []) {
-  const pick = (...types: string[]) => {
-    const match = components.find((item) => types.some((type) => item.types.includes(type)));
-    return String(match?.long_name || match?.longText || '').trim();
-  };
-  return pick('sublocality_level_1', 'sublocality', 'neighborhood', 'locality', 'administrative_area_level_2');
-}
-
 function placeFromGoogle(result: any, lat: number, lng: number): MapPlace {
+  const place = peruPlaceFromComponents(result?.address_components || result?.addressComponents || []);
   return {
     label: String(result?.formatted_address || result?.formattedAddress || result?.name || result?.displayName || `${lat.toFixed(5)}, ${lng.toFixed(5)}`),
-    district: districtFromComponents(result?.address_components || result?.addressComponents),
+    district: place.district,
+    province: place.province,
+    department: place.department,
     lat,
     lng,
   };
@@ -174,12 +172,12 @@ export function PlacePicker({
     }
     const geocoder = geocoderRef.current;
     if (!geocoder) {
-      onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', lat, lng });
+      onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
       return;
     }
     geocoder.geocode({ location: { lat, lng }, language: 'es', region: 'PE' }, (results: any[], status: string) => {
       if (status === 'OK' && results?.[0]) onChange(placeFromGoogle(results[0], lat, lng));
-      else onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', lat, lng });
+      else onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
     });
   };
 

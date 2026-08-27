@@ -31,6 +31,11 @@ import {
   type SaleSource,
 } from '../lib/registrar-venta';
 import {
+  OWN_FLEET_CARRIER,
+  quoteOwnFleetShipping,
+  saleTotals,
+} from '../lib/own-fleet-shipping';
+import {
   applyOptimisticSale,
   buildOptimisticSale,
   humanizeSaleError,
@@ -344,7 +349,12 @@ export default function RegistrarVenta() {
     [accounts],
   );
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
-  const total = saleLinesTotal(lines);
+  const productsTotal = saleLinesTotal(lines);
+  const shippingQuote = delivery === 'envio' && shippingCarrier === OWN_FLEET_CARRIER
+    ? quoteOwnFleetShipping(dropoffPlace)
+    : null;
+  const totals = saleTotals(productsTotal, shippingQuote);
+  const total = totals.total;
 
   const addProduct = (product: CatalogProduct) => {
     const sku = String(product.mainSku || '').trim();
@@ -668,34 +678,18 @@ export default function RegistrarVenta() {
 
         {delivery === 'envio' ? (
           <div className="space-y-3">
-            <div
-              className="inline-flex w-full overflow-hidden rounded-md border border-border sm:w-auto"
-              role="radiogroup"
-              aria-label="Reparto"
-            >
-              {SHIPPING_CARRIERS.map((carrier, index) => {
-                const selected = shippingCarrier === carrier.value;
-                return (
-                  <button
-                    key={carrier.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    onClick={() => {
-                      setShippingCarrier(carrier.value);
-                      clearFieldError('delivery');
-                    }}
-                    className={cn(
-                      'h-11 min-w-0 flex-1 cursor-pointer truncate px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
-                      index < SHIPPING_CARRIERS.length - 1 && 'border-r border-border',
-                      selected ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
-                    )}
-                  >
-                    {carrier.label}
-                  </button>
-                );
-              })}
-            </div>
+            <Choice
+              value={shippingCarrier}
+              options={SHIPPING_CARRIERS}
+              onChange={(value) => {
+                setShippingCarrier(value);
+                clearFieldError('delivery');
+              }}
+              ariaLabel="Reparto"
+            />
+            {shippingCarrier === OWN_FLEET_CARRIER && (
+              <p className="text-xs text-muted-foreground">Movilidad propia.</p>
+            )}
             <div className="space-y-1.5">
               <Label>Dirección</Label>
               <PlacePicker
@@ -707,6 +701,25 @@ export default function RegistrarVenta() {
                 placeholder="Calle o toca el mapa"
               />
             </div>
+            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && (
+              <div className="space-y-1 text-sm">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-muted-foreground">
+                    {shippingQuote.zoneLabel || 'Distrito'}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.districtAmount)}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-muted-foreground">
+                    {shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.distanceAmount)}</span>
+                </div>
+              </div>
+            )}
+            {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
+              <p className="text-xs text-muted-foreground">Marca el mapa para ver el envío.</p>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>
               <Input
@@ -775,8 +788,19 @@ export default function RegistrarVenta() {
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">Total</p>
-            <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+            {totals.shipping > 0 ? (
+              <>
+                <p className="truncate text-xs text-muted-foreground">
+                  Productos {formatMoney(totals.products)} · Distrito {formatMoney(totals.districtAmount)} · Distancia {formatMoney(totals.distanceAmount)}
+                </p>
+                <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">Total</p>
+                <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+              </>
+            )}
           </div>
           <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !!loadError || channelMissing}>
             {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
