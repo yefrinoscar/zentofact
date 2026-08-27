@@ -7,10 +7,12 @@ import {
   coerceOrderStatus,
   falabellaInboxToBundleOrders,
   hydrateUnifiedOrdersFromFalabellaInbox,
+  hydrateUnifiedOrdersFromSnapshots,
   ingestSalesMappingBundle,
   listingMasterSku,
   mergeBundleOrders,
   parseSalesMappingBundle,
+  resolveBundleOrderItems,
   workbookFromBundleExcel,
   workbookFromReconciliationAnchors,
 } from './catalog/sales-mapping-bundle.js';
@@ -516,6 +518,108 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /'falabellaOrders'/);
   assert.doesNotMatch(sql, /o\.external_order_id = fo\.order_id/);
   assert.doesNotMatch(sql, /fo\.raw_data \? 'OrderItems'/);
+  assert.match(sql, /'rawPayload'/);
+  assert.match(sql, /FROM order_snapshots s/);
+});
+
+test('recupera líneas Ripley vacías desde rawPayload o snapshots', async () => {
+  const recovered = resolveBundleOrderItems({
+    channel: 'ripley',
+    items: [],
+    rawPayload: {
+      order_lines: [{
+        order_line_id: 'L-1',
+        offer_sku: 'S166285',
+        product_sku: 'AG301',
+        product_title: 'Coche celeste',
+        quantity: 2,
+      }],
+    },
+  });
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].sku, 'S166285');
+  assert.equal(recovered[0].quantity, 2);
+  assert.deepEqual(recovered[0].rawData, { Quantity: 2 });
+
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 3, main_sku: 'G35V' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 2 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 5 }] };
+      if (text.startsWith('insert into orders')) {
+        assert.equal(params[8], 'complete');
+        return { rows: [{ id: 44 }] };
+      }
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    orders: [{
+      channel: 'ripley',
+      companyRuc: '20607809136',
+      externalOrderId: 'RIP-EMPTY',
+      orderedAt: '2026-08-22T16:00:00.000Z',
+      items: [],
+      rawPayload: {
+        order_lines: [{
+          order_line_id: 'L-1',
+          offer_sku: 'S166285',
+          product_sku: 'AG301',
+          quantity: 2,
+        }],
+      },
+    }],
+  });
+  assert.equal(result.orders, 1);
+  assert.equal(result.items, 1);
+  const item = queries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(item.params[2], 'S166285');
+  assert.equal(item.params[5], 2);
+
+  const hydrateQueries = [];
+  const hydrateDb = {
+    async query(sql, params = []) {
+      hydrateQueries.push({ sql: String(sql), params });
+      const text = String(sql).trim().toLowerCase();
+      if (text.includes('from order_snapshots')) {
+        return {
+          rows: [{
+            order_id: 55,
+            external_order_id: 'RIP-SNAP',
+            company_ruc: '20607809136',
+            channel: 'ripley',
+            raw_payload: {
+              order_lines: [{
+                order_line_id: 'L-9',
+                offer_sku: 'S119266',
+                product_sku: 'AG107',
+                quantity: 1,
+              }],
+            },
+          }],
+        };
+      }
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 8, main_sku: 'G1RAMAS' }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      if (text.startsWith('update orders')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const hydrated = await hydrateUnifiedOrdersFromSnapshots(hydrateDb);
+  assert.equal(hydrated.orders, 1);
+  assert.equal(hydrated.items, 1);
+  const extra = hydrateQueries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(extra.params[0], 55);
+  assert.equal(extra.params[1], 'L-9');
+  assert.equal(extra.params[2], 'S119266');
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

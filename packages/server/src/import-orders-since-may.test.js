@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assertOrdersDumpAllowed,
   catalogFromProducts,
+  EXPORT_ORDERS_DUMP_COMMAND,
   inspectOrdersDump,
   remapImportedItemHints,
   remapImportedListingsToExcel,
@@ -23,7 +24,17 @@ test('un dump de pedidos no puede traer catálogo ni inventario', () => {
   assert.equal(allowed.hasListings, true);
   assert.equal(allowed.hasEvents, true);
   assert.deepEqual(allowed.forbidden, []);
+  assert.equal(allowed.hasSnapshots, false);
   assertOrdersDumpAllowed(allowed);
+  assert.match(EXPORT_ORDERS_DUMP_COMMAND, /-t order_snapshots/);
+
+  const snapshots = inspectOrdersDump(`
+    INSERT INTO orders (id, channel_account_id, external_order_id) VALUES (9, 1, 'RIP-1');
+    INSERT INTO order_snapshots (order_id, payload_hash, raw_payload) VALUES (9, 'abc', '{}');
+  `);
+  assert.equal(snapshots.hasOrders, true);
+  assert.equal(snapshots.hasSnapshots, true);
+  assertOrdersDumpAllowed(snapshots);
 
   const blocked = inspectOrdersDump(`
     INSERT INTO orders (id) VALUES (1);

@@ -50,6 +50,7 @@ const {
   assertBundleWorkbook,
   ingestSalesMappingBundle,
   hydrateUnifiedOrdersFromFalabellaInbox,
+  hydrateUnifiedOrdersFromSnapshots,
   parseSalesMappingBundle,
   workbookFromBundleExcel,
 } = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
@@ -293,9 +294,10 @@ try {
     console.log(`Bundle ingerido: ${ingested.orders} pedidos, ${ingested.items} líneas, ${ingested.listings} listings, ${ingested.events} eventos.`);
   } else if (dumpPath) {
     const remapped = await remapImportedListingsToExcel(pool);
+    const fromSnapshots = await hydrateUnifiedOrdersFromSnapshots(pool);
     const hydrated = await hydrateUnifiedOrdersFromFalabellaInbox(pool);
     const hinted = await remapImportedItemHints(pool);
-    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas con maestro operativo: ${hinted}; inbox Falabella: ${hydrated.items} líneas.`);
+    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas con maestro operativo: ${hinted}; snapshots: ${fromSnapshots.items} líneas; inbox Falabella: ${hydrated.items} líneas.`);
   }
 
   const keyTargets = resolveMarketplaceKeyTargets({

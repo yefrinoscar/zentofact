@@ -5,6 +5,7 @@ import {
 import { excelMasterForSku } from './historical-sku-map.js';
 import { MAPPING_CHANNELS, ORDER_SINCE_SQL, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
 import { falabellaOrderItemsPayload, mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
+import { mapRipleyOrderItems } from '../order-adapters/ripley.js';
 
 export const BUNDLE_VERSION = 1;
 export const BUNDLE_SOURCE = 'sales_mapping_bundle';
@@ -46,6 +47,42 @@ export function bundleItemRawData(item) {
     return { Quantity: raw.Quantity };
   }
   return {};
+}
+
+export function bundleItemsFromRawPayload(channel, raw = {}) {
+  const payload = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  if (channel === 'ripley') {
+    return mapRipleyOrderItems(payload).map((item) => ({
+      externalItemId: item.externalItemId,
+      sku: item.sku,
+      providerSku: item.providerSku,
+      productSku: null,
+      description: item.description,
+      quantity: item.quantity,
+      rawData: Number.isFinite(Number(item.quantity)) ? { Quantity: item.quantity } : {},
+    }));
+  }
+  if (channel === 'falabella') {
+    return mapFalabellaOrderItems(falabellaOrderItemsPayload(payload)).map((item) => ({
+      externalItemId: item.externalItemId,
+      sku: item.sku,
+      providerSku: item.providerSku,
+      productSku: null,
+      description: item.description,
+      quantity: item.quantity,
+      rawData: bundleItemRawData(item),
+    }));
+  }
+  return [];
+}
+
+export function resolveBundleOrderItems(order = {}) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  if (items.length) return items;
+  return bundleItemsFromRawPayload(
+    order.channel,
+    order.rawPayload || order.rawData || order.raw_payload || {},
+  );
 }
 
 function inboxRawPayload(row) {
@@ -247,6 +284,58 @@ export async function hydrateUnifiedOrdersFromFalabellaInbox(db, since = SALES_H
     items: ingested.items + extraItems,
     events: ingested.events,
   };
+}
+
+const EMPTY_UNIFIED_ORDERS_WITH_SNAPSHOTS_SQL = `
+select o.id as order_id, o.external_order_id, c.ruc as company_ruc, ch.code as channel,
+  s.raw_payload
+from orders o
+join companies c on c.id = o.company_id
+join order_channel_accounts a on a.id = o.channel_account_id
+join order_channels ch on ch.id = a.channel_id
+join lateral (
+  select raw_payload
+  from order_snapshots
+  where order_id = o.id
+  order by observed_at desc, id desc
+  limit 1
+) s on true
+where ch.code = any($1::text[])
+  and ${ORDER_SINCE_SQL} >= $2::timestamptz
+  and not exists (select 1 from order_items oi where oi.order_id = o.id)
+`;
+
+export async function hydrateUnifiedOrdersFromSnapshots(db, since = SALES_HISTORY_SINCE) {
+  const { rows } = await db.query(EMPTY_UNIFIED_ORDERS_WITH_SNAPSHOTS_SQL, [MAPPING_CHANNELS, since]);
+  if (!rows.length) return { orders: 0, items: 0 };
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const unlinkedKeys = new Set();
+  let items = 0;
+  const recoveredOrders = new Set();
+  for (const row of rows) {
+    const recovered = bundleItemsFromRawPayload(row.channel, row.raw_payload);
+    if (!recovered.length) continue;
+    const order = {
+      channel: row.channel,
+      companyRuc: row.company_ruc,
+      externalOrderId: row.external_order_id,
+    };
+    recoveredOrders.add(Number(row.order_id));
+    for (const [index, item] of recovered.entries()) {
+      await upsertBundleOrderItem(db, Number(row.order_id), order, item, index, {
+        skus, idBySku, unlinkedKeys,
+      });
+      items += 1;
+    }
+    await db.query(
+      `update orders set items_status='complete', updated_at=now()
+       where id=$1 and items_status <> 'complete'`,
+      [Number(row.order_id)],
+    );
+  }
+  return { orders: recoveredOrders.size, items };
 }
 
 export function workbookFromReconciliationAnchors({ run, rows } = {}) {
@@ -552,6 +641,7 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
     const companyId = companyIds.get(String(order.companyRuc || '').trim());
     if (!companyId || !MAPPING_CHANNELS.includes(order.channel)) continue;
     const accountId = await ensureChannelAccount(db, companyId, order.channel, order.companyRuc);
+    const orderItems = resolveBundleOrderItems(order);
     const inserted = await db.query(
       `insert into orders (
          company_id, channel_account_id, external_order_id, external_order_number,
@@ -562,13 +652,14 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
          $1,$2,$3,$4,
          $5,'unknown',$6,'not_requested',$6,
          'optional','automatic','PEN','{}'::jsonb,'{}'::jsonb,$7::jsonb,
-         $8,'complete'
+         $8,$9
        )
        on conflict (channel_account_id, external_order_id) do update set
          order_status=excluded.order_status,
          fulfillment_status=excluded.fulfillment_status,
          ordered_at=excluded.ordered_at,
          metadata=excluded.metadata,
+         items_status=excluded.items_status,
          updated_at=now()
        returning id`,
       [
@@ -580,11 +671,11 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
         coerceFulfillmentStatus(order.fulfillmentStatus),
         JSON.stringify({ source: BUNDLE_SOURCE, companyRuc: order.companyRuc, channel: order.channel }),
         order.orderedAt,
+        orderItems.length > 0 ? 'complete' : 'pending',
       ],
     );
     const orderId = Number(inserted.rows[0].id);
     orders += 1;
-    const orderItems = Array.isArray(order.items) ? order.items : [];
     for (const [index, item] of orderItems.entries()) {
       const unlinked = unlinkedKeys.has(`${order.channel}\u0000${String(order.companyRuc || '').trim()}\u0000${item.sku}`);
       const master = listingMasterSku({
@@ -701,6 +792,13 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
      order by id`,
     [orderIds],
   )).rows : [];
+  const snapshotRows = orderIds.length ? (await db.query(
+    `select distinct on (order_id) order_id, raw_payload
+     from order_snapshots
+     where order_id=any($1::bigint[])
+     order by order_id, observed_at desc, id desc`,
+    [orderIds],
+  )).rows : [];
   const itemsByOrder = new Map();
   for (const item of itemRows) {
     const list = itemsByOrder.get(Number(item.order_id)) || [];
@@ -725,6 +823,9 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
     });
     eventsByOrder.set(Number(event.order_id), list);
   }
+  const snapshotByOrder = new Map(
+    snapshotRows.map((row) => [Number(row.order_id), row.raw_payload || {}]),
+  );
   return {
     version: BUNDLE_VERSION,
     since,
@@ -756,6 +857,7 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
       fulfillmentStatus: row.fulfillment_status,
       items: itemsByOrder.get(Number(row.id)) || [],
       events: eventsByOrder.get(Number(row.id)) || [],
+      rawPayload: snapshotByOrder.get(Number(row.id)) || null,
     })),
     falabellaOrders: (await loadFalabellaInboxOrphans(db, since)).map((row) => ({
       companyRuc: row.company_ruc,

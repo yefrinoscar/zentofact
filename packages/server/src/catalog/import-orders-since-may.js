@@ -10,6 +10,7 @@ export const ORDER_DUMP_TABLES = Object.freeze([
   'orders',
   'order_items',
   'order_events',
+  'order_snapshots',
   'product_listings',
   'falabella_orders',
   'falabella_order_lifecycle',
@@ -24,7 +25,7 @@ export const FORBIDDEN_DUMP_TABLES = Object.freeze([
 export const EXPORT_ORDERS_DUMP_COMMAND = [
   'pg_dump "$DATABASE_URL_POSTGRES" --data-only --inserts --no-owner --no-privileges',
   '-t companies -t order_channel_accounts -t orders -t order_items -t order_events',
-  '-t product_listings -t falabella_orders -t falabella_order_lifecycle',
+  '-t order_snapshots -t product_listings -t falabella_orders -t falabella_order_lifecycle',
   '-f orders-since-may.sql',
 ].join(' \\\n  ');
 
@@ -60,10 +61,12 @@ export function inspectOrdersDump(sqlText) {
   return {
     tables,
     forbidden,
-    hasOrders: tables.includes('orders') && tables.includes('order_items'),
+    hasOrders: tables.includes('orders')
+      && (tables.includes('order_items') || tables.includes('order_snapshots')),
     hasCompanies: tables.includes('companies'),
     hasListings: tables.includes('product_listings'),
     hasEvents: tables.includes('order_events'),
+    hasSnapshots: tables.includes('order_snapshots'),
   };
 }
 
@@ -74,7 +77,7 @@ export function assertOrdersDumpAllowed(inspection) {
     );
   }
   if (!inspection.hasOrders) {
-    throw new Error('El dump debe incluir orders y order_items.');
+    throw new Error('El dump debe incluir orders y order_items u order_snapshots.');
   }
 }
 

@@ -172,7 +172,14 @@ order_rows AS (
       FROM order_events e
       WHERE e.order_id = o.id
         AND e.provider_occurred_at IS NOT NULL
-    ), '[]'::jsonb)
+    ), '[]'::jsonb),
+    'rawPayload', (
+      SELECT s.raw_payload
+      FROM order_snapshots s
+      WHERE s.order_id = o.id
+      ORDER BY s.observed_at DESC, s.id DESC
+      LIMIT 1
+    )
   ) AS value
   FROM orders o
   JOIN companies c ON c.id = o.company_id
