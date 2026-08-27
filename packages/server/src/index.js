@@ -276,7 +276,7 @@ app.post('/me/logout', async (c) => {
 app.get('/dashboard', async (c) => {
   try {
     const data = await dashboard.getDashboard(c.req.query());
-    c.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=240');
+    c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
 });
