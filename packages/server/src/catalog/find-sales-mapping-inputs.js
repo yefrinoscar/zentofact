@@ -9,6 +9,8 @@ export const DEFAULT_DROP_DIRECTORIES = Object.freeze([
   '/opt/cursor/uploads',
   '/opt/cursor/artifacts',
   '/tmp',
+  '/home/ubuntu/Downloads',
+  '/home/ubuntu',
 ]);
 
 function isFile(path) {
@@ -46,8 +48,10 @@ function peek(path, bytes = 8000) {
 export function isSalesMappingBundleText(text) {
   const sample = String(text || '');
   if (!/"version"\s*:\s*1\b/.test(sample)) return false;
-  if (/"error"\s*:/.test(sample) && !/"excel"\s*:/.test(sample)) return false;
-  return /"excel"\s*:/.test(sample) || /"orders"\s*:/.test(sample) || /"cutoffAt"\s*:/.test(sample);
+  const hasSales = /"orders"\s*:\s*\[\s*\{/.test(sample)
+    || /"falabellaOrders"\s*:\s*\[\s*\{/.test(sample);
+  if (/"error"\s*:/.test(sample) && !/"excel"\s*:/.test(sample) && !hasSales) return false;
+  return /"excel"\s*:/.test(sample) || /"orders"\s*:/.test(sample) || /"cutoffAt"\s*:/.test(sample) || hasSales;
 }
 
 export function isOrdersDumpText(text) {

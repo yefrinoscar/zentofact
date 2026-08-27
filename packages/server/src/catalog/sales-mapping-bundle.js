@@ -399,12 +399,19 @@ export async function loadFridayWorkbookFromDb(db) {
   return workbookFromReconciliationAnchors({ run, rows });
 }
 
+export function bundleHasSales(bundle) {
+  return Boolean(
+    (Array.isArray(bundle?.orders) && bundle.orders.length)
+    || (Array.isArray(bundle?.falabellaOrders) && bundle.falabellaOrders.length),
+  );
+}
+
 export function parseSalesMappingBundle(raw) {
   const bundle = typeof raw === 'string' ? JSON.parse(raw) : raw;
   if (!bundle || Number(bundle.version) !== BUNDLE_VERSION) {
     throw new Error('El bundle debe ser version 1.');
   }
-  if (bundle.error) {
+  if (bundle.error && !bundleHasSales(bundle)) {
     const missing = Array.isArray(bundle.missing) && bundle.missing.length
       ? ` Faltan: ${bundle.missing.join(', ')}.`
       : '';

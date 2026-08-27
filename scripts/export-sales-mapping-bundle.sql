@@ -340,13 +340,23 @@ falabella_inbox_json AS (
     JOIN companies c ON c.id = fo.company_id
     WHERE coalesce(fo.falabella_created_at, fo.first_seen_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
   ) inbox
+),
+sales_payload AS (
+  SELECT jsonb_build_object(
+    'version', 1,
+    'since', '2026-05-01T05:00:00.000Z',
+    'cutoffAt', '2026-08-21T19:50:00.000Z',
+    'companies', COALESCE((SELECT value FROM company_json), '[]'::jsonb),
+    'listings', COALESCE((SELECT value FROM listing_json), '[]'::jsonb),
+    'orders', COALESCE((SELECT jsonb_agg(value ORDER BY id) FROM order_rows), '[]'::jsonb),
+    'falabellaOrders', COALESCE((SELECT value FROM falabella_inbox_json), '[]'::jsonb)
+  ) AS value
 )
 SELECT CASE
   WHEN NOT EXISTS (SELECT 1 FROM run) THEN
-    jsonb_build_object('version', 1, 'error', 'missing_friday_anchor')
+    (SELECT value FROM sales_payload) || jsonb_build_object('error', 'missing_friday_anchor')
   WHEN EXISTS (SELECT 1 FROM counted c LEFT JOIN picked p ON p.master_sku = c.master WHERE p.qty IS NULL) THEN
-    jsonb_build_object(
-      'version', 1,
+    (SELECT value FROM sales_payload) || jsonb_build_object(
       'error', 'incomplete_friday_count',
       'missing', COALESCE((
         SELECT jsonb_agg(c.master ORDER BY c.master)
@@ -355,14 +365,6 @@ SELECT CASE
         WHERE p.qty IS NULL
       ), '[]'::jsonb)
     )
-  ELSE jsonb_build_object(
-    'version', 1,
-    'since', '2026-05-01T05:00:00.000Z',
-    'cutoffAt', '2026-08-21T19:50:00.000Z',
-    'excel', (SELECT value FROM excel_json),
-    'companies', COALESCE((SELECT value FROM company_json), '[]'::jsonb),
-    'listings', COALESCE((SELECT value FROM listing_json), '[]'::jsonb),
-    'orders', COALESCE((SELECT jsonb_agg(value ORDER BY id) FROM order_rows), '[]'::jsonb),
-    'falabellaOrders', COALESCE((SELECT value FROM falabella_inbox_json), '[]'::jsonb)
-  )
+  ELSE
+    (SELECT value FROM sales_payload) || jsonb_build_object('excel', (SELECT value FROM excel_json))
 END;

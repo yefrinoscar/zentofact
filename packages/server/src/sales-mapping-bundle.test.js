@@ -484,6 +484,13 @@ test('parseSalesMappingBundle rechaza otra versión', () => {
     () => parseSalesMappingBundle({ version: 1, error: 'incomplete_friday_count', missing: ['G34R', 'Z7'] }),
     /Faltan: G34R, Z7/,
   );
+  const mappingOnly = parseSalesMappingBundle({
+    version: 1,
+    error: 'missing_friday_anchor',
+    orders: [{ channel: 'ripley', companyRuc: '20607809136', externalOrderId: 'RIP-1', items: [] }],
+  });
+  assert.equal(mappingOnly.error, 'missing_friday_anchor');
+  assert.equal(mappingOnly.orders[0].externalOrderId, 'RIP-1');
 });
 
 test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async () => {
@@ -520,6 +527,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.doesNotMatch(sql, /fo\.raw_data \? 'OrderItems'/);
   assert.match(sql, /'rawPayload'/);
   assert.match(sql, /FROM order_snapshots s/);
+  assert.match(sql, /sales_payload AS/);
+  assert.match(sql, /\(SELECT value FROM sales_payload\) \|\| jsonb_build_object\('error', 'missing_friday_anchor'\)/);
 });
 
 test('recupera líneas Ripley vacías desde rawPayload o snapshots', async () => {
@@ -645,6 +654,7 @@ test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async
     assert.equal(isFridayCountWorkbookName('reporte_empresas_julio_2026.xlsx'), false);
     assert.equal(isSalesMappingBundleText('{"version":1,"excel":{}}'), true);
     assert.equal(isSalesMappingBundleText('{"version":1,"error":"missing_friday_anchor"}'), false);
+    assert.equal(isSalesMappingBundleText('{"version":1,"error":"missing_friday_anchor","orders":[{"channel":"ripley"}]}'), true);
     assert.equal(isOrdersDumpText('INSERT INTO orders (id) VALUES (1);'), true);
     assert.equal(isOrdersDumpText('INSERT INTO products (id) VALUES (1); INSERT INTO orders (id) VALUES (2);'), false);
     const found = discoverSalesMappingInputs({ cwd: dir, directories: [dir] });

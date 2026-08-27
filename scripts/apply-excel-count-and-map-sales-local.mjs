@@ -228,10 +228,14 @@ const bundlePath = discovered.bundle;
 const bundle = bundlePath
   ? parseSalesMappingBundle(readFileSync(bundlePath, 'utf8'))
   : null;
+if (bundle?.error) {
+  console.error(`El bundle avisó ${bundle.error}${Array.isArray(bundle.missing) && bundle.missing.length ? ` (faltan ${bundle.missing.join(', ')})` : ''}. Se mapean las ventas; el descuento espera el conteo completo.`);
+}
+const fromBundle = workbookFromBundleExcel(bundle?.excel);
 const workbook = excelPath
   ? loadInventoryCount20260821(excelPath)
-  : bundle
-    ? assertBundleWorkbook(workbookFromBundleExcel(bundle.excel))
+  : fromBundle
+    ? assertBundleWorkbook(fromBundle)
     : null;
 
 try {
