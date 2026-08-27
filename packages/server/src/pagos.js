@@ -48,7 +48,7 @@ export async function loadSaleIndex(db, companyId = null) {
        fo.company_id,
        fo.order_id,
        fo.order_number,
-       (fo.falabella_created_at at time zone 'America/Lima')::date as sale_date,
+       (fo.falabella_created_at at time zone 'America/Lima')::date::text as sale_date,
        coalesce(fo.grand_total, 0) as amount,
        array(
          select distinct lower(trim(sku))
@@ -175,7 +175,7 @@ export async function listSettlementLines(filter = {}, db) {
   values.push(limit, offset);
   const query = await target.query(
     `select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
-            sl.order_ref, sl.sku, sl.sale_date, sl.transaction_type,
+            sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type,
             sl.bruto, sl.commission, sl.other_fees, sl.neto, sl.raw,
             fo.order_number as sale_order_number,
             count(*) over()::int as total_count

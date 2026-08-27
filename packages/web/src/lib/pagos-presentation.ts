@@ -16,6 +16,13 @@ export function settlementMethodLabel(method) {
   return 'Sin cruce';
 }
 
+export function unmatchedReasonLabel(reason) {
+  if (reason === 'ambiguous_order_id') return 'Varias ventas con el mismo pedido';
+  if (reason === 'ambiguous_sku_date_amount') return 'Varias ventas con el mismo SKU, fecha y monto';
+  if (reason === 'ambiguous_sku_amount') return 'Varias ventas con el mismo SKU y monto';
+  return 'Sin match único';
+}
+
 export function importSummary(item) {
   if (!item) return '';
   if (item.reused) return 'Este archivo ya estaba cargado.';

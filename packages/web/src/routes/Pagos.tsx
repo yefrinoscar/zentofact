@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Upload } from 'lucide-react';
 import api from '../lib/api';
-import { importSummary, money, settlementMethodLabel } from '../lib/pagos-presentation';
+import { importSummary, money, settlementMethodLabel, unmatchedReasonLabel } from '../lib/pagos-presentation';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -65,27 +65,22 @@ export default function Pagos() {
 
   return (
     <div className="space-y-5 pb-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">
-          Sube el estado de cuenta. Las líneas con match único pasan a pagadas.
-        </p>
-        <div>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,text/csv"
-            className="sr-only"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) upload.mutate(file);
-            }}
-          />
-          <Button type="button" onClick={() => fileInput.current?.click()} disabled={upload.isPending}>
-            {upload.isPending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Upload data-icon="inline-start" />}
-            Subir CSV
-          </Button>
-        </div>
+      <div className="flex items-center justify-end">
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".csv,text/csv"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) upload.mutate(file);
+          }}
+        />
+        <Button type="button" onClick={() => fileInput.current?.click()} disabled={upload.isPending}>
+          {upload.isPending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Upload data-icon="inline-start" />}
+          Subir CSV
+        </Button>
       </div>
 
       {notice ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
@@ -152,7 +147,7 @@ export default function Pagos() {
                     <TableCell className="font-medium">{line.saleOrderNumber || line.orderId || '—'}</TableCell>
                     <TableCell>{line.sku || '—'}</TableCell>
                     <TableCell>{line.date || '—'}</TableCell>
-                    <TableCell>{tab === 'matched' ? settlementMethodLabel(line.method) : 'Sin match único'}</TableCell>
+                    <TableCell>{tab === 'matched' ? settlementMethodLabel(line.method) : unmatchedReasonLabel(line.reason)}</TableCell>
                     <TableCell className="text-right tabular-nums">{money.format(line.bruto || 0)}</TableCell>
                     <TableCell className="text-right tabular-nums">{money.format(line.commission || 0)}</TableCell>
                     <TableCell className="text-right tabular-nums">{money.format(line.other || 0)}</TableCell>
