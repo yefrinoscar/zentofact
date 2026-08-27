@@ -113,4 +113,25 @@ test('ingerir el bundle crea empresa, listing Excel y línea sin product_id', as
 
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
+  assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);
+});
+
+test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { renderExportSalesMappingBundleSql } = await import('./catalog/export-sales-mapping-bundle-sql.js');
+  const sql = renderExportSalesMappingBundleSql();
+  assert.equal(
+    readFileSync(new URL('../../../scripts/export-sales-mapping-bundle.sql', import.meta.url), 'utf8'),
+    sql,
+  );
+  assert.match(sql, /'AG174', 'Z7'/);
+  assert.match(sql, /'AG301', 'G35V'/);
+  assert.match(sql, /'G-19', 'G18'/);
+  assert.match(sql, /falabella/);
+  assert.match(sql, /ripley/);
+  assert.match(sql, /2026-05-01T05:00:00.000Z/);
+  assert.match(sql, /2026-08-21T19:50:00.000Z/);
+  assert.doesNotMatch(sql, /from product_inventory/i);
+  assert.doesNotMatch(sql, /from inventory_movements/i);
+  assert.doesNotMatch(sql, /insert into products/i);
 });

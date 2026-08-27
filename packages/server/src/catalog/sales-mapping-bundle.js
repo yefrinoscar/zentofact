@@ -14,7 +14,7 @@ const FULFILLMENT_STATUSES = new Set([
 ]);
 
 export const EXPORT_SALES_MAPPING_BUNDLE_COMMAND = [
-  'node scripts/export-sales-mapping-bundle.mjs --out sales-mapping-bundle.json',
+  'psql "$DATABASE_URL_POSTGRES" -v ON_ERROR_STOP=1 -t -A -f scripts/export-sales-mapping-bundle.sql > sales-mapping-bundle.json',
 ].join('\n');
 
 function integerQuantity(value) {
@@ -90,6 +90,9 @@ export function parseSalesMappingBundle(raw) {
   const bundle = typeof raw === 'string' ? JSON.parse(raw) : raw;
   if (!bundle || Number(bundle.version) !== BUNDLE_VERSION) {
     throw new Error('El bundle debe ser version 1.');
+  }
+  if (bundle.error) {
+    throw new Error(`El bundle no se pudo armar: ${bundle.error}.`);
   }
   return bundle;
 }
