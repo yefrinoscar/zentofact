@@ -159,7 +159,7 @@ export function resolveSaleItem(item, context) {
   const candidates = [];
 
   const unlinked = context.indexes.unlinkedSeller?.get(listingKey(channelCode, companyId, sellerSku));
-  if (unlinked !== undefined && !historicalMasterForSku(sellerSku, historicalMap) && !historicalMasterForSku(shopSku, historicalMap)) {
+  if (unlinked !== undefined) {
     return {
       status: 'doubtful',
       reason: 'La publicación está desvinculada; no se asocia ni se descuenta',

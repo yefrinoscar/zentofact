@@ -211,6 +211,18 @@ test('una publicación desvinculada no usa el maestro anterior ni el main_sku re
   }, context(products, unlinkedListings));
   assert.equal(leftoverHint.status, 'doubtful');
 
+  const historicalUnlinked = resolveSaleItem({
+    channel_code: 'falabella', company_id: 4, sku: '140746934', provider_sku: '156576540',
+  }, context(products, [
+    ...listings,
+    {
+      id: 41, product_id: 116, channel_code: 'falabella', company_id: 4,
+      seller_sku: '140746934', shop_sku: '156576540', status: 'unlinked',
+    },
+  ]));
+  assert.equal(historicalUnlinked.status, 'doubtful');
+  assert.match(historicalUnlinked.reason, /desvinculada/);
+
   const stillMapped = resolveSaleItem({
     channel_code: 'falabella', company_id: 9, sku: 'FAL-RANDOM', provider_sku: '999',
     main_sku: 'Z7',
