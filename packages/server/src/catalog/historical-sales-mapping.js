@@ -1,6 +1,7 @@
 import { deriveInventoryTransitions, normalizeAugustQuantity } from './falabella-august-reconciliation.js';
 import { applyInventoryMovement, InsufficientStockError } from './inventory-service.js';
 import { HISTORICAL_SKU_TO_MASTER, historicalMasterForSku } from './historical-sku-map.js';
+import { falabellaOrderItemsPayload, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
 import { isStockEligibleFulfillment } from './stock-phase.js';
 
 export const SALES_HISTORY_SINCE = '2026-05-01T05:00:00.000Z';
@@ -305,6 +306,7 @@ export function buildHistoricalSalesCoverage({
   cutoffAt = PHYSICAL_COUNT_CUTOFF,
   events = [],
   deductedItemIds = new Set(),
+  falabellaInbox = [],
 } = {}) {
   const productsById = new Map(products.map((product) => [Number(product.id), product]));
   const productsBySku = new Map(products.map((product) => [product.main_sku, product]));
@@ -414,7 +416,11 @@ export function buildHistoricalSalesCoverage({
     grouped.set(key, identity);
   }
 
-  const identities = [...grouped.values()].sort((left, right) => (
+  const inboxGaps = buildFalabellaInboxGapIdentities(falabellaInbox, {
+    orders: new Set(items.map((item) => `${Number(item.company_id)}\u0000${String(item.external_order_id || '').trim()}`)),
+    items: new Set(items.map((item) => `${Number(item.company_id)}\u0000${String(item.external_order_id || '').trim()}\u0000${String(item.external_item_id || '').trim()}`)),
+  });
+  const identities = [...grouped.values(), ...inboxGaps].sort((left, right) => (
     String(left.channel).localeCompare(String(right.channel))
     || Number(left.company_id) - Number(right.company_id)
     || String(left.seller_sku).localeCompare(String(right.seller_sku))
@@ -460,6 +466,7 @@ export function buildHistoricalSalesCoverage({
       skip_before_cutoff: lines.filter((line) => line.ledgerAction === 'skip_before_cutoff').length,
       skip_not_counted: lines.filter((line) => line.ledgerAction === 'skip_not_counted').length,
       review_identities: review.length,
+      inbox_gaps: inboxGaps.length,
       shortages: shortages.length,
     },
     identities,
@@ -473,6 +480,70 @@ export function buildHistoricalSalesCoverage({
 
 export function identityNeedsReview(identity) {
   return identity.status !== 'mapped' || identity.ledger_policy === 'review_no_deduct';
+}
+
+function inboxGapIdentity(base) {
+  return {
+    channel: 'falabella',
+    company_id: Number(base.companyId),
+    seller_sku: base.sellerSku || '',
+    shop_sku: base.shopSku || '',
+    title: base.title || null,
+    lines: 1,
+    units: number(base.units),
+    units_before_cutoff: 0,
+    units_after_cutoff: number(base.units),
+    first_ordered_at: base.orderedAt || null,
+    last_ordered_at: base.orderedAt || null,
+    status: 'unmapped',
+    reason: base.reason,
+    main_sku: null,
+    method: null,
+    count_presence: null,
+    ledger_policy: null,
+    already_mapped_lines: 0,
+    needs_write_lines: 0,
+    to_deduct_units: 0,
+  };
+}
+
+export function buildFalabellaInboxGapIdentities(inboxRows = [], unifiedKeys = { orders: new Set(), items: new Set() }) {
+  const identities = [];
+  for (const row of inboxRows) {
+    const companyId = Number(row.company_id || row.companyId || 0);
+    const orderId = String(row.order_id || row.orderId || '').trim();
+    if (!orderId) continue;
+    const orderKey = `${companyId}\u0000${orderId}`;
+    const orderedAt = row.falabella_created_at || row.orderedAt || null;
+    const orderTitle = `Pedido ${row.order_number || row.orderNumber || orderId}`;
+    const items = mapFalabellaOrderItems(falabellaOrderItemsPayload(row.raw_data || row.rawData));
+    if (!items.length) {
+      if (unifiedKeys.orders.has(orderKey)) continue;
+      identities.push(inboxGapIdentity({
+        companyId,
+        title: orderTitle,
+        orderedAt,
+        units: 0,
+        reason: 'El inbox Falabella no trae líneas; no se asocia ni se descuenta',
+      }));
+      continue;
+    }
+    for (const item of items) {
+      const itemId = String(item.externalItemId || '').trim();
+      if (itemId && unifiedKeys.items.has(`${orderKey}\u0000${itemId}`)) continue;
+      if (!itemId && unifiedKeys.orders.has(orderKey)) continue;
+      identities.push(inboxGapIdentity({
+        companyId,
+        sellerSku: item.sku,
+        shopSku: item.providerSku,
+        title: item.description || orderTitle,
+        orderedAt,
+        units: Number(item.quantity) || 1,
+        reason: 'Línea Falabella del inbox ausente del pedido unificado; no se asocia ni se descuenta',
+      }));
+    }
+  }
+  return identities;
 }
 
 function tsvEscape(value) {
@@ -528,9 +599,9 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
     [MAPPING_CHANNELS],
   )).rows;
   const items = (await db.query(
-    `select oi.id, oi.order_id, oi.sku, oi.provider_sku, oi.description, oi.quantity, oi.raw_data,
+    `select oi.id, oi.order_id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity, oi.raw_data,
        oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity,
-       o.company_id, o.channel_account_id, o.external_order_number, o.ordered_at,
+       o.company_id, o.channel_account_id, o.external_order_id, o.external_order_number, o.ordered_at,
        o.order_status, o.fulfillment_status, ch.code as channel_code
      from order_items oi
      join orders o on o.id=oi.order_id
@@ -556,12 +627,22 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
        and movement_type in ('sale', 'sale_adjust')`,
     [itemIds],
   )).rows : [];
+  const falabellaInbox = (await db.query(
+    `select c.id as company_id, fo.order_id, fo.order_number, fo.status,
+       fo.falabella_created_at, fo.raw_data
+     from falabella_orders fo
+     join companies c on c.id = fo.company_id
+     where coalesce(fo.falabella_created_at, fo.first_seen_at) >= $1::timestamptz
+     order by fo.falabella_created_at, fo.order_id`,
+    [since],
+  )).rows;
   return {
     products,
     listings,
     items,
     events,
     deductedItemIds: new Set(deducted.map((row) => Number(row.order_item_id))),
+    falabellaInbox,
   };
 }
 

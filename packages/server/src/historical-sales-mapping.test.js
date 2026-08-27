@@ -15,6 +15,7 @@ import {
 } from './catalog/historical-sku-map.js';
 import {
   applyHistoricalSalesMappings,
+  buildFalabellaInboxGapIdentities,
   buildHistoricalSalesCoverage,
   classifyCountPresence,
   formatReviewTsv,
@@ -394,6 +395,59 @@ test('la cobertura agrupa identidades y no propone escritura cuando ya está map
   assert.match(tsv, /NO-EXISTE/);
   assert.match(tsv, /RIP-G40XL/);
   assert.doesNotMatch(tsv, /seller-z7/);
+});
+
+test('un pedido Falabella del inbox sin líneas o con líneas no unificadas queda en revisión', () => {
+  const empty = buildFalabellaInboxGapIdentities([{
+    company_id: 9,
+    order_id: 'PV-EMPTY',
+    order_number: '1',
+    falabella_created_at: '2026-08-22T16:00:00.000Z',
+    raw_data: { Statuses: 'pending' },
+  }], { orders: new Set(), items: new Set() });
+  assert.equal(empty.length, 1);
+  assert.equal(empty[0].status, 'unmapped');
+  assert.match(empty[0].reason, /no trae líneas/);
+
+  const leftover = buildFalabellaInboxGapIdentities([{
+    company_id: 9,
+    order_id: 'PV-PARTIAL',
+    order_number: '2',
+    raw_data: {
+      OrderItems: {
+        OrderItem: [
+          { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '1' },
+          { OrderItemId: '8', SellerSku: 'Z7', ShopSku: 'FLO4400237', Quantity: '1' },
+        ],
+      },
+    },
+  }], {
+    orders: new Set(['9\u0000PV-PARTIAL']),
+    items: new Set(['9\u0000PV-PARTIAL\u00007']),
+  });
+  assert.deepEqual(leftover.map((row) => row.seller_sku), ['Z7']);
+  assert.match(leftover[0].reason, /ausente del pedido unificado/);
+
+  const covered = buildHistoricalSalesCoverage({
+    items: [{
+      id: 1, order_id: 1, external_item_id: '7', sku: 'AG174', provider_sku: 'FLO4400237',
+      quantity: 1, company_id: 9, external_order_id: 'PV-PARTIAL',
+      ordered_at: '2026-08-22T16:00:00.000Z', fulfillment_status: 'shipped',
+      channel_code: 'falabella',
+    }],
+    products,
+    listings,
+    countedSkus: new Set(['Z7']),
+    skusWithoutQuantity: new Set(),
+    falabellaInbox: [{
+      company_id: 9,
+      order_id: 'PV-PARTIAL',
+      raw_data: {
+        OrderItems: { OrderItem: { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '1' } },
+      },
+    }],
+  });
+  assert.equal(covered.summary.inbox_gaps, 0);
 });
 
 test('aplicar el mapeo escribe product_id y no toca el inventario', async () => {

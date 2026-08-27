@@ -469,6 +469,10 @@ test('el inbox Falabella cubre pedidos que no están en orders unificados', asyn
   const item = queries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
   assert.equal(item.params[2], 'AG174');
   assert.equal(item.params[5], 2);
+  assert.equal(
+    queries.some((entry) => entry.sql.trim().startsWith('insert into falabella_orders')),
+    true,
+  );
 });
 
 test('parseSalesMappingBundle rechaza otra versión', () => {
@@ -508,6 +512,7 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /falabella_orders/);
   assert.match(sql, /'falabellaOrders'/);
   assert.doesNotMatch(sql, /o\.external_order_id = fo\.order_id/);
+  assert.doesNotMatch(sql, /fo\.raw_data \? 'OrderItems'/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

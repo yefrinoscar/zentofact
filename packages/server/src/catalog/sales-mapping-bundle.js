@@ -4,7 +4,7 @@ import {
 } from '../../../../scripts/lib/inventory-count-2026-08-21.mjs';
 import { excelMasterForSku } from './historical-sku-map.js';
 import { MAPPING_CHANNELS, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
-import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
+import { falabellaOrderItemsPayload, mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
 
 export const BUNDLE_VERSION = 1;
 export const BUNDLE_SOURCE = 'sales_mapping_bundle';
@@ -49,9 +49,7 @@ export function bundleItemRawData(item) {
 }
 
 function inboxRawPayload(row) {
-  const raw = row?.rawData || row?.raw_data || {};
-  if (raw.OrderItems || raw.orderItems || raw.Items) return raw;
-  return raw?.SuccessResponse?.Body || raw;
+  return falabellaOrderItemsPayload(row?.rawData || row?.raw_data || {});
 }
 
 export function falabellaInboxToBundleOrders(rows = []) {
@@ -139,11 +137,6 @@ select c.ruc as company_ruc, fo.order_id, fo.order_number, fo.status,
 from falabella_orders fo
 join companies c on c.id = fo.company_id
 where coalesce(fo.falabella_created_at, fo.first_seen_at) >= $1::timestamptz
-  and (
-    fo.raw_data ? 'OrderItems'
-    or fo.raw_data ? 'orderItems'
-    or fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
-  )
 order by fo.falabella_created_at, fo.order_id
 `;
 
@@ -471,10 +464,44 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
   }
   for (const row of parsed.falabellaOrders || []) {
     const ruc = String(row.companyRuc || row.company_ruc || '').trim();
-    if (!ruc || companyIds.has(ruc)) continue;
-    const companyId = await ensureCompany(db, { ruc, nombre: row.nombre || ruc });
-    companyIds.set(ruc, companyId);
-    await ensureChannelAccount(db, companyId, 'falabella', ruc);
+    if (!ruc) continue;
+    if (!companyIds.has(ruc)) {
+      const companyId = await ensureCompany(db, { ruc, nombre: row.nombre || ruc });
+      companyIds.set(ruc, companyId);
+      await ensureChannelAccount(db, companyId, 'falabella', ruc);
+    }
+    const companyId = companyIds.get(ruc);
+    const orderId = String(row.orderId || row.order_id || '').trim();
+    if (!companyId || !orderId) continue;
+    const raw = inboxRawPayload(row);
+    await db.query(
+      `insert into falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, raw_data, first_seen_at, last_seen_at, synchronized_at
+       ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,now(),now(),now())
+       on conflict (company_id, order_id) do update set
+         order_number=coalesce(nullif(excluded.order_number,''), falabella_orders.order_number),
+         falabella_created_at=coalesce(excluded.falabella_created_at, falabella_orders.falabella_created_at),
+         falabella_updated_at=coalesce(excluded.falabella_updated_at, falabella_orders.falabella_updated_at),
+         status=coalesce(excluded.status, falabella_orders.status),
+         raw_data=case
+           when falabella_orders.raw_data ? 'OrderItems'
+             or falabella_orders.raw_data ? 'orderItems'
+             or falabella_orders.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
+           then falabella_orders.raw_data
+           else excluded.raw_data
+         end,
+         last_seen_at=now()`,
+      [
+        companyId,
+        orderId,
+        String(row.orderNumber || row.order_number || orderId),
+        row.orderedAt || row.falabella_created_at || null,
+        row.updatedAt || row.falabella_updated_at || null,
+        row.status || null,
+        JSON.stringify(raw && typeof raw === 'object' ? raw : {}),
+      ],
+    );
   }
 
   for (const listing of parsed.listings || []) {
@@ -737,12 +764,7 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
       orderedAt: row.falabella_created_at,
       updatedAt: row.falabella_updated_at,
       status: row.status,
-      rawData: {
-        OrderItems: (row.raw_data || {}).OrderItems
-          || (row.raw_data || {}).orderItems
-          || row.raw_data?.SuccessResponse?.Body?.OrderItems
-          || null,
-      },
+      rawData: falabellaOrderItemsPayload(row.raw_data),
     })),
   };
 }

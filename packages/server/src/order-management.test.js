@@ -331,6 +331,12 @@ test('cada OrderItem de Falabella cuenta como una unidad cuando Quantity no vien
     },
   });
   assert.deepEqual(items.map((item) => item.quantity), [1, 1]);
+  const nested = mapFalabellaOrderItems({
+    data: { orderItems: { OrderItemId: '9', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '2' } },
+  });
+  assert.equal(nested.length, 1);
+  assert.equal(nested[0].sku, 'AG174');
+  assert.equal(nested[0].quantity, 2);
 });
 
 test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas', async () => {

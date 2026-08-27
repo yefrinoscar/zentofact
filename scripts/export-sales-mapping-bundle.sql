@@ -235,7 +235,10 @@ falabella_inbox_json AS (
       'OrderItems', COALESCE(
         inbox.raw_data->'OrderItems',
         inbox.raw_data->'orderItems',
-        inbox.raw_data#>'{SuccessResponse,Body,OrderItems}'
+        inbox.raw_data#>'{SuccessResponse,Body,OrderItems}',
+        inbox.raw_data->'Items',
+        inbox.raw_data#>'{data,OrderItems}',
+        inbox.raw_data#>'{data,orderItems}'
       )
     )
   ) ORDER BY inbox.falabella_created_at, inbox.order_id) AS value
@@ -245,11 +248,6 @@ falabella_inbox_json AS (
     FROM falabella_orders fo
     JOIN companies c ON c.id = fo.company_id
     WHERE coalesce(fo.falabella_created_at, fo.first_seen_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
-      AND (
-        fo.raw_data ? 'OrderItems'
-        OR fo.raw_data ? 'orderItems'
-        OR fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' IS NOT NULL
-      )
   ) inbox
 )
 SELECT CASE
