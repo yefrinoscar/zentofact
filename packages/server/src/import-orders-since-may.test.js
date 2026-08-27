@@ -112,4 +112,22 @@ test('remapear listings y líneas conserva el maestro operativo y no confía en 
   const update = itemQueries.find((entry) => entry.sql.includes('update order_items'));
   assert.equal(update.params[0], 17);
   assert.equal(update.params[1], 'Z7');
+
+  const unlinkedDb = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      if (text.includes('from products')) return { rows: [{ id: 42, main_sku: 'Z7' }] };
+      if (text.includes('from order_items oi')) {
+        return { rows: [{
+          id: 18, sku: 'MOC-105045', provider_sku: 'MOC-105045', main_sku: 'Z7', listing_status: 'unlinked',
+        }] };
+      }
+      if (text.includes('update order_items')) {
+        assert.equal(params[1], null);
+        return { rowCount: 1 };
+      }
+      return { rowCount: 1 };
+    },
+  };
+  assert.equal(await remapImportedItemHints(unlinkedDb), 1);
 });

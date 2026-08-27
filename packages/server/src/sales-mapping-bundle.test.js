@@ -213,6 +213,45 @@ test('el listing usa productSku operativo y crea el maestro ausente en stock 0',
   assert.ok(inventory);
 });
 
+test('una línea de listing desvinculado no hereda el maestro residual', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into product_listings')) return { rowCount: 1 };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 81 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    listings: [{
+      channel: 'ripley', companyRuc: '20607809136',
+      sellerSku: 'MOC-105045', shopSku: 'MOC-105045', productSku: 'Z7',
+      status: 'unlinked', title: 'Mochila',
+    }],
+    orders: [{
+      channel: 'ripley', companyRuc: '20607809136',
+      externalOrderId: 'RIP-1', orderedAt: '2026-08-22T16:00:00.000Z',
+      orderStatus: 'confirmed', fulfillmentStatus: 'shipped',
+      items: [{ sku: 'MOC-105045', providerSku: 'MOC-105045', productSku: 'Z7', quantity: 1 }],
+    }],
+  });
+  const listing = queries.find((entry) => entry.sql.trim().startsWith('insert into product_listings'));
+  assert.equal(listing.params[7], 'unlinked');
+  assert.match(listing.sql, /status=excluded.status/);
+  const item = queries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(item.params[6], null);
+});
+
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);

@@ -135,11 +135,13 @@ export async function remapImportedItemHints(db, since = SALES_HISTORY_SINCE) {
   const skus = new Set(products.map((product) => product.main_sku));
   const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
   const items = (await db.query(
-    `select oi.id, oi.sku, oi.provider_sku, oi.main_sku
+    `select oi.id, oi.sku, oi.provider_sku, oi.main_sku, l.status as listing_status
        from order_items oi
        join orders o on o.id = oi.order_id
        join order_channel_accounts a on a.id = o.channel_account_id
        join order_channels ch on ch.id = a.channel_id
+       left join product_listings l
+         on l.channel_code = ch.code and l.company_id = o.company_id and l.seller_sku = oi.sku
       where ch.code = any($1::text[])
         and o.ordered_at >= $2::timestamptz
       order by oi.id`,
@@ -150,7 +152,7 @@ export async function remapImportedItemHints(db, since = SALES_HISTORY_SINCE) {
     const master = listingMasterSku({
       sellerSku: item.sku,
       shopSku: item.provider_sku,
-      productSku: item.main_sku,
+      productSku: item.listing_status === 'unlinked' ? null : item.main_sku,
     }, skus);
     if (master) await ensureAnchorProduct(db, master, skus, idBySku);
     await db.query(

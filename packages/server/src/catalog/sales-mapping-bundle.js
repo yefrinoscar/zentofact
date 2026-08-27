@@ -261,7 +261,8 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,0,$9::jsonb)
        on conflict (channel_code, company_id, seller_sku) do update
          set product_id=excluded.product_id, shop_sku=coalesce(excluded.shop_sku, product_listings.shop_sku),
-             updated_at=now()`,
+             title=coalesce(excluded.title, product_listings.title),
+             status=excluded.status, updated_at=now()`,
       [
         productId,
         listing.channel,
@@ -278,6 +279,12 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
     );
     listings += 1;
   }
+
+  const unlinkedKeys = new Set(
+    (parsed.listings || [])
+      .filter((listing) => listing.status === 'unlinked' && listing.sellerSku)
+      .map((listing) => `${listing.channel}\u0000${String(listing.companyRuc || '').trim()}\u0000${listing.sellerSku}`),
+  );
 
   for (const order of parsed.orders || []) {
     const companyId = companyIds.get(String(order.companyRuc || '').trim());
@@ -317,10 +324,11 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
     orders += 1;
     const orderItems = Array.isArray(order.items) ? order.items : [];
     for (const [index, item] of orderItems.entries()) {
+      const unlinked = unlinkedKeys.has(`${order.channel}\u0000${String(order.companyRuc || '').trim()}\u0000${item.sku}`);
       const master = listingMasterSku({
         sellerSku: item.sku,
         shopSku: item.providerSku,
-        productSku: item.productSku,
+        productSku: unlinked ? null : item.productSku,
       }, skus);
       if (master) await ensureAnchorProduct(db, master, skus, idBySku);
       await db.query(
