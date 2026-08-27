@@ -462,6 +462,34 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
   return { candidates: candidates.rows.length, checked, hydrated, failed, lastLogId };
 }
 
+export async function drainMissingFalabellaOrderItems(companyId, options = {}, dependencies = {}) {
+  const core = dependencies.pool && dependencies.getCompany ? null : await loadCore();
+  const db = dependencies.pool || core.pool;
+  const loadCompany = dependencies.getCompany || core.getCompany;
+  const makeOrderItemsClient = dependencies.orderItemsClientFor || orderItemsClientFor;
+  const company = await loadCompany(Number(companyId));
+  if (!company?.falabellaApiUserId?.trim() || !company?.falabellaApiKey?.trim()) {
+    throw new Error('La empresa no tiene credenciales de Falabella API configuradas.');
+  }
+  const client = makeOrderItemsClient(company);
+  const totals = { batches: 0, candidates: 0, checked: 0, hydrated: 0, failed: 0 };
+  for (let i = 0; i < 500; i += 1) {
+    const batch = await hydrateMissingOrderItems(db, Number(companyId), client, {
+      limit: 200,
+      applyRecentStock: false,
+      seller: company.nombreComercial || company.nombre || company.razonSocial,
+      runId: options.runId,
+    });
+    totals.batches += 1;
+    totals.candidates += Number(batch.candidates || 0);
+    totals.checked += Number(batch.checked || 0);
+    totals.hydrated += Number(batch.hydrated || 0);
+    totals.failed += Number(batch.failed || 0);
+    if (!batch.candidates || batch.hydrated === 0) break;
+  }
+  return totals;
+}
+
 function itemNeedsStockRestock(item) {
   const status = String(item?.Status ?? item?.status ?? '').trim().toLowerCase();
   return status.includes('cancel')

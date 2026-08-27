@@ -127,22 +127,68 @@ async function seedCount(db, workbook) {
   }
 }
 
-async function syncMarketplaces(db, keys) {
-  const company = (await db.query(`select id from companies where ruc='20990001001'`)).rows[0];
-  if (!company) throw new Error('No existe la empresa LIMBO local.');
-  const companyId = Number(company.id);
-  const summary = { falabella: null, ripley: null };
-  if (keys.falabella) {
-    const { syncFalabellaOrders } = await import('../packages/server/src/falabella-sync.js');
-    summary.falabella = await syncFalabellaOrders(companyId, {
-      mode: 'range_created',
-      from: SALES_HISTORY_SINCE,
-      to: new Date().toISOString(),
-    });
+function monthsFromMay(now = new Date()) {
+  const months = [];
+  let year = 2026;
+  let month = 5;
+  const endYear = now.getUTCFullYear();
+  const endMonth = now.getUTCMonth() + 1;
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
   }
-  if (keys.ripley) {
-    const { syncRipleyOrders } = await import('../packages/server/src/ripley-orders.js');
-    summary.ripley = await syncRipleyOrders(companyId, { startUpdateDate: SALES_HISTORY_SINCE });
+  return months;
+}
+
+async function companiesWithKeys(db) {
+  const rows = (await db.query(
+    `select id,
+       nullif(trim(falabella_api_user_id),'') is not null
+         and nullif(trim(falabella_api_key),'') is not null as falabella,
+       nullif(trim(ripley_api_key),'') is not null as ripley
+     from companies where activo is not false
+     order by id`,
+  )).rows;
+  return rows.map((row) => ({
+    id: Number(row.id),
+    falabella: row.falabella === true,
+    ripley: row.ripley === true,
+  }));
+}
+
+async function syncMarketplaces(db) {
+  const { drainMissingFalabellaOrderItems, syncFalabellaOrders } = await import('../packages/server/src/falabella-sync.js');
+  const { syncRipleyOrders } = await import('../packages/server/src/ripley-orders.js');
+  const months = monthsFromMay();
+  const summary = [];
+  for (const company of await companiesWithKeys(db)) {
+    const entry = { companyId: company.id, falabella: [], ripley: null, items: null };
+    if (company.falabella) {
+      for (const month of months) {
+        const result = await syncFalabellaOrders(company.id, { mode: 'month', month });
+        entry.falabella.push({
+          month,
+          status: result.status,
+          received: result.received,
+          upserted: result.upserted,
+        });
+      }
+      entry.items = await drainMissingFalabellaOrderItems(company.id);
+    }
+    if (company.ripley) {
+      await db.query(
+        `insert into ripley_sync_state (company_id, enabled)
+         values ($1, true)
+         on conflict (company_id) do update set enabled=true, updated_at=now()`,
+        [company.id],
+      );
+      entry.ripley = await syncRipleyOrders(company.id, { startUpdateDate: SALES_HISTORY_SINCE });
+    }
+    summary.push(entry);
   }
   return summary;
 }
@@ -178,12 +224,17 @@ try {
   );
   await seedCount(pool, workbook);
 
-  if (!values['skip-sync'] && (keys.falabella || keys.ripley)) {
-    const sync = await syncMarketplaces(pool, keys);
-    console.log('Sync:', JSON.stringify({
-      falabella: sync.falabella && { status: sync.falabella.status, skipped: sync.falabella.skipped },
-      ripley: sync.ripley && { status: sync.ripley.status, received: sync.ripley.received },
-    }));
+  const keyed = await companiesWithKeys(pool);
+  if (!values['skip-sync'] && keyed.some((company) => company.falabella || company.ripley)) {
+    const sync = await syncMarketplaces(pool);
+    console.log('Sync:', JSON.stringify(sync.map((entry) => ({
+      companyId: entry.companyId,
+      falabella: entry.falabella,
+      items: entry.items,
+      ripley: entry.ripley && { status: entry.ripley.status, received: entry.ripley.received },
+    }))));
+  } else if (keys.falabella || keys.ripley) {
+    console.log('Se escribieron API keys pero ninguna empresa quedó con credenciales usable.');
   } else {
     console.log('Sin API keys de seller: no se sincronizaron pedidos Falabella/Ripley.');
   }

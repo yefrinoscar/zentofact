@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   catalogInventoryEnabledForSync,
+  drainMissingFalabellaOrderItems,
   effectiveFalabellaItemStatus,
   falabellaLabelCount,
   fetchFalabellaPages,
@@ -16,6 +17,28 @@ test('una sincronización histórica nunca mueve inventario aunque encuentre can
   assert.equal(catalogInventoryEnabledForSync('day', true), false);
   assert.equal(catalogInventoryEnabledForSync('range_created', true), false);
   assert.equal(catalogInventoryEnabledForSync('incremental', true), true);
+});
+
+test('drenar items faltantes termina cuando Falabella no tiene candidatos', async () => {
+  const queries = [];
+  const result = await drainMissingFalabellaOrderItems(3, {}, {
+    pool: {
+      async query(sql) {
+        queries.push(String(sql));
+        return { rows: [] };
+      },
+    },
+    getCompany: async () => ({
+      falabellaApiUserId: 'user',
+      falabellaApiKey: 'key',
+      nombreComercial: 'LIMBO',
+    }),
+    orderItemsClientFor: () => ({ async call() { throw new Error('no debe pedir items si no hay candidatos'); } }),
+  });
+  assert.equal(result.batches, 1);
+  assert.equal(result.hydrated, 0);
+  assert.equal(result.candidates, 0);
+  assert.equal(queries.some((sql) => sql.includes('from falabella_orders')), true);
 });
 
 function response(orders, overrides = {}) {
