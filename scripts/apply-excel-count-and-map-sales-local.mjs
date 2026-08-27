@@ -195,7 +195,11 @@ async function syncMarketplaces(db) {
           upserted: result.upserted,
         });
       }
-      entry.items = await drainMissingFalabellaOrderItems(company.id);
+      entry.items = await drainMissingFalabellaOrderItems(company.id, {
+        includeEmptyPayloads: true,
+        includeCancelled: true,
+        since: SALES_HISTORY_SINCE,
+      });
     }
     if (company.ripley) {
       await db.query(

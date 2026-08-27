@@ -307,6 +307,7 @@ export function buildHistoricalSalesCoverage({
   events = [],
   deductedItemIds = new Set(),
   falabellaInbox = [],
+  emptyOrders = [],
 } = {}) {
   const productsById = new Map(products.map((product) => [Number(product.id), product]));
   const productsBySku = new Map(products.map((product) => [product.main_sku, product]));
@@ -416,11 +417,15 @@ export function buildHistoricalSalesCoverage({
     grouped.set(key, identity);
   }
 
+  const emptyOrderGaps = buildEmptyUnifiedOrderGapIdentities(emptyOrders);
   const inboxGaps = buildFalabellaInboxGapIdentities(falabellaInbox, {
-    orders: new Set(items.map((item) => `${Number(item.company_id)}\u0000${String(item.external_order_id || '').trim()}`)),
+    orders: new Set([
+      ...items.map((item) => `${Number(item.company_id)}\u0000${String(item.external_order_id || '').trim()}`),
+      ...emptyOrders.map((row) => `${Number(row.company_id)}\u0000${String(row.external_order_id || '').trim()}`),
+    ]),
     items: new Set(items.map((item) => `${Number(item.company_id)}\u0000${String(item.external_order_id || '').trim()}\u0000${String(item.external_item_id || '').trim()}`)),
   });
-  const identities = [...grouped.values(), ...inboxGaps].sort((left, right) => (
+  const identities = [...grouped.values(), ...inboxGaps, ...emptyOrderGaps].sort((left, right) => (
     String(left.channel).localeCompare(String(right.channel))
     || Number(left.company_id) - Number(right.company_id)
     || String(left.seller_sku).localeCompare(String(right.seller_sku))
@@ -467,6 +472,7 @@ export function buildHistoricalSalesCoverage({
       skip_not_counted: lines.filter((line) => line.ledgerAction === 'skip_not_counted').length,
       review_identities: review.length,
       inbox_gaps: inboxGaps.length,
+      header_gaps: emptyOrderGaps.length,
       shortages: shortages.length,
     },
     identities,
@@ -482,9 +488,9 @@ export function identityNeedsReview(identity) {
   return identity.status !== 'mapped' || identity.ledger_policy === 'review_no_deduct';
 }
 
-function inboxGapIdentity(base) {
+function saleGapIdentity(base) {
   return {
-    channel: 'falabella',
+    channel: base.channel || 'falabella',
     company_id: Number(base.companyId),
     seller_sku: base.sellerSku || '',
     shop_sku: base.shopSku || '',
@@ -507,6 +513,21 @@ function inboxGapIdentity(base) {
   };
 }
 
+export function buildEmptyUnifiedOrderGapIdentities(emptyOrders = []) {
+  return emptyOrders.flatMap((row) => {
+    const orderId = String(row.external_order_id || '').trim();
+    if (!orderId) return [];
+    return [saleGapIdentity({
+      channel: row.channel_code || row.channel,
+      companyId: row.company_id,
+      title: `Pedido ${row.external_order_number || orderId}`,
+      orderedAt: row.ordered_at,
+      units: 0,
+      reason: 'El pedido unificado no trae líneas; no se asocia ni se descuenta',
+    })];
+  });
+}
+
 export function buildFalabellaInboxGapIdentities(inboxRows = [], unifiedKeys = { orders: new Set(), items: new Set() }) {
   const identities = [];
   for (const row of inboxRows) {
@@ -519,7 +540,7 @@ export function buildFalabellaInboxGapIdentities(inboxRows = [], unifiedKeys = {
     const items = mapFalabellaOrderItems(falabellaOrderItemsPayload(row.raw_data || row.rawData));
     if (!items.length) {
       if (unifiedKeys.orders.has(orderKey)) continue;
-      identities.push(inboxGapIdentity({
+      identities.push(saleGapIdentity({
         companyId,
         title: orderTitle,
         orderedAt,
@@ -532,7 +553,7 @@ export function buildFalabellaInboxGapIdentities(inboxRows = [], unifiedKeys = {
       const itemId = String(item.externalItemId || '').trim();
       if (itemId && unifiedKeys.items.has(`${orderKey}\u0000${itemId}`)) continue;
       if (!itemId && unifiedKeys.orders.has(orderKey)) continue;
-      identities.push(inboxGapIdentity({
+      identities.push(saleGapIdentity({
         companyId,
         sellerSku: item.sku,
         shopSku: item.providerSku,
@@ -636,6 +657,20 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
      order by fo.falabella_created_at, fo.order_id`,
     [since],
   )).rows;
+  const emptyOrders = (await db.query(
+    `select o.company_id, o.external_order_id, o.external_order_number, o.ordered_at,
+       ch.code as channel_code
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where ch.code = any($1::text[])
+       and o.ordered_at >= $2
+       and not exists (
+         select 1 from order_items missing_items where missing_items.order_id = o.id
+       )
+     order by o.id`,
+    [MAPPING_CHANNELS, since],
+  )).rows;
   return {
     products,
     listings,
@@ -643,6 +678,7 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
     events,
     deductedItemIds: new Set(deducted.map((row) => Number(row.order_item_id))),
     falabellaInbox,
+    emptyOrders,
   };
 }
 

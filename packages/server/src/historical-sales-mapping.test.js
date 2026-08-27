@@ -15,6 +15,7 @@ import {
 } from './catalog/historical-sku-map.js';
 import {
   applyHistoricalSalesMappings,
+  buildEmptyUnifiedOrderGapIdentities,
   buildFalabellaInboxGapIdentities,
   buildHistoricalSalesCoverage,
   classifyCountPresence,
@@ -448,6 +449,46 @@ test('un pedido Falabella del inbox sin líneas o con líneas no unificadas qued
     }],
   });
   assert.equal(covered.summary.inbox_gaps, 0);
+});
+
+test('un pedido unificado Falabella o Ripley sin líneas queda en revisión', () => {
+  const gaps = buildEmptyUnifiedOrderGapIdentities([
+    {
+      company_id: 4,
+      channel_code: 'ripley',
+      external_order_id: 'RIP-EMPTY',
+      external_order_number: '88',
+      ordered_at: '2026-06-02T12:00:00.000Z',
+    },
+  ]);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].channel, 'ripley');
+  assert.match(gaps[0].reason, /no trae líneas/);
+
+  const coverage = buildHistoricalSalesCoverage({
+    items: [],
+    products,
+    listings,
+    countedSkus: new Set(['Z7']),
+    skusWithoutQuantity: new Set(),
+    falabellaInbox: [{
+      company_id: 9,
+      order_id: 'PV-EMPTY',
+      order_number: '1',
+      raw_data: {},
+    }],
+    emptyOrders: [{
+      company_id: 9,
+      channel_code: 'falabella',
+      external_order_id: 'PV-EMPTY',
+      external_order_number: '1',
+      ordered_at: '2026-08-22T16:00:00.000Z',
+    }],
+  });
+  assert.equal(coverage.summary.inbox_gaps, 0);
+  assert.equal(coverage.summary.header_gaps, 1);
+  assert.equal(coverage.review.length, 1);
+  assert.match(coverage.review[0].reason, /pedido unificado/);
 });
 
 test('aplicar el mapeo escribe product_id y no toca el inventario', async () => {

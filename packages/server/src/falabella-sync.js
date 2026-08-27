@@ -330,16 +330,37 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
          and fo.falabella_created_at >= now() - interval '2 days') as recent
      from falabella_orders fo
      where fo.company_id=$1
-       and lower(coalesce(fo.status, '')) !~ '(cancel|failed)'
+       and ($4::boolean or lower(coalesce(fo.status, '')) !~ '(cancel|failed)')
        and ($3::timestamptz is null or fo.synchronized_at >= $3)
-       and not exists (
-         select 1 from orders o join order_items oi on oi.order_id=o.id
-         where o.company_id=fo.company_id and o.external_order_id=fo.order_id
+       and (
+         not exists (
+           select 1 from orders o join order_items oi on oi.order_id=o.id
+           where o.company_id=fo.company_id and o.external_order_id=fo.order_id
+         )
+         or (
+           $5::boolean
+           and ($6::timestamptz is null or coalesce(fo.falabella_created_at, fo.first_seen_at) >= $6)
+           and not (
+             fo.raw_data ? 'OrderItems'
+             or fo.raw_data ? 'orderItems'
+             or fo.raw_data ? 'Items'
+             or fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
+             or fo.raw_data #>> '{data,OrderItems}' is not null
+             or fo.raw_data #>> '{data,orderItems}' is not null
+           )
+         )
        )
      order by (fo.first_seen_at >= now() - interval '1 hour') desc,
        fo.falabella_updated_at desc nulls last
      limit $2`,
-    [companyId, limit, observedSince?.toISOString() || null],
+    [
+      companyId,
+      limit,
+      observedSince?.toISOString() || null,
+      options.includeCancelled === true,
+      options.includeEmptyPayloads === true,
+      options.since || null,
+    ],
   );
   if (!candidates.rows.length) return { candidates: 0, checked: 0, hydrated: 0, failed: 0 };
   const account = await ensureFalabellaOrderAccount(db, companyId);
@@ -479,6 +500,10 @@ export async function drainMissingFalabellaOrderItems(companyId, options = {}, d
       applyRecentStock: false,
       seller: company.nombreComercial || company.nombre || company.razonSocial,
       runId: options.runId,
+      observedSince: options.observedSince,
+      since: options.since,
+      includeEmptyPayloads: options.includeEmptyPayloads === true,
+      includeCancelled: options.includeCancelled === true,
     });
     totals.batches += 1;
     totals.candidates += Number(batch.candidates || 0);

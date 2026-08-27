@@ -41,6 +41,33 @@ test('drenar items faltantes termina cuando Falabella no tiene candidatos', asyn
   assert.equal(queries.some((sql) => sql.includes('from falabella_orders')), true);
 });
 
+test('el mapeo desde mayo pide items de cabeceras vacías y de pedidos cancelados', async () => {
+  let captured = { sql: '', params: [] };
+  await drainMissingFalabellaOrderItems(3, {
+    includeEmptyPayloads: true,
+    includeCancelled: true,
+    since: '2026-05-01T05:00:00.000Z',
+  }, {
+    pool: {
+      async query(sql, params = []) {
+        captured = { sql: String(sql), params };
+        return { rows: [] };
+      },
+    },
+    getCompany: async () => ({
+      falabellaApiUserId: 'user',
+      falabellaApiKey: 'key',
+      nombreComercial: 'LIMBO',
+    }),
+    orderItemsClientFor: () => ({ async call() { throw new Error('no debe pedir items si no hay candidatos'); } }),
+  });
+  assert.match(captured.sql, /\$4::boolean or lower\(coalesce\(fo\.status/);
+  assert.match(captured.sql, /\$5::boolean/);
+  assert.equal(captured.params[3], true);
+  assert.equal(captured.params[4], true);
+  assert.equal(captured.params[5], '2026-05-01T05:00:00.000Z');
+});
+
 function response(orders, overrides = {}) {
   return {
     ok: true,
