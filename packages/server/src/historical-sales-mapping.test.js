@@ -309,6 +309,37 @@ test('la cobertura descuenta solo el maestro contado con salida posterior', () =
   assert.equal(coverage.summary.to_deduct, 1);
 });
 
+test('una cantidad 0 sin Quantity en el payload cuenta como 1 unidad y se descuenta', () => {
+  const coverage = buildHistoricalSalesCoverage({
+    products: [{ id: 10, main_sku: 'Z7', quantity_on_hand: 10 }],
+    listings,
+    countedSkus: new Set(['Z7']),
+    skusWithoutQuantity: new Set(),
+    items: [
+      {
+        id: 11, order_id: 92, channel_code: 'falabella', company_id: 3, channel_account_id: 5,
+        sku: 'seller-z7', provider_sku: 'shop-z7', description: 'Z7', quantity: 0,
+        product_id: 10, listing_id: 20, main_sku: 'Z7', stock_applied_quantity: 0,
+        ordered_at: '2026-08-22T16:00:00.000Z', fulfillment_status: 'shipped', order_status: 'confirmed',
+        external_order_number: 'ZERO',
+      },
+      {
+        id: 12, order_id: 93, channel_code: 'falabella', company_id: 3, channel_account_id: 5,
+        sku: 'seller-z7', provider_sku: 'shop-z7', description: 'Z7', quantity: 0, raw_data: { Quantity: 0 },
+        product_id: 10, listing_id: 20, main_sku: 'Z7', stock_applied_quantity: 0,
+        ordered_at: '2026-08-22T16:00:00.000Z', fulfillment_status: 'shipped', order_status: 'confirmed',
+        external_order_number: 'EXPLICIT-ZERO',
+      },
+    ],
+  });
+  const omitted = coverage.lines.find((line) => line.itemId === 11);
+  assert.equal(omitted.quantity, 1);
+  assert.equal(omitted.ledgerAction, 'deduct');
+  const explicit = coverage.lines.find((line) => line.itemId === 12);
+  assert.equal(explicit.quantity, 0);
+  assert.equal(explicit.ledgerAction, 'skip_not_exited');
+});
+
 test('la cobertura agrupa identidades y no propone escritura cuando ya está mapeado', () => {
   const coverage = buildHistoricalSalesCoverage({
     products,

@@ -1,4 +1,4 @@
-import { deriveInventoryTransitions } from './falabella-august-reconciliation.js';
+import { deriveInventoryTransitions, normalizeAugustQuantity } from './falabella-august-reconciliation.js';
 import { applyInventoryMovement, InsufficientStockError } from './inventory-service.js';
 import { HISTORICAL_SKU_TO_MASTER, historicalMasterForSku } from './historical-sku-map.js';
 import { isStockEligibleFulfillment } from './stock-phase.js';
@@ -320,9 +320,13 @@ export function buildHistoricalSalesCoverage({
 
   for (const item of items) {
     const resolved = resolveSaleItem(item, context);
-    const quantity = number(item.quantity);
+    const quantity = normalizeAugustQuantity(item).quantity;
     const orderedAt = item.ordered_at ? new Date(item.ordered_at).toISOString() : null;
-    const exit = planWarehouseExit(item, eventsByOrder.get(Number(item.order_id)) || [], cutoffAt);
+    const exit = planWarehouseExit(
+      { ...item, quantity },
+      eventsByOrder.get(Number(item.order_id)) || [],
+      cutoffAt,
+    );
     const line = {
       itemId: Number(item.id),
       orderId: Number(item.order_id),
@@ -524,7 +528,7 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
     [MAPPING_CHANNELS],
   )).rows;
   const items = (await db.query(
-    `select oi.id, oi.order_id, oi.sku, oi.provider_sku, oi.description, oi.quantity,
+    `select oi.id, oi.order_id, oi.sku, oi.provider_sku, oi.description, oi.quantity, oi.raw_data,
        oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity,
        o.company_id, o.channel_account_id, o.external_order_number, o.ordered_at,
        o.order_status, o.fulfillment_status, ch.code as channel_code
