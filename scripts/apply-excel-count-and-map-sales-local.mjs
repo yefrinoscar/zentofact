@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { config } from 'dotenv';
@@ -13,6 +13,7 @@ const { values, positionals } = parseArgs({
   options: {
     apply: { type: 'boolean', default: false },
     excel: { type: 'string' },
+    bundle: { type: 'string' },
     'orders-sql': { type: 'string' },
     'skip-sync': { type: 'boolean', default: false },
   },
@@ -48,6 +49,19 @@ function findOrdersSql() {
   return CANDIDATE_ORDER_SQL_PATHS.find((path) => existsSync(path)) || null;
 }
 
+const CANDIDATE_BUNDLE_PATHS = [
+  values.bundle,
+  process.env.SALES_MAPPING_BUNDLE,
+  'sales-mapping-bundle.json',
+  '/opt/cursor/uploads/sales-mapping-bundle.json',
+  '/opt/cursor/artifacts/sales-mapping-bundle.json',
+  '/tmp/sales-mapping-bundle.json',
+].filter(Boolean).map((path) => resolve(path));
+
+function findBundle() {
+  return CANDIDATE_BUNDLE_PATHS.find((path) => existsSync(path)) || null;
+}
+
 const {
   SALES_HISTORY_SINCE,
   PHYSICAL_COUNT_CUTOFF,
@@ -63,6 +77,13 @@ const {
   remapImportedListingsToExcel,
   restoreOrdersDump,
 } = await import('../packages/server/src/catalog/import-orders-since-may.js');
+const {
+  EXPORT_SALES_MAPPING_BUNDLE_COMMAND,
+  assertBundleWorkbook,
+  ingestSalesMappingBundle,
+  parseSalesMappingBundle,
+  workbookFromBundleExcel,
+} = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
 const { pool } = await import('@zentofact/core');
 const databaseUrl = process.env.DATABASE_URL_POSTGRES || process.env.DATABASE_URL;
 
@@ -216,26 +237,38 @@ async function syncMarketplaces(db) {
 }
 
 const excelPath = findExcel();
-if (!excelPath) {
-  console.error('Falta el Excel del viernes (stock 21.08.2026 a las 2.50 pm.xlsx).');
+const bundlePath = findBundle();
+const bundle = bundlePath
+  ? parseSalesMappingBundle(readFileSync(bundlePath, 'utf8'))
+  : null;
+const workbook = excelPath
+  ? loadInventoryCount20260821(excelPath)
+  : bundle
+    ? assertBundleWorkbook(workbookFromBundleExcel(bundle.excel))
+    : null;
+if (!workbook) {
+  console.error('Falta el Excel del viernes o un sales-mapping-bundle.json con esas cantidades.');
+  console.error('En la máquina que tiene el Excel y la base operativa:');
+  console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
   process.exit(1);
 }
 
 try {
-  const workbook = loadInventoryCount20260821(excelPath);
   const countedUnits = workbook.targets.reduce((sum, target) => sum + target.targetQuantity, 0);
-  console.log(`Excel: ${basename(excelPath)}`);
-  console.log(`SHA-256: ${workbook.sourceHash}`);
+  if (excelPath) console.log(`Excel: ${basename(excelPath)}`);
+  if (bundlePath) console.log(`Bundle: ${basename(bundlePath)}`);
+  console.log(`SHA-256: ${workbook.sourceHash || '(bundle)'}`);
   console.log(`Maestros contados: ${workbook.targets.length}; unidades: ${countedUnits}`);
   console.log(`Sin cantidad: ${[...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].join(', ')}`);
   console.log(`Corte: ${PHYSICAL_COUNT_CUTOFF}`);
 
   const dumpPath = findOrdersSql();
-  if (dumpPath) {
+  if (dumpPath && !bundle) {
     console.log(`Importando pedidos ${basename(dumpPath)}`);
     restoreOrdersDump({ sqlPath: dumpPath, databaseUrl });
-  } else {
-    console.log('Sin dump de pedidos Falabella/Ripley. En la base operativa:');
+  } else if (!bundle && !dumpPath) {
+    console.log('Sin bundle ni dump de pedidos Falabella/Ripley. En la base operativa:');
+    console.log(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
     console.log(EXPORT_ORDERS_DUMP_COMMAND);
   }
 
@@ -255,7 +288,10 @@ try {
   );
   await seedCount(pool, workbook);
 
-  if (dumpPath) {
+  if (bundle) {
+    const ingested = await ingestSalesMappingBundle(pool, bundle);
+    console.log(`Bundle ingerido: ${ingested.orders} pedidos, ${ingested.items} líneas, ${ingested.listings} listings, ${ingested.events} eventos.`);
+  } else if (dumpPath) {
     const remapped = await remapImportedListingsToExcel(pool);
     const cleared = await clearImportedItemProductLinks(pool);
     console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas limpiadas para remapear: ${cleared}`);
