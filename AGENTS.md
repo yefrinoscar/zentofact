@@ -10,6 +10,7 @@
 - Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
 - The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment from `main`.
 - Railway does not deploy pull requests. PR Environments stay off. Do not wait for a Railway GitHub check, preview URL, or green deploy status on a feature PR. Prove the change on this Cloud Agent VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+- A Cloud Agent must not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. It must not create a Railway environment, PR environment, or preview deploy. Postgres, `.env`, fixture users, catalog, inbox, API, and web are created only on this Cloud Agent VM.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
@@ -84,9 +85,11 @@ When proving a UI or API change on this VM, or when the task names a role, catal
 
 ## Cursor Cloud specific instructions
 
-Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway is the public host after a merge into `dev` or `main`, not the proof. A new pull request must not create a Railway environment.
+The Cloud Agent VM is the only test appliance. Postgres, `.env`, fixture users, catalog, Falabella inbox, API (`3010`), and web (`3011`) are created here by `scripts/cloud-agent-start.sh` and the configured terminals. Do not provision Neon, Railway Postgres, a GitHub pull request, or a Railway PR environment to make this app start.
 
-1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`.
+Do not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. Do not create a Railway environment, PR environment, or preview deploy. Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+
+1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`. If `.env` was missing, the script wrote one with `SEED_PREVIEW=true`.
 2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` — done when doctor prints `api_health=ok` (`service=zentofact-api`) and `web_health=ok`.
 3. Pick the fixture profile that matches the task from `docs/agents/cloud-agent.md`, then `.cursor/skills/verify-zentofact/scripts/control-zentofact login <email>`. Done when stdout prints `login=ok email=<that email>` and the screen under test shows seeded rows (or the role's authorized empty view).
 
