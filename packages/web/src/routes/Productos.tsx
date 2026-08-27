@@ -2018,7 +2018,7 @@ function ProductOverviewActions({
 }) {
   return (
     <div
-      className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-background/95 px-5 py-3 shadow-[0_-12px_24px_-16px_rgba(15,23,42,0.18)]"
+      className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-background px-5 py-3"
       role="group"
       aria-label="Acciones del producto"
     >
