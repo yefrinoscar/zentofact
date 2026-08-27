@@ -8,7 +8,30 @@ import {
   ingestSalesMappingBundle,
   parseSalesMappingBundle,
   workbookFromBundleExcel,
+  workbookFromReconciliationAnchors,
 } from './catalog/sales-mapping-bundle.js';
+
+test('las anclas de conciliación del viernes rellenan IDs del Excel, incluso desde AG legado', () => {
+  const workbook = assertBundleWorkbook(workbookFromReconciliationAnchors({
+    run: {
+      cutoff_at: '2026-08-21T19:50:00.000Z',
+      source_hash: 'ac509fd821ef2887f74048a867f744030efe4a819188794fe09554d463a3d9e6',
+    },
+    rows: [...INVENTORY_COUNT_MASTER_SKUS].map((sku) => ({
+      main_sku: sku === 'Z7' ? 'AG174' : sku,
+      cutoff_quantity: sku === 'Z7' ? 1374 : 10,
+    })),
+  }));
+  assert.equal(workbook.targets.find((target) => target.masterSku === 'Z7').targetQuantity, 1374);
+  assert.equal(workbook.source, 'reconciliation_anchors');
+  assert.throws(
+    () => workbookFromReconciliationAnchors({
+      run: { cutoff_at: '2026-08-01T05:00:00.000Z', source_hash: 'x' },
+      rows: [],
+    }),
+    /conteo del viernes/,
+  );
+});
 
 test('el bundle version 1 carga el conteo del viernes y rechaza uno incompleto', () => {
   const workbook = assertBundleWorkbook(workbookFromBundleExcel({

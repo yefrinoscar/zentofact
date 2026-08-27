@@ -14,10 +14,77 @@ const FULFILLMENT_STATUSES = new Set([
 ]);
 
 export const EXPORT_SALES_MAPPING_BUNDLE_COMMAND = [
-  'node scripts/export-sales-mapping-bundle.mjs \\',
-  '  --excel "/Users/ylaurach/Downloads/stock 21.08.2026 a las 2.50 pm.xlsx" \\',
-  '  --out sales-mapping-bundle.json',
+  'node scripts/export-sales-mapping-bundle.mjs --out sales-mapping-bundle.json',
 ].join('\n');
+
+function integerQuantity(value) {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity) || quantity < 0) return null;
+  const rounded = Math.round(quantity);
+  if (Math.abs(quantity - rounded) > 0.0001) return null;
+  return rounded;
+}
+
+export function workbookFromReconciliationAnchors({ run, rows } = {}) {
+  if (new Date(run.cutoff_at).getTime() !== new Date(PHYSICAL_COUNT_CUTOFF).getTime()) {
+    throw new Error(`El ancla no es el conteo del viernes (${PHYSICAL_COUNT_CUTOFF}).`);
+  }
+  const catalog = new Set([...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY]);
+  const grouped = new Map();
+  for (const row of rows || []) {
+    const quantity = integerQuantity(row.cutoff_quantity);
+    if (quantity == null) {
+      throw new Error(`La cantidad de corte de ${row.main_sku} no es un entero.`);
+    }
+    const master = excelMasterForSku(row.main_sku, catalog);
+    if (!master || INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY.has(master)) continue;
+    if (!INVENTORY_COUNT_MASTER_SKUS.has(master)) continue;
+    const list = grouped.get(master) || [];
+    list.push({ mainSku: row.main_sku, quantity });
+    grouped.set(master, list);
+  }
+  const targets = [];
+  for (const masterSku of [...INVENTORY_COUNT_MASTER_SKUS].sort()) {
+    const entries = grouped.get(masterSku) || [];
+    const exact = entries.find((entry) => entry.mainSku === masterSku);
+    let chosen = exact || (entries.length === 1 ? entries[0] : null);
+    if (!chosen && entries.length > 1) {
+      const quantities = new Set(entries.map((entry) => entry.quantity));
+      if (quantities.size === 1) chosen = entries[0];
+    }
+    if (!chosen) {
+      throw new Error(`No hay cantidad de corte unívoca para ${masterSku}.`);
+    }
+    targets.push({ masterSku, sourceRows: [], targetQuantity: chosen.quantity });
+  }
+  return {
+    targets,
+    sourceHash: run.source_hash || null,
+    skippedRows: [],
+    presentWithoutQuantity: [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY],
+    source: 'reconciliation_anchors',
+  };
+}
+
+export async function loadFridayWorkbookFromDb(db) {
+  const run = (await db.query(
+    `select id, source_hash, cutoff_at, applied_at
+     from inventory_reconciliation_runs
+     where cutoff_at = $1::timestamptz
+     order by applied_at desc, id desc
+     limit 1`,
+    [PHYSICAL_COUNT_CUTOFF],
+  )).rows[0];
+  if (!run) return null;
+  const rows = (await db.query(
+    `select p.main_sku, a.cutoff_quantity
+     from inventory_reconciliation_anchors a
+     join products p on p.id = a.product_id
+     where a.run_id = $1`,
+    [run.id],
+  )).rows;
+  return workbookFromReconciliationAnchors({ run, rows });
+}
 
 export function parseSalesMappingBundle(raw) {
   const bundle = typeof raw === 'string' ? JSON.parse(raw) : raw;

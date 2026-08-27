@@ -20,23 +20,30 @@ const excelPath = [
   positionals[0],
   'stock 21.08.2026 a las 2.50 pm.xlsx',
   '/Users/ylaurach/Downloads/stock 21.08.2026 a las 2.50 pm.xlsx',
-].filter(Boolean).map((path) => resolve(path)).find((path) => existsSync(path));
-
-if (!excelPath) {
-  console.error('Falta el Excel del viernes. Pásalo con --excel.');
-  process.exit(1);
-}
+].filter(Boolean).map((path) => resolve(path)).find((path) => existsSync(path)) || null;
 
 const { pool } = await import('@zentofact/core');
 const { SALES_HISTORY_SINCE } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
-const { buildSalesMappingBundle } = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
+const {
+  EXPORT_SALES_MAPPING_BUNDLE_COMMAND,
+  buildSalesMappingBundle,
+  loadFridayWorkbookFromDb,
+} = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
 
 try {
-  const workbook = loadInventoryCount20260821(excelPath);
+  const workbook = excelPath
+    ? loadInventoryCount20260821(excelPath)
+    : await loadFridayWorkbookFromDb(pool);
+  if (!workbook) {
+    console.error('No está el Excel del viernes ni un ancla de conciliación con corte 2026-08-21 14:50 Lima.');
+    console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
+    process.exit(1);
+  }
   const bundle = await buildSalesMappingBundle(pool, { workbook, since: SALES_HISTORY_SINCE });
   const out = resolve(values.out);
   writeFileSync(out, `${JSON.stringify(bundle)}\n`);
-  console.log(`Excel: ${excelPath}`);
+  if (excelPath) console.log(`Excel: ${excelPath}`);
+  else console.log('Conteo: anclas de conciliación del viernes (cutoff_quantity)');
   console.log(`SHA-256: ${workbook.sourceHash}`);
   console.log(`Maestros: ${workbook.targets.length}; unidades: ${workbook.targets.reduce((sum, target) => sum + target.targetQuantity, 0)}`);
   console.log(`Empresas: ${bundle.companies.length}; listings: ${bundle.listings.length}`);
