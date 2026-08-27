@@ -24,6 +24,7 @@ const {
   EXCEL_ROW_ALIAS_TO_MASTER,
   LEGACY_AG_TO_EXCEL,
 } = await import('../packages/server/src/catalog/historical-sku-map.js');
+const { seedHistoricalMastersAbsentFromExcel } = await import('../packages/server/src/catalog/sales-mapping-apply.js');
 const { pool } = await import('@zentofact/core');
 
 const excelIds = [...INVENTORY_COUNT_MASTER_SKUS].sort();
@@ -160,6 +161,10 @@ function postChannel(mainSku) {
 try {
   const companyId = await ensureCompanyAndAccounts(pool);
   await seedExcelProducts(pool);
+  const absentMasters = await seedHistoricalMastersAbsentFromExcel(pool, {
+    countedSkus: INVENTORY_COUNT_MASTER_SKUS,
+    skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+  });
   for (const mainSku of catalogIds) {
     await listing(pool, companyId, postChannel(mainSku), mainSku, mainSku);
   }
@@ -266,8 +271,11 @@ try {
   }
   const unknown = itemByOrder[`${PREFIX}-UNKNOWN`];
   if (unknown?.main_sku) throw new Error('NO-EXISTE no debe mapearse.');
-  const missingMaster = itemByOrder[`${PREFIX}-MISSING-MASTER`];
-  if (missingMaster?.main_sku) throw new Error('TRI65748392 no debe escribir maestro ausente.');
+  const anchored = itemByOrder[`${PREFIX}-MISSING-MASTER`];
+  if (anchored?.main_sku !== 'AG227' || Number(anchored.stock_applied_quantity) !== 0) {
+    throw new Error(`TRI65748392 debía anclarse a AG227 sin descontar. Got ${JSON.stringify(anchored)}`);
+  }
+  if (!absentMasters.includes('AG227')) throw new Error('AG227 debía crearse como maestro ausente del Excel.');
   const market = itemByOrder[`${PREFIX}-MKT-Z7`];
   if (market?.main_sku !== 'Z7' || Number(market.stock_applied_quantity) !== 1) {
     throw new Error(`FLO4400237 debía descontar Z7. Got ${JSON.stringify(market)}`);

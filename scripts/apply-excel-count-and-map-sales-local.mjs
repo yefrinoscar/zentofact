@@ -25,11 +25,7 @@ mkdirSync('/opt/cursor/uploads', { recursive: true });
 mkdirSync('/opt/cursor/artifacts', { recursive: true });
 
 const OPENING_REASON = 'Saldo inicial de agosto reconstruido desde el conteo físico';
-const discovered = discoverSalesMappingInputs({
-  excel: values.excel || process.env.INVENTORY_COUNT_XLSX || positionals[0],
-  bundle: values.bundle || process.env.SALES_MAPPING_BUNDLE,
-  ordersSql: values['orders-sql'] || process.env.ORDERS_SINCE_MAY_SQL,
-});
+const SOURCE_BUNDLE_PATH = '/opt/cursor/uploads/sales-mapping-bundle.json';
 
 const {
   SALES_HISTORY_SINCE,
@@ -54,33 +50,35 @@ const {
   parseSalesMappingBundle,
   workbookFromBundleExcel,
 } = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
+const {
+  exportSalesMappingBundleViaPsql,
+  resolveMarketplaceKeyTargets,
+  seedHistoricalMastersAbsentFromExcel,
+  writeMarketplaceSyncKeys,
+} = await import('../packages/server/src/catalog/sales-mapping-apply.js');
 const { pool } = await import('@zentofact/core');
 const databaseUrl = process.env.DATABASE_URL_POSTGRES || process.env.DATABASE_URL;
-
-async function writeSellerKeys(db) {
-  const falabellaUser = String(process.env.FALABELLA_API_USER_ID || '').trim();
-  const falabellaKey = String(process.env.FALABELLA_API_KEY || '').trim();
-  const ripleyKey = String(process.env.RIPLEY_API_KEY || '').trim();
-  const ripleyShop = String(process.env.RIPLEY_SHOP_ID || '').trim();
-  if (!falabellaUser && !falabellaKey && !ripleyKey) {
-    return { falabella: false, ripley: false };
+const sourceDatabaseUrl = String(process.env.SALES_MAPPING_SOURCE_DATABASE_URL || '').trim();
+if (sourceDatabaseUrl && sourceDatabaseUrl !== databaseUrl) {
+  console.log('Exportando bundle desde SALES_MAPPING_SOURCE_DATABASE_URL (solo lectura).');
+  try {
+    exportSalesMappingBundleViaPsql({
+      databaseUrl: sourceDatabaseUrl,
+      sqlPath: resolve('scripts/export-sales-mapping-bundle.sql'),
+      outputPath: SOURCE_BUNDLE_PATH,
+    });
+    parseSalesMappingBundle(readFileSync(SOURCE_BUNDLE_PATH, 'utf8'));
+  } catch (error) {
+    console.error('No se pudo leer la base operativa:', error.message);
+    process.exit(1);
   }
-  await db.query(
-    `update companies set
-       falabella_api_user_id = coalesce(nullif($1,''), falabella_api_user_id),
-       falabella_api_key = coalesce(nullif($2,''), falabella_api_key),
-       ripley_api_key = coalesce(nullif($3,''), ripley_api_key),
-       ripley_shop_id = coalesce(nullif($4,''), ripley_shop_id)
-     where ruc='20990001001'`,
-    [falabellaUser, falabellaKey, ripleyKey, ripleyShop],
-  );
-  await db.query(
-    `insert into ripley_sync_state (company_id, enabled)
-     select id, true from companies where ruc='20990001001'
-     on conflict (company_id) do update set enabled=true, updated_at=now()`,
-  );
-  return { falabella: Boolean(falabellaUser && falabellaKey), ripley: Boolean(ripleyKey) };
+} else if (sourceDatabaseUrl && sourceDatabaseUrl === databaseUrl) {
+  console.error('SALES_MAPPING_SOURCE_DATABASE_URL no puede ser esta misma base: aquí no está el conteo del viernes.');
 }
+  excel: values.excel || process.env.INVENTORY_COUNT_XLSX || positionals[0],
+  bundle: values.bundle || process.env.SALES_MAPPING_BUNDLE,
+  ordersSql: values['orders-sql'] || process.env.ORDERS_SINCE_MAY_SQL,
+});
 
 async function seedCount(db, workbook) {
   for (const target of workbook.targets) {
@@ -245,7 +243,6 @@ try {
     console.log(EXPORT_ORDERS_DUMP_COMMAND);
   }
 
-  const keys = await writeSellerKeys(pool);
   await pool.query(
     `delete from inventory_movements
      where source in ('historical_sales_mapping', 'excel_count')
@@ -260,6 +257,13 @@ try {
     `delete from orders where external_order_id like 'EXCEL-MAP-%' or external_order_id like 'MAP-%'`,
   );
   await seedCount(pool, workbook);
+  const absentMasters = await seedHistoricalMastersAbsentFromExcel(pool, {
+    countedSkus: INVENTORY_COUNT_MASTER_SKUS,
+    skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+  });
+  if (absentMasters.length) {
+    console.log(`Maestros históricos ausentes del Excel (se asocian, no se descuentan): ${absentMasters.join(', ')}`);
+  }
 
   if (bundle) {
     const ingested = await ingestSalesMappingBundle(pool, bundle);
@@ -269,6 +273,28 @@ try {
     const cleared = await clearImportedItemProductLinks(pool);
     console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas limpiadas para remapear: ${cleared}`);
   }
+
+  const keyTargets = resolveMarketplaceKeyTargets({
+    falabellaCompanyRuc: process.env.FALABELLA_COMPANY_RUC,
+    ripleyCompanyRuc: process.env.RIPLEY_COMPANY_RUC,
+    bundle,
+  });
+  if (keyTargets.ambiguousFalabella) {
+    console.error(`Hay varias empresas Falabella (${keyTargets.falabellaFromBundle.join(', ')}). Define FALABELLA_COMPANY_RUC.`);
+  }
+  if (keyTargets.ambiguousRipley) {
+    console.error(`Hay varias empresas Ripley (${keyTargets.ripleyFromBundle.join(', ')}). Define RIPLEY_COMPANY_RUC.`);
+  }
+  const keys = await writeMarketplaceSyncKeys(pool, {
+    falabellaUser: process.env.FALABELLA_API_USER_ID,
+    falabellaKey: process.env.FALABELLA_API_KEY,
+    ripleyKey: process.env.RIPLEY_API_KEY,
+    ripleyShop: process.env.RIPLEY_SHOP_ID,
+    falabellaRucs: keyTargets.falabellaRucs,
+    ripleyRucs: keyTargets.ripleyRucs,
+  });
+  if (keys.falabella) console.log(`Keys Falabella en RUC ${keys.falabellaRucs.join(', ')}`);
+  if (keys.ripley) console.log(`Keys Ripley en RUC ${keys.ripleyRucs.join(', ')}`);
 
   const keyed = await companiesWithKeys(pool);
   if (!values['skip-sync'] && keyed.some((company) => company.falabella || company.ripley)) {

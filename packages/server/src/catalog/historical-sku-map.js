@@ -110,6 +110,13 @@ export const HISTORICAL_SKU_TO_MASTER = Object.freeze({
   ...MARKETPLACE_SKU_TO_MASTER,
 });
 
+export function historicalMastersAbsentFromExcel(catalogSkus, historicalMap = HISTORICAL_SKU_TO_MASTER) {
+  const catalog = catalogSkus instanceof Set ? catalogSkus : new Set(catalogSkus || []);
+  return [...new Set(Object.values(historicalMap))]
+    .filter((sku) => sku && !catalog.has(sku))
+    .sort();
+}
+
 export function excelMasterForSku(sku, catalogSkus, historicalMap = HISTORICAL_SKU_TO_MASTER) {
   const value = String(sku || '').trim();
   if (!value) return null;

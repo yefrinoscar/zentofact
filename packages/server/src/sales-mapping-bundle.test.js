@@ -111,6 +111,47 @@ test('ingerir el bundle crea empresa, listing Excel y línea sin product_id', as
   assert.equal(queries.some((entry) => entry.sql.includes('product_inventory')), false);
 });
 
+test('ingerir un listing histórico ausente del Excel lo ancla al maestro sin inventario', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql);
+      if (text.includes('delete from orders')) return { rowCount: 0 };
+      if (text.includes('from products')) return { rows: [{ id: 227, main_sku: 'AG227' }] };
+      if (text.includes('from companies where ruc')) return { rows: [{ id: 9 }] };
+      if (text.includes('from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.includes('from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into product_listings')) return { rowCount: 1 };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 71 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    listings: [{
+      channel: 'falabella', companyRuc: '20607809136', sellerSku: 'TRI65748392', shopSku: 'TRI65748392',
+      status: 'active', title: 'Triciclo',
+    }],
+    orders: [{
+      channel: 'falabella',
+      companyRuc: '20607809136',
+      externalOrderId: 'FAL-TRI',
+      externalOrderNumber: 'TRI',
+      orderedAt: '2026-08-22T16:00:00.000Z',
+      orderStatus: 'confirmed',
+      fulfillmentStatus: 'shipped',
+      items: [{ sku: 'TRI65748392', providerSku: 'TRI65748392', quantity: 1, description: 'Triciclo' }],
+    }],
+  });
+  assert.equal(result.listings, 1);
+  const listing = queries.find((entry) => entry.sql.startsWith('insert into product_listings'));
+  assert.equal(listing.params[0], 227);
+  assert.equal(listing.params[4], 'TRI65748392');
+});
+
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);

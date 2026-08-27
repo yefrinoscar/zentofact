@@ -9,6 +9,7 @@ import {
   HISTORICAL_SKU_TO_MASTER,
   LEGACY_AG_TO_EXCEL,
   excelMasterForSku,
+  historicalMastersAbsentFromExcel,
 } from './catalog/historical-sku-map.js';
 import {
   applyHistoricalSalesMappings,
@@ -133,6 +134,29 @@ test('un mapeo histórico sin maestro no descuenta y pide revisión', () => {
   }, context(products, listings));
   assert.equal(resolved.status, 'missing_master');
   assert.equal(resolved.mainSku, 'FAL-144958533');
+});
+
+test('un maestro histórico ausente del Excel se asocia y no se descuenta', () => {
+  const ctx = context([
+    ...products,
+    { id: 227, main_sku: 'AG227', name: 'AG227' },
+  ], listings);
+  const resolved = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'TRI65748392', provider_sku: 'TRI65748392',
+  }, ctx);
+  assert.equal(resolved.status, 'mapped');
+  assert.equal(resolved.product.main_sku, 'AG227');
+  assert.equal(resolved.countPresence, 'absent_from_excel');
+  assert.equal(resolved.ledgerPolicy, 'map_only_no_deduct');
+});
+
+test('los maestros históricos que no están en el Excel quedan fuera del conteo', () => {
+  const catalog = new Set([...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY]);
+  const absent = historicalMastersAbsentFromExcel(catalog);
+  assert.equal(absent.includes('Z7'), false);
+  assert.equal(absent.includes('H36'), false);
+  assert.ok(absent.includes('AG227'));
+  assert.ok(absent.includes('FAL-144958533'));
 });
 
 test('un SKU legado o alias del Excel resuelve al código del conteo', () => {
@@ -385,4 +409,5 @@ test('un SKU legado o el código del Excel resuelven al maestro del conteo', () 
   assert.equal(excelMasterForSku('G40XL', catalog), 'G40XL');
   assert.equal(excelMasterForSku('NO-EXISTE', catalog), null);
   assert.equal(excelMasterForSku('TRI65748392', catalog), null);
+  assert.equal(excelMasterForSku('TRI65748392', new Set([...catalog, 'AG227'])), 'AG227');
 });
