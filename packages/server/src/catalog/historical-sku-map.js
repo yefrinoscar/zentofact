@@ -1,4 +1,4 @@
-const LEGACY_AG_TO_EXCEL = {
+export const LEGACY_AG_TO_EXCEL = {
   AG94: 'G38L',
   AG65: 'G44',
   AG134: 'Z77',
@@ -71,7 +71,7 @@ const LEGACY_AG_TO_EXCEL = {
   AG299: 'G40XL',
 };
 
-const EXCEL_ROW_ALIAS_TO_MASTER = {
+export const EXCEL_ROW_ALIAS_TO_MASTER = {
   'G-19': 'G18',
   G24CA: 'G24N',
 };

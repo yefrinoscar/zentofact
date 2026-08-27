@@ -36,7 +36,7 @@ function printCoverage(coverage) {
   console.log(`Ventas desde: ${coverage.since}`);
   console.log(`Conteo físico (ancla, no se vuelve a contar): ${coverage.cutoffAt}`);
   console.log('Canales: falabella, ripley');
-  console.log('No copia el catálogo a Railway. Descuenta solo salidas posteriores al conteo en maestros del Excel.');
+  console.log('Maestros: códigos del Excel del viernes. Descuenta solo salidas posteriores al conteo.');
   console.table([coverage.summary]);
   if (coverage.shortages.length) {
     console.log(`Faltantes posteriores al conteo: ${coverage.shortages.length}`);

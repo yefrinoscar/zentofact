@@ -10,6 +10,7 @@ config({ path: resolve('.env') });
 
 const COUNT_QTY = 10;
 const PREFIX = 'EXCEL-MAP';
+const OPENING_REASON = 'Saldo inicial de agosto reconstruido desde el conteo físico';
 const {
   SALES_HISTORY_SINCE,
   PHYSICAL_COUNT_CUTOFF,
@@ -19,10 +20,15 @@ const {
   formatReviewTsv,
   loadHistoricalSalesMappingContext,
 } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
+const {
+  EXCEL_ROW_ALIAS_TO_MASTER,
+  LEGACY_AG_TO_EXCEL,
+} = await import('../packages/server/src/catalog/historical-sku-map.js');
 const { pool } = await import('@zentofact/core');
 
 const excelIds = [...INVENTORY_COUNT_MASTER_SKUS].sort();
 const noQty = [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].sort();
+const catalogIds = [...excelIds, ...noQty];
 
 async function ensureCompanyAndAccounts(db) {
   const existing = await db.query(`select id from companies where ruc='20990001001' order by id limit 1`);
@@ -47,11 +53,12 @@ async function ensureCompanyAndAccounts(db) {
 }
 
 async function seedExcelProducts(db) {
-  for (const mainSku of [...excelIds, ...noQty]) {
+  for (const mainSku of catalogIds) {
     await db.query(
       `insert into products (main_sku, name, status, attributes)
        values ($1,$1,'active',$2)
-       on conflict (main_sku) do update set status='active', updated_at=now()`,
+       on conflict (main_sku) do update
+         set status='active', attributes=excluded.attributes, updated_at=now()`,
       [mainSku, JSON.stringify({ source: 'excel_count_2026_08_21' })],
     );
     const counted = INVENTORY_COUNT_MASTER_SKUS.has(mainSku);
@@ -60,6 +67,27 @@ async function seedExcelProducts(db) {
        select id, $2, 0 from products where main_sku=$1
        on conflict (product_id) do update set quantity_on_hand=$2, quantity_reserved=0, updated_at=now()`,
       [mainSku, counted ? COUNT_QTY : 0],
+    );
+  }
+}
+
+async function seedOpenings(db) {
+  for (const mainSku of excelIds) {
+    await db.query(
+      `insert into inventory_movements (
+         product_id, movement_type, quantity_delta, quantity_after, reason,
+         source, idempotency_key, metadata, effective_at
+       )
+       select p.id, 'initial', $2, $2, $3, 'excel_count', $4, '{}'::jsonb, $5
+       from products p where p.main_sku=$1
+       on conflict (idempotency_key) do nothing`,
+      [
+        mainSku,
+        COUNT_QTY,
+        OPENING_REASON,
+        `excel-local-opening:${mainSku}`,
+        '2026-08-01T05:00:00.000Z',
+      ],
     );
   }
 }
@@ -112,9 +140,10 @@ async function insertOrder(db, companyId, channel, externalId, orderedAt, sku, s
 async function resetExcelSales(db) {
   await db.query(
     `delete from inventory_movements
-     where source='historical_sales_mapping'
+     where source in ('historical_sales_mapping', 'excel_count')
         or idempotency_key like 'historical-sales-mapping:%'
-        or idempotency_key like 'excel-local-opening:%'`,
+        or idempotency_key like 'excel-local-opening:%'
+        or idempotency_key = 'fixture-z7-opening'`,
   );
   await db.query(
     `delete from order_items where order_id in (
@@ -124,23 +153,58 @@ async function resetExcelSales(db) {
   await db.query(`delete from orders where external_order_id like $1`, [`${PREFIX}-%`]);
 }
 
+function postChannel(mainSku) {
+  return mainSku === 'HOG025' ? 'ripley' : 'falabella';
+}
+
 try {
   const companyId = await ensureCompanyAndAccounts(pool);
   await seedExcelProducts(pool);
-  await listing(pool, companyId, 'falabella', 'Z7', 'Z7');
-  await listing(pool, companyId, 'falabella', 'AG174', 'Z7');
-  await listing(pool, companyId, 'ripley', 'HOG025', 'HOG025');
-  await listing(pool, companyId, 'falabella', 'AG301', 'G35V');
-  await listing(pool, companyId, 'falabella', 'G40XL', 'G40XL');
+  for (const mainSku of catalogIds) {
+    await listing(pool, companyId, postChannel(mainSku), mainSku, mainSku);
+  }
   await resetExcelSales(pool);
   await seedExcelProducts(pool);
+  await seedOpenings(pool);
 
-  await insertOrder(pool, companyId, 'falabella', `${PREFIX}-Z7-PRE`, '2026-08-10T12:00:00Z', 'AG174', 'AG174', 3);
-  await insertOrder(pool, companyId, 'falabella', `${PREFIX}-Z7-POST`, '2026-08-22T16:00:00Z', 'Z7', 'Z7', 2);
-  await insertOrder(pool, companyId, 'ripley', `${PREFIX}-HOG025-POST`, '2026-08-22T16:30:00Z', 'HOG025', 'HOG025', 1);
-  await insertOrder(pool, companyId, 'falabella', `${PREFIX}-G35V-POST`, '2026-08-22T17:00:00Z', 'AG301', 'AG301', 1);
-  await insertOrder(pool, companyId, 'falabella', `${PREFIX}-G40XL-POST`, '2026-08-22T18:00:00Z', 'G40XL', 'G40XL', 1);
-  await insertOrder(pool, companyId, 'falabella', `${PREFIX}-UNKNOWN`, '2026-08-22T19:00:00Z', 'NO-EXISTE', '000', 1);
+  for (const mainSku of excelIds) {
+    await insertOrder(
+      pool, companyId, postChannel(mainSku), `${PREFIX}-POST-${mainSku}`,
+      '2026-08-22T16:00:00Z', mainSku, mainSku, 1,
+    );
+  }
+  for (const mainSku of noQty) {
+    await insertOrder(
+      pool, companyId, 'falabella', `${PREFIX}-NOQTY-${mainSku}`,
+      '2026-08-22T18:00:00Z', mainSku, mainSku, 1,
+    );
+  }
+  for (const [legacy, master] of Object.entries(LEGACY_AG_TO_EXCEL)) {
+    await insertOrder(
+      pool, companyId, 'falabella', `${PREFIX}-PRE-${legacy}`,
+      '2026-08-10T12:00:00Z', legacy, legacy, 1,
+    );
+    void master;
+  }
+  for (const [alias, master] of Object.entries(EXCEL_ROW_ALIAS_TO_MASTER)) {
+    await insertOrder(
+      pool, companyId, 'falabella', `${PREFIX}-ALIAS-${alias}`,
+      '2026-08-10T13:00:00Z', alias, alias, 1,
+    );
+    void master;
+  }
+  await insertOrder(
+    pool, companyId, 'falabella', `${PREFIX}-MKT-Z7`,
+    '2026-08-22T17:00:00Z', 'FLO4400237', 'FLO4400237', 1,
+  );
+  await insertOrder(
+    pool, companyId, 'falabella', `${PREFIX}-UNKNOWN`,
+    '2026-08-22T19:00:00Z', 'NO-EXISTE', '000', 1,
+  );
+  await insertOrder(
+    pool, companyId, 'falabella', `${PREFIX}-MISSING-MASTER`,
+    '2026-08-22T19:30:00Z', 'TRI65748392', 'TRI65748392', 1,
+  );
 
   const loaded = await loadHistoricalSalesMappingContext(pool, { since: SALES_HISTORY_SINCE });
   const coverage = buildHistoricalSalesCoverage({
@@ -157,8 +221,8 @@ try {
   const stock = await pool.query(
     `select p.main_sku, i.quantity_on_hand
      from products p join product_inventory i on i.product_id=p.id
-     where p.main_sku=any($1) order by p.main_sku`,
-    [['Z7', 'HOG025', 'G35V', 'G40XL']],
+     where p.attributes->>'source'='excel_count_2026_08_21'
+     order by p.main_sku`,
   );
   const items = await pool.query(
     `select o.external_order_id, oi.sku, oi.main_sku, oi.stock_state, oi.stock_applied_quantity
@@ -167,29 +231,60 @@ try {
     [`${PREFIX}-%`],
   );
   const bySku = Object.fromEntries(stock.rows.map((row) => [row.main_sku, Number(row.quantity_on_hand)]));
-  const expected = { Z7: 8, HOG025: 9, G35V: 9, G40XL: 0 };
-  const mismatches = Object.entries(expected).filter(([sku, qty]) => bySku[sku] !== qty);
+  const mismatches = [];
+  for (const sku of excelIds) {
+    const expected = sku === 'Z7' ? 8 : 9;
+    if (bySku[sku] !== expected) mismatches.push(`${sku} expected ${expected} got ${bySku[sku]}`);
+  }
+  for (const sku of noQty) {
+    if (bySku[sku] !== 0) mismatches.push(`${sku} expected 0 got ${bySku[sku]}`);
+  }
+
+  const missingCatalog = catalogIds.filter((sku) => !(sku in bySku));
+  if (missingCatalog.length) {
+    throw new Error(`Faltan IDs del Excel en el catálogo: ${missingCatalog.join(', ')}`);
+  }
+
+  const itemByOrder = Object.fromEntries(items.rows.map((row) => [row.external_order_id, row]));
+  for (const [legacy, master] of Object.entries(LEGACY_AG_TO_EXCEL)) {
+    const row = itemByOrder[`${PREFIX}-PRE-${legacy}`];
+    if (!row || row.main_sku !== master || Number(row.stock_applied_quantity) !== 0) {
+      throw new Error(`${legacy} debía mapear a ${master} sin descontar. Got ${JSON.stringify(row)}`);
+    }
+  }
+  for (const [alias, master] of Object.entries(EXCEL_ROW_ALIAS_TO_MASTER)) {
+    const row = itemByOrder[`${PREFIX}-ALIAS-${alias}`];
+    if (!row || row.main_sku !== master || Number(row.stock_applied_quantity) !== 0) {
+      throw new Error(`${alias} debía mapear a ${master} sin descontar. Got ${JSON.stringify(row)}`);
+    }
+  }
+  for (const sku of noQty) {
+    const row = itemByOrder[`${PREFIX}-NOQTY-${sku}`];
+    if (!row || row.main_sku !== sku || Number(row.stock_applied_quantity) !== 0) {
+      throw new Error(`${sku} debía mapearse sin descontar. Got ${JSON.stringify(row)}`);
+    }
+  }
+  const unknown = itemByOrder[`${PREFIX}-UNKNOWN`];
+  if (unknown?.main_sku) throw new Error('NO-EXISTE no debe mapearse.');
+  const missingMaster = itemByOrder[`${PREFIX}-MISSING-MASTER`];
+  if (missingMaster?.main_sku) throw new Error('TRI65748392 no debe escribir maestro ausente.');
+  const market = itemByOrder[`${PREFIX}-MKT-Z7`];
+  if (market?.main_sku !== 'Z7' || Number(market.stock_applied_quantity) !== 1) {
+    throw new Error(`FLO4400237 debía descontar Z7. Got ${JSON.stringify(market)}`);
+  }
 
   mkdirSync(resolve('.audit'), { recursive: true });
   writeFileSync(resolve('.audit/sales-mapping-since-may-2026-review.tsv'), formatReviewTsv(coverage.identities));
   writeFileSync(resolve('.audit/sales-mapping-since-may-2026.tsv'), formatCoverageTsv(coverage.identities));
 
+  const sample = stock.rows.filter((row) => ['Z7', 'HOG025', 'G35V', 'G40XL', 'G18', 'H13M'].includes(row.main_sku));
   console.log(`Excel product IDs in catalog: ${excelIds.length} counted + ${noQty.length} without quantity`);
   console.log(`Cutoff: ${PHYSICAL_COUNT_CUTOFF}`);
   console.table([coverage.summary]);
-  console.table(stock.rows);
-  console.table(items.rows);
+  console.table(sample);
   console.log(`APLICADO: mapped ${result.updatedItems}, deducted ${result.deductedItems}`);
-  if (mismatches.length) {
-    throw new Error(`Stock mismatch: ${mismatches.map(([sku, qty]) => `${sku} expected ${qty} got ${bySku[sku]}`).join('; ')}`);
-  }
-  const unknown = items.rows.find((row) => row.external_order_id.endsWith('UNKNOWN'));
-  if (unknown?.main_sku) throw new Error('NO-EXISTE no debe mapearse.');
-  const pre = items.rows.find((row) => row.external_order_id.endsWith('Z7-PRE'));
-  if (pre.main_sku !== 'Z7' || Number(pre.stock_applied_quantity) !== 0) {
-    throw new Error('La venta anterior al conteo debe mapear a Z7 sin descontar.');
-  }
-  console.log('LOCAL PROVE: excel IDs, post-count deductions, and review list match.');
+  if (mismatches.length) throw new Error(`Stock mismatch: ${mismatches.join('; ')}`);
+  console.log('LOCAL PROVE: every Excel ID is the master; post-count sales deduct; pre-count/no-qty/unmapped stay off the ledger.');
 } finally {
   await pool.end();
 }

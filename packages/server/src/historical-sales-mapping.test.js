@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HISTORICAL_SKU_TO_MASTER } from './catalog/historical-sku-map.js';
+import {
+  INVENTORY_COUNT_MASTER_SKUS,
+  INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+} from '../../../scripts/lib/inventory-count-2026-08-21.mjs';
+import {
+  EXCEL_ROW_ALIAS_TO_MASTER,
+  HISTORICAL_SKU_TO_MASTER,
+  LEGACY_AG_TO_EXCEL,
+} from './catalog/historical-sku-map.js';
 import {
   applyHistoricalSalesMappings,
   buildHistoricalSalesCoverage,
@@ -311,4 +319,59 @@ test('aplicar el mapeo escribe product_id y no toca el inventario', async () => 
   assert.equal(result.inventoryUnchanged, true);
   assert.equal(queries.some((entry) => entry.sql.includes('insert into inventory_movements')), false);
   assert.equal(queries.some((entry) => entry.sql.includes('commit')), true);
+});
+
+test('cada AG legado y alias del Excel apunta a un ID del conteo', () => {
+  for (const [legacy, master] of Object.entries(LEGACY_AG_TO_EXCEL)) {
+    assert.ok(
+      INVENTORY_COUNT_MASTER_SKUS.has(master) || INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY.has(master),
+      `${legacy} → ${master} no está en el Excel`,
+    );
+  }
+  for (const [alias, master] of Object.entries(EXCEL_ROW_ALIAS_TO_MASTER)) {
+    assert.equal(INVENTORY_COUNT_MASTER_SKUS.has(master), true, `${alias} → ${master}`);
+  }
+});
+
+test('cada ID del Excel es el maestro cuando existe el producto', () => {
+  const excelIds = [...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY];
+  const excelProducts = excelIds.map((sku, index) => ({ id: index + 1, main_sku: sku, name: sku }));
+  const ctx = context(excelProducts, [], {
+    countedSkus: INVENTORY_COUNT_MASTER_SKUS,
+    skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+  });
+  for (const sku of INVENTORY_COUNT_MASTER_SKUS) {
+    const resolved = resolveSaleItem({
+      channel_code: 'falabella', company_id: 1, sku, provider_sku: sku,
+    }, ctx);
+    assert.equal(resolved.status, 'mapped', sku);
+    assert.equal(resolved.product.main_sku, sku);
+    assert.equal(resolved.method, 'exact_main_sku');
+    assert.equal(resolved.ledgerPolicy, 'deduct_after_cutoff');
+  }
+  for (const sku of INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY) {
+    const resolved = resolveSaleItem({
+      channel_code: 'falabella', company_id: 1, sku, provider_sku: sku,
+    }, ctx);
+    assert.equal(resolved.status, 'mapped', sku);
+    assert.equal(resolved.product.main_sku, sku);
+    assert.equal(resolved.ledgerPolicy, 'review_no_deduct');
+  }
+  for (const [legacy, master] of Object.entries(LEGACY_AG_TO_EXCEL)) {
+    const resolved = resolveSaleItem({
+      channel_code: 'falabella', company_id: 1, sku: legacy, provider_sku: 'x',
+    }, ctx);
+    assert.equal(resolved.status, 'mapped', `${legacy} → ${master}`);
+    assert.equal(resolved.product.main_sku, master);
+    assert.equal(resolved.method, 'explicit_historical_sku');
+  }
+  const alias = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'G-19', provider_sku: 'x',
+  }, ctx);
+  assert.equal(alias.product.main_sku, 'G18');
+  const marketplace = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'FLO4400237', provider_sku: 'x',
+  }, ctx);
+  assert.equal(marketplace.product.main_sku, 'Z7');
+  assert.equal(HISTORICAL_SKU_TO_MASTER.AG174, 'Z7');
 });
