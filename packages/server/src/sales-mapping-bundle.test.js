@@ -6,6 +6,7 @@ import {
   coerceFulfillmentStatus,
   coerceOrderStatus,
   falabellaInboxToBundleOrders,
+  hydrateUnifiedOrdersFromFalabellaInbox,
   ingestSalesMappingBundle,
   listingMasterSku,
   mergeBundleOrders,
@@ -320,6 +321,119 @@ test('el inbox Falabella cubre pedidos que no están en orders unificados', asyn
   );
   assert.equal(merged[0].items.length, 1);
 
+  const partial = mergeBundleOrders(
+    [{
+      channel: 'falabella', companyRuc: '20607809136', externalOrderId: 'PV-INBOX',
+      items: [{ externalItemId: '7', sku: 'AG174', quantity: 1 }],
+    }],
+    [{
+      channel: 'falabella', companyRuc: '20607809136', externalOrderId: 'PV-INBOX',
+      items: [
+        { externalItemId: '7', sku: 'AG174', quantity: 1 },
+        { externalItemId: '8', sku: 'Z7', quantity: 1 },
+      ],
+    }],
+  );
+  assert.deepEqual(partial[0].items.map((item) => item.externalItemId), ['7', '8']);
+
+  const leftoverQueries = [];
+  const leftoverDb = {
+    async query(sql, params = []) {
+      leftoverQueries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 91 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      if (text.startsWith('insert into order_events')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const leftover = await ingestSalesMappingBundle(leftoverDb, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    orders: [{
+      channel: 'falabella',
+      companyRuc: '20607809136',
+      externalOrderId: 'PV-PARTIAL',
+      orderedAt: '2026-08-22T16:00:00.000Z',
+      items: [{ externalItemId: '7', sku: 'AG174', quantity: 1 }],
+    }],
+    falabellaOrders: [{
+      companyRuc: '20607809136',
+      orderId: 'PV-PARTIAL',
+      status: 'shipped',
+      orderedAt: '2026-08-22T16:00:00.000Z',
+      updatedAt: '2026-08-22T18:00:00.000Z',
+      rawData: {
+        OrderItems: {
+          OrderItem: [
+            { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '1' },
+            { OrderItemId: '8', SellerSku: 'Z7', ShopSku: 'FLO4400237', Quantity: '1' },
+          ],
+        },
+      },
+    }],
+  });
+  assert.equal(leftover.items, 2);
+  const leftoverItemSkus = leftoverQueries
+    .filter((entry) => entry.sql.trim().startsWith('insert into order_items'))
+    .map((entry) => entry.params[2]);
+  assert.deepEqual(leftoverItemSkus, ['AG174', 'Z7']);
+
+  const hydrateQueries = [];
+  const hydrateDb = {
+    async query(sql, params = []) {
+      hydrateQueries.push({ sql: String(sql), params });
+      const text = String(sql).trim().toLowerCase();
+      if (text.includes('from falabella_orders fo')) {
+        return {
+          rows: [{
+            company_ruc: '20607809136',
+            order_id: 'PV-DUMP',
+            order_number: '88',
+            status: 'shipped',
+            falabella_created_at: '2026-08-22T16:00:00.000Z',
+            falabella_updated_at: '2026-08-22T18:00:00.000Z',
+            raw_data: {
+              OrderItems: {
+                OrderItem: [
+                  { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '1' },
+                  { OrderItemId: '8', SellerSku: 'Z7', ShopSku: 'FLO4400237', Quantity: '1' },
+                ],
+              },
+            },
+          }],
+        };
+      }
+      if (text.includes('left join order_items oi')) {
+        return {
+          rows: [{
+            company_ruc: '20607809136',
+            order_id: 77,
+            external_order_id: 'PV-DUMP',
+            external_item_id: '7',
+          }],
+        };
+      }
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const hydrated = await hydrateUnifiedOrdersFromFalabellaInbox(hydrateDb);
+  assert.equal(hydrated.orders, 0);
+  assert.equal(hydrated.items, 1);
+  assert.equal(hydrateQueries.some((entry) => entry.sql.trim().startsWith('delete from orders')), false);
+  const extraItem = hydrateQueries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(extraItem.params[0], 77);
+  assert.equal(extraItem.params[1], '8');
+  assert.equal(extraItem.params[2], 'Z7');
+  assert.match(extraItem.sql, /do nothing/i);
+
   const queries = [];
   const db = {
     async query(sql, params = []) {
@@ -393,6 +507,7 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /'rawData'/);
   assert.match(sql, /falabella_orders/);
   assert.match(sql, /'falabellaOrders'/);
+  assert.doesNotMatch(sql, /o\.external_order_id = fo\.order_id/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

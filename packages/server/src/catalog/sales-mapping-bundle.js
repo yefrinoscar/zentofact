@@ -106,12 +106,27 @@ export function mergeBundleOrders(orders = [], inboxOrders = []) {
       byKey.set(key, order);
       continue;
     }
-    if ((existing.items || []).length === 0 && (order.items || []).length) {
+    const existingIds = new Set(
+      (existing.items || []).map((item) => String(item.externalItemId || '')).filter(Boolean),
+    );
+    const extra = (order.items || []).filter((item) => {
+      const id = String(item.externalItemId || '');
+      return id ? !existingIds.has(id) : (existing.items || []).length === 0;
+    });
+    if (!(existing.items || []).length && (order.items || []).length) {
       byKey.set(key, {
         ...existing,
         items: order.items,
         events: (existing.events || []).length ? existing.events : order.events,
         fulfillmentStatus: existing.fulfillmentStatus || order.fulfillmentStatus,
+      });
+      continue;
+    }
+    if (extra.length) {
+      byKey.set(key, {
+        ...existing,
+        items: [...(existing.items || []), ...extra],
+        events: (existing.events || []).length ? existing.events : order.events,
       });
     }
   }
@@ -129,16 +144,6 @@ where coalesce(fo.falabella_created_at, fo.first_seen_at) >= $1::timestamptz
     or fo.raw_data ? 'orderItems'
     or fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
   )
-  and not exists (
-    select 1
-    from orders o
-    join order_channel_accounts a on a.id = o.channel_account_id
-    join order_channels ch on ch.id = a.channel_id
-    join order_items oi on oi.order_id = o.id
-    where o.company_id = fo.company_id
-      and o.external_order_id = fo.order_id
-      and ch.code = 'falabella'
-  )
 order by fo.falabella_created_at, fo.order_id
 `;
 
@@ -146,20 +151,109 @@ export async function loadFalabellaInboxOrphans(db, since = SALES_HISTORY_SINCE)
   return (await db.query(FALABELLA_INBOX_ORPHAN_SQL, [since])).rows;
 }
 
+const EXISTING_FALABELLA_UNIFIED_SQL = `
+select c.ruc as company_ruc, o.id as order_id, o.external_order_id, oi.external_item_id
+from orders o
+join companies c on c.id = o.company_id
+join order_channel_accounts a on a.id = o.channel_account_id
+join order_channels ch on ch.id = a.channel_id
+left join order_items oi on oi.order_id = o.id
+where ch.code = 'falabella'
+  and coalesce(o.ordered_at, 'epoch'::timestamptz) >= $1::timestamptz
+`;
+
+export async function loadExistingFalabellaUnifiedOrders(db, since = SALES_HISTORY_SINCE) {
+  const { rows } = await db.query(EXISTING_FALABELLA_UNIFIED_SQL, [since]);
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = `${String(row.company_ruc || '').trim()}\u0000${String(row.external_order_id || '').trim()}`;
+    const current = byKey.get(key) || { orderId: Number(row.order_id), itemIds: new Set() };
+    if (row.external_item_id) current.itemIds.add(String(row.external_item_id));
+    byKey.set(key, current);
+  }
+  return byKey;
+}
+
+function falabellaOrderKey(order) {
+  return `${String(order.companyRuc || '').trim()}\u0000${String(order.externalOrderId || '').trim()}`;
+}
+
+async function upsertBundleOrderItem(db, orderId, order, item, index, { skus, idBySku, unlinkedKeys }) {
+  const unlinked = unlinkedKeys.has(`${order.channel}\u0000${String(order.companyRuc || '').trim()}\u0000${item.sku}`);
+  const master = listingMasterSku({
+    sellerSku: item.sku,
+    shopSku: item.providerSku,
+    productSku: unlinked ? null : item.productSku,
+  }, skus);
+  if (master) await ensureAnchorProduct(db, master, skus, idBySku);
+  await db.query(
+    `insert into order_items (
+       order_id, external_item_id, sku, provider_sku, description, quantity,
+       product_id, listing_id, main_sku, stock_state, metadata, raw_data
+     ) values ($1,$2,$3,$4,$5,$6,null,null,$7,'none',$8::jsonb,$9::jsonb)
+     on conflict (order_id, external_item_id) do nothing`,
+    [
+      orderId,
+      String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`),
+      item.sku || null,
+      item.providerSku || null,
+      item.description || item.sku || '',
+      bundleItemQuantity(item),
+      master,
+      JSON.stringify({ source: BUNDLE_SOURCE, productSku: item.productSku || master || null }),
+      JSON.stringify(bundleItemRawData(item)),
+    ],
+  );
+}
+
 export async function hydrateUnifiedOrdersFromFalabellaInbox(db, since = SALES_HISTORY_SINCE) {
   const rows = await loadFalabellaInboxOrphans(db, since);
-  const orders = falabellaInboxToBundleOrders(rows);
-  if (!orders.length) return { orders: 0, items: 0, events: 0 };
-  const companies = [...new Map(orders.map((order) => [order.companyRuc, {
+  const inboxOrders = falabellaInboxToBundleOrders(rows);
+  if (!inboxOrders.length) return { orders: 0, items: 0, events: 0 };
+  const existing = await loadExistingFalabellaUnifiedOrders(db, since);
+  const newOrders = [];
+  const extraByOrder = [];
+  for (const order of inboxOrders) {
+    const found = existing.get(falabellaOrderKey(order));
+    if (!found) {
+      newOrders.push(order);
+      continue;
+    }
+    const extra = (order.items || []).filter((item, index) => {
+      const id = String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`);
+      return !found.itemIds.has(id);
+    });
+    if (extra.length) extraByOrder.push({ orderId: found.orderId, order, items: extra });
+  }
+  const companies = [...new Map(inboxOrders.map((order) => [order.companyRuc, {
     ruc: order.companyRuc,
     nombre: order.companyRuc,
   }])).values()];
-  return ingestSalesMappingBundle(db, {
-    version: BUNDLE_VERSION,
-    companies,
-    listings: [],
-    orders,
-  });
+  const ingested = newOrders.length
+    ? await ingestSalesMappingBundle(db, {
+      version: BUNDLE_VERSION,
+      companies,
+      listings: [],
+      orders: newOrders,
+    })
+    : { orders: 0, items: 0, events: 0 };
+  if (!extraByOrder.length) return ingested;
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const unlinkedKeys = new Set();
+  let extraItems = 0;
+  for (const entry of extraByOrder) {
+    for (const [index, item] of entry.items.entries()) {
+      await upsertBundleOrderItem(db, entry.orderId, entry.order, item, index, { skus, idBySku, unlinkedKeys });
+      extraItems += 1;
+    }
+  }
+  return {
+    orders: ingested.orders,
+    items: ingested.items + extraItems,
+    events: ingested.events,
+  };
 }
 
 export function workbookFromReconciliationAnchors({ run, rows } = {}) {

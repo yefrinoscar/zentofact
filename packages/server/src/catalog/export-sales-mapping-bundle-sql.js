@@ -201,16 +201,6 @@ falabella_inbox_json AS (
         OR fo.raw_data ? 'orderItems'
         OR fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' IS NOT NULL
       )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM orders o
-        JOIN order_channel_accounts a ON a.id = o.channel_account_id
-        JOIN order_channels ch ON ch.id = a.channel_id
-        JOIN order_items oi ON oi.order_id = o.id
-        WHERE o.company_id = fo.company_id
-          AND o.external_order_id = fo.order_id
-          AND ch.code = 'falabella'
-      )
   ) inbox
 )
 SELECT CASE
