@@ -145,6 +145,8 @@ const HEADER_MATCHERS = {
   category: (n) => n.includes('categor') && n.includes('transacc'),
   paymentStatus: (n) => n === 'estado de pago' || n === 'payment status',
   statementId: (n) => n.includes('estado de cuenta'),
+  productName: (n) => n.includes('nombre del producto') || n === 'product name',
+  commissionRate: (n) => n === 'comision' || n === 'comisi n' || n === '% comision',
 };
 
 function pickHeader(headers, role, used) {
@@ -179,6 +181,8 @@ export function bindCsvHeaders(headerRow) {
     category: pickHeader(headers, 'category', used),
     paymentStatus: pickHeader(headers, 'paymentStatus', used),
     statementId: pickHeader(headers, 'statementId', used),
+    productName: pickHeader(headers, 'productName', used),
+    commissionRate: pickHeader(headers, 'commissionRate', used),
     bruto: pickHeader(headers, 'bruto', used),
     commission: pickHeader(headers, 'commission', used),
     other: pickHeader(headers, 'other', used),
@@ -201,15 +205,40 @@ export function bindCsvHeaders(headerRow) {
 }
 
 export function classifyTransactionType(value) {
+  const kind = classifyChargeKind(value);
+  if (kind === 'sale' || kind === 'commission' || kind === 'refund' || kind === 'unknown') return kind;
+  return 'other';
+}
+
+export function classifyChargeKind(value) {
   const normalized = normalizeHeader(value);
   if (!normalized) return 'unknown';
   if (normalized.includes('precio del producto') || normalized.includes('pago por precio')) return 'sale';
+  if (normalized === 'sales' || normalized === 'sale' || normalized === 'venta') return 'sale';
   if (normalized.includes('comisi') || normalized.includes('commission')) return 'commission';
+  if (normalized.includes('cofinanciamiento') || (normalized.includes('cobro') && normalized.includes('logistic'))) {
+    return 'shipping';
+  }
+  if (normalized.includes('envio comprador')) return 'buyer_shipping';
   if (/(devol|refund|reembolso|return)/.test(normalized) && !normalized.includes('reversa de pago de env')) {
     return 'refund';
   }
-  if (normalized === 'sales' || normalized === 'sale' || normalized === 'venta') return 'sale';
   return 'other';
+}
+
+export function parseRate(value) {
+  const raw = String(value ?? '').replace('%', '').replace(',', '.').trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+export function rawValueByHeader(raw, match) {
+  for (const [key, value] of Object.entries(raw || {})) {
+    if (match(normalizeHeader(key))) return String(value ?? '').trim();
+  }
+  return '';
 }
 
 export function parsePaymentStatus(value) {
@@ -268,12 +297,15 @@ export function parseSettlementCsv(text) {
       itemId: cell(row, headerIndex, binding.columns.itemId)
         || cell(row, headerIndex, binding.columns.articleId),
       statementId: cell(row, headerIndex, binding.columns.statementId),
+      productName: cell(row, headerIndex, binding.columns.productName),
       date: parseDateKey(cell(row, headerIndex, binding.columns.orderDate))
         || parseDateKey(cell(row, headerIndex, binding.columns.date)),
       type: typeValue,
       kind,
+      chargeKind: classifyChargeKind(typeValue),
       paid: parsePaymentStatus(paymentStatus),
       paymentStatus,
+      commissionRate: parseRate(cell(row, headerIndex, binding.columns.commissionRate)),
       bruto: bruto || 0,
       commission,
       other,

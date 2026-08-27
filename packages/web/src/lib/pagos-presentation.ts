@@ -46,6 +46,36 @@ function headerLooksLikeSettlement(text: string) {
   return normalized.includes('del orden') || normalized.includes('de pedido') || normalized.includes('estado de pago');
 }
 
+export const percent = new Intl.NumberFormat('es-PE', {
+  style: 'percent',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+
+export function percentLabel(rate: number | null | undefined) {
+  if (rate == null || !Number.isFinite(Number(rate))) return '—';
+  return percent.format(Number(rate));
+}
+
+export function chargeKindLabel(kind: string | null | undefined) {
+  if (kind === 'sale') return 'Precio';
+  if (kind === 'commission') return 'Comisión';
+  if (kind === 'shipping') return 'Envío';
+  if (kind === 'buyer_shipping') return 'Envío comprador';
+  if (kind === 'refund') return 'Devolución';
+  return 'Otro';
+}
+
+export function saleOverview(summary: {
+  saleCount?: number;
+  commissionRate?: number | null;
+  shippingRate?: number | null;
+  takeRate?: number | null;
+} | null | undefined) {
+  if (!summary?.saleCount) return '';
+  return `${summary.saleCount} ventas · comisión ${percentLabel(summary.commissionRate)} · envío ${percentLabel(summary.shippingRate)} · Falabella se queda ${percentLabel(summary.takeRate)}`;
+}
+
 export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
   const utf8 = new TextDecoder('utf-8').decode(bytes);

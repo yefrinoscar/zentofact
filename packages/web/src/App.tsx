@@ -45,7 +45,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/pagos': {
     title: 'Pagos',
-    subtitle: 'Cruza el estado de cuenta de Falabella con las ventas.',
+    subtitle: 'Cuánto te cobra Falabella por cada venta.',
   },
   '/menu': {
     title: 'Menú',

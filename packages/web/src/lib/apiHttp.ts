@@ -181,6 +181,8 @@ const apiHttp = {
     req(`/pagos/imports${qs(filter)}`),
   listSettlementLines: (filter: { status?: 'matched' | 'unmatched'; importId?: number; limit?: number; offset?: number } = {}) =>
     req(`/pagos/lines${qs(filter)}`),
+  listSettlementSales: (filter: { search?: string; paid?: 'pagado' | 'no-pagado' | ''; importId?: number; limit?: number; offset?: number } = {}) =>
+    req(`/pagos/sales${qs(filter)}`),
   importSettlementCsv: (data: { filename: string; csv: string; companyId?: number }) =>
     req('/pagos/imports', { method: 'POST', body: JSON.stringify(data) }),
 

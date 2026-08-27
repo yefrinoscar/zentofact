@@ -143,6 +143,7 @@ test('reconoce el NewReportTransaction de Falabella Seller Center Perú', () => 
   assert.equal(binding.columns.paymentStatus, 'Estado de pago');
   assert.equal(binding.columns.orderDate, 'Fecha creación de la orden');
   assert.equal(binding.columns.commission, null);
+  assert.equal(binding.columns.commissionRate, '% comisión');
 });
 
 test('rechaza un CSV sin columnas para cruzar y cita las cabeceras reales', () => {

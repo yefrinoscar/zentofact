@@ -3,7 +3,7 @@
 
 export const PERMISSIONS = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
-  { key: 'pagos', label: 'Pagos', description: 'Subir liquidaciones de Falabella y cruzarlas con las ventas', path: '/pagos', section: 'operation' },
+  { key: 'pagos', label: 'Pagos', description: 'Ver lo que Falabella cobra por cada venta y cruzar liquidaciones', path: '/pagos', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
   { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },

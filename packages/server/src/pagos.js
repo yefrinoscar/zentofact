@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { lineFingerprint, normalizeHeader, parseSettlementCsv } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
+import { aggregateSettlementSales, summarizeSettlementSales } from './pagos-sales.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -132,6 +133,7 @@ function mapLine(row) {
     other: money(row.other_fees),
     neto: money(row.neto),
     saleOrderNumber: row.sale_order_number || null,
+    productName: row.product_name || '',
     raw: row.raw || {},
   };
 }
@@ -195,6 +197,56 @@ export async function listSettlementLines(filter = {}, db) {
   return {
     items: query.rows.map(mapLine),
     totalCount: Number(query.rows[0]?.total_count || 0),
+    limit,
+    offset,
+  };
+}
+
+export async function listSettlementSales(filter = {}, db) {
+  const target = await resolvePool(db);
+  const importId = optionalPositiveInt(filter.importId);
+  const paid = String(filter.paid || '').trim().toLowerCase();
+  if (paid && !['pagado', 'no-pagado', 'no_pagado'].includes(paid)) {
+    throw httpError('Estado de pago inválido.');
+  }
+  const search = String(filter.search || '').trim().toLowerCase();
+  const limit = Math.min(Math.max(Number(filter.limit) || 50, 1), 200);
+  const offset = Math.max(Number(filter.offset) || 0, 0);
+  const values = [];
+  const where = [];
+  if (importId) {
+    values.push(importId);
+    where.push(`sl.import_id = $${values.length}`);
+  }
+  const query = await target.query(
+    `select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
+            sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
+            sl.payment_status, sl.item_id,
+            sl.bruto, sl.commission, sl.other_fees, sl.neto, sl.raw,
+            fo.order_number as sale_order_number
+       from settlement_lines sl
+       left join falabella_orders fo
+         on sl.sale_source = 'falabella_order' and sl.sale_id = fo.id
+      ${where.length ? `where ${where.join(' and ')}` : ''}
+      order by sl.import_id desc, sl.row_number asc
+      limit 10000`,
+    values,
+  );
+  let sales = aggregateSettlementSales(query.rows.map(mapLine));
+  if (paid === 'pagado') sales = sales.filter((sale) => sale.paid);
+  if (paid === 'no-pagado' || paid === 'no_pagado') sales = sales.filter((sale) => !sale.paid);
+  if (search) {
+    sales = sales.filter((sale) => (
+      sale.orderId.toLowerCase().includes(search)
+      || sale.productName.toLowerCase().includes(search)
+      || sale.skus.some((sku) => sku.toLowerCase().includes(search))
+    ));
+  }
+  const summary = summarizeSettlementSales(sales);
+  return {
+    items: sales.slice(offset, offset + limit),
+    summary,
+    totalCount: sales.length,
     limit,
     offset,
   };

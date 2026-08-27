@@ -295,6 +295,10 @@ app.get('/pagos/lines', async (c) => {
   try { return ok(c, await pagos.listSettlementLines(c.req.query())); }
   catch (e) { return fail(c, e, e.status || 400); }
 });
+app.get('/pagos/sales', async (c) => {
+  try { return ok(c, await pagos.listSettlementSales(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
 app.post('/pagos/imports', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
