@@ -1725,9 +1725,13 @@ function ProductDrawer({
           <div className="min-w-0">
             <SheetTitle className="pr-2 leading-6">{product?.name || 'Producto'}</SheetTitle>
             <SheetDescription className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">SKU interno</span>
-              <span className="font-mono text-sm font-semibold text-foreground">{product?.mainSku || '—'}</span>
-              {product && <StatusBadge value={product.status} />}
+              {product?.mainSku
+                ? <CopyableSku
+                    sku={product.mainSku}
+                    className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold tracking-wide text-foreground hover:text-foreground"
+                  />
+                : <span className="font-mono text-sm font-semibold text-foreground">—</span>}
+              {product && <ProductStatusBadge product={product} compact />}
             </SheetDescription>
           </div>
           <nav aria-label="Navegación entre productos" className="col-start-2 flex items-center sm:col-start-3 sm:row-start-1 sm:justify-end">
@@ -1751,24 +1755,28 @@ function ProductDrawer({
           </TabsList>
         </div>
 
-        <TabsContent value="overview" className="min-h-0 overflow-y-auto">
-          <div className="grid grid-cols-2 border-b border-border md:grid-cols-4">
-            <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
-            <Metric label="Precio" value={formatBasePrice(product)} />
-            <Metric label="Sellers" value={String(product.sellersCount || 0)} />
-            <Metric label="Publicadas" value={String(publishedListings.length)} />
+        <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="grid grid-cols-2 border-b border-border md:grid-cols-4">
+              <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
+              <Metric label="Precio" value={formatBasePrice(product)} />
+              <Metric label="Sellers" value={String(product.sellersCount || 0)} />
+              <Metric label="Publicadas" value={String(publishedListings.length)} />
+            </div>
+            <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
+            <div className="px-5 py-5">
+              <ProductProperties
+                product={product}
+                profitOwners={profitOwners}
+                savingField={savingField}
+                onSaveCommission={onSaveCommission}
+                onSaveProfitOwner={onSaveProfitOwner}
+                onSaveDescription={onSaveDescription}
+              />
+              {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
+            </div>
           </div>
-          <div className="px-5 py-5">
-            <ProductProperties
-              product={product}
-              profitOwners={profitOwners}
-              savingField={savingField}
-              onSaveCommission={onSaveCommission}
-              onSaveProfitOwner={onSaveProfitOwner}
-              onSaveDescription={onSaveDescription}
-            />
-            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
-          </div>
+          <ProductOverviewActions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
         </TabsContent>
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto">
@@ -1961,7 +1969,7 @@ function ProductPhoto({
   onEditImage: () => void;
 }) {
   return (
-    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-muted">
+    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-muted">
       {product?.imageUrl ? (
         <button
           type="button"
@@ -1989,15 +1997,53 @@ function ProductPhoto({
   );
 }
 
+function ProductOverviewCue({ available, listingsCount }: { available: number; listingsCount: number }) {
+  const message = available <= 0
+    ? 'Quiebre. Hay que reponer.'
+    : listingsCount === 0
+      ? 'Sin publicaciones. Asocia o publica.'
+      : null;
+  if (!message) return null;
+  return <p className="border-b border-border px-5 py-3 text-sm text-muted-foreground">{message}</p>;
+}
+
+function ProductOverviewActions({
+  onAdjust,
+  onAssociate,
+  onPublish,
+}: {
+  onAdjust: () => void;
+  onAssociate: () => void;
+  onPublish: () => void;
+}) {
+  return (
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-background/95 px-5 py-3 shadow-[0_-12px_24px_-16px_rgba(15,23,42,0.18)]"
+      role="group"
+      aria-label="Acciones del producto"
+    >
+      <Button type="button" className="rounded-full" onClick={onAdjust}>
+        <CircleDollarSign data-icon="inline-start" /> Ajustar stock
+      </Button>
+      <Button type="button" variant="outline" className="rounded-full" onClick={onAssociate}>
+        <Plus data-icon="inline-start" /> Asociar producto
+      </Button>
+      <Button type="button" variant="outline" className="rounded-full" onClick={onPublish}>
+        <PackagePlus data-icon="inline-start" /> Nueva publicación
+      </Button>
+    </div>
+  );
+}
+
 function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-      <button type="button" onClick={onAssociate} className="secondary-button h-8 px-3">
-        <Plus className="h-4 w-4" /> Asociar producto
-      </button>
-      <button type="button" onClick={onPublish} className="primary-button h-8 px-3">
-        <PackagePlus className="h-4 w-4" /> Nueva publicación
-      </button>
+      <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onAssociate}>
+        <Plus data-icon="inline-start" /> Asociar producto
+      </Button>
+      <Button type="button" size="sm" className="rounded-full" onClick={onPublish}>
+        <PackagePlus data-icon="inline-start" /> Nueva publicación
+      </Button>
     </div>
   );
 }
@@ -2418,12 +2464,6 @@ function ActionFeedback({ error, message }: { error: string; message: string }) 
 function Notice({ tone, children }: { tone: 'error' | 'success' | 'info'; children: ReactNode }) {
   const classes = tone === 'error' ? 'border-red-200 bg-red-50 text-red-700' : tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-sky-200 bg-sky-50 text-sky-700';
   return <div className={cn('flex items-start gap-2 rounded-lg border px-3 py-2 text-sm', classes)}>{tone === 'error' && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}{children}</div>;
-}
-
-function StatusBadge({ value }: { value: string }) {
-  const normalized = String(value || '').toLowerCase();
-  const classes = normalized === 'active' || normalized === 'published' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalized === 'archived' || normalized === 'unlinked' ? 'border-slate-200 bg-slate-100 text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-700';
-  return <span className={cn('inline-flex rounded-md border px-2 py-0.5 text-xs font-medium', classes)}>{normalized === 'published' ? 'Publicado' : normalized === 'active' ? 'Activo' : normalized === 'inactive' ? 'Inactivo' : normalized === 'archived' ? 'Archivado' : normalized === 'unlinked' ? 'Desvinculado' : value}</span>;
 }
 
 function LoadingBlock() { return <div className="grid min-h-48 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>; }
