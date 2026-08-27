@@ -190,6 +190,35 @@ test('una identidad sin evidencia queda unmapped', () => {
   assert.equal(resolved.status, 'unmapped');
 });
 
+test('una publicación desvinculada no usa el maestro anterior ni el main_sku residual', () => {
+  const unlinkedListings = [
+    ...listings,
+    {
+      id: 40, product_id: 10, channel_code: 'ripley', company_id: 1,
+      seller_sku: 'MOC-105045', shop_sku: 'MOC-105045', status: 'unlinked',
+    },
+  ];
+  const leftoverProduct = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'MOC-105045', provider_sku: 'MOC-105045',
+    product_id: 10, main_sku: 'Z7',
+  }, context(products, unlinkedListings));
+  assert.equal(leftoverProduct.status, 'doubtful');
+  assert.match(leftoverProduct.reason, /desvinculada/);
+
+  const leftoverHint = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'MOC-105045', provider_sku: 'MOC-105045',
+    main_sku: 'Z7',
+  }, context(products, unlinkedListings));
+  assert.equal(leftoverHint.status, 'doubtful');
+
+  const stillMapped = resolveSaleItem({
+    channel_code: 'falabella', company_id: 9, sku: 'FAL-RANDOM', provider_sku: '999',
+    main_sku: 'Z7',
+  }, context(products, unlinkedListings));
+  assert.equal(stillMapped.status, 'mapped');
+  assert.equal(stillMapped.product.main_sku, 'Z7');
+});
+
 test('el main_sku operativo de la línea resuelve el maestro aunque el seller SKU no mapee', () => {
   const byHint = resolveSaleItem({
     channel_code: 'falabella', company_id: 9, sku: 'FAL-RANDOM', provider_sku: '999',

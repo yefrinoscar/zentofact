@@ -45,15 +45,19 @@ export function buildListingIndexes(listings) {
   const sellerActive = new Map();
   const shopActive = new Map();
   const sellerAny = new Map();
+  const unlinkedSeller = new Map();
   for (const listing of listings) {
-    if (listing.status === 'unlinked') continue;
     const seller = listingKey(listing.channel_code, listing.company_id, listing.seller_sku);
+    if (listing.status === 'unlinked') {
+      addUnique(unlinkedSeller, seller, listing);
+      continue;
+    }
     addUnique(sellerAny, seller, listing);
     if (listing.status !== 'active') continue;
     addUnique(sellerActive, seller, listing);
     addUnique(shopActive, listingKey(listing.channel_code, listing.company_id, listing.shop_sku), listing);
   }
-  return { sellerActive, shopActive, sellerAny };
+  return { sellerActive, shopActive, sellerAny, unlinkedSeller };
 }
 
 export function classifyCountPresence(mainSku, catalog = {}) {
@@ -153,6 +157,14 @@ export function resolveSaleItem(item, context) {
   const shopSku = String(item.provider_sku || '').trim();
   const historicalMap = context.historicalMap || HISTORICAL_SKU_TO_MASTER;
   const candidates = [];
+
+  const unlinked = context.indexes.unlinkedSeller?.get(listingKey(channelCode, companyId, sellerSku));
+  if (unlinked !== undefined && !historicalMasterForSku(sellerSku, historicalMap) && !historicalMasterForSku(shopSku, historicalMap)) {
+    return {
+      status: 'doubtful',
+      reason: 'La publicación está desvinculada; no se asocia ni se descuenta',
+    };
+  }
 
   if (item.product_id != null && item.product_id !== '') {
     const product = context.productsById.get(Number(item.product_id));
