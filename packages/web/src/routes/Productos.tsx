@@ -367,8 +367,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'description';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'description'>>;
+type ProductEditableField = 'commissionAmount' | 'profitOwner';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -1015,18 +1015,6 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
-  const saveDescription = useCallback((raw: string) => {
-    if (!selectedId || !selectedProduct) return;
-    const normalized = raw.trim() || null;
-    const current = selectedProduct.description || '';
-    if ((normalized || '') === current) return;
-    updateProductField.mutate({
-      id: selectedId,
-      patch: { description: normalized },
-      optimistic: { field: 'description', patch: { description: normalized } },
-    });
-  }, [selectedId, selectedProduct, updateProductField]);
-
   return (
     <div className="space-y-4">
       <CatalogInventoryKpis
@@ -1137,7 +1125,6 @@ export default function Productos() {
         fieldError={fieldError}
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
-        onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1672,7 +1659,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSaveDescription,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner,
 }: {
   open: boolean;
   product: Product | null;
@@ -1707,7 +1694,6 @@ function ProductDrawer({
   fieldError: string;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
-  onSaveDescription: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
@@ -1779,7 +1765,6 @@ function ProductDrawer({
                 savingField={savingField}
                 onSaveCommission={onSaveCommission}
                 onSaveProfitOwner={onSaveProfitOwner}
-                onSaveDescription={onSaveDescription}
               />
               {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
             </div>
@@ -2123,14 +2108,12 @@ function ProductProperties({
   savingField,
   onSaveCommission,
   onSaveProfitOwner,
-  onSaveDescription,
 }: {
   product: Product;
   profitOwners: string[];
   savingField: ProductEditableField | null;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
-  onSaveDescription: (value: string) => void;
 }) {
   return (
     <>
@@ -2163,12 +2146,7 @@ function ProductProperties({
         <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
         <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
       </dl>
-      <ProductDescriptionField
-        productId={product.id}
-        value={product.description || ''}
-        saving={savingField === 'description'}
-        onSave={onSaveDescription}
-      />
+      <ProductDescription text={product.description} />
     </>
   );
 }
@@ -2264,62 +2242,15 @@ function ProductInlineField({
   );
 }
 
-function ProductDescriptionField({
-  productId,
-  value,
-  saving,
-  onSave,
-}: {
-  productId: number;
-  value: string;
-  saving?: boolean;
-  onSave: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const cancelledRef = useRef(false);
-  const focused = draft !== null;
-  const displayed = draft ?? value;
-
+function ProductDescription({ text }: { text?: string | null }) {
+  const description = String(text || '').trim();
   return (
-    <label className="mt-6 block cursor-text">
-      <span className="flex items-baseline justify-between gap-3">
-        <span className="text-sm text-muted-foreground">Descripción</span>
-        {saving
-          ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
-          : <span className="text-xs text-muted-foreground">Del producto interno</span>}
-      </span>
-      <span className={cn(
-        'mt-2 block rounded-2xl bg-muted/50 px-3 py-3 transition-colors duration-150',
-        'hover:bg-muted',
-        focused && 'bg-muted',
-      )}>
-        <textarea
-          key={`${productId}-description`}
-          className={cn(
-            'min-h-24 w-full resize-y border-0 bg-transparent p-0 text-sm leading-6 text-foreground shadow-none outline-none ring-0',
-            'placeholder:text-muted-foreground/70',
-            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
-          )}
-          value={displayed}
-          placeholder="Sin descripción"
-          aria-label="Descripción del producto interno"
-          onFocus={() => setDraft(value)}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
-            cancelledRef.current = false;
-            setDraft(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.stopPropagation();
-              cancelledRef.current = true;
-              event.currentTarget.blur();
-            }
-          }}
-        />
-      </span>
-    </label>
+    <section className="mt-6" aria-labelledby="product-description-title">
+      <h3 id="product-description-title" className="text-sm text-muted-foreground">Descripción</h3>
+      <p className="mt-2 text-sm leading-6 text-foreground">
+        {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
+      </p>
+    </section>
   );
 }
 
