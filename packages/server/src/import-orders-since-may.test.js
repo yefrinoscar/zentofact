@@ -3,8 +3,8 @@ import test from 'node:test';
 import {
   assertOrdersDumpAllowed,
   catalogFromProducts,
-  clearImportedItemProductLinks,
   inspectOrdersDump,
+  remapImportedItemHints,
   remapImportedListingsToExcel,
   restoreOrdersDump,
 } from './catalog/import-orders-since-may.js';
@@ -76,10 +76,10 @@ test('un listing legado apunta al id numérico del maestro del Excel', () => {
   }, catalog), null);
   assert.equal(planListingExcelRemap({
     id: 11, product_id: 1, seller_sku: 'NO-EXISTE', shop_sku: '000',
-  }, catalog), null);
+  }, catalog, { trustProductId: false }), null);
 });
 
-test('remapear listings y limpiar líneas deja el mapeo sobre IDs del Excel', async () => {
+test('remapear listings y líneas conserva el maestro operativo y no confía en product_id foráneo', async () => {
   const updates = [];
   const listingDb = {
     async query(sql, params = []) {
@@ -96,12 +96,20 @@ test('remapear listings y limpiar líneas deja el mapeo sobre IDs del Excel', as
   assert.equal(await remapImportedListingsToExcel(listingDb), 1);
   assert.deepEqual(updates[0], [8, 42]);
 
+  const itemQueries = [];
   const itemDb = {
-    async query(sql, params) {
-      assert.match(String(sql), /product_id = null/);
-      assert.equal(params[1], '2026-05-01T05:00:00.000Z');
-      return { rowCount: 17 };
+    async query(sql, params = []) {
+      itemQueries.push({ sql: String(sql), params });
+      const text = String(sql);
+      if (text.includes('from products')) return { rows: [{ id: 42, main_sku: 'Z7' }] };
+      if (text.includes('from order_items oi')) {
+        return { rows: [{ id: 17, sku: 'AG174', provider_sku: 'FLO4400237', main_sku: 'AG174' }] };
+      }
+      return { rowCount: 1 };
     },
   };
-  assert.equal(await clearImportedItemProductLinks(itemDb), 17);
+  assert.equal(await remapImportedItemHints(itemDb), 1);
+  const update = itemQueries.find((entry) => entry.sql.includes('update order_items'));
+  assert.equal(update.params[0], 17);
+  assert.equal(update.params[1], 'Z7');
 });

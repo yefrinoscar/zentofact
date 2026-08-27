@@ -126,8 +126,10 @@ export function excelMasterForSku(sku, catalogSkus, historicalMap = HISTORICAL_S
   return null;
 }
 
-export function planListingExcelRemap(listing, catalog) {
-  const currentSku = catalog.skuById.get(Number(listing.product_id)) || null;
+export function planListingExcelRemap(listing, catalog, { trustProductId = true } = {}) {
+  const currentSku = trustProductId
+    ? (catalog.skuById.get(Number(listing.product_id)) || null)
+    : null;
   const master = excelMasterForSku(listing.seller_sku, catalog.skus)
     || excelMasterForSku(listing.shop_sku, catalog.skus)
     || excelMasterForSku(currentSku, catalog.skus);

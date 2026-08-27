@@ -202,7 +202,7 @@ export function listingMasterSku(listing, catalogSkus) {
     || null;
 }
 
-async function ensureAnchorProduct(db, sku, skus, idBySku) {
+export async function ensureAnchorProduct(db, sku, skus, idBySku) {
   const master = String(sku || '').trim();
   if (!master) return null;
   if (idBySku.has(master)) return idBySku.get(master);

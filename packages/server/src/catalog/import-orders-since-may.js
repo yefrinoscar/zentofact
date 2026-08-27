@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { excelMasterForSku, planListingExcelRemap } from './historical-sku-map.js';
 import { MAPPING_CHANNELS, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { ensureAnchorProduct, listingMasterSku } from './sales-mapping-bundle.js';
 
 export const ORDER_DUMP_TABLES = Object.freeze([
   'companies',
@@ -110,7 +111,7 @@ export function catalogFromProducts(products) {
   };
 }
 
-export async function remapImportedListingsToExcel(db) {
+export async function remapImportedListingsToExcel(db, { trustProductId = false } = {}) {
   const products = (await db.query('select id, main_sku from products')).rows;
   const catalog = catalogFromProducts(products);
   const listings = (await db.query(
@@ -118,7 +119,7 @@ export async function remapImportedListingsToExcel(db) {
   )).rows;
   let remapped = 0;
   for (const listing of listings) {
-    const plan = planListingExcelRemap(listing, catalog);
+    const plan = planListingExcelRemap(listing, catalog, { trustProductId });
     if (!plan) continue;
     await db.query(
       'update product_listings set product_id=$2, updated_at=now() where id=$1',
@@ -129,19 +130,42 @@ export async function remapImportedListingsToExcel(db) {
   return remapped;
 }
 
-export async function clearImportedItemProductLinks(db, since = SALES_HISTORY_SINCE) {
-  const result = await db.query(
-    `update order_items oi
-        set product_id = null, listing_id = null, main_sku = null
-       from orders o
+export async function remapImportedItemHints(db, since = SALES_HISTORY_SINCE) {
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const items = (await db.query(
+    `select oi.id, oi.sku, oi.provider_sku, oi.main_sku
+       from order_items oi
+       join orders o on o.id = oi.order_id
        join order_channel_accounts a on a.id = o.channel_account_id
        join order_channels ch on ch.id = a.channel_id
-      where o.id = oi.order_id
-        and ch.code = any($1::text[])
-        and o.ordered_at >= $2::timestamptz`,
+      where ch.code = any($1::text[])
+        and o.ordered_at >= $2::timestamptz
+      order by oi.id`,
     [MAPPING_CHANNELS, since],
-  );
-  return result.rowCount ?? 0;
+  )).rows;
+  let remapped = 0;
+  for (const item of items) {
+    const master = listingMasterSku({
+      sellerSku: item.sku,
+      shopSku: item.provider_sku,
+      productSku: item.main_sku,
+    }, skus);
+    if (master) await ensureAnchorProduct(db, master, skus, idBySku);
+    await db.query(
+      `update order_items
+          set product_id = null, listing_id = null, main_sku = $2, updated_at = now()
+        where id = $1`,
+      [item.id, master],
+    );
+    remapped += 1;
+  }
+  return remapped;
+}
+
+export async function clearImportedItemProductLinks(db, since = SALES_HISTORY_SINCE) {
+  return remapImportedItemHints(db, since);
 }
 
 export { excelMasterForSku, planListingExcelRemap };

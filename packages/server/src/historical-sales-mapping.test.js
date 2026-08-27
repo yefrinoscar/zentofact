@@ -308,10 +308,12 @@ test('la cobertura agrupa identidades y no propone escritura cuando ya está map
   assert.equal(coverage.toApply[0].itemId, 3);
   assert.equal(coverage.toApply[0].ledgerPolicy, 'review_no_deduct');
   assert.equal(coverage.summary.to_deduct, 0);
-  assert.equal(coverage.review.length, 1);
-  assert.equal(coverage.review[0].seller_sku, 'NO-EXISTE');
+  assert.equal(coverage.review.length, 2);
+  assert.equal(coverage.review.some((row) => row.seller_sku === 'NO-EXISTE'), true);
+  assert.equal(coverage.review.some((row) => row.seller_sku === 'RIP-G40XL'), true);
   const tsv = formatReviewTsv(coverage.identities);
   assert.match(tsv, /NO-EXISTE/);
+  assert.match(tsv, /RIP-G40XL/);
   assert.doesNotMatch(tsv, /seller-z7/);
 });
 

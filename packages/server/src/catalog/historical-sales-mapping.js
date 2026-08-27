@@ -245,6 +245,9 @@ export function resolveSaleItem(item, context) {
       mainSku: picked.product.main_sku,
       countPresence: presence,
       ledgerPolicy: ledgerPolicyForPresence(presence),
+      reason: presence === 'excel_without_quantity'
+        ? 'El Excel no tiene cantidad para este maestro'
+        : null,
     };
   }
 
@@ -382,7 +385,7 @@ export function buildHistoricalSalesCoverage({
     }
     if (!identity.title && item.description) identity.title = item.description;
     identity.status = worseStatus(identity.status, line.status);
-    if (line.status !== 'mapped' || identity.status !== 'mapped') {
+    if (line.status !== 'mapped' || identity.status !== 'mapped' || line.ledgerPolicy === 'review_no_deduct') {
       identity.reason = line.reason || identity.reason;
     }
     if (line.mainSku) identity.main_sku = line.mainSku;
@@ -401,7 +404,7 @@ export function buildHistoricalSalesCoverage({
     || String(left.seller_sku).localeCompare(String(right.seller_sku))
     || String(left.shop_sku).localeCompare(String(right.shop_sku))
   ));
-  const review = identities.filter((identity) => identity.status !== 'mapped');
+  const review = identities.filter((identity) => identityNeedsReview(identity));
   const toApply = lines.filter((line) => line.needsWrite);
   const toDeduct = lines.filter((line) => line.ledgerAction === 'deduct');
   const deductByProduct = new Map();
@@ -452,6 +455,10 @@ export function buildHistoricalSalesCoverage({
   };
 }
 
+export function identityNeedsReview(identity) {
+  return identity.status !== 'mapped' || identity.ledger_policy === 'review_no_deduct';
+}
+
 function tsvEscape(value) {
   return String(value ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ');
 }
@@ -462,7 +469,7 @@ export function formatReviewTsv(identities) {
     'units_before_cutoff', 'units_after_cutoff', 'first_ordered_at', 'last_ordered_at',
     'status', 'reason', 'main_sku', 'method', 'count_presence', 'ledger_policy',
   ];
-  const rows = identities.filter((identity) => identity.status !== 'mapped');
+  const rows = identities.filter((identity) => identityNeedsReview(identity));
   return `${[header.join('\t'), ...rows.map((row) => header.map((key) => tsvEscape(row[key])).join('\t'))].join('\n')}\n`;
 }
 
@@ -474,6 +481,14 @@ export function formatCoverageTsv(identities) {
     'count_presence', 'ledger_policy',
   ];
   return `${[header.join('\t'), ...identities.map((row) => header.map((key) => tsvEscape(row[key])).join('\t'))].join('\n')}\n`;
+}
+
+export function formatShortagesTsv(shortages = []) {
+  const header = ['main_sku', 'product_id', 'on_hand', 'units', 'shortage', 'reason'];
+  const rows = shortages.map((row) => [
+    row.mainSku, row.productId, row.onHand, row.units, row.shortage, row.reason,
+  ]);
+  return `${[header.join('\t'), ...rows.map((row) => row.map((value) => tsvEscape(value)).join('\t'))].join('\n')}\n`;
 }
 
 async function inventoryFingerprint(db) {

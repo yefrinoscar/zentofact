@@ -34,11 +34,12 @@ const {
   buildHistoricalSalesCoverage,
   formatCoverageTsv,
   formatReviewTsv,
+  formatShortagesTsv,
   loadHistoricalSalesMappingContext,
 } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
 const {
   EXPORT_ORDERS_DUMP_COMMAND,
-  clearImportedItemProductLinks,
+  remapImportedItemHints,
   remapImportedListingsToExcel,
   restoreOrdersDump,
 } = await import('../packages/server/src/catalog/import-orders-since-may.js');
@@ -270,8 +271,8 @@ try {
     console.log(`Bundle ingerido: ${ingested.orders} pedidos, ${ingested.items} líneas, ${ingested.listings} listings, ${ingested.events} eventos.`);
   } else if (dumpPath) {
     const remapped = await remapImportedListingsToExcel(pool);
-    const cleared = await clearImportedItemProductLinks(pool);
-    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas limpiadas para remapear: ${cleared}`);
+    const hinted = await remapImportedItemHints(pool);
+    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas con maestro operativo: ${hinted}`);
   }
 
   const keyTargets = resolveMarketplaceKeyTargets({
@@ -341,11 +342,14 @@ try {
   mkdirSync('/opt/cursor/artifacts', { recursive: true });
   const reviewTsv = formatReviewTsv(coverage.identities);
   const reportTsv = formatCoverageTsv(coverage.identities);
+  const shortagesTsv = formatShortagesTsv(coverage.shortages);
   writeFileSync(resolve('.audit/sales-mapping-since-may-2026-review.tsv'), reviewTsv);
   writeFileSync(resolve('.audit/sales-mapping-since-may-2026.tsv'), reportTsv);
+  writeFileSync(resolve('.audit/sales-mapping-since-may-2026-shortages.tsv'), shortagesTsv);
   writeFileSync('/opt/cursor/artifacts/sales-mapping-review.tsv', reviewTsv);
   writeFileSync('/opt/cursor/artifacts/sales-mapping-report.tsv', reportTsv);
-  console.log(`Revisión: ${coverage.review.length} identidades`);
+  writeFileSync('/opt/cursor/artifacts/sales-mapping-shortages.tsv', shortagesTsv);
+  console.log(`Revisión: ${coverage.review.length} identidades; faltantes de stock: ${coverage.shortages.length}`);
 
   if (!values.apply) {
     console.log('DRY RUN: no se asociaron líneas ni se descontó stock. Usa --apply.');
