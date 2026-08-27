@@ -48,6 +48,7 @@ const {
   EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND,
   assertBundleWorkbook,
   ingestSalesMappingBundle,
+  hydrateUnifiedOrdersFromFalabellaInbox,
   parseSalesMappingBundle,
   workbookFromBundleExcel,
 } = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
@@ -276,8 +277,9 @@ try {
     console.log(`Bundle ingerido: ${ingested.orders} pedidos, ${ingested.items} líneas, ${ingested.listings} listings, ${ingested.events} eventos.`);
   } else if (dumpPath) {
     const remapped = await remapImportedListingsToExcel(pool);
+    const hydrated = await hydrateUnifiedOrdersFromFalabellaInbox(pool);
     const hinted = await remapImportedItemHints(pool);
-    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas con maestro operativo: ${hinted}`);
+    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas con maestro operativo: ${hinted}; inbox Falabella: ${hydrated.items} líneas.`);
   }
 
   const keyTargets = resolveMarketplaceKeyTargets({

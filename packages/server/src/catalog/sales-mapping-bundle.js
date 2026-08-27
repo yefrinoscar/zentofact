@@ -4,6 +4,7 @@ import {
 } from '../../../../scripts/lib/inventory-count-2026-08-21.mjs';
 import { excelMasterForSku } from './historical-sku-map.js';
 import { MAPPING_CHANNELS, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
 
 export const BUNDLE_VERSION = 1;
 export const BUNDLE_SOURCE = 'sales_mapping_bundle';
@@ -45,6 +46,120 @@ export function bundleItemRawData(item) {
     return { Quantity: raw.Quantity };
   }
   return {};
+}
+
+function inboxRawPayload(row) {
+  const raw = row?.rawData || row?.raw_data || {};
+  if (raw.OrderItems || raw.orderItems || raw.Items) return raw;
+  return raw?.SuccessResponse?.Body || raw;
+}
+
+export function falabellaInboxToBundleOrders(rows = []) {
+  return rows.flatMap((row) => {
+    const companyRuc = String(row.companyRuc || row.company_ruc || '').trim();
+    const orderId = String(row.orderId || row.order_id || '').trim();
+    if (!companyRuc || !orderId) return [];
+    const statuses = mapFalabellaCanonicalStatus(row.status);
+    const mappedItems = mapFalabellaOrderItems(inboxRawPayload(row));
+    if (!mappedItems.length) return [];
+    const orderedAt = row.orderedAt || row.falabella_created_at || null;
+    const updatedAt = row.updatedAt || row.falabella_updated_at || null;
+    return [{
+      channel: 'falabella',
+      companyRuc,
+      externalOrderId: orderId,
+      externalOrderNumber: String(row.orderNumber || row.order_number || orderId),
+      orderedAt,
+      orderStatus: statuses.orderStatus,
+      fulfillmentStatus: statuses.fulfillmentStatus,
+      items: mappedItems.map((item) => ({
+        externalItemId: item.externalItemId,
+        sku: item.sku,
+        providerSku: item.providerSku,
+        productSku: null,
+        description: item.description,
+        quantity: item.quantity,
+        rawData: bundleItemRawData(item),
+      })),
+      events: updatedAt ? [{
+        eventType: 'status',
+        providerOccurredAt: updatedAt,
+        newValues: {
+          fulfillmentStatus: statuses.fulfillmentStatus,
+          orderStatus: statuses.orderStatus,
+        },
+      }] : [],
+    }];
+  });
+}
+
+export function mergeBundleOrders(orders = [], inboxOrders = []) {
+  const byKey = new Map();
+  for (const order of orders) {
+    if (!order?.externalOrderId) continue;
+    byKey.set(`${order.channel}\u0000${order.companyRuc}\u0000${order.externalOrderId}`, order);
+  }
+  for (const order of inboxOrders) {
+    const key = `${order.channel}\u0000${order.companyRuc}\u0000${order.externalOrderId}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, order);
+      continue;
+    }
+    if ((existing.items || []).length === 0 && (order.items || []).length) {
+      byKey.set(key, {
+        ...existing,
+        items: order.items,
+        events: (existing.events || []).length ? existing.events : order.events,
+        fulfillmentStatus: existing.fulfillmentStatus || order.fulfillmentStatus,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
+const FALABELLA_INBOX_ORPHAN_SQL = `
+select c.ruc as company_ruc, fo.order_id, fo.order_number, fo.status,
+  fo.falabella_created_at, fo.falabella_updated_at, fo.raw_data
+from falabella_orders fo
+join companies c on c.id = fo.company_id
+where coalesce(fo.falabella_created_at, fo.first_seen_at) >= $1::timestamptz
+  and (
+    fo.raw_data ? 'OrderItems'
+    or fo.raw_data ? 'orderItems'
+    or fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
+  )
+  and not exists (
+    select 1
+    from orders o
+    join order_channel_accounts a on a.id = o.channel_account_id
+    join order_channels ch on ch.id = a.channel_id
+    join order_items oi on oi.order_id = o.id
+    where o.company_id = fo.company_id
+      and o.external_order_id = fo.order_id
+      and ch.code = 'falabella'
+  )
+order by fo.falabella_created_at, fo.order_id
+`;
+
+export async function loadFalabellaInboxOrphans(db, since = SALES_HISTORY_SINCE) {
+  return (await db.query(FALABELLA_INBOX_ORPHAN_SQL, [since])).rows;
+}
+
+export async function hydrateUnifiedOrdersFromFalabellaInbox(db, since = SALES_HISTORY_SINCE) {
+  const rows = await loadFalabellaInboxOrphans(db, since);
+  const orders = falabellaInboxToBundleOrders(rows);
+  if (!orders.length) return { orders: 0, items: 0, events: 0 };
+  const companies = [...new Map(orders.map((order) => [order.companyRuc, {
+    ruc: order.companyRuc,
+    nombre: order.companyRuc,
+  }])).values()];
+  return ingestSalesMappingBundle(db, {
+    version: BUNDLE_VERSION,
+    companies,
+    listings: [],
+    orders,
+  });
 }
 
 export function workbookFromReconciliationAnchors({ run, rows } = {}) {
@@ -260,6 +375,13 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
       await ensureChannelAccount(db, companyId, channel, company.nombreComercial || company.nombre);
     }
   }
+  for (const row of parsed.falabellaOrders || []) {
+    const ruc = String(row.companyRuc || row.company_ruc || '').trim();
+    if (!ruc || companyIds.has(ruc)) continue;
+    const companyId = await ensureCompany(db, { ruc, nombre: row.nombre || ruc });
+    companyIds.set(ruc, companyId);
+    await ensureChannelAccount(db, companyId, 'falabella', ruc);
+  }
 
   for (const listing of parsed.listings || []) {
     const companyId = companyIds.get(String(listing.companyRuc || '').trim());
@@ -300,7 +422,12 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
       .map((listing) => `${listing.channel}\u0000${String(listing.companyRuc || '').trim()}\u0000${listing.sellerSku}`),
   );
 
-  for (const order of parsed.orders || []) {
+  const ordersToIngest = mergeBundleOrders(
+    parsed.orders,
+    falabellaInboxToBundleOrders(parsed.falabellaOrders),
+  );
+
+  for (const order of ordersToIngest) {
     const companyId = companyIds.get(String(order.companyRuc || '').trim());
     if (!companyId || !MAPPING_CHANNELS.includes(order.channel)) continue;
     const accountId = await ensureChannelAccount(db, companyId, order.channel, order.companyRuc);
@@ -402,10 +529,17 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
   const companies = (await db.query(
     `select distinct c.id, c.ruc, c.nombre, c.nombre_comercial, c.razon_social
      from companies c
-     join orders o on o.company_id=c.id
-     join order_channel_accounts a on a.id=o.channel_account_id
-     join order_channels ch on ch.id=a.channel_id
-     where ch.code=any($1::text[]) and o.ordered_at >= $2
+     where exists (
+         select 1 from orders o
+         join order_channel_accounts a on a.id=o.channel_account_id
+         join order_channels ch on ch.id=a.channel_id
+         where o.company_id=c.id and ch.code=any($1::text[]) and o.ordered_at >= $2
+       )
+       or exists (
+         select 1 from falabella_orders fo
+         where fo.company_id=c.id
+           and coalesce(fo.falabella_created_at, fo.first_seen_at) >= $2
+       )
      order by c.id`,
     [MAPPING_CHANNELS, since],
   )).rows;
@@ -501,6 +635,20 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
       fulfillmentStatus: row.fulfillment_status,
       items: itemsByOrder.get(Number(row.id)) || [],
       events: eventsByOrder.get(Number(row.id)) || [],
+    })),
+    falabellaOrders: (await loadFalabellaInboxOrphans(db, since)).map((row) => ({
+      companyRuc: row.company_ruc,
+      orderId: row.order_id,
+      orderNumber: row.order_number,
+      orderedAt: row.falabella_created_at,
+      updatedAt: row.falabella_updated_at,
+      status: row.status,
+      rawData: {
+        OrderItems: (row.raw_data || {}).OrderItems
+          || (row.raw_data || {}).orderItems
+          || row.raw_data?.SuccessResponse?.Body?.OrderItems
+          || null,
+      },
     })),
   };
 }

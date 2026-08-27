@@ -140,6 +140,11 @@ company_json AS (
     JOIN order_channels ch ON ch.id = a.channel_id
     WHERE ch.code IN ('falabella', 'ripley')
       AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+    UNION
+    SELECT DISTINCT c.id, c.ruc, c.nombre, c.nombre_comercial, c.razon_social
+    FROM companies c
+    JOIN falabella_orders fo ON fo.company_id = c.id
+    WHERE coalesce(fo.falabella_created_at, fo.first_seen_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
   ) c
 ),
 listing_json AS (
@@ -167,6 +172,10 @@ listing_json AS (
       JOIN order_channels ch ON ch.id = a.channel_id
       WHERE ch.code IN ('falabella', 'ripley')
         AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+      UNION
+      SELECT DISTINCT fo.company_id
+      FROM falabella_orders fo
+      WHERE coalesce(fo.falabella_created_at, fo.first_seen_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
     )
 ),
 order_rows AS (
@@ -213,6 +222,45 @@ order_rows AS (
   JOIN order_channels ch ON ch.id = a.channel_id
   WHERE ch.code IN ('falabella', 'ripley')
     AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+),
+falabella_inbox_json AS (
+  SELECT jsonb_agg(jsonb_build_object(
+    'companyRuc', inbox.ruc,
+    'orderId', inbox.order_id,
+    'orderNumber', inbox.order_number,
+    'orderedAt', inbox.falabella_created_at,
+    'updatedAt', inbox.falabella_updated_at,
+    'status', inbox.status,
+    'rawData', jsonb_build_object(
+      'OrderItems', COALESCE(
+        inbox.raw_data->'OrderItems',
+        inbox.raw_data->'orderItems',
+        inbox.raw_data#>'{SuccessResponse,Body,OrderItems}'
+      )
+    )
+  ) ORDER BY inbox.falabella_created_at, inbox.order_id) AS value
+  FROM (
+    SELECT c.ruc, fo.order_id, fo.order_number, fo.status,
+      fo.falabella_created_at, fo.falabella_updated_at, fo.raw_data
+    FROM falabella_orders fo
+    JOIN companies c ON c.id = fo.company_id
+    WHERE coalesce(fo.falabella_created_at, fo.first_seen_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
+      AND (
+        fo.raw_data ? 'OrderItems'
+        OR fo.raw_data ? 'orderItems'
+        OR fo.raw_data #>> '{SuccessResponse,Body,OrderItems}' IS NOT NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM orders o
+        JOIN order_channel_accounts a ON a.id = o.channel_account_id
+        JOIN order_channels ch ON ch.id = a.channel_id
+        JOIN order_items oi ON oi.order_id = o.id
+        WHERE o.company_id = fo.company_id
+          AND o.external_order_id = fo.order_id
+          AND ch.code = 'falabella'
+      )
+  ) inbox
 )
 SELECT CASE
   WHEN NOT EXISTS (SELECT 1 FROM run) THEN
@@ -235,6 +283,7 @@ SELECT CASE
     'excel', (SELECT value FROM excel_json),
     'companies', COALESCE((SELECT value FROM company_json), '[]'::jsonb),
     'listings', COALESCE((SELECT value FROM listing_json), '[]'::jsonb),
-    'orders', COALESCE((SELECT jsonb_agg(value ORDER BY id) FROM order_rows), '[]'::jsonb)
+    'orders', COALESCE((SELECT jsonb_agg(value ORDER BY id) FROM order_rows), '[]'::jsonb),
+    'falabellaOrders', COALESCE((SELECT value FROM falabella_inbox_json), '[]'::jsonb)
   )
 END;

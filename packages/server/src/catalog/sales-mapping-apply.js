@@ -15,6 +15,11 @@ function uniqueChannelRucs(bundle, channel) {
   for (const listing of bundle?.listings || []) {
     if (listing.channel === channel && listing.companyRuc) rucs.add(String(listing.companyRuc).trim());
   }
+  if (channel === 'falabella') {
+    for (const row of bundle?.falabellaOrders || []) {
+      if (row.companyRuc) rucs.add(String(row.companyRuc).trim());
+    }
+  }
   return [...rucs].filter(Boolean).sort();
 }
 

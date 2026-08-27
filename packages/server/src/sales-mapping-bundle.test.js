@@ -5,8 +5,10 @@ import {
   assertBundleWorkbook,
   coerceFulfillmentStatus,
   coerceOrderStatus,
+  falabellaInboxToBundleOrders,
   ingestSalesMappingBundle,
   listingMasterSku,
+  mergeBundleOrders,
   parseSalesMappingBundle,
   workbookFromBundleExcel,
   workbookFromReconciliationAnchors,
@@ -295,6 +297,66 @@ test('ingerir conserva cantidad 0 y si el payload traía Quantity', async () => 
   assert.match(inserts[0].sql, /raw_data/);
 });
 
+test('el inbox Falabella cubre pedidos que no están en orders unificados', async () => {
+  const converted = falabellaInboxToBundleOrders([{
+    companyRuc: '20607809136',
+    orderId: 'PV-INBOX',
+    orderNumber: '99',
+    status: 'ready_to_ship',
+    orderedAt: '2026-08-22T16:00:00.000Z',
+    updatedAt: '2026-08-22T18:00:00.000Z',
+    rawData: {
+      OrderItems: { OrderItem: { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '1' } },
+    },
+  }]);
+  assert.equal(converted.length, 1);
+  assert.equal(converted[0].channel, 'falabella');
+  assert.equal(converted[0].items[0].sku, 'AG174');
+  assert.equal(converted[0].events[0].providerOccurredAt, '2026-08-22T18:00:00.000Z');
+
+  const merged = mergeBundleOrders(
+    [{ channel: 'falabella', companyRuc: '20607809136', externalOrderId: 'PV-INBOX', items: [] }],
+    converted,
+  );
+  assert.equal(merged[0].items.length, 1);
+
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 90 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      if (text.startsWith('insert into order_events')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    falabellaOrders: [{
+      companyRuc: '20607809136',
+      orderId: 'PV-INBOX',
+      status: 'shipped',
+      orderedAt: '2026-08-22T16:00:00.000Z',
+      updatedAt: '2026-08-22T18:00:00.000Z',
+      rawData: {
+        OrderItems: { OrderItem: { OrderItemId: '7', SellerSku: 'AG174', ShopSku: 'FLO4400237', Quantity: '2' } },
+      },
+    }],
+  });
+  assert.equal(result.orders, 1);
+  assert.equal(result.items, 1);
+  const item = queries.find((entry) => entry.sql.trim().startsWith('insert into order_items'));
+  assert.equal(item.params[2], 'AG174');
+  assert.equal(item.params[5], 2);
+});
+
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);
@@ -329,6 +391,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /LEFT JOIN products p ON p\.id = oi\.product_id/);
   assert.match(sql, /raw_data \? 'Quantity'/);
   assert.match(sql, /'rawData'/);
+  assert.match(sql, /falabella_orders/);
+  assert.match(sql, /'falabellaOrders'/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {
