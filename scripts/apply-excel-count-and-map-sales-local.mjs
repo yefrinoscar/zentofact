@@ -56,6 +56,8 @@ const {
 const {
   exportSalesMappingBundleViaPsql,
   resolveMarketplaceKeyTargets,
+  salesMappingApplyGate,
+  seedExcelIdentityCatalog,
   seedHistoricalMastersAbsentFromExcel,
   writeMarketplaceSyncKeys,
 } = await import('../packages/server/src/catalog/sales-mapping-apply.js');
@@ -163,28 +165,31 @@ function monthsFromMay(now = new Date()) {
   return months;
 }
 
-async function companiesWithKeys(db) {
+async function companiesWithKeys(db, rucs = null) {
   const rows = (await db.query(
     `select id,
        nullif(trim(falabella_api_user_id),'') is not null
          and nullif(trim(falabella_api_key),'') is not null as falabella,
        nullif(trim(ripley_api_key),'') is not null as ripley
-     from companies where activo is not false
+     from companies
+     where activo is not false
+       and ($1::text[] is null or ruc = any($1::text[]))
      order by id`,
+    [rucs],
   )).rows;
   return rows.map((row) => ({
     id: Number(row.id),
     falabella: row.falabella === true,
     ripley: row.ripley === true,
-  }));
+  })).filter((row) => row.falabella || row.ripley);
 }
 
-async function syncMarketplaces(db) {
+async function syncMarketplaces(db, companies = null) {
   const { drainMissingFalabellaOrderItems, syncFalabellaOrders } = await import('../packages/server/src/falabella-sync.js');
   const { syncRipleyOrders } = await import('../packages/server/src/ripley-orders.js');
   const months = monthsFromMay();
   const summary = [];
-  for (const company of await companiesWithKeys(db)) {
+  for (const company of companies || await companiesWithKeys(db)) {
     const entry = { companyId: company.id, falabella: [], ripley: null, items: null };
     if (company.falabella) {
       for (const month of months) {
@@ -226,23 +231,24 @@ const workbook = excelPath
   : bundle
     ? assertBundleWorkbook(workbookFromBundleExcel(bundle.excel))
     : null;
-if (!workbook) {
-  console.error('Falta el Excel del viernes o un sales-mapping-bundle.json con esas cantidades.');
-  console.error('En la base operativa (con el repo):');
-  console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
-  console.error('O sin clonar, desde esa misma base:');
-  console.error(EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND);
-  process.exit(1);
-}
 
 try {
-  const countedUnits = workbook.targets.reduce((sum, target) => sum + target.targetQuantity, 0);
-  if (excelPath) console.log(`Excel: ${basename(excelPath)}`);
-  if (bundlePath) console.log(`Bundle: ${basename(bundlePath)}`);
-  console.log(`SHA-256: ${workbook.sourceHash || '(bundle)'}`);
-  console.log(`Maestros contados: ${workbook.targets.length}; unidades: ${countedUnits}`);
-  console.log(`Sin cantidad: ${[...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].join(', ')}`);
-  console.log(`Corte: ${PHYSICAL_COUNT_CUTOFF}`);
+  if (workbook) {
+    const countedUnits = workbook.targets.reduce((sum, target) => sum + target.targetQuantity, 0);
+    if (excelPath) console.log(`Excel: ${basename(excelPath)}`);
+    if (bundlePath) console.log(`Bundle: ${basename(bundlePath)}`);
+    console.log(`SHA-256: ${workbook.sourceHash || '(bundle)'}`);
+    console.log(`Maestros contados: ${workbook.targets.length}; unidades: ${countedUnits}`);
+    console.log(`Sin cantidad: ${[...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].join(', ')}`);
+    console.log(`Corte: ${PHYSICAL_COUNT_CUTOFF}`);
+  } else {
+    console.error('Falta el Excel del viernes o un sales-mapping-bundle.json con esas cantidades.');
+    console.error('En la base operativa (con el repo):');
+    console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
+    console.error('O sin clonar, desde esa misma base:');
+    console.error(EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND);
+    console.log('Se mapean ventas si hay API keys o un dump; el descuento espera el conteo.');
+  }
 
   const dumpPath = discovered.ordersSql;
   if (dumpPath && !bundle) {
@@ -268,7 +274,11 @@ try {
   await pool.query(
     `delete from orders where external_order_id like 'EXCEL-MAP-%' or external_order_id like 'MAP-%'`,
   );
-  await seedCount(pool, workbook);
+  if (workbook) await seedCount(pool, workbook);
+  await seedExcelIdentityCatalog(pool, {
+    countedSkus: INVENTORY_COUNT_MASTER_SKUS,
+    skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+  });
   const absentMasters = await seedHistoricalMastersAbsentFromExcel(pool, {
     countedSkus: INVENTORY_COUNT_MASTER_SKUS,
     skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
@@ -309,9 +319,9 @@ try {
   if (keys.falabella) console.log(`Keys Falabella en RUC ${keys.falabellaRucs.join(', ')}`);
   if (keys.ripley) console.log(`Keys Ripley en RUC ${keys.ripleyRucs.join(', ')}`);
 
-  const keyed = await companiesWithKeys(pool);
-  if (!values['skip-sync'] && keyed.some((company) => company.falabella || company.ripley)) {
-    const sync = await syncMarketplaces(pool);
+  const keyed = await companiesWithKeys(pool, [...new Set([...keys.falabellaRucs, ...keys.ripleyRucs])]);
+  if (!values['skip-sync'] && keyed.length) {
+    const sync = await syncMarketplaces(pool, keyed);
     console.log('Sync:', JSON.stringify(sync.map((entry) => ({
       companyId: entry.companyId,
       falabella: entry.falabella,
@@ -321,7 +331,7 @@ try {
   } else if (keys.falabella || keys.ripley) {
     console.log('Se escribieron API keys pero ninguna empresa quedó con credenciales usable.');
   } else {
-    console.log('Sin API keys de seller: no se sincronizaron pedidos Falabella/Ripley.');
+    console.log('Sin acceso a Falabella ni Ripley: faltan FALABELLA_API_USER_ID/FALABELLA_API_KEY y RIPLEY_API_KEY.');
   }
 
   const realOrders = Number((await pool.query(
@@ -338,7 +348,6 @@ try {
   if (realOrders === 0) {
     console.error('No hay pedidos Falabella/Ripley reales desde mayo en esta base.');
     console.error('Falta el sales-mapping-bundle.json, un dump de pedidos, o las API keys de seller.');
-    if (values.apply) process.exit(1);
   }
 
   const loaded = await loadHistoricalSalesMappingContext(pool, { since: SALES_HISTORY_SINCE });
@@ -363,7 +372,16 @@ try {
   writeFileSync('/opt/cursor/artifacts/sales-mapping-shortages.tsv', shortagesTsv);
   console.log(`Revisión: ${coverage.review.length} identidades; faltantes de stock: ${coverage.shortages.length}`);
 
-  if (!values.apply) {
+  const gate = salesMappingApplyGate({
+    workbook,
+    realOrders,
+    apply: values.apply,
+  });
+  if (!gate.ok) {
+    console.error(gate.message);
+    if (values.apply) process.exit(1);
+    console.log('DRY RUN: no se asociaron líneas ni se descontó stock.');
+  } else if (!values.apply) {
     console.log('DRY RUN: no se asociaron líneas ni se descontó stock. Usa --apply.');
   } else {
     const result = await applyHistoricalSalesMappings(pool, {

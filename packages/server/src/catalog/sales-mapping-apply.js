@@ -59,6 +59,40 @@ export function resolveMarketplaceKeyTargets({
   };
 }
 
+export async function ensureMarketplaceCompany(db, ruc, { nombre } = {}) {
+  const trimmed = String(ruc || '').trim();
+  if (!trimmed) return null;
+  const existing = await db.query(
+    'select id from companies where ruc=$1 order by id limit 1',
+    [trimmed],
+  );
+  let companyId = existing.rows[0] ? Number(existing.rows[0].id) : null;
+  if (!companyId) {
+    const label = String(nombre || trimmed).trim() || trimmed;
+    const inserted = await db.query(
+      `insert into companies (nombre, ruc, razon_social, nombre_comercial, activo)
+       values ($1,$2,$1,$1,true) returning id`,
+      [label, trimmed],
+    );
+    companyId = Number(inserted.rows[0].id);
+  }
+  for (const channel of ['falabella', 'ripley']) {
+    const channelRow = await db.query('select id from order_channels where code=$1', [channel]);
+    const channelId = Number(channelRow.rows[0]?.id);
+    if (!channelId) continue;
+    await db.query(
+      `insert into order_channel_accounts (
+         company_id, channel_id, external_account_id, display_name,
+         auto_create_orders, document_requirement, document_type_policy, settings
+       )
+       values ($1,$2,'default',$3,true,'optional','automatic','{}'::jsonb)
+       on conflict (company_id, channel_id, external_account_id) do nothing`,
+      [companyId, channelId, nombre || channel],
+    );
+  }
+  return companyId;
+}
+
 export async function writeMarketplaceSyncKeys(db, {
   falabellaUser = '',
   falabellaKey = '',
@@ -73,6 +107,10 @@ export async function writeMarketplaceSyncKeys(db, {
   const ripShop = String(ripleyShop || '').trim();
   if (!falUser && !falKey && !ripKey) {
     return { falabella: false, ripley: false, falabellaRucs: [], ripleyRucs: [] };
+  }
+  const targetRucs = [...new Set([...falabellaRucs, ...ripleyRucs].map((ruc) => String(ruc || '').trim()).filter(Boolean))];
+  for (const ruc of targetRucs) {
+    await ensureMarketplaceCompany(db, ruc);
   }
   if ((falUser || falKey) && falabellaRucs.length) {
     await db.query(
@@ -104,6 +142,47 @@ export async function writeMarketplaceSyncKeys(db, {
     falabellaRucs,
     ripleyRucs,
   };
+}
+
+export async function seedExcelIdentityCatalog(db, {
+  countedSkus,
+  skusWithoutQuantity,
+} = {}) {
+  const skus = [...new Set([...(countedSkus || []), ...(skusWithoutQuantity || [])])].sort();
+  for (const sku of skus) {
+    await db.query(
+      `insert into products (main_sku, name, status, attributes)
+       values ($1,$1,'active',$2)
+       on conflict (main_sku) do update
+         set status='active', updated_at=now()`,
+      [sku, JSON.stringify({ source: 'excel_count_2026_08_21' })],
+    );
+    await db.query(
+      `insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+       select id, 0, 0 from products where main_sku=$1
+       on conflict (product_id) do nothing`,
+      [sku],
+    );
+  }
+  return skus;
+}
+
+export function salesMappingApplyGate({ workbook, realOrders, apply } = {}) {
+  if (apply && !workbook) {
+    return {
+      ok: false,
+      code: 'missing_friday_count',
+      message: 'Falta el Excel del viernes o un sales-mapping-bundle.json con esas cantidades. Sin el conteo no se descuenta stock.',
+    };
+  }
+  if (apply && Number(realOrders) === 0) {
+    return {
+      ok: false,
+      code: 'missing_sales',
+      message: 'No hay pedidos Falabella/Ripley reales desde mayo en esta base. Falta el sales-mapping-bundle.json, un dump de pedidos, o las API keys de seller.',
+    };
+  }
+  return { ok: true, code: null, message: null };
 }
 
 export async function seedHistoricalMastersAbsentFromExcel(db, {

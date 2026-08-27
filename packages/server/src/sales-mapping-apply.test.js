@@ -10,6 +10,8 @@ import {
 import {
   exportSalesMappingBundleViaPsql,
   resolveMarketplaceKeyTargets,
+  salesMappingApplyGate,
+  seedExcelIdentityCatalog,
   seedHistoricalMastersAbsentFromExcel,
   writeMarketplaceSyncKeys,
 } from './catalog/sales-mapping-apply.js';
@@ -105,8 +107,12 @@ test('writeMarketplaceSyncKeys no adivina si no hay keys', async () => {
   const queries = [];
   const db = {
     async query(sql, params = []) {
-      queries.push({ sql: String(sql), params });
-      return { rows: [], rowCount: 0 };
+      const text = String(sql);
+      queries.push({ sql: text, params });
+      if (text.includes('select id from companies')) return { rows: [{ id: 1 }] };
+      if (text.includes('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.includes('from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      return { rows: [], rowCount: 1 };
     },
   };
   const empty = await writeMarketplaceSyncKeys(db, {
@@ -121,5 +127,53 @@ test('writeMarketplaceSyncKeys no adivina si no hay keys', async () => {
     falabellaRucs: ['20607809136'],
   });
   assert.equal(written.falabella, true);
-  assert.equal(queries[0].params[2][0], '20607809136');
+  const update = queries.find((entry) => entry.sql.includes('falabella_api_user_id'));
+  assert.equal(update.params[2][0], '20607809136');
+  assert.equal(queries.some((entry) => entry.sql.includes('insert into companies')), false);
+});
+
+test('writeMarketplaceSyncKeys crea la empresa si el RUC no existe', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      queries.push({ sql: text, params });
+      if (text.includes('select id from companies')) return { rows: [] };
+      if (text.includes('insert into companies')) return { rows: [{ id: 9 }] };
+      if (text.includes('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.includes('from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const written = await writeMarketplaceSyncKeys(db, {
+    falabellaUser: 'user',
+    falabellaKey: 'key',
+    falabellaRucs: ['20607809136'],
+  });
+  assert.equal(written.falabella, true);
+  assert.equal(queries.some((entry) => entry.sql.includes('insert into companies')), true);
+  assert.equal(queries.some((entry) => entry.sql.includes('insert into order_channel_accounts')), true);
+});
+
+test('seedExcelIdentityCatalog no pisa cantidades ya contadas', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const skus = await seedExcelIdentityCatalog(db, {
+    countedSkus: new Set(['Z7']),
+    skusWithoutQuantity: new Set(['G40XL']),
+  });
+  assert.deepEqual(skus, ['G40XL', 'Z7']);
+  assert.equal(queries.some((entry) => entry.sql.includes('on conflict (product_id) do nothing')), true);
+});
+
+test('salesMappingApplyGate no descuenta sin conteo del viernes ni sin ventas reales', () => {
+  assert.equal(salesMappingApplyGate({ workbook: null, realOrders: 12, apply: true }).code, 'missing_friday_count');
+  assert.equal(salesMappingApplyGate({ workbook: { targets: [] }, realOrders: 0, apply: true }).code, 'missing_sales');
+  assert.equal(salesMappingApplyGate({ workbook: { targets: [] }, realOrders: 12, apply: true }).ok, true);
+  assert.equal(salesMappingApplyGate({ workbook: null, realOrders: 0, apply: false }).ok, true);
 });
