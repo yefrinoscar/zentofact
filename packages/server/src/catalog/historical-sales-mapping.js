@@ -1,6 +1,6 @@
 import { deriveInventoryTransitions } from './falabella-august-reconciliation.js';
 import { applyInventoryMovement, InsufficientStockError } from './inventory-service.js';
-import { HISTORICAL_SKU_TO_MASTER } from './historical-sku-map.js';
+import { HISTORICAL_SKU_TO_MASTER, historicalMasterForSku } from './historical-sku-map.js';
 import { isStockEligibleFulfillment } from './stock-phase.js';
 
 export const SALES_HISTORY_SINCE = '2026-05-01T05:00:00.000Z';
@@ -205,9 +205,9 @@ export function resolveSaleItem(item, context) {
   }
 
   const hintSku = String(item.main_sku || item.productSku || '').trim();
-  const historicalSku = [sellerSku, shopSku, hintSku].find((sku) => historicalMap[sku]);
+  const historicalSku = [sellerSku, shopSku, hintSku].find((sku) => historicalMasterForSku(sku, historicalMap));
   if (historicalSku) {
-    const mainSku = historicalMap[historicalSku];
+    const mainSku = historicalMasterForSku(historicalSku, historicalMap);
     const product = context.productsBySku.get(mainSku);
     if (!product && candidates.length === 0) {
       return {

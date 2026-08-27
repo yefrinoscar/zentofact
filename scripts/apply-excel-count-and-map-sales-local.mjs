@@ -75,9 +75,14 @@ if (sourceDatabaseUrl && sourceDatabaseUrl !== databaseUrl) {
   }
 } else if (sourceDatabaseUrl && sourceDatabaseUrl === databaseUrl) {
   console.error('SALES_MAPPING_SOURCE_DATABASE_URL no puede ser esta misma base: aquí no está el conteo del viernes.');
+  process.exit(1);
 }
+
+const discovered = discoverSalesMappingInputs({
   excel: values.excel || process.env.INVENTORY_COUNT_XLSX || positionals[0],
-  bundle: values.bundle || process.env.SALES_MAPPING_BUNDLE,
+  bundle: values.bundle
+    || process.env.SALES_MAPPING_BUNDLE
+    || (sourceDatabaseUrl ? SOURCE_BUNDLE_PATH : undefined),
   ordersSql: values['orders-sql'] || process.env.ORDERS_SINCE_MAY_SQL,
 });
 

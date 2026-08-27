@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
   INVENTORY_COUNT_MASTER_SKUS,
   INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
@@ -83,11 +86,19 @@ test('se crean maestros históricos ausentes del Excel en stock 0', async () => 
   });
   assert.ok(masters.includes('AG227'));
   assert.ok(masters.includes('FAL-144958533'));
+  assert.ok(masters.includes('AM7'));
   assert.equal(masters.includes('Z7'), false);
+  assert.equal(masters.includes('AG107'), false);
   const productInsert = inserted.find((entry) => entry.sql.includes('insert into products') && entry.params[0] === 'AG227');
   assert.equal(JSON.parse(productInsert.params[1]).source, 'historical_master_absent_from_excel');
   const inventoryInsert = inserted.find((entry) => entry.sql.includes('product_inventory') && entry.params[0] === 'AG227');
   assert.ok(inventoryInsert);
+});
+
+test('el comando local de mapeo es JavaScript válido', () => {
+  const script = resolve(dirname(fileURLToPath(import.meta.url)), '../../../scripts/apply-excel-count-and-map-sales-local.mjs');
+  const result = spawnSync(process.execPath, ['--check', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('writeMarketplaceSyncKeys no adivina si no hay keys', async () => {

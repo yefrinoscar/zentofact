@@ -104,24 +104,93 @@ const MARKETPLACE_SKU_TO_MASTER = {
   '123389143': 'FAL-123389143',
 };
 
+// Ripley seller SKUs associated on 22 Aug 2026. Unlinked publications are omitted.
+export const RIPLEY_SKU_TO_MASTER = {
+  S119266: 'AG107',
+  S119268: 'AG108',
+  S119228: 'AG109',
+  S118834: 'AG113',
+  S166238: 'AG115',
+  S166292: 'AG127',
+  S119231: 'AG128',
+  'BIC-100235': 'AG129',
+  'MUE-102257': 'AG138',
+  'BIC-100236': 'AG139',
+  'BIC-105528': 'AG139',
+  'SCA-101055': 'AG141',
+  'MES-1055777': 'AG155',
+  'EST-102235': 'AG157',
+  'SIL-200358': 'AG159',
+  'GUA-104022': 'AG164',
+  'GUA-104023': 'AG165',
+  S126697: 'AG166',
+  S126694: 'AG167',
+  S119279: 'AG171',
+  S126718: 'AG171',
+  S166229: 'AG171',
+  S166230: 'AG171',
+  'ZAP-1077739': 'AG173',
+  'SET-777810': 'AG174',
+  'ZAP-108088': 'AG193',
+  'TRI-100358': 'AG227',
+  S126717: 'AG274',
+  'ESC-1058777': 'AG277',
+  S118856: 'AG82',
+  S126695: 'AG83',
+  S126696: 'AG84',
+  'PIL-103669': 'AG86',
+  'TRI-100357': 'AG87',
+  MAQ1234: 'AG89',
+  'GUA-107755': 'AG94',
+  'BOT-105522': 'AM7',
+  'SCA-103341': 'AG289',
+  CHA1234: 'AG290',
+  S118837: 'AG291',
+  'LAM-203320': 'AG292',
+  'GUA-104005': 'AG293',
+  S166287: 'AG294',
+  'CAM-104497': 'AG295',
+};
+
 export const HISTORICAL_SKU_TO_MASTER = Object.freeze({
   ...LEGACY_AG_TO_EXCEL,
   ...EXCEL_ROW_ALIAS_TO_MASTER,
   ...MARKETPLACE_SKU_TO_MASTER,
+  ...RIPLEY_SKU_TO_MASTER,
 });
+
+export function followHistoricalSku(sku, historicalMap = HISTORICAL_SKU_TO_MASTER) {
+  let current = String(sku || '').trim();
+  if (!current) return null;
+  const seen = new Set();
+  while (historicalMap[current] && !seen.has(current)) {
+    seen.add(current);
+    current = historicalMap[current];
+  }
+  return current || null;
+}
+
+export function historicalMasterForSku(sku, historicalMap = HISTORICAL_SKU_TO_MASTER) {
+  const value = String(sku || '').trim();
+  if (!value || !historicalMap[value]) return null;
+  return followHistoricalSku(value, historicalMap);
+}
 
 export function historicalMastersAbsentFromExcel(catalogSkus, historicalMap = HISTORICAL_SKU_TO_MASTER) {
   const catalog = catalogSkus instanceof Set ? catalogSkus : new Set(catalogSkus || []);
-  return [...new Set(Object.values(historicalMap))]
-    .filter((sku) => sku && !catalog.has(sku))
-    .sort();
+  const terminals = new Set();
+  for (const sku of Object.keys(historicalMap)) {
+    const terminal = followHistoricalSku(sku, historicalMap);
+    if (terminal && !catalog.has(terminal)) terminals.add(terminal);
+  }
+  return [...terminals].sort();
 }
 
 export function excelMasterForSku(sku, catalogSkus, historicalMap = HISTORICAL_SKU_TO_MASTER) {
   const value = String(sku || '').trim();
   if (!value) return null;
   if (catalogSkus.has(value)) return value;
-  const mapped = historicalMap[value];
+  const mapped = followHistoricalSku(value, historicalMap);
   if (mapped && catalogSkus.has(mapped)) return mapped;
   return null;
 }

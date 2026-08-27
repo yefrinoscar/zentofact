@@ -167,6 +167,12 @@ test('el listing usa productSku operativo y crea el maestro ausente en stock 0',
   assert.equal(listingMasterSku({
     sellerSku: 'FAL-RANDOM', shopSku: '999', productSku: 'AG178',
   }, catalog), 'AG178');
+  assert.equal(listingMasterSku({
+    sellerSku: 'S119266', shopSku: 'S119266', productSku: 'AG107',
+  }, catalog), 'G1RAMAS');
+  assert.equal(listingMasterSku({
+    sellerSku: 'SET-777810', shopSku: 'SET-777810', productSku: '',
+  }, catalog), 'Z7');
 
   const queries = [];
   const db = {

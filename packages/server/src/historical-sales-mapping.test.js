@@ -8,7 +8,9 @@ import {
   EXCEL_ROW_ALIAS_TO_MASTER,
   HISTORICAL_SKU_TO_MASTER,
   LEGACY_AG_TO_EXCEL,
+  RIPLEY_SKU_TO_MASTER,
   excelMasterForSku,
+  historicalMasterForSku,
   historicalMastersAbsentFromExcel,
 } from './catalog/historical-sku-map.js';
 import {
@@ -155,8 +157,12 @@ test('los maestros históricos que no están en el Excel quedan fuera del conteo
   const absent = historicalMastersAbsentFromExcel(catalog);
   assert.equal(absent.includes('Z7'), false);
   assert.equal(absent.includes('H36'), false);
+  assert.equal(absent.includes('AG107'), false);
+  assert.equal(absent.includes('G1RAMAS'), false);
   assert.ok(absent.includes('AG227'));
   assert.ok(absent.includes('FAL-144958533'));
+  assert.ok(absent.includes('AM7'));
+  assert.ok(absent.includes('AG289'));
 });
 
 test('un SKU legado o alias del Excel resuelve al código del conteo', () => {
@@ -430,4 +436,51 @@ test('un SKU legado o el código del Excel resuelven al maestro del conteo', () 
   assert.equal(excelMasterForSku('NO-EXISTE', catalog), null);
   assert.equal(excelMasterForSku('TRI65748392', catalog), null);
   assert.equal(excelMasterForSku('TRI65748392', new Set([...catalog, 'AG227'])), 'AG227');
+  assert.equal(excelMasterForSku('S119266', catalog), 'G1RAMAS');
+  assert.equal(excelMasterForSku('SET-777810', catalog), 'Z7');
+  assert.equal(excelMasterForSku('GUA-104022', catalog), 'H13M');
+  assert.equal(excelMasterForSku('TRI-100358', catalog), null);
+  assert.equal(excelMasterForSku('TRI-100358', new Set([...catalog, 'AG227'])), 'AG227');
+  assert.equal(historicalMasterForSku('S119266'), 'G1RAMAS');
+  assert.equal(historicalMasterForSku('BOT-105522'), 'AM7');
+  assert.equal(historicalMasterForSku('MOC-105045'), null);
+});
+
+test('un SKU Ripley documentado resuelve al maestro del Excel o queda anclado sin descontar', () => {
+  const excelIds = [...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY];
+  const extraMasters = ['AG138', 'AG86', 'AM7', 'AG227', 'AG289', 'AG290', 'AG291', 'AG292', 'AG293', 'AG294', 'AG295'];
+  const productsForRipley = [...excelIds, ...extraMasters].map((sku, index) => ({
+    id: index + 1, main_sku: sku, name: sku,
+  }));
+  const ctx = context(productsForRipley, [], {
+    countedSkus: INVENTORY_COUNT_MASTER_SKUS,
+    skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+  });
+  const ramitas = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'S119266', provider_sku: 'S119266',
+  }, ctx);
+  assert.equal(ramitas.status, 'mapped');
+  assert.equal(ramitas.product.main_sku, 'G1RAMAS');
+  assert.equal(ramitas.ledgerPolicy, 'deduct_after_cutoff');
+
+  const triturador = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'TRI-100358', provider_sku: 'TRI-100358',
+  }, ctx);
+  assert.equal(triturador.status, 'mapped');
+  assert.equal(triturador.product.main_sku, 'AG227');
+  assert.equal(triturador.ledgerPolicy, 'map_only_no_deduct');
+
+  const unlinked = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'MOC-105045', provider_sku: 'MOC-105045',
+  }, ctx);
+  assert.equal(unlinked.status, 'unmapped');
+
+  for (const [sellerSku, ag] of Object.entries(RIPLEY_SKU_TO_MASTER)) {
+    const terminal = historicalMasterForSku(sellerSku);
+    const resolved = resolveSaleItem({
+      channel_code: 'ripley', company_id: 1, sku: sellerSku, provider_sku: sellerSku,
+    }, ctx);
+    assert.equal(resolved.status, 'mapped', `${sellerSku} → ${ag}`);
+    assert.equal(resolved.product.main_sku, terminal, `${sellerSku} → ${terminal}`);
+  }
 });
