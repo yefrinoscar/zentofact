@@ -8,6 +8,7 @@ import {
   EXCEL_ROW_ALIAS_TO_MASTER,
   HISTORICAL_SKU_TO_MASTER,
   LEGACY_AG_TO_EXCEL,
+  excelMasterForSku,
 } from './catalog/historical-sku-map.js';
 import {
   applyHistoricalSalesMappings,
@@ -374,4 +375,14 @@ test('cada ID del Excel es el maestro cuando existe el producto', () => {
   }, ctx);
   assert.equal(marketplace.product.main_sku, 'Z7');
   assert.equal(HISTORICAL_SKU_TO_MASTER.AG174, 'Z7');
+});
+
+test('un SKU legado o el código del Excel resuelven al maestro del conteo', () => {
+  const catalog = new Set([...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY]);
+  assert.equal(excelMasterForSku('Z7', catalog), 'Z7');
+  assert.equal(excelMasterForSku('AG174', catalog), 'Z7');
+  assert.equal(excelMasterForSku('G-19', catalog), 'G18');
+  assert.equal(excelMasterForSku('G40XL', catalog), 'G40XL');
+  assert.equal(excelMasterForSku('NO-EXISTE', catalog), null);
+  assert.equal(excelMasterForSku('TRI65748392', catalog), null);
 });

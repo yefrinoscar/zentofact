@@ -13,6 +13,7 @@ const { values, positionals } = parseArgs({
   options: {
     apply: { type: 'boolean', default: false },
     excel: { type: 'string' },
+    'orders-sql': { type: 'string' },
     'skip-sync': { type: 'boolean', default: false },
   },
 });
@@ -25,12 +26,26 @@ const CANDIDATE_EXCEL_PATHS = [
   process.env.INVENTORY_COUNT_XLSX,
   positionals[0],
   'stock 21.08.2026 a las 2.50 pm.xlsx',
+  '/opt/cursor/artifacts/stock 21.08.2026 a las 2.50 pm.xlsx',
   '/opt/cursor/uploads/stock 21.08.2026 a las 2.50 pm.xlsx',
   '/tmp/stock 21.08.2026 a las 2.50 pm.xlsx',
 ].filter(Boolean).map((path) => resolve(path));
 
+const CANDIDATE_ORDER_SQL_PATHS = [
+  values['orders-sql'],
+  process.env.ORDERS_SINCE_MAY_SQL,
+  'orders-since-may.sql',
+  '/opt/cursor/uploads/orders-since-may.sql',
+  '/opt/cursor/artifacts/orders-since-may.sql',
+  '/tmp/orders-since-may.sql',
+].filter(Boolean).map((path) => resolve(path));
+
 function findExcel() {
   return CANDIDATE_EXCEL_PATHS.find((path) => existsSync(path)) || null;
+}
+
+function findOrdersSql() {
+  return CANDIDATE_ORDER_SQL_PATHS.find((path) => existsSync(path)) || null;
 }
 
 const {
@@ -42,7 +57,14 @@ const {
   formatReviewTsv,
   loadHistoricalSalesMappingContext,
 } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
+const {
+  EXPORT_ORDERS_DUMP_COMMAND,
+  clearImportedItemProductLinks,
+  remapImportedListingsToExcel,
+  restoreOrdersDump,
+} = await import('../packages/server/src/catalog/import-orders-since-may.js');
 const { pool } = await import('@zentofact/core');
+const databaseUrl = process.env.DATABASE_URL_POSTGRES || process.env.DATABASE_URL;
 
 async function writeSellerKeys(db) {
   const falabellaUser = String(process.env.FALABELLA_API_USER_ID || '').trim();
@@ -208,6 +230,15 @@ try {
   console.log(`Sin cantidad: ${[...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].join(', ')}`);
   console.log(`Corte: ${PHYSICAL_COUNT_CUTOFF}`);
 
+  const dumpPath = findOrdersSql();
+  if (dumpPath) {
+    console.log(`Importando pedidos ${basename(dumpPath)}`);
+    restoreOrdersDump({ sqlPath: dumpPath, databaseUrl });
+  } else {
+    console.log('Sin dump de pedidos Falabella/Ripley. En la base operativa:');
+    console.log(EXPORT_ORDERS_DUMP_COMMAND);
+  }
+
   const keys = await writeSellerKeys(pool);
   await pool.query(
     `delete from inventory_movements
@@ -223,6 +254,12 @@ try {
     `delete from orders where external_order_id like 'EXCEL-MAP-%' or external_order_id like 'MAP-%'`,
   );
   await seedCount(pool, workbook);
+
+  if (dumpPath) {
+    const remapped = await remapImportedListingsToExcel(pool);
+    const cleared = await clearImportedItemProductLinks(pool);
+    console.log(`Listings reasociados a IDs del Excel: ${remapped}; líneas limpiadas para remapear: ${cleared}`);
+  }
 
   const keyed = await companiesWithKeys(pool);
   if (!values['skip-sync'] && keyed.some((company) => company.falabella || company.ripley)) {

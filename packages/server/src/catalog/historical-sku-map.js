@@ -109,3 +109,27 @@ export const HISTORICAL_SKU_TO_MASTER = Object.freeze({
   ...EXCEL_ROW_ALIAS_TO_MASTER,
   ...MARKETPLACE_SKU_TO_MASTER,
 });
+
+export function excelMasterForSku(sku, catalogSkus, historicalMap = HISTORICAL_SKU_TO_MASTER) {
+  const value = String(sku || '').trim();
+  if (!value) return null;
+  if (catalogSkus.has(value)) return value;
+  const mapped = historicalMap[value];
+  if (mapped && catalogSkus.has(mapped)) return mapped;
+  return null;
+}
+
+export function planListingExcelRemap(listing, catalog) {
+  const currentSku = catalog.skuById.get(Number(listing.product_id)) || null;
+  const master = excelMasterForSku(listing.seller_sku, catalog.skus)
+    || excelMasterForSku(listing.shop_sku, catalog.skus)
+    || excelMasterForSku(currentSku, catalog.skus);
+  if (!master) return null;
+  const productId = catalog.idBySku.get(master);
+  if (!productId || productId === Number(listing.product_id)) return null;
+  return {
+    listingId: Number(listing.id),
+    productId,
+    mainSku: master,
+  };
+}
