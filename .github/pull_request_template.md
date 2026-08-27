@@ -8,7 +8,7 @@
 
 ## Pull request target
 
-<!-- Regular feature and fix pull requests target dev. Production releases use dev -> main. -->
+<!-- Regular feature and fix pull requests target `dev`. Railway does not deploy pull requests; prove on the Cloud Agent VM. Production releases use `dev` -> `main`. -->
 
 - [ ] Integration — feature or fix targeting `dev`; no release label or version increment
 - [ ] Production release — `dev` targeting `main`; complete the release section below
