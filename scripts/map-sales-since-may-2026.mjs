@@ -12,6 +12,7 @@ const { values } = parseArgs({
     apply: { type: 'boolean', default: false },
     since: { type: 'string' },
     'review-out': { type: 'string', default: '.audit/sales-mapping-since-may-2026-review.tsv' },
+    'report-out': { type: 'string', default: '.audit/sales-mapping-since-may-2026.tsv' },
   },
 });
 
@@ -22,19 +23,25 @@ const {
   SALES_HISTORY_SINCE,
   applyHistoricalSalesMappings,
   buildHistoricalSalesCoverage,
+  formatCoverageTsv,
   formatReviewTsv,
   loadHistoricalSalesMappingContext,
 } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
 
 const since = values.since || SALES_HISTORY_SINCE;
 const reviewOut = resolve(values['review-out']);
+const reportOut = resolve(values['report-out']);
 
 function printCoverage(coverage) {
   console.log(`Ventas desde: ${coverage.since}`);
-  console.log(`Conteo físico (no se descuenta aquí): ${coverage.cutoffAt}`);
+  console.log(`Conteo físico (ancla, no se vuelve a contar): ${coverage.cutoffAt}`);
   console.log('Canales: falabella, ripley');
-  console.log('Este comando no copia el catálogo a Railway ni escribe inventario.');
+  console.log('No copia el catálogo a Railway. Descuenta solo salidas posteriores al conteo en maestros del Excel.');
   console.table([coverage.summary]);
+  if (coverage.shortages.length) {
+    console.log(`Faltantes posteriores al conteo: ${coverage.shortages.length}`);
+    console.table(coverage.shortages);
+  }
   if (coverage.review.length) {
     console.log(`Identidades para revisión humana: ${coverage.review.length}`);
     console.table(coverage.review.slice(0, 40).map((row) => ({
@@ -64,16 +71,18 @@ try {
   printCoverage(coverage);
   mkdirSync(dirname(reviewOut), { recursive: true });
   writeFileSync(reviewOut, formatReviewTsv(coverage.identities));
+  writeFileSync(reportOut, formatCoverageTsv(coverage.identities));
   console.log(`Lista de revisión: ${reviewOut}`);
+  console.log(`Reporte de mapeo: ${reportOut}`);
   if (!values.apply) {
-    console.log('DRY RUN: no se modificó la base. Usa --apply para asociar líneas ciertas sin mover stock.');
+    console.log('DRY RUN: no se modificó la base. Usa --apply para asociar líneas ciertas y descontar salidas posteriores al conteo.');
   } else {
     const result = await applyHistoricalSalesMappings(pool, {
       since,
       countedSkus: INVENTORY_COUNT_MASTER_SKUS,
       skusWithoutQuantity: INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
     });
-    console.log(`APLICADO: ${result.updatedItems} líneas asociadas, ${result.createdListings} listings inactivos creados; inventario sin cambios.`);
+    console.log(`APLICADO: ${result.updatedItems} líneas asociadas, ${result.createdListings} listings inactivos, ${result.deductedItems} salidas posteriores al conteo; faltantes ${result.shortages.length}.`);
   }
 } finally {
   await pool.end();

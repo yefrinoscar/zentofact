@@ -1,4 +1,7 @@
+import { deriveInventoryTransitions } from './falabella-august-reconciliation.js';
+import { applyInventoryMovement, InsufficientStockError } from './inventory-service.js';
 import { HISTORICAL_SKU_TO_MASTER } from './historical-sku-map.js';
+import { isStockEligibleFulfillment } from './stock-phase.js';
 
 export const SALES_HISTORY_SINCE = '2026-05-01T05:00:00.000Z';
 export const PHYSICAL_COUNT_CUTOFF = '2026-08-21T19:50:00.000Z';
@@ -19,6 +22,8 @@ const STATUS_RANK = Object.freeze({
   missing_master: 2,
   doubtful: 3,
 });
+
+const TERMINAL_STATUSES = new Set(['cancelled', 'canceled', 'failed', 'returned']);
 
 function number(value) {
   const parsed = Number(value);
@@ -63,6 +68,56 @@ export function ledgerPolicyForPresence(presence) {
   if (presence === 'excel_counted') return 'deduct_after_cutoff';
   if (presence === 'excel_without_quantity') return 'review_no_deduct';
   return 'map_only_no_deduct';
+}
+
+export function planWarehouseExit(item, events = [], cutoffAt = PHYSICAL_COUNT_CUTOFF) {
+  const quantity = Math.max(number(item.quantity), 0);
+  const timeline = deriveInventoryTransitions(events, quantity || 1);
+  const exit = timeline.transitions.find((entry) => entry.kind === 'exit');
+  if (exit && timeline.physicallyOut) {
+    const afterCutoff = new Date(exit.effectiveAt).getTime() >= new Date(cutoffAt).getTime();
+    return { physicallyOut: true, effectiveAt: exit.effectiveAt, afterCutoff, source: 'order_event' };
+  }
+  if (exit && !timeline.physicallyOut) {
+    return { physicallyOut: false, effectiveAt: exit.effectiveAt, afterCutoff: false, source: 'order_event_reversed' };
+  }
+  const orderStatus = String(item.order_status || '').toLowerCase();
+  const fulfillment = String(item.fulfillment_status || '').toLowerCase();
+  if (TERMINAL_STATUSES.has(orderStatus) || TERMINAL_STATUSES.has(fulfillment)) {
+    return { physicallyOut: false, effectiveAt: null, afterCutoff: false, source: 'terminal' };
+  }
+  if (!isStockEligibleFulfillment(fulfillment)) {
+    return { physicallyOut: false, effectiveAt: null, afterCutoff: false, source: 'not_eligible' };
+  }
+  const at = item.ordered_at ? new Date(item.ordered_at).toISOString() : null;
+  const afterCutoff = at ? new Date(at).getTime() >= new Date(cutoffAt).getTime() : false;
+  return { physicallyOut: true, effectiveAt: at, afterCutoff, source: 'fulfillment_ordered_at' };
+}
+
+export function planSaleLedgerAction(line, exit, { alreadyApplied = false, hasMovement = false } = {}) {
+  if (line.status !== 'mapped') return { action: 'none' };
+  if (!exit?.physicallyOut) return { action: 'skip_not_exited' };
+  if (!exit.afterCutoff) return { action: 'skip_before_cutoff' };
+  if (line.ledgerPolicy !== 'deduct_after_cutoff') return { action: 'skip_not_counted' };
+  if (alreadyApplied || hasMovement) return { action: 'already_deducted' };
+  if (!(number(line.quantity) > 0)) return { action: 'skip_not_exited' };
+  return {
+    action: 'deduct',
+    quantity: number(line.quantity),
+    effectiveAt: exit.effectiveAt,
+    productId: line.productId,
+  };
+}
+
+function eventsByOrderId(events = []) {
+  const grouped = new Map();
+  for (const event of events) {
+    const orderId = Number(event.order_id);
+    const list = grouped.get(orderId) || [];
+    list.push(event);
+    grouped.set(orderId, list);
+  }
+  return grouped;
 }
 
 function pushCandidate(candidates, product, listing, method) {
@@ -232,6 +287,8 @@ export function buildHistoricalSalesCoverage({
   historicalMap = HISTORICAL_SKU_TO_MASTER,
   since = SALES_HISTORY_SINCE,
   cutoffAt = PHYSICAL_COUNT_CUTOFF,
+  events = [],
+  deductedItemIds = new Set(),
 } = {}) {
   const productsById = new Map(products.map((product) => [Number(product.id), product]));
   const productsBySku = new Map(products.map((product) => [product.main_sku, product]));
@@ -241,7 +298,7 @@ export function buildHistoricalSalesCoverage({
   const context = {
     productsById, productsBySku, listingsById, listings, indexes, historicalMap, countCatalog,
   };
-  const cutoff = new Date(cutoffAt).getTime();
+  const eventsByOrder = eventsByOrderId(events);
   const lines = [];
   const grouped = new Map();
 
@@ -249,7 +306,7 @@ export function buildHistoricalSalesCoverage({
     const resolved = resolveSaleItem(item, context);
     const quantity = number(item.quantity);
     const orderedAt = item.ordered_at ? new Date(item.ordered_at).toISOString() : null;
-    const afterCutoff = orderedAt ? new Date(orderedAt).getTime() >= cutoff : false;
+    const exit = planWarehouseExit(item, eventsByOrder.get(Number(item.order_id)) || [], cutoffAt);
     const line = {
       itemId: Number(item.id),
       orderId: Number(item.order_id),
@@ -262,10 +319,14 @@ export function buildHistoricalSalesCoverage({
       title: item.description || null,
       quantity,
       orderedAt,
-      afterCutoff,
+      afterCutoff: exit.afterCutoff,
+      exitAt: exit.effectiveAt,
+      exitSource: exit.source,
+      physicallyOut: exit.physicallyOut,
       currentProductId: item.product_id == null ? null : Number(item.product_id),
       currentListingId: item.listing_id == null ? null : Number(item.listing_id),
       currentMainSku: item.main_sku || null,
+      stockAppliedQuantity: number(item.stock_applied_quantity),
       status: resolved.status,
       reason: resolved.reason || null,
       method: resolved.method || null,
@@ -274,8 +335,15 @@ export function buildHistoricalSalesCoverage({
       listingId: resolved.listing ? Number(resolved.listing.id) : null,
       countPresence: resolved.countPresence || null,
       ledgerPolicy: resolved.ledgerPolicy || null,
-      needsWrite: mappingNeedsWrite(item, resolved),
+      needsWrite: false,
+      ledgerAction: 'none',
     };
+    line.needsWrite = mappingNeedsWrite(item, resolved);
+    const ledger = planSaleLedgerAction(line, exit, {
+      alreadyApplied: number(item.stock_applied_quantity) > 0,
+      hasMovement: deductedItemIds.has(Number(item.id)),
+    });
+    line.ledgerAction = ledger.action;
     lines.push(line);
 
     const key = identityKey(item);
@@ -299,10 +367,11 @@ export function buildHistoricalSalesCoverage({
       ledger_policy: null,
       already_mapped_lines: 0,
       needs_write_lines: 0,
+      to_deduct_units: 0,
     };
     identity.lines += 1;
     identity.units += quantity;
-    if (afterCutoff) identity.units_after_cutoff += quantity;
+    if (exit.afterCutoff) identity.units_after_cutoff += quantity;
     else identity.units_before_cutoff += quantity;
     if (orderedAt && (!identity.first_ordered_at || orderedAt < identity.first_ordered_at)) {
       identity.first_ordered_at = orderedAt;
@@ -321,6 +390,7 @@ export function buildHistoricalSalesCoverage({
     identity.ledger_policy = line.ledgerPolicy || identity.ledger_policy;
     if (line.status === 'mapped' && !line.needsWrite) identity.already_mapped_lines += 1;
     if (line.needsWrite) identity.needs_write_lines += 1;
+    if (line.ledgerAction === 'deduct') identity.to_deduct_units += quantity;
     grouped.set(key, identity);
   }
 
@@ -332,6 +402,25 @@ export function buildHistoricalSalesCoverage({
   ));
   const review = identities.filter((identity) => identity.status !== 'mapped');
   const toApply = lines.filter((line) => line.needsWrite);
+  const toDeduct = lines.filter((line) => line.ledgerAction === 'deduct');
+  const deductByProduct = new Map();
+  for (const line of toDeduct) {
+    deductByProduct.set(line.productId, number(deductByProduct.get(line.productId)) + line.quantity);
+  }
+  const shortages = products.flatMap((product) => {
+    const units = number(deductByProduct.get(Number(product.id)));
+    if (!countedSkus.has(product.main_sku) || units <= 0) return [];
+    const onHand = number(product.quantity_on_hand);
+    if (onHand >= units) return [];
+    return [{
+      productId: Number(product.id),
+      mainSku: product.main_sku,
+      onHand,
+      units,
+      shortage: units - onHand,
+      reason: 'Las salidas posteriores al conteo superan el stock actual del maestro contado.',
+    }];
+  });
 
   return {
     since,
@@ -346,12 +435,19 @@ export function buildHistoricalSalesCoverage({
       missing_master: lines.filter((line) => line.status === 'missing_master').length,
       already_mapped: lines.filter((line) => line.status === 'mapped' && !line.needsWrite).length,
       to_apply: toApply.length,
+      to_deduct: toDeduct.length,
+      already_deducted: lines.filter((line) => line.ledgerAction === 'already_deducted').length,
+      skip_before_cutoff: lines.filter((line) => line.ledgerAction === 'skip_before_cutoff').length,
+      skip_not_counted: lines.filter((line) => line.ledgerAction === 'skip_not_counted').length,
       review_identities: review.length,
+      shortages: shortages.length,
     },
     identities,
     review,
+    shortages,
     lines,
     toApply,
+    toDeduct,
   };
 }
 
@@ -367,6 +463,16 @@ export function formatReviewTsv(identities) {
   ];
   const rows = identities.filter((identity) => identity.status !== 'mapped');
   return `${[header.join('\t'), ...rows.map((row) => header.map((key) => tsvEscape(row[key])).join('\t'))].join('\n')}\n`;
+}
+
+export function formatCoverageTsv(identities) {
+  const header = [
+    'channel', 'company_id', 'seller_sku', 'shop_sku', 'title', 'lines', 'units',
+    'units_before_cutoff', 'units_after_cutoff', 'to_deduct_units',
+    'first_ordered_at', 'last_ordered_at', 'status', 'reason', 'main_sku', 'method',
+    'count_presence', 'ledger_policy',
+  ];
+  return `${[header.join('\t'), ...identities.map((row) => header.map((key) => tsvEscape(row[key])).join('\t'))].join('\n')}\n`;
 }
 
 async function inventoryFingerprint(db) {
@@ -402,7 +508,29 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
      order by oi.id`,
     [MAPPING_CHANNELS, since],
   )).rows;
-  return { products, listings, items };
+  const orderIds = [...new Set(items.map((item) => Number(item.order_id)))];
+  const itemIds = items.map((item) => Number(item.id));
+  const events = orderIds.length ? (await db.query(
+    `select id, order_id, event_type, new_values, provider_occurred_at
+     from order_events
+     where order_id=any($1::bigint[]) and provider_occurred_at is not null
+     order by order_id, provider_occurred_at, id`,
+    [orderIds],
+  )).rows : [];
+  const deducted = itemIds.length ? (await db.query(
+    `select distinct order_item_id
+     from inventory_movements
+     where order_item_id=any($1::bigint[])
+       and movement_type in ('sale', 'sale_adjust')`,
+    [itemIds],
+  )).rows : [];
+  return {
+    products,
+    listings,
+    items,
+    events,
+    deductedItemIds: new Set(deducted.map((row) => Number(row.order_item_id))),
+  };
 }
 
 export async function applyHistoricalSalesMappings(pool, input = {}) {
@@ -487,13 +615,90 @@ export async function applyHistoricalSalesMappings(pool, input = {}) {
       updatedItems += updated.rowCount;
     }
 
+    const countedProductIds = new Set(
+      loaded.products
+        .filter((product) => (input.countedSkus || new Set()).has(product.main_sku))
+        .map((product) => Number(product.id)),
+    );
+    let deductedItems = 0;
+    const appliedShortages = [];
+    const toDeduct = [...coverage.toDeduct].sort((left, right) => (
+      String(left.exitAt || '').localeCompare(String(right.exitAt || ''))
+      || left.itemId - right.itemId
+    ));
+    for (const line of toDeduct) {
+      try {
+        const result = await applyInventoryMovement(client, {
+          productId: line.productId,
+          quantityDelta: -line.quantity,
+          movementType: 'sale',
+          reason: line.orderNumber ? `Venta del pedido ${line.orderNumber}` : 'Venta posterior al conteo físico',
+          source: 'historical_sales_mapping',
+          orderId: line.orderId,
+          orderItemId: line.itemId,
+          listingId: line.listingId,
+          allowNegative: false,
+          effectiveAt: line.exitAt,
+          idempotencyKey: `historical-sales-mapping:item:${line.itemId}:exit`,
+          metadata: {
+            salesHistorySince: SALES_HISTORY_SINCE,
+            cutoffAt: coverage.cutoffAt,
+            channelCode: line.channelCode,
+            ledgerPolicy: line.ledgerPolicy,
+          },
+        });
+        if (result.applied === true) {
+          deductedItems += 1;
+          await client.query(
+            `update order_items set
+               stock_state='applied',
+               stock_applied_quantity=$1,
+               stock_revision=stock_revision+1,
+               updated_at=now()
+             where id=$2`,
+            [line.quantity, line.itemId],
+          );
+        }
+      } catch (error) {
+        if (error instanceof InsufficientStockError || error.code === 'insufficient_stock') {
+          appliedShortages.push({
+            itemId: line.itemId,
+            mainSku: line.mainSku,
+            productId: line.productId,
+            quantity: line.quantity,
+            onHand: error.onHand,
+            reason: 'Las salidas posteriores al conteo superan el stock actual del maestro contado.',
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
     const after = await inventoryFingerprint(client);
-    if (JSON.stringify(after) !== JSON.stringify(before)) {
-      throw new Error('El mapeo no debe crear movimientos ni cambiar cantidades de inventario.');
+    const beforeByProduct = new Map(before.inventory.map((row) => [Number(row.product_id), row]));
+    for (const row of after.inventory) {
+      const productId = Number(row.product_id);
+      const previous = beforeByProduct.get(productId);
+      if (!previous) continue;
+      if (Number(row.quantity_reserved) !== Number(previous.quantity_reserved)) {
+        throw new Error(`El mapeo cambió el stock reservado del producto ${productId}.`);
+      }
+      if (!countedProductIds.has(productId)
+        && Number(row.quantity_on_hand) !== Number(previous.quantity_on_hand)) {
+        throw new Error(`El maestro ${productId} no está contado en el Excel y no debe descontar.`);
+      }
     }
 
     await client.query('commit');
-    return { coverage, createdListings, updatedItems, inventoryUnchanged: true };
+    return {
+      coverage,
+      createdListings,
+      updatedItems,
+      deductedItems,
+      shortages: [...coverage.shortages, ...appliedShortages],
+      inventoryUnchanged: deductedItems === 0,
+    };
   } catch (error) {
     await client.query('rollback');
     throw error;

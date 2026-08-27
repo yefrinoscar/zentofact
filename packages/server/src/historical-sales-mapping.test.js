@@ -7,8 +7,11 @@ import {
   classifyCountPresence,
   formatReviewTsv,
   ledgerPolicyForPresence,
+  planSaleLedgerAction,
+  planWarehouseExit,
   resolveSaleItem,
   buildListingIndexes,
+  PHYSICAL_COUNT_CUTOFF,
 } from './catalog/historical-sales-mapping.js';
 
 function context(products, listings, extras = {}) {
@@ -137,6 +140,71 @@ test('el conteo físico decide si se puede descontar después del viernes', () =
   assert.equal(ledgerPolicyForPresence('excel_without_quantity'), 'review_no_deduct');
 });
 
+test('solo descuenta salidas posteriores al conteo en maestros contados', () => {
+  const mapped = {
+    status: 'mapped', quantity: 2, productId: 10, ledgerPolicy: 'deduct_after_cutoff',
+  };
+  assert.equal(planSaleLedgerAction(mapped, {
+    physicallyOut: true, afterCutoff: true, effectiveAt: '2026-08-22T16:00:00.000Z',
+  }).action, 'deduct');
+  assert.equal(planSaleLedgerAction(mapped, {
+    physicallyOut: true, afterCutoff: false, effectiveAt: '2026-08-10T16:00:00.000Z',
+  }).action, 'skip_before_cutoff');
+  assert.equal(planSaleLedgerAction({
+    ...mapped, ledgerPolicy: 'map_only_no_deduct',
+  }, {
+    physicallyOut: true, afterCutoff: true, effectiveAt: '2026-08-22T16:00:00.000Z',
+  }).action, 'skip_not_counted');
+  assert.equal(planSaleLedgerAction(mapped, {
+    physicallyOut: true, afterCutoff: true, effectiveAt: '2026-08-22T16:00:00.000Z',
+  }, { hasMovement: true }).action, 'already_deducted');
+});
+
+test('una salida con evento posterior al conteo entra al ledger; una anterior no', () => {
+  const after = planWarehouseExit({
+    quantity: 1, fulfillment_status: 'pending', ordered_at: '2026-08-20T12:00:00.000Z',
+  }, [{
+    id: 1, provider_occurred_at: '2026-08-22T16:00:00.000Z',
+    new_values: { fulfillmentStatus: 'ready_to_ship', orderStatus: 'confirmed' },
+  }], PHYSICAL_COUNT_CUTOFF);
+  assert.equal(after.afterCutoff, true);
+  assert.equal(after.source, 'order_event');
+
+  const before = planWarehouseExit({
+    quantity: 1, fulfillment_status: 'shipped', ordered_at: '2026-08-10T12:00:00.000Z',
+  }, [], PHYSICAL_COUNT_CUTOFF);
+  assert.equal(before.afterCutoff, false);
+  assert.equal(before.source, 'fulfillment_ordered_at');
+});
+
+test('la cobertura descuenta solo el maestro contado con salida posterior', () => {
+  const coverage = buildHistoricalSalesCoverage({
+    products: [{ id: 10, main_sku: 'Z7', quantity_on_hand: 10 }, { id: 270, main_sku: 'FAL-146325783', quantity_on_hand: 0 }],
+    listings,
+    countedSkus: new Set(['Z7']),
+    skusWithoutQuantity: new Set(),
+    items: [
+      {
+        id: 9, order_id: 90, channel_code: 'falabella', company_id: 3, channel_account_id: 5,
+        sku: 'seller-z7', provider_sku: 'shop-z7', description: 'Z7', quantity: 2,
+        product_id: 10, listing_id: 20, main_sku: 'Z7', stock_applied_quantity: 0,
+        ordered_at: '2026-08-22T16:00:00.000Z', fulfillment_status: 'shipped', order_status: 'confirmed',
+        external_order_number: 'POST',
+      },
+      {
+        id: 10, order_id: 91, channel_code: 'falabella', company_id: 3, channel_account_id: 5,
+        sku: '357258624678', provider_sku: '146325783', description: 'Chaleco', quantity: 1,
+        product_id: 270, listing_id: null, main_sku: 'FAL-146325783', stock_applied_quantity: 0,
+        ordered_at: '2026-08-22T16:00:00.000Z', fulfillment_status: 'shipped', order_status: 'confirmed',
+        external_order_number: 'ABSENT',
+      },
+    ],
+  });
+  assert.deepEqual(coverage.toDeduct.map((line) => line.itemId), [9]);
+  assert.equal(coverage.lines.find((line) => line.itemId === 10).ledgerAction, 'skip_not_counted');
+  assert.equal(coverage.summary.to_deduct, 1);
+});
+
 test('la cobertura agrupa identidades y no propone escritura cuando ya está mapeado', () => {
   const coverage = buildHistoricalSalesCoverage({
     products,
@@ -171,6 +239,7 @@ test('la cobertura agrupa identidades y no propone escritura cuando ya está map
   assert.equal(coverage.summary.to_apply, 1);
   assert.equal(coverage.toApply[0].itemId, 3);
   assert.equal(coverage.toApply[0].ledgerPolicy, 'review_no_deduct');
+  assert.equal(coverage.summary.to_deduct, 0);
   assert.equal(coverage.review.length, 1);
   assert.equal(coverage.review[0].seller_sku, 'NO-EXISTE');
   const tsv = formatReviewTsv(coverage.identities);
@@ -183,6 +252,8 @@ test('aplicar el mapeo escribe product_id y no toca el inventario', async () => 
   const client = {
     async query(sql, params = []) {
       queries.push({ sql: String(sql), params });
+      if (String(sql).includes('from order_events')) return { rows: [] };
+      if (String(sql).includes('distinct order_item_id')) return { rows: [] };
       if (String(sql).includes('from product_inventory')) {
         return { rows: [{ product_id: 10, quantity_on_hand: 4, quantity_reserved: 0 }] };
       }
@@ -219,6 +290,7 @@ test('aplicar el mapeo escribe product_id y no toca el inventario', async () => 
     skusWithoutQuantity: new Set(['G40XL']),
   });
   assert.equal(result.updatedItems, 1);
+  assert.equal(result.deductedItems, 0);
   assert.equal(result.inventoryUnchanged, true);
   assert.equal(queries.some((entry) => entry.sql.includes('insert into inventory_movements')), false);
   assert.equal(queries.some((entry) => entry.sql.includes('commit')), true);
