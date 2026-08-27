@@ -1,3 +1,10 @@
+import {
+  OWN_DELIVERY_CARRIER,
+  ownDeliveryQuote,
+  type DeliveryLocation,
+} from './own-delivery.ts';
+import type { ShippingCarrier } from './shipping-carrier.ts';
+
 export const SALE_SOURCES = [
   { value: 'marketplace', label: 'Marketplace' },
   { value: 'whatsapp', label: 'WhatsApp' },
@@ -18,7 +25,7 @@ export const PICKUP_ADDRESS = 'Av. La Marina 2055, San Miguel';
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
-export type ShippingCarrier = 'marvisuar' | 'shaloom' | 'dinsides';
+export type { ShippingCarrier } from './shipping-carrier.ts';
 
 export type CatalogProductForSale = {
   id: number;
@@ -59,6 +66,8 @@ export type ManualSaleInput = {
   deliveryDate: string;
   shippingCarrier: ShippingCarrier | '';
   dropoffPlace: DropoffPlace | null;
+  deliveryLocation: DeliveryLocation;
+  ownDeliveryDistanceKm: number | null;
   shippingNote?: string;
   saleSource: SaleSource;
   paymentMethod: PaymentMethod;
@@ -112,6 +121,11 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
+export function manualSaleShippingAmount(input: Pick<ManualSaleInput, 'delivery' | 'shippingCarrier' | 'ownDeliveryDistanceKm'>) {
+  if (input.delivery !== 'envio' || input.shippingCarrier !== OWN_DELIVERY_CARRIER) return 0;
+  return ownDeliveryQuote(input.ownDeliveryDistanceKm)?.amount || 0;
+}
+
 export function validateManualSale(input: ManualSaleInput) {
   if (!input.channelAccountId) {
     return 'Todavía no hay un canal de venta manual habilitado.';
@@ -129,10 +143,22 @@ export function validateManualSale(input: ManualSaleInput) {
     return 'Indica la fecha de entrega.';
   }
   if (input.delivery === 'envio' && !input.shippingCarrier) {
-    return 'Elige el reparto: Marvisuar, Shaloom o Dinsides.';
+    return 'Elige el reparto.';
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
     return 'Marca la dirección de envío en el mapa.';
+  }
+  if (input.delivery === 'envio' && !String(input.deliveryLocation?.district || '').trim()) {
+    return 'Elige el distrito de entrega.';
+  }
+  if (input.delivery === 'envio' && input.shippingCarrier === OWN_DELIVERY_CARRIER) {
+    const distanceKm = Number(input.ownDeliveryDistanceKm);
+    if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+      return 'Indica la distancia estimada.';
+    }
+    if (!ownDeliveryQuote(distanceKm)) {
+      return 'Movilidad propia cubre hasta 25 km.';
+    }
   }
   return null;
 }
@@ -145,7 +171,12 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
   const orderNumber = input.orderNumber || generateManualOrderNumber(
     input.orderedAt ? new Date(input.orderedAt) : new Date(),
   );
-  const total = saleLinesTotal(input.lines);
+  const subtotal = saleLinesTotal(input.lines);
+  const ownDelivery = input.delivery === 'envio' && input.shippingCarrier === OWN_DELIVERY_CARRIER
+    ? ownDeliveryQuote(input.ownDeliveryDistanceKm)
+    : null;
+  const shippingAmount = manualSaleShippingAmount(input);
+  const total = subtotal + shippingAmount;
   const deliveryDate = String(input.deliveryDate).trim();
 
   return {
@@ -157,7 +188,8 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
     fulfillmentStatus: 'ready_to_ship' as const,
     requestedDocumentType: 'boleta' as const,
     currency: 'PEN',
-    subtotal: total,
+    subtotal,
+    shippingAmount,
     total,
     customer: {
       name: String(input.customerName).trim(),
@@ -167,10 +199,15 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
       type: input.delivery,
       carrier: input.delivery === 'envio' ? input.shippingCarrier : undefined,
       address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : PICKUP_ADDRESS,
-      district: input.delivery === 'envio' ? input.dropoffPlace?.district || '' : '',
+      department: input.delivery === 'envio' ? input.deliveryLocation.department : '',
+      province: input.delivery === 'envio' ? input.deliveryLocation.province : '',
+      district: input.delivery === 'envio' ? input.deliveryLocation.district : '',
+      ubigeo: input.delivery === 'envio' ? input.deliveryLocation.ubigeo : '',
       reference: input.delivery === 'envio' ? String(input.shippingNote || '').trim() : '',
       lat: input.delivery === 'envio' ? input.dropoffPlace?.lat : undefined,
       lng: input.delivery === 'envio' ? input.dropoffPlace?.lng : undefined,
+      distanceKm: ownDelivery?.distanceKm,
+      rateTierKm: ownDelivery?.maxDistanceKm,
     },
     metadata: {
       origin: 'manual_ui',
@@ -178,6 +215,13 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
       delivery: input.delivery,
       deliveryDate,
       shippingCarrier: input.delivery === 'envio' ? input.shippingCarrier : '',
+      ...(ownDelivery ? {
+        ownDelivery: {
+          distanceKm: ownDelivery.distanceKm,
+          rateTierKm: ownDelivery.maxDistanceKm,
+          shippingAmount,
+        },
+      } : {}),
       paymentMethod: input.paymentMethod,
       receivedBy: input.paymentMethod === 'efectivo' ? String(input.receivedBy || '').trim() : '',
       paymentProof: input.paymentProof || null,

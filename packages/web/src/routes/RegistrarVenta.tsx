@@ -39,6 +39,15 @@ import {
   type SaleValidationField,
 } from '../lib/sale-feedback';
 import { SHIPPING_CARRIERS, type ShippingCarrier } from '../lib/shipping-carrier';
+import {
+  DEFAULT_DELIVERY_LOCATION,
+  OWN_DELIVERY_CARRIER,
+  deliveryProvincesForDepartment,
+  districtsForDeliveryLocation,
+  findLimaMetropolitanDistrict,
+  ownDeliveryQuote,
+  type DeliveryLocation,
+} from '../lib/own-delivery';
 import { PlacePicker, type MapPlace } from '../components/PlacePicker';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
@@ -47,6 +56,13 @@ import { Calendar } from '../components/ui/calendar';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { dateFromKey } from '../lib/documentDateRange';
 
 type ChannelAccount = {
@@ -288,6 +304,8 @@ export default function RegistrarVenta() {
   const [deliveryDate, setDeliveryDate] = useState(limaTodayKey);
   const [shippingCarrier, setShippingCarrier] = useState<ShippingCarrier | ''>('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
+  const [deliveryLocation, setDeliveryLocation] = useState<DeliveryLocation>(DEFAULT_DELIVERY_LOCATION);
+  const [ownDeliveryDistanceKm, setOwnDeliveryDistanceKm] = useState('');
   const [shippingNote, setShippingNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
   const [receivedBy, setReceivedBy] = useState('');
@@ -344,7 +362,15 @@ export default function RegistrarVenta() {
     [accounts],
   );
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
-  const total = saleLinesTotal(lines);
+  const productTotal = saleLinesTotal(lines);
+  const ownDeliveryDistance = ownDeliveryDistanceKm === '' ? null : Number(ownDeliveryDistanceKm);
+  const ownDelivery = shippingCarrier === OWN_DELIVERY_CARRIER
+    ? ownDeliveryQuote(ownDeliveryDistance)
+    : null;
+  const shippingAmount = ownDelivery?.amount || 0;
+  const total = productTotal + shippingAmount;
+  const deliveryProvinces = deliveryProvincesForDepartment(deliveryLocation.department);
+  const deliveryDistricts = districtsForDeliveryLocation(deliveryLocation);
 
   const addProduct = (product: CatalogProduct) => {
     const sku = String(product.mainSku || '').trim();
@@ -409,6 +435,8 @@ export default function RegistrarVenta() {
       deliveryDate,
       shippingCarrier,
       dropoffPlace,
+      deliveryLocation,
+      ownDeliveryDistanceKm: ownDeliveryDistance,
       shippingNote,
       saleSource,
       paymentMethod,
@@ -431,6 +459,8 @@ export default function RegistrarVenta() {
         deliveryDate,
         shippingCarrier,
         dropoffPlace,
+        deliveryLocation,
+        ownDeliveryDistanceKm: ownDeliveryDistance,
         shippingNote,
         saleSource,
         paymentMethod,
@@ -644,6 +674,7 @@ export default function RegistrarVenta() {
                 setDelivery('recojo');
                 setShippingCarrier('');
                 setDropoffPlace(null);
+                setOwnDeliveryDistanceKm('');
                 setShippingNote('');
                 clearFieldError('delivery');
               }}
@@ -683,6 +714,7 @@ export default function RegistrarVenta() {
                     aria-checked={selected}
                     onClick={() => {
                       setShippingCarrier(carrier.value);
+                      if (carrier.value !== OWN_DELIVERY_CARRIER) setOwnDeliveryDistanceKm('');
                       clearFieldError('delivery');
                     }}
                     className={cn(
@@ -696,12 +728,104 @@ export default function RegistrarVenta() {
                 );
               })}
             </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="delivery-department">Departamento</Label>
+                <Select
+                  value={deliveryLocation.department}
+                  onValueChange={(department) => {
+                    const province = deliveryProvincesForDepartment(department)[0] || '';
+                    setDeliveryLocation({ department, province, district: '', ubigeo: '' });
+                    clearFieldError('delivery');
+                  }}
+                >
+                  <SelectTrigger id="delivery-department" aria-label="Departamento de entrega">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DEFAULT_DELIVERY_LOCATION.department}>{DEFAULT_DELIVERY_LOCATION.department}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delivery-province">Provincia</Label>
+                <Select
+                  value={deliveryLocation.province}
+                  onValueChange={(province) => {
+                    setDeliveryLocation((current) => ({ ...current, province, district: '', ubigeo: '' }));
+                    clearFieldError('delivery');
+                  }}
+                >
+                  <SelectTrigger id="delivery-province" aria-label="Provincia de entrega">
+                    <SelectValue placeholder="Selecciona provincia" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deliveryProvinces.map((province) => <SelectItem key={province} value={province}>{province}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delivery-district">Distrito</Label>
+                <Select
+                  value={deliveryLocation.district}
+                  onValueChange={(districtName) => {
+                    const district = deliveryDistricts.find((candidate) => candidate.name === districtName);
+                    if (!district) return;
+                    setDeliveryLocation((current) => ({ ...current, district: district.name, ubigeo: district.ubigeo }));
+                    clearFieldError('delivery');
+                  }}
+                >
+                  <SelectTrigger id="delivery-district" aria-label="Distrito de entrega">
+                    <SelectValue placeholder="Selecciona distrito" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deliveryDistricts.map((district) => <SelectItem key={district.ubigeo} value={district.name}>{district.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {shippingCarrier === OWN_DELIVERY_CARRIER && (
+              <div className="grid gap-3 border-y border-border py-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="own-delivery-distance">Distancia estimada</Label>
+                  <Input
+                    id="own-delivery-distance"
+                    type="number"
+                    min={0.1}
+                    max={25}
+                    step="0.1"
+                    inputMode="decimal"
+                    value={ownDeliveryDistanceKm}
+                    onChange={(event) => {
+                      setOwnDeliveryDistanceKm(event.target.value);
+                      clearFieldError('delivery');
+                    }}
+                    placeholder="km"
+                    className={cn(NUMBER_INPUT, 'tabular-nums')}
+                  />
+                </div>
+                <div className="min-w-0 pb-0.5 sm:pb-1">
+                  <p className="text-xs text-muted-foreground">Tarifa de envío</p>
+                  <p className="text-lg font-semibold tabular-nums">{ownDelivery ? formatMoney(ownDelivery.amount) : '—'}</p>
+                  <p className="text-xs text-muted-foreground">10 km · S/ 10 &nbsp; 15 km · S/ 20 &nbsp; 25 km · S/ 25</p>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Dirección</Label>
               <PlacePicker
                 value={dropoffPlace}
                 onChange={(place) => {
                   setDropoffPlace(place);
+                  const district = findLimaMetropolitanDistrict(place.district);
+                  if (district) {
+                    setDeliveryLocation({
+                      department: DEFAULT_DELIVERY_LOCATION.department,
+                      province: DEFAULT_DELIVERY_LOCATION.province,
+                      district: district.name,
+                      ubigeo: district.ubigeo,
+                    });
+                  }
                   clearFieldError('delivery');
                 }}
                 placeholder="Calle o toca el mapa"
@@ -773,10 +897,22 @@ export default function RegistrarVenta() {
       <div className="h-2 sm:hidden" aria-hidden="true" />
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">Total</p>
-            <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+        <div className="mx-auto flex max-w-3xl items-end justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span>Productos</span>
+              <span className="tabular-nums">{formatMoney(productTotal)}</span>
+            </div>
+            {shippingCarrier === OWN_DELIVERY_CARRIER && (
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>Envío propio</span>
+                <span className="tabular-nums">{ownDelivery ? formatMoney(shippingAmount) : '—'}</span>
+              </div>
+            )}
+            <div className="flex items-baseline gap-3">
+              <p className="text-xs text-muted-foreground">Total</p>
+              <p className="truncate text-xl font-semibold tabular-nums">{formatMoney(total)}</p>
+            </div>
           </div>
           <Button type="submit" className="h-11 shrink-0 cursor-pointer" disabled={creating || !!loadError || channelMissing}>
             {creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}

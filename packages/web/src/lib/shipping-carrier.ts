@@ -1,7 +1,10 @@
+import { OWN_DELIVERY_CARRIER } from './own-delivery.ts';
+
 export const SHIPPING_CARRIERS = [
   { value: 'marvisuar', label: 'Marvisuar' },
   { value: 'shaloom', label: 'Shaloom' },
   { value: 'dinsides', label: 'Dinsides' },
+  { value: OWN_DELIVERY_CARRIER, label: 'Movilidad propia' },
 ] as const;
 
 export type ShippingCarrier = (typeof SHIPPING_CARRIERS)[number]['value'];

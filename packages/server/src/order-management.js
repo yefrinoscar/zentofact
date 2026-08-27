@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
+import limaOwnDelivery from '../../../shared/lima-own-delivery.json' with { type: 'json' };
 
 export const DOCUMENT_REQUIREMENTS = ['disabled', 'optional', 'required'];
 export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'customer_choice'];
@@ -10,7 +11,9 @@ export const FULFILLMENT_STATUSES = [
 ];
 export const ORDER_ITEMS_STATUSES = ['pending', 'complete', 'error'];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
-export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides'];
+export const OWN_DELIVERY_CARRIER = 'movilidad_propia';
+export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides', OWN_DELIVERY_CARRIER];
+export const OWN_DELIVERY_DISTANCE_TIERS = limaOwnDelivery.distanceTiers;
 
 let corePromise;
 
@@ -57,13 +60,88 @@ function jsonObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function locationKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLocaleLowerCase('es-PE')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function limaMetropolitanDistrict(value) {
+  const key = locationKey(value);
+  if (!key) return null;
+  const exactMatch = limaOwnDelivery.districts.find((district) => locationKey(district.name) === key);
+  if (exactMatch) return exactMatch;
+  const partialMatches = limaOwnDelivery.districts.filter((district) => {
+    const candidate = locationKey(district.name);
+    return candidate.includes(key) || key.includes(candidate);
+  });
+  return partialMatches.length === 1 ? partialMatches[0] : null;
+}
+
+function ownDeliveryQuote(distanceValue) {
+  const distanceKm = Number(distanceValue);
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+    throw new Error('Indica la distancia estimada.');
+  }
+  const tier = OWN_DELIVERY_DISTANCE_TIERS.find((candidate) => distanceKm <= candidate.maxDistanceKm);
+  if (!tier) throw new Error('Movilidad propia cubre hasta 25 km.');
+  return { distanceKm, maxDistanceKm: tier.maxDistanceKm, amount: tier.amount };
+}
+
+function normalizeManualOwnDelivery(order, input) {
+  if (String(input.source || '').trim().toLowerCase() !== 'manual') return order;
+  if (String(order.shipping?.type || '').trim().toLowerCase() !== 'envio') return order;
+  if (String(order.shipping?.carrier || '').trim().toLowerCase() !== OWN_DELIVERY_CARRIER) return order;
+
+  if (
+    locationKey(order.shipping.department) !== locationKey(limaOwnDelivery.department)
+    || locationKey(order.shipping.province) !== locationKey(limaOwnDelivery.province)
+  ) {
+    throw new Error('Movilidad propia solo está disponible en Lima, provincia de Lima.');
+  }
+
+  const district = limaMetropolitanDistrict(order.shipping.district);
+  if (!district) throw new Error('Elige un distrito de Lima.');
+  if (order.subtotal == null) throw new Error('No se pudo calcular el subtotal.');
+
+  const quote = ownDeliveryQuote(order.shipping.distanceKm);
+  const discountAmount = order.discountAmount || 0;
+  const total = Math.round((order.subtotal + quote.amount - discountAmount) * 100) / 100;
+
+  return {
+    ...order,
+    shippingAmount: quote.amount,
+    total,
+    shipping: {
+      ...order.shipping,
+      department: limaOwnDelivery.department,
+      province: limaOwnDelivery.province,
+      district: district.name,
+      ubigeo: district.ubigeo,
+      distanceKm: quote.distanceKm,
+      rateTierKm: quote.maxDistanceKm,
+    },
+    metadata: {
+      ...order.metadata,
+      ownDelivery: {
+        distanceKm: quote.distanceKm,
+        rateTierKm: quote.maxDistanceKm,
+        shippingAmount: quote.amount,
+      },
+    },
+  };
+}
+
 function assertManualEnvioCarrier(shipping, source) {
   if (String(source || '').trim().toLowerCase() !== 'manual') return;
   const type = String(shipping?.type || '').trim().toLowerCase();
   if (type !== 'envio') return;
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
-    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides.');
+    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Movilidad propia.');
   }
 }
 
@@ -589,12 +667,13 @@ async function ingestOrderInTransaction(input, db) {
     documentRequirement: existing.document_requirement,
     documentTypePolicy: existing.document_type_policy,
   } : account;
-  const order = normalizeOrderInput({
+  let order = normalizeOrderInput({
     ...input,
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
   }, policyAccount);
   assertManualEnvioCarrier(order.shipping, input.source);
+  order = normalizeManualOwnDelivery(order, input);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {
     const replay = await db.query(
@@ -1098,6 +1177,78 @@ const SALES_EXCLUSIONS = `
   and o.payment_status not in ('refunded', 'failed')
   and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
 `;
+
+export async function getOwnDeliveryReport(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const date = String(filters.date || '').trim();
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date inválida.');
+  const where = `
+    ${SALES_EXCLUSIONS}
+    and ch.code='manual'
+    and o.shipping->>'carrier'=$2
+    and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+      = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)
+  `;
+  const [summaryResult, tiersResult, districtsResult] = await Promise.all([
+    target.query(
+      `select count(o.id)::int as deliveries_count,
+         coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       where ${where}`,
+      [date, OWN_DELIVERY_CARRIER],
+    ),
+    target.query(
+      `select nullif(o.shipping->>'rateTierKm', '') as rate_tier_km,
+         count(o.id)::int as deliveries_count,
+         coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       where ${where}
+       group by 1`,
+      [date, OWN_DELIVERY_CARRIER],
+    ),
+    target.query(
+      `select coalesce(nullif(trim(o.shipping->>'district'), ''), 'Sin distrito') as district,
+         count(o.id)::int as deliveries_count,
+         coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       where ${where}
+       group by 1
+       order by shipping_total desc, deliveries_count desc, district
+       limit 8`,
+      [date, OWN_DELIVERY_CARRIER],
+    ),
+  ]);
+  const summary = summaryResult.rows[0] || {};
+  const tierByDistance = new Map(
+    tiersResult.rows.map((row) => [Number(row.rate_tier_km || 0), row]),
+  );
+
+  return {
+    date: date || limaDateKey(),
+    deliveriesCount: Number(summary.deliveries_count || 0),
+    shippingTotal: Number(summary.shipping_total || 0),
+    tiers: OWN_DELIVERY_DISTANCE_TIERS.map((tier) => {
+      const row = tierByDistance.get(tier.maxDistanceKm);
+      return {
+        maxDistanceKm: tier.maxDistanceKm,
+        amount: tier.amount,
+        deliveriesCount: Number(row?.deliveries_count || 0),
+        shippingTotal: Number(row?.shipping_total || 0),
+      };
+    }),
+    districts: districtsResult.rows.map((row) => ({
+      district: String(row.district || 'Sin distrito'),
+      deliveriesCount: Number(row.deliveries_count || 0),
+      shippingTotal: Number(row.shipping_total || 0),
+    })),
+  };
+}
 
 function limaDateKey(value = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(value);

@@ -12,6 +12,7 @@ import {
   saleLinesTotal,
   validateManualSale,
 } from './registrar-venta.ts';
+import { DEFAULT_DELIVERY_LOCATION } from './own-delivery.ts';
 
 const baseLine = {
   id: 'line-1',
@@ -38,6 +39,12 @@ function validSale(overrides = {}) {
       lat: -12.1,
       lng: -77.0,
     },
+    deliveryLocation: {
+      ...DEFAULT_DELIVERY_LOCATION,
+      district: 'Santiago de Surco',
+      ubigeo: '150140',
+    },
+    ownDeliveryDistanceKm: null,
     shippingNote: 'Tocar timbre',
     saleSource: 'whatsapp',
     paymentMethod: 'despues',
@@ -121,11 +128,15 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
     validateManualSale(validSale({ shippingCarrier: '' })),
-    'Elige el reparto: Marvisuar, Shaloom o Dinsides.',
+    'Elige el reparto.',
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
     'Marca la dirección de envío en el mapa.',
+  );
+  assert.equal(
+    validateManualSale(validSale({ deliveryLocation: DEFAULT_DELIVERY_LOCATION })),
+    'Elige el distrito de entrega.',
   );
   assert.equal(validateManualSale(validSale()), null);
 });
@@ -148,6 +159,10 @@ test('buildManualSaleOrderPayload incluye fecha de entrega y promisedShippingAt'
   assert.equal(payload.paymentStatus, 'pending');
   assert.equal(payload.shipping.type, 'envio');
   assert.equal(payload.shipping.carrier, 'shaloom');
+  assert.equal(payload.shippingAmount, 0);
+  assert.equal(payload.subtotal, 250);
+  assert.equal(payload.total, 250);
+  assert.equal(payload.shipping.district, 'Santiago de Surco');
   assert.equal(payload.shipping.address, 'Av. Primavera 123, Surco');
   assert.equal(payload.shipping.reference, 'Tocar timbre');
   assert.deepEqual(payload.items[0].metadata, { productId: 44, catalogPrice: 250 });
@@ -165,6 +180,35 @@ test('buildManualSaleOrderPayload en recojo usa la dirección de tienda', () => 
   assert.equal(payload.shipping.carrier, undefined);
   assert.equal(payload.shipping.address, PICKUP_ADDRESS);
   assert.equal(payload.metadata.shippingCarrier, '');
+});
+
+test('buildManualSaleOrderPayload suma envío propio por distancia', () => {
+  const payload = buildManualSaleOrderPayload(validSale({
+    shippingCarrier: 'movilidad_propia',
+    ownDeliveryDistanceKm: 12,
+  }));
+
+  assert.equal(payload.subtotal, 250);
+  assert.equal(payload.shippingAmount, 20);
+  assert.equal(payload.total, 270);
+  assert.equal(payload.shipping.distanceKm, 12);
+  assert.equal(payload.shipping.rateTierKm, 15);
+  assert.deepEqual(payload.metadata.ownDelivery, {
+    distanceKm: 12,
+    rateTierKm: 15,
+    shippingAmount: 20,
+  });
+});
+
+test('validateManualSale limita movilidad propia a 25 km', () => {
+  assert.equal(
+    validateManualSale(validSale({ shippingCarrier: 'movilidad_propia', ownDeliveryDistanceKm: null })),
+    'Indica la distancia estimada.',
+  );
+  assert.equal(
+    validateManualSale(validSale({ shippingCarrier: 'movilidad_propia', ownDeliveryDistanceKm: 26 })),
+    'Movilidad propia cubre hasta 25 km.',
+  );
 });
 
 test('buildManualSaleOrderPayload marca pagado cuando el cobro no es después', () => {

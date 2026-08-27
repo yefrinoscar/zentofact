@@ -228,6 +228,8 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
+  getOwnDeliveryReport: (filter: { date?: string } = {}) =>
+    req(`/order-management/own-delivery-report${qs(filter)}`),
   getSalespersonHome: (filter: { from?: string; to?: string; limit?: number } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>

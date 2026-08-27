@@ -27,7 +27,7 @@ if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
   process.env.AUTH_ALLOW_SIGNUP = 'true';
 }
 
-const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
+const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
@@ -349,6 +349,10 @@ app.get('/order-management/orders', async (c) => {
 });
 app.get('/order-management/sales-pulse', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/own-delivery-report', requireAdmin(), async (c) => {
+  try { return ok(c, await orderManagement.getOwnDeliveryReport(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/my-sales', requirePermission('salesperson'), async (c) => {

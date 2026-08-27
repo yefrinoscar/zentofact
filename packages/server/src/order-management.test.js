@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   estimatedCommission,
+  getOwnDeliveryReport,
   getSalesPulse,
   getSalespersonHome,
   ingestOrder,
@@ -391,6 +392,39 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
   assert.equal(result.channels[0].ordersCount, 3);
 });
 
+test('resume los montos de movilidad propia para administración', async () => {
+  let queryIndex = 0;
+  const db = {
+    async query(sql, params) {
+      assert.match(sql, /o\.shipping->>'carrier'=\$2/);
+      assert.match(sql, /America\/Lima/);
+      assert.deepEqual(params, ['2026-08-12', 'movilidad_propia']);
+      queryIndex += 1;
+      if (queryIndex === 1) {
+        return { rows: [{ deliveries_count: 3, shipping_total: '55.00' }] };
+      }
+      if (queryIndex === 2) {
+        return { rows: [
+          { rate_tier_km: '10', deliveries_count: 1, shipping_total: '10.00' },
+          { rate_tier_km: '15', deliveries_count: 1, shipping_total: '20.00' },
+          { rate_tier_km: '25', deliveries_count: 1, shipping_total: '25.00' },
+        ] };
+      }
+      return { rows: [
+        { district: 'San Miguel', deliveries_count: 2, shipping_total: '35.00' },
+        { district: 'Miraflores', deliveries_count: 1, shipping_total: '20.00' },
+      ] };
+    },
+  };
+
+  const result = await getOwnDeliveryReport({ date: '2026-08-12' }, db);
+  assert.equal(result.deliveriesCount, 3);
+  assert.equal(result.shippingTotal, 55);
+  assert.deepEqual(result.tiers.map((tier) => tier.shippingTotal), [10, 20, 25]);
+  assert.equal(result.districts[0].district, 'San Miguel');
+  assert.equal(result.districts[0].shippingTotal, 35);
+});
+
 test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () => {
   const db = {
     async query(sql, params) {
@@ -576,14 +610,14 @@ function manualSale(overrides = {}) {
 test('rechaza una venta manual Envío sin repartidor', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Movilidad propia/,
   );
 });
 
 test('rechaza una venta manual Envío con un repartidor que no está en la lista', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio', carrier: 'otro' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Movilidad propia/,
   );
 });
 
@@ -597,13 +631,58 @@ test('acepta una venta manual Recojo sin repartidor', async () => {
   assert.equal(result.order.shipping.carrier, undefined);
 });
 
-test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async () => {
+test('acepta una venta manual Envío con un repartidor configurado', async () => {
   const result = await ingestOrder(
     manualSale({ shipping: { type: 'envio', carrier: 'shaloom' } }),
     new IngestDb(),
   );
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'shaloom');
+});
+
+test('movilidad propia recalcula el envío y total en el servidor', async () => {
+  const result = await ingestOrder(manualSale({
+    subtotal: 50,
+    shippingAmount: 999,
+    total: 1049,
+    shipping: {
+      type: 'envio',
+      carrier: 'movilidad_propia',
+      department: 'Lima',
+      province: 'Lima',
+      district: 'Surco',
+      ubigeo: 'incorrecto',
+      distanceKm: 12,
+    },
+  }), new IngestDb());
+
+  assert.equal(result.order.shippingAmount, 20);
+  assert.equal(result.order.total, 70);
+  assert.equal(result.order.shipping.district, 'Santiago de Surco');
+  assert.equal(result.order.shipping.ubigeo, '150140');
+  assert.equal(result.order.shipping.rateTierKm, 15);
+  assert.deepEqual(result.order.metadata.ownDelivery, {
+    distanceKm: 12,
+    rateTierKm: 15,
+    shippingAmount: 20,
+  });
+});
+
+test('movilidad propia rechaza distancias mayores a 25 km', async () => {
+  await assert.rejects(
+    () => ingestOrder(manualSale({
+      subtotal: 50,
+      shipping: {
+        type: 'envio',
+        carrier: 'movilidad_propia',
+        department: 'Lima',
+        province: 'Lima',
+        district: 'Lima',
+        distanceKm: 25.1,
+      },
+    }), new IngestDb()),
+    /Movilidad propia cubre hasta 25 km/,
+  );
 });
 
 test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {

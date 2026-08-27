@@ -33,6 +33,7 @@ import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { usePermissions } from '../hooks/usePermissions';
 import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
@@ -140,6 +141,9 @@ type ManagedOrder = {
     needsCustomerChoice: boolean;
   };
   currency: string;
+  subtotal?: number | null;
+  shippingAmount?: number | null;
+  discountAmount?: number | null;
   total?: number | null;
   customer?: { name?: string; documentNumber?: string; phone?: string };
   shipping?: {
@@ -151,6 +155,11 @@ type ManagedOrder = {
     reference?: string;
     lat?: number;
     lng?: number;
+    department?: string;
+    province?: string;
+    ubigeo?: string;
+    distanceKm?: number;
+    rateTierKm?: number;
   };
   metadata?: {
     paymentMethod?: string;
@@ -158,6 +167,11 @@ type ManagedOrder = {
     delivery?: string;
     shippingCarrier?: string;
     receivedBy?: string;
+    ownDelivery?: {
+      distanceKm?: number;
+      rateTierKm?: number;
+      shippingAmount?: number;
+    };
     ripleySvc?: {
       orderId?: string;
       statusManagement?: string;
@@ -227,6 +241,23 @@ type SalesPulse = {
     name: string;
     ordersCount: number;
     salesTotal: number;
+  }>;
+};
+
+type OwnDeliveryReport = {
+  date: string;
+  deliveriesCount: number;
+  shippingTotal: number;
+  tiers: Array<{
+    maxDistanceKm: number;
+    amount: number;
+    deliveriesCount: number;
+    shippingTotal: number;
+  }>;
+  districts: Array<{
+    district: string;
+    deliveriesCount: number;
+    shippingTotal: number;
   }>;
 };
 
@@ -514,6 +545,20 @@ function paymentMethodLabel(order: ManagedOrder) {
   return PAYMENT_METHOD_LABELS[method] || '—';
 }
 
+function productsAmount(order: ManagedOrder) {
+  const subtotal = Number(order.subtotal);
+  if (Number.isFinite(subtotal)) return subtotal;
+  return Math.max(0, Number(order.total || 0) - Number(order.shippingAmount || 0));
+}
+
+function shippingChargeLabel(order: ManagedOrder) {
+  if (order.shipping?.carrier !== 'movilidad_propia') return 'Envío';
+  const distanceKm = Number(order.shipping.distanceKm ?? order.metadata?.ownDelivery?.distanceKm);
+  return Number.isFinite(distanceKm) && distanceKm > 0
+    ? `Movilidad propia · ${distanceKm} km`
+    : 'Movilidad propia';
+}
+
 function CopyableOrderNumber({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -611,6 +656,7 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { isAdmin } = usePermissions();
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
@@ -698,12 +744,20 @@ export default function PedidosMulticanal() {
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
+  const ownDeliveryReportQuery = useQuery({
+    queryKey: ['own-delivery-report', date],
+    queryFn: async (): Promise<OwnDeliveryReport> => api.getOwnDeliveryReport({ date }),
+    enabled: isAdmin,
+    placeholderData: keepPreviousData,
+    staleTime: 15_000,
+  });
 
   const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
   const channels = (Array.isArray(channelsQuery.data) ? channelsQuery.data : []) as Channel[];
   const orders = (Array.isArray(ordersQuery.data?.orders) ? ordersQuery.data.orders : []) as ManagedOrder[];
   const totalCount = Number(ordersQuery.data?.totalCount || 0);
   const salesPulse = pulseQuery.data || null;
+  const ownDeliveryReport = ownDeliveryReportQuery.data || null;
   const loading = ordersQuery.isPending && !ordersQuery.data;
   const fetching = ordersQuery.isFetching;
   const loadError = (ordersQuery.error as Error | undefined)?.message
@@ -711,6 +765,8 @@ export default function PedidosMulticanal() {
     || '';
   const pulseLoading = pulseQuery.isPending && !pulseQuery.data;
   const pulseError = (pulseQuery.error as Error | undefined)?.message || '';
+  const ownDeliveryReportLoading = ownDeliveryReportQuery.isPending && !ownDeliveryReportQuery.data;
+  const ownDeliveryReportError = (ownDeliveryReportQuery.error as Error | undefined)?.message || '';
 
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
@@ -727,6 +783,7 @@ export default function PedidosMulticanal() {
     setSuccessMessage(`Venta ${registered} registrada.`);
     void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
     void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
+    void queryClient.invalidateQueries({ queryKey: ['own-delivery-report'] });
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, queryClient]);
 
@@ -1190,6 +1247,15 @@ export default function PedidosMulticanal() {
         </div>
       </section>
 
+      {isAdmin && (
+        <OwnDeliverySummary
+          report={ownDeliveryReport}
+          loading={ownDeliveryReportLoading}
+          error={ownDeliveryReportError}
+          onRetry={() => void ownDeliveryReportQuery.refetch()}
+        />
+      )}
+
       {successMessage && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
           <span role="status" aria-live="polite" className="flex items-center gap-2"><CheckCircle2 className="size-4" /> {successMessage}</span>
@@ -1336,6 +1402,12 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
                       <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
+                      {Number(detail.shippingAmount || 0) > 0 && (
+                        <>
+                          <DetailField icon={<Package />} label="Productos" content={<span className="font-medium tabular-nums">{formatMoney(productsAmount(detail), detail.currency)}</span>} />
+                          <DetailField icon={<Truck />} label="Envío" content={<span className="font-medium tabular-nums">{formatMoney(detail.shippingAmount, detail.currency)} <span className="font-normal text-muted-foreground">· {shippingChargeLabel(detail)}</span></span>} />
+                        </>
+                      )}
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                     </div>
                   </section>
@@ -1531,6 +1603,72 @@ function ProductThumb({ url, shopSku, sku, name }: { url?: string | null; shopSk
       onError={() => setFailedCount((current) => current + 1)}
       className="size-10 shrink-0 rounded-md bg-muted object-cover"
     />
+  );
+}
+
+function OwnDeliverySummary({
+  report,
+  loading,
+  error,
+  onRetry,
+}: {
+  report: OwnDeliveryReport | null;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="overflow-hidden rounded-md border border-border bg-card" aria-label="Reporte de movilidad propia">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Truck className="size-4 shrink-0 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">Envíos propios</h3>
+        </div>
+        {!loading && report && <span className="text-sm font-semibold tabular-nums">{formatMoney(report.shippingTotal)}</span>}
+      </div>
+      {loading ? (
+        <div className="grid gap-px bg-border md:grid-cols-3">
+          {[0, 1, 2].map((index) => <div key={index} className="h-24 animate-pulse bg-card motion-reduce:animate-none" />)}
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm text-destructive sm:px-5">
+          <span>No se pudo cargar los envíos propios.</span>
+          <Button type="button" variant="ghost" size="xs" className="h-9 cursor-pointer" onClick={onRetry}>Reintentar</Button>
+        </div>
+      ) : (
+        <div className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
+          <div className="px-4 py-3 sm:px-5">
+            <p className="text-xs text-muted-foreground">Cobrado en envíos</p>
+            <p className="mt-1 text-xl font-semibold tabular-nums">{formatMoney(report?.shippingTotal)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{report?.deliveriesCount || 0} entregas con movilidad propia.</p>
+          </div>
+          <div className="px-4 py-3 sm:px-5">
+            <p className="text-xs text-muted-foreground">Por tramo</p>
+            <div className="mt-2 space-y-1.5">
+              {(report?.tiers || []).map((tier) => (
+                <div key={tier.maxDistanceKm} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-muted-foreground">Hasta {tier.maxDistanceKm} km · {tier.deliveriesCount}</span>
+                  <span className="font-medium tabular-nums">{formatMoney(tier.shippingTotal)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="px-4 py-3 sm:px-5">
+            <p className="text-xs text-muted-foreground">Por distrito</p>
+            {report?.districts.length ? (
+              <div className="mt-2 space-y-1.5">
+                {report.districts.map((district) => (
+                  <div key={district.district} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="min-w-0 truncate text-muted-foreground">{district.district} · {district.deliveriesCount}</span>
+                    <span className="shrink-0 font-medium tabular-nums">{formatMoney(district.shippingTotal)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="mt-2 text-sm text-muted-foreground">Sin envíos propios en este día.</p>}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
