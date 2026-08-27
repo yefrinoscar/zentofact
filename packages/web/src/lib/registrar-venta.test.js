@@ -125,7 +125,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
-    'Marca la dirección de envío en el mapa.',
+    'Busca el distrito o el departamento de envío.',
   );
   assert.equal(validateManualSale(validSale()), null);
 });

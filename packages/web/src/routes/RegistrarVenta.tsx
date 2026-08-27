@@ -698,7 +698,7 @@ export default function RegistrarVenta() {
                   setDropoffPlace(place);
                   clearFieldError('delivery');
                 }}
-                placeholder="Calle o toca el mapa"
+                placeholder="Distrito o departamento"
               />
             </div>
             {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && (
@@ -718,7 +718,7 @@ export default function RegistrarVenta() {
               </div>
             )}
             {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
-              <p className="text-xs text-muted-foreground">Marca el mapa para ver el envío.</p>
+              <p className="text-xs text-muted-foreground">Busca el distrito o el departamento para ver el envío.</p>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>

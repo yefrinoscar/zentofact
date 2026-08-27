@@ -199,7 +199,7 @@ export function applyOwnFleetShipping(order) {
   const lat = Number(shipping.lat);
   const lng = Number(shipping.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    throw new Error('Marca la dirección de envío en el mapa.');
+    throw new Error('Busca el distrito o el departamento de envío.');
   }
   const quote = quoteOwnFleetShipping({
     district: shipping.district || '',

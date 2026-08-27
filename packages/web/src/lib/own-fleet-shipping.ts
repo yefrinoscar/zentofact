@@ -119,7 +119,7 @@ type AddressComponent = {
   types?: string[];
 };
 
-function foldName(value: string) {
+export function foldName(value: string) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')

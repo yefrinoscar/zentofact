@@ -142,7 +142,7 @@ export function validateManualSale(input: ManualSaleInput) {
     return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
-    return 'Marca la dirección de envío en el mapa.';
+    return 'Busca el distrito o el departamento de envío.';
   }
   return null;
 }
