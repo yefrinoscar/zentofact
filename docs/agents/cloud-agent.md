@@ -2,7 +2,7 @@
 
 How a Cloud Agent boots ZentoFact on this VM and which seeded profile to use for each task. Source of truth for emails, SKUs, and inbox rows is `packages/server/src/seed-preview.js` (`SEED_USERS`, `SEED_COMPANIES`, `SEED_PRODUCTS`, `SEED_MARKER`). This file is the disclosed map those constants feed.
 
-Prove at `http://127.0.0.1:3011`. The API is `http://127.0.0.1:3010`. Railway is the public host after a merge, not the proof.
+Prove at `http://127.0.0.1:3011`. The API is `http://127.0.0.1:3010`. Railway is the public host after a merge into `dev` or `main`, not the proof. Opening a pull request must not spin a Railway PR environment; skip Railway GitHub checks and drive this VM.
 
 ## Boot
 

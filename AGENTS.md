@@ -9,6 +9,7 @@
 - When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, and open a pull request targeting `dev`. Do **not** merge that pull request. Merging into `dev` is manual and only happens when the user explicitly asks to merge it.
 - Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
 - The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment from `main`.
+- Railway does not deploy pull requests. PR Environments stay off. Do not wait for a Railway GitHub check, preview URL, or green deploy status on a feature PR. Prove the change on this Cloud Agent VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
@@ -83,7 +84,7 @@ When proving a UI or API change on this VM, or when the task names a role, catal
 
 ## Cursor Cloud specific instructions
 
-Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway is the public host after a merge, not the proof.
+Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway is the public host after a merge into `dev` or `main`, not the proof. A new pull request must not create a Railway environment.
 
 1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`.
 2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` — done when doctor prints `api_health=ok` (`service=zentofact-api`) and `web_health=ok`.
