@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { config } from 'dotenv';
@@ -7,6 +7,7 @@ import {
   INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
   loadInventoryCount20260821,
 } from './lib/inventory-count-2026-08-21.mjs';
+import { discoverSalesMappingInputs } from '../packages/server/src/catalog/find-sales-mapping-inputs.js';
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -20,47 +21,15 @@ const { values, positionals } = parseArgs({
 });
 
 config({ path: resolve('.env') });
+mkdirSync('/opt/cursor/uploads', { recursive: true });
+mkdirSync('/opt/cursor/artifacts', { recursive: true });
 
 const OPENING_REASON = 'Saldo inicial de agosto reconstruido desde el conteo físico';
-const CANDIDATE_EXCEL_PATHS = [
-  values.excel,
-  process.env.INVENTORY_COUNT_XLSX,
-  positionals[0],
-  'stock 21.08.2026 a las 2.50 pm.xlsx',
-  '/opt/cursor/artifacts/stock 21.08.2026 a las 2.50 pm.xlsx',
-  '/opt/cursor/uploads/stock 21.08.2026 a las 2.50 pm.xlsx',
-  '/tmp/stock 21.08.2026 a las 2.50 pm.xlsx',
-].filter(Boolean).map((path) => resolve(path));
-
-const CANDIDATE_ORDER_SQL_PATHS = [
-  values['orders-sql'],
-  process.env.ORDERS_SINCE_MAY_SQL,
-  'orders-since-may.sql',
-  '/opt/cursor/uploads/orders-since-may.sql',
-  '/opt/cursor/artifacts/orders-since-may.sql',
-  '/tmp/orders-since-may.sql',
-].filter(Boolean).map((path) => resolve(path));
-
-function findExcel() {
-  return CANDIDATE_EXCEL_PATHS.find((path) => existsSync(path)) || null;
-}
-
-function findOrdersSql() {
-  return CANDIDATE_ORDER_SQL_PATHS.find((path) => existsSync(path)) || null;
-}
-
-const CANDIDATE_BUNDLE_PATHS = [
-  values.bundle,
-  process.env.SALES_MAPPING_BUNDLE,
-  'sales-mapping-bundle.json',
-  '/opt/cursor/uploads/sales-mapping-bundle.json',
-  '/opt/cursor/artifacts/sales-mapping-bundle.json',
-  '/tmp/sales-mapping-bundle.json',
-].filter(Boolean).map((path) => resolve(path));
-
-function findBundle() {
-  return CANDIDATE_BUNDLE_PATHS.find((path) => existsSync(path)) || null;
-}
+const discovered = discoverSalesMappingInputs({
+  excel: values.excel || process.env.INVENTORY_COUNT_XLSX || positionals[0],
+  bundle: values.bundle || process.env.SALES_MAPPING_BUNDLE,
+  ordersSql: values['orders-sql'] || process.env.ORDERS_SINCE_MAY_SQL,
+});
 
 const {
   SALES_HISTORY_SINCE,
@@ -236,8 +205,8 @@ async function syncMarketplaces(db) {
   return summary;
 }
 
-const excelPath = findExcel();
-const bundlePath = findBundle();
+const excelPath = discovered.excel;
+const bundlePath = discovered.bundle;
 const bundle = bundlePath
   ? parseSalesMappingBundle(readFileSync(bundlePath, 'utf8'))
   : null;
@@ -262,7 +231,7 @@ try {
   console.log(`Sin cantidad: ${[...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].join(', ')}`);
   console.log(`Corte: ${PHYSICAL_COUNT_CUTOFF}`);
 
-  const dumpPath = findOrdersSql();
+  const dumpPath = discovered.ordersSql;
   if (dumpPath && !bundle) {
     console.log(`Importando pedidos ${basename(dumpPath)}`);
     restoreOrdersDump({ sqlPath: dumpPath, databaseUrl });
@@ -310,6 +279,23 @@ try {
     console.log('Se escribieron API keys pero ninguna empresa quedó con credenciales usable.');
   } else {
     console.log('Sin API keys de seller: no se sincronizaron pedidos Falabella/Ripley.');
+  }
+
+  const realOrders = Number((await pool.query(
+    `select count(*)::int as n
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where ch.code = any($1::text[])
+       and o.ordered_at >= $2
+       and o.external_order_id not like 'EXCEL-MAP-%'
+       and o.external_order_id not like 'MAP-%'`,
+    [['falabella', 'ripley'], SALES_HISTORY_SINCE],
+  )).rows[0]?.n || 0);
+  if (realOrders === 0) {
+    console.error('No hay pedidos Falabella/Ripley reales desde mayo en esta base.');
+    console.error('Falta el sales-mapping-bundle.json, un dump de pedidos, o las API keys de seller.');
+    if (values.apply) process.exit(1);
   }
 
   const loaded = await loadHistoricalSalesMappingContext(pool, { since: SALES_HISTORY_SINCE });

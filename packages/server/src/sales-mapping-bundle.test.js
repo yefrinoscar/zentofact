@@ -135,3 +135,37 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.doesNotMatch(sql, /from inventory_movements/i);
   assert.doesNotMatch(sql, /insert into products/i);
 });
+
+test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const {
+    discoverSalesMappingInputs,
+    isFridayCountWorkbookName,
+    isOrdersDumpText,
+    isSalesMappingBundleText,
+  } = await import('./catalog/find-sales-mapping-inputs.js');
+  const dir = mkdtempSync(join(tmpdir(), 'sales-map-inputs-'));
+  try {
+    writeFileSync(join(dir, 'reporte_empresas_julio_2026.xlsx'), 'not-excel');
+    writeFileSync(join(dir, 'stock 21.08.2026 a las 2.50 pm (1).xlsx'), 'workbook');
+    writeFileSync(join(dir, 'sales-mapping-bundle (1).json'), JSON.stringify({
+      version: 1, cutoffAt: '2026-08-21T19:50:00.000Z', excel: { targets: [] }, orders: [],
+    }));
+    writeFileSync(join(dir, 'orders-since-may (1).sql'), 'INSERT INTO orders (id) VALUES (1);\n');
+    writeFileSync(join(dir, 'catalog.sql'), 'INSERT INTO products (id) VALUES (1);\nINSERT INTO orders (id) VALUES (2);\n');
+    assert.equal(isFridayCountWorkbookName('stock 21.08.2026 a las 2.50 pm (1).xlsx'), true);
+    assert.equal(isFridayCountWorkbookName('reporte_empresas_julio_2026.xlsx'), false);
+    assert.equal(isSalesMappingBundleText('{"version":1,"excel":{}}'), true);
+    assert.equal(isSalesMappingBundleText('{"version":1,"error":"missing_friday_anchor"}'), false);
+    assert.equal(isOrdersDumpText('INSERT INTO orders (id) VALUES (1);'), true);
+    assert.equal(isOrdersDumpText('INSERT INTO products (id) VALUES (1); INSERT INTO orders (id) VALUES (2);'), false);
+    const found = discoverSalesMappingInputs({ cwd: dir, directories: [dir] });
+    assert.match(found.excel, /stock 21\.08\.2026 a las 2\.50 pm \(1\)\.xlsx$/);
+    assert.match(found.bundle, /sales-mapping-bundle \(1\)\.json$/);
+    assert.match(found.ordersSql, /orders-since-may \(1\)\.sql$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
