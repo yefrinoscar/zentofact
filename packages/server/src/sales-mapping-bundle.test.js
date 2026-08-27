@@ -6,6 +6,7 @@ import {
   coerceFulfillmentStatus,
   coerceOrderStatus,
   ingestSalesMappingBundle,
+  listingMasterSku,
   parseSalesMappingBundle,
   workbookFromBundleExcel,
   workbookFromReconciliationAnchors,
@@ -152,6 +153,57 @@ test('ingerir un listing histórico ausente del Excel lo ancla al maestro sin in
   assert.equal(listing.params[4], 'TRI65748392');
 });
 
+test('el listing usa productSku operativo y crea el maestro ausente en stock 0', async () => {
+  const catalog = new Set([...INVENTORY_COUNT_MASTER_SKUS]);
+  assert.equal(listingMasterSku({
+    sellerSku: 'AG174', shopSku: 'FLO4400237', productSku: 'AG174',
+  }, catalog), 'Z7');
+  assert.equal(listingMasterSku({
+    sellerSku: '140746934', shopSku: '140746934', productSku: 'H9XLN',
+  }, catalog), 'H9XLN');
+  assert.equal(listingMasterSku({
+    sellerSku: 'FAL-RANDOM', shopSku: '999', productSku: 'AG178',
+  }, catalog), 'AG178');
+
+  const queries = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const text = String(sql).trim();
+      if (text.startsWith('delete from orders')) return { rowCount: 0 };
+      if (text.startsWith('select id, main_sku from products')) return { rows: [{ id: 1, main_sku: 'Z7' }] };
+      if (text.startsWith('select id from companies')) return { rows: [{ id: 9 }] };
+      if (text.startsWith('select id from order_channels')) return { rows: [{ id: 1 }] };
+      if (text.startsWith('select id from order_channel_accounts')) return { rows: [{ id: 4 }] };
+      if (text.startsWith('insert into products')) return { rows: [{ id: 178 }] };
+      if (text.startsWith('insert into product_inventory')) return { rowCount: 1 };
+      if (text.startsWith('insert into product_listings')) return { rowCount: 1 };
+      if (text.startsWith('insert into orders')) return { rows: [{ id: 80 }] };
+      if (text.startsWith('insert into order_items')) return { rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await ingestSalesMappingBundle(db, {
+    version: 1,
+    companies: [{ ruc: '20607809136', nombre: 'LIMBO PERU' }],
+    listings: [{
+      channel: 'falabella', companyRuc: '20607809136',
+      sellerSku: 'FAL-RANDOM', shopSku: '999', productSku: 'AG178',
+      status: 'active', title: 'AG178',
+    }],
+    orders: [],
+  });
+  assert.equal(result.listings, 1);
+  const created = queries.find((entry) => entry.sql.trim().startsWith('insert into products'));
+  assert.equal(created.params[0], 'AG178');
+  assert.equal(JSON.parse(created.params[1]).source, 'historical_master_absent_from_excel');
+  const listing = queries.find((entry) => entry.sql.trim().startsWith('insert into product_listings'));
+  assert.equal(listing.params[0], 178);
+  assert.equal(listing.params[4], 'FAL-RANDOM');
+  const inventory = queries.find((entry) => entry.sql.includes('product_inventory'));
+  assert.ok(inventory);
+});
+
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);
@@ -181,6 +233,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.doesNotMatch(sql, /insert into products/i);
   assert.match(sql, /incomplete_friday_count/);
   assert.match(sql, /jsonb_agg\(c\.master ORDER BY c\.master\)/);
+  assert.match(sql, /'productSku'/);
+  assert.match(sql, /LEFT JOIN products p ON p\.id = l\.product_id/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

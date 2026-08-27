@@ -193,6 +193,39 @@ async function ensureChannelAccount(db, companyId, channelCode, displayName) {
   return Number(account.rows[0].id);
 }
 
+export function listingMasterSku(listing, catalogSkus) {
+  const productSku = String(listing?.productSku || listing?.mainSku || '').trim();
+  return excelMasterForSku(listing?.sellerSku, catalogSkus)
+    || excelMasterForSku(listing?.shopSku, catalogSkus)
+    || excelMasterForSku(productSku, catalogSkus)
+    || productSku
+    || null;
+}
+
+async function ensureAnchorProduct(db, sku, skus, idBySku) {
+  const master = String(sku || '').trim();
+  if (!master) return null;
+  if (idBySku.has(master)) return idBySku.get(master);
+  const inserted = await db.query(
+    `insert into products (main_sku, name, status, attributes)
+     values ($1,$1,'active',$2)
+     on conflict (main_sku) do update
+       set status='active', attributes=excluded.attributes, updated_at=now()
+     returning id`,
+    [master, JSON.stringify({ source: 'historical_master_absent_from_excel' })],
+  );
+  const productId = Number(inserted.rows[0].id);
+  await db.query(
+    `insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+     select id, 0, 0 from products where id=$1
+     on conflict (product_id) do nothing`,
+    [productId],
+  );
+  skus.add(master);
+  idBySku.set(master, productId);
+  return productId;
+}
+
 export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {}) {
   const parsed = parseSalesMappingBundle(bundle);
   const products = (await db.query('select id, main_sku from products')).rows;
@@ -217,9 +250,8 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
   for (const listing of parsed.listings || []) {
     const companyId = companyIds.get(String(listing.companyRuc || '').trim());
     if (!companyId) continue;
-    const master = excelMasterForSku(listing.sellerSku, skus)
-      || excelMasterForSku(listing.shopSku, skus);
-    const productId = master ? idBySku.get(master) : null;
+    const master = listingMasterSku(listing, skus);
+    const productId = master ? await ensureAnchorProduct(db, master, skus, idBySku) : null;
     if (!productId) continue;
     const accountId = await ensureChannelAccount(db, companyId, listing.channel, listing.companyRuc);
     await db.query(
@@ -348,9 +380,10 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
   )).rows;
   const listings = companies.length ? (await db.query(
     `select l.channel_code as channel, c.ruc as "companyRuc", l.seller_sku as "sellerSku",
-       l.shop_sku as "shopSku", l.status, l.title
+       l.shop_sku as "shopSku", p.main_sku as "productSku", l.status, l.title
      from product_listings l
      join companies c on c.id=l.company_id
+     left join products p on p.id=l.product_id
      where l.channel_code=any($1::text[]) and c.id=any($2::int[])
      order by l.id`,
     [MAPPING_CHANNELS, companies.map((row) => Number(row.id))],

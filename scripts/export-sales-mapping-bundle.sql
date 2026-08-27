@@ -148,11 +148,17 @@ listing_json AS (
     'companyRuc', c.ruc,
     'sellerSku', l.seller_sku,
     'shopSku', l.shop_sku,
+    'productSku', CASE
+      WHEN p.main_sku IS NULL THEN NULL
+      ELSE COALESCE(m.master, p.main_sku)
+    END,
     'status', l.status,
     'title', l.title
   ) ORDER BY l.id) AS value
   FROM product_listings l
   JOIN companies c ON c.id = l.company_id
+  LEFT JOIN products p ON p.id = l.product_id
+  LEFT JOIN sku_map m ON m.legacy = p.main_sku
   WHERE l.channel_code IN ('falabella', 'ripley')
     AND c.id IN (
       SELECT DISTINCT o.company_id
