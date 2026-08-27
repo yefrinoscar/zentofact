@@ -372,6 +372,9 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
         sellers_count: 1,
         channel_codes: ['falabella'],
       }] };
+      if (sql.includes("= 'nosotros'")) {
+        return { rows: [{ shipping_total: '36', district_total: '16', distance_total: '20', deliveries: 1 }] };
+      }
       return { rows: [{ code: 'falabella', name: 'Falabella', orders_count: 3, sales_total: '480.50' }] };
     },
   };
@@ -389,6 +392,10 @@ test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas',
   assert.equal(result.topProducts[0].shopSku, '12345678');
   assert.deepEqual(result.topProducts[0].channelCodes, ['falabella']);
   assert.equal(result.channels[0].ordersCount, 3);
+  assert.equal(result.ownFleetShipping.total, 36);
+  assert.equal(result.ownFleetShipping.districtTotal, 16);
+  assert.equal(result.ownFleetShipping.distanceTotal, 20);
+  assert.equal(result.ownFleetShipping.deliveries, 1);
 });
 
 test('lista pedidos por fecha comercial de Lima para la vista de hoy', async () => {
@@ -576,14 +583,14 @@ function manualSale(overrides = {}) {
 test('rechaza una venta manual Envío sin repartidor', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros/,
   );
 });
 
 test('rechaza una venta manual Envío con un repartidor que no está en la lista', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio', carrier: 'otro' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros/,
   );
 });
 
@@ -604,6 +611,28 @@ test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async (
   );
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'shaloom');
+});
+
+test('Nosotros persiste distrito, distancia y el total con envío', async () => {
+  const result = await ingestOrder(manualSale({
+    subtotal: 250,
+    total: 250,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.0776,
+      lng: -77.0905,
+    },
+  }), new IngestDb());
+  assert.equal(result.created, true);
+  assert.equal(result.order.shipping.carrier, 'nosotros');
+  assert.equal(result.order.shippingAmount, 18);
+  assert.equal(result.order.total, 268);
+  assert.equal(result.order.shipping.districtAmount, 8);
+  assert.equal(result.order.shipping.distanceAmount, 10);
 });
 
 test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {

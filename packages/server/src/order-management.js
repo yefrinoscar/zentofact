@@ -1,3 +1,4 @@
+import { applyOwnFleetShipping } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
 
@@ -10,7 +11,7 @@ export const FULFILLMENT_STATUSES = [
 ];
 export const ORDER_ITEMS_STATUSES = ['pending', 'complete', 'error'];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
-export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides'];
+export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides', 'nosotros'];
 
 let corePromise;
 
@@ -63,7 +64,7 @@ function assertManualEnvioCarrier(shipping, source) {
   if (type !== 'envio') return;
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
-    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides.');
+    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros.');
   }
 }
 
@@ -589,11 +590,11 @@ async function ingestOrderInTransaction(input, db) {
     documentRequirement: existing.document_requirement,
     documentTypePolicy: existing.document_type_policy,
   } : account;
-  const order = normalizeOrderInput({
+  const order = applyOwnFleetShipping(normalizeOrderInput({
     ...input,
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
-  }, policyAccount);
+  }, policyAccount));
   assertManualEnvioCarrier(order.shipping, input.source);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {
@@ -966,7 +967,7 @@ export async function getSalesPulse(filters = {}, db) {
   const date = String(filters.date || '').trim();
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date inválida.');
 
-  const [sellerResult, productResult, channelResult] = await Promise.all([
+  const [sellerResult, productResult, channelResult, shippingResult] = await Promise.all([
     target.query(
     `select c.id as company_id, c.nombre_comercial, c.nombre, c.razon_social,
        count(o.id)::int as orders_count,
@@ -1051,6 +1052,22 @@ export async function getSalesPulse(filters = {}, db) {
        order by orders_count desc, sales_total desc`,
       [date],
     ),
+    target.query(
+      `select
+         coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total,
+         coalesce(sum(nullif(o.shipping->>'districtAmount', '')::numeric), 0)::numeric as district_total,
+         coalesce(sum(nullif(o.shipping->>'distanceAmount', '')::numeric), 0)::numeric as distance_total,
+         count(*) filter (where coalesce(o.shipping_amount, 0) > 0)::int as deliveries
+       from orders o
+       where o.order_status not in ('cancelled', 'failed')
+         and o.payment_status not in ('refunded', 'failed')
+         and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+         and lower(coalesce(o.shipping->>'carrier', '')) = 'nosotros'
+         and lower(coalesce(o.shipping->>'type', '')) = 'envio'
+         and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+           = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)`,
+      [date],
+    ),
   ]);
 
   const sellers = sellerResult.rows.map((row) => ({
@@ -1080,6 +1097,14 @@ export async function getSalesPulse(filters = {}, db) {
     salesTotal: Number(row.sales_total || 0),
   }));
 
+  const shippingRow = shippingResult.rows[0] || {};
+  const ownFleetShipping = {
+    total: Number(shippingRow.shipping_total || 0),
+    districtTotal: Number(shippingRow.district_total || 0),
+    distanceTotal: Number(shippingRow.distance_total || 0),
+    deliveries: Number(shippingRow.deliveries || 0),
+  };
+
   return {
     date: date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date()),
     ordersCount: sellers.reduce((sum, seller) => sum + seller.ordersCount, 0),
@@ -1090,6 +1115,7 @@ export async function getSalesPulse(filters = {}, db) {
     sellers,
     topProducts,
     channels,
+    ownFleetShipping,
   };
 }
 

@@ -14,6 +14,7 @@ import {
   RotateCcw,
   ShoppingBag,
   Store,
+  Truck,
   WalletCards,
 } from 'lucide-react';
 import {
@@ -501,6 +502,12 @@ export default function Dashboard() {
           change={data?.changes?.cancellationRate}
           icon={RotateCcw}
           warning
+        />
+        <KpiCard
+          title="Envío propio"
+          value={money.format(data?.ownFleetShipping?.total || 0)}
+          detail={`Distrito ${money.format(data?.ownFleetShipping?.districtTotal || 0)} · Distancia ${money.format(data?.ownFleetShipping?.distanceTotal || 0)}`}
+          icon={Truck}
         />
       </div>
 

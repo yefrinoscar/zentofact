@@ -67,3 +67,15 @@ _Avoid_: Margen, fee, comisión del marketplace
 **Beneficiario**:
 Persona a la que se atribuye la ganancia del Producto al filtrar o exportar reportes.
 _Avoid_: Flag, tag, dueño, owner, seller
+
+**Envío propio**:
+Entrega con movilidad de la bodega, identificada por el repartidor Nosotros.
+_Avoid_: Movilidad propia as stored id
+
+**Precio de envío distrito**:
+Monto de Envío propio según distrito de Lima Metropolitana o, fuera de ella, según departamento.
+_Avoid_: tarifa zonal, fee de envío
+
+**Precio por distancia**:
+Monto de Envío propio según kilómetros desde la bodega, con tope.
+_Avoid_: recargo km

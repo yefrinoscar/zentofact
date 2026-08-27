@@ -1,3 +1,11 @@
+import {
+  OWN_FLEET_CARRIER,
+  OWN_FLEET_ORIGIN,
+  quoteOwnFleetShipping,
+  saleTotals,
+} from './own-fleet-shipping.ts';
+import type { ShippingCarrier } from './shipping-carrier.ts';
+
 export const SALE_SOURCES = [
   { value: 'marketplace', label: 'Marketplace' },
   { value: 'whatsapp', label: 'WhatsApp' },
@@ -13,12 +21,12 @@ export const PAYMENT_METHODS = [
   { value: 'transferencia', label: 'Transferencia' },
 ] as const;
 
-export const PICKUP_ADDRESS = 'Av. La Marina 2055, San Miguel';
+export const PICKUP_ADDRESS = OWN_FLEET_ORIGIN.address;
 
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
-export type ShippingCarrier = 'marvisuar' | 'shaloom' | 'dinsides';
+export type { ShippingCarrier };
 
 export type CatalogProductForSale = {
   id: number;
@@ -46,6 +54,8 @@ export type SaleLine = {
 export type DropoffPlace = {
   label: string;
   district?: string;
+  province?: string;
+  department?: string;
   lat?: number;
   lng?: number;
 };
@@ -129,10 +139,10 @@ export function validateManualSale(input: ManualSaleInput) {
     return 'Indica la fecha de entrega.';
   }
   if (input.delivery === 'envio' && !input.shippingCarrier) {
-    return 'Elige el reparto: Marvisuar, Shaloom o Dinsides.';
+    return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
-    return 'Marca la dirección de envío en el mapa.';
+    return 'Busca el distrito o el departamento de envío.';
   }
   return null;
 }
@@ -145,7 +155,10 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
   const orderNumber = input.orderNumber || generateManualOrderNumber(
     input.orderedAt ? new Date(input.orderedAt) : new Date(),
   );
-  const total = saleLinesTotal(input.lines);
+  const productsTotal = saleLinesTotal(input.lines);
+  const ownFleet = input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER;
+  const shippingQuote = ownFleet ? quoteOwnFleetShipping(input.dropoffPlace) : null;
+  const totals = saleTotals(productsTotal, shippingQuote);
   const deliveryDate = String(input.deliveryDate).trim();
 
   return {
@@ -157,8 +170,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
     fulfillmentStatus: 'ready_to_ship' as const,
     requestedDocumentType: 'boleta' as const,
     currency: 'PEN',
-    subtotal: total,
-    total,
+    subtotal: totals.products,
+    shippingAmount: totals.shipping || null,
+    total: totals.total,
     customer: {
       name: String(input.customerName).trim(),
       phone: String(input.customerPhone || '').trim(),
@@ -168,9 +182,16 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
       carrier: input.delivery === 'envio' ? input.shippingCarrier : undefined,
       address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : PICKUP_ADDRESS,
       district: input.delivery === 'envio' ? input.dropoffPlace?.district || '' : '',
+      province: input.delivery === 'envio' ? input.dropoffPlace?.province || '' : '',
+      department: input.delivery === 'envio' ? input.dropoffPlace?.department || '' : '',
       reference: input.delivery === 'envio' ? String(input.shippingNote || '').trim() : '',
       lat: input.delivery === 'envio' ? input.dropoffPlace?.lat : undefined,
       lng: input.delivery === 'envio' ? input.dropoffPlace?.lng : undefined,
+      districtAmount: shippingQuote?.districtAmount,
+      distanceAmount: shippingQuote?.distanceAmount,
+      distanceKm: shippingQuote?.distanceKm,
+      zoneKind: shippingQuote?.zone.kind,
+      zoneLabel: shippingQuote?.zoneLabel,
     },
     metadata: {
       origin: 'manual_ui',

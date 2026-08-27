@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, MapPin, Navigation, Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { peruPlaceFromComponents } from '../lib/own-fleet-shipping';
+import {
+  indexedPlaceToDestination,
+  nearestPeruPlace,
+  peruPlaceById,
+  searchPeruPlaces,
+  type IndexedPeruPlace,
+} from '../lib/peru-places';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 export type MapPlace = {
   label: string;
   district: string;
+  province: string;
+  department: string;
   lat: number;
   lng: number;
 };
@@ -15,7 +25,23 @@ type Prediction = {
   placeId: string;
   main: string;
   secondary: string;
+  localPlace?: IndexedPeruPlace;
 };
+
+const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
+
+function inPeru(lat: number, lng: number) {
+  return lat >= PERU_BBOX.minLat && lat <= PERU_BBOX.maxLat && lng >= PERU_BBOX.minLng && lng <= PERU_BBOX.maxLng;
+}
+
+function predictionFromLocal(place: IndexedPeruPlace): Prediction {
+  return {
+    placeId: place.id,
+    main: place.district || place.department,
+    secondary: place.district ? `${place.department}` : 'Departamento',
+    localPlace: place,
+  };
+}
 
 const LIMA = { lat: -12.0464, lng: -77.0428 };
 
@@ -59,18 +85,13 @@ function loadGoogleMaps(key: string) {
   return mapsLoader;
 }
 
-function districtFromComponents(components: Array<{ long_name?: string; longText?: string; types: string[] }> = []) {
-  const pick = (...types: string[]) => {
-    const match = components.find((item) => types.some((type) => item.types.includes(type)));
-    return String(match?.long_name || match?.longText || '').trim();
-  };
-  return pick('sublocality_level_1', 'sublocality', 'neighborhood', 'locality', 'administrative_area_level_2');
-}
-
 function placeFromGoogle(result: any, lat: number, lng: number): MapPlace {
+  const place = peruPlaceFromComponents(result?.address_components || result?.addressComponents || []);
   return {
     label: String(result?.formatted_address || result?.formattedAddress || result?.name || result?.displayName || `${lat.toFixed(5)}, ${lng.toFixed(5)}`),
-    district: districtFromComponents(result?.address_components || result?.addressComponents),
+    district: place.district,
+    province: place.province,
+    department: place.department,
     lat,
     lng,
   };
@@ -165,6 +186,7 @@ export function PlacePicker({
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
+  const [localMode, setLocalMode] = useState(false);
   const point = value || LIMA;
 
   const applyLatLng = (lat: number, lng: number, readyMade?: MapPlace) => {
@@ -174,12 +196,12 @@ export function PlacePicker({
     }
     const geocoder = geocoderRef.current;
     if (!geocoder) {
-      onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', lat, lng });
+      onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
       return;
     }
     geocoder.geocode({ location: { lat, lng }, language: 'es', region: 'PE' }, (results: any[], status: string) => {
       if (status === 'OK' && results?.[0]) onChange(placeFromGoogle(results[0], lat, lng));
-      else onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', lat, lng });
+      else onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
     });
   };
 
@@ -194,6 +216,11 @@ export function PlacePicker({
   };
 
   const pickPrediction = async (prediction: Prediction) => {
+    const local = prediction.localPlace || peruPlaceById(prediction.placeId);
+    if (local) {
+      showPlace(indexedPlaceToDestination(local));
+      return;
+    }
     const place = await fetchPlace(prediction.placeId);
     if (place) showPlace(place);
   };
@@ -240,8 +267,11 @@ export function PlacePicker({
         setReady(true);
         setError('');
       })
-      .catch((nextError: any) => {
-        if (!cancelled) setError(nextError?.message || 'No se pudo abrir Google Maps.');
+      .catch(() => {
+        if (cancelled) return;
+        setLocalMode(true);
+        setReady(true);
+        setError('');
       });
     return () => {
       cancelled = true;
@@ -278,7 +308,10 @@ export function PlacePicker({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setSearching(true);
-      fetchPredictions(term)
+      const request = localMode
+        ? Promise.resolve(searchPeruPlaces(term).map(predictionFromLocal))
+        : fetchPredictions(term);
+      request
         .then((rows) => {
           if (cancelled) return;
           setPredictions(rows);
@@ -295,7 +328,7 @@ export function PlacePicker({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, ready]);
+  }, [query, ready, localMode]);
 
   const useMyLocation = () => {
     if (!navigator.geolocation) {
@@ -311,6 +344,18 @@ export function PlacePicker({
         mapRef.current?.panTo({ lat, lng });
         mapRef.current?.setZoom(17);
         markerRef.current?.setPosition({ lat, lng });
+        if (localMode) {
+          if (!inPeru(lat, lng)) {
+            setLocating(false);
+            setError('Estás fuera del Perú. Busca el distrito o el departamento.');
+            return;
+          }
+          const nearest = nearestPeruPlace({ lat, lng });
+          if (nearest) showPlace(indexedPlaceToDestination(nearest));
+          else applyLatLng(lat, lng);
+          setLocating(false);
+          return;
+        }
         applyLatLng(lat, lng);
         setLocating(false);
       },
@@ -332,7 +377,7 @@ export function PlacePicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={placeholder}
-              aria-label="Buscar en Google Maps"
+              aria-label="Buscar distrito o departamento"
               autoComplete="off"
               className="h-11 rounded-xl pr-9 pl-9"
               onKeyDown={(event) => {
@@ -403,8 +448,20 @@ export function PlacePicker({
         )}
       </div>
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <div ref={mapNode} className="h-56 w-full bg-muted sm:h-72" />
-        {!ready && !error && (
+        {!localMode && <div ref={mapNode} className="h-56 w-full bg-muted sm:h-72" />}
+        {localMode && (
+          <div className="flex h-28 items-center gap-3 px-3 sm:h-32">
+            <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+              <MapPin className="size-5" />
+            </span>
+            <p className="text-sm leading-5 text-muted-foreground">
+              {value
+                ? value.label
+                : 'Busca un distrito de Lima o un departamento. El envío se calcula al elegirlo.'}
+            </p>
+          </div>
+        )}
+        {!ready && !error && !localMode && (
           <div className="flex items-center justify-center gap-2 border-t border-border px-3 py-2.5 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Cargando Google Maps…
           </div>
@@ -412,7 +469,7 @@ export function PlacePicker({
         {error && (
           <p className="border-t border-border px-3 py-2.5 text-sm text-rose-700">{error}</p>
         )}
-        {value && (
+        {value && !localMode && (
           <p className="border-t border-border px-3 py-2.5 text-sm leading-5">
             {value.label}
           </p>

@@ -140,6 +140,8 @@ type ManagedOrder = {
     needsCustomerChoice: boolean;
   };
   currency: string;
+  subtotal?: number | null;
+  shippingAmount?: number | null;
   total?: number | null;
   customer?: { name?: string; documentNumber?: string; phone?: string };
   shipping?: {
@@ -148,9 +150,16 @@ type ManagedOrder = {
     trackingCode?: string;
     address?: string;
     district?: string;
+    province?: string;
+    department?: string;
     reference?: string;
     lat?: number;
     lng?: number;
+    districtAmount?: number;
+    distanceAmount?: number;
+    distanceKm?: number;
+    zoneKind?: string;
+    zoneLabel?: string;
   };
   metadata?: {
     paymentMethod?: string;
@@ -228,6 +237,12 @@ type SalesPulse = {
     ordersCount: number;
     salesTotal: number;
   }>;
+  ownFleetShipping?: {
+    total: number;
+    districtTotal: number;
+    distanceTotal: number;
+    deliveries: number;
+  };
 };
 
 const DAY_LIMIT = 500;
@@ -1129,6 +1144,15 @@ export default function PedidosMulticanal() {
               </h2>
             )}
           </div>
+          {salesPulse?.ownFleetShipping && salesPulse.ownFleetShipping.total > 0 && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Envío propio {formatMoney(salesPulse.ownFleetShipping.total)}
+              {salesPulse.ownFleetShipping.deliveries
+                ? ` · ${salesPulse.ownFleetShipping.deliveries} ${salesPulse.ownFleetShipping.deliveries === 1 ? 'entrega' : 'entregas'}`
+                : ''}
+              {` · Distrito ${formatMoney(salesPulse.ownFleetShipping.districtTotal)} · Distancia ${formatMoney(salesPulse.ownFleetShipping.distanceTotal)}`}
+            </p>
+          )}
           {pulseError && (
             <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
               Reintentar
@@ -1337,6 +1361,12 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
                       <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
+                      {Number(detail.shippingAmount) > 0 && (
+                        <>
+                          <DetailField icon={<Truck />} label="Envío distrito" content={<span className="tabular-nums">{formatMoney(detail.shipping?.districtAmount, detail.currency)}{detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}</span>} />
+                          <DetailField icon={<Truck />} label="Distancia" content={<span className="tabular-nums">{formatMoney(detail.shipping?.distanceAmount, detail.currency)}{detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}</span>} />
+                        </>
+                      )}
                     </div>
                   </section>
 

@@ -121,11 +121,11 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
     validateManualSale(validSale({ shippingCarrier: '' })),
-    'Elige el reparto: Marvisuar, Shaloom o Dinsides.',
+    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.',
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
-    'Marca la dirección de envío en el mapa.',
+    'Busca el distrito o el departamento de envío.',
   );
   assert.equal(validateManualSale(validSale()), null);
 });
@@ -186,6 +186,34 @@ test('regresión: la venta manual siempre envía fecha de entrega al backend', (
   const payload = buildManualSaleOrderPayload(validSale({ deliveryDate: '2026-08-26' }));
   assert.ok(payload.promisedShippingAt, 'promisedShippingAt no puede faltar');
   assert.equal(payload.metadata.deliveryDate, '2026-08-26');
+});
+
+test('Nosotros suma distrito y distancia al total de la venta', () => {
+  const payload = buildManualSaleOrderPayload(validSale({
+    shippingCarrier: 'nosotros',
+    dropoffPlace: {
+      label: 'Av. La Marina 2055, San Miguel',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.0776,
+      lng: -77.0905,
+    },
+  }));
+
+  assert.equal(payload.subtotal, 250);
+  assert.equal(payload.shippingAmount, 18);
+  assert.equal(payload.total, 268);
+  assert.equal(payload.shipping.carrier, 'nosotros');
+  assert.equal(payload.shipping.districtAmount, 8);
+  assert.equal(payload.shipping.distanceAmount, 10);
+  assert.equal(payload.shipping.zoneKind, 'lima_district');
+});
+
+test('un repartidor tercero no cobra envío propio', () => {
+  const payload = buildManualSaleOrderPayload(validSale());
+  assert.equal(payload.shippingAmount, null);
+  assert.equal(payload.total, 250);
 });
 
 test('regresión: el modal de productos muestra stock aunque sea cero', () => {
