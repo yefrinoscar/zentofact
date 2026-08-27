@@ -105,8 +105,10 @@ export function saleOverview(summary: {
   shippingRate?: number | null;
   takeRate?: number | null;
 } | null | undefined) {
-  if (!summary?.saleCount) return '';
-  return `${summary.saleCount} ventas · comisión ${percentLabel(summary.commissionRate)} · cobro envío ${percentLabel(summary.shippingRate)} · se queda ${percentLabel(summary.takeRate)}`;
+  const count = Number(summary.saleCount || 0);
+  if (!count) return '';
+  const ventas = count === 1 ? '1 venta' : `${count} ventas`;
+  return `${ventas} · comisión ${percentLabel(summary.commissionRate)} · cobro envío ${percentLabel(summary.shippingRate)} · se queda ${percentLabel(summary.takeRate)}`;
 }
 
 export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {

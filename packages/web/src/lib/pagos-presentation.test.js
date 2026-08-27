@@ -15,6 +15,10 @@ test('el overview nombra cobro envío y lo que se queda', () => {
     saleOverview({ saleCount: 27, commissionRate: 0.14, shippingRate: 0.21, takeRate: 0.35 }),
     '27 ventas · comisión 14% · cobro envío 21% · se queda 35%',
   );
+  assert.equal(
+    saleOverview({ saleCount: 1, commissionRate: 0.15, shippingRate: 0.434, takeRate: 0.584 }),
+    '1 venta · comisión 15% · cobro envío 43.4% · se queda 58.4%',
+  );
 });
 
 test('acorta el título de plaza y deja SKU e unidades aparte', () => {
