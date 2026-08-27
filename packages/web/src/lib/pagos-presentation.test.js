@@ -1,10 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSummary, settlementMethodLabel, settlementStatusLabel, unmatchedReasonLabel } from './pagos-presentation.ts';
+import { decodeSettlementCsv, importSummary, paymentStatusLabel, settlementMethodLabel, settlementStatusLabel, unmatchedReasonLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya estaba cargado.');
-  assert.equal(importSummary({ reused: false, matchedCount: 2, unmatchedCount: 3 }), '2 cruzadas · 3 sin cruzar');
+  assert.equal(importSummary({ reused: false, matchedCount: 2, unmatchedCount: 3, paidSalesCount: 1 }), '2 cruzadas · 3 sin cruzar · 1 pagadas');
+  assert.equal(unmatchedReasonLabel('unknown_order_id'), 'Pedido no está en las ventas');
+  assert.equal(paymentStatusLabel('Pagado'), 'Pagado');
+  assert.equal(paymentStatusLabel('No Pagado'), 'No pagado');
+});
+
+test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {
+  const header = 'Fecha creación de la orden,N° del orden,Estado de pago,Monto con IVA';
+  const bytes = Uint8Array.from(Buffer.from(header, 'latin1'));
+  const decoded = decodeSettlementCsv(bytes);
+  assert.match(decoded, /creación/);
+  assert.match(decoded, /Estado de pago/);
 });
 
 test('el cruce se nombra como en la mesa', () => {

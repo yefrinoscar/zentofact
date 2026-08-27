@@ -81,3 +81,23 @@ test('agrega bruto comisión y neto al marcar la venta pagada', () => {
   assert.equal(paidSales[0].amounts.commission, 28.49);
   assert.equal(paidSales[0].amounts.neto, 161.41);
 });
+
+test('un pedido desconocido no se adivina por SKU', () => {
+  const match = matchSettlementLine({
+    orderId: '3248910865',
+    sku: 'AG301',
+    date: '2026-08-27',
+    amount: 189.9,
+  }, indexSales(sales));
+  assert.equal(match.status, 'unmatched');
+  assert.equal(match.reason, 'unknown_order_id');
+});
+
+test('Estado de pago No Pagado cruza y no marca la venta pagada', () => {
+  const { paidSales, results } = matchSettlementLines([
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 189.9, commission: 0, other: 0, neto: 189.9, paid: false },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 28.49, other: 0, neto: -28.49, paid: false },
+  ], sales);
+  assert.equal(results.filter((row) => row.status === 'matched').length, 2);
+  assert.equal(paidSales.length, 0);
+});

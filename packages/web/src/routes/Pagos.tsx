@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Upload } from 'lucide-react';
 import api from '../lib/api';
-import { importSummary, money, settlementMethodLabel, unmatchedReasonLabel } from '../lib/pagos-presentation';
+import { decodeSettlementCsv, importSummary, money, paymentStatusLabel, settlementMethodLabel, unmatchedReasonLabel } from '../lib/pagos-presentation';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -36,13 +36,13 @@ export default function Pagos() {
   });
   const linesQuery = useQuery({
     queryKey: ['pagos-lines', tab],
-    queryFn: () => api.listSettlementLines({ status: tab, limit: 50 }),
+    queryFn: () => api.listSettlementLines({ status: tab, limit: 200 }),
     placeholderData: keepPreviousData,
   });
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
-      const csv = await file.text();
+      const csv = decodeSettlementCsv(await file.arrayBuffer());
       return api.importSettlementCsv({ filename: file.name, csv });
     },
     onSuccess: async (result) => {
@@ -134,6 +134,8 @@ export default function Pagos() {
                   <TableHead>Pedido</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Fecha</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>Pago</TableHead>
                   <TableHead>Cruce</TableHead>
                   <TableHead className="text-right">Bruto</TableHead>
                   <TableHead className="text-right">Comisión</TableHead>
@@ -147,6 +149,8 @@ export default function Pagos() {
                     <TableCell className="font-medium">{line.saleOrderNumber || line.orderId || '—'}</TableCell>
                     <TableCell>{line.sku || '—'}</TableCell>
                     <TableCell>{line.date || '—'}</TableCell>
+                    <TableCell>{line.type || '—'}</TableCell>
+                    <TableCell>{paymentStatusLabel(line.paymentStatus)}</TableCell>
                     <TableCell>{tab === 'matched' ? settlementMethodLabel(line.method) : unmatchedReasonLabel(line.reason)}</TableCell>
                     <TableCell className="text-right tabular-nums">{money.format(line.bruto || 0)}</TableCell>
                     <TableCell className="text-right tabular-nums">{money.format(line.commission || 0)}</TableCell>
@@ -156,7 +160,7 @@ export default function Pagos() {
                 ))}
                 {!lines.length && !linesQuery.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                       {tab === 'matched' ? 'No hay líneas cruzadas.' : 'No hay líneas sin cruzar.'}
                     </TableCell>
                   </TableRow>

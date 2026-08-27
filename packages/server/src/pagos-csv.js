@@ -112,91 +112,46 @@ export function parseCsvRows(text) {
   return rows;
 }
 
-const HEADER_ROLES = {
-  orderId: [
-    'n de pedido',
-    'n pedido',
-    'numero de pedido',
-    'numero pedido',
-    'id pedido',
-    'id de pedido',
-    'id de orden',
-    'id orden',
-    'order number',
-    'order no',
-    'order nr',
-    'ordernr',
-    'orderno',
-    'order id',
-    'orderid',
-  ],
-  sku: [
-    'sku',
-    'sku del vendedor',
-    'sku vendedor',
-    'seller sku',
-    'sellersku',
-    'sku seller',
-  ],
-  date: [
-    'fecha de transaccion',
-    'fecha transaccion',
-    'fecha de creacion',
-    'fecha de creacion del pedido',
-    'fecha de liquidacion',
-    'transaction date',
-    'order date',
-    'fecha',
-  ],
-  amount: [
-    'monto',
-    'amount',
-    'paid price',
-    'precio pagado',
-  ],
-  bruto: [
-    'monto pedido',
-    'precio de venta',
-    'item price',
-    'bruto',
-    'gross',
-  ],
-  commission: [
-    'monto comision',
-    'comision',
-    'comision de falabella',
-    'commission',
-  ],
-  other: [
-    'otros cobros',
-    'otras tarifas',
-    'other fees',
-    'monto flete',
-    'monto de flete',
-    'tarifa de envio',
-    'shipping fee',
-  ],
-  neto: [
-    'monto total a depositar',
-    'total a pagar',
-    'total a depositar',
-    'payout',
-  ],
-  type: [
-    'tipo de transaccion',
-    'transaction type',
-    'tipo liquidacion',
-    'tipo de liquidacion',
-    'fee name',
-    'nombre de la tarifa',
-  ],
+const HEADER_MATCHERS = {
+  orderId: (n) => n.includes('del orden')
+    || n.includes('de pedido')
+    || n.includes('order number')
+    || n === 'order id'
+    || n === 'orderid'
+    || n === 'id pedido'
+    || n === 'id de pedido'
+    || n === 'id orden'
+    || n === 'id de orden',
+  sku: (n) => n === 'sku'
+    || n === 'sku vendedor'
+    || n === 'sku del vendedor'
+    || n === 'seller sku'
+    || n === 'sellersku',
+  shopSku: (n) => n === 'sku falabella' || n === 'shop sku' || n === 'shopsku',
+  itemId: (n) => n === 'falabella id' || n === 'falabella-id',
+  articleId: (n) => n.includes('id art'),
+  orderDate: (n) => n.includes('fecha creaci') && n.includes('orden'),
+  date: (n) => n.includes('fecha de transacci')
+    || n === 'fecha transaccion'
+    || n.includes('fecha de liquidacion')
+    || n === 'transaction date',
+  amount: (n) => n === 'monto con iva' || n === 'monto' || n === 'amount',
+  bruto: (n) => n === 'monto pedido' || n === 'precio de venta' || n === 'item price' || n === 'bruto' || n === 'gross',
+  commission: (n) => n === 'monto comision' || n === 'comision de falabella',
+  other: (n) => n === 'otros cobros' || n === 'otras tarifas' || n === 'other fees'
+    || n === 'monto flete' || n === 'monto de flete' || n === 'tarifa de envio' || n === 'shipping fee',
+  neto: (n) => n === 'monto total a depositar' || n === 'total a pagar' || n === 'total a depositar' || n === 'payout',
+  type: (n) => n.includes('tipo de transacci') || n === 'transaction type' || n === 'fee name' || n === 'nombre de la tarifa',
+  category: (n) => n.includes('categor') && n.includes('transacc'),
+  paymentStatus: (n) => n === 'estado de pago' || n === 'payment status',
+  statementId: (n) => n.includes('estado de cuenta'),
 };
 
 function pickHeader(headers, role, used) {
-  const wanted = HEADER_ROLES[role];
+  const match = HEADER_MATCHERS[role];
   for (const header of headers) {
     if (used.has(header.original)) continue;
-    if (wanted.includes(header.normalized)) {
+    if (match(header.normalized)) {
       used.add(header.original);
       return header.original;
     }
@@ -215,8 +170,15 @@ export function bindCsvHeaders(headerRow) {
   const columns = {
     orderId: pickHeader(headers, 'orderId', used),
     sku: pickHeader(headers, 'sku', used),
+    shopSku: pickHeader(headers, 'shopSku', used),
+    itemId: pickHeader(headers, 'itemId', used),
+    articleId: pickHeader(headers, 'articleId', used),
+    orderDate: pickHeader(headers, 'orderDate', used),
     date: pickHeader(headers, 'date', used),
     type: pickHeader(headers, 'type', used),
+    category: pickHeader(headers, 'category', used),
+    paymentStatus: pickHeader(headers, 'paymentStatus', used),
+    statementId: pickHeader(headers, 'statementId', used),
     bruto: pickHeader(headers, 'bruto', used),
     commission: pickHeader(headers, 'commission', used),
     other: pickHeader(headers, 'other', used),
@@ -241,12 +203,21 @@ export function bindCsvHeaders(headerRow) {
 export function classifyTransactionType(value) {
   const normalized = normalizeHeader(value);
   if (!normalized) return 'unknown';
-  if (/(comision|commission|fee name commission)/.test(normalized) && !/(venta|sale|sales)/.test(normalized)) {
-    return 'commission';
+  if (normalized.includes('precio del producto') || normalized.includes('pago por precio')) return 'sale';
+  if (normalized.includes('comisi') || normalized.includes('commission')) return 'commission';
+  if (/(devol|refund|reembolso|return)/.test(normalized) && !normalized.includes('reversa de pago de env')) {
+    return 'refund';
   }
-  if (/(venta|sale|sales|item price|paid price|pago recibido)/.test(normalized)) return 'sale';
-  if (/(devol|refund|reembolso|return)/.test(normalized)) return 'refund';
+  if (normalized === 'sales' || normalized === 'sale' || normalized === 'venta') return 'sale';
   return 'other';
+}
+
+export function parsePaymentStatus(value) {
+  const normalized = normalizeHeader(value);
+  if (!normalized) return null;
+  if (normalized.includes('no pagado') || normalized === 'unpaid' || normalized === 'not paid') return false;
+  if (normalized === 'pagado' || normalized === 'paid') return true;
+  return null;
 }
 
 function cell(row, headerIndex, headerName) {
@@ -258,14 +229,19 @@ export function parseSettlementCsv(text) {
   const rows = parseCsvRows(text);
   if (rows.length < 2) throw httpError('El CSV no tiene líneas de detalle.');
   const binding = bindCsvHeaders(rows[0]);
-  const headerIndex = new Map(binding.headers.map((header, index) => [header, index]));
+  const headerIndex = new Map();
+  for (let index = 0; index < rows[0].length; index += 1) {
+    const name = String(rows[0][index] || '').trim();
+    if (name && !headerIndex.has(name)) headerIndex.set(name, index);
+  }
   const lines = [];
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index];
     const raw = {};
     for (const header of binding.headers) raw[header] = cell(row, headerIndex, header);
     if (!Object.values(raw).some(Boolean)) continue;
-    const typeValue = cell(row, headerIndex, binding.columns.type);
+    const typeValue = cell(row, headerIndex, binding.columns.type)
+      || cell(row, headerIndex, binding.columns.category);
     const kind = classifyTransactionType(typeValue);
     const signedAmount = parseMoney(cell(row, headerIndex, binding.columns.amount));
     const bruto = binding.columns.bruto
@@ -282,14 +258,22 @@ export function parseSettlementCsv(text) {
       : signedAmount != null
         ? signedAmount
         : Math.round(((bruto || 0) - commission - other) * 100) / 100;
+    const paymentStatus = cell(row, headerIndex, binding.columns.paymentStatus);
     lines.push({
       rowNumber: index + 1,
       raw,
       orderId: cell(row, headerIndex, binding.columns.orderId),
       sku: cell(row, headerIndex, binding.columns.sku),
-      date: parseDateKey(cell(row, headerIndex, binding.columns.date)),
+      shopSku: cell(row, headerIndex, binding.columns.shopSku),
+      itemId: cell(row, headerIndex, binding.columns.itemId)
+        || cell(row, headerIndex, binding.columns.articleId),
+      statementId: cell(row, headerIndex, binding.columns.statementId),
+      date: parseDateKey(cell(row, headerIndex, binding.columns.orderDate))
+        || parseDateKey(cell(row, headerIndex, binding.columns.date)),
       type: typeValue,
       kind,
+      paid: parsePaymentStatus(paymentStatus),
+      paymentStatus,
       bruto: bruto || 0,
       commission,
       other,
@@ -303,7 +287,9 @@ export function parseSettlementCsv(text) {
 
 export function lineFingerprint(line) {
   return [
+    String(line.statementId || '').trim().toLowerCase(),
     String(line.orderId || '').trim().toLowerCase(),
+    String(line.itemId || '').trim().toLowerCase(),
     String(line.sku || '').trim().toLowerCase(),
     line.date || '',
     String(line.kind || ''),

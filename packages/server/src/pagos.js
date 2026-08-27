@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { lineFingerprint, parseSettlementCsv } from './pagos-csv.js';
+import { lineFingerprint, normalizeHeader, parseSettlementCsv } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
@@ -123,6 +123,10 @@ function mapLine(row) {
     sku: row.sku || '',
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
     type: row.transaction_type || '',
+    kind: row.kind || '',
+    paid: normalizeHeader(row.payment_status || '') !== 'no pagado',
+    paymentStatus: row.payment_status || '',
+    itemId: row.item_id || '',
     bruto: money(row.bruto),
     commission: money(row.commission),
     other: money(row.other_fees),
@@ -175,7 +179,8 @@ export async function listSettlementLines(filter = {}, db) {
   values.push(limit, offset);
   const query = await target.query(
     `select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
-            sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type,
+            sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
+            sl.payment_status, sl.item_id,
             sl.bruto, sl.commission, sl.other_fees, sl.neto, sl.raw,
             fo.order_number as sale_order_number,
             count(*) over()::int as total_count
@@ -260,9 +265,10 @@ export async function importSettlementCsv(input = {}, db) {
         `insert into settlement_lines (
            import_id, row_number, fingerprint, order_ref, sku, sale_date, transaction_type,
            kind, bruto, commission, other_fees, neto, amount, raw,
-           match_status, match_method, match_reason, sale_source, sale_id
+           match_status, match_method, match_reason, sale_source, sale_id,
+           payment_status, item_id
          ) values (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21
          )
          on conflict (fingerprint) do update set
            import_id = excluded.import_id,
@@ -270,7 +276,9 @@ export async function importSettlementCsv(input = {}, db) {
            match_method = excluded.match_method,
            match_reason = excluded.match_reason,
            sale_source = excluded.sale_source,
-           sale_id = excluded.sale_id`,
+           sale_id = excluded.sale_id,
+           payment_status = excluded.payment_status,
+           item_id = excluded.item_id`,
         [
           importId,
           result.line.rowNumber,
@@ -291,6 +299,8 @@ export async function importSettlementCsv(input = {}, db) {
           result.reason || null,
           result.sale?.source || null,
           result.sale?.id || null,
+          result.line.paymentStatus || '',
+          result.line.itemId || '',
         ],
       );
     }

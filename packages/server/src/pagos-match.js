@@ -53,6 +53,7 @@ export function matchSettlementLine(line, index) {
     if (index.byOrderId.has(orderKey)) {
       return { status: 'unmatched', method: null, sale: null, reason: 'ambiguous_order_id' };
     }
+    return { status: 'unmatched', method: null, sale: null, reason: 'unknown_order_id' };
   }
   const sku = keyPart(line.sku);
   const amount = line.amount != null ? line.amount : (line.bruto || line.neto);
@@ -91,6 +92,7 @@ export function matchSettlementLines(lines, sales) {
   const paidBySale = new Map();
   for (const result of results) {
     if (result.status !== 'matched' || !result.sale) continue;
+    if (result.line.paid === false) continue;
     const key = `${result.sale.source}:${result.sale.id}`;
     const current = paidBySale.get(key) || { sale: result.sale, lines: [] };
     current.lines.push(result.line);

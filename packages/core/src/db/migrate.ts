@@ -1662,10 +1662,14 @@ const DDL = `
     match_reason TEXT,
     sale_source TEXT,
     sale_id BIGINT,
+    payment_status TEXT NOT NULL DEFAULT '',
+    item_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (match_status IN ('matched', 'unmatched')),
     CHECK (kind IN ('sale', 'commission', 'other', 'refund', 'unknown'))
   );
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT '';
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS item_id TEXT NOT NULL DEFAULT '';
   CREATE INDEX IF NOT EXISTS idx_settlement_lines_import_status
     ON settlement_lines(import_id, match_status, row_number);
   CREATE INDEX IF NOT EXISTS idx_settlement_lines_sale

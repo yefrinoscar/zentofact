@@ -86,3 +86,58 @@ test('la primera carga cruza por ID de orden y marca la venta pagada', async () 
   assert.equal(result.paidSalesCount, 1);
   assert.equal(inserts.some((sql) => sql.includes('insert into sale_settlements')), true);
 });
+
+const UNPAID_CSV = [
+  'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto;Estado de pago',
+  '27/08/2026;Sales;PV-10002;AG301;189.90;No Pagado',
+].join('\n');
+
+test('No Pagado cruza el pedido y no inserta liquidación pagada', async () => {
+  const inserts = [];
+  const db = {
+    query: async (sql) => {
+      if (sql.includes('file_sha256') && sql.includes('from settlement_imports')) return { rows: [] };
+      if (sql.includes('from falabella_orders')) {
+        return {
+          rows: [{
+            id: 2,
+            company_id: 1,
+            order_id: 'preview-seed-shipped',
+            order_number: 'PV-10002',
+            sale_date: '2026-08-27',
+            amount: 189.9,
+            skus: ['ag301'],
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    connect: async () => ({
+      query: async (sql, params) => {
+        inserts.push({ sql, params });
+        if (sql.includes('insert into settlement_imports')) {
+          return {
+            rows: [{
+              id: 1,
+              filename: params[0],
+              file_sha256: params[1],
+              company_id: params[2],
+              imported_at: '2026-08-27T12:00:00.000Z',
+              imported_by: params[3],
+              line_count: params[5],
+              matched_count: params[6],
+              unmatched_count: params[7],
+              paid_sales_count: params[8],
+            }],
+          };
+        }
+        return { rows: [] };
+      },
+      release() {},
+    }),
+  };
+  const result = await importSettlementCsv({ filename: 'no-pagado.csv', csv: UNPAID_CSV, importedBy: 'admin' }, db);
+  assert.equal(result.matchedCount, 1);
+  assert.equal(result.paidSalesCount, 0);
+  assert.equal(inserts.some((row) => row.sql.includes('insert into sale_settlements')), false);
+});
