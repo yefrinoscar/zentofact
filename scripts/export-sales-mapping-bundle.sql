@@ -183,10 +183,13 @@ order_rows AS (
         'externalItemId', oi.external_item_id,
         'sku', oi.sku,
         'providerSku', oi.provider_sku,
+        'productSku', COALESCE(m.master, p.main_sku, oi.main_sku),
         'description', oi.description,
         'quantity', oi.quantity
       ) ORDER BY oi.id)
       FROM order_items oi
+      LEFT JOIN products p ON p.id = oi.product_id
+      LEFT JOIN sku_map m ON m.legacy = COALESCE(p.main_sku, oi.main_sku)
       WHERE oi.order_id = o.id
     ), '[]'::jsonb),
     'events', COALESCE((

@@ -183,6 +183,24 @@ test('una identidad sin evidencia queda unmapped', () => {
   assert.equal(resolved.status, 'unmapped');
 });
 
+test('el main_sku operativo de la línea resuelve el maestro aunque el seller SKU no mapee', () => {
+  const byHint = resolveSaleItem({
+    channel_code: 'falabella', company_id: 9, sku: 'FAL-RANDOM', provider_sku: '999',
+    main_sku: 'Z7',
+  }, context(products, listings));
+  assert.equal(byHint.status, 'mapped');
+  assert.equal(byHint.method, 'exact_main_sku');
+  assert.equal(byHint.product.main_sku, 'Z7');
+  assert.equal(byHint.ledgerPolicy, 'deduct_after_cutoff');
+
+  const byLegacyHint = resolveSaleItem({
+    channel_code: 'falabella', company_id: 9, sku: 'FAL-RANDOM', provider_sku: '999',
+    main_sku: 'AG174',
+  }, context(products, listings));
+  assert.equal(byLegacyHint.status, 'mapped');
+  assert.equal(byLegacyHint.product.main_sku, 'Z7');
+});
+
 test('el conteo físico decide si se puede descontar después del viernes', () => {
   assert.equal(classifyCountPresence('Z7', { countedSkus: new Set(['Z7']), skusWithoutQuantity: new Set() }), 'excel_counted');
   assert.equal(ledgerPolicyForPresence('excel_counted'), 'deduct_after_cutoff');

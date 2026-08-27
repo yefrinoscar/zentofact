@@ -317,14 +317,20 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
     orders += 1;
     const orderItems = Array.isArray(order.items) ? order.items : [];
     for (const [index, item] of orderItems.entries()) {
+      const master = listingMasterSku({
+        sellerSku: item.sku,
+        shopSku: item.providerSku,
+        productSku: item.productSku,
+      }, skus);
+      if (master) await ensureAnchorProduct(db, master, skus, idBySku);
       await db.query(
         `insert into order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
            product_id, listing_id, main_sku, stock_state, metadata
-         ) values ($1,$2,$3,$4,$5,$6,null,null,null,'none',$7::jsonb)
+         ) values ($1,$2,$3,$4,$5,$6,null,null,$7,'none',$8::jsonb)
          on conflict (order_id, external_item_id) do update set
            sku=excluded.sku, provider_sku=excluded.provider_sku, quantity=excluded.quantity,
-           product_id=null, listing_id=null, main_sku=null, updated_at=now()`,
+           product_id=null, listing_id=null, main_sku=excluded.main_sku, updated_at=now()`,
         [
           orderId,
           String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`),
@@ -332,7 +338,8 @@ export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {})
           item.providerSku || null,
           item.description || item.sku || '',
           Number(item.quantity) || 1,
-          JSON.stringify({ source: BUNDLE_SOURCE }),
+          master,
+          JSON.stringify({ source: BUNDLE_SOURCE, productSku: item.productSku || master || null }),
         ],
       );
       items += 1;
@@ -401,8 +408,11 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
   )).rows;
   const orderIds = orderRows.map((row) => Number(row.id));
   const itemRows = orderIds.length ? (await db.query(
-    `select order_id, external_item_id, sku, provider_sku, description, quantity
-     from order_items where order_id=any($1::bigint[]) order by id`,
+    `select oi.order_id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity,
+       coalesce(p.main_sku, oi.main_sku) as product_sku
+     from order_items oi
+     left join products p on p.id=oi.product_id
+     where oi.order_id=any($1::bigint[]) order by oi.id`,
     [orderIds],
   )).rows : [];
   const eventRows = orderIds.length ? (await db.query(
@@ -419,6 +429,7 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
       externalItemId: item.external_item_id,
       sku: item.sku,
       providerSku: item.provider_sku,
+      productSku: item.product_sku || null,
       description: item.description,
       quantity: Number(item.quantity),
     });

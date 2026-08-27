@@ -204,7 +204,8 @@ export function resolveSaleItem(item, context) {
     );
   }
 
-  const historicalSku = [sellerSku, shopSku].find((sku) => historicalMap[sku]);
+  const hintSku = String(item.main_sku || item.productSku || '').trim();
+  const historicalSku = [sellerSku, shopSku, hintSku].find((sku) => historicalMap[sku]);
   if (historicalSku) {
     const mainSku = historicalMap[historicalSku];
     const product = context.productsBySku.get(mainSku);
@@ -226,7 +227,7 @@ export function resolveSaleItem(item, context) {
     }
   }
 
-  for (const sku of [sellerSku, shopSku]) {
+  for (const sku of [sellerSku, shopSku, hintSku]) {
     if (!sku) continue;
     const product = context.productsBySku.get(sku);
     if (product) pushCandidate(candidates, product, exactSeller || existingListing || exactShop || null, 'exact_main_sku');

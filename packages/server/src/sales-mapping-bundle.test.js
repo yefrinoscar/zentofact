@@ -109,6 +109,9 @@ test('ingerir el bundle crea empresa, listing Excel y línea sin product_id', as
   assert.equal(listing.params[4], 'AG174');
   const item = queries.find((entry) => entry.sql.startsWith('insert into order_items'));
   assert.equal(item.params[2], 'AG174');
+  assert.equal(item.params[6], 'Z7');
+  assert.match(item.sql, /product_id, listing_id, main_sku/);
+  assert.match(item.sql, /null,null,\$7/);
   assert.equal(queries.some((entry) => entry.sql.includes('product_inventory')), false);
 });
 
@@ -235,6 +238,7 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /jsonb_agg\(c\.master ORDER BY c\.master\)/);
   assert.match(sql, /'productSku'/);
   assert.match(sql, /LEFT JOIN products p ON p\.id = l\.product_id/);
+  assert.match(sql, /LEFT JOIN products p ON p\.id = oi\.product_id/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {
