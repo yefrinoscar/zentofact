@@ -26,6 +26,7 @@ const { pool } = await import('@zentofact/core');
 const { SALES_HISTORY_SINCE } = await import('../packages/server/src/catalog/historical-sales-mapping.js');
 const {
   EXPORT_SALES_MAPPING_BUNDLE_COMMAND,
+  EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND,
   buildSalesMappingBundle,
   loadFridayWorkbookFromDb,
 } = await import('../packages/server/src/catalog/sales-mapping-bundle.js');
@@ -37,6 +38,7 @@ try {
   if (!workbook) {
     console.error('No está el Excel del viernes ni un ancla de conciliación con corte 2026-08-21 14:50 Lima.');
     console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
+    console.error(EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND);
     process.exit(1);
   }
   const bundle = await buildSalesMappingBundle(pool, { workbook, since: SALES_HISTORY_SINCE });

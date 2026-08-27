@@ -156,7 +156,16 @@ SELECT CASE
   WHEN NOT EXISTS (SELECT 1 FROM run) THEN
     jsonb_build_object('version', 1, 'error', 'missing_friday_anchor')
   WHEN EXISTS (SELECT 1 FROM counted c LEFT JOIN picked p ON p.master_sku = c.master WHERE p.qty IS NULL) THEN
-    jsonb_build_object('version', 1, 'error', 'incomplete_friday_count')
+    jsonb_build_object(
+      'version', 1,
+      'error', 'incomplete_friday_count',
+      'missing', COALESCE((
+        SELECT jsonb_agg(c.master ORDER BY c.master)
+        FROM counted c
+        LEFT JOIN picked p ON p.master_sku = c.master
+        WHERE p.qty IS NULL
+      ), '[]'::jsonb)
+    )
   ELSE jsonb_build_object(
     'version', 1,
     'since', ${sqlStr(SALES_HISTORY_SINCE)},

@@ -13,8 +13,16 @@ const FULFILLMENT_STATUSES = new Set([
   'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
 ]);
 
+export const EXPORT_SALES_MAPPING_BUNDLE_SQL_REF = 'yefrinoscar/zentofact/cursor/map-sales-from-may-2fe9/scripts/export-sales-mapping-bundle.sql';
+
 export const EXPORT_SALES_MAPPING_BUNDLE_COMMAND = [
   'psql "$DATABASE_URL_POSTGRES" -v ON_ERROR_STOP=1 -t -A -f scripts/export-sales-mapping-bundle.sql > sales-mapping-bundle.json',
+].join('\n');
+
+export const EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND = [
+  `curl -fsSL https://raw.githubusercontent.com/${EXPORT_SALES_MAPPING_BUNDLE_SQL_REF} \\`,
+  '| psql "$DATABASE_URL_POSTGRES" -v ON_ERROR_STOP=1 -t -A \\',
+  '> sales-mapping-bundle.json',
 ].join('\n');
 
 function integerQuantity(value) {
@@ -92,7 +100,10 @@ export function parseSalesMappingBundle(raw) {
     throw new Error('El bundle debe ser version 1.');
   }
   if (bundle.error) {
-    throw new Error(`El bundle no se pudo armar: ${bundle.error}.`);
+    const missing = Array.isArray(bundle.missing) && bundle.missing.length
+      ? ` Faltan: ${bundle.missing.join(', ')}.`
+      : '';
+    throw new Error(`El bundle no se pudo armar: ${bundle.error}.${missing}`);
   }
   return bundle;
 }

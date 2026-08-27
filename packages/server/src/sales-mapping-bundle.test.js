@@ -114,6 +114,10 @@ test('ingerir el bundle crea empresa, listing Excel y línea sin product_id', as
 test('parseSalesMappingBundle rechaza otra versión', () => {
   assert.throws(() => parseSalesMappingBundle({ version: 2 }), /version 1/);
   assert.throws(() => parseSalesMappingBundle({ version: 1, error: 'missing_friday_anchor' }), /missing_friday_anchor/);
+  assert.throws(
+    () => parseSalesMappingBundle({ version: 1, error: 'incomplete_friday_count', missing: ['G34R', 'Z7'] }),
+    /Faltan: G34R, Z7/,
+  );
 });
 
 test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async () => {
@@ -134,6 +138,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.doesNotMatch(sql, /from product_inventory/i);
   assert.doesNotMatch(sql, /from inventory_movements/i);
   assert.doesNotMatch(sql, /insert into products/i);
+  assert.match(sql, /incomplete_friday_count/);
+  assert.match(sql, /jsonb_agg\(c\.master ORDER BY c\.master\)/);
 });
 
 test('descubre el bundle y el Excel aunque el nombre no sea el canónico', async () => {

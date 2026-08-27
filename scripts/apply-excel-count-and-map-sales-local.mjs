@@ -48,6 +48,7 @@ const {
 } = await import('../packages/server/src/catalog/import-orders-since-may.js');
 const {
   EXPORT_SALES_MAPPING_BUNDLE_COMMAND,
+  EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND,
   assertBundleWorkbook,
   ingestSalesMappingBundle,
   parseSalesMappingBundle,
@@ -217,8 +218,10 @@ const workbook = excelPath
     : null;
 if (!workbook) {
   console.error('Falta el Excel del viernes o un sales-mapping-bundle.json con esas cantidades.');
-  console.error('En la máquina que tiene el Excel y la base operativa:');
+  console.error('En la base operativa (con el repo):');
   console.error(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
+  console.error('O sin clonar, desde esa misma base:');
+  console.error(EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND);
   process.exit(1);
 }
 
@@ -238,6 +241,7 @@ try {
   } else if (!bundle && !dumpPath) {
     console.log('Sin bundle ni dump de pedidos Falabella/Ripley. En la base operativa:');
     console.log(EXPORT_SALES_MAPPING_BUNDLE_COMMAND);
+    console.log(EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND);
     console.log(EXPORT_ORDERS_DUMP_COMMAND);
   }
 
