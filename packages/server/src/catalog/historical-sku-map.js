@@ -102,9 +102,19 @@ const MARKETPLACE_SKU_TO_MASTER = {
   '140715461': 'FAL-140715461',
   AFE781187: 'FAL-123389143',
   '123389143': 'FAL-123389143',
+  '1354xssew': 'AG301',
+  '143571425': 'AG301',
+  hsfds: 'AG301',
+  '123412asdfa': 'AG301',
+  '156582201': 'G34R',
+  '144962663': 'FAL-144962663',
+  '146325030': 'FAL-146325783',
+  '146325783': 'FAL-146325783',
+  '151159665': 'FAL-151159665',
+  '115839107': 'FAL-115839107',
 };
 
-// Ripley seller SKUs associated on 22 Aug 2026. Unlinked publications are omitted.
+// Ripley seller SKUs associated 22–24 Aug 2026. Unlinked publications are omitted.
 export const RIPLEY_SKU_TO_MASTER = {
   S119266: 'AG107',
   S119268: 'AG108',
@@ -143,6 +153,7 @@ export const RIPLEY_SKU_TO_MASTER = {
   MAQ1234: 'AG89',
   'GUA-107755': 'AG94',
   'BOT-105522': 'AM7',
+  S166285: 'AG301',
   'SCA-103341': 'AG289',
   CHA1234: 'AG290',
   S118837: 'AG291',

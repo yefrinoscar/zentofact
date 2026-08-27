@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { applyInventoryMovement } from './inventory-service.js';
-import { HISTORICAL_SKU_TO_MASTER as HISTORICAL_SKU_MAP } from './historical-sku-map.js';
+import { HISTORICAL_SKU_TO_MASTER as HISTORICAL_SKU_MAP, historicalMasterForSku } from './historical-sku-map.js';
 
 export const AUGUST_START = '2026-08-01T05:00:00.000Z';
 export const AUGUST_END = '2026-09-01T05:00:00.000Z';
@@ -126,9 +126,9 @@ function resolveItem(item, context) {
     const product = context.productsById.get(Number(exact.product_id));
     return product ? { product, listing: exact, method: exactSeller ? 'active_seller_sku' : 'active_shop_sku' } : null;
   }
-  const explicitSku = [sellerSku, shopSku].find((sku) => HISTORICAL_SKU_TO_MASTER[sku]);
+  const explicitSku = [sellerSku, shopSku].find((sku) => historicalMasterForSku(sku, HISTORICAL_SKU_TO_MASTER));
   if (!explicitSku) return null;
-  const product = context.productsBySku.get(HISTORICAL_SKU_TO_MASTER[explicitSku]);
+  const product = context.productsBySku.get(historicalMasterForSku(explicitSku, HISTORICAL_SKU_TO_MASTER));
   if (!product) return null;
   const historicalListing = context.listings.find((listing) => (
     Number(listing.company_id) === Number(item.company_id)

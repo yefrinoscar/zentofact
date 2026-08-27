@@ -161,6 +161,7 @@ test('los maestros históricos que no están en el Excel quedan fuera del conteo
   assert.equal(absent.includes('G1RAMAS'), false);
   assert.ok(absent.includes('AG227'));
   assert.ok(absent.includes('FAL-144958533'));
+  assert.ok(absent.includes('FAL-144962663'));
   assert.ok(absent.includes('AM7'));
   assert.ok(absent.includes('AG289'));
 });
@@ -448,7 +449,7 @@ test('un SKU legado o el código del Excel resuelven al maestro del conteo', () 
 
 test('un SKU Ripley documentado resuelve al maestro del Excel o queda anclado sin descontar', () => {
   const excelIds = [...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY];
-  const extraMasters = ['AG138', 'AG86', 'AM7', 'AG227', 'AG289', 'AG290', 'AG291', 'AG292', 'AG293', 'AG294', 'AG295'];
+  const extraMasters = ['AG138', 'AG86', 'AM7', 'AG227', 'AG289', 'AG290', 'AG291', 'AG292', 'AG293', 'AG294', 'AG295', 'FAL-144962663'];
   const productsForRipley = [...excelIds, ...extraMasters].map((sku, index) => ({
     id: index + 1, main_sku: sku, name: sku,
   }));
@@ -469,6 +470,33 @@ test('un SKU Ripley documentado resuelve al maestro del Excel o queda anclado si
   assert.equal(triturador.status, 'mapped');
   assert.equal(triturador.product.main_sku, 'AG227');
   assert.equal(triturador.ledgerPolicy, 'map_only_no_deduct');
+
+  const celeste = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'S166285', provider_sku: 'S166285',
+  }, ctx);
+  assert.equal(celeste.status, 'mapped');
+  assert.equal(celeste.product.main_sku, 'G35V');
+  assert.equal(celeste.ledgerPolicy, 'deduct_after_cutoff');
+
+  const falabellaCeleste = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: '143571425', provider_sku: '143571425',
+  }, ctx);
+  assert.equal(falabellaCeleste.status, 'mapped');
+  assert.equal(falabellaCeleste.product.main_sku, 'G35V');
+
+  const beige = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'SILLA-BEIGE', provider_sku: '156582201',
+  }, ctx);
+  assert.equal(beige.status, 'mapped');
+  assert.equal(beige.product.main_sku, 'G34R');
+  assert.equal(beige.ledgerPolicy, 'deduct_after_cutoff');
+
+  const rosa = resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'SILLA-ROSA', provider_sku: '144962663',
+  }, ctx);
+  assert.equal(rosa.status, 'mapped');
+  assert.equal(rosa.product.main_sku, 'FAL-144962663');
+  assert.equal(rosa.ledgerPolicy, 'map_only_no_deduct');
 
   const unlinked = resolveSaleItem({
     channel_code: 'ripley', company_id: 1, sku: 'MOC-105045', provider_sku: 'MOC-105045',
