@@ -148,7 +148,15 @@ function pickCandidate(candidates) {
     }
   }
   if (byProduct.size > 1) {
-    return { status: 'doubtful', reason: conflictReason([...byProduct.values()]) };
+    const picked = [...byProduct.values()];
+    const historical = picked.filter((candidate) => candidate.method === 'explicit_historical_sku');
+    const others = picked.filter((candidate) => (
+      candidate.method !== 'explicit_historical_sku' && candidate.method !== 'existing_product_id'
+    ));
+    if (historical.length === 1 && others.length === 0) {
+      return { status: 'mapped', ...historical[0] };
+    }
+    return { status: 'doubtful', reason: conflictReason(picked) };
   }
   if (byProduct.size === 1) return { status: 'mapped', ...[...byProduct.values()][0] };
   return null;
@@ -292,7 +300,9 @@ function mappingNeedsWrite(item, resolved) {
   const listingId = resolved.listing ? Number(resolved.listing.id) : null;
   const currentProductId = item.product_id == null || item.product_id === '' ? null : Number(item.product_id);
   const currentListingId = item.listing_id == null || item.listing_id === '' ? null : Number(item.listing_id);
-  if (currentProductId != null && currentProductId !== productId) return false;
+  if (currentProductId != null && currentProductId !== productId) {
+    return resolved.method === 'explicit_historical_sku';
+  }
   return currentProductId !== productId
     || (listingId != null && currentListingId !== listingId)
     || String(item.main_sku || '') !== resolved.product.main_sku;
@@ -763,8 +773,8 @@ export async function applyHistoricalSalesMappings(pool, input = {}) {
            main_sku=$3,
            updated_at=now()
          where id=$4
-           and (product_id is null or product_id=$1)`,
-        [line.productId, listingId, line.mainSku, line.itemId],
+           and (product_id is null or product_id=$1 or $5::boolean)`,
+        [line.productId, listingId, line.mainSku, line.itemId, line.method === 'explicit_historical_sku'],
       );
       updatedItems += updated.rowCount;
     }

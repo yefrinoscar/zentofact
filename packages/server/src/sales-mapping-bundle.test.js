@@ -494,6 +494,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   );
   assert.match(sql, /'AG174', 'Z7'/);
   assert.match(sql, /'AG301', 'G35V'/);
+  assert.match(sql, /'S119266', 'G1RAMAS'/);
+  assert.match(sql, /'S166285', 'G35V'/);
   assert.match(sql, /'G-19', 'G18'/);
   assert.match(sql, /falabella/);
   assert.match(sql, /ripley/);
@@ -506,8 +508,8 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /incomplete_friday_count/);
   assert.match(sql, /jsonb_agg\(c\.master ORDER BY c\.master\)/);
   assert.match(sql, /'productSku'/);
-  assert.match(sql, /LEFT JOIN products p ON p\.id = l\.product_id/);
-  assert.match(sql, /LEFT JOIN products p ON p\.id = oi\.product_id/);
+  assert.match(sql, /LEFT JOIN sku_map m_sku ON m_sku\.legacy = oi\.sku/);
+  assert.match(sql, /LEFT JOIN sku_map ms ON ms\.legacy = l\.seller_sku/);
   assert.match(sql, /raw_data \? 'Quantity'/);
   assert.match(sql, /'rawData'/);
   assert.match(sql, /falabella_orders/);

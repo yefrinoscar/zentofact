@@ -5,7 +5,11 @@ import {
   mapRipleyOrderItems,
   mapRipleyShipping,
 } from './order-adapters/ripley.js';
-import { ripleySyncWindow, syncAllRipleyOrders } from './ripley-orders.js';
+import {
+  drainMissingRipleyOrderItems,
+  ripleySyncWindow,
+  syncAllRipleyOrders,
+} from './ripley-orders.js';
 
 test('el polling incremental usa el cursor de la última sincronización', () => {
   assert.deepEqual(
@@ -64,4 +68,47 @@ test('sincroniza solo empresas activas con API key de Ripley y aísla fallos', a
   assert.equal(result.successful, 1);
   assert.equal(result.failed, 1);
   assert.equal(result.results[1].error, 'Ripley no disponible');
+});
+
+test('un pedido Ripley sin líneas no se marca completo y se reconsulta por order_ids', async () => {
+  assert.equal(mapRipleyOrderItems({ order_id: 'RIP-EMPTY' }).length, 0);
+  const queries = [];
+  const ingested = [];
+  const db = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      if (String(sql).includes('from orders o')) {
+        if (queries.filter((entry) => entry.sql.includes('from orders o')).length > 1) {
+          return { rows: [] };
+        }
+        return { rows: [{ external_order_id: 'RIP-EMPTY' }, { external_order_id: 'RIP-OK' }] };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const result = await drainMissingRipleyOrderItems(4, { since: '2026-05-01T05:00:00.000Z' }, {
+    db,
+    getCompany: async () => ({ id: 4, activo: true, ripleyApiKey: 'key', nombre: 'LIMBO' }),
+    account: { id: 8, companyId: 4 },
+    ingestRipleyOrder: async (input) => {
+      ingested.push(input.normalized.orderId);
+      return { itemsPending: true };
+    },
+    client: {
+      async listAllOrders({ orderIds }) {
+        assert.deepEqual(orderIds, ['RIP-EMPTY', 'RIP-OK']);
+        return [
+          { orderId: 'RIP-EMPTY', raw: { order_id: 'RIP-EMPTY' } },
+          {
+            orderId: 'RIP-OK',
+            raw: { order_id: 'RIP-OK', order_lines: [{ order_line_id: 'L-1', offer_sku: 'S119266', quantity: 1 }] },
+          },
+        ];
+      },
+    },
+  });
+  assert.equal(ingested.join(','), 'RIP-EMPTY,RIP-OK');
+  assert.equal(result.candidates, 2);
+  assert.equal(result.hydrated, 1);
+  assert.equal(result.stillEmpty, 1);
 });

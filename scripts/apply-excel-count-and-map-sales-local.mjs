@@ -186,11 +186,11 @@ async function companiesWithKeys(db, rucs = null) {
 
 async function syncMarketplaces(db, companies = null) {
   const { drainMissingFalabellaOrderItems, syncFalabellaOrders } = await import('../packages/server/src/falabella-sync.js');
-  const { syncRipleyOrders } = await import('../packages/server/src/ripley-orders.js');
+  const { drainMissingRipleyOrderItems, syncRipleyOrders } = await import('../packages/server/src/ripley-orders.js');
   const months = monthsFromMay();
   const summary = [];
   for (const company of companies || await companiesWithKeys(db)) {
-    const entry = { companyId: company.id, falabella: [], ripley: null, items: null };
+    const entry = { companyId: company.id, falabella: [], ripley: null, items: null, ripleyItems: null };
     if (company.falabella) {
       for (const month of months) {
         const result = await syncFalabellaOrders(company.id, { mode: 'month', month });
@@ -215,6 +215,7 @@ async function syncMarketplaces(db, companies = null) {
         [company.id],
       );
       entry.ripley = await syncRipleyOrders(company.id, { startUpdateDate: SALES_HISTORY_SINCE });
+      entry.ripleyItems = await drainMissingRipleyOrderItems(company.id, { since: SALES_HISTORY_SINCE });
     }
     summary.push(entry);
   }
@@ -327,6 +328,7 @@ try {
       falabella: entry.falabella,
       items: entry.items,
       ripley: entry.ripley && { status: entry.ripley.status, received: entry.ripley.received },
+      ripleyItems: entry.ripleyItems,
     }))));
   } else if (keys.falabella || keys.ripley) {
     console.log('Se escribieron API keys pero ninguna empresa quedó con credenciales usable.');

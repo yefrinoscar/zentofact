@@ -652,6 +652,15 @@ test('un SKU Ripley documentado resuelve al maestro del Excel o queda anclado si
   assert.equal(celeste.product.main_sku, 'G35V');
   assert.equal(celeste.ledgerPolicy, 'deduct_after_cutoff');
 
+  const hog025 = productsForRipley.find((product) => product.main_sku === 'HOG025');
+  const staleCeleste = resolveSaleItem({
+    channel_code: 'ripley', company_id: 1, sku: 'S166285', provider_sku: 'S166285',
+    product_id: hog025.id,
+  }, ctx);
+  assert.equal(staleCeleste.status, 'mapped');
+  assert.equal(staleCeleste.product.main_sku, 'G35V');
+  assert.equal(staleCeleste.method, 'explicit_historical_sku');
+
   const falabellaCeleste = resolveSaleItem({
     channel_code: 'falabella', company_id: 1, sku: '143571425', provider_sku: '143571425',
   }, ctx);

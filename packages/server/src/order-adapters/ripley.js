@@ -126,7 +126,7 @@ export async function ingestRipleyOrder(input, db) {
   );
   const statuses = mapRipleyCanonicalStatus(normalized?.status);
   const items = mapRipleyOrderItems(raw);
-  return ingestOrder({
+  const ingested = await ingestOrder({
     companyId: input.companyId,
     channelAccountId: account.id,
     automatic: true,
@@ -152,11 +152,17 @@ export async function ingestRipleyOrder(input, db) {
       hasIncident: Boolean(raw?.has_incident),
     },
     items,
-    itemsComplete: true,
+    itemsComplete: items.length > 0,
+    itemsError: items.length ? undefined : 'Ripley no devolvió los items del pedido.',
     rawPayload: raw,
     source: input.source || 'sync',
     correlationId: input.correlationId,
     eventId: input.eventId,
     providerOccurredAt: normalized?.updatedAt || normalized?.createdAt,
   }, db);
+  return {
+    ...ingested,
+    itemsPending: items.length === 0,
+    itemsError: items.length ? null : 'Ripley no devolvió los items del pedido.',
+  };
 }

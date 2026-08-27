@@ -3,8 +3,8 @@ import {
   INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
 } from '../../../../scripts/lib/inventory-count-2026-08-21.mjs';
 import {
-  EXCEL_ROW_ALIAS_TO_MASTER,
-  LEGACY_AG_TO_EXCEL,
+  HISTORICAL_SKU_TO_MASTER,
+  followHistoricalSku,
 } from './historical-sku-map.js';
 import { ORDER_SINCE_SQL, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
 
@@ -17,7 +17,10 @@ function sqlValues(entries) {
 }
 
 export function renderExportSalesMappingBundleSql() {
-  const skuMap = Object.entries({ ...LEGACY_AG_TO_EXCEL, ...EXCEL_ROW_ALIAS_TO_MASTER });
+  const skuMap = Object.entries(HISTORICAL_SKU_TO_MASTER)
+    .map(([sku]) => [sku, followHistoricalSku(sku)])
+    .filter(([sku, master]) => sku && master)
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0])));
   const counted = [...INVENTORY_COUNT_MASTER_SKUS].sort();
   const noQty = [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY].sort();
   return `-- Sales mapping bundle: Friday cutoff_quantity + Falabella/Ripley lines since May.
@@ -105,8 +108,8 @@ listing_json AS (
     'sellerSku', l.seller_sku,
     'shopSku', l.shop_sku,
     'productSku', CASE
-      WHEN p.main_sku IS NULL THEN NULL
-      ELSE COALESCE(m.master, p.main_sku)
+      WHEN COALESCE(ms.master, mh.master, m.master, p.main_sku) IS NULL THEN NULL
+      ELSE COALESCE(ms.master, mh.master, m.master, p.main_sku)
     END,
     'status', l.status,
     'title', l.title
@@ -115,6 +118,8 @@ listing_json AS (
   JOIN companies c ON c.id = l.company_id
   LEFT JOIN products p ON p.id = l.product_id
   LEFT JOIN sku_map m ON m.legacy = p.main_sku
+  LEFT JOIN sku_map ms ON ms.legacy = l.seller_sku
+  LEFT JOIN sku_map mh ON mh.legacy = l.shop_sku
   WHERE l.channel_code IN ('falabella', 'ripley')
     AND c.id IN (
       SELECT DISTINCT o.company_id
@@ -143,7 +148,7 @@ order_rows AS (
         'externalItemId', oi.external_item_id,
         'sku', oi.sku,
         'providerSku', oi.provider_sku,
-        'productSku', COALESCE(m.master, p.main_sku, oi.main_sku),
+        'productSku', COALESCE(m_sku.master, m_shop.master, m.master, p.main_sku, oi.main_sku),
         'description', oi.description,
         'quantity', oi.quantity,
         'rawData', CASE
@@ -154,6 +159,8 @@ order_rows AS (
       FROM order_items oi
       LEFT JOIN products p ON p.id = oi.product_id
       LEFT JOIN sku_map m ON m.legacy = COALESCE(p.main_sku, oi.main_sku)
+      LEFT JOIN sku_map m_sku ON m_sku.legacy = oi.sku
+      LEFT JOIN sku_map m_shop ON m_shop.legacy = oi.provider_sku
       WHERE oi.order_id = o.id
     ), '[]'::jsonb),
     'events', COALESCE((
