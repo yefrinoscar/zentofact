@@ -126,6 +126,121 @@ export function summarizeSettlementSales(sales) {
   };
 }
 
+function groupKey(item) {
+  return [
+    String(item.sku || '').trim(),
+    round2(item.bruto),
+    item.commissionRate ?? '',
+    round2(item.shipping),
+  ].join('|');
+}
+
+export function groupSaleProducts(items) {
+  const groups = new Map();
+  for (const item of items || []) {
+    const key = groupKey(item);
+    const current = groups.get(key) || {
+      sku: item.sku || '',
+      productName: item.productName || '',
+      quantity: 0,
+      bruto: 0,
+      commission: 0,
+      shipping: 0,
+      buyerShipping: 0,
+      other: 0,
+      neto: 0,
+      csvRates: [],
+    };
+    current.quantity += 1;
+    current.bruto = round2(current.bruto + Number(item.bruto || 0));
+    current.commission = round2(current.commission + Number(item.commission || 0));
+    current.shipping = round2(current.shipping + Number(item.shipping || 0));
+    current.buyerShipping = round2(current.buyerShipping + Number(item.buyerShipping || 0));
+    current.other = round2(current.other + Number(item.other || 0));
+    current.neto = round2(current.neto + Number(item.neto || 0));
+    if (item.commissionRate != null && Number.isFinite(Number(item.commissionRate))) {
+      current.csvRates.push(Number(item.commissionRate));
+    }
+    if (item.productName && !current.productName) current.productName = item.productName;
+    groups.set(key, current);
+  }
+
+  return [...groups.values()].map((group) => {
+    const totals = finalizeTotals(group);
+    const quantity = group.quantity || 1;
+    return {
+      sku: group.sku,
+      productName: group.productName,
+      quantity,
+      ...totals,
+      unitBruto: round2(totals.bruto / quantity),
+      unitCommission: round2(totals.commission / quantity),
+      unitShipping: round2(totals.shipping / quantity),
+      unitNeto: round2(totals.neto / quantity),
+    };
+  });
+}
+
+const CHARGE_KIND_ORDER = {
+  sale: 0,
+  commission: 1,
+  shipping: 2,
+  other: 3,
+  refund: 4,
+  buyer_shipping: 5,
+};
+
+export function groupSaleCharges(charges) {
+  const groups = new Map();
+  let buyerNet = 0;
+  for (const charge of charges || []) {
+    const kind = charge.kind || 'other';
+    if (kind === 'buyer_shipping') {
+      buyerNet = round2(buyerNet + Number(charge.amount || 0));
+      continue;
+    }
+    const key = `${kind}|${charge.type || ''}`;
+    const current = groups.get(key) || {
+      kind,
+      type: charge.type || '',
+      count: 0,
+      amount: 0,
+      unitAmounts: [],
+    };
+    const amount = round2(Number(charge.amount || 0));
+    current.count += 1;
+    current.amount = round2(current.amount + amount);
+    current.unitAmounts.push(amount);
+    groups.set(key, current);
+  }
+
+  if (buyerNet !== 0) {
+    groups.set('buyer_shipping|', {
+      kind: 'buyer_shipping',
+      type: '',
+      count: 1,
+      amount: buyerNet,
+      unitAmounts: [buyerNet],
+    });
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const unique = [...new Set(group.unitAmounts)];
+      return {
+        kind: group.kind,
+        type: group.type,
+        count: group.count,
+        amount: group.amount,
+        unitAmount: unique.length === 1 ? unique[0] : null,
+      };
+    })
+    .sort((left, right) => (
+      (CHARGE_KIND_ORDER[left.kind] ?? 9) - (CHARGE_KIND_ORDER[right.kind] ?? 9)
+      || String(left.type).localeCompare(String(right.type))
+    ));
+}
+
 export function aggregateSettlementSales(lines) {
   const groups = new Map();
   for (const line of lines || []) {
@@ -168,6 +283,12 @@ export function aggregateSettlementSales(lines) {
 
   return [...groups.values()].map((sale) => {
     const totals = finalizeTotals(sale);
+    const items = [...sale.items.values()].map((item) => ({
+      itemId: item.itemId,
+      sku: item.sku,
+      productName: item.productName,
+      ...finalizeTotals(item),
+    }));
     return {
       orderId: sale.orderId,
       date: sale.date,
@@ -179,12 +300,9 @@ export function aggregateSettlementSales(lines) {
       itemCount: sale.items.size,
       ...totals,
       charges: sale.charges,
-      items: [...sale.items.values()].map((item) => ({
-        itemId: item.itemId,
-        sku: item.sku,
-        productName: item.productName,
-        ...finalizeTotals(item),
-      })),
+      chargeGroups: groupSaleCharges(sale.charges),
+      items,
+      products: groupSaleProducts(items),
     };
   }).sort((left, right) => (right.takeRate || 0) - (left.takeRate || 0) || String(right.orderId).localeCompare(String(left.orderId)));
 }

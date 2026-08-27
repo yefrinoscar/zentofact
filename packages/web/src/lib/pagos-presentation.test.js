@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSettlementCsv, importSummary, paymentStatusLabel, saleOverview, settlementMethodLabel, settlementStatusLabel, unmatchedReasonLabel } from './pagos-presentation.ts';
+import { decodeSettlementCsv, importSummary, paymentStatusLabel, saleOverview, settlementMethodLabel, settlementStatusLabel, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya estaba cargado.');
@@ -10,11 +10,22 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusLabel('No Pagado'), 'No pagado');
 });
 
-test('el overview nombra comisión envío y lo que se queda Falabella', () => {
+test('el overview nombra cobro envío y lo que se queda', () => {
   assert.equal(
     saleOverview({ saleCount: 27, commissionRate: 0.14, shippingRate: 0.21, takeRate: 0.35 }),
-    '27 ventas · comisión 14% · envío 21% · Falabella se queda 35%',
+    '27 ventas · comisión 14% · cobro envío 21% · se queda 35%',
   );
+});
+
+test('acorta el título de plaza y deja SKU e unidades aparte', () => {
+  assert.equal(
+    shortProductName('Manta Térmica Aluminizada Mylar Emergencia Trekking Camping'),
+    'Manta Térmica Aluminizada',
+  );
+  assert.equal(skuLabel(['MTC12367890']), 'MTC12367890');
+  assert.equal(skuLabel(['MTC12367890', 'HOG025']), 'MTC12367890 +1');
+  assert.equal(unitsLabel(11), '11 u');
+  assert.equal(unitsLabel(1), '');
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

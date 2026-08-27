@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -91,4 +91,101 @@ test('el porcentaje de comisión no es fijo entre ventas', () => {
   const summary = summarizeSettlementSales(sales);
   assert.equal(summary.saleCount, 2);
   assert.ok(summary.commissionRate > 0.1 && summary.commissionRate < 0.18);
+});
+
+function unitLines(itemId, sku = 'MTC12367890', name = 'Manta Térmica Aluminizada Mylar Emergencia Trekking Camping') {
+  return [
+    row({ 'Falabella-Id': itemId, 'SKU vendedor': sku, 'Nombre del producto': name }),
+    row({
+      'Falabella-Id': itemId,
+      'SKU vendedor': sku,
+      'Nombre del producto': name,
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-1.35',
+    }),
+    row({
+      'Falabella-Id': itemId,
+      'SKU vendedor': sku,
+      'Nombre del producto': name,
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto con IVA': '-3.9',
+    }),
+    row({
+      'Falabella-Id': itemId,
+      'SKU vendedor': sku,
+      'Nombre del producto': name,
+      'Tipo de transacción': 'Pago de envío comprador',
+      'Monto con IVA': '3.17',
+    }),
+    row({
+      'Falabella-Id': itemId,
+      'SKU vendedor': sku,
+      'Nombre del producto': name,
+      'Tipo de transacción': 'Reversa de pago de envío comprador',
+      'Monto con IVA': '-3.17',
+    }),
+  ];
+}
+
+test('agrupa unidades iguales en un producto y cobra envío por tipo', () => {
+  const csv = [HEADER, ...Array.from({ length: 11 }, (_, index) => unitLines(`item-${index + 1}`)).flat()].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.itemCount, 11);
+  assert.equal(sale.items.length, 11);
+  assert.equal(sale.products.length, 1);
+  assert.equal(sale.products[0].quantity, 11);
+  assert.equal(sale.products[0].sku, 'MTC12367890');
+  assert.equal(sale.products[0].unitBruto, 8.99);
+  assert.equal(sale.products[0].unitShipping, 3.9);
+  assert.equal(sale.products[0].shipping, 42.9);
+  assert.equal(sale.bruto, 98.89);
+  assert.equal(sale.commission, 14.85);
+  assert.equal(sale.shipping, 42.9);
+  assert.equal(sale.neto, 41.14);
+  const byKind = Object.fromEntries(sale.chargeGroups.map((group) => [group.kind, group]));
+  assert.equal(byKind.sale.count, 11);
+  assert.equal(byKind.commission.count, 11);
+  assert.equal(byKind.commission.amount, -14.85);
+  assert.equal(byKind.shipping.count, 11);
+  assert.equal(byKind.shipping.unitAmount, -3.9);
+  assert.equal(byKind.buyer_shipping, undefined);
+});
+
+test('pedidos mixtos quedan un grupo por SKU y precio', () => {
+  const csv = [
+    HEADER,
+    ...unitLines('a', 'MTC12367890'),
+    ...unitLines('b', 'MTC12367890'),
+    row({ 'Falabella-Id': 'c', 'SKU vendedor': 'HOG025', 'Nombre del producto': 'Organizador', 'Monto con IVA': '39.9' }),
+    row({
+      'Falabella-Id': 'c',
+      'SKU vendedor': 'HOG025',
+      'Nombre del producto': 'Organizador',
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-4.00',
+      '% comisión': '0.10',
+    }),
+    row({
+      'Falabella-Id': 'c',
+      'SKU vendedor': 'HOG025',
+      'Nombre del producto': 'Organizador',
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto con IVA': '-2.50',
+    }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  const products = groupSaleProducts(sale.items);
+  assert.equal(products.length, 2);
+  const manta = products.find((item) => item.sku === 'MTC12367890');
+  const hog = products.find((item) => item.sku === 'HOG025');
+  assert.equal(manta.quantity, 2);
+  assert.equal(hog.quantity, 1);
+  assert.equal(hog.unitShipping, 2.5);
+  const charges = groupSaleCharges(sale.charges);
+  const shipping = charges.filter((group) => group.kind === 'shipping');
+  assert.equal(shipping.length, 1);
+  assert.equal(shipping[0].count, 3);
+  assert.equal(shipping[0].unitAmount, null);
+  assert.equal(shipping[0].amount, -10.3);
+  assert.equal(charges.some((group) => group.kind === 'buyer_shipping'), false);
 });

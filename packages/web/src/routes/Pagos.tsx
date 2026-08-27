@@ -9,7 +9,11 @@ import {
   money,
   paymentStatusLabel,
   percentLabel,
+  saleDateLabel,
   saleOverview,
+  shortProductName,
+  skuLabel,
+  unitsLabel,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +31,32 @@ import {
   TablePanel,
   TableRow,
 } from '@/components/ui/table';
+
+type SettlementProduct = {
+  sku?: string;
+  productName?: string;
+  quantity: number;
+  bruto: number;
+  commission: number;
+  shipping: number;
+  neto: number;
+  take: number;
+  unitBruto: number;
+  unitCommission: number;
+  unitShipping: number;
+  unitNeto: number;
+  commissionRate: number | null;
+  shippingRate: number | null;
+  takeRate: number | null;
+};
+
+type SettlementChargeGroup = {
+  type: string;
+  kind: string;
+  count: number;
+  amount: number;
+  unitAmount: number | null;
+};
 
 type SettlementSale = {
   orderId: string;
@@ -46,20 +76,8 @@ type SettlementSale = {
   commissionRate: number | null;
   shippingRate: number | null;
   takeRate: number | null;
-  charges?: Array<{ type: string; kind: string; amount: number; sku?: string }>;
-  items?: Array<{
-    itemId?: string;
-    sku?: string;
-    productName?: string;
-    bruto: number;
-    commission: number;
-    shipping: number;
-    neto: number;
-    take: number;
-    commissionRate: number | null;
-    shippingRate: number | null;
-    takeRate: number | null;
-  }>;
+  products?: SettlementProduct[];
+  chargeGroups?: SettlementChargeGroup[];
 };
 
 type SettlementImport = {
@@ -79,7 +97,7 @@ function CopyableId({ value, label }: { value: string; label: string }) {
       type="button"
       title={copied ? 'Copiado' : label}
       aria-label={`${label} ${value}`}
-      className="mt-0.5 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
+      className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
       onClick={async (event) => {
         event.stopPropagation();
         await navigator.clipboard.writeText(value);
@@ -90,6 +108,23 @@ function CopyableId({ value, label }: { value: string; label: string }) {
       {value}
       {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
     </button>
+  );
+}
+
+function ColumnHead({
+  label,
+  hint,
+  className,
+}: {
+  label: string;
+  hint?: string;
+  className?: string;
+}) {
+  return (
+    <TableHead className={cn('h-auto whitespace-normal py-2', className)} title={hint}>
+      <span className="block">{label}</span>
+      {hint ? <span className="mt-0.5 block text-[11px] font-normal leading-tight">{hint}</span> : null}
+    </TableHead>
   );
 }
 
@@ -113,25 +148,66 @@ function AmountRate({
 function ChargeRow({
   label,
   amount,
+  hint,
   rate,
-  muted = false,
+  strong = false,
 }: {
   label: string;
   amount: number;
+  hint?: string;
   rate?: number | null;
-  muted?: boolean;
+  strong?: boolean;
 }) {
+  const details = [
+    hint,
+    rate != null ? `${percentLabel(rate)} del precio` : '',
+  ].filter(Boolean);
   return (
     <div className="flex items-baseline justify-between gap-4 py-2">
       <div className="min-w-0">
-        <p className={cn('text-sm', muted ? 'text-muted-foreground' : 'font-medium')}>{label}</p>
-        {rate != null ? <p className="text-xs text-muted-foreground">{percentLabel(rate)} del precio</p> : null}
+        <p className={cn('text-sm', strong ? 'font-medium' : 'text-foreground')}>{label}</p>
+        {details.map((line) => (
+          <p key={line} className="text-xs text-muted-foreground">{line}</p>
+        ))}
       </div>
-      <p className={cn('shrink-0 tabular-nums text-sm', muted ? 'text-muted-foreground' : 'font-medium')}>
+      <p className={cn('shrink-0 tabular-nums text-sm', strong ? 'font-medium' : '')}>
         {money.format(amount)}
       </p>
     </div>
   );
+}
+
+function saleTitle(sale: SettlementSale) {
+  return shortProductName(sale.productName) || skuLabel(sale.skus) || sale.orderId;
+}
+
+function saleSubtitle(sale: SettlementSale) {
+  const products = sale.products || [];
+  const parts = [`Pedido ${sale.orderId}`];
+  if (products.length === 1 && products[0].quantity > 1) {
+    parts.push(`${products[0].quantity} iguales`);
+  } else if ((sale.itemCount || 0) > 1) {
+    parts.push(`${sale.itemCount} u`);
+  }
+  const date = saleDateLabel(sale.date);
+  if (date) parts.push(date);
+  return parts.join(' · ');
+}
+
+function shippingHint(sale: SettlementSale) {
+  const products = sale.products || [];
+  if (products.length === 1 && products[0].quantity > 1 && products[0].unitShipping) {
+    return `${money.format(products[0].unitShipping)} × ${products[0].quantity} unidades`;
+  }
+  return 'Falabella te cobra por enviar.';
+}
+
+function chargeTimes(group: SettlementChargeGroup) {
+  if (group.count > 1 && group.unitAmount != null) {
+    return `${group.count} × ${money.format(Math.abs(group.unitAmount))}`;
+  }
+  if (group.count > 1) return `${group.count} movimientos`;
+  return '';
 }
 
 export default function Pagos() {
@@ -244,13 +320,15 @@ export default function Pagos() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Venta</TableHead>
+              <TableHead>Pedido</TableHead>
+              <TableHead>Producto</TableHead>
+              <TableHead>SKU</TableHead>
               <TableHead>Pago</TableHead>
-              <TableHead className="text-right">Precio</TableHead>
-              <TableHead className="text-right">Comisión</TableHead>
-              <TableHead className="text-right">Envío</TableHead>
-              <TableHead className="text-right">Neto</TableHead>
-              <TableHead className="text-right">Falabella se queda</TableHead>
+              <ColumnHead className="text-right" label="Precio" hint="Lo que pagó el cliente" />
+              <ColumnHead className="text-right" label="Comisión" hint="% de Falabella" />
+              <ColumnHead className="text-right" label="Cobro envío" hint="Te cobra Falabella" />
+              <ColumnHead className="text-right" label="Te llega" hint="Lo que te depositan" />
+              <ColumnHead className="text-right" label="Se queda" hint="Comisión más envío" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -267,13 +345,18 @@ export default function Pagos() {
                   }
                 }}
               >
-                <TableCell className="min-w-0">
-                  <p className="line-clamp-2 font-medium leading-5">{sale.productName || sale.skus?.[0] || 'Venta Falabella'}</p>
+                <TableCell>
                   <CopyableId value={sale.orderId} label="Copiar pedido" />
-                  {sale.skus?.[0] ? (
-                    <p className="font-mono text-xs text-muted-foreground">
-                      {sale.skus.length > 1 ? `${sale.skus[0]} +${sale.skus.length - 1}` : sale.skus[0]}
-                    </p>
+                </TableCell>
+                <TableCell className="max-w-[11rem] whitespace-normal">
+                  <p className="line-clamp-1 font-medium leading-5" title={sale.productName || undefined}>
+                    {saleTitle(sale)}
+                  </p>
+                </TableCell>
+                <TableCell>
+                  <p className="font-mono text-xs">{skuLabel(sale.skus) || '—'}</p>
+                  {unitsLabel(sale.itemCount) ? (
+                    <p className="text-xs text-muted-foreground">{unitsLabel(sale.itemCount)}</p>
                   ) : null}
                 </TableCell>
                 <TableCell>
@@ -292,8 +375,8 @@ export default function Pagos() {
             ))}
             {!sales.length && !salesQuery.isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
-                  Sube un CSV de Falabella para ver comisión, envío y lo que se queda por cada venta.
+                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                  Sube un CSV de Falabella para ver comisión, cobro de envío y lo que te llega.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -301,8 +384,7 @@ export default function Pagos() {
           {summary?.saleCount ? (
             <TableFooter>
               <TableRow>
-                <TableCell className="font-medium">Total</TableCell>
-                <TableCell className="text-muted-foreground">{summary.paidCount} pagadas</TableCell>
+                <TableCell colSpan={4} className="font-medium">Total · {summary.paidCount} pagadas</TableCell>
                 <TableCell className="text-right tabular-nums">{money.format(summary.bruto || 0)}</TableCell>
                 <TableCell><AmountRate amount={summary.commission || 0} rate={summary.commissionRate} /></TableCell>
                 <TableCell><AmountRate amount={summary.shipping || 0} rate={summary.shippingRate} /></TableCell>
@@ -319,45 +401,58 @@ export default function Pagos() {
           {selected ? (
             <>
               <SheetHeader className="border-b border-border px-5 py-4 pr-12">
-                <SheetTitle className="text-[17px] leading-tight">{selected.productName || selected.orderId}</SheetTitle>
+                <SheetTitle className="text-[17px] leading-tight" title={selected.productName || undefined}>
+                  {saleTitle(selected)}
+                </SheetTitle>
                 <SheetDescription className="text-[13px] leading-snug">
-                  Pedido {selected.orderId}
-                  {selected.itemCount && selected.itemCount > 1 ? ` · ${selected.itemCount} ítems` : ''}
-                  {selected.date ? ` · ${selected.date}` : ''}
+                  {saleSubtitle(selected)}
                 </SheetDescription>
               </SheetHeader>
               <div className="px-5 py-4">
-                <ChargeRow label="Precio" amount={selected.bruto || 0} />
+                <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
                 <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
-                <ChargeRow label="Envío" amount={-(selected.shipping || 0)} rate={selected.shippingRate} />
-                {selected.buyerShipping ? <ChargeRow label="Envío comprador" amount={selected.buyerShipping} muted /> : null}
-                <ChargeRow label="Neto a recibir" amount={selected.neto || 0} />
-                <ChargeRow label="Falabella se queda" amount={selected.take || 0} rate={selected.takeRate} />
+                <ChargeRow label="Cobro envío" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
+                <ChargeRow label="Te llega" amount={selected.neto || 0} hint="Lo que te depositan." strong />
+                <ChargeRow label="Se queda Falabella" amount={selected.take || 0} hint="Comisión más cobro de envío." rate={selected.takeRate} />
               </div>
-              {selected.charges?.length ? (
+              {(selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1 ? (
                 <div className="border-t border-border px-5 py-4">
-                  <p className="text-sm font-medium">Movimientos</p>
+                  <p className="text-sm font-medium">Por producto</p>
                   <div className="mt-2 divide-y divide-border">
-                    {selected.charges.map((charge, index) => (
-                      <div key={`${charge.type}-${index}`} className="flex items-baseline justify-between gap-3 py-2">
-                        <p className="min-w-0 text-sm leading-5">{charge.type || chargeKindLabel(charge.kind)}</p>
-                        <p className="shrink-0 tabular-nums text-sm">{money.format(charge.amount || 0)}</p>
+                    {selected.products?.map((product) => (
+                      <div key={`${product.sku}-${product.unitBruto}`} className="py-3">
+                        <p className="font-medium leading-5" title={product.productName || undefined}>
+                          {shortProductName(product.productName) || product.sku}
+                        </p>
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                          {product.sku || '—'}
+                          {product.quantity > 1 ? ` · ${product.quantity} u` : ''}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {money.format(product.unitBruto)} c/u · comisión {percentLabel(product.commissionRate)} · cobro envío {money.format(product.unitShipping)} c/u
+                        </p>
+                        <div className="mt-1 flex justify-between gap-3 text-sm">
+                          <span>Te llega {money.format(product.unitNeto)} c/u</span>
+                          <span className="tabular-nums">Se queda {percentLabel(product.takeRate)}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : null}
-              {selected.items && selected.items.length > 1 ? (
+              {selected.chargeGroups?.length ? (
                 <div className="border-t border-border px-5 py-4">
-                  <p className="text-sm font-medium">Por ítem</p>
+                  <p className="text-sm font-medium">Cobros Falabella</p>
                   <div className="mt-2 divide-y divide-border">
-                    {selected.items.map((item) => (
-                      <div key={item.itemId || item.sku} className="py-2">
-                        <p className="font-mono text-xs text-muted-foreground">{item.sku || item.itemId}</p>
-                        <div className="mt-1 flex justify-between gap-3 text-sm">
-                          <span>Comisión {percentLabel(item.commissionRate)} · envío {percentLabel(item.shippingRate)}</span>
-                          <span className="tabular-nums">Se queda {percentLabel(item.takeRate)}</span>
+                    {selected.chargeGroups.map((group) => (
+                      <div key={`${group.kind}-${group.type}`} className="flex items-baseline justify-between gap-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm leading-5">{chargeKindLabel(group.kind)}</p>
+                          {chargeTimes(group) ? (
+                            <p className="text-xs text-muted-foreground">{chargeTimes(group)}</p>
+                          ) : null}
                         </div>
+                        <p className="shrink-0 tabular-nums text-sm">{money.format(group.amount || 0)}</p>
                       </div>
                     ))}
                   </div>
