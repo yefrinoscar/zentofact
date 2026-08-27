@@ -139,7 +139,7 @@ company_json AS (
     JOIN order_channel_accounts a ON a.id = o.channel_account_id
     JOIN order_channels ch ON ch.id = a.channel_id
     WHERE ch.code IN ('falabella', 'ripley')
-      AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+      AND coalesce(o.ordered_at, o.created_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
     UNION
     SELECT DISTINCT c.id, c.ruc, c.nombre, c.nombre_comercial, c.razon_social
     FROM companies c
@@ -171,7 +171,7 @@ listing_json AS (
       JOIN order_channel_accounts a ON a.id = o.channel_account_id
       JOIN order_channels ch ON ch.id = a.channel_id
       WHERE ch.code IN ('falabella', 'ripley')
-        AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+        AND coalesce(o.ordered_at, o.created_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
       UNION
       SELECT DISTINCT fo.company_id
       FROM falabella_orders fo
@@ -184,7 +184,7 @@ order_rows AS (
     'companyRuc', c.ruc,
     'externalOrderId', o.external_order_id,
     'externalOrderNumber', o.external_order_number,
-    'orderedAt', o.ordered_at,
+    'orderedAt', coalesce(o.ordered_at, o.created_at),
     'orderStatus', o.order_status,
     'fulfillmentStatus', o.fulfillment_status,
     'items', COALESCE((
@@ -221,7 +221,7 @@ order_rows AS (
   JOIN order_channel_accounts a ON a.id = o.channel_account_id
   JOIN order_channels ch ON ch.id = a.channel_id
   WHERE ch.code IN ('falabella', 'ripley')
-    AND o.ordered_at >= '2026-05-01T05:00:00.000Z'::timestamptz
+    AND coalesce(o.ordered_at, o.created_at) >= '2026-05-01T05:00:00.000Z'::timestamptz
 ),
 falabella_inbox_json AS (
   SELECT jsonb_agg(jsonb_build_object(

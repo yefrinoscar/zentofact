@@ -498,6 +498,7 @@ test('el SQL de export incluye el mapa AG→Excel y no toca inventario', async (
   assert.match(sql, /falabella/);
   assert.match(sql, /ripley/);
   assert.match(sql, /2026-05-01T05:00:00.000Z/);
+  assert.match(sql, /coalesce\(o\.ordered_at, o\.created_at\)/);
   assert.match(sql, /2026-08-21T19:50:00.000Z/);
   assert.doesNotMatch(sql, /from product_inventory/i);
   assert.doesNotMatch(sql, /from inventory_movements/i);

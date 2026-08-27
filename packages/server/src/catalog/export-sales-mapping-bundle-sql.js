@@ -6,7 +6,7 @@ import {
   EXCEL_ROW_ALIAS_TO_MASTER,
   LEGACY_AG_TO_EXCEL,
 } from './historical-sku-map.js';
-import { PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { ORDER_SINCE_SQL, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
 
 function sqlStr(value) {
   return `'${String(value).replaceAll('\'', '\'\'')}'`;
@@ -90,7 +90,7 @@ company_json AS (
     JOIN order_channel_accounts a ON a.id = o.channel_account_id
     JOIN order_channels ch ON ch.id = a.channel_id
     WHERE ch.code IN ('falabella', 'ripley')
-      AND o.ordered_at >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
+      AND ${ORDER_SINCE_SQL} >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
     UNION
     SELECT DISTINCT c.id, c.ruc, c.nombre, c.nombre_comercial, c.razon_social
     FROM companies c
@@ -122,7 +122,7 @@ listing_json AS (
       JOIN order_channel_accounts a ON a.id = o.channel_account_id
       JOIN order_channels ch ON ch.id = a.channel_id
       WHERE ch.code IN ('falabella', 'ripley')
-        AND o.ordered_at >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
+        AND ${ORDER_SINCE_SQL} >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
       UNION
       SELECT DISTINCT fo.company_id
       FROM falabella_orders fo
@@ -135,7 +135,7 @@ order_rows AS (
     'companyRuc', c.ruc,
     'externalOrderId', o.external_order_id,
     'externalOrderNumber', o.external_order_number,
-    'orderedAt', o.ordered_at,
+    'orderedAt', ${ORDER_SINCE_SQL},
     'orderStatus', o.order_status,
     'fulfillmentStatus', o.fulfillment_status,
     'items', COALESCE((
@@ -172,7 +172,7 @@ order_rows AS (
   JOIN order_channel_accounts a ON a.id = o.channel_account_id
   JOIN order_channels ch ON ch.id = a.channel_id
   WHERE ch.code IN ('falabella', 'ripley')
-    AND o.ordered_at >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
+    AND ${ORDER_SINCE_SQL} >= ${sqlStr(SALES_HISTORY_SINCE)}::timestamptz
 ),
 falabella_inbox_json AS (
   SELECT jsonb_agg(jsonb_build_object(

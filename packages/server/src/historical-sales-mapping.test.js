@@ -293,6 +293,13 @@ test('una salida con evento posterior al conteo entra al ledger; una anterior no
   }, [], PHYSICAL_COUNT_CUTOFF);
   assert.equal(before.afterCutoff, false);
   assert.equal(before.source, 'fulfillment_ordered_at');
+
+  const fromCreatedAt = planWarehouseExit({
+    quantity: 1, fulfillment_status: 'shipped', ordered_at: null,
+    created_at: '2026-08-22T16:00:00.000Z',
+  }, [], PHYSICAL_COUNT_CUTOFF);
+  assert.equal(fromCreatedAt.afterCutoff, true);
+  assert.equal(fromCreatedAt.source, 'fulfillment_ordered_at');
 });
 
 test('la cobertura descuenta solo el maestro contado con salida posterior', () => {

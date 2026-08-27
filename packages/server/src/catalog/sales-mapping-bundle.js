@@ -3,7 +3,7 @@ import {
   INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
 } from '../../../../scripts/lib/inventory-count-2026-08-21.mjs';
 import { excelMasterForSku } from './historical-sku-map.js';
-import { MAPPING_CHANNELS, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { MAPPING_CHANNELS, ORDER_SINCE_SQL, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
 import { falabellaOrderItemsPayload, mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
 
 export const BUNDLE_VERSION = 1;
@@ -152,7 +152,7 @@ join order_channel_accounts a on a.id = o.channel_account_id
 join order_channels ch on ch.id = a.channel_id
 left join order_items oi on oi.order_id = o.id
 where ch.code = 'falabella'
-  and coalesce(o.ordered_at, 'epoch'::timestamptz) >= $1::timestamptz
+  and ${ORDER_SINCE_SQL} >= $1::timestamptz
 `;
 
 export async function loadExistingFalabellaUnifiedOrders(db, since = SALES_HISTORY_SINCE) {
@@ -654,7 +654,7 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
          select 1 from orders o
          join order_channel_accounts a on a.id=o.channel_account_id
          join order_channels ch on ch.id=a.channel_id
-         where o.company_id=c.id and ch.code=any($1::text[]) and o.ordered_at >= $2
+         where o.company_id=c.id and ch.code=any($1::text[]) and ${ORDER_SINCE_SQL} >= $2
        )
        or exists (
          select 1 from falabella_orders fo
@@ -675,13 +675,13 @@ export async function buildSalesMappingBundle(db, { workbook, since = SALES_HIST
     [MAPPING_CHANNELS, companies.map((row) => Number(row.id))],
   )).rows : [];
   const orderRows = (await db.query(
-    `select o.id, o.external_order_id, o.external_order_number, o.ordered_at,
+    `select o.id, o.external_order_id, o.external_order_number, ${ORDER_SINCE_SQL} as ordered_at,
        o.order_status, o.fulfillment_status, c.ruc as company_ruc, ch.code as channel
      from orders o
      join companies c on c.id=o.company_id
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
-     where ch.code=any($1::text[]) and o.ordered_at >= $2
+     where ch.code=any($1::text[]) and ${ORDER_SINCE_SQL} >= $2
      order by o.id`,
     [MAPPING_CHANNELS, since],
   )).rows;

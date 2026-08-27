@@ -7,6 +7,7 @@ import { isStockEligibleFulfillment } from './stock-phase.js';
 export const SALES_HISTORY_SINCE = '2026-05-01T05:00:00.000Z';
 export const PHYSICAL_COUNT_CUTOFF = '2026-08-21T19:50:00.000Z';
 export const MAPPING_CHANNELS = Object.freeze(['falabella', 'ripley']);
+export const ORDER_SINCE_SQL = 'coalesce(o.ordered_at, o.created_at)';
 
 const METHOD_RANK = Object.freeze({
   active_seller_sku: 5,
@@ -94,7 +95,9 @@ export function planWarehouseExit(item, events = [], cutoffAt = PHYSICAL_COUNT_C
   if (!isStockEligibleFulfillment(fulfillment)) {
     return { physicallyOut: false, effectiveAt: null, afterCutoff: false, source: 'not_eligible' };
   }
-  const at = item.ordered_at ? new Date(item.ordered_at).toISOString() : null;
+  const at = item.ordered_at || item.created_at
+    ? new Date(item.ordered_at || item.created_at).toISOString()
+    : null;
   const afterCutoff = at ? new Date(at).getTime() >= new Date(cutoffAt).getTime() : false;
   return { physicallyOut: true, effectiveAt: at, afterCutoff, source: 'fulfillment_ordered_at' };
 }
@@ -622,13 +625,14 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
   const items = (await db.query(
     `select oi.id, oi.order_id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity, oi.raw_data,
        oi.product_id, oi.listing_id, oi.main_sku, oi.stock_state, oi.stock_applied_quantity,
-       o.company_id, o.channel_account_id, o.external_order_id, o.external_order_number, o.ordered_at,
+       o.company_id, o.channel_account_id, o.external_order_id, o.external_order_number,
+       ${ORDER_SINCE_SQL} as ordered_at,
        o.order_status, o.fulfillment_status, ch.code as channel_code
      from order_items oi
      join orders o on o.id=oi.order_id
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
-     where ch.code=any($1::text[]) and o.ordered_at >= $2
+     where ch.code=any($1::text[]) and ${ORDER_SINCE_SQL} >= $2
      order by oi.id`,
     [MAPPING_CHANNELS, since],
   )).rows;
@@ -658,13 +662,14 @@ export async function loadHistoricalSalesMappingContext(db, { since = SALES_HIST
     [since],
   )).rows;
   const emptyOrders = (await db.query(
-    `select o.company_id, o.external_order_id, o.external_order_number, o.ordered_at,
+    `select o.company_id, o.external_order_id, o.external_order_number,
+       ${ORDER_SINCE_SQL} as ordered_at,
        ch.code as channel_code
      from orders o
      join order_channel_accounts a on a.id = o.channel_account_id
      join order_channels ch on ch.id = a.channel_id
      where ch.code = any($1::text[])
-       and o.ordered_at >= $2
+       and ${ORDER_SINCE_SQL} >= $2
        and not exists (
          select 1 from order_items missing_items where missing_items.order_id = o.id
        )

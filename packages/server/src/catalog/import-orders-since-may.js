@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { excelMasterForSku, planListingExcelRemap } from './historical-sku-map.js';
-import { MAPPING_CHANNELS, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { MAPPING_CHANNELS, ORDER_SINCE_SQL, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
 import { ensureAnchorProduct, listingMasterSku } from './sales-mapping-bundle.js';
 
 export const ORDER_DUMP_TABLES = Object.freeze([
@@ -143,7 +143,7 @@ export async function remapImportedItemHints(db, since = SALES_HISTORY_SINCE) {
        left join product_listings l
          on l.channel_code = ch.code and l.company_id = o.company_id and l.seller_sku = oi.sku
       where ch.code = any($1::text[])
-        and o.ordered_at >= $2::timestamptz
+        and ${ORDER_SINCE_SQL} >= $2::timestamptz
       order by oi.id`,
     [MAPPING_CHANNELS, since],
   )).rows;

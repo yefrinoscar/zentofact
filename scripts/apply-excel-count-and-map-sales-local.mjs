@@ -30,6 +30,7 @@ const SOURCE_BUNDLE_PATH = '/opt/cursor/uploads/sales-mapping-bundle.json';
 const {
   SALES_HISTORY_SINCE,
   PHYSICAL_COUNT_CUTOFF,
+  ORDER_SINCE_SQL,
   applyHistoricalSalesMappings,
   buildHistoricalSalesCoverage,
   formatCoverageTsv,
@@ -329,7 +330,7 @@ try {
      join order_channel_accounts a on a.id = o.channel_account_id
      join order_channels ch on ch.id = a.channel_id
      where ch.code = any($1::text[])
-       and o.ordered_at >= $2
+       and ${ORDER_SINCE_SQL} >= $2
        and o.external_order_id not like 'EXCEL-MAP-%'
        and o.external_order_id not like 'MAP-%'`,
     [['falabella', 'ripley'], SALES_HISTORY_SINCE],
