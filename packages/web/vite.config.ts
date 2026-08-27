@@ -9,6 +9,7 @@ const apiPrefixes = [
   '/health',
   '/me',
   '/dashboard',
+  '/pagos',
   '/orders-inbox',
   '/order-management',
   '/products',

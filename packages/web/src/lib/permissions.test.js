@@ -18,6 +18,7 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.equal(PERMISSIONS[salespersonIndex].section, 'orders');
   assert.ok(salespersonIndex >= 0 && salespersonIndex < ordersIndex);
   assert.equal(pathPermission('/mis-ventas'), 'salesperson');
+  assert.equal(pathPermission('/pagos'), 'pagos');
 });
 
 test('el vendedor tiene preset fijo y permisos bloqueados', () => {

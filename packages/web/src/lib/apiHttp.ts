@@ -177,6 +177,12 @@ const apiHttp = {
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
     req(`/dashboard${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
+  listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
+    req(`/pagos/imports${qs(filter)}`),
+  listSettlementLines: (filter: { status?: 'matched' | 'unmatched'; importId?: number; limit?: number; offset?: number } = {}) =>
+    req(`/pagos/lines${qs(filter)}`),
+  importSettlementCsv: (data: { filename: string; csv: string; companyId?: number }) =>
+    req('/pagos/imports', { method: 'POST', body: JSON.stringify(data) }),
 
   // Bandeja consolidada de pedidos
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>

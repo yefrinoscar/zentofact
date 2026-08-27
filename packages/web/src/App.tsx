@@ -30,6 +30,7 @@ import { PanelLeft } from 'lucide-react';
 import { documentDateRangeForLastDays } from './lib/documentDateRange';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
+const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 const SystemConfig = lazy(() => import('./routes/SystemConfig'));
 
@@ -41,6 +42,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/dashboard': {
     title: 'Dashboard',
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
+  },
+  '/pagos': {
+    title: 'Pagos',
+    subtitle: 'Cruza el estado de cuenta de Falabella con las ventas.',
   },
   '/menu': {
     title: 'Menú',
@@ -265,6 +270,7 @@ function AppLayout() {
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
+              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Pagos /></Suspense></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />

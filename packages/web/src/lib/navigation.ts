@@ -18,6 +18,7 @@ import {
   TrendingDown,
   Users,
   Wallet,
+  WalletCards,
   Zap,
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
@@ -50,6 +51,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
+      { to: '/pagos', icon: WalletCards, label: 'Pagos', permission: 'pagos' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
       { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },

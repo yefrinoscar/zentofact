@@ -1,5 +1,6 @@
 export type PermissionKey =
   | 'dashboard'
+  | 'pagos'
   | 'falabella_sellers'
   | 'salesperson'
   | 'order_management'
@@ -47,6 +48,7 @@ export const PERMISSION_SECTIONS: Array<{ key: PermissionSectionKey; label: stri
 // El orden también define la primera pantalla disponible para cada usuario.
 export const PERMISSIONS: PermissionDef[] = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
+  { key: 'pagos', label: 'Pagos', description: 'Subir liquidaciones de Falabella y cruzarlas con las ventas', path: '/pagos', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
   { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
@@ -214,7 +216,7 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
     const clean = key.trim();
     return LEGACY_PERMISSION_MAP[clean] || [clean];
   });
-  const allowed = new Set<PermissionKey>(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users' && key !== 'salesperson'));
+  const allowed = new Set<PermissionKey>(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'pagos' && key !== 'users' && key !== 'salesperson'));
   return [...new Set(expanded.filter((key): key is PermissionKey => allowed.has(key as PermissionKey)))];
 }
 
@@ -222,13 +224,14 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
   if (!user) return false;
   if (user.active === false) return false;
   const role = normalizeRole(user.role);
-  if (key === 'users' || key === 'dashboard') return isAdminRole(role);
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return isAdminRole(role);
   if (isAdminRole(role)) return true;
   return parsePermissions(user.permissions, role).includes(key);
 }
 
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';

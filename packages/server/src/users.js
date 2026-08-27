@@ -58,7 +58,7 @@ function normalizeRequestedPermissions(input, role, fallback) {
   if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
   if (normalizeRole(role) === 'vendedor') return permissionsForRole(role);
   return normalizePermissions(input != null ? input : fallback, role)
-    .filter((key) => key !== 'users' && key !== 'dashboard');
+    .filter((key) => key !== 'users' && key !== 'dashboard' && key !== 'pagos');
 }
 
 function normalizeCommissionPercent(value, fallback = 0) {

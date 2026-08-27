@@ -11,7 +11,6 @@ import {
   ChartNoAxesCombined,
   CircleDollarSign,
   RefreshCw,
-  RotateCcw,
   ShoppingBag,
   Store,
   WalletCards,
@@ -481,26 +480,23 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
         <KpiCard
+          title="Pagado"
+          value={money.format(summary.paidSales || 0)}
+          detail="Falabella ya liquidó estas ventas"
+          icon={CircleDollarSign}
+        />
+        <KpiCard
+          title="Pendiente"
+          value={money.format(summary.pendingSales || 0)}
+          detail="Ventas que todavía no aparecen en el CSV"
+          icon={WalletCards}
+        />
+        <KpiCard
           title="Pedidos vendidos"
           value={integer.format(summary.orders || 0)}
           detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
           change={data?.changes?.orders}
           icon={ShoppingBag}
-        />
-        <KpiCard
-          title="Ticket promedio"
-          value={money.format(summary.averageTicket || 0)}
-          detail="Ingreso promedio por pedido"
-          change={data?.changes?.averageTicket}
-          icon={WalletCards}
-        />
-        <KpiCard
-          title="Ventas canceladas"
-          value={money.format(summary.cancelledSales || 0)}
-          detail={`${Number(summary.cancellationRate || 0).toFixed(1)}% de los pedidos`}
-          change={data?.changes?.cancellationRate}
-          icon={RotateCcw}
-          warning
         />
       </div>
 
@@ -640,7 +636,7 @@ export default function Dashboard() {
 
       <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
         <ChartNoAxesCombined className="size-4" />
-        Ventas netas excluye pedidos cancelados, devueltos o fallidos. {comparisonLabel}.
+        Ventas netas excluye pedidos cancelados, devueltos o fallidos. Pagado es lo que Falabella ya liquidó. {comparisonLabel}.
       </div>
     </div>
   );
