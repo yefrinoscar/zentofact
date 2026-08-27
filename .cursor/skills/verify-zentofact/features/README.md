@@ -6,7 +6,8 @@ This directory is the maintained source for verifying operator-facing behavior. 
 
 - Launch with `.cursor/skills/verify-zentofact/scripts/control-zentofact launch`.
 - Doctor must report `api_health=ok` (`service=zentofact-api`) and `web_health=ok` at `http://127.0.0.1:3011`.
-- Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login` using `ADMIN_EMAIL` from `.env`.
+- Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login` or `login <email>` from `docs/agents/cloud-agent.md`.
+- Seeded catalog, inbox, and roles are required on this VM. If AG301 or PV-10001 is missing, run `control-zentofact seed`.
 - The PostgreSQL catalog is shared. Run one verification drive at a time. Default recipes are read-only.
 - Never drive Falabella seller mutations or inventory adjustments unless a later feature file says so.
 

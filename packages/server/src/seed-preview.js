@@ -19,10 +19,44 @@ const { permissionsForRole } = await import('./permissions.js');
 const { shouldSeedPreview } = await import('./preview-env.js');
 const users = await import('./users.js');
 
-const SEED_MARKER = 'preview-seed-v1';
+const SEED_MARKER = 'preview-seed-v3';
 const DEFAULT_SEED_PASSWORD = 'ZentoFactPreview123';
 
+const SEED_ORDERS = [
+  {
+    key: 'pending',
+    orderNumber: 'PV-10001',
+    customer: { name: 'Ana Preview', firstName: 'Ana', lastName: 'Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    falabellaStatus: 'pending',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'ready',
+    orderNumber: 'PV-10003',
+    customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    falabellaStatus: 'ready_to_ship',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'shipped',
+    orderNumber: 'PV-10002',
+    customer: { name: 'Luis Preview', firstName: 'Luis', lastName: 'Preview', documentNumber: '87654321' },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'shipped',
+    falabellaStatus: 'shipped',
+    stockState: 'applied',
+    stockApplied: 1,
+  },
+];
+
 const SEED_USERS = [
+  { email: 'admin@preview.zentofact.local', name: 'Administrador Preview', role: 'admin' },
   { email: 'operator@preview.zentofact.local', name: 'Operador Preview', role: 'operator' },
   { email: 'vendedor@preview.zentofact.local', name: 'Vendedor Preview', role: 'vendedor', commissionPercent: 5 },
   { email: 'billing@preview.zentofact.local', name: 'Facturación Preview', role: 'billing' },
@@ -195,15 +229,46 @@ async function ensureAdminUser(credentials) {
     }
   }
   await users.promoteSuperadminByEmail(credentials.email, 'system.preview-seed');
+  await syncCredentialPassword(credentials.email, credentials.password);
   const listed = await users.listUsers();
   const admin = listed.find((user) => user.email === credentials.email);
   if (!admin) throw new Error(`No se pudo resolver el admin seed ${credentials.email}`);
   return admin;
 }
 
+async function syncCredentialPassword(email, password) {
+  const hashed = await hashPassword(password);
+  const result = await pool.query(
+    `UPDATE account AS a
+        SET password = $1, "updatedAt" = NOW()
+      FROM "user" AS u
+     WHERE a."userId" = u.id
+       AND u.email = $2
+       AND a."providerId" = 'credential'
+     RETURNING a.id`,
+    [hashed, email],
+  );
+  if (!result.rowCount) {
+    console.warn('[SEED] No hay cuenta credential para', email);
+  }
+}
+
 async function ensureRoleUser({ email, name, role, commissionPercent = 0 }, password, actorId) {
   const existing = (await users.listUsers()).find((user) => user.email === email);
-  if (existing) return { user: existing, created: false };
+  if (existing) {
+    await pool.query(
+      `UPDATE "user"
+          SET name = $2,
+              role = $3,
+              permissions = $4,
+              active = true,
+              commission_percent = $5,
+              "updatedAt" = NOW()
+        WHERE id = $1`,
+      [existing.id, name, role, JSON.stringify(permissionsForRole(role)), commissionPercent],
+    );
+    return { user: await users.getUserById(existing.id), created: false };
+  }
   try {
     const user = await users.createUser({
       name,
@@ -375,6 +440,46 @@ async function ensureClients(companies) {
   return created;
 }
 
+function limaNoonToday(now = new Date()) {
+  const lima = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  return new Date(Date.UTC(
+    lima.getUTCFullYear(),
+    lima.getUTCMonth(),
+    lima.getUTCDate(),
+    17, 0, 0,
+  ));
+}
+
+function previewOrderId(key) {
+  return `${SEED_MARKER}-${key}`;
+}
+
+async function replacePreviewOrders(companyId) {
+  await pool.query(
+    `DELETE FROM falabella_order_lifecycle
+      WHERE company_id = $1 AND order_id LIKE 'preview-seed-%'`,
+    [companyId],
+  );
+  await pool.query(
+    `DELETE FROM falabella_orders
+      WHERE company_id = $1 AND order_id LIKE 'preview-seed-%'`,
+    [companyId],
+  );
+  await pool.query(
+    `DELETE FROM order_items
+      WHERE order_id IN (
+        SELECT id FROM orders
+         WHERE company_id = $1 AND external_order_id LIKE 'preview-seed-%'
+      )`,
+    [companyId],
+  );
+  await pool.query(
+    `DELETE FROM orders
+      WHERE company_id = $1 AND external_order_id LIKE 'preview-seed-%'`,
+    [companyId],
+  );
+}
+
 async function ensureSampleOrders(companiesByRuc, products) {
   await ensureOrdersItemsColumns();
   const limbo = companiesByRuc.get('20990001001');
@@ -384,99 +489,141 @@ async function ensureSampleOrders(companiesByRuc, products) {
   const account = await ensureFalabellaChannelAccount(limbo);
   if (!account) return { orders: 0 };
 
-  const externalOrderId = `${SEED_MARKER}-order-1`;
-  const orderNumber = 'PV-10001';
-  const now = new Date();
-  const orderResult = await pool.query(
-    `INSERT INTO orders (
-       company_id, channel_account_id, external_order_id, external_order_number,
-       order_status, payment_status, fulfillment_status, document_status, provider_status,
-       document_requirement, document_type_policy, currency, subtotal, total,
-       customer, shipping, metadata, ordered_at, provider_updated_at, items_status, created_by
-     ) VALUES (
-       $1,$2,$3,$4,
-       'confirmed','paid','pending','not_requested','pending',
-       'optional','automatic','PEN',$5,$5,
-       $6::jsonb,'{}'::jsonb,$7::jsonb,$8,$8,'complete',$9
-     )
-     ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
-       last_seen_at = NOW(), updated_at = NOW()
-     RETURNING id`,
-    [
-      limbo.id,
-      account.id,
-      externalOrderId,
-      orderNumber,
-      product.referencePrice || 100,
-      JSON.stringify({ name: 'Ana Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local' }),
-      JSON.stringify({ origin: SEED_MARKER }),
-      now,
-      'preview-seed',
-    ],
-  );
-  const orderId = Number(orderResult.rows[0].id);
-  await pool.query(
-    `INSERT INTO order_items (
-       order_id, external_item_id, sku, provider_sku, description, quantity,
-       unit_price, total, product_id, main_sku, stock_state, metadata
-     ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,'none',$7::jsonb)
-     ON CONFLICT (order_id, external_item_id) DO NOTHING`,
-    [
-      orderId,
-      `${externalOrderId}-item-1`,
-      product.mainSku,
-      product.name,
-      product.referencePrice || 100,
-      product.productId,
-      JSON.stringify({ origin: SEED_MARKER }),
-    ],
-  );
+  await replacePreviewOrders(limbo.id);
+  const promisedAt = limaNoonToday();
+  for (const spec of SEED_ORDERS) {
+    const externalOrderId = previewOrderId(spec.key);
+    const orderResult = await pool.query(
+      `INSERT INTO orders (
+         company_id, channel_account_id, external_order_id, external_order_number,
+         order_status, payment_status, fulfillment_status, document_status, provider_status,
+         document_requirement, document_type_policy, currency, subtotal, total,
+         customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
+         items_status, created_by
+       ) VALUES (
+         $1,$2,$3,$4,
+         $5,'paid',$6,'not_requested',$6,
+         'optional','automatic','PEN',$7,$7,
+         $8::jsonb,'{}'::jsonb,$9::jsonb,$10,$10,$10,'complete',$11
+       )
+       ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
+         order_status = EXCLUDED.order_status,
+         fulfillment_status = EXCLUDED.fulfillment_status,
+         promised_shipping_at = EXCLUDED.promised_shipping_at,
+         last_seen_at = NOW(),
+         updated_at = NOW()
+       RETURNING id`,
+      [
+        limbo.id,
+        account.id,
+        externalOrderId,
+        spec.orderNumber,
+        spec.orderStatus,
+        spec.fulfillmentStatus,
+        product.referencePrice || 100,
+        JSON.stringify(spec.customer),
+        JSON.stringify({ origin: SEED_MARKER }),
+        promisedAt,
+        'preview-seed',
+      ],
+    );
+    const orderId = Number(orderResult.rows[0].id);
+    await pool.query(
+      `INSERT INTO order_items (
+         order_id, external_item_id, sku, provider_sku, description, quantity,
+         unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
+       ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,$7,$8,$9::jsonb)
+       ON CONFLICT (order_id, external_item_id) DO NOTHING`,
+      [
+        orderId,
+        `${externalOrderId}-item-1`,
+        product.mainSku,
+        product.name,
+        product.referencePrice || 100,
+        product.productId,
+        spec.stockState,
+        spec.stockApplied,
+        JSON.stringify({ origin: SEED_MARKER }),
+      ],
+    );
+  }
+  return { orders: SEED_ORDERS.length };
+}
 
-  // Pedido listo para salidas de hoy (shipped hoy).
-  const shippedId = `${SEED_MARKER}-order-shipped`;
-  const shipped = await pool.query(
-    `INSERT INTO orders (
-       company_id, channel_account_id, external_order_id, external_order_number,
-       order_status, payment_status, fulfillment_status, document_status, provider_status,
-       document_requirement, document_type_policy, currency, subtotal, total,
-       customer, shipping, metadata, ordered_at, provider_updated_at, items_status, created_by
-     ) VALUES (
-       $1,$2,$3,'PV-10002',
-       'completed','paid','shipped','not_requested','shipped',
-       'optional','automatic','PEN',$4,$4,
-       $5::jsonb,'{}'::jsonb,$6::jsonb,NOW(),NOW(),'complete',$7
-     )
-     ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
-       fulfillment_status='shipped', last_seen_at=NOW(), updated_at=NOW()
-     RETURNING id`,
-    [
-      limbo.id,
-      account.id,
-      shippedId,
-      product.referencePrice || 100,
-      JSON.stringify({ name: 'Luis Preview', documentNumber: '87654321' }),
-      JSON.stringify({ origin: SEED_MARKER }),
-      'preview-seed',
-    ],
-  );
-  await pool.query(
-    `INSERT INTO order_items (
-       order_id, external_item_id, sku, provider_sku, description, quantity,
-       unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
-     ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,'applied',1,$7::jsonb)
-     ON CONFLICT (order_id, external_item_id) DO NOTHING`,
-    [
-      Number(shipped.rows[0].id),
-      `${shippedId}-item-1`,
-      product.mainSku,
-      product.name,
-      product.referencePrice || 100,
-      product.productId,
-      JSON.stringify({ origin: SEED_MARKER }),
-    ],
-  );
+async function ensureFalabellaInboxOrders(limbo, product) {
+  if (!limbo || !product) return { falabellaOrders: 0 };
+  const promised = limaNoonToday().toISOString();
+  for (const spec of SEED_ORDERS) {
+    const orderId = previewOrderId(spec.key);
+    const raw = {
+      OrderId: orderId,
+      OrderNumber: spec.orderNumber,
+      CustomerFirstName: spec.customer.firstName,
+      CustomerLastName: spec.customer.lastName,
+      PromisedShippingTime: promised,
+      ItemsCount: '1',
+      Statuses: spec.falabellaStatus,
+    };
+    await pool.query(
+      `INSERT INTO falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, invoice_required, grand_total, currency, raw_data
+       ) VALUES ($1,$2,$3,NOW(),NOW(),$4,false,$5,'PEN',$6::jsonb)
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         order_number = EXCLUDED.order_number,
+         raw_data = EXCLUDED.raw_data,
+         last_seen_at = NOW()`,
+      [limbo.id, orderId, spec.orderNumber, spec.falabellaStatus, product.referencePrice || 100, JSON.stringify(raw)],
+    );
+    await pool.query(
+      `INSERT INTO falabella_order_lifecycle (
+         company_id, order_id, order_number, current_status, pending_at,
+         ready_to_ship_at, shipped_at, first_observed_at, last_observed_at
+       ) VALUES (
+         $1,$2,$3,$4,NOW(),
+         CASE WHEN $4 IN ('ready_to_ship','shipped') THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'shipped' THEN NOW() ELSE NULL END,
+         NOW(), NOW()
+       )
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         current_status = EXCLUDED.current_status,
+         last_observed_at = NOW()`,
+      [limbo.id, orderId, spec.orderNumber, spec.falabellaStatus],
+    );
+  }
+  return { falabellaOrders: SEED_ORDERS.length };
+}
 
-  return { orders: 2 };
+async function ensurePreviewFixtures() {
+  const credentials = adminCredentials();
+  const password = seedPassword();
+  const admin = await ensureAdminUser(credentials);
+  for (const spec of SEED_USERS) {
+    await ensureRoleUser(spec, password, admin.id);
+    await syncCredentialPassword(spec.email, password);
+  }
+  const limbo = await pool.query(
+    `SELECT id FROM companies WHERE ruc = '20990001001' LIMIT 1`,
+  );
+  const product = await pool.query(
+    `SELECT id, main_sku, name, reference_price
+       FROM products
+      WHERE main_sku = 'AG301'
+      LIMIT 1`,
+  );
+  if (limbo.rows[0] && product.rows[0]) {
+    const company = { id: Number(limbo.rows[0].id), ruc: '20990001001' };
+    const spec = {
+      productId: Number(product.rows[0].id),
+      mainSku: product.rows[0].main_sku,
+      name: product.rows[0].name,
+      referencePrice: Number(product.rows[0].reference_price || 100),
+    };
+    await ensureSampleOrders(new Map([['20990001001', company]]), [spec]);
+    await ensureFalabellaInboxOrders(company, spec);
+  }
+  return admin;
 }
 
 async function bumpInsumosStock() {
@@ -493,7 +640,8 @@ export async function seedPreviewData({ force = false } = {}) {
   await ensureSeedMarkerTable();
   const marker = await readSeedMarker();
   if (!force && marker?.marker === SEED_MARKER) {
-    console.log('[SEED] Preview ya sembrado; omitiendo (force=false).');
+    console.log('[SEED] Preview ya sembrado; reparando logins e inbox.');
+    await ensurePreviewFixtures();
     return { skipped: true, summary: marker.summary || {} };
   }
 
@@ -541,6 +689,7 @@ export async function seedPreviewData({ force = false } = {}) {
 
   const clientsCreated = await ensureClients(companies);
   const orders = await ensureSampleOrders(companiesByRuc, products);
+  const inbox = await ensureFalabellaInboxOrders(companiesByRuc.get('20990001001'), products[0]);
   const insumosModule = await import('./insumos.js');
   await insumosModule.ensureTables();
   await bumpInsumosStock();
@@ -557,9 +706,10 @@ export async function seedPreviewData({ force = false } = {}) {
       listings: product.listings,
     })),
     clientsCreated,
-    orders,
+    orders: { ...orders, ...inbox },
     loginHint: {
-      admin: credentials.email,
+      superadmin: credentials.email,
+      admin: 'admin@preview.zentofact.local',
       operator: 'operator@preview.zentofact.local',
       vendedor: 'vendedor@preview.zentofact.local',
       billing: 'billing@preview.zentofact.local',
@@ -587,6 +737,7 @@ export async function bootstrapPreviewIfNeeded() {
   await ensureAuthSchema();
   await users.ensureUserColumns();
   const result = await seedPreviewData();
+  await ensurePreviewFixtures();
   return { ran: true, ...result };
 }
 
@@ -600,11 +751,17 @@ if (isCli) {
     await users.ensureUserColumns();
     const result = await seedPreviewData({ force });
     if (result.skipped) {
-      console.log('Seed omitido (ya aplicado). Usa --force para re-aplicar datos faltantes.');
+      console.log('Seed marker ya aplicado; logins e inbox reparados. Usa --force para re-sembrar catálogo.');
     } else {
       console.log('Seed preview aplicado ✅');
-      console.log(JSON.stringify(result.summary.loginHint, null, 2));
     }
+    console.log(JSON.stringify(result.summary?.loginHint || {
+      superadmin: adminCredentials().email,
+      admin: 'admin@preview.zentofact.local',
+      operator: 'operator@preview.zentofact.local',
+      vendedor: 'vendedor@preview.zentofact.local',
+      billing: 'billing@preview.zentofact.local',
+    }, null, 2));
     process.exit(0);
   } catch (error) {
     console.error('Seed preview falló:', error);

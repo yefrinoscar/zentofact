@@ -9,6 +9,8 @@
 - When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, and open a pull request targeting `dev`. Do **not** merge that pull request. Merging into `dev` is manual and only happens when the user explicitly asks to merge it.
 - Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
 - The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment from `main`.
+- Railway does not deploy pull requests. PR Environments stay off. Do not wait for a Railway GitHub check, preview URL, or green deploy status on a feature PR. Prove the change on this Cloud Agent VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+- A Cloud Agent must not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. It must not create a Railway environment, PR environment, or preview deploy. Postgres, `.env`, fixture users, catalog, inbox, API, and web are created only on this Cloud Agent VM.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
@@ -77,15 +79,24 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Cloud Agent fixtures
+
+When proving a UI or API change on this VM, or when the task names a role, catalog, inbox, inventory, or seed: read `docs/agents/cloud-agent.md`.
+
 ## Cursor Cloud specific instructions
 
-This runs against a **local PostgreSQL on the VM** (not Neon). The startup update script only refreshes npm dependencies; the database daemon, `.env`, and services are not started automatically.
+The Cloud Agent VM is the only test appliance. Postgres, `.env`, fixture users, catalog, Falabella inbox, API (`3010`), and web (`3011`) are created here by `scripts/cloud-agent-start.sh` and the configured terminals. Do not provision Neon, Railway Postgres, a GitHub pull request, or a Railway PR environment to make this app start.
 
-- **Start PostgreSQL each boot** (no systemd, so it does not auto-start): `sudo pg_ctlcluster 16 main start`. The local DB is `zentofact`, role `zento`/`zento` (superuser, so `CREATE EXTENSION pg_trgm` works). The root `.env` already points `DATABASE_URL_POSTGRES` at `postgresql://zento:zento@127.0.0.1:5432/zentofact` (no SSL — do not add `sslmode=require` for the local cluster).
-- **Run everything**: `npm run dev` from the repo root (builds `@zentofact/falabella-api` + `@zentofact/core`, then runs API on `:3010`, web on `:3011`, plus the two `tsc --watch` builders). Web UI: `http://127.0.0.1:3011/` (HashRouter). API health: `http://127.0.0.1:3010/health`. This is the canonical entrypoint; the `verify-zentofact` skill's `control-zentofact` helper is an alternative.
-- **Auth bootstrap is already applied** in the snapshot (`npm run auth:migrate -w @zentofact/server` then `npm run auth:seed-admin -w @zentofact/server`). If the DB is ever reset, rerun both. Seeded superadmin: `admin@zentofact.local` / `ZentoFactLocal123`. Non-auth schema is auto-created on API startup via `runMigrations`.
-- **Preview seed (Railway PR envs):** on boot, when `RAILWAY_ENVIRONMENT_NAME` matches `zentofact-pr-<n>` (or `SEED_PREVIEW=true` outside production), the API runs `ensureAuthSchema`, creates the admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD`, and idempotently seeds demo data (users, LIMBO/MANTA RAYA/YAKURUNA, catálogo con stock/listings, insumos, pedidos de muestra). To skip it entirely on a PR env (creates nothing — no auth schema, no users, no demo data): set `SEED_PREVIEW=false` or `SKIP_PREVIEW_SEED=true`. Manual rerun: `npm run seed:preview -w @zentofact/server -- --force`. Demo logins share `ADMIN_PASSWORD` or `SEED_USER_PASSWORD`: `operator@preview.zentofact.local`, `vendedor@preview.zentofact.local`, `billing@preview.zentofact.local`.
-- **Native-binding gotcha (important):** the committed `package-lock.json` omits the `linux-x64-gnu` optional deps for `@tailwindcss/oxide` and `lightningcss` (npm optional-deps bug npm/cli#4828). Without them Vite crashes on start with "Cannot find native binding". A plain `npm install` does **not** fix this; the startup update script reinstalls the matching binaries with `npm install --no-save --no-package-lock`. Do not delete `node_modules` expecting `npm install` alone to recover — rerun the update-script step or `npm run dev` will fail on the web service only (the API still comes up).
-- **`vp` is not installed**: the root `build`/`dev:all`/`core`/`web` scripts use the "Vite+" (`vp`) CLI, which is not a project dependency. Build per workspace instead: `npm run build -w @zentofact/falabella-api`, `-w @zentofact/core`, `-w @zentofact/web`.
-- **Lint/test/build:** there is no repo-wide `lint` script; the static check is `npm run typecheck -w @zentofact/web` (`tsc --noEmit`). Tests are per package via `node --test`: `npm test -w @zentofact/{core,falabella-api,server,web}`. Web production build: `npm run build -w @zentofact/web`.
-- **Optional integrations are unset by default** and degrade gracefully: Falabella Seller API (catalog only simulates), Cloudflare R2 (falls back to local disk), Resend (reset links printed to logs), Google Maps. `SUNAT_FORCE_ENV=beta` locally — never real emission. Puppeteer/Chrome (PDF render + Falabella manifest scraper) is not needed for login/catalog flows and its Chrome download is not part of setup.
+Do not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. Do not create a Railway environment, PR environment, or preview deploy. Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+
+1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`. If `.env` was missing, the script wrote one with `SEED_PREVIEW=true`.
+2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` — done when doctor prints `api_health=ok` (`service=zentofact-api`) and `web_health=ok`.
+3. Pick the fixture profile that matches the task from `docs/agents/cloud-agent.md`, then `.cursor/skills/verify-zentofact/scripts/control-zentofact login <email>`. Done when stdout prints `login=ok email=<that email>` and the screen under test shows seeded rows (or the role's authorized empty view).
+
+`SEED_PREVIEW=true` fills every selectable role, LIMBO / MANTA RAYA / YAKURUNA, catalog stock, and Falabella inbox rows on boot. Falabella Seller API stays off (`FALABELLA_SYNC_ENABLED=false`).
+
+`bash scripts/cloud-agent-install.sh` refreshes `node_modules`, linux-x64 native bindings for Vite, and `dist/` for `@zentofact/falabella-api`, `@zentofact/core`, and `@zentofact/ripley-api`. A plain `npm install` does not restore those native bindings.
+
+`vp` is not a project dependency. Build per workspace. Tests are `npm test -w @zentofact/{core,falabella-api,server,web}`. Typecheck is `npm run typecheck -w @zentofact/web`.
+
+Optional remotes stay unset: R2 falls back to disk, Resend prints reset links, Maps stays empty, `SUNAT_FORCE_ENV=beta`.
