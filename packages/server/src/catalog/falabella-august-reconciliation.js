@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { applyInventoryMovement } from './inventory-service.js';
+import { HISTORICAL_SKU_TO_MASTER as HISTORICAL_SKU_MAP } from './historical-sku-map.js';
 
 export const AUGUST_START = '2026-08-01T05:00:00.000Z';
 export const AUGUST_END = '2026-09-01T05:00:00.000Z';
@@ -8,23 +9,7 @@ export const PHYSICAL_CUTOFF = '2026-08-21T19:50:00.000Z';
 const ELIGIBLE = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL = new Set(['cancelled', 'canceled', 'failed', 'returned']);
 
-export const HISTORICAL_SKU_TO_MASTER = Object.freeze({
-  TRI65748392: 'AG227',
-  '9522514852': 'H36',
-  CHA12345678: 'AG186',
-  'PÑL12309854': 'AG79',
-  FLO4400237: 'Z7',
-  CON09832134: 'Z7',
-  CTF44329989: 'Z7',
-  '148145225': 'A-25',
-  '1441852874': 'A-25',
-  '148126523': 'AG218',
-  '140746934': 'H9XLN',
-  '357258624678': 'FAL-146325783',
-  '1512351': 'FAL-146325783',
-  '6846846846465': 'FAL-151159665',
-  AS544145685: 'FAL-115839107',
-});
+export const HISTORICAL_SKU_TO_MASTER = HISTORICAL_SKU_MAP;
 
 export const KNOWN_PRODUCT_BLOCKERS = Object.freeze({});
 

@@ -35,6 +35,8 @@ const TARGETS = [
   ['AG217', [[86, '']]], ['A-29', [[87, 'A-29']]], ['A-30', [[88, 'A-30']]],
 ];
 
+export const INVENTORY_COUNT_MASTER_SKUS = new Set(TARGETS.map(([masterSku]) => masterSku));
+
 export const INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY = new Set([
   'AG103', 'AG146', 'AG147', 'AG158', 'H13M', 'G40XL',
 ]);

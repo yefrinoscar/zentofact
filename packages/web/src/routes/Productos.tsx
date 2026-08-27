@@ -2361,9 +2361,11 @@ function ProductStatusBadge({ product, compact = false }: { product: Product; co
 }
 
 function movementLabel(type: string, reason?: string | null) {
+  const text = String(reason || '');
+  if (text.startsWith('Saldo inicial de agosto reconstruido')) return 'Stock inicial';
   if (type === 'return') return 'Devolución';
   if (type === 'sale_reversal') {
-    return String(reason || '').startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
+    return text.startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
   }
   return ({ sale: 'Venta', sale_adjust: 'Ajuste de venta', adjustment_in: 'Entrada manual', adjustment_out: 'Salida manual', initial: 'Stock inicial', import: 'Importación' } as Record<string, string>)[type] || type;
 }
