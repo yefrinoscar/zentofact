@@ -13,10 +13,11 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     apply: { type: 'boolean', default: false },
+    sync: { type: 'boolean', default: false },
     excel: { type: 'string' },
     bundle: { type: 'string' },
     'orders-sql': { type: 'string' },
-    'skip-sync': { type: 'boolean', default: false },
+    'skip-sync': { type: 'boolean', default: true },
   },
 });
 
@@ -315,19 +316,24 @@ try {
   if (keyTargets.ambiguousRipley) {
     console.error(`Hay varias empresas Ripley (${keyTargets.ripleyFromBundle.join(', ')}). Define RIPLEY_COMPANY_RUC.`);
   }
-  const keys = await writeMarketplaceSyncKeys(pool, {
-    falabellaUser: process.env.FALABELLA_API_USER_ID,
-    falabellaKey: process.env.FALABELLA_API_KEY,
-    ripleyKey: process.env.RIPLEY_API_KEY,
-    ripleyShop: process.env.RIPLEY_SHOP_ID,
-    falabellaRucs: keyTargets.falabellaRucs,
-    ripleyRucs: keyTargets.ripleyRucs,
-  });
+  const wantSync = values.sync === true;
+  const keys = wantSync
+    ? await writeMarketplaceSyncKeys(pool, {
+      falabellaUser: process.env.FALABELLA_API_USER_ID,
+      falabellaKey: process.env.FALABELLA_API_KEY,
+      ripleyKey: process.env.RIPLEY_API_KEY,
+      ripleyShop: process.env.RIPLEY_SHOP_ID,
+      falabellaRucs: keyTargets.falabellaRucs,
+      ripleyRucs: keyTargets.ripleyRucs,
+    })
+    : { falabella: false, ripley: false, falabellaRucs: [], ripleyRucs: [] };
   if (keys.falabella) console.log(`Keys Falabella en RUC ${keys.falabellaRucs.join(', ')}`);
   if (keys.ripley) console.log(`Keys Ripley en RUC ${keys.ripleyRucs.join(', ')}`);
 
-  const keyed = await companiesWithKeys(pool, [...new Set([...keys.falabellaRucs, ...keys.ripleyRucs])]);
-  if (!values['skip-sync'] && keyed.length) {
+  const keyed = wantSync
+    ? await companiesWithKeys(pool, [...new Set([...keys.falabellaRucs, ...keys.ripleyRucs])])
+    : [];
+  if (wantSync && keyed.length) {
     const sync = await syncMarketplaces(pool, keyed);
     console.log('Sync:', JSON.stringify(sync.map((entry) => ({
       companyId: entry.companyId,
@@ -336,10 +342,8 @@ try {
       ripley: entry.ripley && { status: entry.ripley.status, received: entry.ripley.received },
       ripleyItems: entry.ripleyItems,
     }))));
-  } else if (keys.falabella || keys.ripley) {
-    console.log('Se escribieron API keys pero ninguna empresa quedó con credenciales usable.');
   } else {
-    console.log('Sin acceso a Falabella ni Ripley: faltan FALABELLA_API_USER_ID/FALABELLA_API_KEY y RIPLEY_API_KEY.');
+    console.log('Sin sync de Falabella ni Ripley. El mapeo usa el bundle o el dump.');
   }
 
   const realOrders = Number((await pool.query(
@@ -355,7 +359,7 @@ try {
   )).rows[0]?.n || 0);
   if (realOrders === 0) {
     console.error('No hay pedidos Falabella/Ripley reales desde mayo en esta base.');
-    console.error('Falta el sales-mapping-bundle.json, un dump de pedidos, o las API keys de seller.');
+    console.error('Falta el sales-mapping-bundle.json o un dump de pedidos.');
   }
 
   const loaded = await loadHistoricalSalesMappingContext(pool, { since: SALES_HISTORY_SINCE });
