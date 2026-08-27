@@ -7,6 +7,9 @@ import { randomBytes } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '../../../.env') });
+if (process.argv[1] && String(process.argv[1]).endsWith('seed-preview.js')) {
+  process.env.AUTH_ALLOW_SIGNUP = 'true';
+}
 
 const { hashPassword } = await import('better-auth/crypto');
 const { createCompany, pool, runMigrations } = await import('@zentofact/core');

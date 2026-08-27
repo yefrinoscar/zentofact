@@ -126,6 +126,23 @@ test('un mapeo histórico sin maestro no descuenta y pide revisión', () => {
   assert.equal(resolved.mainSku, 'FAL-144958533');
 });
 
+test('un SKU legado o alias del Excel resuelve al código del conteo', () => {
+  const ctx = context([
+    ...products,
+    { id: 301, main_sku: 'G35V', name: 'G35V' },
+    { id: 18, main_sku: 'G18', name: 'G18' },
+  ], listings, { countedSkus: new Set(['Z7', 'G35V', 'G18']), skusWithoutQuantity: new Set() });
+  assert.equal(resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'AG174', provider_sku: 'x',
+  }, ctx).product.main_sku, 'Z7');
+  assert.equal(resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'AG301', provider_sku: 'x',
+  }, ctx).product.main_sku, 'G35V');
+  assert.equal(resolveSaleItem({
+    channel_code: 'falabella', company_id: 1, sku: 'G-19', provider_sku: 'x',
+  }, ctx).product.main_sku, 'G18');
+});
+
 test('una identidad sin evidencia queda unmapped', () => {
   const resolved = resolveSaleItem({
     channel_code: 'falabella', company_id: 1, sku: 'NO-EXISTE', provider_sku: '000',
