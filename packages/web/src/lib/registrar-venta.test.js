@@ -212,6 +212,78 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   );
 });
 
+test('validateManualSale exige DNI, RUC o razón social si se pide comprobante', () => {
+  assert.equal(
+    validateManualSale(validSale({ documentRequest: 'boleta' })),
+    'Escribe el DNI de 8 dígitos.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'boleta',
+      customerDocumentNumber: '12345678',
+    })),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'boleta',
+      boletaIdentity: 'ce',
+      customerDocumentNumber: '001234567',
+    })),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({ documentRequest: 'factura', customerDocumentNumber: '20123456789' })),
+    'Escribe la razón social.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'factura',
+      customerDocumentNumber: '20123456789',
+      legalName: 'LIMBO SAC',
+    })),
+    'Escribe la dirección fiscal.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'factura',
+      customerDocumentNumber: '20123456789',
+      legalName: 'LIMBO SAC',
+      fiscalAddress: 'Av. La Marina 2055',
+    })),
+    null,
+  );
+});
+
+test('buildManualSaleOrderPayload no pide comprobante si el cliente no lo requiere', () => {
+  const payload = buildManualSaleOrderPayload(validSale());
+  assert.equal(payload.requestedDocumentType, null);
+  assert.equal(payload.customer.documentNumber, undefined);
+});
+
+test('buildManualSaleOrderPayload guarda boleta o factura sin emitir', () => {
+  const boleta = buildManualSaleOrderPayload(validSale({
+    documentRequest: 'boleta',
+    customerDocumentNumber: '12345678',
+  }));
+  assert.equal(boleta.requestedDocumentType, 'boleta');
+  assert.equal(boleta.customer.documentType, '1');
+  assert.equal(boleta.customer.documentNumber, '12345678');
+
+  const factura = buildManualSaleOrderPayload(validSale({
+    documentRequest: 'factura',
+    customerDocumentNumber: '20990001001',
+    legalName: 'LIMBO PERU S.R.L.',
+    fiscalAddress: 'Av. La Marina 2055',
+  }));
+  assert.equal(factura.requestedDocumentType, 'factura');
+  assert.equal(factura.customer.documentType, '6');
+  assert.equal(factura.customer.documentNumber, '20990001001');
+  assert.equal(factura.customer.legalName, 'LIMBO PERU S.R.L.');
+  assert.equal(factura.customer.address, 'Av. La Marina 2055');
+  assert.equal(factura.customer.name, 'LIMBO PERU S.R.L.');
+});
+
 test('validateManualSale permite recojo sin repartidor ni mapa', () => {
   assert.equal(validateManualSale(validSale({
     delivery: 'recojo',

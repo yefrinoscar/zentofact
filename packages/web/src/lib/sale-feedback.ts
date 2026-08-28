@@ -4,7 +4,7 @@ export type RegisteredSaleFlash = {
   total: number;
 };
 
-export type SaleValidationField = 'channel' | 'customer' | 'products' | 'lines' | 'delivery';
+export type SaleValidationField = 'channel' | 'customer' | 'document' | 'products' | 'lines' | 'delivery';
 
 /** Location state passed from Nueva venta → Mis ventas. */
 export type MisVentasLocationState = {
@@ -66,6 +66,15 @@ export function saleValidationField(message: string | null | undefined): SaleVal
   if (!value) return null;
   if (value.includes('canal de venta manual')) return 'channel';
   if (value.includes('nombre del cliente')) return 'customer';
+  if (
+    value.includes('DNI')
+    || value.includes('RUC')
+    || value.includes('razón social')
+    || value.includes('carné')
+    || value.includes('dirección fiscal')
+  ) {
+    return 'document';
+  }
   if (value.includes('producto')) return 'products';
   if (value.includes('cantidad') || value.includes('precio')) return 'lines';
   if (

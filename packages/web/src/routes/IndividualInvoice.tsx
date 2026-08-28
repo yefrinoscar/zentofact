@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Send, Plus, Trash2, Loader2, AlertCircle, Eye,
   Calendar as CalendarIcon, ArrowLeft,
@@ -7,6 +7,7 @@ import {
 import { es } from 'date-fns/locale';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { invoicePrefillFromOrder, type OrderForDocument } from '../lib/order-document';
 import { useAppStore } from '../stores/app';
 import { usePermissions } from '../hooks/usePermissions';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '../components/ui/select';
@@ -69,8 +70,17 @@ function DatePicker({ value, onChange }: { value: string; onChange: (d: string) 
   );
 }
 
+type FromOrderState = {
+  fromOrderId?: number;
+  fromOrder?: OrderForDocument;
+};
+
 export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocType }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const fromOrderState = (location.state || {}) as FromOrderState;
+  const fromOrderId = Number(fromOrderState.fromOrderId) || 0;
+  const appliedOrderRef = useRef<number | null>(null);
   const { role, loading: permissionsLoading } = usePermissions();
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
@@ -103,6 +113,35 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
   const docType = fixedDocType;
   const isFactura = docType === '01';
   const listPath = isFactura ? '/facturas' : '/boletas';
+
+  useEffect(() => {
+    if (!fromOrderId || appliedOrderRef.current === fromOrderId) return;
+    const apply = (order: OrderForDocument) => {
+      const prefill = invoicePrefillFromOrder(order);
+      if (prefill.companyId) setCompanyId(prefill.companyId);
+      setClientNumero(prefill.clientNumero);
+      setClientNombre(prefill.clientNombre);
+      setClientDireccion(prefill.clientDireccion);
+      setBoletaConDni(prefill.boletaConDni);
+      if (prefill.items.length) {
+        setItems(prefill.items.map((item) => ({
+          id: crypto.randomUUID(),
+          descripcion: item.descripcion,
+          cantidad: item.cantidad,
+          precioUnitario: item.precioUnitario,
+        })));
+      }
+    };
+    if (fromOrderState.fromOrder) apply(fromOrderState.fromOrder);
+    void api.getManagedOrder(fromOrderId)
+      .then((order: OrderForDocument) => {
+        appliedOrderRef.current = fromOrderId;
+        apply(order);
+      })
+      .catch(() => {
+        appliedOrderRef.current = fromOrderId;
+      });
+  }, [fromOrderId]);
 
   useEffect(() => {
     if (permissionsLoading || role === 'viewer') return;
@@ -260,6 +299,9 @@ export default function IndividualInvoice({ fixedDocType }: { fixedDocType: DocT
       {/* Cliente */}
       <section className="space-y-4">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cliente</p>
+        {fromOrderId ? (
+          <p className="text-xs text-muted-foreground">Datos del pedido. Revisa y emite cuando corresponda.</p>
+        ) : null}
         {isFactura ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="RUC" hint="11 dígitos" error={fe(errs.numero)}>

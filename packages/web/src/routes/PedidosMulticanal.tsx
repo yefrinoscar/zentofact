@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -34,6 +34,11 @@ import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
+import {
+  generateDocumentLabel,
+  generateDocumentPath,
+  pendingDocumentKind,
+} from '../lib/order-document';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -143,7 +148,14 @@ type ManagedOrder = {
   subtotal?: number | null;
   shippingAmount?: number | null;
   total?: number | null;
-  customer?: { name?: string; documentNumber?: string; phone?: string };
+  customer?: {
+    name?: string;
+    documentNumber?: string;
+    documentType?: string;
+    phone?: string;
+    legalName?: string;
+    address?: string;
+  };
   shipping?: {
     type?: string;
     carrier?: string;
@@ -626,6 +638,14 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+
+  const goToGenerateDocument = useCallback((order: ManagedOrder) => {
+    const kind = pendingDocumentKind(order);
+    if (!kind) return;
+    navigate(generateDocumentPath(kind), {
+      state: { fromOrderId: order.id, fromOrder: order },
+    });
+  }, [navigate]);
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
@@ -1103,6 +1123,14 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              {pendingDocumentKind(row.original) && (
+                <>
+                  <DropdownMenuItem onClick={() => goToGenerateDocument(row.original)}>
+                    <FileText /> {generateDocumentLabel(pendingDocumentKind(row.original)!)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
@@ -1117,7 +1145,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById]);
+  }, [companyById, goToGenerateDocument]);
 
   const table = useReactTable({
     data: orders,
@@ -1360,6 +1388,19 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
                       <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
+                      {pendingDocumentKind(detail) && (
+                        <div className="py-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="cursor-pointer"
+                            onClick={() => goToGenerateDocument(detail)}
+                          >
+                            <FileText /> {generateDocumentLabel(pendingDocumentKind(detail)!)}
+                          </Button>
+                        </div>
+                      )}
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
                         <>
