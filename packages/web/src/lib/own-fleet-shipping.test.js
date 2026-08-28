@@ -10,6 +10,7 @@ import {
   distanceAmountForKm,
   haversineKm,
   isInPeru,
+  mergeOwnFleetConfig,
   peruPlaceFromComponents,
   quoteOwnFleetShipping,
   resolveShippingZone,
@@ -211,6 +212,45 @@ test('la cotización usa el distrito del pin, no el texto buscado', () => {
   assert.equal(ancon?.charged, true);
   assert.equal(ancon?.zoneLabel, 'Ancón');
   assert.equal(ancon?.districtAmount, 20);
+});
+
+test('las playas del sur no tienen movilidad propia hasta que el admin las encienda', () => {
+  const pucusana = quoteOwnFleetShipping({
+    district: 'Pucusana',
+    lat: -12.481,
+    lng: -76.797,
+  });
+  assert.equal(pucusana?.charged, false);
+  assert.equal(pucusana?.zoneLabel, 'Pucusana');
+
+  const sanBartolo = quoteOwnFleetShipping({
+    district: 'San Bartolo',
+    lat: -12.388,
+    lng: -76.778,
+  });
+  assert.equal(sanBartolo?.charged, false);
+  assert.equal(sanBartolo?.zoneLabel, 'San Bartolo');
+
+  const enabled = mergeOwnFleetConfig({
+    districts: [{ key: 'pucusana', enabled: true, amount: 30 }],
+  });
+  const quoted = quoteOwnFleetShipping({
+    district: 'Pucusana',
+    lat: -12.481,
+    lng: -76.797,
+  }, enabled);
+  assert.equal(quoted?.charged, true);
+  assert.equal(quoted?.zoneLabel, 'Pucusana');
+  assert.equal(quoted?.districtAmount, 30);
+  assert.equal(quoted?.distanceAmount, MAX_DISTANCE_AMOUNT);
+
+  const lurin = quoteOwnFleetShipping({
+    district: 'Lurín',
+    lat: -12.274,
+    lng: -76.87,
+  });
+  assert.equal(lurin?.charged, true);
+  assert.equal(lurin?.districtAmount, 20);
 });
 
 test('la movilidad propia cubre Lima metropolitana: 43 distritos y Callao', () => {

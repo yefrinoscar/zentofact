@@ -46,4 +46,10 @@ test('placeAtCoordinates asigna el distrito del punto, no un nombre buscado', ()
   assert.equal(placeAtCoordinates(-11.495, -77.208).district, 'Huaral');
   assert.equal(placeAtCoordinates(-11.495, -77.208).reachable, false);
   assert.equal(placeAtCoordinates(-12.0776, -77.0905).reachable, true);
+  assert.equal(placeAtCoordinates(-12.481, -76.797).district, 'Pucusana');
+  assert.equal(placeAtCoordinates(-12.481, -76.797).reachable, false);
+  assert.equal(placeAtCoordinates(-12.388, -76.778).district, 'San Bartolo');
+  assert.equal(placeAtCoordinates(-12.388, -76.778).reachable, false);
+  assert.equal(placeAtCoordinates(-12.274, -76.87).district, 'Lurín');
+  assert.equal(placeAtCoordinates(-12.274, -76.87).reachable, true);
 });

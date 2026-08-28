@@ -1,3 +1,4 @@
+import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
@@ -595,11 +596,12 @@ async function ingestOrderInTransaction(input, db) {
     documentRequirement: existing.document_requirement,
     documentTypePolicy: existing.document_type_policy,
   } : account;
+  const fleetConfig = await loadOwnFleetConfig(db);
   const order = applyOwnFleetShipping(normalizeOrderInput({
     ...input,
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
-  }, policyAccount));
+  }, policyAccount), fleetConfig);
   assertManualEnvioCarrier(order.shipping, input.source);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {

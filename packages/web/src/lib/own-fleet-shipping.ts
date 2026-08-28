@@ -89,6 +89,47 @@ const CALLAO_DISTRICT_AMOUNTS: Record<string, number> = {
 
 const GENERIC_LIMA_DISTRICT = new Set(['lima', 'cercado', 'cercado de lima']);
 
+/** Playas del sur: por defecto no hay movilidad propia. El admin puede encenderlas. */
+export const OWN_FLEET_BEACH_KEYS = [
+  'punta hermosa',
+  'punta negra',
+  'san bartolo',
+  'santa maria del mar',
+  'pucusana',
+] as const;
+
+const DISTRICT_ALIASES: Record<string, string> = {
+  surco: 'santiago de surco',
+  magdalena: 'magdalena del mar',
+  cercado: 'cercado de lima',
+  lima: 'cercado de lima',
+  smp: 'san martin de porres',
+  sjm: 'san juan de miraflores',
+  sjl: 'san juan de lurigancho',
+  vmt: 'villa maria del triunfo',
+  chosica: 'lurigancho',
+  'carmen de la legua reynoso': 'carmen de la legua',
+};
+
+export type OwnFleetDistrictSetting = {
+  key: string;
+  name: string;
+  province: string;
+  department: string;
+  lat: number;
+  lng: number;
+  amount: number;
+  enabled: boolean;
+};
+
+export type OwnFleetConfig = {
+  districts: OwnFleetDistrictSetting[];
+};
+
+export type OwnFleetConfigInput = {
+  districts?: Array<{ key?: string; name?: string; amount?: number; enabled?: boolean }>;
+};
+
 /** Centroides de Lima metropolitana: 43 distritos de Lima y 7 del Callao. Huaral y Cañete no entran. */
 export const METRO_SNAP_MAX_KM = 20;
 
@@ -209,18 +250,94 @@ function nearestPoint(point: { lat: number; lng: number }, places: ZonePoint[]) 
   return best ? { place: best, km: bestKm } : null;
 }
 
-/** Distrito donde está el pin. Fuera de Lima metropolitana no hay movilidad propia. */
-export function placeAtCoordinates(lat: number, lng: number): OwnFleetDestination {
+export function defaultOwnFleetConfig(): OwnFleetConfig {
+  const beaches = new Set<string>(OWN_FLEET_BEACH_KEYS);
+  return {
+    districts: METRO_POINTS.map((place) => {
+      const key = foldName(place.district);
+      const amount = LIMA_DISTRICT_AMOUNTS[key] ?? CALLAO_DISTRICT_AMOUNTS[key] ?? 20;
+      return {
+        key,
+        name: place.district,
+        province: place.province,
+        department: place.department,
+        lat: place.lat,
+        lng: place.lng,
+        amount,
+        enabled: !beaches.has(key),
+      };
+    }),
+  };
+}
+
+export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig | null): OwnFleetConfig {
+  const base = defaultOwnFleetConfig();
+  const overrides = new Map<string, { amount?: number; enabled?: boolean }>();
+  for (const row of saved?.districts || []) {
+    const key = foldName(row.key || row.name || '');
+    if (!key) continue;
+    overrides.set(DISTRICT_ALIASES[key] || key, row);
+  }
+  return {
+    districts: base.districts.map((district) => {
+      const override = overrides.get(district.key);
+      if (!override) return district;
+      const amount = Number(override.amount);
+      return {
+        ...district,
+        enabled: override.enabled === undefined ? district.enabled : Boolean(override.enabled),
+        amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount,
+      };
+    }),
+  };
+}
+
+export function serializeOwnFleetConfig(
+  saved?: OwnFleetConfigInput | OwnFleetConfig | null,
+): OwnFleetConfigInput {
+  return {
+    districts: mergeOwnFleetConfig(saved).districts.map((district) => ({
+      key: district.key,
+      amount: district.amount,
+      enabled: district.enabled,
+    })),
+  };
+}
+
+function districtSetting(
+  name: string,
+  department: string,
+  config: OwnFleetConfig,
+): OwnFleetDistrictSetting | null {
+  const folded = foldName(name);
+  const key = DISTRICT_ALIASES[folded] || folded;
+  if (!key) return null;
+  const dept = foldName(department);
+  return config.districts.find((district) => {
+    if (district.key !== key) return false;
+    if (!dept) return true;
+    return foldName(district.department) === dept;
+  }) || null;
+}
+
+/** Distrito donde está el pin. Fuera de cobertura no hay movilidad propia. */
+export function placeAtCoordinates(
+  lat: number,
+  lng: number,
+  configInput?: OwnFleetConfigInput | OwnFleetConfig | null,
+): OwnFleetDestination {
+  const config = mergeOwnFleetConfig(configInput);
   const point = { lat, lng };
   const covered = nearestPoint(point, METRO_POINTS);
   const uncovered = nearestPoint(point, UNCOVERED_POINTS);
   const coveredOk = Boolean(covered && covered.km <= METRO_SNAP_MAX_KM);
   if (coveredOk && (!uncovered || covered!.km <= uncovered.km)) {
+    const setting = districtSetting(covered!.place.district, covered!.place.department, config);
     return {
       district: covered!.place.district,
       province: covered!.place.province,
       department: covered!.place.department,
-      reachable: true,
+      reachable: Boolean(setting?.enabled),
       lat,
       lng,
     };
@@ -328,7 +445,7 @@ function pickComponent(components: AddressComponent[], ...types: string[]) {
 function knownDistrictName(name: string, department: string) {
   const key = foldName(name);
   if (!key || GENERIC_LIMA_DISTRICT.has(key)) return '';
-  return lookupDistrict(name, department) ? titleCase(name) : '';
+  return districtSetting(name, department, mergeOwnFleetConfig()) ? titleCase(name) : '';
 }
 
 export function peruPlaceFromComponents(components: AddressComponent[] = []): PeruPlace {
@@ -375,23 +492,25 @@ export function distanceAmountForKm(km: number) {
   return MAX_DISTANCE_AMOUNT;
 }
 
-function lookupDistrict(name: string, department: string) {
-  const key = foldName(name);
-  if (!key) return null;
-  const dept = foldName(department);
-  if (key in LIMA_DISTRICT_AMOUNTS && (!dept || dept === 'lima')) {
-    return { kind: 'lima_district' as const, name: titleCase(name), amount: LIMA_DISTRICT_AMOUNTS[key] };
-  }
-  if (key in CALLAO_DISTRICT_AMOUNTS && (!dept || dept === 'callao')) {
-    return { kind: 'callao_district' as const, name: titleCase(name), amount: CALLAO_DISTRICT_AMOUNTS[key] };
-  }
-  return null;
+function lookupDistrict(
+  name: string,
+  department: string,
+  config: OwnFleetConfig,
+) {
+  const setting = districtSetting(name, department, config);
+  if (!setting || !setting.enabled) return null;
+  const kind = foldName(setting.department) === 'callao' ? 'callao_district' as const : 'lima_district' as const;
+  return { kind, name: setting.name, amount: setting.amount };
 }
 
-export function resolveShippingZone(place: OwnFleetDestination | PeruPlace): { zone: ShippingZone; amount: number } {
-  const districtHit = lookupDistrict(place.district || '', place.department || '')
+export function resolveShippingZone(
+  place: OwnFleetDestination | PeruPlace,
+  configInput?: OwnFleetConfigInput | OwnFleetConfig | null,
+): { zone: ShippingZone; amount: number } {
+  const config = mergeOwnFleetConfig(configInput);
+  const districtHit = lookupDistrict(place.district || '', place.department || '', config)
     || (foldName(place.province || '') && foldName(place.province || '') !== 'lima'
-      ? lookupDistrict(place.province || '', place.department || '')
+      ? lookupDistrict(place.province || '', place.department || '', config)
       : null);
 
   if (districtHit) {
@@ -419,12 +538,16 @@ function roundMoney(value: number) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
-export function quoteOwnFleetShipping(destination: OwnFleetDestination | null | undefined): OwnFleetQuote | null {
+export function quoteOwnFleetShipping(
+  destination: OwnFleetDestination | null | undefined,
+  configInput?: OwnFleetConfigInput | OwnFleetConfig | null,
+): OwnFleetQuote | null {
   if (!destination) return null;
+  const config = mergeOwnFleetConfig(configInput);
   const lat = Number(destination.lat);
   const lng = Number(destination.lng);
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
-  const atPin = hasPoint ? placeAtCoordinates(lat, lng) : null;
+  const atPin = hasPoint ? placeAtCoordinates(lat, lng, config) : null;
   const distanceKm = hasPoint
     ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
     : 0;
@@ -444,7 +567,7 @@ export function quoteOwnFleetShipping(destination: OwnFleetDestination | null | 
     district: destination.district || '',
     province: destination.province || '',
     department: destination.department || '',
-  });
+  }, config);
   const reachable = zoneQuote.zone.kind === 'lima_district' || zoneQuote.zone.kind === 'callao_district';
   if (!reachable) {
     return {

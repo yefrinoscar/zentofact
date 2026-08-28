@@ -346,6 +346,13 @@ export default function RegistrarVenta() {
     staleTime: 15_000,
   });
 
+  const fleetQuery = useQuery({
+    queryKey: ['own-fleet-config'],
+    queryFn: api.getOwnFleetConfig,
+    staleTime: 30_000,
+  });
+  const fleetConfig = fleetQuery.data;
+
   const manualAccount = useMemo(
     () => accounts.find((account) => account.channelCode === 'manual' && account.active) || null,
     [accounts],
@@ -353,7 +360,7 @@ export default function RegistrarVenta() {
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
   const productsTotal = saleLinesTotal(lines);
   const shippingQuote = delivery === 'envio' && shippingCarrier === OWN_FLEET_CARRIER
-    ? quoteOwnFleetShipping(dropoffPlace)
+    ? quoteOwnFleetShipping(dropoffPlace, fleetConfig)
     : null;
   const totals = saleTotals(productsTotal, shippingQuote);
   const total = totals.total;
@@ -426,7 +433,7 @@ export default function RegistrarVenta() {
       paymentMethod,
       receivedBy,
       paymentProof,
-    });
+    }, fleetConfig);
     if (validationError) {
       showFieldError(validationError);
       return;
@@ -448,7 +455,7 @@ export default function RegistrarVenta() {
         paymentMethod,
         receivedBy,
         paymentProof,
-      });
+      }, fleetConfig);
     } catch (error: any) {
       showFieldError(humanizeSaleError(error?.message));
       return;

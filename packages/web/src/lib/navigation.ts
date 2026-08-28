@@ -16,13 +16,14 @@ import {
   ShoppingBag,
   Shuffle,
   TrendingDown,
+  Truck,
   Users,
   Wallet,
   Zap,
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 import type { PermissionKey } from './permissions';
-import { isNavItemActive, mobileNavPathname } from './nav-path';
+import { isNavItemActive, isNavItemVisible, mobileNavPathname } from './nav-path';
 
 export { isNavItemActive, mobileNavPathname };
 
@@ -34,6 +35,7 @@ export type NavItem = {
   /** Los ítems solo para superadmin no dependen de un permiso del menú. */
   permission?: PermissionKey;
   description?: string;
+  adminOnly?: boolean;
   superadminOnly?: boolean;
   hiddenInProduction?: boolean;
 };
@@ -86,6 +88,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
       { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
       {
+        to: '/envio-propio',
+        icon: Truck,
+        label: 'Envío propio',
+        adminOnly: true,
+        description: 'Distritos y precios de movilidad propia.',
+      },
+      {
         to: '/system-config',
         icon: ShieldCheck,
         label: 'Sistema',
@@ -99,18 +108,12 @@ export const NAV_GROUPS: NavGroup[] = [
 export function visibleNavigation(
   can: (permission: PermissionKey) => boolean,
   isProd = import.meta.env.VITE_APP_ENV === 'production',
-  options: { isSuperadmin?: boolean } = {},
+  options: { isAdmin?: boolean; isSuperadmin?: boolean } = {},
 ) {
   return NAV_GROUPS
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => {
-        if (isProd && item.hiddenInProduction) return false;
-        if (item.superadminOnly) return options.isSuperadmin === true;
-        if (!item.permission) return false;
-        if (item.to === '/salidas') return can('salidas') || can('productos');
-        return can(item.permission);
-      }),
+      items: group.items.filter((item) => isNavItemVisible(item, can, isProd, options)),
     }))
     .filter((group) => group.items.length > 0);
 }

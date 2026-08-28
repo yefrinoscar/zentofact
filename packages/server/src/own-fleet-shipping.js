@@ -86,6 +86,27 @@ const CALLAO_DISTRICT_AMOUNTS = {
 
 export const METRO_SNAP_MAX_KM = 20;
 
+export const OWN_FLEET_BEACH_KEYS = [
+  'punta hermosa',
+  'punta negra',
+  'san bartolo',
+  'santa maria del mar',
+  'pucusana',
+];
+
+const DISTRICT_ALIASES = {
+  surco: 'santiago de surco',
+  magdalena: 'magdalena del mar',
+  cercado: 'cercado de lima',
+  lima: 'cercado de lima',
+  smp: 'san martin de porres',
+  sjm: 'san juan de miraflores',
+  sjl: 'san juan de lurigancho',
+  vmt: 'villa maria del triunfo',
+  chosica: 'lurigancho',
+  'carmen de la legua reynoso': 'carmen de la legua',
+};
+
 function zonePoint(district, province, department, lat, lng) {
   return { district, province, department, lat, lng };
 }
@@ -181,6 +202,12 @@ function foldName(value) {
     .trim();
 }
 
+const UNCOVERED_POINTS = [
+  zonePoint('Huaral', 'Huaral', 'Lima', -11.495, -77.208),
+  zonePoint('San Vicente De Cañete', 'Cañete', 'Lima', -13.077, -76.387),
+  ...DEPARTMENT_POINTS.filter((place) => foldName(place.department) !== 'lima'),
+];
+
 export function inPeruBounds(lat, lng) {
   return lat >= PERU_BBOX.minLat
     && lat <= PERU_BBOX.maxLat
@@ -231,23 +258,85 @@ function nearestPoint(point, places) {
   return best ? { place: best, km: bestKm } : null;
 }
 
-const UNCOVERED_POINTS = [
-  zonePoint('Huaral', 'Huaral', 'Lima', -11.495, -77.208),
-  zonePoint('San Vicente De Cañete', 'Cañete', 'Lima', -13.077, -76.387),
-  ...DEPARTMENT_POINTS.filter((place) => foldName(place.department) !== 'lima'),
-];
+export function defaultOwnFleetConfig() {
+  const beaches = new Set(OWN_FLEET_BEACH_KEYS);
+  return {
+    districts: METRO_POINTS.map((place) => {
+      const key = foldName(place.district);
+      const amount = Object.prototype.hasOwnProperty.call(LIMA_DISTRICT_AMOUNTS, key)
+        ? LIMA_DISTRICT_AMOUNTS[key]
+        : (Object.prototype.hasOwnProperty.call(CALLAO_DISTRICT_AMOUNTS, key) ? CALLAO_DISTRICT_AMOUNTS[key] : 20);
+      return {
+        key,
+        name: place.district,
+        province: place.province,
+        department: place.department,
+        lat: place.lat,
+        lng: place.lng,
+        amount,
+        enabled: !beaches.has(key),
+      };
+    }),
+  };
+}
 
-export function placeAtCoordinates(lat, lng) {
+export function mergeOwnFleetConfig(saved) {
+  const base = defaultOwnFleetConfig();
+  const overrides = new Map();
+  for (const row of saved?.districts || []) {
+    const key = foldName(row?.key || row?.name || '');
+    if (!key) continue;
+    overrides.set(DISTRICT_ALIASES[key] || key, row);
+  }
+  return {
+    districts: base.districts.map((district) => {
+      const override = overrides.get(district.key);
+      if (!override) return district;
+      const amount = Number(override.amount);
+      return {
+        ...district,
+        enabled: override.enabled === undefined ? district.enabled : Boolean(override.enabled),
+        amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount,
+      };
+    }),
+  };
+}
+
+export function serializeOwnFleetConfig(saved) {
+  return {
+    districts: mergeOwnFleetConfig(saved).districts.map((district) => ({
+      key: district.key,
+      amount: district.amount,
+      enabled: district.enabled,
+    })),
+  };
+}
+
+function districtSetting(name, department, config) {
+  const folded = foldName(name);
+  const key = DISTRICT_ALIASES[folded] || folded;
+  if (!key) return null;
+  const dept = foldName(department);
+  return config.districts.find((district) => {
+    if (district.key !== key) return false;
+    if (!dept) return true;
+    return foldName(district.department) === dept;
+  }) || null;
+}
+
+export function placeAtCoordinates(lat, lng, configInput) {
+  const config = mergeOwnFleetConfig(configInput);
   const point = { lat, lng };
   const covered = nearestPoint(point, METRO_POINTS);
   const uncovered = nearestPoint(point, UNCOVERED_POINTS);
   const coveredOk = Boolean(covered && covered.km <= METRO_SNAP_MAX_KM);
   if (coveredOk && (!uncovered || covered.km <= uncovered.km)) {
+    const setting = districtSetting(covered.place.district, covered.place.department, config);
     return {
       district: covered.place.district,
       province: covered.place.province,
       department: covered.place.department,
-      reachable: true,
+      reachable: Boolean(setting?.enabled),
       lat,
       lng,
     };
@@ -274,23 +363,18 @@ export function distanceAmountForKm(km) {
   return MAX_DISTANCE_AMOUNT;
 }
 
-function lookupDistrict(name, department) {
-  const key = foldName(name);
-  if (!key) return null;
-  const dept = foldName(department);
-  if (Object.prototype.hasOwnProperty.call(LIMA_DISTRICT_AMOUNTS, key) && (!dept || dept === 'lima')) {
-    return { kind: 'lima_district', name: titleCase(name), amount: LIMA_DISTRICT_AMOUNTS[key] };
-  }
-  if (Object.prototype.hasOwnProperty.call(CALLAO_DISTRICT_AMOUNTS, key) && (!dept || dept === 'callao')) {
-    return { kind: 'callao_district', name: titleCase(name), amount: CALLAO_DISTRICT_AMOUNTS[key] };
-  }
-  return null;
+function lookupDistrict(name, department, config) {
+  const setting = districtSetting(name, department, config);
+  if (!setting || !setting.enabled) return null;
+  const kind = foldName(setting.department) === 'callao' ? 'callao_district' : 'lima_district';
+  return { kind, name: setting.name, amount: setting.amount };
 }
 
-export function resolveShippingZone(place = {}) {
-  const districtHit = lookupDistrict(place.district, place.department)
+export function resolveShippingZone(place = {}, configInput) {
+  const config = mergeOwnFleetConfig(configInput);
+  const districtHit = lookupDistrict(place.district, place.department, config)
     || (foldName(place.province) && foldName(place.province) !== 'lima'
-      ? lookupDistrict(place.province, place.department)
+      ? lookupDistrict(place.province, place.department, config)
       : null);
 
   if (districtHit) {
@@ -314,12 +398,13 @@ export function resolveShippingZone(place = {}) {
   };
 }
 
-export function quoteOwnFleetShipping(destination) {
+export function quoteOwnFleetShipping(destination, configInput) {
   if (!destination) return null;
+  const config = mergeOwnFleetConfig(configInput);
   const lat = Number(destination.lat);
   const lng = Number(destination.lng);
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
-  const atPin = hasPoint ? placeAtCoordinates(lat, lng) : null;
+  const atPin = hasPoint ? placeAtCoordinates(lat, lng, config) : null;
   const distanceKm = hasPoint
     ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
     : 0;
@@ -339,7 +424,7 @@ export function quoteOwnFleetShipping(destination) {
     district: destination.district || '',
     province: destination.province || '',
     department: destination.department || '',
-  });
+  }, config);
   const reachable = zoneQuote.zone.kind === 'lima_district' || zoneQuote.zone.kind === 'callao_district';
   if (!reachable) {
     return {
@@ -365,7 +450,7 @@ export function quoteOwnFleetShipping(destination) {
   };
 }
 
-export function applyOwnFleetShipping(order) {
+export function applyOwnFleetShipping(order, configInput) {
   const shipping = order?.shipping && typeof order.shipping === 'object' ? order.shipping : {};
   const type = String(shipping.type || '').trim().toLowerCase();
   const carrier = String(shipping.carrier || '').trim().toLowerCase();
@@ -380,12 +465,12 @@ export function applyOwnFleetShipping(order) {
   if (!isInPeru(lat, lng)) {
     throw new Error(OUT_OF_PERU_MESSAGE);
   }
-  const atPin = placeAtCoordinates(lat, lng);
+  const atPin = placeAtCoordinates(lat, lng, configInput);
   const quote = quoteOwnFleetShipping({
     ...atPin,
     lat,
     lng,
-  });
+  }, configInput);
   if (!quote?.charged) {
     throw new Error(OWN_FLEET_OUT_OF_RANGE_MESSAGE);
   }

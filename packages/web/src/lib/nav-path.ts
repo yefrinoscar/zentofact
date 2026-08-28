@@ -17,3 +17,25 @@ export function mobileNavPathname(
   }
   return activePath;
 }
+
+export type NavVisibilityItem = {
+  to: string;
+  permission?: PermissionKey;
+  adminOnly?: boolean;
+  superadminOnly?: boolean;
+  hiddenInProduction?: boolean;
+};
+
+export function isNavItemVisible(
+  item: NavVisibilityItem,
+  can: (permission: PermissionKey) => boolean,
+  isProd = false,
+  options: { isAdmin?: boolean; isSuperadmin?: boolean } = {},
+) {
+  if (isProd && item.hiddenInProduction) return false;
+  if (item.adminOnly) return options.isAdmin === true || options.isSuperadmin === true;
+  if (item.superadminOnly) return options.isSuperadmin === true;
+  if (!item.permission) return false;
+  if (item.to === '/salidas') return can('salidas') || can('productos');
+  return can(item.permission);
+}

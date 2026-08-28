@@ -114,3 +114,48 @@ test('applyOwnFleetShipping rechaza un pin fuera del Perú', () => {
     /Esa dirección no está en el Perú/,
   );
 });
+
+test('Pucusana y San Bartolo no se cobran hasta que el admin las encienda', () => {
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -12.388,
+        lng: -76.778,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
+
+  const quoted = applyOwnFleetShipping({
+    subtotal: 250,
+    total: 250,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      lat: -12.481,
+      lng: -76.797,
+    },
+  }, {
+    districts: [{ key: 'pucusana', enabled: true, amount: 30 }],
+  });
+  assert.equal(quoted.shipping.district, 'Pucusana');
+  assert.equal(quoted.shipping.districtAmount, 30);
+  assert.ok(quoted.shippingAmount > 30);
+});

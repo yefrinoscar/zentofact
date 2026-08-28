@@ -126,7 +126,7 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
-export function validateManualSale(input: ManualSaleInput) {
+export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
   if (!input.channelAccountId) {
     return 'Todavía no hay un canal de venta manual habilitado.';
   }
@@ -156,14 +156,14 @@ export function validateManualSale(input: ManualSaleInput) {
     }
   }
   if (input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER) {
-    const quote = quoteOwnFleetShipping(input.dropoffPlace);
+    const quote = quoteOwnFleetShipping(input.dropoffPlace, fleetConfig);
     if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
   }
   return null;
 }
 
-export function buildManualSaleOrderPayload(input: ManualSaleInput) {
-  const error = validateManualSale(input);
+export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
+  const error = validateManualSale(input, fleetConfig);
   if (error) throw new Error(error);
 
   const paidNow = input.paymentMethod !== 'despues';
@@ -176,9 +176,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
   const dropoffLat = Number(dropoff?.lat);
   const dropoffLng = Number(dropoff?.lng);
   const atPin = dropoff && Number.isFinite(dropoffLat) && Number.isFinite(dropoffLng)
-    ? placeAtCoordinates(dropoffLat, dropoffLng)
+    ? placeAtCoordinates(dropoffLat, dropoffLng, fleetConfig)
     : null;
-  const shippingQuote = ownFleet ? quoteOwnFleetShipping(dropoff) : null;
+  const shippingQuote = ownFleet ? quoteOwnFleetShipping(dropoff, fleetConfig) : null;
   const totals = saleTotals(productsTotal, shippingQuote);
   const deliveryDate = String(input.deliveryDate).trim();
   const shippingDistrict = atPin ? (atPin.district || '') : (dropoff?.district || '');

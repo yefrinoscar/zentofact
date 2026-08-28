@@ -172,6 +172,34 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   );
   assert.equal(
     validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Pucusana',
+        district: 'Pucusana',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Pucusana',
+        district: 'Pucusana',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    }), { districts: [{ key: 'pucusana', enabled: true, amount: 30 }] }),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({
       shippingCarrier: 'shaloom',
       dropoffPlace: {
         label: 'Madrid, España',

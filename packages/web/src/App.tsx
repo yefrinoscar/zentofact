@@ -7,6 +7,7 @@ import Companies from './routes/Companies';
 import CreditNotes from './routes/CreditNotes';
 import CreditNotesList from './routes/CreditNotesList';
 import Settings from './routes/Settings';
+import EnvioPropio from './routes/EnvioPropio';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
@@ -126,6 +127,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Ajustes',
     subtitle: 'Configura empresas y el tema visual de la aplicación.',
   },
+  '/envio-propio': {
+    title: 'Envío propio',
+    subtitle: 'Distritos y precios de movilidad propia.',
+  },
   '/system-config': {
     title: 'Configuración del sistema',
     subtitle: 'Flags operativos de este ambiente. Solo superadministradores.',
@@ -204,7 +209,7 @@ function AppLayout() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const { user, loading, can, isSuperadmin } = usePermissions();
+  const { user, loading, can, isAdmin, isSuperadmin } = usePermissions();
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -225,6 +230,11 @@ function AppLayout() {
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
+  const ownFleetRoute = loading
+    ? <div className="h-80 animate-pulse rounded-2xl bg-muted" />
+    : isAdmin
+      ? <EnvioPropio />
+      : <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />;
   const systemConfigRoute = (
     isSuperadmin
       ? <Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><SystemConfig /></Suspense>
@@ -291,6 +301,7 @@ function AppLayout() {
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
+              <Route path="/envio-propio" element={ownFleetRoute} />
               <Route path="/system-config" element={systemConfigRoute} />
               <Route path="*" element={<Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />} />
             </Routes>
