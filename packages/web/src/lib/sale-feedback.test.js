@@ -38,6 +38,7 @@ test('saleValidationField ubica el error en la sección correcta', () => {
   assert.equal(saleValidationField('Escribe el nombre del cliente.'), 'customer');
   assert.equal(saleValidationField('Agrega al menos un producto.'), 'products');
   assert.equal(saleValidationField('Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.'), 'delivery');
+  assert.equal(saleValidationField('Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.'), 'delivery');
 });
 
 test('applyOptimisticSale agrega la venta y sube hoy/mes', () => {

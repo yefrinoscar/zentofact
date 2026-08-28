@@ -1,6 +1,7 @@
 import {
   OWN_FLEET_CARRIER,
   OWN_FLEET_ORIGIN,
+  OWN_FLEET_OUT_OF_RANGE_MESSAGE,
   placeAtCoordinates,
   quoteOwnFleetShipping,
   saleTotals,
@@ -143,7 +144,11 @@ export function validateManualSale(input: ManualSaleInput) {
     return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
-    return 'Busca el distrito o el departamento de envío.';
+    return 'Busca el distrito de Lima metropolitana.';
+  }
+  if (input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER) {
+    const quote = quoteOwnFleetShipping(input.dropoffPlace);
+    if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
   }
   return null;
 }

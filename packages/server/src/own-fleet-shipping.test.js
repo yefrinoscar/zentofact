@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_DISTANCE_AMOUNT,
   OWN_FLEET_ORIGIN,
-  PROVINCE_DEPARTMENT_AMOUNT,
   applyOwnFleetShipping,
-  distanceAmountForKm,
   quoteOwnFleetShipping,
 } from './own-fleet-shipping.js';
 
@@ -60,7 +57,7 @@ test('el pin en Surquillo cobra Surquillo aunque el payload diga San Miguel', ()
   assert.equal(quoted.shipping.districtAmount, 12);
 });
 
-test('una provincia lejana queda en el tope de distancia', () => {
+test('Ancón, Huaral y provincias no tienen movilidad propia', () => {
   const quote = quoteOwnFleetShipping({
     district: 'Cercado',
     province: 'Arequipa',
@@ -68,9 +65,22 @@ test('una provincia lejana queda en el tope de distancia', () => {
     lat: -16.409,
     lng: -71.537,
   });
-  assert.equal(quote.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
-  assert.equal(quote.distanceAmount, MAX_DISTANCE_AMOUNT);
-  assert.equal(quote.zone.kind, 'department');
+  assert.equal(quote.charged, false);
+  assert.equal(quote.zone.kind, 'out_of_range');
+  assert.equal(quote.total, 0);
   assert.ok(quote.distanceKm > 25);
-  assert.equal(distanceAmountForKm(quote.distanceKm), MAX_DISTANCE_AMOUNT);
+
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -11.739,
+        lng: -77.15,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
 });

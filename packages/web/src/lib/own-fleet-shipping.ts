@@ -14,6 +14,8 @@ export const DISTANCE_TIERS = [
 
 export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
+export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
+export const OWN_FLEET_COVERAGE_HINT = 'Movilidad propia. Solo Lima metropolitana.';
 
 const LIMA_DISTRICT_AMOUNTS: Record<string, number> = {
   'san miguel': 8,
@@ -52,7 +54,6 @@ const LIMA_DISTRICT_AMOUNTS: Record<string, number> = {
   comas: 20,
   carabayllo: 20,
   'puente piedra': 20,
-  ancon: 20,
   'santa rosa': 20,
   'villa el salvador': 20,
   'villa maria del triunfo': 20,
@@ -134,7 +135,6 @@ const METRO_POINTS: ZonePoint[] = [
   zonePoint('Comas', 'Lima', 'Lima', -11.932, -77.048),
   zonePoint('Carabayllo', 'Lima', 'Lima', -11.873, -77.032),
   zonePoint('Puente Piedra', 'Lima', 'Lima', -11.867, -77.076),
-  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
   zonePoint('Santa Rosa', 'Lima', 'Lima', -11.796, -77.156),
   zonePoint('Villa El Salvador', 'Lima', 'Lima', -12.213, -76.937),
   zonePoint('Villa María Del Triunfo', 'Lima', 'Lima', -12.162, -76.943),
@@ -184,6 +184,13 @@ const DEPARTMENT_POINTS: ZonePoint[] = [
   zonePoint('', 'Coronel Portillo', 'Ucayali', -8.379, -74.554),
 ];
 
+const UNCOVERED_POINTS: ZonePoint[] = [
+  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
+  zonePoint('Huaral', 'Huaral', 'Lima', -11.495, -77.208),
+  zonePoint('San Vicente De Cañete', 'Cañete', 'Lima', -13.077, -76.387),
+  ...DEPARTMENT_POINTS.filter((place) => foldName(place.department) !== 'lima'),
+];
+
 function nearestPoint(point: { lat: number; lng: number }, places: ZonePoint[]) {
   let best: ZonePoint | null = null;
   let bestKm = Infinity;
@@ -197,33 +204,36 @@ function nearestPoint(point: { lat: number; lng: number }, places: ZonePoint[]) 
   return best ? { place: best, km: bestKm } : null;
 }
 
-/** Distrito (o departamento) donde está el pin. Ignora el texto de búsqueda. */
+/** Distrito donde está el pin. Fuera de Lima metropolitana no hay movilidad propia. */
 export function placeAtCoordinates(lat: number, lng: number): OwnFleetDestination {
   const point = { lat, lng };
-  const metro = nearestPoint(point, METRO_POINTS);
-  if (metro && metro.km <= METRO_SNAP_MAX_KM) {
+  const covered = nearestPoint(point, METRO_POINTS);
+  const uncovered = nearestPoint(point, UNCOVERED_POINTS);
+  const coveredOk = Boolean(covered && covered.km <= METRO_SNAP_MAX_KM);
+  if (coveredOk && (!uncovered || covered!.km <= uncovered.km)) {
     return {
-      district: metro.place.district,
-      province: metro.place.province,
-      department: metro.place.department,
+      district: covered!.place.district,
+      province: covered!.place.province,
+      department: covered!.place.department,
+      reachable: true,
       lat,
       lng,
     };
   }
-  const department = nearestPoint(point, DEPARTMENT_POINTS);
-  if (department) {
+  if (uncovered) {
     return {
-      district: department.place.district,
-      province: department.place.province,
-      department: department.place.department,
+      district: uncovered.place.district,
+      province: uncovered.place.province,
+      department: uncovered.place.department,
+      reachable: false,
       lat,
       lng,
     };
   }
-  return { lat, lng };
+  return { lat, lng, reachable: false };
 }
 
-export type ShippingZoneKind = 'lima_district' | 'callao_district' | 'department' | 'unknown';
+export type ShippingZoneKind = 'lima_district' | 'callao_district' | 'department' | 'out_of_range' | 'unknown';
 
 export type ShippingZone = {
   kind: ShippingZoneKind;
@@ -240,6 +250,7 @@ export type OwnFleetDestination = {
   district?: string | null;
   province?: string | null;
   department?: string | null;
+  reachable?: boolean | null;
   lat?: number | null;
   lng?: number | null;
 };
@@ -384,14 +395,38 @@ export function quoteOwnFleetShipping(destination: OwnFleetDestination | null | 
   const lng = Number(destination.lng);
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
   const atPin = hasPoint ? placeAtCoordinates(lat, lng) : null;
+  const distanceKm = hasPoint
+    ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
+    : 0;
+  if (atPin && atPin.reachable === false) {
+    const label = atPin.district || atPin.department || '';
+    return {
+      charged: false,
+      zone: { kind: 'out_of_range', name: label },
+      zoneLabel: label,
+      districtAmount: 0,
+      distanceKm,
+      distanceAmount: 0,
+      total: 0,
+    };
+  }
   const zoneQuote = resolveShippingZone(atPin && (atPin.district || atPin.department) ? atPin : {
     district: destination.district || '',
     province: destination.province || '',
     department: destination.department || '',
   });
-  const distanceKm = hasPoint
-    ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
-    : 0;
+  const reachable = zoneQuote.zone.kind === 'lima_district' || zoneQuote.zone.kind === 'callao_district';
+  if (!reachable) {
+    return {
+      charged: false,
+      zone: { kind: 'out_of_range', name: zoneQuote.zone.name },
+      zoneLabel: zoneQuote.zone.name,
+      districtAmount: 0,
+      distanceKm,
+      distanceAmount: 0,
+      total: 0,
+    };
+  }
   const distanceAmount = hasPoint ? distanceAmountForKm(distanceKm) : 0;
   const districtAmount = zoneQuote.amount;
   return {
@@ -407,8 +442,8 @@ export function quoteOwnFleetShipping(destination: OwnFleetDestination | null | 
 
 export function saleTotals(productsTotal: number, quote: OwnFleetQuote | null) {
   const products = roundMoney(productsTotal);
-  const districtAmount = quote?.districtAmount || 0;
-  const distanceAmount = quote?.distanceAmount || 0;
+  const districtAmount = quote?.charged ? quote.districtAmount : 0;
+  const distanceAmount = quote?.charged ? quote.distanceAmount : 0;
   const shipping = roundMoney(districtAmount + distanceAmount);
   return {
     products,

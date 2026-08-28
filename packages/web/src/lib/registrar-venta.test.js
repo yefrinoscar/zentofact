@@ -125,9 +125,37 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
-    'Busca el distrito o el departamento de envío.',
+    'Busca el distrito de Lima metropolitana.',
   );
   assert.equal(validateManualSale(validSale()), null);
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Arequipa',
+        district: 'Arequipa',
+        province: 'Arequipa',
+        department: 'Arequipa',
+        lat: -16.409,
+        lng: -71.537,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Ancón',
+        district: 'Ancón',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -11.739,
+        lng: -77.15,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
 });
 
 test('validateManualSale permite recojo sin repartidor ni mapa', () => {

@@ -25,9 +25,13 @@ test('la búsqueda local alimenta la misma cotización de envío propio', () => 
   assert.equal(warehouse?.total, 18);
 
   const arequipa = quoteOwnFleetShipping(peruPlaceById('dep-arequipa'));
-  assert.equal(arequipa?.districtAmount, 25);
-  assert.equal(arequipa?.distanceAmount, 25);
-  assert.equal(arequipa?.total, 50);
+  assert.equal(arequipa?.charged, false);
+  assert.equal(arequipa?.zone.kind, 'out_of_range');
+  assert.equal(arequipa?.total, 0);
+
+  const ancon = quoteOwnFleetShipping(peruPlaceById('lima-ancon'));
+  assert.equal(ancon?.charged, false);
+  assert.equal(ancon?.zoneLabel, 'Ancón');
 });
 
 test('placeAtCoordinates asigna el distrito del punto, no un nombre buscado', () => {
@@ -35,4 +39,10 @@ test('placeAtCoordinates asigna el distrito del punto, no un nombre buscado', ()
   assert.equal(placeAtCoordinates(-12.0776, -77.0905).district, 'San Miguel');
   assert.equal(placeAtCoordinates(-12.135, -76.995).district, 'Santiago De Surco');
   assert.equal(placeAtCoordinates(-16.409, -71.537).department, 'Arequipa');
+  assert.equal(placeAtCoordinates(-16.409, -71.537).reachable, false);
+  assert.equal(placeAtCoordinates(-11.739, -77.15).district, 'Ancón');
+  assert.equal(placeAtCoordinates(-11.739, -77.15).reachable, false);
+  assert.equal(placeAtCoordinates(-11.495, -77.208).district, 'Huaral');
+  assert.equal(placeAtCoordinates(-11.495, -77.208).reachable, false);
+  assert.equal(placeAtCoordinates(-12.0776, -77.0905).reachable, true);
 });

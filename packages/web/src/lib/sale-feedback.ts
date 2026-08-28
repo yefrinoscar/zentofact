@@ -72,6 +72,8 @@ export function saleValidationField(message: string | null | undefined): SaleVal
     value.includes('fecha de entrega')
     || value.includes('reparto')
     || value.includes('dirección')
+    || value.includes('no llega')
+    || value.includes('Lima metropolitana')
   ) {
     return 'delivery';
   }

@@ -165,9 +165,10 @@ test('la cotización usa el distrito del pin, no el texto buscado', () => {
     lat: -16.409,
     lng: -71.537,
   });
-  assert.equal(leftoverSanMiguelInArequipa?.zone.kind, 'department');
+  assert.equal(leftoverSanMiguelInArequipa?.charged, false);
+  assert.equal(leftoverSanMiguelInArequipa?.zone.kind, 'out_of_range');
   assert.equal(leftoverSanMiguelInArequipa?.zoneLabel, 'Arequipa');
-  assert.equal(leftoverSanMiguelInArequipa?.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
+  assert.equal(leftoverSanMiguelInArequipa?.total, 0);
 
   const huaral = quoteOwnFleetShipping({
     district: 'Ancón',
@@ -176,9 +177,18 @@ test('la cotización usa el distrito del pin, no el texto buscado', () => {
     lat: -11.495,
     lng: -77.208,
   });
-  assert.equal(huaral?.zone.kind, 'department');
-  assert.equal(huaral?.zoneLabel, 'Lima');
-  assert.equal(huaral?.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
+  assert.equal(huaral?.charged, false);
+  assert.equal(huaral?.zone.kind, 'out_of_range');
+  assert.equal(huaral?.zoneLabel, 'Huaral');
+  assert.equal(huaral?.total, 0);
+
+  const ancon = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    lat: -11.739,
+    lng: -77.15,
+  });
+  assert.equal(ancon?.charged, false);
+  assert.equal(ancon?.zoneLabel, 'Ancón');
 });
 
 test('saleTotals agrega productos, distrito y distancia al total', () => {

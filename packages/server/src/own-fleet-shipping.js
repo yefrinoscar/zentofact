@@ -12,6 +12,7 @@ export const DISTANCE_TIERS = [
   { maxKm: 25, amount: 25 },
 ];
 
+export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
 export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
 
@@ -52,7 +53,6 @@ const LIMA_DISTRICT_AMOUNTS = {
   comas: 20,
   carabayllo: 20,
   'puente piedra': 20,
-  ancon: 20,
   'santa rosa': 20,
   'villa el salvador': 20,
   'villa maria del triunfo': 20,
@@ -117,7 +117,6 @@ const METRO_POINTS = [
   zonePoint('Comas', 'Lima', 'Lima', -11.932, -77.048),
   zonePoint('Carabayllo', 'Lima', 'Lima', -11.873, -77.032),
   zonePoint('Puente Piedra', 'Lima', 'Lima', -11.867, -77.076),
-  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
   zonePoint('Santa Rosa', 'Lima', 'Lima', -11.796, -77.156),
   zonePoint('Villa El Salvador', 'Lima', 'Lima', -12.213, -76.937),
   zonePoint('Villa María Del Triunfo', 'Lima', 'Lima', -12.162, -76.943),
@@ -213,29 +212,39 @@ function nearestPoint(point, places) {
   return best ? { place: best, km: bestKm } : null;
 }
 
+const UNCOVERED_POINTS = [
+  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
+  zonePoint('Huaral', 'Huaral', 'Lima', -11.495, -77.208),
+  zonePoint('San Vicente De Cañete', 'Cañete', 'Lima', -13.077, -76.387),
+  ...DEPARTMENT_POINTS.filter((place) => foldName(place.department) !== 'lima'),
+];
+
 export function placeAtCoordinates(lat, lng) {
   const point = { lat, lng };
-  const metro = nearestPoint(point, METRO_POINTS);
-  if (metro && metro.km <= METRO_SNAP_MAX_KM) {
+  const covered = nearestPoint(point, METRO_POINTS);
+  const uncovered = nearestPoint(point, UNCOVERED_POINTS);
+  const coveredOk = Boolean(covered && covered.km <= METRO_SNAP_MAX_KM);
+  if (coveredOk && (!uncovered || covered.km <= uncovered.km)) {
     return {
-      district: metro.place.district,
-      province: metro.place.province,
-      department: metro.place.department,
+      district: covered.place.district,
+      province: covered.place.province,
+      department: covered.place.department,
+      reachable: true,
       lat,
       lng,
     };
   }
-  const department = nearestPoint(point, DEPARTMENT_POINTS);
-  if (department) {
+  if (uncovered) {
     return {
-      district: department.place.district,
-      province: department.place.province,
-      department: department.place.department,
+      district: uncovered.place.district,
+      province: uncovered.place.province,
+      department: uncovered.place.department,
+      reachable: false,
       lat,
       lng,
     };
   }
-  return { lat, lng };
+  return { lat, lng, reachable: false };
 }
 
 export function distanceAmountForKm(km) {
@@ -293,14 +302,38 @@ export function quoteOwnFleetShipping(destination) {
   const lng = Number(destination.lng);
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
   const atPin = hasPoint ? placeAtCoordinates(lat, lng) : null;
+  const distanceKm = hasPoint
+    ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
+    : 0;
+  if (atPin && atPin.reachable === false) {
+    const label = atPin.district || atPin.department || '';
+    return {
+      charged: false,
+      zone: { kind: 'out_of_range', name: label },
+      zoneLabel: label,
+      districtAmount: 0,
+      distanceKm,
+      distanceAmount: 0,
+      total: 0,
+    };
+  }
   const zoneQuote = resolveShippingZone(atPin && (atPin.district || atPin.department) ? atPin : {
     district: destination.district || '',
     province: destination.province || '',
     department: destination.department || '',
   });
-  const distanceKm = hasPoint
-    ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
-    : 0;
+  const reachable = zoneQuote.zone.kind === 'lima_district' || zoneQuote.zone.kind === 'callao_district';
+  if (!reachable) {
+    return {
+      charged: false,
+      zone: { kind: 'out_of_range', name: zoneQuote.zone.name },
+      zoneLabel: zoneQuote.zone.name,
+      districtAmount: 0,
+      distanceKm,
+      distanceAmount: 0,
+      total: 0,
+    };
+  }
   const distanceAmount = hasPoint ? distanceAmountForKm(distanceKm) : 0;
   const districtAmount = zoneQuote.amount;
   return {
@@ -332,6 +365,9 @@ export function applyOwnFleetShipping(order) {
     lat,
     lng,
   });
+  if (!quote?.charged) {
+    throw new Error(OWN_FLEET_OUT_OF_RANGE_MESSAGE);
+  }
   const products = Number(order.subtotal) || 0;
   return {
     ...order,

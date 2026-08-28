@@ -474,7 +474,7 @@ export function PlacePicker({
             <p className="text-sm leading-5 text-muted-foreground">
               {value
                 ? value.label
-                : 'Busca un distrito de Lima o un departamento. El envío se calcula al elegirlo.'}
+                : 'Busca un distrito de Lima metropolitana. El envío se calcula al elegirlo.'}
             </p>
           </div>
         )}

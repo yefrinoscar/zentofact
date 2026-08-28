@@ -32,6 +32,8 @@ import {
 } from '../lib/registrar-venta';
 import {
   OWN_FLEET_CARRIER,
+  OWN_FLEET_COVERAGE_HINT,
+  OWN_FLEET_OUT_OF_RANGE_MESSAGE,
   quoteOwnFleetShipping,
   saleTotals,
 } from '../lib/own-fleet-shipping';
@@ -688,7 +690,7 @@ export default function RegistrarVenta() {
               ariaLabel="Reparto"
             />
             {shippingCarrier === OWN_FLEET_CARRIER && (
-              <p className="text-xs text-muted-foreground">Movilidad propia.</p>
+              <p className="text-xs text-muted-foreground">{OWN_FLEET_COVERAGE_HINT}</p>
             )}
             <div className="space-y-1.5">
               <Label>Dirección</Label>
@@ -698,10 +700,10 @@ export default function RegistrarVenta() {
                   setDropoffPlace(place);
                   clearFieldError('delivery');
                 }}
-                placeholder="Distrito o departamento"
+                placeholder="Distrito de Lima metropolitana"
               />
             </div>
-            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && (
+            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote?.charged && (
               <div className="space-y-1 text-sm">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="truncate text-muted-foreground">
@@ -717,8 +719,11 @@ export default function RegistrarVenta() {
                 </div>
               </div>
             )}
+            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && !shippingQuote.charged && (
+              <p className="text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
+            )}
             {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
-              <p className="text-xs text-muted-foreground">Busca el distrito o el departamento para ver el envío.</p>
+              <p className="text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>
