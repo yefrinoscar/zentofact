@@ -11,8 +11,6 @@ import {
   ChartNoAxesCombined,
   CircleDollarSign,
   RefreshCw,
-  RotateCcw,
-  ShoppingBag,
   Store,
   Truck,
   WalletCards,
@@ -147,12 +145,6 @@ function formatDay(value: unknown) {
   return day ? dateLabel.format(new Date(`${day}T12:00:00.000Z`)) : '';
 }
 
-function periodDays(from: string, to: string) {
-  const start = new Date(`${from}T12:00:00.000Z`).getTime();
-  const end = new Date(`${to}T12:00:00.000Z`).getTime();
-  return Math.round((end - start) / 86_400_000) + 1;
-}
-
 function Trend({ value, inverse = false }: { value: number | null | undefined; inverse?: boolean }) {
   if (value === undefined) return null;
   if (value === null) return <span className="font-medium text-muted-foreground">Sin base previa</span>;
@@ -175,15 +167,17 @@ function KpiCard({
   detail,
   change,
   icon: Icon,
-  warning = false,
+  tone,
 }: {
   title: string;
   value: string;
   detail: string;
   change?: number | null;
-  icon: typeof ShoppingBag;
-  warning?: boolean;
+  icon: typeof CircleDollarSign;
+  tone?: 'arrive' | 'wait';
 }) {
+  const wait = tone === 'wait';
+  const arrive = tone === 'arrive';
   return (
     <Card className="gap-4 py-5">
       <CardContent className="px-5">
@@ -192,52 +186,52 @@ function KpiCard({
             <p className="text-xs font-medium text-muted-foreground">{title}</p>
             <p className={cn(
               'mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.035em] tabular-nums 2xl:text-2xl',
-              warning && 'text-orange-600 dark:text-orange-400',
+              wait && 'text-orange-600 dark:text-orange-400',
+              arrive && 'text-emerald-700 dark:text-emerald-400',
             )}>
               {value}
             </p>
           </div>
           <span className={cn(
             'grid size-9 shrink-0 place-items-center rounded-xl',
-            warning ? 'bg-orange-500/10 text-orange-600' : 'bg-primary/8 text-primary dark:bg-primary/15',
+            wait && 'bg-orange-500/10 text-orange-600',
+            arrive && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+            !wait && !arrive && 'bg-primary/8 text-primary dark:bg-primary/15',
           )}>
             <Icon className="size-[18px]" />
           </span>
         </div>
         <div className="mt-4 flex min-h-4 items-center justify-between gap-2 text-xs">
           <span className="truncate text-muted-foreground">{detail}</span>
-          <Trend value={change} inverse={warning} />
+          <Trend value={change} inverse={wait} />
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function SalesSummaryCard({ summary, change }: { summary: any; change?: number | null }) {
+function SalesSummaryCard({ summary }: { summary: any }) {
+  const orders = Number(summary.orders || 0);
   return (
-    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
+    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20 sm:col-span-2">
       <CardContent className="px-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium text-primary-foreground/70">Ventas netas</p>
-            <p className="mt-2 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums 2xl:text-[1.7rem]">
+        <div className="grid grid-cols-2 divide-x divide-white/15">
+          <div className="pr-4 sm:pr-6">
+            <p className="text-xs font-medium text-primary-foreground/70">Facturado</p>
+            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums sm:text-[1.55rem] 2xl:text-[1.7rem]">
               {money.format(summary.netSales || 0)}
             </p>
+            <p className="mt-4 min-h-4 truncate text-xs text-primary-foreground/65">
+              {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
+            </p>
           </div>
-          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
-            <CircleDollarSign className="size-[18px]" />
-          </span>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-2 text-xs">
-          <span className="text-primary-foreground/65">{money.format(summary.dailyAverage || 0)} por día</span>
-          {change === null ? (
-            <span className="font-medium text-primary-foreground/65">Sin base previa</span>
-          ) : (
-            <span className="inline-flex items-center gap-0.5 font-semibold text-white">
-              {(change || 0) >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-              {Math.abs(change || 0).toFixed(1)}%
-            </span>
-          )}
+          <div className="pl-4 sm:pl-6">
+            <p className="text-xs font-medium text-primary-foreground/70">Neto</p>
+            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums text-emerald-100 sm:text-[1.55rem] 2xl:text-[1.7rem]">
+              {money.format(summary.arrives || 0)}
+            </p>
+            <p className="mt-4 min-h-4 text-xs text-primary-foreground/65">Te llega</p>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -274,7 +268,7 @@ function CompanyTooltip({ active, payload }: any) {
     <div className="min-w-60 rounded-xl border border-border/80 bg-popover/95 p-3 text-xs shadow-xl backdrop-blur">
       <p className="mb-2 max-w-64 font-medium text-foreground">{company.name}</p>
       <div className="space-y-1.5 text-muted-foreground">
-        <p className="flex justify-between gap-6"><span>Ventas netas</span><strong className="text-primary">{money.format(company.netSales)}</strong></p>
+        <p className="flex justify-between gap-6"><span>Facturado</span><strong className="text-primary">{money.format(company.netSales)}</strong></p>
         <p className="flex justify-between gap-6"><span>Participación</span><strong className="text-foreground">{company.salesShare.toFixed(1)}%</strong></p>
         <p className="flex justify-between gap-6"><span>Ticket promedio</span><strong className="text-foreground">{money.format(company.averageTicket)}</strong></p>
         <p className="flex justify-between gap-6 border-t border-border pt-1.5"><span>Cancelaciones</span><strong className="text-orange-600">{money.format(company.cancelledSales)}</strong></p>
@@ -405,7 +399,6 @@ export default function Dashboard() {
   }
 
   const summary = data?.summary || {};
-  const days = periodDays(filters.from, filters.to);
   const comparisonLabel = `vs. ${rangeLabel(data?.filters?.previousFrom || filters.from, data?.filters?.previousTo || filters.to)}`;
 
   return (
@@ -480,28 +473,19 @@ export default function Dashboard() {
       </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
+        <SalesSummaryCard summary={summary} />
         <KpiCard
-          title="Pedidos vendidos"
-          value={integer.format(summary.orders || 0)}
-          detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
-          change={data?.changes?.orders}
-          icon={ShoppingBag}
+          title="Pagado"
+          value={money.format(summary.paidSales || 0)}
+          detail="Ya depositaron"
+          icon={CircleDollarSign}
         />
         <KpiCard
-          title="Ticket promedio"
-          value={money.format(summary.averageTicket || 0)}
-          detail="Ingreso promedio por pedido"
-          change={data?.changes?.averageTicket}
+          title="Pendiente"
+          value={money.format(summary.pendingSales || 0)}
+          detail="Aún no pagan"
           icon={WalletCards}
-        />
-        <KpiCard
-          title="Ventas canceladas"
-          value={money.format(summary.cancelledSales || 0)}
-          detail={`${Number(summary.cancellationRate || 0).toFixed(1)}% de los pedidos`}
-          change={data?.changes?.cancellationRate}
-          icon={RotateCcw}
-          warning
+          tone="wait"
         />
         <KpiCard
           title="Envío propio"
@@ -516,7 +500,7 @@ export default function Dashboard() {
           <CardHeader className="gap-3 sm:grid-cols-[1fr_auto]">
             <div>
               <p className="text-xs font-medium text-muted-foreground">Evolución financiera</p>
-              <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Ventas netas por día</CardTitle>
+              <CardTitle className="mt-1 text-xl font-semibold tracking-tight">Facturado por día</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">Compara el ritmo de ventas con el periodo inmediatamente anterior.</p>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground sm:justify-end">
@@ -550,7 +534,7 @@ export default function Dashboard() {
           <CardHeader>
             <p className="text-xs font-medium text-muted-foreground">Comparativo de tiendas</p>
             <CardTitle className="text-xl font-semibold tracking-tight">Aporte a las ventas</CardTitle>
-            <p className="text-xs text-muted-foreground">Ingreso neto y participación en el periodo seleccionado.</p>
+            <p className="text-xs text-muted-foreground">Facturado y participación en el periodo seleccionado.</p>
           </CardHeader>
           <CardContent className="px-2 sm:px-4">
             {rankingChart.length ? (
@@ -601,7 +585,7 @@ export default function Dashboard() {
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-5">Tienda</TableHead>
-                <TableHead className="text-right">Ventas netas</TableHead>
+                <TableHead className="text-right">Facturado</TableHead>
                 <TableHead>Participación</TableHead>
                 <TableHead className="text-right">Vs. anterior</TableHead>
                 <TableHead className="text-right">Pedidos</TableHead>
@@ -647,7 +631,7 @@ export default function Dashboard() {
 
       <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
         <ChartNoAxesCombined className="size-4" />
-        Ventas netas excluye pedidos cancelados, devueltos o fallidos. {comparisonLabel}.
+        Pagado y pendiente suman el neto. {comparisonLabel}.
       </div>
     </div>
   );

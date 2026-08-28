@@ -81,10 +81,15 @@ export function percentageDelta(current, previous) {
   return ((a - b) / Math.abs(b)) * 100;
 }
 
-function normalizeSummary(raw = {}) {
+export function normalizeSummary(raw = {}) {
+  const paidSales = numeric(raw.paidSales);
+  const pendingSales = numeric(raw.pendingSales);
   return {
     grossDemand: numeric(raw.grossDemand),
     netSales: numeric(raw.netSales),
+    paidSales,
+    pendingSales,
+    arrives: raw.arrives == null ? paidSales + pendingSales : numeric(raw.arrives),
     cancelledSales: numeric(raw.cancelledSales),
     orders: numeric(raw.orders),
     totalOrders: numeric(raw.totalOrders),
@@ -118,7 +123,9 @@ const DASHBOARD_SQL = `
       fo.company_id,
       (fo.falabella_created_at AT TIME ZONE 'America/Lima')::date AS day,
       COALESCE(fo.grand_total, 0) AS amount,
-      lower(COALESCE(fo.status, '')) ~ '(canceled|cancelled|cancelada|returned|devuelta|failed)' AS is_cancelled
+      lower(COALESCE(fo.status, '')) ~ '(canceled|cancelled|cancelada|returned|devuelta|failed)' AS is_cancelled,
+      'falabella_order'::text AS sale_source,
+      fo.id AS sale_id
     FROM falabella_orders fo
     JOIN companies c ON c.id = fo.company_id AND c.activo IS NOT FALSE
     WHERE (fo.falabella_created_at AT TIME ZONE 'America/Lima')::date BETWEEN $3::date AND $2::date
@@ -132,7 +139,9 @@ const DASHBOARD_SQL = `
       CASE WHEN COALESCE(b.mto_imp_venta, '') ~ '^-?[0-9]+([.][0-9]+)?$'
         THEN b.mto_imp_venta::numeric ELSE 0 END AS amount,
       UPPER(COALESCE(b.estado_sunat, '')) IN ('ANULADO', 'REEMPLAZADO')
-        OR EXISTS (SELECT 1 FROM credit_notes cn WHERE cn.affected_boleta_id = b.id) AS is_cancelled
+        OR EXISTS (SELECT 1 FROM credit_notes cn WHERE cn.affected_boleta_id = b.id) AS is_cancelled,
+      'boleta'::text AS sale_source,
+      b.id AS sale_id
     FROM boletas b
     JOIN companies c ON c.id = b.company_id AND c.activo IS NOT FALSE
     WHERE b.fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -150,7 +159,9 @@ const DASHBOARD_SQL = `
       f.fecha_emision::date AS day,
       CASE WHEN COALESCE(f.mto_imp_venta, '') ~ '^-?[0-9]+([.][0-9]+)?$'
         THEN f.mto_imp_venta::numeric ELSE 0 END AS amount,
-      UPPER(COALESCE(f.estado_sunat, '')) IN ('ANULADO', 'REEMPLAZADO') AS is_cancelled
+      UPPER(COALESCE(f.estado_sunat, '')) IN ('ANULADO', 'REEMPLAZADO') AS is_cancelled,
+      'factura'::text AS sale_source,
+      f.id AS sale_id
     FROM facturas f
     JOIN companies c ON c.id = f.company_id AND c.activo IS NOT FALSE
     WHERE f.fecha_emision ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -162,7 +173,14 @@ const DASHBOARD_SQL = `
       )
   ),
   current_orders AS MATERIALIZED (
-    SELECT * FROM sales_source WHERE day BETWEEN $1::date AND $2::date
+    SELECT
+      source.*,
+      ss.status AS settlement_status,
+      COALESCE(ss.neto, 0) AS settlement_neto
+    FROM sales_source source
+    LEFT JOIN sale_settlements ss
+      ON ss.sale_source = source.sale_source AND ss.sale_id = source.sale_id
+    WHERE source.day BETWEEN $1::date AND $2::date
   ),
   previous_orders AS MATERIALIZED (
     SELECT * FROM sales_source WHERE day BETWEEN $3::date AND $4::date
@@ -171,6 +189,9 @@ const DASHBOARD_SQL = `
     SELECT
       COALESCE(SUM(amount), 0) AS gross_demand,
       COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'paid'), 0) AS paid_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'pending'), 0) AS pending_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS arrives,
       COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
       COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
       COUNT(*) AS total_orders,
@@ -251,6 +272,9 @@ const DASHBOARD_SQL = `
       SELECT jsonb_build_object(
         'grossDemand', gross_demand,
         'netSales', net_sales,
+        'paidSales', paid_sales,
+        'pendingSales', pending_sales,
+        'arrives', arrives,
         'cancelledSales', cancelled_sales,
         'orders', orders,
         'totalOrders', total_orders,

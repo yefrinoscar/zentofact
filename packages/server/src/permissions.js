@@ -3,6 +3,7 @@
 
 export const PERMISSIONS = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
+  { key: 'pagos', label: 'Pagos', description: 'Ver lo que Falabella cobra por cada venta y cruzar liquidaciones', path: '/pagos', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
   { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
@@ -164,7 +165,7 @@ export function normalizePermissions(input, role = 'operator') {
     const clean = String(key || '').trim();
     return LEGACY_PERMISSION_MAP[clean] || [clean];
   });
-  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users' && key !== 'salesperson'));
+  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'pagos' && key !== 'users' && key !== 'salesperson'));
   return [...new Set(expanded.filter((key) => allowed.has(key)))];
 }
 
@@ -179,7 +180,7 @@ export function userHasPermission(user, key) {
   if (!user) return false;
   if (user.active === false || user.active === 'false') return false;
   const role = normalizeRole(user.role);
-  if (key === 'users' || key === 'dashboard') return isAdminRole(role);
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return isAdminRole(role);
   if (isAdminRole(role)) return true;
   return normalizePermissions(user.permissions, role).includes(key);
 }
@@ -187,6 +188,7 @@ export function userHasPermission(user, key) {
 export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';

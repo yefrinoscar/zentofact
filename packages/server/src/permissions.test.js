@@ -24,10 +24,12 @@ test('un usuario desactivado no obtiene permisos', () => {
   assert.equal(userHasPermission({ role: 'admin', active: false, permissions: [] }, 'users'), false);
 });
 
-test('el dashboard queda reservado para administradores', () => {
+test('el dashboard y pagos quedan reservados para administradores', () => {
   assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'dashboard'), false);
   assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['dashboard'] }, 'dashboard'), false);
   assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, 'dashboard'), true);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['pagos'] }, 'pagos'), false);
+  assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, 'pagos'), true);
   assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'companies'), false);
 });
 
@@ -41,6 +43,7 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
   assert.equal(keys.has('credit_notes_bulk'), true);
   assert.equal(keys.has('salidas'), true);
   assert.equal(keys.has('insumos'), true);
+  assert.equal(keys.has('pagos'), true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'salidas')?.section, 'operation');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'insumos')?.section, 'operation');
   assert.notEqual(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
@@ -62,6 +65,7 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
   assert.equal(pathPermission('/salidas'), 'salidas');
   assert.equal(pathPermission('/insumos'), 'insumos');
+  assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/productos'), 'productos');
 });
 

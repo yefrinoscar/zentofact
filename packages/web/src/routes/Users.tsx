@@ -298,7 +298,7 @@ export default function UsersPage() {
     .filter((role) => isSuperadmin || !isAdminRole(role));
   const visiblePermissions = PERMISSIONS.filter((permission) => {
     if (import.meta.env.VITE_APP_ENV === 'production' && permission.hiddenInProduction) return false;
-    return isAdminRole(form.role) || !['dashboard', 'users', 'salesperson'].includes(permission.key);
+    return isAdminRole(form.role) || !['dashboard', 'pagos', 'users', 'salesperson'].includes(permission.key);
   });
   const permissionGroups = PERMISSION_SECTIONS
     .map((section) => ({

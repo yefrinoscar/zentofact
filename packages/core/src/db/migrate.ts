@@ -1625,6 +1625,102 @@ const DDL = `
     CHECK (sync_interval_minutes > 0)
   );
 
+  CREATE TABLE IF NOT EXISTS settlement_imports (
+    id BIGSERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    file_sha256 TEXT NOT NULL UNIQUE,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    imported_by TEXT,
+    headers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    matched_count INTEGER NOT NULL DEFAULT 0,
+    unmatched_count INTEGER NOT NULL DEFAULT 0,
+    paid_sales_count INTEGER NOT NULL DEFAULT 0,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_settlement_imports_imported
+    ON settlement_imports(imported_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS settlement_lines (
+    id BIGSERIAL PRIMARY KEY,
+    import_id BIGINT NOT NULL REFERENCES settlement_imports(id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL UNIQUE,
+    order_ref TEXT NOT NULL DEFAULT '',
+    sku TEXT NOT NULL DEFAULT '',
+    sale_date DATE,
+    transaction_type TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'unknown',
+    bruto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    commission NUMERIC(14,2) NOT NULL DEFAULT 0,
+    other_fees NUMERIC(14,2) NOT NULL DEFAULT 0,
+    neto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    amount NUMERIC(14,2),
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    match_status TEXT NOT NULL,
+    match_method TEXT,
+    match_reason TEXT,
+    sale_source TEXT,
+    sale_id BIGINT,
+    payment_status TEXT NOT NULL DEFAULT '',
+    item_id TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (match_status IN ('matched', 'unmatched')),
+    CHECK (kind IN ('sale', 'commission', 'other', 'refund', 'unknown'))
+  );
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT '';
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS item_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX IF NOT EXISTS idx_settlement_lines_import_status
+    ON settlement_lines(import_id, match_status, row_number);
+  CREATE INDEX IF NOT EXISTS idx_settlement_lines_sale
+    ON settlement_lines(sale_source, sale_id)
+    WHERE sale_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS sale_settlements (
+    sale_source TEXT NOT NULL,
+    sale_id BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    bruto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    commission NUMERIC(14,2) NOT NULL DEFAULT 0,
+    other_fees NUMERIC(14,2) NOT NULL DEFAULT 0,
+    neto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    match_method TEXT,
+    import_id BIGINT REFERENCES settlement_imports(id) ON DELETE SET NULL,
+    paid_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (sale_source, sale_id),
+    CHECK (sale_source IN ('falabella_order', 'boleta', 'factura')),
+    CHECK (status IN ('pending', 'paid'))
+  );
+
+  INSERT INTO sale_settlements (
+    sale_source, sale_id, status, bruto, commission, other_fees, neto, match_method, import_id
+  )
+  SELECT
+    sl.sale_source,
+    sl.sale_id,
+    'pending',
+    COALESCE(SUM(sl.bruto), 0),
+    COALESCE(SUM(sl.commission), 0),
+    COALESCE(SUM(sl.other_fees), 0),
+    COALESCE(SUM(sl.neto), 0),
+    MIN(sl.match_method),
+    MAX(sl.import_id)
+  FROM settlement_lines sl
+  WHERE sl.match_status = 'matched'
+    AND sl.sale_id IS NOT NULL
+    AND sl.sale_source IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM settlement_lines paid
+      WHERE paid.sale_source = sl.sale_source
+        AND paid.sale_id = sl.sale_id
+        AND paid.match_status = 'matched'
+        AND lower(trim(paid.payment_status)) IN ('pagado', 'paid')
+    )
+  GROUP BY sl.sale_source, sl.sale_id
+  ON CONFLICT (sale_source, sale_id) DO NOTHING;
+
   UPDATE orders o
   SET created_by = e.actor_user_id
   FROM (

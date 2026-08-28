@@ -14,6 +14,11 @@ test('insumos exige sesión para lectura y ajustes', () => {
   assert.equal(isProtectedPath('/insumos/3/adjust'), true);
 });
 
+test('pagos exige sesión para historial y carga de CSV', () => {
+  assert.equal(isProtectedPath('/pagos'), true);
+  assert.equal(isProtectedPath('/pagos/imports'), true);
+});
+
 test('el catálogo y el inventario cargan la sesión antes de validar permisos', () => {
   assert.equal(isProtectedPath('/products'), true);
   assert.equal(isProtectedPath('/products/42/inventory'), true);

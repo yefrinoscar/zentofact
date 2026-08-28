@@ -68,6 +68,7 @@ const ripleyOrders = await import('./ripley-orders.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
+const pagos = await import('./pagos.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
 const readyToShipOperation = await import('./falabella-ready-to-ship-operation.js');
@@ -140,6 +141,7 @@ app.use('*', requireCsrf());
 // Permisos por módulo (menú). /me y /health no aplican.
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
+  ['/pagos', 'pagos'],
   ['/orders-inbox', 'orders_inbox'],
   ['/facturas', 'facturas'],
   ['/workflow', 'falabella_sellers'],
@@ -274,7 +276,7 @@ app.post('/me/logout', async (c) => {
 app.get('/dashboard', async (c) => {
   try {
     const data = await dashboard.getDashboard(c.req.query());
-    c.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=240');
+    c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
 });
@@ -283,6 +285,30 @@ app.post('/dashboard/refresh', async (c) => {
     const refresh = await dashboard.refreshDashboard();
     return ok(c, refresh);
   } catch (e) { return fail(c, e); }
+});
+
+app.get('/pagos/imports', async (c) => {
+  try { return ok(c, await pagos.listSettlementImports(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/lines', async (c) => {
+  try { return ok(c, await pagos.listSettlementLines(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/sales', async (c) => {
+  try { return ok(c, await pagos.listSettlementSales(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.post('/pagos/imports', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await pagos.importSettlementCsv({
+      ...body,
+      importedBy: c.get('user')?.id || null,
+    });
+    dashboard.clearDashboardResponseCache();
+    return ok(c, result, result.reused ? 200 : 201);
+  } catch (e) { return fail(c, e, e.status || 400); }
 });
 
 // ── Bandeja general de pedidos ──
