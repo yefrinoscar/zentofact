@@ -2380,7 +2380,7 @@ function OverviewField({
       <span className="text-[15px] text-muted-foreground">{label}</span>
       <div
         className={cn(
-          'flex min-w-0 items-center justify-end gap-1 rounded-md px-1.5 py-1 transition-colors duration-150',
+          'flex min-w-0 items-center justify-end gap-1 rounded-md py-1 transition-colors duration-150',
           focused ? 'bg-muted' : 'cursor-text hover:bg-muted',
         )}
         onClick={() => { if (!focused) setDraft(value); }}
