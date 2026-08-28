@@ -41,7 +41,7 @@ export function PrototypeSwitcher({
   }, [index, variants, params, setParams]);
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[80] flex justify-center px-4">
+    <div data-prototype-switcher className="pointer-events-none fixed inset-x-0 bottom-4 z-[80] flex justify-center px-4">
       <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-zinc-950 px-2 py-1.5 text-white shadow-2xl ring-1 ring-white/20">
         <button type="button" className="grid size-8 place-items-center rounded-full hover:bg-white/10" onClick={() => cycle(-1)} aria-label="Variante anterior">
           <ChevronLeft className="size-4" />

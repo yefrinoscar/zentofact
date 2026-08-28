@@ -94,9 +94,18 @@ const SHEET_CLASS: Record<string, string> = {
 
 export function PrototypeProductDrawer(props: PrototypeProductDrawerProps) {
   const { open, onClose, variant } = props;
+  const keepSwitcher = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-prototype-switcher]')) event.preventDefault();
+  };
   return (
     <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className={SHEET_CLASS[variant] || SHEET_CLASS.A}>
+      <SheetContent
+        className={SHEET_CLASS[variant] || SHEET_CLASS.A}
+        onPointerDownOutside={keepSwitcher}
+        onInteractOutside={keepSwitcher}
+        onFocusOutside={keepSwitcher}
+      >
         {variant === 'B' ? <CartelDrawer {...props} />
           : variant === 'C' ? <RailDrawer {...props} />
             : variant === 'D' ? <CompactDrawer {...props} />
