@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, formatElapsed, importSummary, paymentStatusLabel, productPhotoSrc, remainingHoldMs, saleOverview, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este contenido ya se cruzó.');
@@ -45,12 +45,25 @@ test('acorta el título de plaza y deja SKU e unidades aparte', () => {
   assert.equal(unitsLabel(1), '');
 });
 
-test('la foto del popover usa el SKU Falabella del CSV', () => {
-  assert.equal(
-    productPhotoSrc({ shopSku: '135888977', sku: 'MTC12367890' }),
-    `/catalog/image?url=${encodeURIComponent('https://media.falabella.com/falabellaPE/135888977_01')}`,
+test('el popover nombra boleta, factura o la ausencia', () => {
+  assert.equal(documentLabel({ kind: 'boleta', number: 'B001-12' }), 'Boleta B001-12');
+  assert.equal(documentLabel({ kind: 'factura', number: 'F001-3' }), 'Factura F001-3');
+  assert.equal(documentLabel(null), 'Sin boleta ni factura');
+});
+
+test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
+  assert.deepEqual(
+    settlementCash({
+      bruto: 100,
+      neto: 50,
+      take: 50,
+      paidNeto: 30,
+      pendingNeto: 20,
+      paidCount: 2,
+      pendingCount: 1,
+    }),
+    { sold: 100, arrives: 50, kept: 50, paid: 30, pending: 20, paidCount: 2, pendingCount: 1 },
   );
-  assert.equal(productPhotoSrc({ sku: 'not a sku!' }), '');
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

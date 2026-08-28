@@ -187,5 +187,33 @@ export function productPhotoSrc(input: {
   return value;
 }
 
-export const SALE_PREVIEW_PRODUCT_LIMIT = 4;
+export function documentLabel(document: {
+  kind?: string | null;
+  number?: string | null;
+} | null | undefined) {
+  const number = String(document?.number || '').trim();
+  if (document?.kind === 'factura') return number ? `Factura ${number}` : 'Factura emitida';
+  if (document?.kind === 'boleta') return number ? `Boleta ${number}` : 'Boleta emitida';
+  return 'Sin boleta ni factura';
+}
+
+export function settlementCash(summary: {
+  bruto?: number | null;
+  neto?: number | null;
+  take?: number | null;
+  paidNeto?: number | null;
+  pendingNeto?: number | null;
+  paidCount?: number | null;
+  pendingCount?: number | null;
+} | null | undefined) {
+  return {
+    sold: Number(summary?.bruto || 0),
+    arrives: Number(summary?.neto || 0),
+    kept: Number(summary?.take || 0),
+    paid: Number(summary?.paidNeto || 0),
+    pending: Number(summary?.pendingNeto || 0),
+    paidCount: Number(summary?.paidCount || 0),
+    pendingCount: Number(summary?.pendingCount || 0),
+  };
+}
 

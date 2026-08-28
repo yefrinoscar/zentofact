@@ -1,19 +1,18 @@
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Package, Search, Upload } from 'lucide-react';
+import { Check, Copy, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
   chargeKindLabel,
   decodeSettlementCsv,
+  documentLabel,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
   importSummary,
   money,
   paymentStatusLabel,
   percentLabel,
-  productPhotoSrc,
-  SALE_PREVIEW_PRODUCT_LIMIT,
   saleDateLabel,
   saleOverview,
   shortImportFilename,
@@ -86,6 +85,11 @@ type SettlementSale = {
   takeRate: number | null;
   products?: SettlementProduct[];
   chargeGroups?: SettlementChargeGroup[];
+  document?: {
+    kind?: string | null;
+    number?: string | null;
+    status?: string | null;
+  } | null;
 };
 
 type SettlementImport = {
@@ -125,99 +129,13 @@ function CopyableId({ value, label }: { value: string; label: string }) {
   );
 }
 
-function SaleProductThumb({ product }: { product: SettlementProduct }) {
-  const [failed, setFailed] = useState(false);
-  const src = productPhotoSrc({ shopSku: product.shopSku, sku: product.sku });
-  if (!src || failed) {
-    return (
-      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
-        <Package className="size-4 text-muted-foreground" />
-      </span>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
-      className="size-10 shrink-0 rounded-md bg-muted object-cover"
-    />
-  );
-}
-
-function previewProducts(sale: SettlementSale) {
-  if (sale.products?.length) return sale.products;
-  return [{
-    sku: skuLabel(sale.skus),
-    productName: sale.productName,
-    quantity: sale.itemCount || 1,
-    bruto: sale.bruto || 0,
-    commission: 0,
-    shipping: 0,
-    neto: sale.neto || 0,
-    take: sale.take || 0,
-    unitBruto: sale.bruto || 0,
-    unitCommission: 0,
-    unitShipping: 0,
-    unitNeto: sale.neto || 0,
-    commissionRate: null,
-    shippingRate: null,
-    takeRate: null,
-  }] satisfies SettlementProduct[];
-}
-
 function SalePreviewCard({ sale }: { sale: SettlementSale }) {
-  const products = previewProducts(sale);
-  const visible = products.slice(0, SALE_PREVIEW_PRODUCT_LIMIT);
-  const extra = products.length - visible.length;
-  const when = saleDateLabel(sale.date);
   return (
-    <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
-      <div>
-        <p className="font-mono text-sm font-semibold text-foreground">{sale.orderId}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {[paymentStatusLabel(sale.paymentStatus), when].filter(Boolean).join(' · ')}
-        </p>
-      </div>
-      <div className="mt-3 divide-y divide-border">
-        {visible.map((product) => {
-          const name = shortProductName(product.productName) || product.sku || 'Producto';
-          const meta = [
-            product.sku,
-            product.quantity > 1 ? `${product.quantity} u` : '',
-          ].filter(Boolean).join(' · ');
-          return (
-            <div key={`${product.sku}-${product.unitBruto}`} className="flex gap-2.5 py-2 first:pt-0 last:pb-0">
-              <SaleProductThumb product={product} />
-              <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 text-xs font-medium leading-4" title={product.productName || undefined}>
-                  {name}
-                </p>
-                {meta ? <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{meta}</p> : null}
-                <p className="mt-0.5 text-xs tabular-nums text-foreground">
-                  {money.format(product.unitBruto)}
-                  {product.quantity > 1 ? ' c/u' : ''}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {extra > 0 ? (
-        <p className="pt-1 text-[11px] text-muted-foreground">y {extra} más</p>
-      ) : null}
-      <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs">
-        <div className="flex justify-between gap-3">
-          <span className="text-muted-foreground">Precio</span>
-          <span className="tabular-nums font-medium">{money.format(sale.bruto || 0)}</span>
-        </div>
-        <div className="flex justify-between gap-3">
-          <span className="text-muted-foreground">Te llega</span>
-          <span className={cn('tabular-nums font-medium', llegaText)}>{money.format(sale.neto || 0)}</span>
-        </div>
-      </div>
+    <div className="w-64 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+      <p className="font-mono text-sm font-semibold text-foreground">{sale.orderId}</p>
+      <p className="mt-2 text-lg font-semibold tabular-nums tracking-tight">{money.format(sale.bruto || 0)}</p>
+      <p className="text-xs text-muted-foreground">Total de la venta</p>
+      <p className="mt-3 text-xs text-foreground">{documentLabel(sale.document)}</p>
     </div>
   );
 }
@@ -232,8 +150,8 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
       setPosition({
-        top: Math.min(rect.bottom + 10, window.innerHeight - 280),
-        left: Math.min(rect.left, window.innerWidth - 340),
+        top: Math.min(rect.bottom + 10, window.innerHeight - 180),
+        left: Math.min(rect.left, window.innerWidth - 280),
       });
     }
     if (timerRef.current) window.clearTimeout(timerRef.current);

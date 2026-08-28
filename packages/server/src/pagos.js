@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
-import { aggregateSettlementSales, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, summarizeSettlementSales } from './pagos-sales.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -246,13 +246,38 @@ export async function listSettlementSales(filter = {}, db) {
     ));
   }
   const summary = summarizeSettlementSales(sales);
+  const page = sales.slice(offset, offset + limit);
+  const items = await attachSaleDocuments(page, target);
   return {
-    items: sales.slice(offset, offset + limit),
+    items,
     summary,
     totalCount: sales.length,
     limit,
     offset,
   };
+}
+
+async function attachSaleDocuments(sales, db) {
+  const refs = [...new Set(sales.flatMap((sale) => (
+    [sale.orderId, ...(sale.orderNumbers || [])]
+  )).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!refs.length) return attachDocumentsToSales(sales, []);
+  const query = await db.query(
+    `select 'boleta' as kind, order_number, numero_completo, estado_sunat
+       from boletas
+      where order_number = any($1::text[])
+     union all
+     select 'factura', order_number, numero_completo, estado_sunat
+       from facturas
+      where order_number = any($1::text[])`,
+    [refs],
+  );
+  return attachDocumentsToSales(sales, query.rows.map((row) => ({
+    kind: row.kind,
+    orderNumber: row.order_number,
+    number: row.numero_completo,
+    status: row.estado_sunat,
+  })));
 }
 
 export async function importSettlementCsv(input = {}, db) {

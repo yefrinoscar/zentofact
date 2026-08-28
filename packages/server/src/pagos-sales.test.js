@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -95,6 +95,9 @@ test('el porcentaje de comisión no es fijo entre ventas', () => {
   const summary = summarizeSettlementSales(sales);
   assert.equal(summary.saleCount, 2);
   assert.ok(summary.commissionRate > 0.1 && summary.commissionRate < 0.18);
+  assert.equal(summary.paidCount, 2);
+  assert.equal(summary.paidNeto, summary.neto);
+  assert.equal(summary.pendingNeto, 0);
 });
 
 function unitLines(itemId, sku = 'MTC12367890', name = 'Manta Térmica Aluminizada Mylar Emergencia Trekking Camping') {
@@ -192,4 +195,44 @@ test('pedidos mixtos quedan un grupo por SKU y precio', () => {
   assert.equal(shipping[0].unitAmount, null);
   assert.equal(shipping[0].amount, -10.3);
   assert.equal(charges.some((group) => group.kind === 'buyer_shipping'), false);
+});
+
+test('separa lo vendido y lo que llega entre pagado y pendiente', () => {
+  const csv = [
+    HEADER,
+    row(),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-1.35' }),
+    row({
+      'N° del orden': '3248910999',
+      'Falabella-Id': 'pending-1',
+      'Estado de pago': 'No Pagado',
+      'Monto con IVA': '20',
+    }),
+    row({
+      'N° del orden': '3248910999',
+      'Falabella-Id': 'pending-1',
+      'Estado de pago': 'No Pagado',
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-3',
+    }),
+  ].join('\n');
+  const summary = summarizeSettlementSales(aggregateSettlementSales(parseSettlementCsv(csv).lines));
+  assert.equal(summary.paidCount, 1);
+  assert.equal(summary.pendingCount, 1);
+  assert.equal(summary.paidBruto, 8.99);
+  assert.equal(summary.pendingBruto, 20);
+  assert.equal(summary.paidNeto, 7.64);
+  assert.equal(summary.pendingNeto, 17);
+});
+
+test('el pedido muestra boleta o factura si ya se emitió', () => {
+  const [sale] = attachDocumentsToSales(
+    [{ orderId: '3248910865', orderNumbers: ['PV-10001'], bruto: 98.89 }],
+    [
+      { kind: 'boleta', orderNumber: '3248910865', number: 'B001-12', status: 'ACEPTADO' },
+      { kind: 'factura', orderNumber: 'PV-10001', number: 'F001-3', status: 'ACEPTADO' },
+    ],
+  );
+  assert.equal(sale.document.kind, 'boleta');
+  assert.equal(sale.document.number, 'B001-12');
 });

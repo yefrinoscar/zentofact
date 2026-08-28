@@ -77,6 +77,7 @@ function emptySale(orderId, line) {
     csvRates: [],
     charges: [],
     items: new Map(),
+    orderNumbers: [],
   };
 }
 
@@ -108,16 +109,23 @@ function finalizeTotals(row) {
 }
 
 export function summarizeSettlementSales(sales) {
-  const summary = sales.reduce((totals, sale) => ({
-    saleCount: totals.saleCount + 1,
-    paidCount: totals.paidCount + (sale.paid ? 1 : 0),
-    pendingCount: totals.pendingCount + (sale.paid ? 0 : 1),
-    bruto: round2(totals.bruto + sale.bruto),
-    commission: round2(totals.commission + sale.commission),
-    shipping: round2(totals.shipping + sale.shipping),
-    neto: round2(totals.neto + sale.neto),
-    take: round2(totals.take + sale.take),
-  }), {
+  const summary = sales.reduce((totals, sale) => {
+    const paid = Boolean(sale.paid);
+    return {
+      saleCount: totals.saleCount + 1,
+      paidCount: totals.paidCount + (paid ? 1 : 0),
+      pendingCount: totals.pendingCount + (paid ? 0 : 1),
+      bruto: round2(totals.bruto + sale.bruto),
+      commission: round2(totals.commission + sale.commission),
+      shipping: round2(totals.shipping + sale.shipping),
+      neto: round2(totals.neto + sale.neto),
+      take: round2(totals.take + sale.take),
+      paidBruto: round2(totals.paidBruto + (paid ? sale.bruto : 0)),
+      pendingBruto: round2(totals.pendingBruto + (paid ? 0 : sale.bruto)),
+      paidNeto: round2(totals.paidNeto + (paid ? sale.neto : 0)),
+      pendingNeto: round2(totals.pendingNeto + (paid ? 0 : sale.neto)),
+    };
+  }, {
     saleCount: 0,
     paidCount: 0,
     pendingCount: 0,
@@ -126,6 +134,10 @@ export function summarizeSettlementSales(sales) {
     shipping: 0,
     neto: 0,
     take: 0,
+    paidBruto: 0,
+    pendingBruto: 0,
+    paidNeto: 0,
+    pendingNeto: 0,
   });
   return {
     ...summary,
@@ -277,6 +289,8 @@ export function aggregateSettlementSales(lines) {
       current.paymentStatus = line.paymentStatus || '';
     }
     if (line.status === 'matched') current.matched = true;
+    const orderNumber = String(line.saleOrderNumber || '').trim();
+    if (orderNumber && !current.orderNumbers.includes(orderNumber)) current.orderNumbers.push(orderNumber);
     const sku = String(line.sku || '').trim();
     if (sku && !current.skus.includes(sku)) current.skus.push(sku);
     const productName = productNameFromLine(line);
@@ -312,6 +326,7 @@ export function aggregateSettlementSales(lines) {
       matched: sale.matched,
       productName: sale.productName,
       skus: sale.skus,
+      orderNumbers: sale.orderNumbers,
       itemCount: sale.items.size,
       ...totals,
       charges: sale.charges,
@@ -320,4 +335,25 @@ export function aggregateSettlementSales(lines) {
       products: groupSaleProducts(items),
     };
   }).sort((left, right) => (right.takeRate || 0) - (left.takeRate || 0) || String(right.orderId).localeCompare(String(left.orderId)));
+}
+
+export function attachDocumentsToSales(sales, documents) {
+  const byRef = new Map();
+  for (const document of documents || []) {
+    const key = String(document.orderNumber || '').trim();
+    if (!key) continue;
+    const current = byRef.get(key);
+    if (!current || (document.kind === 'factura' && current.kind !== 'factura')) {
+      byRef.set(key, {
+        kind: document.kind,
+        number: document.number || '',
+        status: document.status || '',
+      });
+    }
+  }
+  return (sales || []).map((sale) => {
+    const refs = [sale.orderId, ...(sale.orderNumbers || [])].map((value) => String(value || '').trim()).filter(Boolean);
+    const document = refs.map((ref) => byRef.get(ref)).find(Boolean) || null;
+    return { ...sale, document };
+  });
 }
