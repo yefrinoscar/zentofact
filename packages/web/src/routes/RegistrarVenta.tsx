@@ -221,11 +221,11 @@ function Segmented<T extends string>({
 }) {
   return (
     <div
-      className="inline-flex overflow-hidden rounded-md border border-border"
+      className="inline-flex h-9 items-center rounded-xl bg-muted p-1"
       role="radiogroup"
       aria-label={ariaLabel}
     >
-      {options.map((option, index) => {
+      {options.map((option) => {
         const selected = option.value === value;
         return (
           <button
@@ -235,9 +235,8 @@ function Segmented<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'h-11 min-w-14 cursor-pointer px-3 text-sm font-medium transition-colors sm:h-9',
-              index > 0 && 'border-l border-border',
-              selected ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
+              'h-7 cursor-pointer rounded-lg px-3 text-sm font-medium transition-colors',
+              selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {option.label}
@@ -262,10 +261,10 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mt-5 space-y-4 rounded-lg border border-border p-5 first:mt-0">
+    <section className="space-y-4 py-6 first:pt-0">
       <div className={cn('flex flex-col gap-3', action && 'sm:flex-row sm:items-start sm:justify-between')}>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
           {hint ? <p className="mt-1 text-sm text-muted-foreground">{hint}</p> : null}
         </div>
         {action}
@@ -628,134 +627,127 @@ export default function RegistrarVenta() {
         </p>
       )}
 
-      <FormSection title="Origen" hint="Cómo llegó esta venta.">
+      <div className="divide-y divide-border">
+      <FormSection title="Origen">
         <Choice value={saleSource} options={SALE_SOURCES} onChange={setSaleSource} ariaLabel="Origen de la venta" />
       </FormSection>
 
       <FormSection title="Cliente" error={fieldErrors.customer || fieldErrors.document}>
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="customer-name">Nombre</Label>
-              <Input
-                id="customer-name"
-                value={customerName}
-                onChange={(event) => {
-                  setCustomerName(event.target.value);
-                  clearFieldError('customer');
+        <FieldRow label="Nombre" htmlFor="customer-name">
+          <Input
+            id="customer-name"
+            value={customerName}
+            onChange={(event) => {
+              setCustomerName(event.target.value);
+              clearFieldError('customer');
+            }}
+            placeholder="Nombre del cliente"
+            autoComplete="name"
+            aria-invalid={!!fieldErrors.customer}
+          />
+        </FieldRow>
+        <FieldRow label="Teléfono" htmlFor="customer-phone">
+          <Input
+            id="customer-phone"
+            value={customerPhone}
+            onChange={(event) => setCustomerPhone(event.target.value)}
+            placeholder="999 999 999"
+            inputMode="tel"
+            autoComplete="tel"
+          />
+        </FieldRow>
+        <FieldRow label="Comprobante">
+          <Choice
+            value={documentRequest}
+            options={DOCUMENT_REQUESTS}
+            onChange={(value) => {
+              setDocumentRequest(value);
+              if (value === 'factura' && !legalName.trim()) setLegalName(customerName);
+              setCustomerDocumentNumber('');
+              clearFieldError('document');
+            }}
+            ariaLabel="Comprobante"
+          />
+          {documentRequest !== 'none' ? (
+            <p className="mt-1.5 text-xs text-muted-foreground">Se emite después desde Pedidos.</p>
+          ) : null}
+        </FieldRow>
+        {documentRequest === 'boleta' && (
+          <FieldRow label={boletaIdentity === 'ce' ? 'CE' : 'DNI'} htmlFor="customer-document">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Segmented
+                value={boletaIdentity}
+                options={BOLETA_IDENTITIES}
+                onChange={(value) => {
+                  setBoletaIdentity(value);
+                  setCustomerDocumentNumber('');
+                  clearFieldError('document');
                 }}
-                placeholder="Nombre del cliente"
-                autoComplete="name"
-                aria-invalid={!!fieldErrors.customer}
+                ariaLabel="Tipo de documento"
+              />
+              <Input
+                id="customer-document"
+                value={customerDocumentNumber}
+                onChange={(event) => {
+                  const next = boletaIdentity === 'dni'
+                    ? event.target.value.replace(/\D/g, '').slice(0, 8)
+                    : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+                  setCustomerDocumentNumber(next);
+                  clearFieldError('document');
+                }}
+                placeholder={boletaIdentity === 'ce' ? '001234567' : '12345678'}
+                inputMode={boletaIdentity === 'dni' ? 'numeric' : 'text'}
+                autoComplete="off"
+                aria-invalid={!!fieldErrors.document}
+                className="sm:max-w-56"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="customer-phone">Teléfono</Label>
-              <Input id="customer-phone" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="999 999 999" inputMode="tel" autoComplete="tel" />
-            </div>
-          </div>
-
-          <FieldRow label="Comprobante">
-            <Choice
-              value={documentRequest}
-              options={DOCUMENT_REQUESTS}
-              onChange={(value) => {
-                setDocumentRequest(value);
-                if (value === 'factura' && !legalName.trim()) setLegalName(customerName);
-                setCustomerDocumentNumber('');
-                clearFieldError('document');
-              }}
-              ariaLabel="Comprobante"
-            />
-            {documentRequest !== 'none' ? (
-              <p className="mt-1.5 text-xs text-muted-foreground">Se emite después desde Pedidos.</p>
-            ) : null}
           </FieldRow>
-
-          {documentRequest === 'boleta' && (
-            <div className="space-y-3 border-t border-border pt-4">
-            <FieldRow label={boletaIdentity === 'ce' ? 'CE' : 'DNI'} htmlFor="customer-document">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Segmented
-                  value={boletaIdentity}
-                  options={BOLETA_IDENTITIES}
-                  onChange={(value) => {
-                    setBoletaIdentity(value);
-                    setCustomerDocumentNumber('');
-                    clearFieldError('document');
-                  }}
-                  ariaLabel="Tipo de documento"
-                />
-                <Input
-                  id="customer-document"
-                  value={customerDocumentNumber}
-                  onChange={(event) => {
-                    const next = boletaIdentity === 'dni'
-                      ? event.target.value.replace(/\D/g, '').slice(0, 8)
-                      : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
-                    setCustomerDocumentNumber(next);
-                    clearFieldError('document');
-                  }}
-                  placeholder={boletaIdentity === 'ce' ? '001234567' : '12345678'}
-                  inputMode={boletaIdentity === 'dni' ? 'numeric' : 'text'}
-                  autoComplete="off"
-                  aria-invalid={!!fieldErrors.document}
-                  className="sm:max-w-56"
-                />
-              </div>
+        )}
+        {documentRequest === 'factura' && (
+          <>
+            <FieldRow label="RUC" htmlFor="customer-ruc">
+              <Input
+                id="customer-ruc"
+                value={customerDocumentNumber}
+                onChange={(event) => {
+                  setCustomerDocumentNumber(event.target.value.replace(/\D/g, '').slice(0, 11));
+                  clearFieldError('document');
+                }}
+                placeholder="20123456789"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-invalid={!!fieldErrors.document}
+              />
             </FieldRow>
-            </div>
-          )}
-
-          {documentRequest === 'factura' && (
-            <div className="space-y-3 border-t border-border pt-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="customer-ruc">RUC</Label>
-                  <Input
-                    id="customer-ruc"
-                    value={customerDocumentNumber}
-                    onChange={(event) => {
-                      setCustomerDocumentNumber(event.target.value.replace(/\D/g, '').slice(0, 11));
-                      clearFieldError('document');
-                    }}
-                    placeholder="20123456789"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    aria-invalid={!!fieldErrors.document}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="legal-name">Razón social</Label>
-                  <Input
-                    id="legal-name"
-                    value={legalName}
-                    onChange={(event) => {
-                      setLegalName(event.target.value);
-                      clearFieldError('document');
-                    }}
-                    placeholder="Empresa S.A.C."
-                    autoComplete="organization"
-                    aria-invalid={!!fieldErrors.document}
-                  />
-                </div>
-              </div>
-              <FieldRow label="Dirección fiscal" htmlFor="fiscal-address">
-                <Input
-                  id="fiscal-address"
-                  value={fiscalAddress}
-                  onChange={(event) => {
-                    setFiscalAddress(event.target.value);
-                    clearFieldError('document');
-                  }}
-                  placeholder="Av. …"
-                  autoComplete="street-address"
-                  aria-invalid={!!fieldErrors.document}
-                />
-              </FieldRow>
-            </div>
-          )}
-        </div>
+            <FieldRow label="Razón social" htmlFor="legal-name">
+              <Input
+                id="legal-name"
+                value={legalName}
+                onChange={(event) => {
+                  setLegalName(event.target.value);
+                  clearFieldError('document');
+                }}
+                placeholder="Empresa S.A.C."
+                autoComplete="organization"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </FieldRow>
+            <FieldRow label="Dirección fiscal" htmlFor="fiscal-address">
+              <Input
+                id="fiscal-address"
+                value={fiscalAddress}
+                onChange={(event) => {
+                  setFiscalAddress(event.target.value);
+                  clearFieldError('document');
+                }}
+                placeholder="Av. …"
+                autoComplete="street-address"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </FieldRow>
+          </>
+        )}
       </FormSection>
 
       <FormSection
@@ -769,15 +761,13 @@ export default function RegistrarVenta() {
         )}
       >
         {lines.length === 0 && (
-          <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            Busca un producto del catálogo.
-          </p>
+          <p className="text-sm text-muted-foreground">Busca un producto del catálogo.</p>
         )}
 
         {lines.length > 0 && (
-          <ul className="divide-y divide-border rounded-md border border-border">
-            {lines.map((line) => (
-              <li key={line.id} className="p-3">
+          <ul className="divide-y divide-border">
+            {lines.map((line, index) => (
+              <li key={line.id} className={cn('py-3', index === 0 && 'pt-0')}>
                 <div className="flex items-start gap-3">
                   <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} />
                   <div className="min-w-0 flex-1">
@@ -827,8 +817,7 @@ export default function RegistrarVenta() {
       </FormSection>
 
       <FormSection title="Entrega" error={fieldErrors.delivery}>
-        <div className="space-y-4">
-          <FieldRow label="Cómo">
+        <FieldRow label="Cómo">
             <div className="flex flex-wrap items-center gap-2">
               <Segmented
                 value={delivery}
@@ -938,10 +927,9 @@ export default function RegistrarVenta() {
               <p className="sm:pt-2 text-sm leading-6 text-muted-foreground">{PICKUP_ADDRESS}</p>
             </FieldRow>
           )}
-        </div>
       </FormSection>
 
-      <FormSection title="Pago" hint="Ahora o después.">
+      <FormSection title="Pago">
         <Choice
           value={paymentMethod}
           options={PAYMENT_METHODS}
@@ -960,16 +948,16 @@ export default function RegistrarVenta() {
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
           <FieldRow label="Constancia">
             {paymentProof ? (
-              <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
-                <img src={paymentProof.dataUrl} alt="" className="size-12 rounded object-cover" />
+              <div className="flex items-center gap-2">
+                <img src={paymentProof.dataUrl} alt="" className="size-10 rounded-md object-cover" />
                 <span className="min-w-0 flex-1 truncate text-sm">{paymentProof.name}</span>
                 <Button type="button" variant="ghost" size="icon-sm" className="size-8 cursor-pointer" aria-label="Quitar constancia" onClick={() => setPaymentProof(null)}>
                   <X />
                 </Button>
               </div>
             ) : (
-              <label className="flex h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-sm text-muted-foreground hover:bg-muted/40">
-                <ImagePlus className="size-5" />
+              <label className="inline-flex h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                <ImagePlus className="size-4" />
                 Foto opcional
                 <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachProof(event.target.files?.[0])} />
               </label>
@@ -977,6 +965,7 @@ export default function RegistrarVenta() {
           </FieldRow>
         )}
       </FormSection>
+      </div>
 
       <div className="h-2 sm:hidden" aria-hidden="true" />
 
