@@ -74,16 +74,26 @@ export type SaleFormView = {
 };
 
 export const PROTOTYPE_VARIANTS = [
-  { key: 'A', name: 'Hoja de boleta' },
-  { key: 'B', name: 'Tabla operativa' },
-  { key: 'C', name: 'Caja POS' },
-  { key: 'D', name: 'Filas densas' },
-  { key: 'E', name: 'Preguntas' },
-  { key: 'F', name: 'Cinco pasos' },
-  { key: 'G', name: 'Productos primero' },
-  { key: 'H', name: 'Columna resumen' },
-  { key: 'I', name: 'Ticket estrecho' },
-  { key: 'J', name: 'Dos tiempos' },
+  { key: '1', name: 'Cinco numerados' },
+  { key: '2', name: 'Tres tiempos' },
+  { key: '3', name: 'Dos tiempos' },
+  { key: '4', name: 'Riel izquierdo' },
+  { key: '5', name: 'Barra de progreso' },
+  { key: '6', name: 'Segmented' },
+  { key: '7', name: 'Productos fijos' },
+  { key: '8', name: 'POS + pasos' },
+  { key: '9', name: 'Pregunta grande' },
+  { key: '10', name: 'Paso + recap' },
+  { key: '11', name: 'Checklist' },
+  { key: '12', name: 'Timeline' },
+  { key: '13', name: 'Dots abajo' },
+  { key: '14', name: 'Ticket estrecho' },
+  { key: '15', name: 'Tabla primero' },
+  { key: '16', name: 'Origen fijo' },
+  { key: '17', name: 'Confirmar al final' },
+  { key: '18', name: 'Pasos opcionales' },
+  { key: '19', name: 'Peek siguiente' },
+  { key: '20', name: 'Línea con checks' },
 ] as const;
 
 export type PrototypeKey = (typeof PROTOTYPE_VARIANTS)[number]['key'];

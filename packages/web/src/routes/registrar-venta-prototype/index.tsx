@@ -4,35 +4,55 @@ import { ProductSearchPicker } from '../../components/ProductSearchPicker';
 import { PrototypeSwitcher } from '../../components/PrototypeSwitcher';
 import { PROTOTYPE_VARIANTS, type PrototypeKey, type SaleFormView } from './view';
 import {
-  VariantA,
-  VariantB,
-  VariantC,
-  VariantD,
-  VariantE,
-  VariantF,
-  VariantG,
-  VariantH,
-  VariantI,
-  VariantJ,
+  Variant1,
+  Variant2,
+  Variant3,
+  Variant4,
+  Variant5,
+  Variant6,
+  Variant7,
+  Variant8,
+  Variant9,
+  Variant10,
+  Variant11,
+  Variant12,
+  Variant13,
+  Variant14,
+  Variant15,
+  Variant16,
+  Variant17,
+  Variant18,
+  Variant19,
+  Variant20,
 } from './variants';
 
 const VARIANTS: Record<PrototypeKey, (props: { view: SaleFormView }) => React.JSX.Element> = {
-  A: VariantA,
-  B: VariantB,
-  C: VariantC,
-  D: VariantD,
-  E: VariantE,
-  F: VariantF,
-  G: VariantG,
-  H: VariantH,
-  I: VariantI,
-  J: VariantJ,
+  1: Variant1,
+  2: Variant2,
+  3: Variant3,
+  4: Variant4,
+  5: Variant5,
+  6: Variant6,
+  7: Variant7,
+  8: Variant8,
+  9: Variant9,
+  10: Variant10,
+  11: Variant11,
+  12: Variant12,
+  13: Variant13,
+  14: Variant14,
+  15: Variant15,
+  16: Variant16,
+  17: Variant17,
+  18: Variant18,
+  19: Variant19,
+  20: Variant20,
 };
 
 export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
   const [params, setParams] = useSearchParams();
-  const raw = String(params.get('variant') || 'A').toUpperCase();
-  const current = (PROTOTYPE_VARIANTS.some((variant) => variant.key === raw) ? raw : 'A') as PrototypeKey;
+  const raw = String(params.get('variant') || '1');
+  const current = (PROTOTYPE_VARIANTS.some((variant) => variant.key === raw) ? raw : '1') as PrototypeKey;
   const Variant = VARIANTS[current];
 
   const filled = useRef(false);
@@ -46,7 +66,7 @@ export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
 
   return (
     <form onSubmit={view.submit} className="pb-[calc(8rem+env(safe-area-inset-bottom))]">
-      {/* PROTOTYPE — throwaway. Ten layouts of Nueva venta, `?variant=A`…`J`. */}
+      {/* PROTOTYPE — throwaway. 20 stepper layouts of Nueva venta, `?variant=1`…`20`. */}
       {view.setupError ? (
         <p className="mb-4 text-sm text-destructive">{view.setupError}</p>
       ) : null}

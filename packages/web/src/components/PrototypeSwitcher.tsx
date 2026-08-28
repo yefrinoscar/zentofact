@@ -55,7 +55,7 @@ export function PrototypeSwitcher({
         >
           <ChevronLeft className="size-4" />
         </button>
-        <p className="min-w-48 px-2 text-center text-xs font-medium tabular-nums">
+        <p className="min-w-52 max-w-64 px-2 text-center text-xs font-medium tabular-nums">
           {active?.key} — {active?.name}
         </p>
         <button

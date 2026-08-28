@@ -1,12 +1,7 @@
-import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Banknote, Loader2, Search, Trash2 } from 'lucide-react';
-import {
-  SALE_SOURCES,
-  type SaleLine,
-} from '../../lib/registrar-venta';
+import { useState } from 'react';
+import { Check } from 'lucide-react';
+import { cn } from '../../lib/cn';
 import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
 import {
   Table,
   TableBody,
@@ -14,578 +9,529 @@ import {
   TableHead,
   TableHeader,
   TablePanel,
-  TablePanelFooter,
   TableRow,
 } from '../../components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { Choice, NUMBER_INPUT, ProductPhoto, formatMoney } from './widgets';
-import { ComprobanteChoice, DeliveryFields, DeliveryHow, PaymentFields } from './fields';
+import { Segmented, formatMoney } from './widgets';
+import {
+  Back,
+  ClienteBody,
+  EntregaBody,
+  OrigenBody,
+  PagoBody,
+  ProductosBody,
+  StepFooter,
+  VentaBody,
+} from './bodies';
 import type { SaleFormView } from './view';
 
-function Back({ view }: { view: SaleFormView }) {
-  return (
-    <Button type="button" variant="ghost" className="-ml-2 h-9 cursor-pointer px-2" onClick={() => view.navigate(view.afterSavePath)}>
-      <ArrowLeft /> Volver
-    </Button>
-  );
+const FIVE = ['Origen', 'Cliente', 'Productos', 'Entrega', 'Pago'] as const;
+const THREE = ['Venta', 'Entrega', 'Pago'] as const;
+const TWO = ['Pedido', 'Despacho'] as const;
+const FOUR = ['Cliente', 'Productos', 'Entrega', 'Pago'] as const;
+
+function useStep(count: number, start = 1) {
+  const [step, setStep] = useState(Math.min(start, count - 1));
+  return {
+    step,
+    setStep,
+    isFirst: step === 0,
+    isLast: step === count - 1,
+    next: () => setStep((value) => Math.min(count - 1, value + 1)),
+    back: () => setStep((value) => Math.max(0, value - 1)),
+  };
 }
 
-function Save({ view, sticky = false }: { view: SaleFormView; sticky?: boolean }) {
-  const button = (
-    <Button type="submit" className="h-10 cursor-pointer" disabled={view.submitDisabled}>
-      {view.creating ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
-      {view.creating ? 'Listo…' : 'Registrar venta'}
-    </Button>
-  );
-  if (sticky) {
-    return (
-      <div className="sticky bottom-0 z-20 flex items-center justify-between gap-3 border-t border-border bg-background/95 py-3">
-        <p className="text-xl font-semibold tabular-nums">{formatMoney(view.total)}</p>
-        {button}
-      </div>
-    );
-  }
+function FiveBody({ view, step }: { view: SaleFormView; step: number }) {
+  if (step === 0) return <OrigenBody view={view} />;
+  if (step === 1) return <ClienteBody view={view} />;
+  if (step === 2) return <ProductosBody view={view} />;
+  if (step === 3) return <EntregaBody view={view} />;
+  return <PagoBody view={view} />;
+}
+
+function Recap({ view }: { view: SaleFormView }) {
   return (
-    <div className="flex items-center justify-end gap-3 border-t border-border pt-5">
-      <span className="mr-auto text-xl font-semibold tabular-nums">{formatMoney(view.total)}</span>
-      {button}
+    <div className="space-y-1 text-sm text-muted-foreground">
+      <p className="text-foreground">{view.customerName || 'Sin cliente'}</p>
+      <p>{view.lines.length} producto{view.lines.length === 1 ? '' : 's'} · {formatMoney(view.totals.products)}</p>
+      <p>{view.delivery === 'envio' ? 'Envío' : 'Recojo'} · {view.paymentMethod === 'despues' ? 'Paga después' : 'Pago ahora'}</p>
     </div>
   );
 }
 
-function QtyPrice({ view, line }: { view: SaleFormView; line: SaleLine }) {
-  return (
-    <>
-      <Input
-        type="number"
-        min={1}
-        value={line.quantity}
-        onChange={(event) => view.updateLine(line.id, { quantity: Math.max(1, Math.floor(Number(event.target.value || 1))) })}
-        className={NUMBER_INPUT}
-        aria-label={`Cantidad ${line.name}`}
-      />
-      <Input
-        type="number"
-        min={0}
-        step="0.01"
-        value={line.unitPrice}
-        onChange={(event) => view.updateLine(line.id, { unitPrice: Math.max(0, Number(event.target.value || 0)) })}
-        className={NUMBER_INPUT}
-        aria-label={`Precio ${line.name}`}
-      />
-    </>
-  );
-}
-
-function RemoveLine({ view, line }: { view: SaleFormView; line: SaleLine }) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={`Quitar ${line.name}`}
-      onClick={() => view.setLines((current) => current.filter((item) => item.id !== line.id))}
-    >
-      <Trash2 />
-    </Button>
-  );
-}
-
-/** A — Same hierarchy as Nueva boleta: labels above fields, 2-col grid, item columns, total inline. */
-export function VariantA({ view }: { view: SaleFormView }) {
-  return (
-    <div className="mx-auto max-w-3xl space-y-8 pb-8">
-      <Back view={view} />
-      <section className="space-y-3">
-        <p className="text-sm font-medium">Origen</p>
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-      </section>
-      <section className="space-y-3">
-        <p className="text-sm font-medium">Cliente</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="customer-name">Nombre</Label>
-            <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="customer-phone">Teléfono</Label>
-            <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label>Comprobante</Label>
-            <ComprobanteChoice view={view} />
-          </div>
-        </div>
-      </section>
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Items</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>
-            <Search /> Agregar
-          </Button>
-        </div>
-        <div className="grid grid-cols-[1fr_4.5rem_6.5rem_5.5rem_2rem] items-center gap-3 text-[11px] font-medium text-muted-foreground">
-          <span>Descripción</span><span className="text-center">Cant.</span><span className="text-right">Precio</span><span className="text-right">Total</span><span />
-        </div>
-        {view.lines.length === 0 && <p className="text-sm text-muted-foreground">Agrega un producto.</p>}
-        {view.lines.map((line) => (
-          <div key={line.id} className="grid grid-cols-[1fr_4.5rem_6.5rem_5.5rem_2rem] items-center gap-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{line.name}</p>
-              <p className="font-mono text-[11px] text-muted-foreground">{line.sku}</p>
-            </div>
-            <QtyPrice view={view} line={line} />
-            <p className="text-right text-sm tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</p>
-            <RemoveLine view={view} line={line} />
-          </div>
-        ))}
-      </section>
-      <section className="space-y-3">
-        <p className="text-sm font-medium">Entrega</p>
-        <DeliveryHow view={view} />
-        <DeliveryFields view={view} />
-      </section>
-      <section className="space-y-3">
-        <p className="text-sm font-medium">Pago</p>
-        <PaymentFields view={view} />
-      </section>
-      <Save view={view} />
-    </div>
-  );
-}
-
-/** B — Productos-style: toolbar + one TablePanel. Customer/delivery/pay sit under the table. */
-export function VariantB({ view }: { view: SaleFormView }) {
-  return (
-    <div className="space-y-4 pb-8">
-      <div className="flex flex-wrap items-center gap-2">
-        <Back view={view} />
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-        <span className="ml-auto" />
-        <DeliveryHow view={view} />
-        <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>
-          <Search /> Buscar producto
-        </Button>
-      </div>
-      <TablePanel>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Producto</TableHead>
-              <TableHead className="w-24 text-right">Cant.</TableHead>
-              <TableHead className="w-28 text-right">Precio</TableHead>
-              <TableHead className="w-28 text-right">Total</TableHead>
-              <TableHead className="w-12" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {view.lines.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">Busca un producto del catálogo.</TableCell>
-              </TableRow>
-            ) : view.lines.map((line) => (
-              <TableRow key={line.id}>
-                <TableCell>
-                  <div className="flex items-center gap-3">
-                    <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} size="sm" />
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{line.name}</p>
-                      <p className="font-mono text-[11px] text-muted-foreground">{line.sku}</p>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={line.quantity}
-                    onChange={(event) => view.updateLine(line.id, { quantity: Math.max(1, Math.floor(Number(event.target.value || 1))) })}
-                    className={NUMBER_INPUT}
-                    aria-label={`Cantidad ${line.name}`}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={line.unitPrice}
-                    onChange={(event) => view.updateLine(line.id, { unitPrice: Math.max(0, Number(event.target.value || 0)) })}
-                    className={NUMBER_INPUT}
-                    aria-label={`Precio ${line.name}`}
-                  />
-                </TableCell>
-                <TableCell className="text-right tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</TableCell>
-                <TableCell><RemoveLine view={view} line={line} /></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <TablePanelFooter className="flex justify-between text-sm">
-          <span className="text-muted-foreground">{view.lines.length} ítems</span>
-          <span className="font-medium tabular-nums">{formatMoney(view.totals.products)}</span>
-        </TablePanelFooter>
-      </TablePanel>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Cliente</p>
-          <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-          <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-          <ComprobanteChoice view={view} />
-        </div>
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Entrega</p>
-          <DeliveryFields view={view} />
-        </div>
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Pago</p>
-          <PaymentFields view={view} />
-        </div>
-      </div>
-      <Save view={view} />
-    </div>
-  );
-}
-
-/** C — POS: catalog action + ticket on the right. */
-export function VariantC({ view }: { view: SaleFormView }) {
-  return (
-    <div className="grid gap-6 pb-28 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="min-w-0 space-y-4">
-        <div className="flex items-center gap-2">
-          <Back view={view} />
-          <Button type="button" className="h-10 flex-1 cursor-pointer sm:flex-none" onClick={() => view.setPickerOpen(true)}>
-            <Search /> Buscar producto
-          </Button>
-        </div>
-        {view.lines.length === 0 && <p className="py-16 text-center text-sm text-muted-foreground">El ticket está vacío.</p>}
-        <ul className="divide-y divide-border">
-          {view.lines.map((line) => (
-            <li key={line.id} className="flex items-center gap-3 py-3">
-              <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{line.name}</p>
-                <div className="mt-2 grid max-w-xs grid-cols-2 gap-2">
-                  <QtyPrice view={view} line={line} />
-                </div>
-              </div>
-              <p className="text-sm font-semibold tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</p>
-              <RemoveLine view={view} line={line} />
-            </li>
-          ))}
-        </ul>
-      </div>
-      <aside className="space-y-5 lg:sticky lg:top-4 lg:self-start">
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-        <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre del cliente" />
-        <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-        <ComprobanteChoice view={view} />
-        <DeliveryHow view={view} />
-        <DeliveryFields view={view} />
-        <PaymentFields view={view} />
-        <Save view={view} sticky />
-      </aside>
-    </div>
-  );
-}
-
-/** D — Dense settings rows. No section titles. */
-export function VariantD({ view }: { view: SaleFormView }) {
-  const Row = ({ label, children }: { label: string; children: ReactNode }) => (
-    <div className="grid items-center gap-3 border-b border-border/70 py-2.5 sm:grid-cols-[7.5rem_minmax(0,1fr)]">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-  return (
-    <div className="mx-auto max-w-2xl pb-8">
-      <Back view={view} />
-      <Row label="Origen">
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-      </Row>
-      <Row label="Nombre">
-        <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} />
-      </Row>
-      <Row label="Teléfono">
-        <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} />
-      </Row>
-      <Row label="Comprobante">
-        <ComprobanteChoice view={view} />
-      </Row>
-      <Row label="Productos">
-        <div className="space-y-2">
-          {view.lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 truncate text-sm">{line.name}</p>
-              <div className="grid w-40 grid-cols-2 gap-1"><QtyPrice view={view} line={line} /></div>
-              <RemoveLine view={view} line={line} />
-            </div>
-          ))}
-          <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={() => view.setPickerOpen(true)}>
-            <Search /> Agregar
-          </Button>
-        </div>
-      </Row>
-      <Row label="Entrega">
-        <div className="space-y-2">
-          <DeliveryHow view={view} />
-          <DeliveryFields view={view} />
-        </div>
-      </Row>
-      <Row label="Pago">
-        <PaymentFields view={view} />
-      </Row>
-      <Save view={view} />
-    </div>
-  );
-}
-
-/** E — Spoken questions, more air, no uppercase chrome. */
-export function VariantE({ view }: { view: SaleFormView }) {
-  return (
-    <div className="mx-auto max-w-xl space-y-10 pb-8">
-      <Back view={view} />
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">¿De dónde sale?</h2>
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">¿Quién compra?</h2>
-        <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-        <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-        <ComprobanteChoice view={view} />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">¿Qué lleva?</h2>
-        {view.lines.map((line) => (
-          <div key={line.id} className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">{line.name}</p>
-              <p className="text-sm tabular-nums text-muted-foreground">{line.quantity} × {formatMoney(line.unitPrice)}</p>
-            </div>
-            <RemoveLine view={view} line={line} />
-          </div>
-        ))}
-        <Button type="button" variant="outline" onClick={() => view.setPickerOpen(true)}><Search /> Agregar producto</Button>
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">¿Cómo se entrega?</h2>
-        <DeliveryHow view={view} />
-        <DeliveryFields view={view} />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">¿Cómo paga?</h2>
-        <PaymentFields view={view} />
-      </section>
-      <Save view={view} />
-    </div>
-  );
-}
-
-/** F — One group at a time. */
-export function VariantF({ view }: { view: SaleFormView }) {
-  const steps = ['Origen', 'Cliente', 'Productos', 'Entrega', 'Pago'] as const;
-  const [step, setStep] = useState(0);
+/** 1 — Cinco círculos unidos por una línea. */
+export function Variant1({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
   return (
     <div className="mx-auto max-w-xl space-y-6 pb-8">
       <Back view={view} />
-      <p className="text-xs tabular-nums text-muted-foreground">{step + 1} / {steps.length} · {steps[step]}</p>
-      {step === 0 && <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />}
-      {step === 1 && (
-        <div className="space-y-3">
-          <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-          <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-          <ComprobanteChoice view={view} />
-        </div>
-      )}
-      {step === 2 && (
-        <div className="space-y-3">
-          {view.lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 truncate text-sm">{line.name}</p>
-              <RemoveLine view={view} line={line} />
-            </div>
-          ))}
-          <Button type="button" variant="outline" onClick={() => view.setPickerOpen(true)}><Search /> Agregar</Button>
-        </div>
-      )}
-      {step === 3 && (
-        <div className="space-y-3">
-          <DeliveryHow view={view} />
-          <DeliveryFields view={view} />
-        </div>
-      )}
-      {step === 4 && <PaymentFields view={view} />}
-      <div className="flex items-center justify-between gap-3">
-        <Button type="button" variant="ghost" disabled={step === 0} onClick={() => setStep((value) => value - 1)}>Atrás</Button>
-        <p className="text-lg font-semibold tabular-nums">{formatMoney(view.total)}</p>
-        {step < steps.length - 1 ? (
-          <Button type="button" onClick={() => setStep((value) => value + 1)}>Siguiente</Button>
-        ) : (
-          <Button type="submit" disabled={view.submitDisabled}>
-            {view.creating ? 'Listo…' : 'Registrar venta'}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** G — Products dominate. Identity and fulfillment are thin strips. */
-export function VariantG({ view }: { view: SaleFormView }) {
-  return (
-    <div className="space-y-4 pb-8">
-      <div className="flex flex-wrap items-end gap-3">
-        <Back view={view} />
-        <Input id="customer-name" className="max-w-56" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Cliente" />
-        <Input id="customer-phone" className="max-w-40" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-        <Button type="button" variant="outline" className="ml-auto" onClick={() => view.setPickerOpen(true)}>
-          <Search /> Buscar producto
-        </Button>
-      </div>
-      <TablePanel>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Producto</TableHead>
-              <TableHead className="text-right">Cant.</TableHead>
-              <TableHead className="text-right">Precio</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {view.lines.map((line) => (
-              <TableRow key={line.id}>
-                <TableCell className="font-medium">{line.name}<div className="font-mono text-[11px] font-normal text-muted-foreground">{line.sku}</div></TableCell>
-                <TableCell colSpan={2}><div className="ml-auto grid w-44 grid-cols-2 gap-2"><QtyPrice view={view} line={line} /></div></TableCell>
-                <TableCell className="text-right tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</TableCell>
-                <TableCell><RemoveLine view={view} line={line} /></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TablePanel>
-      <div className="flex flex-wrap items-start gap-6">
-        <div className="min-w-64 flex-1 space-y-2">
-          <DeliveryHow view={view} />
-          <DeliveryFields view={view} />
-        </div>
-        <div className="min-w-56 flex-1 space-y-2">
-          <ComprobanteChoice view={view} />
-          <PaymentFields view={view} />
-        </div>
-      </div>
-      <Save view={view} />
-    </div>
-  );
-}
-
-/** H — Main column products; sticky summary rail. */
-export function VariantH({ view }: { view: SaleFormView }) {
-  return (
-    <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_16rem]">
-      <div className="min-w-0 space-y-4">
-        <div className="flex items-center gap-2">
-          <Back view={view} />
-          <Button type="button" variant="outline" onClick={() => view.setPickerOpen(true)}><Search /> Buscar producto</Button>
-        </div>
-        {view.lines.map((line) => (
-          <div key={line.id} className="flex items-start gap-3 py-2">
-            <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{line.name}</p>
-              <div className="mt-2 grid max-w-xs grid-cols-2 gap-2"><QtyPrice view={view} line={line} /></div>
-            </div>
-            <p className="text-sm tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</p>
-            <RemoveLine view={view} line={line} />
-          </div>
+      <ol className="flex items-start justify-between gap-1">
+        {FIVE.map((label, index) => (
+          <li key={label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={() => nav.setStep(index)}
+              className={cn(
+                'grid size-8 cursor-pointer place-items-center rounded-full text-xs font-medium',
+                index <= nav.step ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+              )}
+            >
+              {index < nav.step ? <Check className="size-3.5" /> : index + 1}
+            </button>
+            <span className={cn('truncate text-[11px]', index === nav.step ? 'text-foreground' : 'text-muted-foreground')}>{label}</span>
+          </li>
         ))}
-        <div className="space-y-3 pt-4">
-          <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-          <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-          <ComprobanteChoice view={view} />
-          <DeliveryHow view={view} />
-          <DeliveryFields view={view} />
-          <PaymentFields view={view} />
-        </div>
+      </ol>
+      <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 2 — Tres tiempos. */
+export function Variant2({ view }: { view: SaleFormView }) {
+  const nav = useStep(3, 0);
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 pb-8">
+      <Back view={view} />
+      <div className="flex gap-2">
+        {THREE.map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => nav.setStep(index)}
+            className={cn(
+              'h-9 flex-1 cursor-pointer rounded-md text-sm font-medium',
+              index === nav.step ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {index + 1}. {label}
+          </button>
+        ))}
       </div>
-      <aside className="space-y-3 text-sm lg:sticky lg:top-4 lg:self-start">
-        <p className="font-medium">{view.customerName || 'Sin cliente'}</p>
-        <p className="text-muted-foreground">{view.saleSource} · {view.delivery === 'envio' ? (view.shippingCarrier || 'Envío') : 'Recojo'}</p>
-        <p className="text-muted-foreground">{view.paymentMethod.replace('_', ' ')}</p>
-        <p className="text-2xl font-semibold tabular-nums">{formatMoney(view.total)}</p>
-        <Button type="submit" className="w-full" disabled={view.submitDisabled}>
-          {view.creating ? 'Listo…' : 'Registrar venta'}
-        </Button>
+      {nav.step === 0 && <VentaBody view={view} />}
+      {nav.step === 1 && <EntregaBody view={view} />}
+      {nav.step === 2 && <PagoBody view={view} />}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 3 — Dos tiempos. */
+export function Variant3({ view }: { view: SaleFormView }) {
+  const nav = useStep(2, 0);
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 pb-8">
+      <Back view={view} />
+      <p className="text-sm text-muted-foreground">{nav.step === 0 ? '1 · Pedido' : '2 · Despacho y cobro'}</p>
+      {nav.step === 0 && <VentaBody view={view} />}
+      {nav.step === 1 && (
+        <div className="grid gap-8 sm:grid-cols-2">
+          <EntregaBody view={view} />
+          <PagoBody view={view} />
+        </div>
+      )}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} nextLabel="Despacho" />
+    </div>
+  );
+}
+
+/** 4 — Riel vertical a la izquierda. */
+export function Variant4({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="grid gap-8 pb-8 lg:grid-cols-[11rem_minmax(0,1fr)]">
+      <aside className="space-y-1">
+        <Back view={view} />
+        {FIVE.map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => nav.setStep(index)}
+            className={cn(
+              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
+              index === nav.step ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <span className="tabular-nums text-xs">{index + 1}</span>
+            {label}
+          </button>
+        ))}
+      </aside>
+      <div className="min-w-0 space-y-4">
+        <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+        <FiveBody view={view} step={nav.step} />
+        <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+      </div>
+    </div>
+  );
+}
+
+/** 5 — Solo barra de progreso. */
+export function Variant5({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-xl space-y-6 pb-8">
+      <Back view={view} />
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div className="h-full bg-foreground" style={{ width: `${((nav.step + 1) / 5) * 100}%` }} />
+      </div>
+      <p className="text-sm text-muted-foreground">Paso {nav.step + 1} de 5 · {FIVE[nav.step]}</p>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 6 — Steps como segmented h-9. */
+export function Variant6({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 pb-8">
+      <Back view={view} />
+      <Segmented
+        value={String(nav.step)}
+        options={FIVE.map((label, index) => ({ value: String(index), label }))}
+        onChange={(value) => nav.setStep(Number(value))}
+        ariaLabel="Paso"
+      />
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 7 — Productos fijos; el stepper es el resto. */
+export function Variant7({ view }: { view: SaleFormView }) {
+  const rest = ['Origen', 'Cliente', 'Entrega', 'Pago'] as const;
+  const nav = useStep(4, 1);
+  return (
+    <div className="space-y-6 pb-8">
+      <Back view={view} />
+      <ProductosBody view={view} />
+      <div className="flex gap-2 text-sm">
+        {rest.map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => nav.setStep(index)}
+            className={cn('cursor-pointer', index === nav.step ? 'font-medium' : 'text-muted-foreground')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {nav.step === 0 && <OrigenBody view={view} />}
+      {nav.step === 1 && <ClienteBody view={view} />}
+      {nav.step === 2 && <EntregaBody view={view} />}
+      {nav.step === 3 && <PagoBody view={view} />}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 8 — POS: productos a la izquierda, pasos a la derecha. */
+export function Variant8({ view }: { view: SaleFormView }) {
+  const nav = useStep(4, 0);
+  const labels = ['Cliente', 'Origen', 'Entrega', 'Pago'] as const;
+  return (
+    <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="min-w-0 space-y-3">
+        <Back view={view} />
+        <ProductosBody view={view} />
+      </div>
+      <aside className="space-y-4">
+        <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+        {nav.step === 0 && <ClienteBody view={view} />}
+        {nav.step === 1 && <OrigenBody view={view} />}
+        {nav.step === 2 && <EntregaBody view={view} />}
+        {nav.step === 3 && <PagoBody view={view} />}
+        <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
       </aside>
     </div>
   );
 }
 
-/** I — Narrow receipt. Labels above. No titles. */
-export function VariantI({ view }: { view: SaleFormView }) {
+/** 9 — Una pregunta grande por pantalla. */
+export function Variant9({ view }: { view: SaleFormView }) {
+  const questions = ['¿De dónde sale?', '¿Quién compra?', '¿Qué lleva?', '¿Cómo se entrega?', '¿Cómo paga?'] as const;
+  const nav = useStep(5, 1);
   return (
-    <div className="mx-auto max-w-md space-y-4 pb-8">
+    <div className="mx-auto max-w-lg space-y-8 pb-8 pt-6">
       <Back view={view} />
-      <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-      <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre del cliente" />
-      <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-      <ComprobanteChoice view={view} />
-      <div className="space-y-2 py-2">
-        {view.lines.map((line) => (
-          <div key={line.id} className="flex items-baseline justify-between gap-3 text-sm">
-            <span className="min-w-0 truncate">{line.quantity} × {line.name}</span>
-            <span className="tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</span>
-          </div>
-        ))}
-        <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={() => view.setPickerOpen(true)}>
-          <Search /> Producto
-        </Button>
-      </div>
-      <DeliveryHow view={view} />
-      <DeliveryFields view={view} />
-      <PaymentFields view={view} />
-      <Save view={view} />
+      <h2 className="text-2xl font-medium tracking-tight">{questions[nav.step]}</h2>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
 
-/** J — Two beats: venta | despacho. */
-export function VariantJ({ view }: { view: SaleFormView }) {
+/** 10 — Paso actual + recap sticky. */
+export function Variant10({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-3xl space-y-4 pb-8">
+    <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_14rem]">
+      <div className="min-w-0 space-y-4">
+        <Back view={view} />
+        <p className="text-sm text-muted-foreground">{nav.step + 1} / 5 · {FIVE[nav.step]}</p>
+        <FiveBody view={view} step={nav.step} />
+        <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+      </div>
+      <aside className="lg:sticky lg:top-4 lg:self-start">
+        <Recap view={view} />
+        <p className="mt-3 text-2xl font-semibold tabular-nums">{formatMoney(view.total)}</p>
+      </aside>
+    </div>
+  );
+}
+
+/** 11 — Checklist; el actual abre el formulario. */
+export function Variant11({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-xl space-y-4 pb-8">
       <Back view={view} />
-      <Tabs defaultValue="venta">
-        <TabsList>
-          <TabsTrigger value="venta">Venta</TabsTrigger>
-          <TabsTrigger value="despacho">Despacho y pago</TabsTrigger>
-        </TabsList>
-        <TabsContent value="venta" className="space-y-4 pt-4">
-          <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-            <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
+      <ul className="divide-y divide-border">
+        {FIVE.map((label, index) => (
+          <li key={label}>
+            <button
+              type="button"
+              onClick={() => nav.setStep(index)}
+              className="flex w-full cursor-pointer items-center gap-3 py-2.5 text-left text-sm"
+            >
+              <span className={cn('grid size-5 place-items-center rounded-full border text-[10px]', index < nav.step && 'border-foreground bg-foreground text-background', index === nav.step && 'border-foreground')}>
+                {index < nav.step ? <Check className="size-3" /> : index + 1}
+              </span>
+              <span className={index === nav.step ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
+            </button>
+            {index === nav.step && <div className="pb-4 pl-8"><FiveBody view={view} step={nav.step} /></div>}
+          </li>
+        ))}
+      </ul>
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 12 — Timeline vertical. */
+export function Variant12({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-xl space-y-2 pb-8">
+      <Back view={view} />
+      {FIVE.map((label, index) => (
+        <div key={label} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+          <div className="flex flex-col items-center">
+            <span className={cn('size-2.5 rounded-full', index <= nav.step ? 'bg-foreground' : 'bg-muted-foreground/30')} />
+            {index < 4 && <span className="w-px flex-1 bg-border" />}
           </div>
-          <ComprobanteChoice view={view} />
-          <Button type="button" variant="outline" onClick={() => view.setPickerOpen(true)}><Search /> Buscar producto</Button>
-          {view.lines.map((line) => (
-            <div key={line.id} className="flex items-center gap-3">
-              <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} size="sm" />
-              <p className="min-w-0 flex-1 truncate text-sm">{line.name}</p>
-              <div className="grid w-40 grid-cols-2 gap-2"><QtyPrice view={view} line={line} /></div>
-              <RemoveLine view={view} line={line} />
-            </div>
-          ))}
-        </TabsContent>
-        <TabsContent value="despacho" className="space-y-4 pt-4">
-          <DeliveryHow view={view} />
-          <DeliveryFields view={view} />
-          <PaymentFields view={view} />
-        </TabsContent>
-      </Tabs>
-      <Save view={view} />
+          <div className="pb-6">
+            <button type="button" className="cursor-pointer text-sm font-medium" onClick={() => nav.setStep(index)}>{label}</button>
+            {index === nav.step && <div className="mt-3"><FiveBody view={view} step={nav.step} /></div>}
+          </div>
+        </div>
+      ))}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 13 — Dots y acciones pegados abajo. */
+export function Variant13({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-xl pb-28">
+      <Back view={view} />
+      <div className="mt-6 space-y-4">
+        <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+        <FiveBody view={view} step={nav.step} />
+      </div>
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background px-4 py-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-3">
+        <div className="mx-auto flex max-w-xl items-center gap-3">
+          <div className="flex gap-1">
+            {FIVE.map((label, index) => (
+              <button
+                key={label}
+                type="button"
+                aria-label={label}
+                onClick={() => nav.setStep(index)}
+                className={cn('size-2 cursor-pointer rounded-full', index === nav.step ? 'bg-foreground' : 'bg-muted-foreground/30')}
+              />
+            ))}
+          </div>
+          <p className="ml-auto text-lg font-semibold tabular-nums">{formatMoney(view.total)}</p>
+          <Button type="button" variant="ghost" disabled={nav.isFirst} onClick={nav.back}>Atrás</Button>
+          {nav.isLast ? (
+            <Button type="submit" disabled={view.submitDisabled}>Registrar</Button>
+          ) : (
+            <Button type="button" onClick={nav.next}>Siguiente</Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 14 — Ticket estrecho. */
+export function Variant14({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-md space-y-5 pb-8">
+      <Back view={view} />
+      <p className="text-center text-xs tabular-nums text-muted-foreground">{nav.step + 1} / 5</p>
+      <h2 className="text-center text-base font-medium">{FIVE[nav.step]}</h2>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 15 — El primer paso es la tabla de productos. */
+export function Variant15({ view }: { view: SaleFormView }) {
+  const labels = ['Productos', 'Cliente', 'Entrega', 'Pago'] as const;
+  const nav = useStep(4, 0);
+  return (
+    <div className="space-y-4 pb-8">
+      <div className="flex items-center gap-3">
+        <Back view={view} />
+        <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+      </div>
+      {nav.step === 0 && (
+        <>
+          <TablePanel>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Producto</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {view.lines.map((line) => (
+                  <TableRow key={line.id}>
+                    <TableCell>{line.name}<div className="font-mono text-[11px] text-muted-foreground">{line.sku}</div></TableCell>
+                    <TableCell className="text-right tabular-nums">{formatMoney(line.unitPrice * line.quantity)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TablePanel>
+          <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>Agregar producto</Button>
+        </>
+      )}
+      {nav.step === 1 && <ClienteBody view={view} />}
+      {nav.step === 2 && <EntregaBody view={view} />}
+      {nav.step === 3 && <PagoBody view={view} />}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 16 — Origen siempre arriba; cuatro pasos debajo. */
+export function Variant16({ view }: { view: SaleFormView }) {
+  const nav = useStep(4, 0);
+  return (
+    <div className="mx-auto max-w-xl space-y-5 pb-8">
+      <Back view={view} />
+      <OrigenBody view={view} />
+      <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {FOUR[nav.step]}</p>
+      {nav.step === 0 && <ClienteBody view={view} />}
+      {nav.step === 1 && <ProductosBody view={view} />}
+      {nav.step === 2 && <EntregaBody view={view} />}
+      {nav.step === 3 && <PagoBody view={view} />}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 17 — El último paso es confirmación. */
+export function Variant17({ view }: { view: SaleFormView }) {
+  const labels = ['Cliente', 'Productos', 'Entrega', 'Confirmar'] as const;
+  const nav = useStep(4, 3);
+  return (
+    <div className="mx-auto max-w-xl space-y-5 pb-8">
+      <Back view={view} />
+      <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+      {nav.step === 0 && <ClienteBody view={view} />}
+      {nav.step === 1 && <ProductosBody view={view} />}
+      {nav.step === 2 && <EntregaBody view={view} />}
+      {nav.step === 3 && (
+        <div className="space-y-4">
+          <Recap view={view} />
+          <PagoBody view={view} />
+        </div>
+      )}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} nextLabel={nav.step === 2 ? 'Confirmar' : 'Siguiente'} />
+    </div>
+  );
+}
+
+/** 18 — Entrega y pago se pueden saltar. */
+export function Variant18({ view }: { view: SaleFormView }) {
+  const nav = useStep(5, 3);
+  const skippable = nav.step === 3 || nav.step === 4;
+  return (
+    <div className="mx-auto max-w-xl space-y-5 pb-8">
+      <Back view={view} />
+      <p className="text-sm text-muted-foreground">{FIVE[nav.step]}{skippable ? ' · opcional' : ''}</p>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter
+        view={view}
+        {...nav}
+        onBack={nav.back}
+        onNext={nav.next}
+        skip={skippable && !nav.isLast ? { label: 'Saltar', onClick: nav.next } : undefined}
+      />
+    </div>
+  );
+}
+
+/** 19 — Muestra el nombre del paso siguiente. */
+export function Variant19({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  const upcoming = FIVE[nav.step + 1];
+  return (
+    <div className="mx-auto max-w-xl space-y-5 pb-8">
+      <Back view={view} />
+      <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+      <FiveBody view={view} step={nav.step} />
+      {upcoming ? <p className="text-xs text-muted-foreground">Siguiente: {upcoming}</p> : null}
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
+    </div>
+  );
+}
+
+/** 20 — Círculos clickeables con estado hecho / actual / pendiente. */
+export function Variant20({ view }: { view: SaleFormView }) {
+  const nav = useStep(5);
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 pb-8">
+      <Back view={view} />
+      <ol className="flex items-center gap-0">
+        {FIVE.map((label, index) => (
+          <li key={label} className="flex min-w-0 flex-1 items-center">
+            <button
+              type="button"
+              onClick={() => nav.setStep(index)}
+              className="flex min-w-0 cursor-pointer items-center gap-2"
+            >
+              <span className={cn(
+                'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-medium',
+                index < nav.step && 'bg-foreground text-background',
+                index === nav.step && 'border border-foreground',
+                index > nav.step && 'bg-muted text-muted-foreground',
+              )}>
+                {index < nav.step ? <Check className="size-3.5" /> : index + 1}
+              </span>
+              <span className="hidden truncate text-xs sm:inline">{label}</span>
+            </button>
+            {index < 4 && <span className="mx-2 h-px flex-1 bg-border" />}
+          </li>
+        ))}
+      </ol>
+      <FiveBody view={view} step={nav.step} />
+      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
