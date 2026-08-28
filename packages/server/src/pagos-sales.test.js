@@ -44,6 +44,25 @@ function row(overrides = {}) {
   ].map((value) => `"${value}"`).join(',');
 }
 
+test('el envío que paga el comprador no aparece ni mueve lo que te llega', () => {
+  const csv = [
+    HEADER,
+    row(),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-1.35' }),
+    row({ 'Tipo de transacción': 'Cobro por cofinanciamiento log√≠stico', 'Monto con IVA': '-3.9' }),
+    row({ 'Tipo de transacción': 'Pago de env√≠o comprador', 'Monto con IVA': '3.17' }),
+    row({ 'Tipo de transacción': 'Reversa de pago de env√≠o comprador', 'Monto con IVA': '-3.17' }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.bruto, 8.99);
+  assert.equal(sale.commission, 1.35);
+  assert.equal(sale.shipping, 3.9);
+  assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.neto, 3.74);
+  assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
+  assert.equal(sale.chargeGroups.some((group) => /comprador/i.test(group.type)), false);
+});
+
 test('agrega comisión envío y porcentaje por pedido sin inflar el envío comprador', () => {
   const csv = [
     HEADER,

@@ -613,11 +613,11 @@ export default function Pagos() {
                   </div>
                 </div>
               ) : null}
-              {selected.chargeGroups?.length ? (
+              {selected.chargeGroups?.some((group) => group.kind !== 'sale') ? (
                 <div className="border-t border-border px-5 py-4">
                   <p className="text-sm font-medium">Cobros Falabella</p>
                   <div className="mt-2 divide-y divide-border">
-                    {selected.chargeGroups.map((group) => (
+                    {selected.chargeGroups.filter((group) => group.kind !== 'sale').map((group) => (
                       <div key={`${group.kind}-${group.type}`} className="flex items-baseline justify-between gap-3 py-2">
                         <div className="min-w-0">
                           <p className="text-sm leading-5">{chargeKindLabel(group.kind)}</p>

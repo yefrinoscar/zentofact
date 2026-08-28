@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import {
   bindCsvHeaders,
+  classifyChargeKind,
   classifyTransactionType,
   lineFingerprint,
   parseMoney,
   parseDateKey,
   parsePaymentStatus,
   parseSettlementCsv,
+  repairSettlementText,
 } from './pagos-csv.js';
 
 const NEW_REPORT_HEADERS = [
@@ -162,6 +164,12 @@ test('clasifica venta comisión y otros cobros', () => {
   assert.equal(classifyTransactionType('Cobro por cofinanciamiento logístico'), 'other');
   assert.equal(classifyTransactionType('Pago de envío comprador'), 'other');
   assert.equal(classifyTransactionType('Reversa de pago de envío comprador'), 'other');
+  assert.equal(classifyChargeKind('Pago de envío comprador'), 'buyer_shipping');
+  assert.equal(classifyChargeKind('Reversa de pago de envío comprador'), 'buyer_shipping');
+  assert.equal(classifyChargeKind('Pago de env√≠o comprador'), 'buyer_shipping');
+  assert.equal(classifyChargeKind('Reversa de pago de env√≠o comprador'), 'buyer_shipping');
+  assert.equal(classifyChargeKind('Cobro por cofinanciamiento log√≠stico'), 'shipping');
+  assert.equal(repairSettlementText('Cobro por comisi√≥n por venta'), 'Cobro por comisión por venta');
   assert.equal(parsePaymentStatus('Pagado'), true);
   assert.equal(parsePaymentStatus('No Pagado'), false);
 });

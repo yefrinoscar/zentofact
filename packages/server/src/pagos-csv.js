@@ -17,6 +17,22 @@ export function normalizeHeader(value) {
     .trim();
 }
 
+export function repairSettlementText(value) {
+  return String(value || '')
+    .replace(/√≠/g, 'í')
+    .replace(/√≥/g, 'ó')
+    .replace(/√°/g, 'á')
+    .replace(/√©/g, 'é')
+    .replace(/√∫/g, 'ú')
+    .replace(/√±/g, 'ñ')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã±/g, 'ñ');
+}
+
 export function parseMoney(value) {
   const raw = String(value ?? '').trim();
   if (!raw || raw === '-' || raw === '—') return null;
@@ -211,7 +227,7 @@ export function classifyTransactionType(value) {
 }
 
 export function classifyChargeKind(value) {
-  const normalized = normalizeHeader(value);
+  const normalized = normalizeHeader(repairSettlementText(value));
   if (!normalized) return 'unknown';
   if (normalized.includes('precio del producto') || normalized.includes('pago por precio')) return 'sale';
   if (normalized === 'sales' || normalized === 'sale' || normalized === 'venta') return 'sale';
@@ -219,7 +235,13 @@ export function classifyChargeKind(value) {
   if (normalized.includes('cofinanciamiento') || (normalized.includes('cobro') && normalized.includes('logistic'))) {
     return 'shipping';
   }
-  if (normalized.includes('envio comprador')) return 'buyer_shipping';
+  if (
+    normalized.includes('envio comprador')
+    || normalized.includes('buyer shipping')
+    || (normalized.includes('comprador') && (normalized.includes('envio') || /\benv\b/.test(normalized)))
+  ) {
+    return 'buyer_shipping';
+  }
   if (/(devol|refund|reembolso|return)/.test(normalized) && !normalized.includes('reversa de pago de env')) {
     return 'refund';
   }
@@ -269,8 +291,10 @@ export function parseSettlementCsv(text) {
     const raw = {};
     for (const header of binding.headers) raw[header] = cell(row, headerIndex, header);
     if (!Object.values(raw).some(Boolean)) continue;
-    const typeValue = cell(row, headerIndex, binding.columns.type)
-      || cell(row, headerIndex, binding.columns.category);
+    const typeValue = repairSettlementText(
+      cell(row, headerIndex, binding.columns.type)
+      || cell(row, headerIndex, binding.columns.category),
+    );
     const kind = classifyTransactionType(typeValue);
     const signedAmount = parseMoney(cell(row, headerIndex, binding.columns.amount));
     const bruto = binding.columns.bruto

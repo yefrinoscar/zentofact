@@ -158,6 +158,15 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   if (utf8.includes('\uFFFD') && /[áéíóúñ°]/i.test(latin) && headerLooksLikeSettlement(latin)) {
     return latin;
   }
+  if (/√[≠≥°©∫±]/.test(utf8)) {
+    return utf8
+      .replace(/√≠/g, 'í')
+      .replace(/√≥/g, 'ó')
+      .replace(/√°/g, 'á')
+      .replace(/√©/g, 'é')
+      .replace(/√∫/g, 'ú')
+      .replace(/√±/g, 'ñ');
+  }
   return utf8;
 }
 

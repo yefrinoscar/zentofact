@@ -86,7 +86,10 @@ function applyCharge(target, kind, amount) {
   if (kind === 'sale') target.bruto = round2(target.bruto + Math.abs(signed));
   else if (kind === 'commission') target.commission = round2(target.commission + Math.abs(signed));
   else if (kind === 'shipping') target.shipping = round2(target.shipping + Math.abs(signed));
-  else if (kind === 'buyer_shipping') target.buyerShipping = round2(target.buyerShipping + signed);
+  else if (kind === 'buyer_shipping') {
+    target.buyerShipping = round2(target.buyerShipping + signed);
+    return;
+  }
   else target.other = round2(target.other + signed);
   target.neto = round2(target.neto + signed);
 }
