@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Search, Upload } from 'lucide-react';
+import { Check, Copy, Package, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
   chargeKindLabel,
@@ -11,6 +12,8 @@ import {
   money,
   paymentStatusLabel,
   percentLabel,
+  productPhotoSrc,
+  SALE_PREVIEW_PRODUCT_LIMIT,
   saleDateLabel,
   saleOverview,
   shortImportFilename,
@@ -38,6 +41,7 @@ import {
 
 type SettlementProduct = {
   sku?: string;
+  shopSku?: string;
   productName?: string;
   quantity: number;
   bruto: number;
@@ -93,6 +97,13 @@ type SettlementImport = {
   paidSalesCount: number;
 };
 
+const cobroCol = 'bg-muted/40';
+const cobroColStart = `${cobroCol} border-l border-border`;
+const cobroColEnd = `${cobroCol} border-r border-border`;
+const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
+const llegaText = 'text-emerald-700 dark:text-emerald-400';
+const takeText = 'text-red-600 dark:text-red-400';
+
 function CopyableId({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   if (!value) return null;
@@ -101,7 +112,7 @@ function CopyableId({ value, label }: { value: string; label: string }) {
       type="button"
       title={copied ? 'Copiado' : label}
       aria-label={`${label} ${value}`}
-      className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
+      className="inline-flex size-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
       onClick={async (event) => {
         event.stopPropagation();
         await navigator.clipboard.writeText(value);
@@ -109,18 +120,159 @@ function CopyableId({ value, label }: { value: string; label: string }) {
         window.setTimeout(() => setCopied(false), 1400);
       }}
     >
-      {value}
       {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
     </button>
   );
 }
 
-const cobroCol = 'bg-muted/40';
-const cobroColStart = `${cobroCol} border-l border-border`;
-const cobroColEnd = `${cobroCol} border-r border-border`;
-const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
-const llegaText = 'text-emerald-700 dark:text-emerald-400';
-const takeText = 'text-red-600 dark:text-red-400';
+function SaleProductThumb({ product }: { product: SettlementProduct }) {
+  const [failed, setFailed] = useState(false);
+  const src = productPhotoSrc({ shopSku: product.shopSku, sku: product.sku });
+  if (!src || failed) {
+    return (
+      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-muted" aria-hidden="true">
+        <Package className="size-4 text-muted-foreground" />
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      className="size-10 shrink-0 rounded-md bg-muted object-cover"
+    />
+  );
+}
+
+function previewProducts(sale: SettlementSale) {
+  if (sale.products?.length) return sale.products;
+  return [{
+    sku: skuLabel(sale.skus),
+    productName: sale.productName,
+    quantity: sale.itemCount || 1,
+    bruto: sale.bruto || 0,
+    commission: 0,
+    shipping: 0,
+    neto: sale.neto || 0,
+    take: sale.take || 0,
+    unitBruto: sale.bruto || 0,
+    unitCommission: 0,
+    unitShipping: 0,
+    unitNeto: sale.neto || 0,
+    commissionRate: null,
+    shippingRate: null,
+    takeRate: null,
+  }] satisfies SettlementProduct[];
+}
+
+function SalePreviewCard({ sale }: { sale: SettlementSale }) {
+  const products = previewProducts(sale);
+  const visible = products.slice(0, SALE_PREVIEW_PRODUCT_LIMIT);
+  const extra = products.length - visible.length;
+  const when = saleDateLabel(sale.date);
+  return (
+    <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+      <div>
+        <p className="font-mono text-sm font-semibold text-foreground">{sale.orderId}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {[paymentStatusLabel(sale.paymentStatus), when].filter(Boolean).join(' · ')}
+        </p>
+      </div>
+      <div className="mt-3 divide-y divide-border">
+        {visible.map((product) => {
+          const name = shortProductName(product.productName) || product.sku || 'Producto';
+          const meta = [
+            product.sku,
+            product.quantity > 1 ? `${product.quantity} u` : '',
+          ].filter(Boolean).join(' · ');
+          return (
+            <div key={`${product.sku}-${product.unitBruto}`} className="flex gap-2.5 py-2 first:pt-0 last:pb-0">
+              <SaleProductThumb product={product} />
+              <div className="min-w-0 flex-1">
+                <p className="line-clamp-2 text-xs font-medium leading-4" title={product.productName || undefined}>
+                  {name}
+                </p>
+                {meta ? <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{meta}</p> : null}
+                <p className="mt-0.5 text-xs tabular-nums text-foreground">
+                  {money.format(product.unitBruto)}
+                  {product.quantity > 1 ? ' c/u' : ''}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {extra > 0 ? (
+        <p className="pt-1 text-[11px] text-muted-foreground">y {extra} más</p>
+      ) : null}
+      <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs">
+        <div className="flex justify-between gap-3">
+          <span className="text-muted-foreground">Precio</span>
+          <span className="tabular-nums font-medium">{money.format(sale.bruto || 0)}</span>
+        </div>
+        <div className="flex justify-between gap-3">
+          <span className="text-muted-foreground">Te llega</span>
+          <span className={cn('tabular-nums font-medium', llegaText)}>{money.format(sale.neto || 0)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaleOrderHover({ sale }: { sale: SettlementSale }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const timerRef = useRef<number | null>(null);
+
+  const show = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPosition({
+        top: Math.min(rect.bottom + 10, window.innerHeight - 280),
+        left: Math.min(rect.left, window.innerWidth - 340),
+      });
+    }
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => setOpen(true), 80);
+  };
+
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => setOpen(false), 160);
+  };
+
+  return (
+    <div className="flex items-center gap-0.5" onClick={(event) => event.stopPropagation()}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className="rounded px-1 py-0.5 font-mono text-xs text-foreground underline decoration-border underline-offset-4 transition hover:bg-accent hover:decoration-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
+      >
+        {sale.orderId}
+      </button>
+      <CopyableId value={sale.orderId} label="Copiar pedido" />
+      {open && createPortal(
+        <div
+          className="fixed z-[1000]"
+          style={{ top: position.top, left: Math.max(12, position.left) }}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+        >
+          <SalePreviewCard sale={sale} />
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
 
 function ColumnHead({
   label,
@@ -429,7 +581,7 @@ export default function Pagos() {
                 }}
               >
                 <TableCell>
-                  <CopyableId value={sale.orderId} label="Copiar pedido" />
+                  <SaleOrderHover sale={sale} />
                 </TableCell>
                 <TableCell className="max-w-[11rem] whitespace-normal">
                   <p className="line-clamp-1 font-medium leading-5" title={sale.productName || undefined}>

@@ -8,6 +8,7 @@ const HEADER = [
   '"Nombre del producto"',
   '"N° del orden"',
   '"SKU vendedor"',
+  '"SKU Falabella"',
   '"Falabella-Id"',
   '"Tipo de transacción"',
   '"Monto con IVA"',
@@ -21,6 +22,7 @@ function row(overrides = {}) {
     'Nombre del producto': 'Manta térmica',
     'N° del orden': '3248910865',
     'SKU vendedor': 'MTC12367890',
+    'SKU Falabella': '135888977',
     'Falabella-Id': 'item-1',
     'Tipo de transacción': 'Pago por precio del producto',
     'Monto con IVA': '8.99',
@@ -33,6 +35,7 @@ function row(overrides = {}) {
     values['Nombre del producto'],
     values['N° del orden'],
     values['SKU vendedor'],
+    values['SKU Falabella'],
     values['Falabella-Id'],
     values['Tipo de transacción'],
     values['Monto con IVA'],
@@ -53,6 +56,7 @@ test('agrega comisión envío y porcentaje por pedido sin inflar el envío compr
   const parsed = parseSettlementCsv(csv);
   const [sale] = aggregateSettlementSales(parsed.lines);
   assert.equal(sale.orderId, '3248910865');
+  assert.equal(sale.products[0].shopSku, '135888977');
   assert.equal(sale.bruto, 8.99);
   assert.equal(sale.commission, 1.35);
   assert.equal(sale.commissionRate, 0.15);

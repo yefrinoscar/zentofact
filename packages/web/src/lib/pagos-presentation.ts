@@ -161,3 +161,31 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   return utf8;
 }
 
+function falabellaMediaUrl(sku?: string | null) {
+  const value = String(sku || '').trim();
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return '';
+  return `https://media.falabella.com/falabellaPE/${value}_01`;
+}
+
+export function productPhotoSrc(input: {
+  imageUrl?: string | null;
+  shopSku?: string | null;
+  sku?: string | null;
+} | null | undefined) {
+  const value = String(input?.imageUrl || '').trim()
+    || falabellaMediaUrl(input?.shopSku)
+    || falabellaMediaUrl(input?.sku);
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'https:' && /(^|\.)falabella\.com$/i.test(parsed.hostname)) {
+      return `/catalog/image?url=${encodeURIComponent(value)}`;
+    }
+  } catch {
+    return value;
+  }
+  return value;
+}
+
+export const SALE_PREVIEW_PRODUCT_LIMIT = 4;
+

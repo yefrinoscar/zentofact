@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, formatElapsed, importSummary, paymentStatusLabel, productPhotoSrc, remainingHoldMs, saleOverview, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este contenido ya se cruzó.');
@@ -43,6 +43,14 @@ test('acorta el título de plaza y deja SKU e unidades aparte', () => {
   assert.equal(skuLabel(['MTC12367890', 'HOG025']), 'MTC12367890 +1');
   assert.equal(unitsLabel(11), '11 u');
   assert.equal(unitsLabel(1), '');
+});
+
+test('la foto del popover usa el SKU Falabella del CSV', () => {
+  assert.equal(
+    productPhotoSrc({ shopSku: '135888977', sku: 'MTC12367890' }),
+    `/catalog/image?url=${encodeURIComponent('https://media.falabella.com/falabellaPE/135888977_01')}`,
+  );
+  assert.equal(productPhotoSrc({ sku: 'not a sku!' }), '');
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

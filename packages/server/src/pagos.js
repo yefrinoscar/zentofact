@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { lineFingerprint, normalizeHeader, parseSettlementCsv } from './pagos-csv.js';
+import { lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, summarizeSettlementSales } from './pagos-sales.js';
 
@@ -122,6 +122,9 @@ function mapLine(row) {
     reason: row.match_reason || null,
     orderId: row.order_ref || '',
     sku: row.sku || '',
+    shopSku: rawValueByHeader(row.raw, (header) => (
+      header === 'sku falabella' || header === 'shop sku' || header === 'shopsku'
+    )),
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
     type: row.transaction_type || '',
     kind: row.kind || '',

@@ -35,10 +35,19 @@ export function productNameFromLine(line) {
   return rawValueByHeader(line.raw, (header) => header.includes('nombre del producto'));
 }
 
-function emptyItem(itemId, sku, productName) {
+function shopSkuFromLine(line) {
+  const named = String(line.shopSku || '').trim();
+  if (named) return named;
+  return rawValueByHeader(line.raw, (header) => (
+    header === 'sku falabella' || header === 'shop sku' || header === 'shopsku'
+  ));
+}
+
+function emptyItem(itemId, sku, productName, shopSku) {
   return {
     itemId: itemId || '',
     sku: sku || '',
+    shopSku: shopSku || '',
     productName: productName || '',
     bruto: 0,
     commission: 0,
@@ -141,6 +150,7 @@ export function groupSaleProducts(items) {
     const key = groupKey(item);
     const current = groups.get(key) || {
       sku: item.sku || '',
+      shopSku: item.shopSku || '',
       productName: item.productName || '',
       quantity: 0,
       bruto: 0,
@@ -162,6 +172,7 @@ export function groupSaleProducts(items) {
       current.csvRates.push(Number(item.commissionRate));
     }
     if (item.productName && !current.productName) current.productName = item.productName;
+    if (item.shopSku && !current.shopSku) current.shopSku = item.shopSku;
     groups.set(key, current);
   }
 
@@ -170,6 +181,7 @@ export function groupSaleProducts(items) {
     const quantity = group.quantity || 1;
     return {
       sku: group.sku,
+      shopSku: group.shopSku,
       productName: group.productName,
       quantity,
       ...totals,
@@ -269,12 +281,14 @@ export function aggregateSettlementSales(lines) {
     if (sku && !current.skus.includes(sku)) current.skus.push(sku);
     const productName = productNameFromLine(line);
     if (productName && !current.productName) current.productName = productName;
+    const shopSku = shopSkuFromLine(line);
     const csvRate = commissionRateFromLine(line);
     if (csvRate) current.csvRates.push(csvRate);
     const itemKey = String(line.itemId || sku || 'item').trim();
-    const item = current.items.get(itemKey) || emptyItem(line.itemId, sku, productName);
+    const item = current.items.get(itemKey) || emptyItem(line.itemId, sku, productName, shopSku);
     applyCharge(item, kind, amount);
     if (sku && !item.sku) item.sku = sku;
+    if (shopSku && !item.shopSku) item.shopSku = shopSku;
     if (productName && !item.productName) item.productName = productName;
     if (csvRate) item.csvRates.push(csvRate);
     current.items.set(itemKey, item);
@@ -286,6 +300,7 @@ export function aggregateSettlementSales(lines) {
     const items = [...sale.items.values()].map((item) => ({
       itemId: item.itemId,
       sku: item.sku,
+      shopSku: item.shopSku,
       productName: item.productName,
       ...finalizeTotals(item),
     }));
