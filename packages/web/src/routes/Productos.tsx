@@ -16,7 +16,6 @@ import {
   Copy,
   ExternalLink,
   FileText,
-  Hash,
   ImagePlus,
   LayoutDashboard,
   Loader2,
@@ -30,7 +29,6 @@ import {
   Search,
   ShieldAlert,
   Store,
-  Tag,
   User,
   X,
 } from 'lucide-react';
@@ -2189,7 +2187,6 @@ function ProductProperties({
           value={String(product.quantityOnHand)}
           display={formatUnits(product.quantityOnHand)}
           type="number"
-          tagged
           onSave={onSaveStock}
         />
         <OverviewField
@@ -2201,7 +2198,6 @@ function ProductProperties({
           display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
           type="number"
           placeholder="Sin precio"
-          tagged
           saving={savingField === 'referencePrice'}
           onSave={onSavePrice}
         />
@@ -2214,7 +2210,6 @@ function ProductProperties({
           display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
           type="number"
           placeholder="Sin comisión"
-          tagged
           saving={savingField === 'commissionAmount'}
           onSave={onSaveCommission}
         />
@@ -2227,19 +2222,12 @@ function ProductProperties({
           display={product.profitOwner || ''}
           placeholder="Sin beneficiario"
           list="profit-owner-inline-options"
-          tagged
           saving={savingField === 'profitOwner'}
           onSave={onSaveProfitOwner}
         />
         <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-        <OverviewRow icon={Tag} label="Marca">
-          {usableBrand(product.brand)
-            ? <OverviewTag>{usableBrand(product.brand)}</OverviewTag>
-            : <OverviewTag tone="muted">Sin marca</OverviewTag>}
-        </OverviewRow>
-        <OverviewRow icon={Hash} label="Unidad"><OverviewTag>Unidad</OverviewTag></OverviewRow>
         <OverviewRow icon={Archive} label="Reservado">
-          <OverviewTag tone="muted">{formatUnits(product.quantityReserved)}</OverviewTag>
+          <span className="text-[15px] font-medium tabular-nums">{formatUnits(product.quantityReserved)}</span>
         </OverviewRow>
         <OverviewRow icon={Clock} label="Actualizado">
           <span className="text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
@@ -2365,7 +2353,6 @@ function OverviewField({
   type = 'text',
   placeholder,
   list,
-  tagged,
   saving,
 }: {
   icon: LucideIcon;
@@ -2378,7 +2365,6 @@ function OverviewField({
   type?: string;
   placeholder?: string;
   list?: string;
-  tagged?: boolean;
   saving?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -2432,11 +2418,9 @@ function OverviewField({
             }}
           />
         ) : display ? (
-          tagged
-            ? <OverviewTag>{display}</OverviewTag>
-            : <span className="truncate text-left text-[15px] font-medium tabular-nums">{display}</span>
+          <span className="truncate text-left text-[15px] font-medium tabular-nums">{display}</span>
         ) : (
-          <OverviewTag tone="muted">{placeholder || '—'}</OverviewTag>
+          <span className="text-[15px] text-muted-foreground">{placeholder || '—'}</span>
         )}
         {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
       </div>
