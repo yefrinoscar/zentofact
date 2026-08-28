@@ -84,12 +84,27 @@ function when(value?: string | null) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('es-PE');
 }
 
+const SHEET_CLASS: Record<string, string> = {
+  A: 'overflow-hidden border-l bg-background sm:max-w-md',
+  B: 'overflow-hidden border-l-0 p-0 sm:max-w-sm',
+  C: 'overflow-hidden border-l p-0 sm:max-w-2xl',
+  D: 'overflow-hidden sm:max-w-lg',
+  E: 'overflow-hidden sm:max-w-xl',
+};
+
 export function PrototypeProductDrawer(props: PrototypeProductDrawerProps) {
-  if (props.variant === 'B') return <CartelDrawer {...props} />;
-  if (props.variant === 'C') return <RailDrawer {...props} />;
-  if (props.variant === 'D') return <CompactDrawer {...props} />;
-  if (props.variant === 'E') return <ThreeTabDrawer {...props} />;
-  return <FichaDrawer {...props} />;
+  const { open, onClose, variant } = props;
+  return (
+    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <SheetContent className={SHEET_CLASS[variant] || SHEET_CLASS.A}>
+        {variant === 'B' ? <CartelDrawer {...props} />
+          : variant === 'C' ? <RailDrawer {...props} />
+            : variant === 'D' ? <CompactDrawer {...props} />
+              : variant === 'E' ? <ThreeTabDrawer {...props} />
+                : <FichaDrawer {...props} />}
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function Field({
@@ -146,8 +161,7 @@ function FichaDrawer({
   onSaveStock,
 }: PrototypeProductDrawerProps) {
   return (
-    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className="overflow-hidden border-l bg-background sm:max-w-md">
+    <>
         <SheetHeader className="space-y-2 px-5 pb-3 pt-9 pr-14">
           <p className="text-xs text-muted-foreground">
             {product?.mainSku} · {product?.status === 'active' ? 'Activo' : 'Inactivo'}
@@ -205,8 +219,7 @@ function FichaDrawer({
           <PlaceholderTabs tab="sales" />
           <PlaceholderTabs tab="returns" />
         </Tabs>
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
 
@@ -221,8 +234,7 @@ function CartelDrawer({
   onPublish,
 }: PrototypeProductDrawerProps) {
   return (
-    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className="overflow-hidden border-l-0 p-0 sm:max-w-sm">
+    <>
         <div className="h-44 bg-muted">
           {product?.imageUrl ? (
             <img src={product.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -275,8 +287,7 @@ function CartelDrawer({
             <button type="button" className="secondary-button h-9 justify-center" onClick={onPublish}>Publicar</button>
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
 
@@ -291,8 +302,7 @@ function RailDrawer({
   onPublish,
 }: PrototypeProductDrawerProps) {
   return (
-    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className="overflow-hidden border-l p-0 sm:max-w-2xl">
+    <>
         <Tabs
           value={tab}
           onValueChange={(value) => onTabChange(value as DrawerTab)}
@@ -338,8 +348,7 @@ function RailDrawer({
             <TabsContent value="returns"><OtherTab>Devoluciones.</OtherTab></TabsContent>
           </div>
         </Tabs>
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
 
@@ -354,8 +363,7 @@ function CompactDrawer({
   onPublish,
 }: PrototypeProductDrawerProps) {
   return (
-    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className="overflow-hidden sm:max-w-lg">
+    <>
         <SheetHeader className="flex-row items-center gap-3 px-5 pb-3 pt-8 pr-14">
           <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted">
             {product?.imageUrl ? (
@@ -404,8 +412,7 @@ function CompactDrawer({
           <PlaceholderTabs tab="sales" />
           <PlaceholderTabs tab="returns" />
         </Tabs>
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
 
@@ -421,8 +428,7 @@ function ThreeTabDrawer({
 }: PrototypeProductDrawerProps) {
   const moreActive = tab === 'inventory' || tab === 'sales' || tab === 'returns';
   return (
-    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <SheetContent className="overflow-hidden sm:max-w-xl">
+    <>
         <SheetHeader className="space-y-2 px-5 pb-4 pt-8 pr-14">
           <div className="flex gap-4">
             <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
@@ -493,7 +499,6 @@ function ThreeTabDrawer({
             </OtherTab>
           </div>
         )}
-      </SheetContent>
-    </Sheet>
+    </>
   );
 }
