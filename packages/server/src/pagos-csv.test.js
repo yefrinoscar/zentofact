@@ -228,6 +228,43 @@ test('parsea líneas item-level del NewReportTransaction y usa la fecha de la or
   assert.equal(new Set(parsed.lines.map(lineFingerprint)).size, 3);
 });
 
+test('el envío del comprador no se guarda como cobro aunque sume y reste', () => {
+  const csv = newReportCsv([
+    {},
+    {
+      'Tipo de transacción': 'Pago de env√≠o comprador',
+      'Monto (Sin IVA)': '2.69',
+      IVA: '0.48',
+      'Monto con IVA': '3.17',
+      'Categoría de transacciones': 'Envío',
+    },
+    {
+      'Tipo de transacción': 'Reversa de pago de envío comprador',
+      'Monto (Sin IVA)': '-2.69',
+      IVA: '-0.48',
+      'Monto con IVA': '-3.17',
+      'Categoría de transacciones': 'Envío',
+    },
+    {
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto (Sin IVA)': '-3.31',
+      IVA: '-0.59',
+      'Monto con IVA': '-3.9',
+      'Categoría de transacciones': 'Logística',
+    },
+  ]);
+  const lines = parseSettlementCsv(csv).lines;
+  const pago = lines.find((line) => line.chargeKind === 'buyer_shipping' && Number(line.neto) > 0);
+  const reversa = lines.find((line) => line.chargeKind === 'buyer_shipping' && Number(line.neto) < 0);
+  const logistica = lines.find((line) => line.chargeKind === 'shipping');
+  assert.equal(pago.other, 0);
+  assert.equal(reversa.other, 0);
+  assert.equal(pago.neto, 3.17);
+  assert.equal(reversa.neto, -3.17);
+  assert.equal(logistica.other, 3.9);
+  assert.equal(logistica.neto, -3.9);
+});
+
 const REAL_PAID = '/home/ubuntu/.cursor/projects/workspace/uploads/NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.404396991_1629.csv';
 const REAL_UNPAID = '/home/ubuntu/.cursor/projects/workspace/uploads/NewReportTransaction_FAPE-SCDE75A-20260826-PEN_2026-08-27T11_52_00.352526960_dc52.csv';
 

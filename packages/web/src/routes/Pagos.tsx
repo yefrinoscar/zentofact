@@ -313,15 +313,6 @@ function hasBuyerShipping(sale: SettlementSale) {
   );
 }
 
-function buyerShippingHint(sale: SettlementSale) {
-  const paid = Math.abs(Number(sale.buyerShippingPaid || 0));
-  const reversed = Math.abs(Number(sale.buyerShippingReversed || 0));
-  if (paid && reversed && paid === reversed) {
-    return `Pago ${money.format(paid)} · reversa −${money.format(reversed)}`;
-  }
-  return 'Lo pagó el cliente. Se anula.';
-}
-
 function chargeTimes(group: SettlementChargeGroup) {
   if (group.count > 1 && group.unitAmount != null) {
     return `${group.count} × ${money.format(Math.abs(group.unitAmount))}`;
@@ -585,11 +576,7 @@ export default function Pagos() {
               <div className="px-5 py-4">
                 <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
                 {hasBuyerShipping(selected) ? (
-                  <ChargeRow
-                    label="Envío del comprador"
-                    amount={selected.buyerShipping || 0}
-                    hint={buyerShippingHint(selected)}
-                  />
+                  <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
                 ) : null}
                 <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
                   <p className="pt-2 text-xs font-medium">Falabella cobra</p>

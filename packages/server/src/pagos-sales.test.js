@@ -60,6 +60,7 @@ test('el envío que paga el comprador no aparece ni mueve lo que te llega', () =
   assert.equal(sale.buyerShipping, 0);
   assert.equal(sale.buyerShippingPaid, 3.17);
   assert.equal(sale.buyerShippingReversed, -3.17);
+  assert.equal(sale.other, 0);
   assert.equal(sale.neto, 3.74);
   assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
   assert.equal(sale.chargeGroups.some((group) => /comprador/i.test(group.type)), false);
@@ -89,6 +90,7 @@ test('agrega comisión envío y porcentaje por pedido sin inflar el envío compr
   assert.equal(sale.take, 5.25);
   assert.equal(sale.takeRate, 0.584);
   assert.equal(sale.items.length, 1);
+  assert.equal(parsed.lines.filter((line) => line.chargeKind === 'buyer_shipping').every((line) => line.other === 0), true);
 });
 
 test('el porcentaje de comisión no es fijo entre ventas', () => {

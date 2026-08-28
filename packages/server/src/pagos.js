@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
+import { classifyChargeKind, lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, attachDocumentsToSales, summarizeSettlementSales } from './pagos-sales.js';
 
@@ -167,6 +167,7 @@ function mapLine(row) {
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
     type: row.transaction_type || '',
     kind: row.kind || '',
+    chargeKind: classifyChargeKind(row.transaction_type || ''),
     paid: normalizeHeader(row.payment_status || '') !== 'no pagado',
     paymentStatus: row.payment_status || '',
     itemId: row.item_id || '',

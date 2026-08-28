@@ -1721,6 +1721,25 @@ const DDL = `
   GROUP BY sl.sale_source, sl.sale_id
   ON CONFLICT (sale_source, sale_id) DO NOTHING;
 
+  UPDATE settlement_lines
+     SET other_fees = 0
+   WHERE other_fees <> 0
+     AND lower(transaction_type) LIKE '%comprador%';
+
+  UPDATE sale_settlements ss
+     SET other_fees = sub.other_fees,
+         updated_at = now()
+    FROM (
+      SELECT sale_source, sale_id, COALESCE(SUM(other_fees), 0) AS other_fees
+        FROM settlement_lines
+       WHERE match_status = 'matched'
+         AND sale_id IS NOT NULL
+         AND sale_source IS NOT NULL
+       GROUP BY sale_source, sale_id
+    ) sub
+   WHERE ss.sale_source = sub.sale_source
+     AND ss.sale_id = sub.sale_id;
+
   UPDATE orders o
   SET created_by = e.actor_user_id
   FROM (

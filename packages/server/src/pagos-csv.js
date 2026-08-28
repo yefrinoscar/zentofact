@@ -295,6 +295,7 @@ export function parseSettlementCsv(text) {
       cell(row, headerIndex, binding.columns.type)
       || cell(row, headerIndex, binding.columns.category),
     );
+    const chargeKind = classifyChargeKind(typeValue);
     const kind = classifyTransactionType(typeValue);
     const signedAmount = parseMoney(cell(row, headerIndex, binding.columns.amount));
     const bruto = binding.columns.bruto
@@ -305,7 +306,9 @@ export function parseSettlementCsv(text) {
       : kind === 'commission' ? Math.abs(signedAmount || 0) : 0;
     const other = binding.columns.other
       ? Math.abs(parseMoney(cell(row, headerIndex, binding.columns.other)) || 0)
-      : kind === 'other' || kind === 'refund' ? Math.abs(signedAmount || 0) : 0;
+      : chargeKind === 'buyer_shipping'
+        ? 0
+        : kind === 'other' || kind === 'refund' ? Math.abs(signedAmount || 0) : 0;
     const neto = binding.columns.neto
       ? parseMoney(cell(row, headerIndex, binding.columns.neto))
       : signedAmount != null
@@ -326,7 +329,7 @@ export function parseSettlementCsv(text) {
         || parseDateKey(cell(row, headerIndex, binding.columns.date)),
       type: typeValue,
       kind,
-      chargeKind: classifyChargeKind(typeValue),
+      chargeKind,
       paid: parsePaymentStatus(paymentStatus),
       paymentStatus,
       commissionRate: parseRate(cell(row, headerIndex, binding.columns.commissionRate)),
