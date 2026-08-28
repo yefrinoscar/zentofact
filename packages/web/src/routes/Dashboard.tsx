@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -48,6 +49,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { PrototypeSwitcher } from '@/components/PrototypeSwitcher';
+import { DASHBOARD_PAGOS_VARIANTS, DashboardPagosPrototype } from './dashboard-pagos-prototype';
+import { settlementCash } from '../lib/pagos-presentation';
 
 type PeriodKey = '7d' | '30d' | 'month' | '90d' | 'custom';
 
@@ -345,6 +349,8 @@ function SkeletonDashboard() {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const variant = searchParams.get('variant') || 'actual';
   const [period, setPeriod] = useState<PeriodKey>('month');
   const initialRange = useMemo(() => rangeFor('month'), []);
   const [filters, setFilters] = useState<DashboardFilters>(initialRange);
@@ -367,6 +373,12 @@ export default function Dashboard() {
     },
   });
   const data: any = query.data;
+  const pagosQuery = useQuery({
+    queryKey: ['pagos-sales', 'dashboard-prototype'],
+    queryFn: () => api.listSettlementSales({ limit: 1 }),
+    enabled: import.meta.env.DEV,
+  });
+  const cash = settlementCash(pagosQuery.data?.summary);
 
   const ranking = useMemo(
     () => (data?.companyRanking || []).filter((company: CompanyPerformance) => company.totalOrders > 0),
@@ -477,28 +489,37 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
-        <KpiCard
-          title="Pagado"
-          value={money.format(summary.paidSales || 0)}
-          detail="Falabella ya liquidó estas ventas"
-          icon={CircleDollarSign}
-        />
-        <KpiCard
-          title="Pendiente"
-          value={money.format(summary.pendingSales || 0)}
-          detail="Ventas que Falabella todavía no liquidó"
-          icon={WalletCards}
-        />
-        <KpiCard
-          title="Pedidos vendidos"
-          value={integer.format(summary.orders || 0)}
-          detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
-          change={data?.changes?.orders}
-          icon={ShoppingBag}
-        />
-      </div>
+      <DashboardPagosPrototype
+        variant={variant}
+        cash={cash}
+        actual={(
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
+            <KpiCard
+              title="Pagado"
+              value={money.format(summary.paidSales || 0)}
+              detail="Falabella ya liquidó estas ventas"
+              icon={CircleDollarSign}
+            />
+            <KpiCard
+              title="Pendiente"
+              value={money.format(summary.pendingSales || 0)}
+              detail="Ventas que Falabella todavía no liquidó"
+              icon={WalletCards}
+            />
+            <KpiCard
+              title="Pedidos vendidos"
+              value={integer.format(summary.orders || 0)}
+              detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
+              change={data?.changes?.orders}
+              icon={ShoppingBag}
+            />
+          </div>
+        )}
+      />
+      {variant !== 'actual' ? (
+        <p className="text-xs text-muted-foreground">Según los CSV de Pagos. Una cosa es lo vendido y otra lo que te llega.</p>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Card className="xl:col-span-3">
@@ -638,6 +659,7 @@ export default function Dashboard() {
         <ChartNoAxesCombined className="size-4" />
         Ventas netas excluye pedidos cancelados, devueltos o fallidos. Pagado es lo que Falabella ya liquidó. {comparisonLabel}.
       </div>
+      {import.meta.env.DEV ? <PrototypeSwitcher variants={DASHBOARD_PAGOS_VARIANTS} /> : null}
     </div>
   );
 }
