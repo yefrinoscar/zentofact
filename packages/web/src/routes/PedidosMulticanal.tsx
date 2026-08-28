@@ -39,6 +39,7 @@ import {
   generateDocumentPath,
   pendingDocumentKind,
 } from '../lib/order-document';
+import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -757,9 +758,9 @@ export default function PedidosMulticanal() {
   );
 
   useEffect(() => {
-    const registered = (location.state as { registered?: string } | null)?.registered;
+    const registered = registeredFromMisVentasState(location.state as { registered?: string } | null);
     if (!registered) return;
-    setSuccessMessage(`Venta ${registered} registrada.`);
+    setSuccessMessage(saleSavedSnackbarMessage(registered));
     void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
     void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
     navigate(location.pathname, { replace: true, state: null });
