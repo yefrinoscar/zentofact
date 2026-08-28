@@ -3,6 +3,7 @@ import {
   normalizeHeader,
   parseRate,
   rawValueByHeader,
+  repairSettlementText,
 } from './pagos-csv.js';
 
 function round2(value) {
@@ -226,7 +227,9 @@ export function groupSaleCharges(charges) {
       buyerNet = round2(buyerNet + Number(charge.amount || 0));
       continue;
     }
-    const key = `${kind}|${charge.type || ''}`;
+    const key = ['sale', 'commission', 'shipping', 'buyer_shipping'].includes(kind)
+      ? kind
+      : `${kind}|${charge.type || ''}`;
     const current = groups.get(key) || {
       kind,
       type: charge.type || '',
@@ -278,7 +281,7 @@ export function aggregateSettlementSales(lines) {
     const amount = signedAmount(line);
     applyCharge(current, kind, amount);
     current.charges.push({
-      type: line.type || '',
+      type: repairSettlementText(line.type || ''),
       kind,
       amount,
       sku: line.sku || '',
