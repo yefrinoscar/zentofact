@@ -1831,7 +1831,7 @@ function ProductDrawer({
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
         <div className="shrink-0 px-5 pb-3">
-          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-muted/70 p-1">
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-muted/70 p-1 group-data-horizontal/tabs:h-auto">
             <TabsTrigger value="overview" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
             <TabsTrigger value="listings" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><Boxes className="size-4" /> Inventario</TabsTrigger>
