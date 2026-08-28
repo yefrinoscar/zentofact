@@ -47,6 +47,17 @@ export function formatElapsed(deciseconds: number) {
   return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
 }
 
+export const CSV_UPLOAD_MIN_MS = 1400;
+
+export function remainingHoldMs(startedAt: number, minMs = CSV_UPLOAD_MIN_MS, now = Date.now()) {
+  return Math.max(0, Number(minMs) - (Number(now) - Number(startedAt)));
+}
+
+export async function holdAtLeast(startedAt: number, minMs = CSV_UPLOAD_MIN_MS) {
+  const rest = remainingHoldMs(startedAt, minMs);
+  if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
+}
+
 function headerLooksLikeSettlement(text: string) {
   const header = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
   const normalized = header

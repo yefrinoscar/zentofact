@@ -5,6 +5,8 @@ import api from '../lib/api';
 import {
   chargeKindLabel,
   decodeSettlementCsv,
+  holdAtLeast,
+  CSV_UPLOAD_MIN_MS,
   importSummary,
   money,
   paymentStatusLabel,
@@ -248,6 +250,8 @@ export default function Pagos() {
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [readingName, setReadingName] = useState('');
+  const reading = Boolean(readingName);
 
   const importsQuery = useQuery({
     queryKey: ['pagos-imports'],
@@ -267,14 +271,19 @@ export default function Pagos() {
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
-      const csv = decodeSettlementCsv(await file.arrayBuffer());
-      const result = await api.importSettlementCsv({ filename: file.name, csv });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['pagos-imports'] }),
-        queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
-        queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
-      ]);
-      return result;
+      const started = Date.now();
+      try {
+        const csv = decodeSettlementCsv(await file.arrayBuffer());
+        const result = await api.importSettlementCsv({ filename: file.name, csv });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['pagos-imports'] }),
+          queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
+          queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+        ]);
+        return result;
+      } finally {
+        await holdAtLeast(started, CSV_UPLOAD_MIN_MS);
+      }
     },
     onSuccess: (result) => {
       setError('');
@@ -283,6 +292,9 @@ export default function Pagos() {
     onError: (nextError) => {
       setNotice('');
       setError((nextError as Error).message || 'No se pudo leer el CSV.');
+    },
+    onSettled: () => {
+      setReadingName('');
     },
   });
 
@@ -333,25 +345,39 @@ export default function Pagos() {
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = '';
-            if (file) upload.mutate(file);
+            if (!file) return;
+            setError('');
+            setNotice('');
+            setReadingName(file.name);
+            upload.mutate(file);
           }}
         />
-        <Button type="button" onClick={() => fileInput.current?.click()} disabled={upload.isPending}>
-          {upload.isPending ? <WorkLoaderMark data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
-          {upload.isPending ? 'Leyendo CSV' : 'Subir CSV'}
+        <Button
+          type="button"
+          disabled={reading}
+          onClick={() => {
+            const input = fileInput.current;
+            if (!input || reading) return;
+            input.value = '';
+            input.click();
+          }}
+        >
+          {reading ? <WorkLoaderMark data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+          {reading ? 'Leyendo CSV' : 'Subir CSV'}
         </Button>
       </div>
 
-      {upload.isPending ? (
+      {reading ? (
         <WorkLoader
+          key={readingName}
           label="Leyendo CSV"
-          detail={shortImportFilename(upload.variables?.name)}
+          detail={shortImportFilename(readingName)}
         />
       ) : overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
-      {notice && !upload.isPending ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
+      {notice && !reading ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      <TablePanel aria-busy={upload.isPending} aria-label="Cobros de Falabella por venta">
+      <TablePanel aria-busy={reading} aria-label="Cobros de Falabella por venta">
         <Table>
           <TableHeader>
             <TableRow>
