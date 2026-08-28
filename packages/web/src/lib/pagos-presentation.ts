@@ -206,6 +206,24 @@ export function documentLabel(document: {
   return 'Sin boleta ni factura';
 }
 
+export const PAGOS_SALES_PAGE = 2000;
+
+export const PAGOS_COLUMN_COPY = {
+  precio: { label: 'Precio', hint: 'Pagó el cliente' },
+  commission: { label: 'Comisión', hint: '% del precio' },
+  shipping: { label: 'Logística', hint: 'Cofinanciamiento' },
+  take: { label: 'Se queda', hint: 'Comisión + logística' },
+  neto: { label: 'Te llega', hint: 'Te depositan' },
+} as const;
+
+export function salesPageNote(shown: number, total: number) {
+  const count = Number(total) || 0;
+  const visible = Number(shown) || 0;
+  if (!count) return '';
+  if (visible >= count) return count === 1 ? '1 venta' : `${count} ventas`;
+  return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
+}
+
 export function settlementCash(summary: {
   bruto?: number | null;
   neto?: number | null;

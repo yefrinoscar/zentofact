@@ -5,7 +5,26 @@ import { cn } from '../lib/cn';
 import { TablePanel, TablePanelFooter } from './ui/table';
 import { Skeleton } from './ui/skeleton';
 
+declare module '@tanstack/react-table' {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData, TValue> {
+    headerClassName?: string;
+    cellClassName?: string;
+    align?: 'start' | 'end' | 'center';
+  }
+}
+
 const ROW_HEIGHT = 48;
+
+type VirtualColumnMeta = {
+  headerClassName?: string;
+  cellClassName?: string;
+  align?: 'start' | 'end' | 'center';
+};
+
+function columnMeta(column: { columnDef: { meta?: unknown } }): VirtualColumnMeta {
+  return (column.columnDef.meta || {}) as VirtualColumnMeta;
+}
 
 export function OrdersVirtualTable<TData>({
   table,
@@ -16,6 +35,9 @@ export function OrdersVirtualTable<TData>({
   onRowClick,
   stickyLeftId = 'order',
   stickyRightId = 'actions',
+  rowHeight = ROW_HEIGHT,
+  compact = false,
+  scrollClassName = 'h-[min(70vh,36rem)]',
   'aria-label': ariaLabel,
 }: {
   table: TanstackTable<TData>;
@@ -26,6 +48,9 @@ export function OrdersVirtualTable<TData>({
   onRowClick?: (row: TData) => void;
   stickyLeftId?: string;
   stickyRightId?: string;
+  rowHeight?: number;
+  compact?: boolean;
+  scrollClassName?: string;
   'aria-label'?: string;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -36,7 +61,7 @@ export function OrdersVirtualTable<TData>({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 16,
   });
   const virtualRows = virtualizer.getVirtualItems();
@@ -57,29 +82,42 @@ export function OrdersVirtualTable<TData>({
     return '';
   };
 
+  const alignClass = (align?: VirtualColumnMeta['align'], id?: string) => {
+    if (align === 'end' || id === 'total') return 'justify-end';
+    if (align === 'center' || id === 'actions') return 'justify-center';
+    return '';
+  };
+
   return (
     <TablePanel aria-label={ariaLabel} aria-busy={loading || fetching}>
       {loading ? (
         <OrdersTableSkeleton columnCount={columns.length || 8} />
       ) : rows.length === 0 ? empty : (
-        <div ref={parentRef} className="h-[min(70vh,36rem)] overflow-auto" aria-busy={fetching}>
+        <div ref={parentRef} className={cn('overflow-auto', scrollClassName)} aria-busy={fetching}>
           <div style={{ width: tableWidth, minWidth: '100%' }}>
             <div className="sticky top-0 z-20 flex border-b border-border bg-muted" role="row">
-              {headerGroup?.headers.map((header) => (
+              {headerGroup?.headers.map((header) => {
+                const meta = columnMeta(header.column);
+                return (
                 <div
                   key={header.id}
                   role="columnheader"
                   style={{ width: header.getSize(), minWidth: header.getSize() }}
                   className={cn(
-                    'flex h-10 shrink-0 items-center px-3 text-xs font-medium text-muted-foreground',
+                    'flex shrink-0 font-medium text-muted-foreground',
+                    compact
+                      ? 'h-auto min-h-10 items-center px-2.5 py-1 text-[11px] leading-tight'
+                      : 'h-10 items-center px-3 text-xs',
                     edgeClass(header.column.id, true),
-                    header.column.id === 'total' && 'justify-end',
-                    header.column.id === 'actions' && 'justify-center px-1',
+                    alignClass(meta.align, header.column.id),
+                    header.column.id === 'actions' && 'px-1',
+                    meta.headerClassName,
                   )}
                 >
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
               {virtualRows.map((virtualRow) => {
@@ -111,21 +149,26 @@ export function OrdersVirtualTable<TData>({
                       }
                     } : undefined}
                   >
-                    {row.getVisibleCells().map((cell) => (
+                    {row.getVisibleCells().map((cell) => {
+                      const meta = columnMeta(cell.column);
+                      return (
                       <div
                         key={cell.id}
                         role="cell"
                         style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
                         className={cn(
-                          'flex shrink-0 items-center px-3 py-2 text-sm',
+                          'flex shrink-0 items-center text-sm',
+                          compact ? 'px-2.5 py-0.5' : 'px-3 py-2',
                           edgeClass(cell.column.id, false),
-                          cell.column.id === 'total' && 'justify-end',
-                          cell.column.id === 'actions' && 'justify-center px-1',
+                          alignClass(meta.align, cell.column.id),
+                          cell.column.id === 'actions' && 'px-1',
+                          meta.cellClassName,
                         )}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -133,7 +176,7 @@ export function OrdersVirtualTable<TData>({
           </div>
         </div>
       )}
-      {!loading && footer ? <TablePanelFooter>{footer}</TablePanelFooter> : null}
+      {!loading && footer ? <TablePanelFooter className={compact ? 'px-2.5 py-2' : undefined}>{footer}</TablePanelFooter> : null}
     </TablePanel>
   );
 }

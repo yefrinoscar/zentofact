@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Check, Copy, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
+  PAGOS_COLUMN_COPY,
+  PAGOS_SALES_PAGE,
   chargeKindLabel,
   decodeSettlementCsv,
   documentLabel,
@@ -15,28 +18,20 @@ import {
   percentLabel,
   saleDateLabel,
   saleOverview,
+  salesPageNote,
   shortImportFilename,
   shortProductName,
   skuLabel,
   unitsLabel,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
+import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TablePanel,
-  TableRow,
-} from '@/components/ui/table';
 
 type SettlementProduct = {
   sku?: string;
@@ -109,6 +104,14 @@ const cobroColEnd = `${cobroCol} border-r border-border`;
 const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
 const llegaText = 'text-emerald-700 dark:text-emerald-400';
 const takeText = 'text-red-600 dark:text-red-400';
+const cobroHead = `${cobroCol} text-muted-foreground`;
+const cobroCell = `${cobroCol} group-hover:bg-muted/55`;
+const cobroHeadStart = `${cobroColStart} text-muted-foreground`;
+const cobroCellStart = `${cobroColStart} group-hover:bg-muted/55`;
+const cobroHeadEnd = `${cobroColEnd} text-muted-foreground`;
+const cobroCellEnd = `${cobroColEnd} group-hover:bg-muted/55`;
+const llegaHead = `${llegaCol} ${llegaText}`;
+const llegaCell = `${llegaCol} group-hover:bg-emerald-500/[0.12]`;
 
 function CopyableId({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -174,7 +177,7 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
-        className="rounded px-1 py-0.5 font-mono text-xs text-foreground underline decoration-border underline-offset-4 transition hover:bg-accent hover:decoration-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
+        className="rounded px-0.5 py-0 font-mono text-xs text-foreground underline decoration-border underline-offset-4 transition hover:bg-accent hover:decoration-foreground focus:outline-none focus:ring-2 focus:ring-ring/30"
       >
         {sale.orderId}
       </button>
@@ -194,22 +197,12 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
   );
 }
 
-function ColumnHead({
-  label,
-  hint,
-  className,
-  rowSpan,
-}: {
-  label: string;
-  hint?: string;
-  className?: string;
-  rowSpan?: number;
-}) {
+function TwoLineHead({ label, hint }: { label: string; hint?: string }) {
   return (
-    <TableHead rowSpan={rowSpan} className={cn('h-auto whitespace-normal py-2', className)} title={hint}>
-      <span className="block">{label}</span>
-      {hint ? <span className="mt-0.5 block text-[11px] font-normal leading-tight">{hint}</span> : null}
-    </TableHead>
+    <span className="flex flex-col leading-tight">
+      <span className="whitespace-nowrap">{label}</span>
+      {hint ? <span className="whitespace-nowrap text-[10px] font-normal">{hint}</span> : null}
+    </span>
   );
 }
 
@@ -224,13 +217,13 @@ function AmountRate({
 }) {
   return (
     <div className={cn(
-      'text-right',
+      'text-right leading-tight',
       tone === 'take' && takeText,
       tone === 'receive' && llegaText,
     )}
     >
-      <p className={cn('tabular-nums', tone === 'receive' && 'font-medium')}>{money.format(amount)}</p>
-      <p className={cn('text-xs tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>{percentLabel(rate)}</p>
+      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-medium')}>{money.format(amount)}</p>
+      <p className={cn('text-[10px] tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>{percentLabel(rate)}</p>
     </div>
   );
 }
@@ -345,7 +338,7 @@ export default function Pagos() {
       search: search.trim() || undefined,
       paid: paid === 'all' ? undefined : paid,
       importId: importId === 'all' ? undefined : Number(importId),
-      limit: 100,
+      limit: PAGOS_SALES_PAGE,
     }),
     placeholderData: keepPreviousData,
   });
@@ -385,6 +378,108 @@ export default function Pagos() {
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
   const overview = saleOverview(summary);
+  const totalCount = Number(salesQuery.data?.totalCount || sales.length);
+
+  const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
+    {
+      id: 'order',
+      accessorKey: 'orderId',
+      header: 'Pedido',
+      size: 128,
+      cell: ({ row }) => <SaleOrderHover sale={row.original} />,
+    },
+    {
+      id: 'product',
+      accessorFn: (sale) => saleTitle(sale),
+      header: 'Producto',
+      size: 168,
+      cell: ({ row }) => (
+        <p className="line-clamp-1 text-[13px] font-medium leading-4" title={row.original.productName || undefined}>
+          {saleTitle(row.original)}
+        </p>
+      ),
+    },
+    {
+      id: 'sku',
+      accessorFn: (sale) => skuLabel(sale.skus),
+      header: 'SKU',
+      size: 118,
+      cell: ({ row }) => {
+        const units = unitsLabel(row.original.itemCount);
+        return (
+          <p className="truncate font-mono text-[11px] leading-4">
+            {skuLabel(row.original.skus) || '—'}
+            {units ? <span className="text-muted-foreground"> · {units}</span> : null}
+          </p>
+        );
+      },
+    },
+    {
+      id: 'paid',
+      accessorKey: 'paid',
+      header: 'Pago',
+      size: 84,
+      cell: ({ row }) => (
+        <Badge
+          variant={row.original.paid ? 'secondary' : 'outline'}
+          className={cn('h-5 px-1.5 text-[11px]', row.original.paid && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')}
+        >
+          {paymentStatusLabel(row.original.paymentStatus)}
+        </Badge>
+      ),
+    },
+    {
+      id: 'precio',
+      accessorKey: 'bruto',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
+      size: 108,
+      meta: { align: 'end' },
+      cell: ({ row }) => (
+        <p className="text-right text-[13px] tabular-nums leading-4">{money.format(row.original.bruto || 0)}</p>
+      ),
+    },
+    {
+      id: 'commission',
+      accessorKey: 'commission',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.commission} />,
+      size: 96,
+      meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
+      cell: ({ row }) => <AmountRate amount={row.original.commission || 0} rate={row.original.commissionRate} />,
+    },
+    {
+      id: 'shipping',
+      accessorKey: 'shipping',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.shipping} />,
+      size: 124,
+      meta: { align: 'end', headerClassName: cobroHead, cellClassName: cobroCell },
+      cell: ({ row }) => <AmountRate amount={row.original.shipping || 0} rate={row.original.shippingRate} />,
+    },
+    {
+      id: 'take',
+      accessorKey: 'take',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.take} />,
+      size: 124,
+      meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
+      cell: ({ row }) => <AmountRate amount={row.original.take || 0} rate={row.original.takeRate} tone="take" />,
+    },
+    {
+      id: 'neto',
+      accessorKey: 'neto',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.neto} />,
+      size: 108,
+      meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
+      cell: ({ row }) => (
+        <AmountRate amount={row.original.neto || 0} rate={receiveRate(row.original.bruto, row.original.neto)} tone="receive" />
+      ),
+    },
+  ], []);
+
+  const table = useReactTable({
+    data: sales,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (sale) => sale.orderId,
+  });
 
   return (
     <div className="space-y-4 pb-8">
@@ -473,93 +568,37 @@ export default function Pagos() {
       )}
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      <TablePanel aria-busy={reading} aria-label="Cobros de Falabella por venta">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead rowSpan={2} className="align-bottom">Pedido</TableHead>
-              <TableHead rowSpan={2} className="align-bottom">Producto</TableHead>
-              <TableHead rowSpan={2} className="align-bottom">SKU</TableHead>
-              <TableHead rowSpan={2} className="align-bottom">Pago</TableHead>
-              <ColumnHead rowSpan={2} className="align-bottom text-right" label="Precio" hint="Lo que pagó el cliente" />
-              <TableHead colSpan={3} className={cn('h-8 py-1.5 text-center', cobroColStart, cobroColEnd)}>
-                <span className="block text-[13px] text-foreground">Falabella cobra</span>
-                <span className="block text-[11px] font-normal leading-tight">Comisión + logística</span>
-              </TableHead>
-              <ColumnHead rowSpan={2} className={cn('align-bottom text-right', llegaCol, llegaText)} label="Te llega" hint="Lo que te depositan" />
-            </TableRow>
-            <TableRow>
-              <ColumnHead className={cn('text-right', cobroColStart)} label="Comisión" hint="% del precio" />
-              <ColumnHead className={cn('text-right', cobroCol)} label="Logística" hint="Cofinanciamiento" />
-              <ColumnHead className={cn('text-right', cobroColEnd)} label="Se queda" hint="Suma de los dos" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sales.map((sale) => (
-              <TableRow
-                key={sale.orderId}
-                className="cursor-pointer"
-                tabIndex={0}
-                onClick={() => setSelected(sale)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    setSelected(sale);
-                  }
-                }}
-              >
-                <TableCell>
-                  <SaleOrderHover sale={sale} />
-                </TableCell>
-                <TableCell className="max-w-[11rem] whitespace-normal">
-                  <p className="line-clamp-1 font-medium leading-5" title={sale.productName || undefined}>
-                    {saleTitle(sale)}
-                  </p>
-                </TableCell>
-                <TableCell>
-                  <p className="font-mono text-xs">{skuLabel(sale.skus) || '—'}</p>
-                  {unitsLabel(sale.itemCount) ? (
-                    <p className="text-xs text-muted-foreground">{unitsLabel(sale.itemCount)}</p>
-                  ) : null}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={sale.paid ? 'secondary' : 'outline'} className={sale.paid ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : ''}>
-                    {paymentStatusLabel(sale.paymentStatus)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">{money.format(sale.bruto || 0)}</TableCell>
-                <TableCell className={cobroColStart}><AmountRate amount={sale.commission || 0} rate={sale.commissionRate} /></TableCell>
-                <TableCell className={cobroCol}><AmountRate amount={sale.shipping || 0} rate={sale.shippingRate} /></TableCell>
-                <TableCell className={cobroColEnd}><AmountRate amount={sale.take || 0} rate={sale.takeRate} tone="take" /></TableCell>
-                <TableCell className={llegaCol}>
-                  <AmountRate amount={sale.neto || 0} rate={receiveRate(sale.bruto, sale.neto)} tone="receive" />
-                </TableCell>
-              </TableRow>
-            ))}
-            {!sales.length && !salesQuery.isLoading ? (
-              <TableRow>
-                <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
-                  Sube un CSV de Falabella para ver comisión, logística y lo que te llega.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-          {summary?.saleCount ? (
-            <TableFooter>
-              <TableRow>
-                <TableCell colSpan={4} className="font-medium">Total · {summary.paidCount} pagadas</TableCell>
-                <TableCell className="text-right tabular-nums">{money.format(summary.bruto || 0)}</TableCell>
-                <TableCell className={cobroColStart}><AmountRate amount={summary.commission || 0} rate={summary.commissionRate} /></TableCell>
-                <TableCell className={cobroCol}><AmountRate amount={summary.shipping || 0} rate={summary.shippingRate} /></TableCell>
-                <TableCell className={cobroColEnd}><AmountRate amount={summary.take || 0} rate={summary.takeRate} tone="take" /></TableCell>
-                <TableCell className={llegaCol}>
-                  <AmountRate amount={summary.neto || 0} rate={receiveRate(summary.bruto, summary.neto)} tone="receive" />
-                </TableCell>
-              </TableRow>
-            </TableFooter>
-          ) : null}
-        </Table>
-      </TablePanel>
+      <OrdersVirtualTable
+        table={table}
+        compact
+        rowHeight={40}
+        scrollClassName="h-[min(78dvh,52rem)]"
+        stickyRightId=""
+        loading={salesQuery.isLoading && !sales.length}
+        fetching={salesQuery.isFetching}
+        onRowClick={setSelected}
+        aria-label="Cobros de Falabella por venta"
+        empty={(
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+            Sube un CSV de Falabella para ver comisión, logística y lo que te llega.
+          </div>
+        )}
+        footer={summary?.saleCount ? (
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+            <p className="text-muted-foreground">
+              {salesPageNote(sales.length, totalCount)}
+              {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
+            </p>
+            <p className="tabular-nums">
+              Precio {money.format(summary.bruto || 0)}
+              <span className="text-muted-foreground"> · </span>
+              Se queda <span className={takeText}>{money.format(summary.take || 0)}</span>
+              <span className="text-muted-foreground"> · </span>
+              Te llega <span className={cn('font-medium', llegaText)}>{money.format(summary.neto || 0)}</span>
+            </p>
+          </div>
+        ) : undefined}
+      />
 
       <Sheet open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null); }}>
         <SheetContent className="gap-0 overflow-y-auto sm:max-w-lg">

@@ -245,6 +245,12 @@ export async function listSettlementLines(filter = {}, db) {
   };
 }
 
+export const SETTLEMENT_SALES_PAGE_MAX = 2000;
+
+export function settlementSalesLimit(raw) {
+  return Math.min(Math.max(Number(raw) || 50, 1), SETTLEMENT_SALES_PAGE_MAX);
+}
+
 export async function listSettlementSales(filter = {}, db) {
   const target = await resolvePool(db);
   const importId = optionalPositiveInt(filter.importId);
@@ -253,7 +259,7 @@ export async function listSettlementSales(filter = {}, db) {
     throw httpError('Estado de pago inválido.');
   }
   const search = String(filter.search || '').trim().toLowerCase();
-  const limit = Math.min(Math.max(Number(filter.limit) || 50, 1), 200);
+  const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
   const values = [];
   const where = [];
