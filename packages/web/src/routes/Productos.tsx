@@ -1781,7 +1781,7 @@ function ProductDrawer({
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
     >
-      <SheetHeader className="px-5 pb-5 pt-8 pr-16">
+      <SheetHeader className="px-5 pb-5 pt-10 pr-16">
         <div className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-start gap-x-5 gap-y-3">
           <ProductPhoto product={product} onOpenImage={onOpenImage} onEditImage={onEditImage} />
           <div className="min-w-0 space-y-2.5">
@@ -1818,7 +1818,7 @@ function ProductDrawer({
                     <MoreHorizontal />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
+                <DropdownMenuContent align="start" className="w-auto min-w-44">
                   <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
                   <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
                   <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
@@ -1830,8 +1830,8 @@ function ProductDrawer({
       </SheetHeader>
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
-        <div className="shrink-0 overflow-x-auto px-5 pb-3 [scrollbar-width:thin]">
-          <TabsList className="h-12 w-max min-w-full justify-start gap-1 rounded-xl bg-muted/70 p-1">
+        <div className="shrink-0 px-5 pb-3">
+          <TabsList className="flex h-auto min-h-12 w-full flex-wrap justify-start gap-1 rounded-xl bg-muted/70 p-1">
             <TabsTrigger value="overview" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
             <TabsTrigger value="listings" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Boxes className="size-4" /> Inventario</TabsTrigger>
@@ -2163,41 +2163,39 @@ function ProductTitleField({
   const displayed = draft ?? name;
 
   return (
-    <SheetTitle className="min-w-0">
-      <div
-        className={cn(
-          '-mx-1 rounded-md px-1 py-0.5',
-          focused ? 'bg-muted' : 'cursor-text hover:bg-muted/70',
-        )}
-        onClick={() => { if (!focused) setDraft(name); }}
-      >
-        {focused ? (
-          <input
-            key={`${productId}-name`}
-            className="w-full border-0 bg-transparent p-0 text-lg font-medium leading-6 text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/70 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
-            value={displayed}
-            aria-label="Nombre del producto"
-            autoFocus
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => {
-              if (!cancelledRef.current && draft !== null && draft !== name) onSave(draft);
-              cancelledRef.current = false;
-              setDraft(null);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur();
-              if (event.key === 'Escape') {
-                event.stopPropagation();
-                cancelledRef.current = true;
-                event.currentTarget.blur();
-              }
-            }}
-          />
-        ) : (
-          <span className="block text-lg font-medium leading-6">{name || 'Producto'}</span>
-        )}
-        {saving ? <Loader2 className="mt-1 h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-      </div>
+    <SheetTitle
+      className={cn(
+        'min-w-0 cursor-text rounded-md px-1 py-0.5 text-lg font-medium leading-6',
+        focused ? 'bg-muted' : 'hover:bg-muted/70',
+      )}
+      onClick={() => { if (!focused) setDraft(name); }}
+    >
+      {focused ? (
+        <input
+          key={`${productId}-name`}
+          className="w-full border-0 bg-transparent p-0 text-lg font-medium leading-6 text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/70 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+          value={displayed}
+          aria-label="Nombre del producto"
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (!cancelledRef.current && draft !== null && draft !== name) onSave(draft);
+            cancelledRef.current = false;
+            setDraft(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+            if (event.key === 'Escape') {
+              event.stopPropagation();
+              cancelledRef.current = true;
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      ) : (
+        name || 'Producto'
+      )}
+      {saving ? <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
     </SheetTitle>
   );
 }
@@ -2257,7 +2255,7 @@ function ProductProperties({
         display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
         type="number"
         placeholder="Sin precio"
-        displayClassName="text-lg font-semibold tracking-tight text-zinc-950"
+        displayClassName="text-xl font-semibold tracking-tight text-zinc-950"
         saving={savingField === 'referencePrice'}
         onSave={onSavePrice}
       />
