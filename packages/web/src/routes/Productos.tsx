@@ -2290,10 +2290,11 @@ function ProductInlineField({
         <input
           key={`${productId}-${field}`}
           className={cn(
-            'min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
+            'min-w-0 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
             'placeholder:text-muted-foreground/70',
             'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
             'autofill:bg-transparent',
+            suffix ? 'w-16' : 'flex-1',
             type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
           )}
           type={type}
