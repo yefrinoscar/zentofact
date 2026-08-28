@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -49,9 +48,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { PrototypeSwitcher } from '@/components/PrototypeSwitcher';
-import { DASHBOARD_PAGOS_VARIANTS, DashboardPagosPrototype } from './dashboard-pagos-prototype';
-import { settlementCash } from '../lib/pagos-presentation';
 
 type PeriodKey = '7d' | '30d' | 'month' | '90d' | 'custom';
 
@@ -221,7 +217,7 @@ function SalesSummaryCard({ summary, change }: { summary: any; change?: number |
       <CardContent className="px-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-medium text-primary-foreground/70">Ventas netas</p>
+            <p className="text-xs font-medium text-primary-foreground/70">Vendimos</p>
             <p className="mt-2 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums 2xl:text-[1.7rem]">
               {money.format(summary.netSales || 0)}
             </p>
@@ -231,7 +227,7 @@ function SalesSummaryCard({ summary, change }: { summary: any; change?: number |
           </span>
         </div>
         <div className="mt-4 flex items-center justify-between gap-2 text-xs">
-          <span className="text-primary-foreground/65">{money.format(summary.dailyAverage || 0)} por día</span>
+          <span className="text-primary-foreground/65">Te llega {money.format(summary.arrives || 0)}</span>
           {change === null ? (
             <span className="font-medium text-primary-foreground/65">Sin base previa</span>
           ) : (
@@ -349,8 +345,6 @@ function SkeletonDashboard() {
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
-  const variant = searchParams.get('variant') || 'actual';
   const [period, setPeriod] = useState<PeriodKey>('month');
   const initialRange = useMemo(() => rangeFor('month'), []);
   const [filters, setFilters] = useState<DashboardFilters>(initialRange);
@@ -373,12 +367,6 @@ export default function Dashboard() {
     },
   });
   const data: any = query.data;
-  const pagosQuery = useQuery({
-    queryKey: ['pagos-sales', 'dashboard-prototype'],
-    queryFn: () => api.listSettlementSales({ limit: 1 }),
-    enabled: import.meta.env.DEV,
-  });
-  const cash = settlementCash(pagosQuery.data?.summary);
 
   const ranking = useMemo(
     () => (data?.companyRanking || []).filter((company: CompanyPerformance) => company.totalOrders > 0),
@@ -489,37 +477,28 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <DashboardPagosPrototype
-        variant={variant}
-        cash={cash}
-        actual={(
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
-            <KpiCard
-              title="Pagado"
-              value={money.format(summary.paidSales || 0)}
-              detail="Falabella ya liquidó estas ventas"
-              icon={CircleDollarSign}
-            />
-            <KpiCard
-              title="Pendiente"
-              value={money.format(summary.pendingSales || 0)}
-              detail="Ventas que Falabella todavía no liquidó"
-              icon={WalletCards}
-            />
-            <KpiCard
-              title="Pedidos vendidos"
-              value={integer.format(summary.orders || 0)}
-              detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
-              change={data?.changes?.orders}
-              icon={ShoppingBag}
-            />
-          </div>
-        )}
-      />
-      {variant !== 'actual' ? (
-        <p className="text-xs text-muted-foreground">Según los CSV de Pagos. Una cosa es lo vendido y otra lo que te llega.</p>
-      ) : null}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
+        <KpiCard
+          title="Pagado"
+          value={money.format(summary.paidSales || 0)}
+          detail="Ya depositaron"
+          icon={CircleDollarSign}
+        />
+        <KpiCard
+          title="Pendiente"
+          value={money.format(summary.pendingSales || 0)}
+          detail="Aún no pagan"
+          icon={WalletCards}
+        />
+        <KpiCard
+          title="Pedidos vendidos"
+          value={integer.format(summary.orders || 0)}
+          detail={`${(Number(summary.orders || 0) / days).toFixed(1)} pedidos por día`}
+          change={data?.changes?.orders}
+          icon={ShoppingBag}
+        />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-5">
         <Card className="xl:col-span-3">
@@ -657,9 +636,8 @@ export default function Dashboard() {
 
       <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
         <ChartNoAxesCombined className="size-4" />
-        Ventas netas excluye pedidos cancelados, devueltos o fallidos. Pagado es lo que Falabella ya liquidó. {comparisonLabel}.
+        Vendimos es lo que pagó el cliente. Pagado y pendiente es lo que te llega. {comparisonLabel}.
       </div>
-      {import.meta.env.DEV ? <PrototypeSwitcher variants={DASHBOARD_PAGOS_VARIANTS} /> : null}
     </div>
   );
 }

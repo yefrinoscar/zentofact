@@ -1693,6 +1693,34 @@ const DDL = `
     CHECK (status IN ('pending', 'paid'))
   );
 
+  INSERT INTO sale_settlements (
+    sale_source, sale_id, status, bruto, commission, other_fees, neto, match_method, import_id
+  )
+  SELECT
+    sl.sale_source,
+    sl.sale_id,
+    'pending',
+    COALESCE(SUM(sl.bruto), 0),
+    COALESCE(SUM(sl.commission), 0),
+    COALESCE(SUM(sl.other_fees), 0),
+    COALESCE(SUM(sl.neto), 0),
+    MIN(sl.match_method),
+    MAX(sl.import_id)
+  FROM settlement_lines sl
+  WHERE sl.match_status = 'matched'
+    AND sl.sale_id IS NOT NULL
+    AND sl.sale_source IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM settlement_lines paid
+      WHERE paid.sale_source = sl.sale_source
+        AND paid.sale_id = sl.sale_id
+        AND paid.match_status = 'matched'
+        AND lower(trim(paid.payment_status)) IN ('pagado', 'paid')
+    )
+  GROUP BY sl.sale_source, sl.sale_id
+  ON CONFLICT (sale_source, sale_id) DO NOTHING;
+
   UPDATE orders o
   SET created_by = e.actor_user_id
   FROM (

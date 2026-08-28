@@ -81,12 +81,15 @@ export function percentageDelta(current, previous) {
   return ((a - b) / Math.abs(b)) * 100;
 }
 
-function normalizeSummary(raw = {}) {
+export function normalizeSummary(raw = {}) {
+  const paidSales = numeric(raw.paidSales);
+  const pendingSales = numeric(raw.pendingSales);
   return {
     grossDemand: numeric(raw.grossDemand),
     netSales: numeric(raw.netSales),
-    paidSales: numeric(raw.paidSales),
-    pendingSales: numeric(raw.pendingSales),
+    paidSales,
+    pendingSales,
+    arrives: raw.arrives == null ? paidSales + pendingSales : numeric(raw.arrives),
     cancelledSales: numeric(raw.cancelledSales),
     orders: numeric(raw.orders),
     totalOrders: numeric(raw.totalOrders),
@@ -172,7 +175,8 @@ const DASHBOARD_SQL = `
   current_orders AS MATERIALIZED (
     SELECT
       source.*,
-      COALESCE(ss.status, 'pending') = 'paid' AS is_paid
+      ss.status AS settlement_status,
+      COALESCE(ss.neto, 0) AS settlement_neto
     FROM sales_source source
     LEFT JOIN sale_settlements ss
       ON ss.sale_source = source.sale_source AND ss.sale_id = source.sale_id
@@ -185,8 +189,9 @@ const DASHBOARD_SQL = `
     SELECT
       COALESCE(SUM(amount), 0) AS gross_demand,
       COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled), 0) AS net_sales,
-      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled AND is_paid), 0) AS paid_sales,
-      COALESCE(SUM(amount) FILTER (WHERE NOT is_cancelled AND NOT is_paid), 0) AS pending_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'paid'), 0) AS paid_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status = 'pending'), 0) AS pending_sales,
+      COALESCE(SUM(settlement_neto) FILTER (WHERE NOT is_cancelled AND settlement_status IN ('paid', 'pending')), 0) AS arrives,
       COALESCE(SUM(amount) FILTER (WHERE is_cancelled), 0) AS cancelled_sales,
       COUNT(*) FILTER (WHERE NOT is_cancelled) AS orders,
       COUNT(*) AS total_orders,
@@ -269,6 +274,7 @@ const DASHBOARD_SQL = `
         'netSales', net_sales,
         'paidSales', paid_sales,
         'pendingSales', pending_sales,
+        'arrives', arrives,
         'cancelledSales', cancelled_sales,
         'orders', orders,
         'totalOrders', total_orders,

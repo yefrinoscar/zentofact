@@ -93,11 +93,24 @@ test('un pedido desconocido no se adivina por SKU', () => {
   assert.equal(match.reason, 'unknown_order_id');
 });
 
-test('Estado de pago No Pagado cruza y no marca la venta pagada', () => {
-  const { paidSales, results } = matchSettlementLines([
+test('Estado de pago No Pagado cruza y deja la venta pendiente', () => {
+  const { paidSales, pendingSales, results } = matchSettlementLines([
     { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 189.9, commission: 0, other: 0, neto: 189.9, paid: false },
     { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 28.49, other: 0, neto: -28.49, paid: false },
   ], sales);
   assert.equal(results.filter((row) => row.status === 'matched').length, 2);
   assert.equal(paidSales.length, 0);
+  assert.equal(pendingSales.length, 1);
+  assert.equal(pendingSales[0].orderNumber, 'PV-10002');
+  assert.equal(pendingSales[0].amounts.neto, 161.41);
+});
+
+test('si hay líneas pagadas, la venta queda pagada y no pendiente', () => {
+  const { paidSales, pendingSales } = matchSettlementLines([
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 189.9, commission: 0, other: 0, neto: 189.9, paid: true },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 28.49, other: 0, neto: -28.49, paid: false },
+  ], sales);
+  assert.equal(paidSales.length, 1);
+  assert.equal(pendingSales.length, 0);
+  assert.equal(paidSales[0].amounts.neto, 189.9);
 });

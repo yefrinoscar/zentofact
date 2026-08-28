@@ -41,6 +41,45 @@ function money(value) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
 }
 
+async function upsertSaleSettlement(client, sale, status, importId) {
+  const paid = status === 'paid';
+  await client.query(
+    `insert into sale_settlements (
+       sale_source, sale_id, status, bruto, commission, other_fees, neto,
+       match_method, import_id, paid_at
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     on conflict (sale_source, sale_id) do update set
+       status = case
+         when sale_settlements.status = 'paid' or excluded.status = 'paid' then 'paid'
+         else 'pending'
+       end,
+       bruto = excluded.bruto,
+       commission = excluded.commission,
+       other_fees = excluded.other_fees,
+       neto = excluded.neto,
+       match_method = excluded.match_method,
+       import_id = excluded.import_id,
+       paid_at = case
+         when excluded.status = 'paid' then coalesce(sale_settlements.paid_at, excluded.paid_at)
+         else sale_settlements.paid_at
+       end,
+       updated_at = now()
+     where excluded.status = 'paid' or sale_settlements.status = 'pending'`,
+    [
+      sale.source,
+      sale.id,
+      status,
+      money(sale.amounts.bruto),
+      money(sale.amounts.commission),
+      money(sale.amounts.other),
+      money(sale.amounts.neto),
+      sale.matchMethods[0] || 'order_id',
+      importId,
+      paid ? new Date() : null,
+    ],
+  );
+}
+
 export async function loadSaleIndex(db, companyId = null) {
   const target = await resolvePool(db);
   const query = await target.query(
@@ -385,32 +424,10 @@ export async function importSettlementCsv(input = {}, db) {
       );
     }
     for (const sale of matched.paidSales) {
-      await client.query(
-        `insert into sale_settlements (
-           sale_source, sale_id, status, bruto, commission, other_fees, neto,
-           match_method, import_id, paid_at
-         ) values ($1,$2,'paid',$3,$4,$5,$6,$7,$8,now())
-         on conflict (sale_source, sale_id) do update set
-           status = 'paid',
-           bruto = excluded.bruto,
-           commission = excluded.commission,
-           other_fees = excluded.other_fees,
-           neto = excluded.neto,
-           match_method = excluded.match_method,
-           import_id = excluded.import_id,
-           paid_at = coalesce(sale_settlements.paid_at, excluded.paid_at),
-           updated_at = now()`,
-        [
-          sale.source,
-          sale.id,
-          money(sale.amounts.bruto),
-          money(sale.amounts.commission),
-          money(sale.amounts.other),
-          money(sale.amounts.neto),
-          sale.matchMethods[0] || 'order_id',
-          importId,
-        ],
-      );
+      await upsertSaleSettlement(client, sale, 'paid', importId);
+    }
+    for (const sale of matched.pendingSales) {
+      await upsertSaleSettlement(client, sale, 'pending', importId);
     }
     await client.query('commit');
     return mapImport(inserted.rows[0]);

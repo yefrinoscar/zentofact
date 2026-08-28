@@ -92,7 +92,7 @@ const UNPAID_CSV = [
   '27/08/2026;Sales;PV-10002;AG301;189.90;No Pagado',
 ].join('\n');
 
-test('No Pagado cruza el pedido y no inserta liquidación pagada', async () => {
+test('No Pagado cruza el pedido e inserta liquidación pendiente', async () => {
   const inserts = [];
   const db = {
     query: async (sql) => {
@@ -139,5 +139,8 @@ test('No Pagado cruza el pedido y no inserta liquidación pagada', async () => {
   const result = await importSettlementCsv({ filename: 'no-pagado.csv', csv: UNPAID_CSV, importedBy: 'admin' }, db);
   assert.equal(result.matchedCount, 1);
   assert.equal(result.paidSalesCount, 0);
-  assert.equal(inserts.some((row) => row.sql.includes('insert into sale_settlements')), false);
+  const settlement = inserts.find((row) => row.sql.includes('insert into sale_settlements'));
+  assert.equal(Boolean(settlement), true);
+  assert.equal(settlement.params[2], 'pending');
+  assert.match(settlement.sql, /sale_settlements\.status = 'pending'/);
 });

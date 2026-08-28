@@ -83,28 +83,44 @@ export function aggregateSaleAmounts(lines) {
   }), { bruto: 0, commission: 0, other: 0, neto: 0 });
 }
 
+function saleKey(sale) {
+  return `${sale.source}:${sale.id}`;
+}
+
+function withSaleAmounts(sale, lines, results) {
+  return {
+    ...sale,
+    amounts: aggregateSaleAmounts(lines),
+    matchMethods: [...new Set(results
+      .filter((result) => result.sale && saleKey(result.sale) === saleKey(sale))
+      .map((result) => result.method)
+      .filter(Boolean))],
+  };
+}
+
 export function matchSettlementLines(lines, sales) {
   const index = indexSales(sales);
   const results = lines.map((line) => {
     const match = matchSettlementLine(line, index);
     return { line, ...match };
   });
-  const paidBySale = new Map();
+  const bySale = new Map();
   for (const result of results) {
     if (result.status !== 'matched' || !result.sale) continue;
-    if (result.line.paid === false) continue;
-    const key = `${result.sale.source}:${result.sale.id}`;
-    const current = paidBySale.get(key) || { sale: result.sale, lines: [] };
-    current.lines.push(result.line);
-    paidBySale.set(key, current);
+    const key = saleKey(result.sale);
+    const current = bySale.get(key) || { sale: result.sale, paidLines: [], pendingLines: [] };
+    if (result.line.paid === false) current.pendingLines.push(result.line);
+    else current.paidLines.push(result.line);
+    bySale.set(key, current);
   }
-  const paidSales = [...paidBySale.values()].map((entry) => ({
-    ...entry.sale,
-    amounts: aggregateSaleAmounts(entry.lines),
-    matchMethods: [...new Set(results
-      .filter((result) => result.sale && `${result.sale.source}:${result.sale.id}` === `${entry.sale.source}:${entry.sale.id}`)
-      .map((result) => result.method)
-      .filter(Boolean))],
-  }));
-  return { results, paidSales };
+  const paidSales = [];
+  const pendingSales = [];
+  for (const entry of bySale.values()) {
+    if (entry.paidLines.length) {
+      paidSales.push(withSaleAmounts(entry.sale, entry.paidLines, results));
+    } else {
+      pendingSales.push(withSaleAmounts(entry.sale, entry.pendingLines, results));
+    }
+  }
+  return { results, paidSales, pendingSales };
 }
