@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Loader2, Search, Upload } from 'lucide-react';
+import { Check, Copy, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
   chargeKindLabel,
@@ -11,11 +11,13 @@ import {
   percentLabel,
   saleDateLabel,
   saleOverview,
+  shortImportFilename,
   shortProductName,
   skuLabel,
   unitsLabel,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
+import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -266,16 +268,17 @@ export default function Pagos() {
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const csv = decodeSettlementCsv(await file.arrayBuffer());
-      return api.importSettlementCsv({ filename: file.name, csv });
-    },
-    onSuccess: async (result) => {
-      setError('');
-      setNotice(importSummary(result));
+      const result = await api.importSettlementCsv({ filename: file.name, csv });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pagos-imports'] }),
         queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
         queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
       ]);
+      return result;
+    },
+    onSuccess: (result) => {
+      setError('');
+      setNotice(importSummary(result));
     },
     onError: (nextError) => {
       setNotice('');
@@ -318,7 +321,7 @@ export default function Pagos() {
           <SelectContent>
             <SelectItem value="all">Todos los archivos</SelectItem>
             {imports.map((item) => (
-              <SelectItem key={item.id} value={String(item.id)}>{item.filename.replace(/^NewReportTransaction_/, '')}</SelectItem>
+              <SelectItem key={item.id} value={String(item.id)}>{shortImportFilename(item.filename)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -334,16 +337,21 @@ export default function Pagos() {
           }}
         />
         <Button type="button" onClick={() => fileInput.current?.click()} disabled={upload.isPending}>
-          {upload.isPending ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Upload data-icon="inline-start" />}
-          Subir CSV
+          {upload.isPending ? <WorkLoaderMark data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+          {upload.isPending ? 'Leyendo CSV' : 'Subir CSV'}
         </Button>
       </div>
 
-      {overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
-      {notice ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
+      {upload.isPending ? (
+        <WorkLoader
+          label="Leyendo CSV"
+          detail={shortImportFilename(upload.variables?.name)}
+        />
+      ) : overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
+      {notice && !upload.isPending ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      <TablePanel aria-label="Cobros de Falabella por venta">
+      <TablePanel aria-busy={upload.isPending} aria-label="Cobros de Falabella por venta">
         <Table>
           <TableHeader>
             <TableRow>

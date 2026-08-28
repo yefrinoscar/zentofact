@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSettlementCsv, importSummary, paymentStatusLabel, saleOverview, settlementMethodLabel, settlementStatusLabel, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { decodeSettlementCsv, formatElapsed, importSummary, paymentStatusLabel, saleOverview, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya estaba cargado.');
   assert.equal(importSummary({ reused: false, matchedCount: 2, unmatchedCount: 3, paidSalesCount: 1 }), '2 cruzadas · 3 sin cruzar · 1 pagadas');
+  assert.equal(shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN.csv'), 'FAPE-SCDE75A-20260820-PEN.csv');
+  assert.equal(formatElapsed(14), '1.4s');
+  assert.equal(formatElapsed(615), '1m 1.5s');
   assert.equal(unmatchedReasonLabel('unknown_order_id'), 'Pedido no está en las ventas');
   assert.equal(paymentStatusLabel('Pagado'), 'Pagado');
   assert.equal(paymentStatusLabel('No Pagado'), 'No pagado');

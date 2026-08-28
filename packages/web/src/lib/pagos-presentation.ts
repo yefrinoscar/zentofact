@@ -37,6 +37,16 @@ export function importSummary(item: { reused?: boolean; matchedCount?: number; u
   return `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
 }
 
+export function shortImportFilename(name: string | null | undefined) {
+  return String(name || '').replace(/^NewReportTransaction_/, '').trim();
+}
+
+export function formatElapsed(deciseconds: number) {
+  const total = Math.max(0, Number(deciseconds) || 0) / 10;
+  if (total < 60) return `${total.toFixed(1)}s`;
+  return `${Math.floor(total / 60)}m ${(total % 60).toFixed(1)}s`;
+}
+
 function headerLooksLikeSettlement(text: string) {
   const header = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
   const normalized = header
