@@ -9,7 +9,6 @@ import {
   ArrowUpRight,
   CalendarDays,
   ChartNoAxesCombined,
-  Banknote,
   CircleDollarSign,
   RefreshCw,
   Store,
@@ -173,7 +172,7 @@ function KpiCard({
   value: string;
   detail: string;
   change?: number | null;
-  icon: typeof Banknote;
+  icon: typeof CircleDollarSign;
   tone?: 'arrive' | 'wait';
 }) {
   const wait = tone === 'wait';
@@ -213,31 +212,35 @@ function KpiCard({
 function SalesSummaryCard({ summary, change }: { summary: any; change?: number | null }) {
   const orders = Number(summary.orders || 0);
   return (
-    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20">
+    <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20 sm:col-span-2">
       <CardContent className="px-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="grid grid-cols-2 divide-x divide-white/15">
+          <div className="pr-4 sm:pr-6">
             <p className="text-xs font-medium text-primary-foreground/70">Facturado</p>
-            <p className="mt-2 whitespace-nowrap text-[1.55rem] font-semibold tracking-[-0.04em] tabular-nums 2xl:text-[1.7rem]">
+            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums sm:text-[1.55rem] 2xl:text-[1.7rem]">
               {money.format(summary.netSales || 0)}
             </p>
+            <div className="mt-4 flex min-h-4 items-center justify-between gap-2 text-xs">
+              <span className="truncate text-primary-foreground/65">
+                {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
+              </span>
+              {change === null ? (
+                <span className="shrink-0 font-medium text-primary-foreground/65">Sin base previa</span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-0.5 font-semibold text-white">
+                  {(change || 0) >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
+                  {Math.abs(change || 0).toFixed(1)}%
+                </span>
+              )}
+            </div>
           </div>
-          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
-            <CircleDollarSign className="size-[18px]" />
-          </span>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-2 text-xs">
-          <span className="text-primary-foreground/65">
-            {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
-          </span>
-          {change === null ? (
-            <span className="font-medium text-primary-foreground/65">Sin base previa</span>
-          ) : (
-            <span className="inline-flex items-center gap-0.5 font-semibold text-white">
-              {(change || 0) >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-              {Math.abs(change || 0).toFixed(1)}%
-            </span>
-          )}
+          <div className="pl-4 sm:pl-6">
+            <p className="text-xs font-medium text-primary-foreground/70">Neto</p>
+            <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums text-emerald-100 sm:text-[1.55rem] 2xl:text-[1.7rem]">
+              {money.format(summary.arrives || 0)}
+            </p>
+            <p className="mt-4 min-h-4 text-xs text-primary-foreground/65">Te llega</p>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -480,13 +483,6 @@ export default function Dashboard() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
-        <KpiCard
-          title="Neto"
-          value={money.format(summary.arrives || 0)}
-          detail="Te llega"
-          icon={Banknote}
-          tone="arrive"
-        />
         <KpiCard
           title="Pagado"
           value={money.format(summary.paidSales || 0)}
