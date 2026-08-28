@@ -249,6 +249,7 @@ export default function Pagos() {
   const [importId, setImportId] = useState<'all' | string>('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState('');
+  const [noticeReused, setNoticeReused] = useState(false);
   const [error, setError] = useState('');
   const [readingName, setReadingName] = useState('');
   const reading = Boolean(readingName);
@@ -287,10 +288,12 @@ export default function Pagos() {
     },
     onSuccess: (result) => {
       setError('');
+      setNoticeReused(Boolean(result.reused));
       setNotice(importSummary(result));
     },
     onError: (nextError) => {
       setNotice('');
+      setNoticeReused(false);
       setError((nextError as Error).message || 'No se pudo leer el CSV.');
     },
     onSettled: () => {
@@ -348,6 +351,7 @@ export default function Pagos() {
             if (!file) return;
             setError('');
             setNotice('');
+            setNoticeReused(false);
             setReadingName(file.name);
             upload.mutate(file);
           }}
@@ -373,8 +377,20 @@ export default function Pagos() {
           label="Leyendo CSV"
           detail={shortImportFilename(readingName)}
         />
-      ) : overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
-      {notice && !reading ? <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p> : null}
+      ) : (
+        <>
+          {notice ? (
+            <p className={cn(
+              'text-sm',
+              noticeReused ? 'text-amber-800 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400',
+            )}
+            >
+              {notice}
+            </p>
+          ) : null}
+          {overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
+        </>
+      )}
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <TablePanel aria-busy={reading} aria-label="Cobros de Falabella por venta">

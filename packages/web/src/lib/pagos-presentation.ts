@@ -31,9 +31,23 @@ export function paymentStatusLabel(status: string | null | undefined) {
   return status || '—';
 }
 
-export function importSummary(item: { reused?: boolean; matchedCount?: number; unmatchedCount?: number; paidSalesCount?: number } | null | undefined) {
+export function importSummary(item: {
+  reused?: boolean;
+  matchedCount?: number;
+  unmatchedCount?: number;
+  paidSalesCount?: number;
+  filename?: string | null;
+  importedAt?: string | null;
+} | null | undefined) {
   if (!item) return '';
-  if (item.reused) return 'Este archivo ya estaba cargado.';
+  if (item.reused) {
+    const file = shortImportFilename(item.filename);
+    const when = saleDateLabel(item.importedAt);
+    if (file && when) return `Este contenido ya se cruzó · ${file} · ${when}`;
+    if (file) return `Este contenido ya se cruzó · ${file}`;
+    if (when) return `Este contenido ya se cruzó · ${when}`;
+    return 'Este contenido ya se cruzó.';
+  }
   return `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
 }
 
