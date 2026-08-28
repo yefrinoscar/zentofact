@@ -1,4 +1,4 @@
-import { applyOwnFleetShipping } from './own-fleet-shipping.js';
+import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
 
@@ -65,6 +65,11 @@ function assertManualEnvioCarrier(shipping, source) {
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
     throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros.');
+  }
+  const lat = Number(shipping?.lat);
+  const lng = Number(shipping?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+    throw new Error(OUT_OF_PERU_MESSAGE);
   }
 }
 

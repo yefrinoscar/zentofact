@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, MapPin, Navigation, Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { peruPlaceFromComponents, placeAtCoordinates } from '../lib/own-fleet-shipping';
+import {
+  OUT_OF_PERU_MESSAGE,
+  PERU_BBOX,
+  countryFromComponents,
+  isInPeru,
+  peruPlaceFromComponents,
+  placeAtCoordinates,
+} from '../lib/own-fleet-shipping';
 import {
   indexedPlaceToDestination,
   peruPlaceById,
@@ -27,11 +34,12 @@ type Prediction = {
   localPlace?: IndexedPeruPlace;
 };
 
-const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
-
-function inPeru(lat: number, lng: number) {
-  return lat >= PERU_BBOX.minLat && lat <= PERU_BBOX.maxLat && lng >= PERU_BBOX.minLng && lng <= PERU_BBOX.maxLng;
-}
+const PERU_MAP_BOUNDS = {
+  north: PERU_BBOX.maxLat,
+  south: PERU_BBOX.minLat,
+  west: PERU_BBOX.minLng,
+  east: PERU_BBOX.maxLng,
+};
 
 function predictionFromLocal(place: IndexedPeruPlace): Prediction {
   return {
@@ -106,38 +114,63 @@ function destinationAtPin(
   };
 }
 
-function placeFromGoogle(result: any, lat: number, lng: number): MapPlace {
-  const place = peruPlaceFromComponents(result?.address_components || result?.addressComponents || []);
+function placeFromGoogle(result: any, lat: number, lng: number): MapPlace | null {
+  const components = result?.address_components || result?.addressComponents || [];
+  const country = countryFromComponents(components);
+  if (!isInPeru(lat, lng, country)) return null;
+  const place = peruPlaceFromComponents(components);
   return destinationAtPin(lat, lng, {
     ...place,
     label: String(result?.formatted_address || result?.formattedAddress || result?.name || result?.displayName || ''),
   });
 }
 
+function mapSuggestions(suggestions: any[] | null | undefined): Prediction[] {
+  return (suggestions || []).slice(0, 6).map((item: any) => {
+    const prediction = item.placePrediction;
+    return {
+      placeId: String(prediction?.placeId || ''),
+      main: String(prediction?.mainText?.toString?.() || prediction?.mainText?.text || prediction?.text?.toString?.() || ''),
+      secondary: String(prediction?.secondaryText?.toString?.() || prediction?.secondaryText?.text || ''),
+    };
+  }).filter((row: Prediction) => row.placeId);
+}
+
 async function fetchPredictions(term: string): Promise<Prediction[]> {
   const google = window.google;
   if (google?.maps?.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
-    const { suggestions } = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+    const request = {
       input: term,
       includedRegionCodes: ['pe'],
       language: 'es',
       region: 'pe',
-    });
-    return (suggestions || []).slice(0, 6).map((item: any) => {
-      const prediction = item.placePrediction;
-      return {
-        placeId: String(prediction?.placeId || ''),
-        main: String(prediction?.mainText?.toString?.() || prediction?.mainText?.text || prediction?.text?.toString?.() || ''),
-        secondary: String(prediction?.secondaryText?.toString?.() || prediction?.secondaryText?.text || ''),
-      };
-    }).filter((row: Prediction) => row.placeId);
+    };
+    try {
+      const { suggestions } = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        ...request,
+        locationRestriction: PERU_MAP_BOUNDS,
+      });
+      return mapSuggestions(suggestions);
+    } catch {
+      const { suggestions } = await google.maps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+      return mapSuggestions(suggestions);
+    }
   }
 
   return new Promise((resolve) => {
     const service = new google.maps.places.AutocompleteService();
     const timer = window.setTimeout(() => resolve([]), 2500);
     service.getPlacePredictions(
-      { input: term, componentRestrictions: { country: 'pe' }, language: 'es' },
+      {
+        input: term,
+        componentRestrictions: { country: 'pe' },
+        language: 'es',
+        bounds: new google.maps.LatLngBounds(
+          { lat: PERU_BBOX.minLat, lng: PERU_BBOX.minLng },
+          { lat: PERU_BBOX.maxLat, lng: PERU_BBOX.maxLng },
+        ),
+        strictBounds: true,
+      },
       (results: any[] | null, status: string) => {
         window.clearTimeout(timer);
         if (status !== 'OK' || !Array.isArray(results)) {
@@ -204,25 +237,66 @@ export function PlacePicker({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
   const [localMode, setLocalMode] = useState(false);
+  const valueRef = useRef(value);
+  valueRef.current = value;
   const point = value || LIMA;
+
+  const restoreMarker = () => {
+    const fallback = valueRef.current || LIMA;
+    markerRef.current?.setPosition(fallback);
+    mapRef.current?.panTo(fallback);
+  };
+
+  const rejectOutsidePeru = () => {
+    setError(OUT_OF_PERU_MESSAGE);
+    restoreMarker();
+  };
 
   const applyLatLng = (lat: number, lng: number, readyMade?: MapPlace) => {
     if (readyMade) {
+      if (!isInPeru(readyMade.lat, readyMade.lng)) {
+        rejectOutsidePeru();
+        return;
+      }
+      setError('');
+      markerRef.current?.setPosition(readyMade);
       onChange(readyMade);
+      return;
+    }
+    if (!isInPeru(lat, lng)) {
+      rejectOutsidePeru();
       return;
     }
     const geocoder = geocoderRef.current;
     if (!geocoder) {
+      setError('');
+      markerRef.current?.setPosition({ lat, lng });
       onChange(destinationAtPin(lat, lng));
       return;
     }
     geocoder.geocode({ location: { lat, lng }, language: 'es', region: 'PE' }, (results: any[], status: string) => {
-      if (status === 'OK' && results?.[0]) onChange(placeFromGoogle(results[0], lat, lng));
-      else onChange(destinationAtPin(lat, lng));
+      if (status === 'OK' && results?.[0]) {
+        const mapped = placeFromGoogle(results[0], lat, lng);
+        if (!mapped) {
+          rejectOutsidePeru();
+          return;
+        }
+        setError('');
+        markerRef.current?.setPosition({ lat, lng });
+        onChange(mapped);
+        return;
+      }
+      setError('');
+      markerRef.current?.setPosition({ lat, lng });
+      onChange(destinationAtPin(lat, lng));
     });
   };
 
   const showPlace = (place: MapPlace) => {
+    if (!isInPeru(place.lat, place.lng)) {
+      rejectOutsidePeru();
+      return;
+    }
     mapRef.current?.panTo(place);
     mapRef.current?.setZoom(17);
     markerRef.current?.setPosition(place);
@@ -230,6 +304,7 @@ export function PlacePicker({
     setQuery('');
     setPredictions([]);
     setActiveIndex(-1);
+    setError('');
   };
 
   const pickPrediction = async (prediction: Prediction) => {
@@ -240,6 +315,7 @@ export function PlacePicker({
     }
     const place = await fetchPlace(prediction.placeId);
     if (place) showPlace(place);
+    else rejectOutsidePeru();
   };
 
   useEffect(() => {
@@ -261,6 +337,10 @@ export function PlacePicker({
           cameraControl: false,
           gestureHandling: 'greedy',
           clickableIcons: false,
+          restriction: {
+            latLngBounds: PERU_MAP_BOUNDS,
+            strictBounds: true,
+          },
         });
         const marker = new google.maps.Marker({
           map,
@@ -269,10 +349,7 @@ export function PlacePicker({
           animation: google.maps.Animation.DROP,
         });
         map.addListener('click', (event: any) => {
-          const lat = event.latLng.lat();
-          const lng = event.latLng.lng();
-          marker.setPosition({ lat, lng });
-          applyLatLng(lat, lng);
+          applyLatLng(event.latLng.lat(), event.latLng.lng());
         });
         marker.addListener('dragend', () => {
           const position = marker.getPosition();
@@ -358,15 +435,14 @@ export function PlacePicker({
       (position) => {
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
+        if (!isInPeru(lat, lng)) {
+          setLocating(false);
+          rejectOutsidePeru();
+          return;
+        }
         mapRef.current?.panTo({ lat, lng });
         mapRef.current?.setZoom(17);
-        markerRef.current?.setPosition({ lat, lng });
         if (localMode) {
-          if (!inPeru(lat, lng)) {
-            setLocating(false);
-            setError('Estás fuera del Perú. Busca el distrito o el departamento.');
-            return;
-          }
           const atPin = destinationAtPin(lat, lng);
           if (atPin.district || atPin.department) showPlace(atPin);
           else applyLatLng(lat, lng);

@@ -11,6 +11,8 @@ import {
   quoteOwnFleetShipping,
   resolveShippingZone,
   saleTotals,
+  countryFromComponents,
+  isInPeru,
 } from './own-fleet-shipping.ts';
 
 test('los tramos de distancia son 10, 20 y 25 con tope', () => {
@@ -107,6 +109,24 @@ test('peruPlaceFromComponents extrae distrito limeño y departamento de provinci
     { long_name: 'Lima', types: ['administrative_area_level_2'] },
     { long_name: 'Provincia de Lima', types: ['administrative_area_level_1'] },
   ]).district, 'San Miguel');
+});
+
+test('isInPeru rechaza coordenadas o país fuera del Perú', () => {
+  assert.equal(isInPeru(-12.0776, -77.0905), true);
+  assert.equal(isInPeru(-16.409, -71.537), true);
+  assert.equal(isInPeru(-11.739, -77.15), true);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'PE'), true);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'Perú'), true);
+  assert.equal(isInPeru(40.4168, -3.7038), false);
+  assert.equal(isInPeru(-34.6037, -58.3816), false);
+  assert.equal(isInPeru(-3.48, -80.17, 'Ecuador'), false);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'Chile'), false);
+  assert.equal(countryFromComponents([
+    { short_name: 'PE', long_name: 'Peru', types: ['country', 'political'] },
+  ]), 'PE');
+  assert.equal(countryFromComponents([
+    { shortName: 'CL', longName: 'Chile', types: ['country'] },
+  ]), 'CL');
 });
 
 test('la cotización suma distrito y distancia desde La Marina', () => {

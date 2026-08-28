@@ -84,3 +84,19 @@ test('Ancón, Huaral y provincias no tienen movilidad propia', () => {
     /Nosotros no llega ahí/,
   );
 });
+
+test('applyOwnFleetShipping rechaza un pin fuera del Perú', () => {
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: 40.4168,
+        lng: -3.7038,
+      },
+    }),
+    /Esa dirección no está en el Perú/,
+  );
+});

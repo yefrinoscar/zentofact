@@ -13,8 +13,10 @@ export const DISTANCE_TIERS = [
 ];
 
 export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
+export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
 export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
+export const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
 
 const LIMA_DISTRICT_AMOUNTS = {
   'san miguel': 8,
@@ -174,6 +176,20 @@ function foldName(value) {
     .replace(/^(distrito|provincia|departamento)\s+(de\s+la\s+|de\s+|del\s+)?/, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+export function inPeruBounds(lat, lng) {
+  return lat >= PERU_BBOX.minLat
+    && lat <= PERU_BBOX.maxLat
+    && lng >= PERU_BBOX.minLng
+    && lng <= PERU_BBOX.maxLng;
+}
+
+export function isInPeru(lat, lng, country) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  const key = foldName(country || '');
+  if (key && key !== 'pe' && key !== 'peru') return false;
+  return inPeruBounds(lat, lng);
 }
 
 function titleCase(value) {
@@ -358,6 +374,9 @@ export function applyOwnFleetShipping(order) {
   const lng = Number(shipping.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     throw new Error('Busca el distrito o el departamento de envío.');
+  }
+  if (!isInPeru(lat, lng)) {
+    throw new Error(OUT_OF_PERU_MESSAGE);
   }
   const atPin = placeAtCoordinates(lat, lng);
   const quote = quoteOwnFleetShipping({

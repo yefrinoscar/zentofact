@@ -16,6 +16,10 @@ export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
 export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
 export const OWN_FLEET_COVERAGE_HINT = 'Movilidad propia. Solo Lima metropolitana.';
+export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
+
+/** Caja que cubre el territorio peruano. Un país vecino puede colarse; el país de Google lo corta. */
+export const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
 
 const LIMA_DISTRICT_AMOUNTS: Record<string, number> = {
   'san miguel': 8,
@@ -269,8 +273,33 @@ type AddressComponent = {
   long_name?: string;
   longName?: string;
   longText?: string;
+  short_name?: string;
+  shortName?: string;
+  shortText?: string;
   types?: string[];
 };
+
+export function inPeruBounds(lat: number, lng: number) {
+  return lat >= PERU_BBOX.minLat
+    && lat <= PERU_BBOX.maxLat
+    && lng >= PERU_BBOX.minLng
+    && lng <= PERU_BBOX.maxLng;
+}
+
+export function countryFromComponents(components: AddressComponent[] = []) {
+  const match = components.find((item) => (item.types || []).includes('country'));
+  if (!match) return '';
+  const short = String(match.short_name || match.shortName || match.shortText || '').trim();
+  const long = String(match.long_name || match.longName || match.longText || '').trim();
+  return short || long;
+}
+
+export function isInPeru(lat: number, lng: number, country?: string | null) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  const key = foldName(country || '');
+  if (key && key !== 'pe' && key !== 'peru') return false;
+  return inPeruBounds(lat, lng);
+}
 
 export function foldName(value: string) {
   return String(value || '')

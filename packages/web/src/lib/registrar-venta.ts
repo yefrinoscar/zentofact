@@ -2,6 +2,8 @@ import {
   OWN_FLEET_CARRIER,
   OWN_FLEET_ORIGIN,
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
+  OUT_OF_PERU_MESSAGE,
+  isInPeru,
   placeAtCoordinates,
   quoteOwnFleetShipping,
   saleTotals,
@@ -145,6 +147,13 @@ export function validateManualSale(input: ManualSaleInput) {
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
     return 'Busca el distrito de Lima metropolitana.';
+  }
+  if (input.delivery === 'envio' && input.dropoffPlace) {
+    const lat = Number(input.dropoffPlace.lat);
+    const lng = Number(input.dropoffPlace.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+      return OUT_OF_PERU_MESSAGE;
+    }
   }
   if (input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER) {
     const quote = quoteOwnFleetShipping(input.dropoffPlace);

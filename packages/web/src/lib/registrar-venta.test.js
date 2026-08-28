@@ -156,6 +156,18 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
     })),
     'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'shaloom',
+      dropoffPlace: {
+        label: 'Madrid, España',
+        district: 'Madrid',
+        lat: 40.4168,
+        lng: -3.7038,
+      },
+    })),
+    'Esa dirección no está en el Perú.',
+  );
 });
 
 test('validateManualSale permite recojo sin repartidor ni mapa', () => {
