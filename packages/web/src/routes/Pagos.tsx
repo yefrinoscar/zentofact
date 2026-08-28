@@ -445,14 +445,15 @@ export default function Pagos() {
               </SheetHeader>
               <div className="px-5 py-4">
                 <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
-                <div className="border-y border-border py-1">
-                  <p className="pt-2 text-xs font-medium text-muted-foreground">Falabella cobra · comisión + cobro envío</p>
+                <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
+                  <p className="pt-2 text-xs font-medium">Falabella cobra</p>
+                  <p className="text-[11px] text-muted-foreground">Comisión + cobro envío</p>
                   <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
                   <ChargeRow label="Cobro envío" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
                   <ChargeRow
                     label="Se queda"
                     amount={selected.take || 0}
-                    hint="Suma de comisión y cobro envío."
+                    hint="Suma de los dos."
                     rate={selected.takeRate}
                     tone="take"
                     strong
