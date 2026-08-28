@@ -146,6 +146,20 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
     validateManualSale(validSale({
       shippingCarrier: 'nosotros',
       dropoffPlace: {
+        label: 'Huaral',
+        district: 'Huaral',
+        province: 'Huaral',
+        department: 'Lima',
+        lat: -11.495,
+        lng: -77.208,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
         label: 'Ancón',
         district: 'Ancón',
         province: 'Lima',
@@ -154,7 +168,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -77.15,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    null,
   );
   assert.equal(
     validateManualSale(validSale({

@@ -3,16 +3,17 @@ import assert from 'node:assert/strict';
 import {
   DISTANCE_TIERS,
   MAX_DISTANCE_AMOUNT,
+  METRO_POINTS,
   OWN_FLEET_ORIGIN,
   PROVINCE_DEPARTMENT_AMOUNT,
+  countryFromComponents,
   distanceAmountForKm,
   haversineKm,
+  isInPeru,
   peruPlaceFromComponents,
   quoteOwnFleetShipping,
   resolveShippingZone,
   saleTotals,
-  countryFromComponents,
-  isInPeru,
 } from './own-fleet-shipping.ts';
 
 test('los tramos de distancia son 10, 20 y 25 con tope', () => {
@@ -207,8 +208,21 @@ test('la cotización usa el distrito del pin, no el texto buscado', () => {
     lat: -11.739,
     lng: -77.15,
   });
-  assert.equal(ancon?.charged, false);
+  assert.equal(ancon?.charged, true);
   assert.equal(ancon?.zoneLabel, 'Ancón');
+  assert.equal(ancon?.districtAmount, 20);
+});
+
+test('la movilidad propia cubre Lima metropolitana: 43 distritos y Callao', () => {
+  const lima = METRO_POINTS.filter((place) => place.department === 'Lima').map((place) => place.district);
+  const callao = METRO_POINTS.filter((place) => place.department === 'Callao').map((place) => place.district);
+  assert.equal(lima.length, 43);
+  assert.equal(callao.length, 7);
+  assert.ok(lima.includes('Ancón'));
+  assert.ok(lima.includes('Santa Rosa'));
+  assert.ok(lima.includes('Pucusana'));
+  assert.ok(callao.includes('Mi Perú'));
+  assert.equal(lima.includes('Huaral'), false);
 });
 
 test('saleTotals agrega productos, distrito y distancia al total', () => {

@@ -59,6 +59,7 @@ const LIMA_DISTRICT_AMOUNTS: Record<string, number> = {
   carabayllo: 20,
   'puente piedra': 20,
   'santa rosa': 20,
+  ancon: 20,
   'villa el salvador': 20,
   'villa maria del triunfo': 20,
   vmt: 20,
@@ -88,7 +89,7 @@ const CALLAO_DISTRICT_AMOUNTS: Record<string, number> = {
 
 const GENERIC_LIMA_DISTRICT = new Set(['lima', 'cercado', 'cercado de lima']);
 
-/** Centroides de distritos con tarifa. El pin se asigna al más cercano, no al texto buscado. */
+/** Centroides de Lima metropolitana: 43 distritos de Lima y 7 del Callao. Huaral y Cañete no entran. */
 export const METRO_SNAP_MAX_KM = 20;
 
 type ZonePoint = {
@@ -109,7 +110,7 @@ function zonePoint(
   return { district, province, department, lat, lng };
 }
 
-const METRO_POINTS: ZonePoint[] = [
+export const METRO_POINTS: ZonePoint[] = [
   zonePoint('San Miguel', 'Lima', 'Lima', -12.0776, -77.0905),
   zonePoint('Magdalena Del Mar', 'Lima', 'Lima', -12.095, -77.07),
   zonePoint('Pueblo Libre', 'Lima', 'Lima', -12.074, -77.062),
@@ -140,6 +141,7 @@ const METRO_POINTS: ZonePoint[] = [
   zonePoint('Carabayllo', 'Lima', 'Lima', -11.873, -77.032),
   zonePoint('Puente Piedra', 'Lima', 'Lima', -11.867, -77.076),
   zonePoint('Santa Rosa', 'Lima', 'Lima', -11.796, -77.156),
+  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
   zonePoint('Villa El Salvador', 'Lima', 'Lima', -12.213, -76.937),
   zonePoint('Villa María Del Triunfo', 'Lima', 'Lima', -12.162, -76.943),
   zonePoint('Lurín', 'Lima', 'Lima', -12.274, -76.87),
@@ -189,7 +191,6 @@ const DEPARTMENT_POINTS: ZonePoint[] = [
 ];
 
 const UNCOVERED_POINTS: ZonePoint[] = [
-  zonePoint('Ancón', 'Lima', 'Lima', -11.739, -77.15),
   zonePoint('Huaral', 'Huaral', 'Lima', -11.495, -77.208),
   zonePoint('San Vicente De Cañete', 'Cañete', 'Lima', -13.077, -76.387),
   ...DEPARTMENT_POINTS.filter((place) => foldName(place.department) !== 'lima'),

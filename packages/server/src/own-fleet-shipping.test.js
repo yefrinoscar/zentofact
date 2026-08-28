@@ -57,7 +57,7 @@ test('el pin en Surquillo cobra Surquillo aunque el payload diga San Miguel', ()
   assert.equal(quoted.shipping.districtAmount, 12);
 });
 
-test('Ancón, Huaral y provincias no tienen movilidad propia', () => {
+test('Huaral y provincias no tienen movilidad propia; Ancón sí porque es Lima metropolitana', () => {
   const quote = quoteOwnFleetShipping({
     district: 'Cercado',
     province: 'Arequipa',
@@ -70,6 +70,20 @@ test('Ancón, Huaral y provincias no tienen movilidad propia', () => {
   assert.equal(quote.total, 0);
   assert.ok(quote.distanceKm > 25);
 
+  const ancon = applyOwnFleetShipping({
+    subtotal: 250,
+    total: 250,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      lat: -11.739,
+      lng: -77.15,
+    },
+  });
+  assert.equal(ancon.shipping.district, 'Ancón');
+  assert.equal(ancon.shipping.districtAmount, 20);
+  assert.ok(ancon.shippingAmount > 20);
+
   assert.throws(
     () => applyOwnFleetShipping({
       subtotal: 250,
@@ -77,8 +91,8 @@ test('Ancón, Huaral y provincias no tienen movilidad propia', () => {
       shipping: {
         type: 'envio',
         carrier: 'nosotros',
-        lat: -11.739,
-        lng: -77.15,
+        lat: -11.495,
+        lng: -77.208,
       },
     }),
     /Nosotros no llega ahí/,
