@@ -1727,14 +1727,28 @@ const DDL = `
      AND lower(transaction_type) LIKE '%comprador%';
 
   UPDATE sale_settlements ss
-     SET other_fees = sub.other_fees,
+     SET bruto = sub.bruto,
+         commission = sub.commission,
+         other_fees = sub.other_fees,
+         neto = sub.neto,
          updated_at = now()
     FROM (
-      SELECT sale_source, sale_id, COALESCE(SUM(other_fees), 0) AS other_fees
-        FROM settlement_lines
-       WHERE match_status = 'matched'
-         AND sale_id IS NOT NULL
-         AND sale_source IS NOT NULL
+      SELECT sale_source,
+             sale_id,
+             COALESCE(SUM(bruto), 0) AS bruto,
+             COALESCE(SUM(commission), 0) AS commission,
+             COALESCE(SUM(other_fees), 0) AS other_fees,
+             COALESCE(SUM(neto), 0) AS neto
+        FROM (
+          SELECT DISTINCT ON (sale_source, sale_id, item_id, kind, round(neto, 2))
+                 sale_source, sale_id, bruto, commission, other_fees, neto
+            FROM settlement_lines
+           WHERE match_status = 'matched'
+             AND sale_id IS NOT NULL
+             AND sale_source IS NOT NULL
+             AND item_id <> ''
+           ORDER BY sale_source, sale_id, item_id, kind, round(neto, 2), import_id DESC, id DESC
+        ) unique_lines
        GROUP BY sale_source, sale_id
     ) sub
    WHERE ss.sale_source = sub.sale_source

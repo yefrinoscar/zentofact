@@ -185,6 +185,21 @@ test('agrupa unidades iguales en un producto y cobra envío por tipo', () => {
   assert.equal(byKind.buyer_shipping, undefined);
 });
 
+test('el mismo ítem en dos CSV no duplica comisión ni logística', () => {
+  const once = Array.from({ length: 11 }, (_, index) => unitLines(`item-${index + 1}`)).flat();
+  const csv = [HEADER, ...once, ...once].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.itemCount, 11);
+  assert.equal(sale.bruto, 98.89);
+  assert.equal(sale.commission, 14.85);
+  assert.equal(sale.shipping, 42.9);
+  assert.equal(sale.take, 57.75);
+  assert.equal(sale.neto, 41.14);
+  const byKind = Object.fromEntries(sale.chargeGroups.map((group) => [group.kind, group]));
+  assert.equal(byKind.commission.count, 11);
+  assert.equal(byKind.shipping.count, 11);
+});
+
 test('pedidos mixtos quedan un grupo por SKU y precio', () => {
   const csv = [
     HEADER,

@@ -269,9 +269,32 @@ export function groupSaleCharges(charges) {
     ));
 }
 
+function uniqueSettlementLines(lines) {
+  const kept = [];
+  const seen = new Set();
+  for (const line of lines || []) {
+    const itemId = String(line.itemId || '').trim();
+    if (!itemId) {
+      kept.push(line);
+      continue;
+    }
+    const kind = line.chargeKind || classifyChargeKind(line.type);
+    const key = [
+      String(line.orderId || '').trim(),
+      itemId,
+      kind,
+      round2(signedAmount(line)).toFixed(2),
+    ].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(line);
+  }
+  return kept;
+}
+
 export function aggregateSettlementSales(lines) {
   const groups = new Map();
-  for (const line of lines || []) {
+  for (const line of uniqueSettlementLines(lines)) {
     const orderId = String(line.orderId || '').trim();
     if (!orderId) continue;
     const current = groups.get(orderId) || emptySale(orderId, line);
