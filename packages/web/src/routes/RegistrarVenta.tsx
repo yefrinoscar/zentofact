@@ -59,6 +59,8 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { dateFromKey } from '../lib/documentDateRange';
+import { RegistrarVentaPrototype } from './registrar-venta-prototype';
+import type { SaleFormView } from './registrar-venta-prototype/view';
 
 type ChannelAccount = {
   id: number;
@@ -612,6 +614,95 @@ export default function RegistrarVenta() {
     : channelMissing
       ? 'Todavía no hay un canal de venta manual habilitado.'
       : '';
+
+  const fillDemo = () => {
+    setCustomerName('Ana Pérez');
+    setCustomerPhone('999111222');
+    setSaleSource('whatsapp');
+    setDocumentRequest('boleta');
+    setBoletaIdentity('dni');
+    setCustomerDocumentNumber('12345678');
+    setDelivery('envio');
+    setShippingCarrier('nosotros');
+    setPaymentMethod('yape_plin');
+    setLines([{
+      id: 'demo-ag301',
+      productId: 1,
+      sku: 'AG301',
+      name: 'Coche Bastón tipo Paraguas Liviano plegable Celeste',
+      catalogPrice: 189.9,
+      unitPrice: 189.9,
+      quantity: 1,
+    }]);
+  };
+
+  const view: SaleFormView = {
+    afterSavePath,
+    setupError,
+    isAdmin,
+    creating,
+    submitDisabled: creating || !!loadError || channelMissing,
+    saleSource,
+    setSaleSource,
+    customerName,
+    setCustomerName: (value) => {
+      setCustomerName(value);
+      clearFieldError('customer');
+    },
+    customerPhone,
+    setCustomerPhone,
+    documentRequest,
+    setDocumentRequest,
+    boletaIdentity,
+    setBoletaIdentity,
+    customerDocumentNumber,
+    setCustomerDocumentNumber,
+    legalName,
+    setLegalName,
+    fiscalAddress,
+    setFiscalAddress,
+    lines,
+    setLines,
+    updateLine,
+    delivery,
+    setDelivery,
+    deliveryDate,
+    setDeliveryDate,
+    shippingCarrier,
+    setShippingCarrier,
+    dropoffPlace,
+    setDropoffPlace,
+    shippingNote,
+    setShippingNote,
+    paymentMethod,
+    setPaymentMethod,
+    receivedBy,
+    setReceivedBy,
+    paymentProof,
+    setPaymentProof,
+    attachProof,
+    fieldErrors,
+    clearFieldError,
+    setPickerOpen,
+    pickerOpen,
+    search,
+    setSearch,
+    submitProductSearch,
+    products,
+    productsFetching: productsQuery.isFetching,
+    submittedSearch,
+    addProduct,
+    shippingQuote,
+    totals,
+    total,
+    fillDemo,
+    navigate,
+    submit,
+  };
+
+  if (import.meta.env.DEV) {
+    return <RegistrarVentaPrototype view={view} />;
+  }
 
   return (
     <form onSubmit={submit} className="mx-auto max-w-3xl pb-[calc(9rem+env(safe-area-inset-bottom))] sm:pb-4">
