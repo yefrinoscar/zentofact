@@ -269,6 +269,46 @@ export function groupSaleCharges(charges) {
     ));
 }
 
+function importKey(line) {
+  const value = Number(line.importId);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function chargeKindOf(line) {
+  return line.chargeKind || classifyChargeKind(line.type);
+}
+
+function scoreOrderImport(importId, lines) {
+  const hasSale = lines.some((line) => chargeKindOf(line) === 'sale');
+  return { importId, lines, hasSale, count: lines.length };
+}
+
+export function chooseLinesPerOrder(lines) {
+  const byOrder = new Map();
+  for (const line of lines || []) {
+    const orderId = String(line.orderId || '').trim();
+    if (!orderId) continue;
+    const imports = byOrder.get(orderId) || new Map();
+    const key = importKey(line);
+    const bucket = imports.get(key) || [];
+    bucket.push(line);
+    imports.set(key, bucket);
+    byOrder.set(orderId, imports);
+  }
+  const chosen = [];
+  for (const imports of byOrder.values()) {
+    const ranked = [...imports.entries()]
+      .map(([importId, orderLines]) => scoreOrderImport(importId, orderLines))
+      .sort((left, right) => (
+        Number(right.hasSale) - Number(left.hasSale)
+        || right.count - left.count
+        || right.importId - left.importId
+      ));
+    chosen.push(...(ranked[0]?.lines || []));
+  }
+  return chosen;
+}
+
 function uniqueSettlementLines(lines) {
   const kept = [];
   const seen = new Set();
@@ -278,11 +318,10 @@ function uniqueSettlementLines(lines) {
       kept.push(line);
       continue;
     }
-    const kind = line.chargeKind || classifyChargeKind(line.type);
     const key = [
       String(line.orderId || '').trim(),
       itemId,
-      kind,
+      chargeKindOf(line),
       round2(signedAmount(line)).toFixed(2),
     ].join('|');
     if (seen.has(key)) continue;
@@ -294,7 +333,7 @@ function uniqueSettlementLines(lines) {
 
 export function aggregateSettlementSales(lines) {
   const groups = new Map();
-  for (const line of uniqueSettlementLines(lines)) {
+  for (const line of uniqueSettlementLines(chooseLinesPerOrder(lines))) {
     const orderId = String(line.orderId || '').trim();
     if (!orderId) continue;
     const current = groups.get(orderId) || emptySale(orderId, line);

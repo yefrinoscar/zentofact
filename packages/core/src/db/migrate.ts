@@ -1733,23 +1733,36 @@ const DDL = `
          neto = sub.neto,
          updated_at = now()
     FROM (
-      SELECT sale_source,
-             sale_id,
-             COALESCE(SUM(bruto), 0) AS bruto,
-             COALESCE(SUM(commission), 0) AS commission,
-             COALESCE(SUM(other_fees), 0) AS other_fees,
-             COALESCE(SUM(neto), 0) AS neto
-        FROM (
-          SELECT DISTINCT ON (sale_source, sale_id, item_id, kind, round(neto, 2))
-                 sale_source, sale_id, bruto, commission, other_fees, neto
-            FROM settlement_lines
-           WHERE match_status = 'matched'
-             AND sale_id IS NOT NULL
-             AND sale_source IS NOT NULL
-             AND item_id <> ''
-           ORDER BY sale_source, sale_id, item_id, kind, round(neto, 2), import_id DESC, id DESC
-        ) unique_lines
-       GROUP BY sale_source, sale_id
+      SELECT sl.sale_source,
+             sl.sale_id,
+             COALESCE(SUM(sl.bruto), 0) AS bruto,
+             COALESCE(SUM(sl.commission), 0) AS commission,
+             COALESCE(SUM(sl.other_fees), 0) AS other_fees,
+             COALESCE(SUM(sl.neto), 0) AS neto
+        FROM settlement_lines sl
+        JOIN (
+          SELECT DISTINCT ON (order_ref)
+                 order_ref, import_id
+            FROM (
+              SELECT order_ref,
+                     import_id,
+                     COUNT(*) FILTER (WHERE kind = 'sale') AS sale_lines,
+                     COUNT(*) AS import_lines
+                FROM settlement_lines
+               WHERE match_status = 'matched'
+                 AND sale_id IS NOT NULL
+                 AND sale_source IS NOT NULL
+                 AND order_ref <> ''
+               GROUP BY order_ref, import_id
+            ) scored
+           ORDER BY order_ref, sale_lines DESC, import_lines DESC, import_id DESC
+        ) best
+          ON best.order_ref = sl.order_ref
+         AND best.import_id = sl.import_id
+       WHERE sl.match_status = 'matched'
+         AND sl.sale_id IS NOT NULL
+         AND sl.sale_source IS NOT NULL
+       GROUP BY sl.sale_source, sl.sale_id
     ) sub
    WHERE ss.sale_source = sub.sale_source
      AND ss.sale_id = sub.sale_id;
