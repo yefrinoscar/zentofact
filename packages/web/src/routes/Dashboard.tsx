@@ -209,7 +209,7 @@ function KpiCard({
   );
 }
 
-function SalesSummaryCard({ summary, change }: { summary: any; change?: number | null }) {
+function SalesSummaryCard({ summary }: { summary: any }) {
   const orders = Number(summary.orders || 0);
   return (
     <Card className="gap-0 bg-primary py-5 text-primary-foreground ring-primary/20 sm:col-span-2">
@@ -220,19 +220,9 @@ function SalesSummaryCard({ summary, change }: { summary: any; change?: number |
             <p className="mt-2 whitespace-nowrap text-[1.35rem] font-semibold tracking-[-0.04em] tabular-nums sm:text-[1.55rem] 2xl:text-[1.7rem]">
               {money.format(summary.netSales || 0)}
             </p>
-            <div className="mt-4 flex min-h-4 items-center justify-between gap-2 text-xs">
-              <span className="truncate text-primary-foreground/65">
-                {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
-              </span>
-              {change === null ? (
-                <span className="shrink-0 font-medium text-primary-foreground/65">Sin base previa</span>
-              ) : (
-                <span className="inline-flex shrink-0 items-center gap-0.5 font-semibold text-white">
-                  {(change || 0) >= 0 ? <ArrowUpRight className="size-3.5" /> : <ArrowDownRight className="size-3.5" />}
-                  {Math.abs(change || 0).toFixed(1)}%
-                </span>
-              )}
-            </div>
+            <p className="mt-4 min-h-4 truncate text-xs text-primary-foreground/65">
+              {orders === 1 ? '1 pedido' : `${integer.format(orders)} pedidos`}
+            </p>
           </div>
           <div className="pl-4 sm:pl-6">
             <p className="text-xs font-medium text-primary-foreground/70">Neto</p>
@@ -482,7 +472,7 @@ export default function Dashboard() {
       </section>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SalesSummaryCard summary={summary} change={data?.changes?.netSales} />
+        <SalesSummaryCard summary={summary} />
         <KpiCard
           title="Pagado"
           value={money.format(summary.paidSales || 0)}
