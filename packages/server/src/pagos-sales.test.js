@@ -58,6 +58,8 @@ test('el envío que paga el comprador no aparece ni mueve lo que te llega', () =
   assert.equal(sale.commission, 1.35);
   assert.equal(sale.shipping, 3.9);
   assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, -3.17);
   assert.equal(sale.neto, 3.74);
   assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
   assert.equal(sale.chargeGroups.some((group) => /comprador/i.test(group.type)), false);
@@ -81,6 +83,8 @@ test('agrega comisión envío y porcentaje por pedido sin inflar el envío compr
   assert.equal(sale.commissionRate, 0.15);
   assert.equal(sale.shipping, 3.9);
   assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, -3.17);
   assert.equal(sale.neto, 3.74);
   assert.equal(sale.take, 5.25);
   assert.equal(sale.takeRate, 0.584);
@@ -167,6 +171,8 @@ test('agrupa unidades iguales en un producto y cobra envío por tipo', () => {
   assert.equal(sale.bruto, 98.89);
   assert.equal(sale.commission, 14.85);
   assert.equal(sale.shipping, 42.9);
+  assert.equal(sale.buyerShippingPaid, 34.87);
+  assert.equal(sale.buyerShippingReversed, -34.87);
   assert.equal(sale.neto, 41.14);
   const byKind = Object.fromEntries(sale.chargeGroups.map((group) => [group.kind, group]));
   assert.equal(byKind.sale.count, 11);
@@ -214,6 +220,21 @@ test('pedidos mixtos quedan un grupo por SKU y precio', () => {
   assert.equal(shipping[0].unitAmount, null);
   assert.equal(shipping[0].amount, -10.3);
   assert.equal(charges.some((group) => group.kind === 'buyer_shipping'), false);
+});
+
+test('un envío comprador sin reversa tampoco entra a cobros ni a te llega', () => {
+  const csv = [
+    HEADER,
+    row(),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-1.35' }),
+    row({ 'Tipo de transacción': 'Pago de envío comprador', 'Monto con IVA': '3.17' }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.neto, 7.64);
+  assert.equal(sale.buyerShipping, 3.17);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, 0);
+  assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
 });
 
 test('separa lo vendido y lo que llega entre pagado y pendiente', () => {

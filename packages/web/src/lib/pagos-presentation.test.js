@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, chargeKindLabel, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este contenido ya se cruzó.');
@@ -23,15 +23,17 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusLabel('No Pagado'), 'No pagado');
 });
 
-test('el overview nombra cobro envío y lo que se queda', () => {
+test('el overview nombra logística y lo que se queda', () => {
   assert.equal(
     saleOverview({ saleCount: 27, commissionRate: 0.14, shippingRate: 0.21, takeRate: 0.35 }),
-    '27 ventas · comisión 14% · cobro envío 21% · se queda 35%',
+    '27 ventas · comisión 14% · logística 21% · se queda 35%',
   );
   assert.equal(
     saleOverview({ saleCount: 1, commissionRate: 0.15, shippingRate: 0.434, takeRate: 0.584 }),
-    '1 venta · comisión 15% · cobro envío 43.4% · se queda 58.4%',
+    '1 venta · comisión 15% · logística 43.4% · se queda 58.4%',
   );
+  assert.equal(chargeKindLabel('shipping'), 'Logística');
+  assert.equal(chargeKindLabel('buyer_shipping'), 'Envío del comprador');
 });
 
 test('acorta el título de plaza y deja SKU e unidades aparte', () => {

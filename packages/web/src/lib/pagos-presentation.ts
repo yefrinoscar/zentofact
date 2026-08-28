@@ -95,8 +95,8 @@ export function percentLabel(rate: number | null | undefined) {
 export function chargeKindLabel(kind: string | null | undefined) {
   if (kind === 'sale') return 'Precio';
   if (kind === 'commission') return 'Comisión';
-  if (kind === 'shipping') return 'Cobro envío';
-  if (kind === 'buyer_shipping') return 'Envío comprador';
+  if (kind === 'shipping') return 'Logística';
+  if (kind === 'buyer_shipping') return 'Envío del comprador';
   if (kind === 'refund') return 'Devolución';
   return 'Otro';
 }
@@ -143,7 +143,7 @@ export function saleOverview(summary: {
   const count = Number(summary?.saleCount || 0);
   if (!count) return '';
   const ventas = count === 1 ? '1 venta' : `${count} ventas`;
-  return `${ventas} · comisión ${percentLabel(summary?.commissionRate)} · cobro envío ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
+  return `${ventas} · comisión ${percentLabel(summary?.commissionRate)} · logística ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
 }
 
 export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {

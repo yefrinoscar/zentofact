@@ -78,6 +78,8 @@ type SettlementSale = {
   commission: number;
   shipping: number;
   buyerShipping?: number;
+  buyerShippingPaid?: number;
+  buyerShippingReversed?: number;
   neto: number;
   take: number;
   commissionRate: number | null;
@@ -300,7 +302,24 @@ function shippingHint(sale: SettlementSale) {
   if (products.length === 1 && products[0].quantity > 1 && products[0].unitShipping) {
     return `${money.format(products[0].unitShipping)} × ${products[0].quantity} unidades`;
   }
-  return 'Falabella te cobra por enviar.';
+  return 'Cofinanciamiento. Lo cobra Falabella.';
+}
+
+function hasBuyerShipping(sale: SettlementSale) {
+  return Boolean(
+    Number(sale.buyerShippingPaid || 0)
+    || Number(sale.buyerShippingReversed || 0)
+    || Number(sale.buyerShipping || 0),
+  );
+}
+
+function buyerShippingHint(sale: SettlementSale) {
+  const paid = Math.abs(Number(sale.buyerShippingPaid || 0));
+  const reversed = Math.abs(Number(sale.buyerShippingReversed || 0));
+  if (paid && reversed && paid === reversed) {
+    return `Pago ${money.format(paid)} · reversa −${money.format(reversed)}`;
+  }
+  return 'Lo pagó el cliente. Se anula.';
 }
 
 function chargeTimes(group: SettlementChargeGroup) {
@@ -474,13 +493,13 @@ export default function Pagos() {
               <ColumnHead rowSpan={2} className="align-bottom text-right" label="Precio" hint="Lo que pagó el cliente" />
               <TableHead colSpan={3} className={cn('h-8 py-1.5 text-center', cobroColStart, cobroColEnd)}>
                 <span className="block text-[13px] text-foreground">Falabella cobra</span>
-                <span className="block text-[11px] font-normal leading-tight">Comisión + cobro envío</span>
+                <span className="block text-[11px] font-normal leading-tight">Comisión + logística</span>
               </TableHead>
               <ColumnHead rowSpan={2} className={cn('align-bottom text-right', llegaCol, llegaText)} label="Te llega" hint="Lo que te depositan" />
             </TableRow>
             <TableRow>
               <ColumnHead className={cn('text-right', cobroColStart)} label="Comisión" hint="% del precio" />
-              <ColumnHead className={cn('text-right', cobroCol)} label="Cobro envío" hint="Por enviar" />
+              <ColumnHead className={cn('text-right', cobroCol)} label="Logística" hint="Cofinanciamiento" />
               <ColumnHead className={cn('text-right', cobroColEnd)} label="Se queda" hint="Suma de los dos" />
             </TableRow>
           </TableHeader>
@@ -529,7 +548,7 @@ export default function Pagos() {
             {!sales.length && !salesQuery.isLoading ? (
               <TableRow>
                 <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
-                  Sube un CSV de Falabella para ver comisión, cobro de envío y lo que te llega.
+                  Sube un CSV de Falabella para ver comisión, logística y lo que te llega.
                 </TableCell>
               </TableRow>
             ) : null}
@@ -565,11 +584,18 @@ export default function Pagos() {
               </SheetHeader>
               <div className="px-5 py-4">
                 <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
+                {hasBuyerShipping(selected) ? (
+                  <ChargeRow
+                    label="Envío del comprador"
+                    amount={selected.buyerShipping || 0}
+                    hint={buyerShippingHint(selected)}
+                  />
+                ) : null}
                 <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
                   <p className="pt-2 text-xs font-medium">Falabella cobra</p>
-                  <p className="text-[11px] text-muted-foreground">Comisión + cobro envío</p>
+                  <p className="text-[11px] text-muted-foreground">Comisión + logística</p>
                   <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
-                  <ChargeRow label="Cobro envío" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
+                  <ChargeRow label="Logística" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
                   <ChargeRow
                     label="Se queda"
                     amount={selected.take || 0}
@@ -602,7 +628,7 @@ export default function Pagos() {
                           {product.quantity > 1 ? ` · ${product.quantity} u` : ''}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {money.format(product.unitBruto)} c/u · comisión {percentLabel(product.commissionRate)} · cobro envío {money.format(product.unitShipping)} c/u
+                          {money.format(product.unitBruto)} c/u · comisión {percentLabel(product.commissionRate)} · logística {money.format(product.unitShipping)} c/u
                         </p>
                         <div className="mt-1 flex justify-between gap-3 text-sm">
                           <span className="tabular-nums text-muted-foreground">Se queda {percentLabel(product.takeRate)}</span>
@@ -613,11 +639,11 @@ export default function Pagos() {
                   </div>
                 </div>
               ) : null}
-              {selected.chargeGroups?.some((group) => group.kind !== 'sale') ? (
+              {selected.chargeGroups?.some((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping') ? (
                 <div className="border-t border-border px-5 py-4">
                   <p className="text-sm font-medium">Cobros Falabella</p>
                   <div className="mt-2 divide-y divide-border">
-                    {selected.chargeGroups.filter((group) => group.kind !== 'sale').map((group) => (
+                    {selected.chargeGroups.filter((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping').map((group) => (
                       <div key={`${group.kind}-${group.type}`} className="flex items-baseline justify-between gap-3 py-2">
                         <div className="min-w-0">
                           <p className="text-sm leading-5">{chargeKindLabel(group.kind)}</p>
