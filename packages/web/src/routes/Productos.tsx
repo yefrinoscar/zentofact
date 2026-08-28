@@ -1831,12 +1831,12 @@ function ProductDrawer({
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
         <div className="shrink-0 px-5 pb-3">
-          <TabsList className="flex h-auto min-h-12 w-full flex-wrap justify-start gap-1 rounded-xl bg-muted/70 p-1">
-            <TabsTrigger value="overview" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
-            <TabsTrigger value="listings" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
-            <TabsTrigger value="inventory" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Boxes className="size-4" /> Inventario</TabsTrigger>
-            <TabsTrigger value="sales" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><BarChart3 className="size-4" /> Ventas</TabsTrigger>
-            <TabsTrigger value="returns" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><RefreshCw className="size-4" /> Devoluciones</TabsTrigger>
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-muted/70 p-1">
+            <TabsTrigger value="overview" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="inventory" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><Boxes className="size-4" /> Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><BarChart3 className="size-4" /> Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className="h-10 rounded-lg px-2.5 text-[13px] sm:text-[15px]"><RefreshCw className="size-4" /> Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
@@ -2164,6 +2164,7 @@ function ProductTitleField({
 
   return (
     <SheetTitle
+      data-slot="sheet-title"
       className={cn(
         'min-w-0 cursor-text rounded-md px-1 py-0.5 text-lg font-medium leading-6',
         focused ? 'bg-muted' : 'hover:bg-muted/70',
