@@ -28,7 +28,7 @@ export const PAYMENT_METHODS = [
 export const PICKUP_ADDRESS = OWN_FLEET_ORIGIN.address;
 
 export const DOCUMENT_REQUESTS = [
-  { value: 'none', label: 'No' },
+  { value: 'none', label: 'Ninguno' },
   { value: 'boleta', label: 'Boleta' },
   { value: 'factura', label: 'Factura' },
 ] as const;

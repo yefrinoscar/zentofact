@@ -183,14 +183,7 @@ function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div
-      className={cn(
-        'grid gap-2 sm:flex sm:flex-wrap',
-        options.length >= 3 ? 'grid-cols-3' : 'grid-cols-2',
-      )}
-      role="radiogroup"
-      aria-label={ariaLabel}
-    >
+    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={ariaLabel}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -201,7 +194,7 @@ function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'h-11 min-w-0 cursor-pointer rounded-md border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
+              'h-11 min-w-0 cursor-pointer rounded-md border px-3 text-sm font-medium transition-colors sm:h-9',
               selected
                 ? 'border-foreground bg-foreground text-background'
                 : 'border-border bg-background text-foreground hover:bg-muted',
@@ -211,6 +204,91 @@ function Choice<T extends string>({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div
+      className="inline-flex overflow-hidden rounded-md border border-border"
+      role="radiogroup"
+      aria-label={ariaLabel}
+    >
+      {options.map((option, index) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              'h-11 min-w-14 cursor-pointer px-3 text-sm font-medium transition-colors sm:h-9',
+              index > 0 && 'border-l border-border',
+              selected ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FormSection({
+  title,
+  hint,
+  error,
+  action,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  error?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mt-5 space-y-4 rounded-lg border border-border p-5 first:mt-0">
+      <div className={cn('flex flex-col gap-3', action && 'sm:flex-row sm:items-start sm:justify-between')}>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          {hint ? <p className="mt-1 text-sm text-muted-foreground">{hint}</p> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+      <FieldHint message={error} />
+    </section>
+  );
+}
+
+function FieldRow({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5 sm:grid-cols-[8.25rem_minmax(0,1fr)] sm:items-start sm:gap-x-4">
+      <Label htmlFor={htmlFor} className="text-sm text-muted-foreground sm:pt-2">{label}</Label>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
@@ -537,173 +615,164 @@ export default function RegistrarVenta() {
       : '';
 
   return (
-    <form onSubmit={submit} className="mx-auto max-w-3xl space-y-6 pb-[calc(9rem+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-4">
-      <div>
+    <form onSubmit={submit} className="mx-auto max-w-3xl pb-[calc(9rem+env(safe-area-inset-bottom))] sm:pb-4">
+      <div className="pb-4">
         <Button type="button" variant="ghost" className="-ml-2 h-11 cursor-pointer px-2 sm:h-9" onClick={() => navigate(afterSavePath)}>
           <ArrowLeft /> Volver
         </Button>
       </div>
 
       {setupError && (
-        <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+        <p className="mb-6 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
           {setupError}
         </p>
       )}
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">Origen</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Cómo llegó esta venta.</p>
-        </div>
+      <FormSection title="Origen" hint="Cómo llegó esta venta.">
         <Choice value={saleSource} options={SALE_SOURCES} onChange={setSaleSource} ariaLabel="Origen de la venta" />
-      </section>
+      </FormSection>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">Cliente</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Con el teléfono alcanza para coordinar.</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="customer-name">Nombre</Label>
-            <Input
-              id="customer-name"
-              value={customerName}
-              onChange={(event) => {
-                setCustomerName(event.target.value);
-                clearFieldError('customer');
+      <FormSection title="Cliente" error={fieldErrors.customer || fieldErrors.document}>
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="customer-name">Nombre</Label>
+              <Input
+                id="customer-name"
+                value={customerName}
+                onChange={(event) => {
+                  setCustomerName(event.target.value);
+                  clearFieldError('customer');
+                }}
+                placeholder="Nombre del cliente"
+                autoComplete="name"
+                aria-invalid={!!fieldErrors.customer}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="customer-phone">Teléfono</Label>
+              <Input id="customer-phone" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="999 999 999" inputMode="tel" autoComplete="tel" />
+            </div>
+          </div>
+
+          <FieldRow label="Comprobante">
+            <Choice
+              value={documentRequest}
+              options={DOCUMENT_REQUESTS}
+              onChange={(value) => {
+                setDocumentRequest(value);
+                if (value === 'factura' && !legalName.trim()) setLegalName(customerName);
+                setCustomerDocumentNumber('');
+                clearFieldError('document');
               }}
-              placeholder="Nombre del cliente"
-              autoComplete="name"
-              aria-invalid={!!fieldErrors.customer}
+              ariaLabel="Comprobante"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="customer-phone">Teléfono</Label>
-            <Input id="customer-phone" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="999 999 999" inputMode="tel" autoComplete="tel" />
-          </div>
-        </div>
-        <FieldHint message={fieldErrors.customer} />
-      </section>
+            {documentRequest !== 'none' ? (
+              <p className="mt-1.5 text-xs text-muted-foreground">Se emite después desde Pedidos.</p>
+            ) : null}
+          </FieldRow>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">Comprobante</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Se requiere boleta o factura. Se emite después desde Pedidos.</p>
-        </div>
-        <Choice
-          value={documentRequest}
-          options={DOCUMENT_REQUESTS}
-          onChange={(value) => {
-            setDocumentRequest(value);
-            if (value === 'factura' && !legalName.trim()) setLegalName(customerName);
-            setCustomerDocumentNumber('');
-            clearFieldError('document');
-          }}
-          ariaLabel="Se requiere boleta o factura"
-        />
-        {documentRequest === 'boleta' && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Documento</Label>
-              <Choice
-                value={boletaIdentity}
-                options={BOLETA_IDENTITIES}
-                onChange={(value) => {
-                  setBoletaIdentity(value);
-                  setCustomerDocumentNumber('');
-                  clearFieldError('document');
-                }}
-                ariaLabel="Tipo de documento"
-              />
+          {documentRequest === 'boleta' && (
+            <div className="space-y-3 border-t border-border pt-4">
+            <FieldRow label={boletaIdentity === 'ce' ? 'CE' : 'DNI'} htmlFor="customer-document">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Segmented
+                  value={boletaIdentity}
+                  options={BOLETA_IDENTITIES}
+                  onChange={(value) => {
+                    setBoletaIdentity(value);
+                    setCustomerDocumentNumber('');
+                    clearFieldError('document');
+                  }}
+                  ariaLabel="Tipo de documento"
+                />
+                <Input
+                  id="customer-document"
+                  value={customerDocumentNumber}
+                  onChange={(event) => {
+                    const next = boletaIdentity === 'dni'
+                      ? event.target.value.replace(/\D/g, '').slice(0, 8)
+                      : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+                    setCustomerDocumentNumber(next);
+                    clearFieldError('document');
+                  }}
+                  placeholder={boletaIdentity === 'ce' ? '001234567' : '12345678'}
+                  inputMode={boletaIdentity === 'dni' ? 'numeric' : 'text'}
+                  autoComplete="off"
+                  aria-invalid={!!fieldErrors.document}
+                  className="sm:max-w-56"
+                />
+              </div>
+            </FieldRow>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="customer-document">{boletaIdentity === 'ce' ? 'CE' : 'DNI'}</Label>
-              <Input
-                id="customer-document"
-                value={customerDocumentNumber}
-                onChange={(event) => {
-                  const next = boletaIdentity === 'dni'
-                    ? event.target.value.replace(/\D/g, '').slice(0, 8)
-                    : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
-                  setCustomerDocumentNumber(next);
-                  clearFieldError('document');
-                }}
-                placeholder={boletaIdentity === 'ce' ? '001234567' : '12345678'}
-                inputMode={boletaIdentity === 'dni' ? 'numeric' : 'text'}
-                autoComplete="off"
-                aria-invalid={!!fieldErrors.document}
-              />
-            </div>
-          </div>
-        )}
-        {documentRequest === 'factura' && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="customer-ruc">RUC</Label>
-              <Input
-                id="customer-ruc"
-                value={customerDocumentNumber}
-                onChange={(event) => {
-                  setCustomerDocumentNumber(event.target.value.replace(/\D/g, '').slice(0, 11));
-                  clearFieldError('document');
-                }}
-                placeholder="20123456789"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-invalid={!!fieldErrors.document}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="legal-name">Razón social</Label>
-              <Input
-                id="legal-name"
-                value={legalName}
-                onChange={(event) => {
-                  setLegalName(event.target.value);
-                  clearFieldError('document');
-                }}
-                placeholder="Empresa S.A.C."
-                autoComplete="organization"
-                aria-invalid={!!fieldErrors.document}
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="fiscal-address">Dirección fiscal</Label>
-              <Input
-                id="fiscal-address"
-                value={fiscalAddress}
-                onChange={(event) => {
-                  setFiscalAddress(event.target.value);
-                  clearFieldError('document');
-                }}
-                placeholder="Av. …"
-                autoComplete="street-address"
-                aria-invalid={!!fieldErrors.document}
-              />
-            </div>
-          </div>
-        )}
-        <FieldHint message={fieldErrors.document} />
-      </section>
+          )}
 
-      <section className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="text-sm font-medium">Productos</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">El precio se puede ajustar si es venta por mayor.</p>
-          </div>
+          {documentRequest === 'factura' && (
+            <div className="space-y-3 border-t border-border pt-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="customer-ruc">RUC</Label>
+                  <Input
+                    id="customer-ruc"
+                    value={customerDocumentNumber}
+                    onChange={(event) => {
+                      setCustomerDocumentNumber(event.target.value.replace(/\D/g, '').slice(0, 11));
+                      clearFieldError('document');
+                    }}
+                    placeholder="20123456789"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    aria-invalid={!!fieldErrors.document}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="legal-name">Razón social</Label>
+                  <Input
+                    id="legal-name"
+                    value={legalName}
+                    onChange={(event) => {
+                      setLegalName(event.target.value);
+                      clearFieldError('document');
+                    }}
+                    placeholder="Empresa S.A.C."
+                    autoComplete="organization"
+                    aria-invalid={!!fieldErrors.document}
+                  />
+                </div>
+              </div>
+              <FieldRow label="Dirección fiscal" htmlFor="fiscal-address">
+                <Input
+                  id="fiscal-address"
+                  value={fiscalAddress}
+                  onChange={(event) => {
+                    setFiscalAddress(event.target.value);
+                    clearFieldError('document');
+                  }}
+                  placeholder="Av. …"
+                  autoComplete="street-address"
+                  aria-invalid={!!fieldErrors.document}
+                />
+              </FieldRow>
+            </div>
+          )}
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="Productos"
+        hint="Ajusta el precio si es por mayor."
+        error={fieldErrors.products || fieldErrors.lines}
+        action={(
           <Button type="button" variant="outline" className="h-11 w-full cursor-pointer sm:h-9 sm:w-auto" onClick={() => setPickerOpen(true)}>
             <Search /> Buscar producto
           </Button>
-        </div>
-
+        )}
+      >
         {lines.length === 0 && (
           <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            Aún no hay productos. Ábrelo y elige del catálogo.
+            Busca un producto del catálogo.
           </p>
         )}
-        <FieldHint message={fieldErrors.products} />
 
         {lines.length > 0 && (
           <ul className="divide-y divide-border rounded-md border border-border">
@@ -755,148 +824,124 @@ export default function RegistrarVenta() {
             ))}
           </ul>
         )}
-        <FieldHint message={fieldErrors.lines} />
-      </section>
+      </FormSection>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium">Entrega</h2>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div
-            className="inline-flex w-full overflow-hidden rounded-md border border-border sm:w-auto"
-            role="radiogroup"
-            aria-label="Método de entrega"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={delivery === 'envio'}
-              onClick={() => {
-                setDelivery('envio');
-                clearFieldError('delivery');
-              }}
-              className={cn(
-                'h-11 min-w-0 flex-1 cursor-pointer border-r border-border px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
-                delivery === 'envio' ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
-              )}
-            >
-              Envío
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={delivery === 'recojo'}
-              onClick={() => {
-                setDelivery('recojo');
-                setShippingCarrier('');
-                setDropoffPlace(null);
-                setShippingNote('');
-                clearFieldError('delivery');
-              }}
-              className={cn(
-                'h-11 min-w-0 flex-1 cursor-pointer px-3 text-sm font-medium transition-colors sm:h-9 sm:flex-none',
-                delivery === 'recojo' ? 'bg-foreground text-background' : 'bg-background text-foreground hover:bg-muted',
-              )}
-            >
-              Recojo
-            </button>
-          </div>
-          <DeliveryDatePicker
-            value={deliveryDate}
-            onChange={(value) => {
-              setDeliveryDate(value);
-              clearFieldError('delivery');
-            }}
-            minDateKey={limaTodayKey()}
-            ariaLabel={delivery === 'envio' ? 'Fecha de entrega' : 'Fecha de recojo'}
-          />
-        </div>
-
-        {delivery === 'envio' ? (
-          <div className="space-y-3">
-            <Choice
-              value={shippingCarrier}
-              options={SHIPPING_CARRIERS}
-              onChange={(value) => {
-                setShippingCarrier(value);
-                clearFieldError('delivery');
-              }}
-              ariaLabel="Reparto"
-            />
-            {shippingCarrier === OWN_FLEET_CARRIER && (
-              <p className="text-xs text-muted-foreground">
-                {OWN_FLEET_COVERAGE_HINT}
-                {isAdmin ? (
-                  <>
-                    {' '}
-                    <button
-                      type="button"
-                      className="cursor-pointer underline-offset-2 hover:underline"
-                      onClick={() => navigate('/orders/envio')}
-                    >
-                      Distritos
-                    </button>
-                  </>
-                ) : null}
-              </p>
-            )}
-            <div className="space-y-1.5">
-              <Label>Dirección</Label>
-              <PlacePicker
-                value={dropoffPlace}
-                onChange={(place) => {
-                  setDropoffPlace(place);
+      <FormSection title="Entrega" error={fieldErrors.delivery}>
+        <div className="space-y-4">
+          <FieldRow label="Cómo">
+            <div className="flex flex-wrap items-center gap-2">
+              <Segmented
+                value={delivery}
+                options={[
+                  { value: 'envio', label: 'Envío' },
+                  { value: 'recojo', label: 'Recojo' },
+                ]}
+                onChange={(value) => {
+                  setDelivery(value);
+                  if (value === 'recojo') {
+                    setShippingCarrier('');
+                    setDropoffPlace(null);
+                    setShippingNote('');
+                  }
                   clearFieldError('delivery');
                 }}
-                placeholder="Distrito de Lima metropolitana"
+                ariaLabel="Método de entrega"
               />
-            </div>
-            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote?.charged && (
-              <div className="space-y-1 text-sm">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="truncate text-muted-foreground">
-                    {shippingQuote.zoneLabel || 'Distrito'}
-                  </span>
-                  <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.districtAmount)}</span>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground">
-                    {shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km
-                  </span>
-                  <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.distanceAmount)}</span>
-                </div>
-              </div>
-            )}
-            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && !shippingQuote.charged && (
-              <p className="text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
-            )}
-            {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
-              <p className="text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="shipping-note">Referencia</Label>
-              <Input
-                id="shipping-note"
-                value={shippingNote}
-                onChange={(event) => {
-                  setShippingNote(event.target.value);
+              <DeliveryDatePicker
+                value={deliveryDate}
+                onChange={(value) => {
+                  setDeliveryDate(value);
                   clearFieldError('delivery');
                 }}
-                placeholder="Dpto, color de puerta…"
+                minDateKey={limaTodayKey()}
+                ariaLabel={delivery === 'envio' ? 'Fecha de entrega' : 'Fecha de recojo'}
               />
             </div>
-          </div>
-        ) : (
-          <p className="pb-1 text-sm leading-6 text-muted-foreground sm:pb-0">{PICKUP_ADDRESS}</p>
-        )}
-        <FieldHint message={fieldErrors.delivery} />
-      </section>
+          </FieldRow>
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium">Pago</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Puedes registrarlo ahora o después.</p>
+          {delivery === 'envio' ? (
+            <>
+              <FieldRow label="Reparto">
+                <Choice
+                  value={shippingCarrier}
+                  options={SHIPPING_CARRIERS}
+                  onChange={(value) => {
+                    setShippingCarrier(value);
+                    clearFieldError('delivery');
+                  }}
+                  ariaLabel="Reparto"
+                />
+                {shippingCarrier === OWN_FLEET_CARRIER && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {OWN_FLEET_COVERAGE_HINT}
+                    {isAdmin ? (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          className="cursor-pointer underline-offset-2 hover:underline"
+                          onClick={() => navigate('/orders/envio')}
+                        >
+                          Distritos
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                )}
+              </FieldRow>
+              <FieldRow label="Dirección">
+                <PlacePicker
+                  value={dropoffPlace}
+                  onChange={(place) => {
+                    setDropoffPlace(place);
+                    clearFieldError('delivery');
+                  }}
+                  placeholder="Distrito de Lima metropolitana"
+                />
+                {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote?.charged && (
+                  <div className="mt-3 space-y-1 text-sm">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-muted-foreground">
+                        {shippingQuote.zoneLabel || 'Distrito'}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.districtAmount)}</span>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        {shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km
+                      </span>
+                      <span className="shrink-0 tabular-nums">{formatMoney(shippingQuote.distanceAmount)}</span>
+                    </div>
+                  </div>
+                )}
+                {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && !shippingQuote.charged && (
+                  <p className="mt-2 text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
+                )}
+                {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
+                )}
+              </FieldRow>
+              <FieldRow label="Referencia" htmlFor="shipping-note">
+                <Input
+                  id="shipping-note"
+                  value={shippingNote}
+                  onChange={(event) => {
+                    setShippingNote(event.target.value);
+                    clearFieldError('delivery');
+                  }}
+                  placeholder="Dpto, color de puerta…"
+                />
+              </FieldRow>
+            </>
+          ) : (
+            <FieldRow label="Tienda">
+              <p className="sm:pt-2 text-sm leading-6 text-muted-foreground">{PICKUP_ADDRESS}</p>
+            </FieldRow>
+          )}
         </div>
+      </FormSection>
+
+      <FormSection title="Pago" hint="Ahora o después.">
         <Choice
           value={paymentMethod}
           options={PAYMENT_METHODS}
@@ -908,14 +953,12 @@ export default function RegistrarVenta() {
           ariaLabel="Método de pago"
         />
         {paymentMethod === 'efectivo' && (
-          <div className="space-y-1.5">
-            <Label htmlFor="received-by">¿Quién cobró?</Label>
+          <FieldRow label="¿Quién cobró?" htmlFor="received-by">
             <Input id="received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
-          </div>
+          </FieldRow>
         )}
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
-          <div className="space-y-1.5">
-            <Label>Constancia</Label>
+          <FieldRow label="Constancia">
             {paymentProof ? (
               <div className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5">
                 <img src={paymentProof.dataUrl} alt="" className="size-12 rounded object-cover" />
@@ -931,14 +974,13 @@ export default function RegistrarVenta() {
                 <input type="file" accept="image/*" className="sr-only" onChange={(event) => attachProof(event.target.files?.[0])} />
               </label>
             )}
-          </div>
+          </FieldRow>
         )}
-      </section>
+      </FormSection>
 
-      {/* Spacer so the fixed bar never covers the last fields on mobile. */}
       <div className="h-2 sm:hidden" aria-hidden="true" />
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-4 sm:backdrop-blur-none">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:border-0 sm:bg-transparent sm:px-0 sm:py-6 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 pb-[env(safe-area-inset-bottom)]">
           <div className="min-w-0">
             {totals.shipping > 0 ? (
