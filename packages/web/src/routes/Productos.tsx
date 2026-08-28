@@ -3,26 +3,38 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
   AlertTriangle,
+  Archive,
+  Banknote,
   BarChart3,
   Boxes,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Check,
+  Clock,
   Copy,
   ExternalLink,
+  Eye,
+  Hash,
   ImagePlus,
+  LayoutDashboard,
   Loader2,
   Maximize2,
   MoreHorizontal,
+  Package,
   PackagePlus,
+  Pencil,
+  Percent,
   Plus,
   RefreshCw,
   Search,
   ShieldAlert,
   Store,
+  Tag,
+  User,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
@@ -268,6 +280,18 @@ function formatMoney(value: unknown) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '—';
   return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(number);
+}
+
+function formatSoles(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return `${formatNumber(number)} soles`;
+}
+
+function formatUnits(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return `${formatNumber(number)} unidades`;
 }
 
 function formatDuration(value: number) {
@@ -1770,12 +1794,12 @@ function ProductDrawer({
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
         <div className="shrink-0 px-5 pb-2">
-          <TabsList className="h-10 w-full justify-start gap-0.5 rounded-full bg-muted/70 p-1 sm:w-auto">
-            <TabsTrigger value="overview" className="rounded-full px-3">Resumen</TabsTrigger>
-            <TabsTrigger value="listings" className="rounded-full px-3">Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
-            <TabsTrigger value="inventory" className="rounded-full px-3">Inventario</TabsTrigger>
-            <TabsTrigger value="sales" className="rounded-full px-3">Ventas</TabsTrigger>
-            <TabsTrigger value="returns" className="rounded-full px-3">Devoluciones</TabsTrigger>
+          <TabsList className="h-10 w-full justify-start gap-1 rounded-lg bg-muted/70 p-1 sm:w-auto">
+            <TabsTrigger value="overview" className="rounded-md px-3 text-sm"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className="rounded-md px-3 text-sm"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="inventory" className="rounded-md px-3 text-sm"><Boxes className="size-4" /> Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className="rounded-md px-3 text-sm"><BarChart3 className="size-4" /> Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className="rounded-md px-3 text-sm"><RefreshCw className="size-4" /> Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
@@ -1784,6 +1808,7 @@ function ProductDrawer({
             <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
             <ProductProperties
               product={product}
+              listings={associatedListings}
               profitOwners={profitOwners}
               publishedCount={publishedListings.length}
               listingsCount={associatedListings.length}
@@ -2132,6 +2157,7 @@ function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: ()
 
 function ProductProperties({
   product,
+  listings,
   profitOwners,
   publishedCount,
   listingsCount,
@@ -2143,6 +2169,7 @@ function ProductProperties({
   onOpenListings,
 }: {
   product: Product;
+  listings: Listing[];
   profitOwners: string[];
   publishedCount: number;
   listingsCount: number;
@@ -2153,124 +2180,193 @@ function ProductProperties({
   onSaveProfitOwner: (value: string) => void;
   onOpenListings: () => void;
 }) {
+  const description = String(product.description || '').trim();
   return (
-    <>
-      <dl>
-        <ProductInlineField
+    <div className="space-y-6">
+      <OverviewSection title="Producto">
+        <OverviewField
+          icon={Package}
           label="Stock"
           productId={product.id}
           field="quantityOnHand"
           value={String(product.quantityOnHand)}
+          display={formatUnits(product.quantityOnHand)}
           type="number"
-          suffix="u"
           onSave={onSaveStock}
         />
-        <ProductInlineField
+        <OverviewField
+          icon={Banknote}
           label="Precio"
           productId={product.id}
           field="referencePrice"
           value={product.referencePrice == null ? '' : String(product.referencePrice)}
+          display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
           type="number"
           placeholder="Sin precio"
-          prefix="S/"
           saving={savingField === 'referencePrice'}
           onSave={onSavePrice}
         />
-        <SellerVisibilityRow publishedCount={publishedCount} listingsCount={listingsCount} onOpen={onOpenListings} />
-        <ProductInlineField
+        <OverviewField
+          icon={Percent}
           label="Comisión"
           productId={product.id}
           field="commissionAmount"
           value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+          display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
           type="number"
           placeholder="Sin comisión"
-          prefix="S/"
           saving={savingField === 'commissionAmount'}
           onSave={onSaveCommission}
         />
-        <ProductInlineField
+        <OverviewField
+          icon={User}
           label="Beneficiario"
           productId={product.id}
           field="profitOwner"
           value={product.profitOwner || ''}
+          display={product.profitOwner || ''}
           placeholder="Sin beneficiario"
           list="profit-owner-inline-options"
+          tagged
           saving={savingField === 'profitOwner'}
           onSave={onSaveProfitOwner}
         />
         <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-        <PropertyRow label="Marca">{usableBrand(product.brand) || <PropertyEmpty>Sin marca</PropertyEmpty>}</PropertyRow>
-        <PropertyRow label="Unidad">Unidad</PropertyRow>
-        <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
-        <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
-      </dl>
-      <ProductDescription text={product.description} />
-    </>
-  );
-}
+      </OverviewSection>
 
-function PropertyRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-h-9 items-center gap-4 py-1.5">
-      <dt className="w-32 shrink-0 text-sm text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 flex-1 truncate px-2 text-sm text-foreground">{children}</dd>
+      <OverviewSection title="Sellers" count={listingsCount} onEdit={onOpenListings}>
+        <OverviewRow icon={Eye} label="Visibles">
+          <button type="button" onClick={onOpenListings} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <OverviewTag tone={publishedCount > 0 ? 'success' : 'muted'}>
+              {listingsCount === 0 ? '0/0' : `${publishedCount}/${listingsCount}`}
+            </OverviewTag>
+          </button>
+        </OverviewRow>
+        {listings.length > 0 ? (
+          <div className="mt-2 space-y-1.5">
+            {listings.map((listing) => {
+              const publication = publicationPresentation(listing);
+              return (
+                <button
+                  key={listing.id}
+                  type="button"
+                  onClick={onOpenListings}
+                  className="flex w-full items-center gap-3 rounded-lg bg-muted/60 px-3 py-2.5 text-left hover:bg-muted"
+                >
+                  <Store className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-medium">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span>
+                    <span className="mt-0.5 block truncate text-sm text-muted-foreground">{channelLabel(listing.channelCode)}</span>
+                  </span>
+                  <OverviewTag tone={publication.visible ? 'success' : 'muted'}>{publication.label}</OverviewTag>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </OverviewSection>
+
+      <OverviewSection title="Detalle">
+        <OverviewRow icon={Tag} label="Marca">
+          {usableBrand(product.brand)
+            ? <OverviewTag>{usableBrand(product.brand)}</OverviewTag>
+            : <OverviewTag tone="muted">Sin marca</OverviewTag>}
+        </OverviewRow>
+        <OverviewRow icon={Hash} label="Unidad"><OverviewTag>Unidad</OverviewTag></OverviewRow>
+        <OverviewRow icon={Archive} label="Reservado">
+          <span className="text-[15px] font-medium tabular-nums">{formatUnits(product.quantityReserved)}</span>
+        </OverviewRow>
+        <OverviewRow icon={Clock} label="Actualizado">
+          <span className="text-right text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
+        </OverviewRow>
+        <div className="pt-3">
+          <p className="text-[15px] font-medium">Descripción</p>
+          <p className="mt-2 text-[15px] leading-6 text-foreground">
+            {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
+          </p>
+        </div>
+      </OverviewSection>
     </div>
   );
 }
 
-function SellerVisibilityRow({
-  publishedCount,
-  listingsCount,
-  onOpen,
+function OverviewSection({
+  title,
+  count,
+  onEdit,
+  children,
 }: {
-  publishedCount: number;
-  listingsCount: number;
-  onOpen: () => void;
+  title: string;
+  count?: number;
+  onEdit?: () => void;
+  children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={listingsCount === 0 ? 'Sellers. Sin publicaciones' : `Sellers ${publishedCount}/${listingsCount} visibles`}
-      className="-mx-2 flex min-h-9 w-[calc(100%+1rem)] items-center gap-4 rounded-md px-2 py-1.5 text-left hover:bg-muted"
-    >
-      <span className="w-32 shrink-0 text-sm text-muted-foreground">Sellers</span>
-      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-        {listingsCount === 0
-          ? <PropertyEmpty>Sin publicaciones</PropertyEmpty>
-          : <span><span className="tabular-nums font-medium">{publishedCount}/{listingsCount}</span> visibles</span>}
-      </span>
-    </button>
+    <section className="border-t border-border/80 pt-5 first:border-t-0 first:pt-0">
+      <header className="mb-2 flex min-h-8 items-center justify-between gap-3">
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        <span className="flex items-center gap-2">
+          {count != null ? <span className="text-sm tabular-nums text-muted-foreground">{count}</span> : null}
+          {onEdit ? (
+            <button type="button" className="icon-button" onClick={onEdit} aria-label={`Ver ${title.toLowerCase()}`}>
+              <Pencil className="size-4" />
+            </button>
+          ) : null}
+        </span>
+      </header>
+      {children}
+    </section>
   );
 }
 
-function PropertyEmpty({ children }: { children: ReactNode }) {
-  return <span className="text-muted-foreground/70">{children}</span>;
+function OverviewRow({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-h-11 grid-cols-[1.25rem_7.5rem_minmax(0,1fr)] items-center gap-x-3 py-1">
+      <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+      <span className="text-[15px] text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 items-center justify-end">{children}</div>
+    </div>
+  );
 }
 
-function ProductInlineField({
+function OverviewTag({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'muted' | 'success' }) {
+  return (
+    <span className={cn(
+      'inline-flex max-w-full truncate rounded-full px-2.5 py-0.5 text-sm font-medium',
+      tone === 'success' && 'bg-emerald-50 text-emerald-800',
+      tone === 'muted' && 'bg-muted text-muted-foreground',
+      tone === 'neutral' && 'bg-muted text-foreground',
+    )}>
+      {children}
+    </span>
+  );
+}
+
+function OverviewField({
+  icon: Icon,
   label,
   productId,
   field,
   value,
+  display,
   onSave,
   type = 'text',
   placeholder,
   list,
-  prefix,
-  suffix,
+  tagged,
   saving,
 }: {
+  icon: LucideIcon;
   label: string;
   productId: number;
   field: string;
   value: string;
+  display: string;
   onSave: (value: string) => void;
   type?: string;
   placeholder?: string;
   list?: string;
-  prefix?: string;
-  suffix?: string;
+  tagged?: boolean;
   saving?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -2279,67 +2375,66 @@ function ProductInlineField({
   const displayed = draft ?? value;
 
   return (
-    <label className="group flex min-h-9 cursor-text items-center gap-4 py-1.5">
-      <span className="w-32 shrink-0 text-sm text-muted-foreground">{label}</span>
-      <span className={cn(
-        'flex min-w-0 flex-1 items-center gap-1 rounded-xl px-2 py-1 transition-colors duration-150',
-        'hover:bg-muted',
-        focused && 'bg-muted',
-      )}>
-        {prefix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{prefix}</span> : null}
-        <input
-          key={`${productId}-${field}`}
-          className={cn(
-            'min-w-0 border-0 bg-transparent p-0 text-sm text-foreground shadow-none outline-none ring-0',
-            'placeholder:text-muted-foreground/70',
-            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
-            'autofill:bg-transparent',
-            suffix ? 'w-16' : 'flex-1',
-            type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
-          )}
-          type={type}
-          inputMode={type === 'number' ? 'decimal' : undefined}
-          step={type === 'number' ? 'any' : undefined}
-          min={type === 'number' ? '0' : undefined}
-          value={displayed}
-          placeholder={placeholder}
-          list={list}
-          autoComplete="off"
-          aria-label={label}
-          onFocus={() => setDraft(value)}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
-            cancelledRef.current = false;
-            setDraft(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-            if (event.key === 'Escape') {
-              // Solo cancela la edición; no dejes que Radix cierre el drawer ni que blur guarde.
-              event.stopPropagation();
-              cancelledRef.current = true;
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        {suffix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{suffix}</span> : null}
+    <div className="grid min-h-11 grid-cols-[1.25rem_7.5rem_minmax(0,1fr)] items-center gap-x-3 py-1">
+      <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+      <span className="text-[15px] text-muted-foreground">{label}</span>
+      <div
+        className={cn(
+          'flex min-w-0 items-center justify-end gap-1 rounded-md px-1.5 py-1 transition-colors duration-150',
+          focused ? 'bg-muted' : 'cursor-text hover:bg-muted',
+        )}
+        onClick={() => { if (!focused) setDraft(value); }}
+      >
+        {focused ? (
+          <input
+            key={`${productId}-${field}`}
+            className={cn(
+              'w-full min-w-0 border-0 bg-transparent p-0 text-right text-[15px] font-medium text-foreground shadow-none outline-none ring-0',
+              'placeholder:font-normal placeholder:text-muted-foreground/70',
+              'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+              'autofill:bg-transparent',
+              type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+            )}
+            type={type}
+            inputMode={type === 'number' ? 'decimal' : undefined}
+            step={type === 'number' ? 'any' : undefined}
+            min={type === 'number' ? '0' : undefined}
+            value={displayed}
+            placeholder={placeholder}
+            list={list}
+            autoComplete="off"
+            aria-label={label}
+            autoFocus
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => {
+              if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
+              cancelledRef.current = false;
+              setDraft(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                cancelledRef.current = true;
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        ) : display ? (
+          tagged
+            ? <OverviewTag>{display}</OverviewTag>
+            : <span className="truncate text-right text-[15px] font-medium tabular-nums">{display}</span>
+        ) : (
+          <OverviewTag tone="muted">{placeholder || '—'}</OverviewTag>
+        )}
         {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-      </span>
-    </label>
+      </div>
+    </div>
   );
 }
 
-function ProductDescription({ text }: { text?: string | null }) {
-  const description = String(text || '').trim();
-  return (
-    <section className="mt-6" aria-labelledby="product-description-title">
-      <h3 id="product-description-title" className="text-sm text-muted-foreground">Descripción</h3>
-      <p className="mt-2 text-sm leading-6 text-foreground">
-        {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
-      </p>
-    </section>
-  );
+function PropertyEmpty({ children }: { children: ReactNode }) {
+  return <span className="text-muted-foreground/70">{children}</span>;
 }
 
 function SellerPrice({ listing }: { listing: Listing }) {
