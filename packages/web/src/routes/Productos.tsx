@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
@@ -64,6 +65,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
+import { PrototypeSwitcher } from '../components/PrototypeSwitcher';
+import { DRAWER_PROTOTYPE_VARIANTS, PrototypeProductDrawer } from './productos-drawer-prototype';
 import falabellaIcon from '../assets/falabella.png';
 
 type Company = {
@@ -433,6 +436,9 @@ function listingImageUrl(listing: Listing) {
 
 export default function Productos() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  // DEV-only throwaway chrome: five drawer layouts via ?variant=A..E. Hidden in production.
+  const drawerPrototypeVariant = import.meta.env.DEV ? (searchParams.get('variant') || 'A') : null;
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
@@ -1154,47 +1160,67 @@ export default function Productos() {
         onTogglePublication={togglePublication}
       />
 
-      <ProductDrawer
-        open={selectedId != null}
-        product={selectedProduct}
-        loading={detailLoading}
-        tab={detailTab}
-        onTabChange={setDetailTab}
-        movements={movements}
-        movementsLoading={movementsQuery.isFetching}
-        sales={sales}
-        salesLoading={salesQuery.isFetching}
-        returns={returns}
-        returnsLoading={returnsQuery.isFetching}
-        salesRange={salesRange}
-        onSalesRangeChange={setSalesRange}
-        hasPreviousProduct={hasPreviousProduct}
-        hasNextProduct={hasNextProduct}
-        productPosition={selectedProductPosition}
-        totalProducts={totalCount}
-        productNavigationBusy={productNavigationBusy}
-        onPreviousProduct={() => void navigateProduct('previous')}
-        onNextProduct={() => void navigateProduct('next')}
-        onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
-        onOpenImage={openProductImage}
-        onAdjust={() => openModal('adjust')}
-        onEditImage={() => {
-          setImageUrl(selectedProduct?.imageUrl || '');
-          openModal('image');
-        }}
-        profitOwners={profitOwnersQuery.data?.items || []}
-        savingField={savingField}
-        fieldError={fieldError}
-        onSaveCommission={saveCommission}
-        onSaveProfitOwner={saveProfitOwner}
-        onSavePrice={savePrice}
-        onSaveName={saveName}
-        onSaveStock={saveStock}
-        onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
-        onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
-        onDisassociate={setUnlinkListing}
-        onTogglePublication={togglePublication}
-      />
+      {drawerPrototypeVariant ? (
+        <PrototypeProductDrawer
+          variant={drawerPrototypeVariant}
+          open={selectedId != null}
+          product={selectedProduct}
+          tab={detailTab}
+          onTabChange={setDetailTab}
+          onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
+          onAdjust={() => openModal('adjust')}
+          onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
+          onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
+          onSaveName={saveName}
+          onSavePrice={savePrice}
+          onSaveStock={saveStock}
+        />
+      ) : (
+        <ProductDrawer
+          open={selectedId != null}
+          product={selectedProduct}
+          loading={detailLoading}
+          tab={detailTab}
+          onTabChange={setDetailTab}
+          movements={movements}
+          movementsLoading={movementsQuery.isFetching}
+          sales={sales}
+          salesLoading={salesQuery.isFetching}
+          returns={returns}
+          returnsLoading={returnsQuery.isFetching}
+          salesRange={salesRange}
+          onSalesRangeChange={setSalesRange}
+          hasPreviousProduct={hasPreviousProduct}
+          hasNextProduct={hasNextProduct}
+          productPosition={selectedProductPosition}
+          totalProducts={totalCount}
+          productNavigationBusy={productNavigationBusy}
+          onPreviousProduct={() => void navigateProduct('previous')}
+          onNextProduct={() => void navigateProduct('next')}
+          onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
+          onOpenImage={openProductImage}
+          onAdjust={() => openModal('adjust')}
+          onEditImage={() => {
+            setImageUrl(selectedProduct?.imageUrl || '');
+            openModal('image');
+          }}
+          profitOwners={profitOwnersQuery.data?.items || []}
+          savingField={savingField}
+          fieldError={fieldError}
+          onSaveCommission={saveCommission}
+          onSaveProfitOwner={saveProfitOwner}
+          onSavePrice={savePrice}
+          onSaveName={saveName}
+          onSaveStock={saveStock}
+          onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
+          onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
+          onDisassociate={setUnlinkListing}
+          onTogglePublication={togglePublication}
+        />
+      )}
+      {drawerPrototypeVariant ? (
+        <PrototypeSwitcher variants={DRAWER_PROTOTYPE_VARIANTS} current={drawerPrototypeVariant} />
+      ) : null}
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
