@@ -111,17 +111,26 @@ function CopyableId({ value, label }: { value: string; label: string }) {
   );
 }
 
+const cobroCol = 'bg-muted/40';
+const cobroColStart = `${cobroCol} border-l border-border`;
+const cobroColEnd = `${cobroCol} border-r border-border`;
+const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
+const llegaText = 'text-emerald-700 dark:text-emerald-400';
+const takeText = 'text-red-600 dark:text-red-400';
+
 function ColumnHead({
   label,
   hint,
   className,
+  rowSpan,
 }: {
   label: string;
   hint?: string;
   className?: string;
+  rowSpan?: number;
 }) {
   return (
-    <TableHead className={cn('h-auto whitespace-normal py-2', className)} title={hint}>
+    <TableHead rowSpan={rowSpan} className={cn('h-auto whitespace-normal py-2', className)} title={hint}>
       <span className="block">{label}</span>
       {hint ? <span className="mt-0.5 block text-[11px] font-normal leading-tight">{hint}</span> : null}
     </TableHead>
@@ -131,16 +140,21 @@ function ColumnHead({
 function AmountRate({
   amount,
   rate,
-  warn = false,
+  tone,
 }: {
   amount: number;
   rate?: number | null;
-  warn?: boolean;
+  tone?: 'take' | 'receive';
 }) {
   return (
-    <div className={cn('text-right', warn && 'text-red-600 dark:text-red-400')}>
-      <p className="tabular-nums">{money.format(amount)}</p>
-      <p className="text-xs tabular-nums text-muted-foreground">{percentLabel(rate)}</p>
+    <div className={cn(
+      'text-right',
+      tone === 'take' && takeText,
+      tone === 'receive' && llegaText,
+    )}
+    >
+      <p className={cn('tabular-nums', tone === 'receive' && 'font-medium')}>{money.format(amount)}</p>
+      <p className={cn('text-xs tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>{percentLabel(rate)}</p>
     </div>
   );
 }
@@ -151,12 +165,14 @@ function ChargeRow({
   hint,
   rate,
   strong = false,
+  tone,
 }: {
   label: string;
   amount: number;
   hint?: string;
   rate?: number | null;
   strong?: boolean;
+  tone?: 'take' | 'receive';
 }) {
   const details = [
     hint,
@@ -170,11 +186,22 @@ function ChargeRow({
           <p key={line} className="text-xs text-muted-foreground">{line}</p>
         ))}
       </div>
-      <p className={cn('shrink-0 tabular-nums text-sm', strong ? 'font-medium' : '')}>
+      <p className={cn(
+        'shrink-0 tabular-nums text-sm',
+        strong && 'font-medium',
+        tone === 'take' && takeText,
+        tone === 'receive' && llegaText,
+      )}
+      >
         {money.format(amount)}
       </p>
     </div>
   );
+}
+
+function receiveRate(bruto: number | null | undefined, neto: number | null | undefined) {
+  if (!bruto) return null;
+  return Number(neto || 0) / Number(bruto);
 }
 
 function saleTitle(sale: SettlementSale) {
@@ -320,15 +347,21 @@ export default function Pagos() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Pedido</TableHead>
-              <TableHead>Producto</TableHead>
-              <TableHead>SKU</TableHead>
-              <TableHead>Pago</TableHead>
-              <ColumnHead className="text-right" label="Precio" hint="Lo que pagó el cliente" />
-              <ColumnHead className="text-right" label="Comisión" hint="% de Falabella" />
-              <ColumnHead className="text-right" label="Cobro envío" hint="Te cobra Falabella" />
-              <ColumnHead className="text-right" label="Te llega" hint="Lo que te depositan" />
-              <ColumnHead className="text-right" label="Se queda" hint="Comisión más envío" />
+              <TableHead rowSpan={2} className="align-bottom">Pedido</TableHead>
+              <TableHead rowSpan={2} className="align-bottom">Producto</TableHead>
+              <TableHead rowSpan={2} className="align-bottom">SKU</TableHead>
+              <TableHead rowSpan={2} className="align-bottom">Pago</TableHead>
+              <ColumnHead rowSpan={2} className="align-bottom text-right" label="Precio" hint="Lo que pagó el cliente" />
+              <TableHead colSpan={3} className={cn('h-8 py-1.5 text-center', cobroColStart, cobroColEnd)}>
+                <span className="block text-[13px] text-foreground">Falabella cobra</span>
+                <span className="block text-[11px] font-normal leading-tight">Comisión + cobro envío</span>
+              </TableHead>
+              <ColumnHead rowSpan={2} className={cn('align-bottom text-right', llegaCol, llegaText)} label="Te llega" hint="Lo que te depositan" />
+            </TableRow>
+            <TableRow>
+              <ColumnHead className={cn('text-right', cobroColStart)} label="Comisión" hint="% del precio" />
+              <ColumnHead className={cn('text-right', cobroCol)} label="Cobro envío" hint="Por enviar" />
+              <ColumnHead className={cn('text-right', cobroColEnd)} label="Se queda" hint="Suma de los dos" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -365,11 +398,11 @@ export default function Pagos() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{money.format(sale.bruto || 0)}</TableCell>
-                <TableCell><AmountRate amount={sale.commission || 0} rate={sale.commissionRate} /></TableCell>
-                <TableCell><AmountRate amount={sale.shipping || 0} rate={sale.shippingRate} /></TableCell>
-                <TableCell className="text-right tabular-nums">{money.format(sale.neto || 0)}</TableCell>
-                <TableCell>
-                  <AmountRate amount={sale.take || 0} rate={sale.takeRate} warn={(sale.takeRate || 0) >= 0.4} />
+                <TableCell className={cobroColStart}><AmountRate amount={sale.commission || 0} rate={sale.commissionRate} /></TableCell>
+                <TableCell className={cobroCol}><AmountRate amount={sale.shipping || 0} rate={sale.shippingRate} /></TableCell>
+                <TableCell className={cobroColEnd}><AmountRate amount={sale.take || 0} rate={sale.takeRate} tone="take" /></TableCell>
+                <TableCell className={llegaCol}>
+                  <AmountRate amount={sale.neto || 0} rate={receiveRate(sale.bruto, sale.neto)} tone="receive" />
                 </TableCell>
               </TableRow>
             ))}
@@ -386,10 +419,12 @@ export default function Pagos() {
               <TableRow>
                 <TableCell colSpan={4} className="font-medium">Total · {summary.paidCount} pagadas</TableCell>
                 <TableCell className="text-right tabular-nums">{money.format(summary.bruto || 0)}</TableCell>
-                <TableCell><AmountRate amount={summary.commission || 0} rate={summary.commissionRate} /></TableCell>
-                <TableCell><AmountRate amount={summary.shipping || 0} rate={summary.shippingRate} /></TableCell>
-                <TableCell className="text-right tabular-nums">{money.format(summary.neto || 0)}</TableCell>
-                <TableCell><AmountRate amount={summary.take || 0} rate={summary.takeRate} /></TableCell>
+                <TableCell className={cobroColStart}><AmountRate amount={summary.commission || 0} rate={summary.commissionRate} /></TableCell>
+                <TableCell className={cobroCol}><AmountRate amount={summary.shipping || 0} rate={summary.shippingRate} /></TableCell>
+                <TableCell className={cobroColEnd}><AmountRate amount={summary.take || 0} rate={summary.takeRate} tone="take" /></TableCell>
+                <TableCell className={llegaCol}>
+                  <AmountRate amount={summary.neto || 0} rate={receiveRate(summary.bruto, summary.neto)} tone="receive" />
+                </TableCell>
               </TableRow>
             </TableFooter>
           ) : null}
@@ -410,10 +445,27 @@ export default function Pagos() {
               </SheetHeader>
               <div className="px-5 py-4">
                 <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
-                <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
-                <ChargeRow label="Cobro envío" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
-                <ChargeRow label="Te llega" amount={selected.neto || 0} hint="Lo que te depositan." strong />
-                <ChargeRow label="Se queda Falabella" amount={selected.take || 0} hint="Comisión más cobro de envío." rate={selected.takeRate} />
+                <div className="border-y border-border py-1">
+                  <p className="pt-2 text-xs font-medium text-muted-foreground">Falabella cobra · comisión + cobro envío</p>
+                  <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
+                  <ChargeRow label="Cobro envío" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
+                  <ChargeRow
+                    label="Se queda"
+                    amount={selected.take || 0}
+                    hint="Suma de comisión y cobro envío."
+                    rate={selected.takeRate}
+                    tone="take"
+                    strong
+                  />
+                </div>
+                <ChargeRow
+                  label="Te llega"
+                  amount={selected.neto || 0}
+                  hint="Lo que te depositan."
+                  rate={receiveRate(selected.bruto, selected.neto)}
+                  tone="receive"
+                  strong
+                />
               </div>
               {(selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1 ? (
                 <div className="border-t border-border px-5 py-4">
@@ -432,8 +484,8 @@ export default function Pagos() {
                           {money.format(product.unitBruto)} c/u · comisión {percentLabel(product.commissionRate)} · cobro envío {money.format(product.unitShipping)} c/u
                         </p>
                         <div className="mt-1 flex justify-between gap-3 text-sm">
-                          <span>Te llega {money.format(product.unitNeto)} c/u</span>
-                          <span className="tabular-nums">Se queda {percentLabel(product.takeRate)}</span>
+                          <span className="tabular-nums text-muted-foreground">Se queda {percentLabel(product.takeRate)}</span>
+                          <span className={cn('tabular-nums font-medium', llegaText)}>Te llega {money.format(product.unitNeto)} c/u</span>
                         </div>
                       </div>
                     ))}
