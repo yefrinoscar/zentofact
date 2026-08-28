@@ -9,7 +9,6 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   CircleDollarSign,
   Check,
   Clock,
@@ -384,8 +383,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'referencePrice';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'referencePrice'>>;
+type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'referencePrice' | 'name';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'referencePrice' | 'name'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -1049,6 +1048,21 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveName = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setFieldError('El nombre no puede quedar vacío.');
+      return;
+    }
+    if (trimmed === selectedProduct.name) return;
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { name: trimmed },
+      optimistic: { field: 'name', patch: { name: trimmed } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   const saveStock = useCallback((raw: string) => {
     if (!selectedProduct) return;
     const trimmed = raw.trim();
@@ -1174,6 +1188,7 @@ export default function Productos() {
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
+        onSaveName={saveName}
         onSaveStock={saveStock}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
@@ -1709,7 +1724,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveStock,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName, onSaveStock,
 }: {
   open: boolean;
   product: Product | null;
@@ -1745,6 +1760,7 @@ function ProductDrawer({
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
+  onSaveName: (value: string) => void;
   onSaveStock: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
@@ -1758,19 +1774,28 @@ function ProductDrawer({
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
-      className="border-l-0 bg-background shadow-[-24px_0_48px_-28px_rgba(15,23,42,0.28)] sm:max-w-3xl sm:rounded-l-[1.75rem]"
+      className="border-l-0 bg-background shadow-[-24px_0_48px_-28px_rgba(15,23,42,0.28)] sm:max-w-xl sm:rounded-l-2xl"
       onEscapeKeyDown={(event) => {
         // Escape dentro de un campo solo cancela la edición; un segundo Escape cierra el drawer.
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
     >
-      <SheetHeader className="px-5 pb-3 pt-4 pr-16">
-        <div className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 sm:grid-cols-[5rem_minmax(0,1fr)_auto]">
+      <SheetHeader className="px-5 pb-5 pt-8 pr-16">
+        <div className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-start gap-x-5 gap-y-3">
           <ProductPhoto product={product} onOpenImage={onOpenImage} onEditImage={onEditImage} />
-          <div className="min-w-0">
-            <SheetTitle className="pr-2 leading-6">{product?.name || 'Producto'}</SheetTitle>
-            <SheetDescription className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="min-w-0 space-y-2.5">
+            {product ? (
+              <ProductTitleField
+                productId={product.id}
+                name={product.name}
+                saving={savingField === 'name'}
+                onSave={onSaveName}
+              />
+            ) : (
+              <SheetTitle>Producto</SheetTitle>
+            )}
+            <SheetDescription className="flex flex-wrap items-center gap-2">
               {product?.mainSku
                 ? <CopyableSku
                     sku={product.mainSku}
@@ -1779,25 +1804,39 @@ function ProductDrawer({
                 : <span className="font-mono text-sm font-semibold text-foreground">—</span>}
               {product && <ProductStatusBadge product={product} compact />}
             </SheetDescription>
-          </div>
-          <nav aria-label="Navegación entre productos" className="col-start-2 flex items-center sm:col-start-3 sm:row-start-1 sm:justify-end">
-            <div className="inline-flex h-11 items-center rounded-full bg-muted/80 p-0.5 sm:h-9">
-              <Button variant="ghost" size="icon-sm" className="size-10 sm:size-8" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft /></Button>
-              <span className="min-w-16 px-2 text-center text-xs font-medium tabular-nums text-muted-foreground" aria-live="polite">{productPosition ? `${productPosition} / ${totalProducts}` : `— / ${totalProducts}`}</span>
-              <Button variant="ghost" size="icon-sm" className="size-10 sm:size-8" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="animate-spin" /> : <ChevronRight />}</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <nav aria-label="Navegación entre productos" className="flex items-center">
+                <div className="inline-flex h-9 items-center rounded-full bg-muted/80 p-0.5">
+                  <Button variant="ghost" size="icon-sm" className="size-8" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft /></Button>
+                  <span className="min-w-14 px-2 text-center text-xs font-medium tabular-nums text-muted-foreground" aria-live="polite">{productPosition ? `${productPosition} / ${totalProducts}` : `— / ${totalProducts}`}</span>
+                  <Button variant="ghost" size="icon-sm" className="size-8" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="animate-spin" /> : <ChevronRight />}</Button>
+                </div>
+              </nav>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon-sm" className="size-8" aria-label="Más acciones" title="Más acciones">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
+                  <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
+                  <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          </nav>
+          </div>
         </div>
       </SheetHeader>
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
-        <div className="shrink-0 px-5 pb-2">
-          <TabsList className="h-10 w-full justify-start gap-1 rounded-lg bg-muted/70 p-1 sm:w-auto">
-            <TabsTrigger value="overview" className="rounded-md px-3 text-sm"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
-            <TabsTrigger value="listings" className="rounded-md px-3 text-sm"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
-            <TabsTrigger value="inventory" className="rounded-md px-3 text-sm"><Boxes className="size-4" /> Inventario</TabsTrigger>
-            <TabsTrigger value="sales" className="rounded-md px-3 text-sm"><BarChart3 className="size-4" /> Ventas</TabsTrigger>
-            <TabsTrigger value="returns" className="rounded-md px-3 text-sm"><RefreshCw className="size-4" /> Devoluciones</TabsTrigger>
+        <div className="shrink-0 overflow-x-auto px-5 pb-3 [scrollbar-width:thin]">
+          <TabsList className="h-12 w-max min-w-full justify-start gap-1 rounded-xl bg-muted/70 p-1">
+            <TabsTrigger value="overview" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><LayoutDashboard className="size-4" /> Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Store className="size-4" /> Publicaciones <span className="tabular-nums text-xs opacity-70">{associatedListings.length}</span></TabsTrigger>
+            <TabsTrigger value="inventory" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><Boxes className="size-4" /> Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><BarChart3 className="size-4" /> Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className="h-10 flex-none rounded-lg px-3.5 text-[15px]"><RefreshCw className="size-4" /> Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
@@ -1806,10 +1845,7 @@ function ProductDrawer({
             <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
             <ProductProperties
               product={product}
-              listings={associatedListings}
               profitOwners={profitOwners}
-              publishedCount={publishedListings.length}
-              listingsCount={associatedListings.length}
               savingField={savingField}
               onSaveStock={onSaveStock}
               onSavePrice={onSavePrice}
@@ -1818,7 +1854,6 @@ function ProductDrawer({
             />
             {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
           </div>
-          <ProductOverviewActions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
         </TabsContent>
 
         <TabsContent value="listings" className="min-h-0 overflow-y-auto px-5 py-5">
@@ -2073,7 +2108,7 @@ function ProductPhoto({
   onEditImage: () => void;
 }) {
   return (
-    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-muted">
+    <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-2xl bg-muted">
       {product?.imageUrl ? (
         <button
           type="button"
@@ -2111,31 +2146,59 @@ function ProductOverviewCue({ available, listingsCount }: { available: number; l
   return <p className="mb-5 rounded-md bg-muted/60 px-4 py-3 text-sm text-muted-foreground">{message}</p>;
 }
 
-function ProductOverviewActions({
-  onAdjust,
-  onAssociate,
-  onPublish,
+function ProductTitleField({
+  productId,
+  name,
+  saving,
+  onSave,
 }: {
-  onAdjust: () => void;
-  onAssociate: () => void;
-  onPublish: () => void;
+  productId: number;
+  name: string;
+  saving?: boolean;
+  onSave: (value: string) => void;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+  const focused = draft !== null;
+  const displayed = draft ?? name;
+
   return (
-    <div
-      className="grid shrink-0 grid-cols-1 gap-2 border-t border-border px-5 py-4 sm:grid-cols-3"
-      role="group"
-      aria-label="Acciones del producto"
-    >
-      <button type="button" className="primary-button h-10" onClick={onAdjust}>
-        <CircleDollarSign className="h-4 w-4" /> Ajustar stock
-      </button>
-      <button type="button" className="secondary-button h-10 justify-center" onClick={onAssociate}>
-        <Plus className="h-4 w-4" /> Asociar producto
-      </button>
-      <button type="button" className="secondary-button h-10 justify-center" onClick={onPublish}>
-        <PackagePlus className="h-4 w-4" /> Nueva publicación
-      </button>
-    </div>
+    <SheetTitle className="min-w-0">
+      <div
+        className={cn(
+          '-mx-1 rounded-md px-1 py-0.5',
+          focused ? 'bg-muted' : 'cursor-text hover:bg-muted/70',
+        )}
+        onClick={() => { if (!focused) setDraft(name); }}
+      >
+        {focused ? (
+          <input
+            key={`${productId}-name`}
+            className="w-full border-0 bg-transparent p-0 text-lg font-medium leading-6 text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/70 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+            value={displayed}
+            aria-label="Nombre del producto"
+            autoFocus
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => {
+              if (!cancelledRef.current && draft !== null && draft !== name) onSave(draft);
+              cancelledRef.current = false;
+              setDraft(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                cancelledRef.current = true;
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        ) : (
+          <span className="block text-lg font-medium leading-6">{name || 'Producto'}</span>
+        )}
+        {saving ? <Loader2 className="mt-1 h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+      </div>
+    </SheetTitle>
   );
 }
 
@@ -2154,10 +2217,7 @@ function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: ()
 
 function ProductProperties({
   product,
-  listings,
   profitOwners,
-  publishedCount,
-  listingsCount,
   savingField,
   onSaveStock,
   onSavePrice,
@@ -2165,10 +2225,7 @@ function ProductProperties({
   onSaveProfitOwner,
 }: {
   product: Product;
-  listings: Listing[];
   profitOwners: string[];
-  publishedCount: number;
-  listingsCount: number;
   savingField: ProductEditableField | null;
   onSaveStock: (value: string) => void;
   onSavePrice: (value: string) => void;
@@ -2177,129 +2234,71 @@ function ProductProperties({
 }) {
   const description = String(product.description || '').trim();
   return (
-    <div className="max-w-lg space-y-4">
-      <OverviewSection title="Detalles" defaultOpen>
-        <OverviewField
-          icon={Package}
-          label="Stock"
-          productId={product.id}
-          field="quantityOnHand"
-          value={String(product.quantityOnHand)}
-          display={formatUnits(product.quantityOnHand)}
-          type="number"
-          onSave={onSaveStock}
-        />
-        <OverviewField
-          icon={Banknote}
-          label="Precio"
-          productId={product.id}
-          field="referencePrice"
-          value={product.referencePrice == null ? '' : String(product.referencePrice)}
-          display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
-          type="number"
-          placeholder="Sin precio"
-          saving={savingField === 'referencePrice'}
-          onSave={onSavePrice}
-        />
-        <OverviewField
-          icon={Percent}
-          label="Comisión"
-          productId={product.id}
-          field="commissionAmount"
-          value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
-          display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
-          type="number"
-          placeholder="Sin comisión"
-          saving={savingField === 'commissionAmount'}
-          onSave={onSaveCommission}
-        />
-        <OverviewField
-          icon={User}
-          label="Beneficiario"
-          productId={product.id}
-          field="profitOwner"
-          value={product.profitOwner || ''}
-          display={product.profitOwner || ''}
-          placeholder="Sin beneficiario"
-          list="profit-owner-inline-options"
-          saving={savingField === 'profitOwner'}
-          onSave={onSaveProfitOwner}
-        />
-        <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-        <OverviewRow icon={Archive} label="Reservado">
-          <span className="text-[15px] font-medium tabular-nums">{formatUnits(product.quantityReserved)}</span>
-        </OverviewRow>
-        <OverviewRow icon={Clock} label="Actualizado">
-          <span className="text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
-        </OverviewRow>
-        <OverviewRow icon={FileText} label="Descripción" align="start">
-          <p className="text-[15px] leading-6 text-foreground">
-            {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
-          </p>
-        </OverviewRow>
-      </OverviewSection>
-
-      <OverviewSection
-        title="Sellers"
-        count={listingsCount}
-        badge={listingsCount === 0 ? '0/0' : `${publishedCount}/${listingsCount}`}
-      >
-        {listings.length === 0 ? (
-          <p className="px-1 py-2 text-sm text-muted-foreground">Sin publicaciones. Asocia o publica.</p>
-        ) : (
-          <div className="space-y-1.5">
-            {listings.map((listing) => {
-              const publication = publicationPresentation(listing);
-              return (
-                <div key={listing.id} className="flex items-center gap-3 rounded-lg bg-muted/60 px-3 py-2.5">
-                  <Store className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px] font-medium">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span>
-                    <span className="mt-0.5 block truncate text-sm text-muted-foreground">{channelLabel(listing.channelCode)}</span>
-                  </span>
-                  <OverviewTag tone={publication.visible ? 'success' : 'muted'}>{publication.label}</OverviewTag>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </OverviewSection>
+    <div>
+      <OverviewField
+        icon={Package}
+        label="Stock"
+        productId={product.id}
+        field="quantityOnHand"
+        value={String(product.quantityOnHand)}
+        display={formatUnits(product.quantityOnHand)}
+        type="number"
+        onSave={onSaveStock}
+      />
+      <OverviewRow icon={Archive} label="Reservado">
+        <span className="text-[15px] font-medium tabular-nums">{formatUnits(product.quantityReserved)}</span>
+      </OverviewRow>
+      <OverviewField
+        icon={Banknote}
+        label="Precio"
+        productId={product.id}
+        field="referencePrice"
+        value={product.referencePrice == null ? '' : String(product.referencePrice)}
+        display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
+        type="number"
+        placeholder="Sin precio"
+        displayClassName="text-lg font-semibold tracking-tight text-zinc-950"
+        saving={savingField === 'referencePrice'}
+        onSave={onSavePrice}
+      />
+      <OverviewField
+        icon={Percent}
+        label="Comisión"
+        productId={product.id}
+        field="commissionAmount"
+        value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+        display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
+        type="number"
+        placeholder="Sin comisión"
+        saving={savingField === 'commissionAmount'}
+        onSave={onSaveCommission}
+      />
+      <OverviewField
+        icon={User}
+        label="Beneficiario"
+        productId={product.id}
+        field="profitOwner"
+        value={product.profitOwner || ''}
+        display={product.profitOwner || ''}
+        placeholder="Sin beneficiario"
+        list="profit-owner-inline-options"
+        saving={savingField === 'profitOwner'}
+        onSave={onSaveProfitOwner}
+      />
+      <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+      <OverviewRow icon={Clock} label="Actualizado">
+        <span className="text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
+      </OverviewRow>
+      <OverviewRow icon={FileText} label="Descripción" align="start">
+        <p className="text-[15px] leading-6 text-foreground">
+          {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
+        </p>
+      </OverviewRow>
     </div>
   );
 }
 
 const OVERVIEW_ROW_CLASS = 'grid min-h-10 grid-cols-[9.75rem_minmax(0,1fr)] gap-x-5 py-1';
-
-function OverviewSection({
-  title,
-  count,
-  badge,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  count?: number;
-  badge?: string;
-  defaultOpen?: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <details
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      className="group border-t border-border/80 pt-4 first:border-t-0 first:pt-0"
-    >
-      <summary className="mb-2 flex min-h-8 cursor-pointer list-none items-center gap-2.5 [&::-webkit-details-marker]:hidden">
-        <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{title}</h3>
-        {badge ? <OverviewTag tone="muted">{badge}</OverviewTag> : null}
-        {count != null && !badge ? <span className="text-sm tabular-nums text-muted-foreground">{count}</span> : null}
-        <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground transition group-open:rotate-180" aria-hidden="true" />
-      </summary>
-      {children}
-    </details>
-  );
-}
 
 function OverviewLabel({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
@@ -2329,19 +2328,6 @@ function OverviewRow({
   );
 }
 
-function OverviewTag({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'muted' | 'success' }) {
-  return (
-    <span className={cn(
-      'inline-flex max-w-full truncate rounded-full px-2.5 py-0.5 text-sm font-medium',
-      tone === 'success' && 'bg-emerald-50 text-emerald-800',
-      tone === 'muted' && 'bg-muted text-muted-foreground',
-      tone === 'neutral' && 'bg-muted text-foreground',
-    )}>
-      {children}
-    </span>
-  );
-}
-
 function OverviewField({
   icon,
   label,
@@ -2353,6 +2339,7 @@ function OverviewField({
   type = 'text',
   placeholder,
   list,
+  displayClassName,
   saving,
 }: {
   icon: LucideIcon;
@@ -2365,6 +2352,7 @@ function OverviewField({
   type?: string;
   placeholder?: string;
   list?: string;
+  displayClassName?: string;
   saving?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -2418,7 +2406,7 @@ function OverviewField({
             }}
           />
         ) : display ? (
-          <span className="truncate text-left text-[15px] font-medium tabular-nums">{display}</span>
+          <span className={cn('truncate text-left text-[15px] font-medium tabular-nums', displayClassName)}>{display}</span>
         ) : (
           <span className="text-[15px] text-muted-foreground">{placeholder || '—'}</span>
         )}
