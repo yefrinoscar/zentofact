@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { quoteOwnFleetShipping } from './own-fleet-shipping.ts';
+import { placeAtCoordinates, quoteOwnFleetShipping } from './own-fleet-shipping.ts';
 import { peruPlaceById, searchPeruPlaces } from './peru-places.ts';
 
 test('busca distritos de Lima y departamentos', () => {
@@ -28,4 +28,11 @@ test('la búsqueda local alimenta la misma cotización de envío propio', () => 
   assert.equal(arequipa?.districtAmount, 25);
   assert.equal(arequipa?.distanceAmount, 25);
   assert.equal(arequipa?.total, 50);
+});
+
+test('placeAtCoordinates asigna el distrito del punto, no un nombre buscado', () => {
+  assert.equal(placeAtCoordinates(-12.114, -77.021).district, 'Surquillo');
+  assert.equal(placeAtCoordinates(-12.0776, -77.0905).district, 'San Miguel');
+  assert.equal(placeAtCoordinates(-12.135, -76.995).district, 'Santiago De Surco');
+  assert.equal(placeAtCoordinates(-16.409, -71.537).department, 'Arequipa');
 });

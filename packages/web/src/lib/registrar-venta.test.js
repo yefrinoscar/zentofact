@@ -208,6 +208,24 @@ test('Nosotros suma distrito y distancia al total de la venta', () => {
   assert.equal(payload.shipping.districtAmount, 8);
   assert.equal(payload.shipping.distanceAmount, 10);
   assert.equal(payload.shipping.zoneKind, 'lima_district');
+  assert.equal(payload.shipping.district, 'San Miguel');
+});
+
+test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () => {
+  const payload = buildManualSaleOrderPayload(validSale({
+    shippingCarrier: 'nosotros',
+    dropoffPlace: {
+      label: 'San Miguel, Lima 15047',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.114,
+      lng: -77.021,
+    },
+  }));
+  assert.equal(payload.shipping.district, 'Surquillo');
+  assert.equal(payload.shipping.districtAmount, 12);
+  assert.equal(payload.shipping.zoneLabel, 'Surquillo');
 });
 
 test('un repartidor tercero no cobra envío propio', () => {

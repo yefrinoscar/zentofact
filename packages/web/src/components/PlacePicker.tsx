@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, MapPin, Navigation, Search, X } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { peruPlaceFromComponents } from '../lib/own-fleet-shipping';
+import { peruPlaceFromComponents, placeAtCoordinates } from '../lib/own-fleet-shipping';
 import {
   indexedPlaceToDestination,
-  nearestPeruPlace,
   peruPlaceById,
   searchPeruPlaces,
   type IndexedPeruPlace,
@@ -85,16 +84,34 @@ function loadGoogleMaps(key: string) {
   return mapsLoader;
 }
 
-function placeFromGoogle(result: any, lat: number, lng: number): MapPlace {
-  const place = peruPlaceFromComponents(result?.address_components || result?.addressComponents || []);
+function destinationAtPin(
+  lat: number,
+  lng: number,
+  extras?: { label?: string; district?: string; province?: string; department?: string },
+): MapPlace {
+  const atPin = placeAtCoordinates(lat, lng);
+  const snapped = Boolean(atPin.district || atPin.department);
+  const district = snapped ? (atPin.district || '') : (extras?.district || '');
+  const province = snapped ? (atPin.province || '') : (extras?.province || '');
+  const department = snapped ? (atPin.department || '') : (extras?.department || '');
   return {
-    label: String(result?.formatted_address || result?.formattedAddress || result?.name || result?.displayName || `${lat.toFixed(5)}, ${lng.toFixed(5)}`),
-    district: place.district,
-    province: place.province,
-    department: place.department,
+    label: extras?.label
+      || (district ? `${district}, ${department}` : department)
+      || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+    district,
+    province,
+    department,
     lat,
     lng,
   };
+}
+
+function placeFromGoogle(result: any, lat: number, lng: number): MapPlace {
+  const place = peruPlaceFromComponents(result?.address_components || result?.addressComponents || []);
+  return destinationAtPin(lat, lng, {
+    ...place,
+    label: String(result?.formatted_address || result?.formattedAddress || result?.name || result?.displayName || ''),
+  });
 }
 
 async function fetchPredictions(term: string): Promise<Prediction[]> {
@@ -196,12 +213,12 @@ export function PlacePicker({
     }
     const geocoder = geocoderRef.current;
     if (!geocoder) {
-      onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
+      onChange(destinationAtPin(lat, lng));
       return;
     }
     geocoder.geocode({ location: { lat, lng }, language: 'es', region: 'PE' }, (results: any[], status: string) => {
       if (status === 'OK' && results?.[0]) onChange(placeFromGoogle(results[0], lat, lng));
-      else onChange({ label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`, district: '', province: '', department: '', lat, lng });
+      else onChange(destinationAtPin(lat, lng));
     });
   };
 
@@ -218,7 +235,7 @@ export function PlacePicker({
   const pickPrediction = async (prediction: Prediction) => {
     const local = prediction.localPlace || peruPlaceById(prediction.placeId);
     if (local) {
-      showPlace(indexedPlaceToDestination(local));
+      showPlace(destinationAtPin(local.lat, local.lng, indexedPlaceToDestination(local)));
       return;
     }
     const place = await fetchPlace(prediction.placeId);
@@ -350,8 +367,8 @@ export function PlacePicker({
             setError('Estás fuera del Perú. Busca el distrito o el departamento.');
             return;
           }
-          const nearest = nearestPeruPlace({ lat, lng });
-          if (nearest) showPlace(indexedPlaceToDestination(nearest));
+          const atPin = destinationAtPin(lat, lng);
+          if (atPin.district || atPin.department) showPlace(atPin);
           else applyLatLng(lat, lng);
           setLocating(false);
           return;

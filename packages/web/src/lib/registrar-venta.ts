@@ -1,6 +1,7 @@
 import {
   OWN_FLEET_CARRIER,
   OWN_FLEET_ORIGIN,
+  placeAtCoordinates,
   quoteOwnFleetShipping,
   saleTotals,
 } from './own-fleet-shipping.ts';
@@ -157,9 +158,18 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
   );
   const productsTotal = saleLinesTotal(input.lines);
   const ownFleet = input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER;
-  const shippingQuote = ownFleet ? quoteOwnFleetShipping(input.dropoffPlace) : null;
+  const dropoff = input.dropoffPlace;
+  const dropoffLat = Number(dropoff?.lat);
+  const dropoffLng = Number(dropoff?.lng);
+  const atPin = dropoff && Number.isFinite(dropoffLat) && Number.isFinite(dropoffLng)
+    ? placeAtCoordinates(dropoffLat, dropoffLng)
+    : null;
+  const shippingQuote = ownFleet ? quoteOwnFleetShipping(dropoff) : null;
   const totals = saleTotals(productsTotal, shippingQuote);
   const deliveryDate = String(input.deliveryDate).trim();
+  const shippingDistrict = atPin ? (atPin.district || '') : (dropoff?.district || '');
+  const shippingProvince = atPin ? (atPin.province || '') : (dropoff?.province || '');
+  const shippingDepartment = atPin ? (atPin.department || '') : (dropoff?.department || '');
 
   return {
     channelAccountId: input.channelAccountId,
@@ -181,9 +191,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
       type: input.delivery,
       carrier: input.delivery === 'envio' ? input.shippingCarrier : undefined,
       address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : PICKUP_ADDRESS,
-      district: input.delivery === 'envio' ? input.dropoffPlace?.district || '' : '',
-      province: input.delivery === 'envio' ? input.dropoffPlace?.province || '' : '',
-      department: input.delivery === 'envio' ? input.dropoffPlace?.department || '' : '',
+      district: input.delivery === 'envio' ? shippingDistrict : '',
+      province: input.delivery === 'envio' ? shippingProvince : '',
+      department: input.delivery === 'envio' ? shippingDepartment : '',
       reference: input.delivery === 'envio' ? String(input.shippingNote || '').trim() : '',
       lat: input.delivery === 'envio' ? input.dropoffPlace?.lat : undefined,
       lng: input.delivery === 'envio' ? input.dropoffPlace?.lng : undefined,

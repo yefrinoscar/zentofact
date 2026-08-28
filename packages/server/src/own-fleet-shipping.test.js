@@ -40,6 +40,26 @@ test('applyOwnFleetShipping no altera un repartidor tercero', () => {
   assert.equal(applyOwnFleetShipping(order), order);
 });
 
+test('el pin en Surquillo cobra Surquillo aunque el payload diga San Miguel', () => {
+  const quoted = applyOwnFleetShipping({
+    subtotal: 189.9,
+    total: 189.9,
+    shippingAmount: null,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.114,
+      lng: -77.021,
+    },
+  });
+  assert.equal(quoted.shipping.district, 'Surquillo');
+  assert.equal(quoted.shipping.zoneLabel, 'Surquillo');
+  assert.equal(quoted.shipping.districtAmount, 12);
+});
+
 test('una provincia lejana queda en el tope de distancia', () => {
   const quote = quoteOwnFleetShipping({
     district: 'Cercado',

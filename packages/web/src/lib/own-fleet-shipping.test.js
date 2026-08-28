@@ -101,6 +101,12 @@ test('peruPlaceFromComponents extrae distrito limeño y departamento de provinci
     province: 'Arequipa',
     department: 'Arequipa',
   });
+  assert.equal(peruPlaceFromComponents([
+    { long_name: 'San Miguel', types: ['political'] },
+    { long_name: 'Lima', types: ['locality'] },
+    { long_name: 'Lima', types: ['administrative_area_level_2'] },
+    { long_name: 'Provincia de Lima', types: ['administrative_area_level_1'] },
+  ]).district, 'San Miguel');
 });
 
 test('la cotización suma distrito y distancia desde La Marina', () => {
@@ -128,7 +134,51 @@ test('la cotización suma distrito y distancia desde La Marina', () => {
   assert.equal(surco?.districtAmount, 16);
   assert.equal(surco?.distanceAmount, 20);
   assert.equal(surco?.total, 36);
-  assert.equal(surco?.zoneLabel, 'Surco');
+  assert.equal(surco?.zoneLabel, 'Santiago De Surco');
+});
+
+test('la cotización usa el distrito del pin, no el texto buscado', () => {
+  const mislabeledSurquillo = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -12.114,
+    lng: -77.021,
+  });
+  assert.equal(mislabeledSurquillo?.zoneLabel, 'Surquillo');
+  assert.equal(mislabeledSurquillo?.districtAmount, 12);
+
+  const googleSaidLima = quoteOwnFleetShipping({
+    district: 'Lima',
+    province: 'Lima',
+    department: 'Provincia De Lima',
+    lat: OWN_FLEET_ORIGIN.lat,
+    lng: OWN_FLEET_ORIGIN.lng,
+  });
+  assert.equal(googleSaidLima?.zoneLabel, 'San Miguel');
+  assert.equal(googleSaidLima?.districtAmount, 8);
+
+  const leftoverSanMiguelInArequipa = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -16.409,
+    lng: -71.537,
+  });
+  assert.equal(leftoverSanMiguelInArequipa?.zone.kind, 'department');
+  assert.equal(leftoverSanMiguelInArequipa?.zoneLabel, 'Arequipa');
+  assert.equal(leftoverSanMiguelInArequipa?.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
+
+  const huaral = quoteOwnFleetShipping({
+    district: 'Ancón',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -11.495,
+    lng: -77.208,
+  });
+  assert.equal(huaral?.zone.kind, 'department');
+  assert.equal(huaral?.zoneLabel, 'Lima');
+  assert.equal(huaral?.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
 });
 
 test('saleTotals agrega productos, distrito y distancia al total', () => {
