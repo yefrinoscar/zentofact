@@ -9,12 +9,13 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   CircleDollarSign,
   Check,
   Clock,
   Copy,
   ExternalLink,
-  Eye,
+  FileText,
   Hash,
   ImagePlus,
   LayoutDashboard,
@@ -23,7 +24,6 @@ import {
   MoreHorizontal,
   Package,
   PackagePlus,
-  Pencil,
   Percent,
   Plus,
   RefreshCw,
@@ -1817,7 +1817,6 @@ function ProductDrawer({
               onSavePrice={onSavePrice}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
-              onOpenListings={() => onTabChange('listings')}
             />
             {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
           </div>
@@ -2166,7 +2165,6 @@ function ProductProperties({
   onSavePrice,
   onSaveCommission,
   onSaveProfitOwner,
-  onOpenListings,
 }: {
   product: Product;
   listings: Listing[];
@@ -2178,12 +2176,11 @@ function ProductProperties({
   onSavePrice: (value: string) => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
-  onOpenListings: () => void;
 }) {
   const description = String(product.description || '').trim();
   return (
-    <div className="space-y-6">
-      <OverviewSection title="Producto">
+    <div className="max-w-lg space-y-4">
+      <OverviewSection title="Detalles" defaultOpen>
         <OverviewField
           icon={Package}
           label="Stock"
@@ -2192,6 +2189,7 @@ function ProductProperties({
           value={String(product.quantityOnHand)}
           display={formatUnits(product.quantityOnHand)}
           type="number"
+          tagged
           onSave={onSaveStock}
         />
         <OverviewField
@@ -2203,6 +2201,7 @@ function ProductProperties({
           display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
           type="number"
           placeholder="Sin precio"
+          tagged
           saving={savingField === 'referencePrice'}
           onSave={onSavePrice}
         />
@@ -2215,6 +2214,7 @@ function ProductProperties({
           display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
           type="number"
           placeholder="Sin comisión"
+          tagged
           saving={savingField === 'commissionAmount'}
           onSave={onSaveCommission}
         />
@@ -2232,41 +2232,6 @@ function ProductProperties({
           onSave={onSaveProfitOwner}
         />
         <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-      </OverviewSection>
-
-      <OverviewSection title="Sellers" count={listingsCount} onEdit={onOpenListings}>
-        <OverviewRow icon={Eye} label="Visibles">
-          <button type="button" onClick={onOpenListings} className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <OverviewTag tone={publishedCount > 0 ? 'success' : 'muted'}>
-              {listingsCount === 0 ? '0/0' : `${publishedCount}/${listingsCount}`}
-            </OverviewTag>
-          </button>
-        </OverviewRow>
-        {listings.length > 0 ? (
-          <div className="mt-2 space-y-1.5">
-            {listings.map((listing) => {
-              const publication = publicationPresentation(listing);
-              return (
-                <button
-                  key={listing.id}
-                  type="button"
-                  onClick={onOpenListings}
-                  className="flex w-full items-center gap-3 rounded-lg bg-muted/60 px-3 py-2.5 text-left hover:bg-muted"
-                >
-                  <Store className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px] font-medium">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span>
-                    <span className="mt-0.5 block truncate text-sm text-muted-foreground">{channelLabel(listing.channelCode)}</span>
-                  </span>
-                  <OverviewTag tone={publication.visible ? 'success' : 'muted'}>{publication.label}</OverviewTag>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </OverviewSection>
-
-      <OverviewSection title="Detalle">
         <OverviewRow icon={Tag} label="Marca">
           {usableBrand(product.brand)
             ? <OverviewTag>{usableBrand(product.brand)}</OverviewTag>
@@ -2274,57 +2239,104 @@ function ProductProperties({
         </OverviewRow>
         <OverviewRow icon={Hash} label="Unidad"><OverviewTag>Unidad</OverviewTag></OverviewRow>
         <OverviewRow icon={Archive} label="Reservado">
-          <span className="text-[15px] font-medium tabular-nums">{formatUnits(product.quantityReserved)}</span>
+          <OverviewTag tone="muted">{formatUnits(product.quantityReserved)}</OverviewTag>
         </OverviewRow>
         <OverviewRow icon={Clock} label="Actualizado">
-          <span className="text-right text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
+          <span className="text-[15px] font-medium">{formatDate(product.updatedAt)}</span>
         </OverviewRow>
-        <div className="pt-3">
-          <p className="text-[15px] font-medium">Descripción</p>
-          <p className="mt-2 text-[15px] leading-6 text-foreground">
+        <OverviewRow icon={FileText} label="Descripción" align="start">
+          <p className="text-[15px] leading-6 text-foreground">
             {description || <PropertyEmpty>Sin descripción</PropertyEmpty>}
           </p>
-        </div>
+        </OverviewRow>
+      </OverviewSection>
+
+      <OverviewSection
+        title="Sellers"
+        count={listingsCount}
+        badge={listingsCount === 0 ? '0/0' : `${publishedCount}/${listingsCount}`}
+      >
+        {listings.length === 0 ? (
+          <p className="px-1 py-2 text-sm text-muted-foreground">Sin publicaciones. Asocia o publica.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {listings.map((listing) => {
+              const publication = publicationPresentation(listing);
+              return (
+                <div key={listing.id} className="flex items-center gap-3 rounded-lg bg-muted/60 px-3 py-2.5">
+                  <Store className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-medium">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span>
+                    <span className="mt-0.5 block truncate text-sm text-muted-foreground">{channelLabel(listing.channelCode)}</span>
+                  </span>
+                  <OverviewTag tone={publication.visible ? 'success' : 'muted'}>{publication.label}</OverviewTag>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </OverviewSection>
     </div>
   );
 }
 
+const OVERVIEW_ROW_CLASS = 'grid min-h-10 grid-cols-[9.75rem_minmax(0,1fr)] gap-x-5 py-1';
+
 function OverviewSection({
   title,
   count,
-  onEdit,
+  badge,
+  defaultOpen = false,
   children,
 }: {
   title: string;
   count?: number;
-  onEdit?: () => void;
+  badge?: string;
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className="border-t border-border/80 pt-5 first:border-t-0 first:pt-0">
-      <header className="mb-2 flex min-h-8 items-center justify-between gap-3">
-        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
-        <span className="flex items-center gap-2">
-          {count != null ? <span className="text-sm tabular-nums text-muted-foreground">{count}</span> : null}
-          {onEdit ? (
-            <button type="button" className="icon-button" onClick={onEdit} aria-label={`Ver ${title.toLowerCase()}`}>
-              <Pencil className="size-4" />
-            </button>
-          ) : null}
-        </span>
-      </header>
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="group border-t border-border/80 pt-4 first:border-t-0 first:pt-0"
+    >
+      <summary className="mb-2 flex min-h-8 cursor-pointer list-none items-center gap-2.5 [&::-webkit-details-marker]:hidden">
+        <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{title}</h3>
+        {badge ? <OverviewTag tone="muted">{badge}</OverviewTag> : null}
+        {count != null && !badge ? <span className="text-sm tabular-nums text-muted-foreground">{count}</span> : null}
+        <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground transition group-open:rotate-180" aria-hidden="true" />
+      </summary>
       {children}
-    </section>
+    </details>
   );
 }
 
-function OverviewRow({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
+function OverviewLabel({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
-    <div className="grid min-h-11 grid-cols-[1.25rem_7.5rem_minmax(0,1fr)] items-center gap-x-3 py-1">
-      <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-      <span className="text-[15px] text-muted-foreground">{label}</span>
-      <div className="flex min-w-0 items-center justify-end">{children}</div>
+    <div className="flex min-w-0 items-center gap-2.5">
+      <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="truncate text-[15px] text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+function OverviewRow({
+  icon,
+  label,
+  align = 'center',
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  align?: 'center' | 'start';
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn(OVERVIEW_ROW_CLASS, align === 'start' ? 'items-start pt-2' : 'items-center')}>
+      <OverviewLabel icon={icon} label={label} />
+      <div className="min-w-0 justify-self-start">{children}</div>
     </div>
   );
 }
@@ -2343,7 +2355,7 @@ function OverviewTag({ children, tone = 'neutral' }: { children: ReactNode; tone
 }
 
 function OverviewField({
-  icon: Icon,
+  icon,
   label,
   productId,
   field,
@@ -2375,12 +2387,11 @@ function OverviewField({
   const displayed = draft ?? value;
 
   return (
-    <div className="grid min-h-11 grid-cols-[1.25rem_7.5rem_minmax(0,1fr)] items-center gap-x-3 py-1">
-      <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-      <span className="text-[15px] text-muted-foreground">{label}</span>
+    <div className={cn(OVERVIEW_ROW_CLASS, 'items-center')}>
+      <OverviewLabel icon={icon} label={label} />
       <div
         className={cn(
-          'flex min-w-0 items-center justify-end gap-1 rounded-md py-1 transition-colors duration-150',
+          'inline-flex w-fit max-w-full items-center justify-start gap-1 rounded-md px-1 py-0.5 transition-colors duration-150',
           focused ? 'bg-muted' : 'cursor-text hover:bg-muted',
         )}
         onClick={() => { if (!focused) setDraft(value); }}
@@ -2389,7 +2400,7 @@ function OverviewField({
           <input
             key={`${productId}-${field}`}
             className={cn(
-              'w-full min-w-0 border-0 bg-transparent p-0 text-right text-[15px] font-medium text-foreground shadow-none outline-none ring-0',
+              'w-36 min-w-0 border-0 bg-transparent p-0 text-left text-[15px] font-medium text-foreground shadow-none outline-none ring-0',
               'placeholder:font-normal placeholder:text-muted-foreground/70',
               'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
               'autofill:bg-transparent',
@@ -2423,7 +2434,7 @@ function OverviewField({
         ) : display ? (
           tagged
             ? <OverviewTag>{display}</OverviewTag>
-            : <span className="truncate text-right text-[15px] font-medium tabular-nums">{display}</span>
+            : <span className="truncate text-left text-[15px] font-medium tabular-nums">{display}</span>
         ) : (
           <OverviewTag tone="muted">{placeholder || '—'}</OverviewTag>
         )}
