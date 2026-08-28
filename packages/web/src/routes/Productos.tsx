@@ -297,11 +297,6 @@ function formatBasePrice(product: Product) {
   return formatMoney(product.sellerPriceMin);
 }
 
-function sellerStock(product: Product) {
-  const stock = Number(product.sellerStockTotal);
-  return Number.isFinite(stock) ? stock : 0;
-}
-
 function formatDate(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
@@ -367,8 +362,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'profitOwner';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner'>>;
+type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'referencePrice';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'referencePrice'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -1015,6 +1010,23 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const savePrice = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const trimmed = raw.trim();
+    const current = selectedProduct.referencePrice == null ? '' : String(selectedProduct.referencePrice);
+    if (trimmed === current) return;
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && (parsed == null || !Number.isFinite(parsed) || parsed < 0)) {
+      setFieldError('El precio debe ser un número válido.');
+      return;
+    }
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { referencePrice: parsed },
+      optimistic: { field: 'referencePrice', patch: { referencePrice: parsed } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   return (
     <div className="space-y-4">
       <CatalogInventoryKpis
@@ -1125,6 +1137,7 @@ export default function Productos() {
         fieldError={fieldError}
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
+        onSavePrice={savePrice}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1659,7 +1672,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice,
 }: {
   open: boolean;
   product: Product | null;
@@ -1694,6 +1707,7 @@ function ProductDrawer({
   fieldError: string;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
+  onSavePrice: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
@@ -1752,10 +1766,21 @@ function ProductDrawer({
         <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             <MetricRow>
-              <Metric label="Stock sellers" value={`${formatNumber(sellerStock(product))} u`} />
-              <Metric label="Precio" value={formatBasePrice(product)} />
-              <Metric label="Sellers" value={String(product.sellersCount || 0)} />
-              <Metric label="Publicadas" value={String(publishedListings.length)} />
+              <Metric label="Stock" value={`${formatNumber(product.available)} u`} hint="disponible" />
+              <MetricPriceField
+                productId={product.id}
+                value={product.referencePrice == null ? '' : String(product.referencePrice)}
+                saving={savingField === 'referencePrice'}
+                onSave={onSavePrice}
+              />
+              <Metric label="Sellers" value={String(product.sellersCount || 0)} hint="asociados" />
+              <Metric
+                label="Visibles"
+                value={String(publishedListings.length)}
+                hint={associatedListings.length === 0
+                  ? 'sin publicaciones'
+                  : `de ${associatedListings.length} publicación${associatedListings.length === 1 ? '' : 'es'}`}
+              />
             </MetricRow>
             <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
             <div className="mt-6">
@@ -1934,12 +1959,76 @@ function AssociationCandidatesSkeleton() {
   </div>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-xl font-semibold tracking-tight">{value}</p>
+      {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
+  );
+}
+
+function MetricPriceField({
+  productId,
+  value,
+  saving,
+  onSave,
+}: {
+  productId: number;
+  value: string;
+  saving?: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+  const focused = draft !== null;
+  const displayed = draft ?? value;
+
+  return (
+    <label className="group min-w-0 cursor-text">
+      <span className="text-xs text-muted-foreground">Precio</span>
+      <span className={cn(
+        '-mx-1 mt-1 flex min-w-0 items-center gap-1 rounded-xl px-1 py-0.5 transition-colors duration-150',
+        'hover:bg-muted',
+        focused && 'bg-muted',
+      )}>
+        {focused || displayed ? <span className="select-none text-xl font-semibold tracking-tight text-muted-foreground">S/</span> : null}
+        <input
+          key={`${productId}-referencePrice`}
+          className={cn(
+            'min-w-0 flex-1 border-0 bg-transparent p-0 text-xl font-semibold tracking-tight text-foreground shadow-none outline-none ring-0',
+            'placeholder:text-base placeholder:font-medium placeholder:text-muted-foreground/70',
+            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+            'autofill:bg-transparent [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          )}
+          type="number"
+          inputMode="decimal"
+          step="any"
+          min="0"
+          value={displayed}
+          placeholder="Sin precio"
+          autoComplete="off"
+          aria-label="Precio"
+          onFocus={() => setDraft(value)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
+            cancelledRef.current = false;
+            setDraft(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+            if (event.key === 'Escape') {
+              event.stopPropagation();
+              cancelledRef.current = true;
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+      </span>
+    </label>
   );
 }
 
