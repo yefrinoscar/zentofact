@@ -262,7 +262,7 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 border-t border-border pt-6">
+    <section className="mt-5 space-y-4 rounded-lg border border-border p-5 first:mt-0">
       <div className={cn('flex flex-col gap-3', action && 'sm:flex-row sm:items-start sm:justify-between')}>
         <div className="min-w-0">
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
@@ -673,6 +673,7 @@ export default function RegistrarVenta() {
           </FieldRow>
 
           {documentRequest === 'boleta' && (
+            <div className="space-y-3 border-t border-border pt-4">
             <FieldRow label={boletaIdentity === 'ce' ? 'CE' : 'DNI'} htmlFor="customer-document">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <Segmented
@@ -703,10 +704,11 @@ export default function RegistrarVenta() {
                 />
               </div>
             </FieldRow>
+            </div>
           )}
 
           {documentRequest === 'factura' && (
-            <>
+            <div className="space-y-3 border-t border-border pt-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="customer-ruc">RUC</Label>
@@ -751,7 +753,7 @@ export default function RegistrarVenta() {
                   aria-invalid={!!fieldErrors.document}
                 />
               </FieldRow>
-            </>
+            </div>
           )}
         </div>
       </FormSection>
