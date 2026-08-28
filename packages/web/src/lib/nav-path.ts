@@ -3,6 +3,9 @@ import type { PermissionKey } from './permissions';
 export function isNavItemActive(pathname: string, to: string) {
   const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (to === '/credit-notes') return activePath === to;
+  if (to === '/orders') {
+    return activePath === to || activePath === '/orders/nueva' || activePath.startsWith('/orders/nueva/');
+  }
   return activePath === to || activePath.startsWith(`${to}/`);
 }
 

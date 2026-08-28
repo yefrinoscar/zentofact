@@ -63,6 +63,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Nueva venta',
     subtitle: 'Registra una venta con productos del catálogo.',
   },
+  '/orders/envio': {
+    title: 'Envío propio',
+    subtitle: 'Distritos y precios de movilidad propia.',
+  },
   '/scanner': {
     title: 'Preparación y escaneo',
     subtitle: 'Escanea una etiqueta y revisa el contenido exacto de cada bulto.',
@@ -126,10 +130,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/settings': {
     title: 'Ajustes',
     subtitle: 'Configura empresas y el tema visual de la aplicación.',
-  },
-  '/envio-propio': {
-    title: 'Envío propio',
-    subtitle: 'Distritos y precios de movilidad propia.',
   },
   '/system-config': {
     title: 'Configuración del sistema',
@@ -278,6 +278,8 @@ function AppLayout() {
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
+              <Route path="/orders/envio" element={ownFleetRoute} />
+              <Route path="/envio-propio" element={<Navigate to="/orders/envio" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
@@ -301,7 +303,6 @@ function AppLayout() {
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
-              <Route path="/envio-propio" element={ownFleetRoute} />
               <Route path="/system-config" element={systemConfigRoute} />
               <Route path="*" element={<Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />} />
             </Routes>
