@@ -1027,6 +1027,20 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveStock = useCallback((raw: string) => {
+    if (!selectedProduct) return;
+    const trimmed = raw.trim();
+    const parsed = Number(trimmed);
+    if (trimmed === '' || !Number.isFinite(parsed) || parsed < 0) {
+      setFieldError('El stock debe ser un número válido.');
+      return;
+    }
+    if (parsed === Number(selectedProduct.quantityOnHand)) return;
+    setFieldError('');
+    setAdjustForm({ mode: 'absolute', value: String(parsed), reason: '' });
+    openModal('adjust');
+  }, [selectedProduct]);
+
   return (
     <div className="space-y-4">
       <CatalogInventoryKpis
@@ -1138,6 +1152,7 @@ export default function Productos() {
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
+        onSaveStock={saveStock}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1672,7 +1687,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice,
+  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveStock,
 }: {
   open: boolean;
   product: Product | null;
@@ -1708,6 +1723,7 @@ function ProductDrawer({
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
+  onSaveStock: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
@@ -1765,33 +1781,20 @@ function ProductDrawer({
 
         <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-            <MetricRow columns={3}>
-              <Metric label="Stock" value={`${formatNumber(product.available)} u`} hint="disponible" />
-              <MetricPriceField
-                productId={product.id}
-                value={product.referencePrice == null ? '' : String(product.referencePrice)}
-                saving={savingField === 'referencePrice'}
-                onSave={onSavePrice}
-              />
-              <Metric
-                label="Sellers"
-                value={String(product.sellersCount || 0)}
-                hint={associatedListings.length === 0
-                  ? 'sin publicaciones'
-                  : `${publishedListings.length} visible${publishedListings.length === 1 ? '' : 's'}`}
-              />
-            </MetricRow>
             <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
-            <div className="mt-6">
-              <ProductProperties
-                product={product}
-                profitOwners={profitOwners}
-                savingField={savingField}
-                onSaveCommission={onSaveCommission}
-                onSaveProfitOwner={onSaveProfitOwner}
-              />
-              {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
-            </div>
+            <ProductProperties
+              product={product}
+              profitOwners={profitOwners}
+              publishedCount={publishedListings.length}
+              listingsCount={associatedListings.length}
+              savingField={savingField}
+              onSaveStock={onSaveStock}
+              onSavePrice={onSavePrice}
+              onSaveCommission={onSaveCommission}
+              onSaveProfitOwner={onSaveProfitOwner}
+              onOpenListings={() => onTabChange('listings')}
+            />
+            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
           </div>
           <ProductOverviewActions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
         </TabsContent>
@@ -1842,7 +1845,7 @@ function ProductDrawer({
               <p className="text-sm font-medium">Movimientos</p>
               <p className="mt-0.5 text-xs text-muted-foreground">Cuándo salió, volvió o se ajustó.</p>
             </div>
-            <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onAdjust}>
+            <Button type="button" variant="outline" size="sm" onClick={onAdjust}>
               <CircleDollarSign data-icon="inline-start" /> Ajustar stock
             </Button>
           </div>
@@ -1968,69 +1971,6 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   );
 }
 
-function MetricPriceField({
-  productId,
-  value,
-  saving,
-  onSave,
-}: {
-  productId: number;
-  value: string;
-  saving?: boolean;
-  onSave: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const cancelledRef = useRef(false);
-  const focused = draft !== null;
-  const displayed = draft ?? value;
-
-  return (
-    <label className="group min-w-0 cursor-text">
-      <span className="text-xs text-muted-foreground">Precio</span>
-      <span className={cn(
-        '-mx-1 mt-1 flex min-w-0 items-center gap-1 rounded-xl px-1 py-0.5 transition-colors duration-150',
-        'hover:bg-muted',
-        focused && 'bg-muted',
-      )}>
-        {focused || displayed ? <span className="select-none text-xl font-semibold tracking-tight text-muted-foreground">S/</span> : null}
-        <input
-          key={`${productId}-referencePrice`}
-          className={cn(
-            'min-w-0 flex-1 border-0 bg-transparent p-0 text-xl font-semibold tracking-tight text-foreground shadow-none outline-none ring-0',
-            'placeholder:text-base placeholder:font-medium placeholder:text-muted-foreground/70',
-            'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
-            'autofill:bg-transparent [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
-          )}
-          type="number"
-          inputMode="decimal"
-          step="any"
-          min="0"
-          value={displayed}
-          placeholder="Sin precio"
-          autoComplete="off"
-          aria-label="Precio"
-          onFocus={() => setDraft(value)}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => {
-            if (!cancelledRef.current && draft !== null && draft !== value) onSave(draft);
-            cancelledRef.current = false;
-            setDraft(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') event.currentTarget.blur();
-            if (event.key === 'Escape') {
-              event.stopPropagation();
-              cancelledRef.current = true;
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-      </span>
-    </label>
-  );
-}
-
 function MetricRow({ children, columns = 4 }: { children: ReactNode; columns?: 3 | 4 }) {
   return (
     <div className={cn('grid gap-x-8 gap-y-5', columns === 3 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4')}>
@@ -2146,7 +2086,7 @@ function ProductOverviewCue({ available, listingsCount }: { available: number; l
       ? 'Sin publicaciones. Asocia o publica.'
       : null;
   if (!message) return null;
-  return <p className="mt-5 rounded-2xl bg-muted/60 px-4 py-3 text-sm text-muted-foreground">{message}</p>;
+  return <p className="mb-5 rounded-md bg-muted/60 px-4 py-3 text-sm text-muted-foreground">{message}</p>;
 }
 
 function ProductOverviewActions({
@@ -2160,19 +2100,19 @@ function ProductOverviewActions({
 }) {
   return (
     <div
-      className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-4"
+      className="grid shrink-0 grid-cols-1 gap-2 border-t border-border px-5 py-4 sm:grid-cols-3"
       role="group"
       aria-label="Acciones del producto"
     >
-      <Button type="button" className="rounded-full" onClick={onAdjust}>
-        <CircleDollarSign data-icon="inline-start" /> Ajustar stock
-      </Button>
-      <Button type="button" variant="outline" className="rounded-full" onClick={onAssociate}>
-        <Plus data-icon="inline-start" /> Asociar producto
-      </Button>
-      <Button type="button" variant="outline" className="rounded-full" onClick={onPublish}>
-        <PackagePlus data-icon="inline-start" /> Nueva publicación
-      </Button>
+      <button type="button" className="primary-button h-10" onClick={onAdjust}>
+        <CircleDollarSign className="h-4 w-4" /> Ajustar stock
+      </button>
+      <button type="button" className="secondary-button h-10 justify-center" onClick={onAssociate}>
+        <Plus className="h-4 w-4" /> Asociar producto
+      </button>
+      <button type="button" className="secondary-button h-10 justify-center" onClick={onPublish}>
+        <PackagePlus className="h-4 w-4" /> Nueva publicación
+      </button>
     </div>
   );
 }
@@ -2180,12 +2120,12 @@ function ProductOverviewActions({
 function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-      <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onAssociate}>
-        <Plus data-icon="inline-start" /> Asociar producto
-      </Button>
-      <Button type="button" size="sm" className="rounded-full" onClick={onPublish}>
-        <PackagePlus data-icon="inline-start" /> Nueva publicación
-      </Button>
+      <button type="button" className="secondary-button" onClick={onAssociate}>
+        <Plus className="h-4 w-4" /> Asociar producto
+      </button>
+      <button type="button" className="primary-button" onClick={onPublish}>
+        <PackagePlus className="h-4 w-4" /> Nueva publicación
+      </button>
     </div>
   );
 }
@@ -2193,19 +2133,50 @@ function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: ()
 function ProductProperties({
   product,
   profitOwners,
+  publishedCount,
+  listingsCount,
   savingField,
+  onSaveStock,
+  onSavePrice,
   onSaveCommission,
   onSaveProfitOwner,
+  onOpenListings,
 }: {
   product: Product;
   profitOwners: string[];
+  publishedCount: number;
+  listingsCount: number;
   savingField: ProductEditableField | null;
+  onSaveStock: (value: string) => void;
+  onSavePrice: (value: string) => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
+  onOpenListings: () => void;
 }) {
   return (
     <>
       <dl>
+        <ProductInlineField
+          label="Stock"
+          productId={product.id}
+          field="quantityOnHand"
+          value={String(product.quantityOnHand)}
+          type="number"
+          suffix="u"
+          onSave={onSaveStock}
+        />
+        <ProductInlineField
+          label="Precio"
+          productId={product.id}
+          field="referencePrice"
+          value={product.referencePrice == null ? '' : String(product.referencePrice)}
+          type="number"
+          placeholder="Sin precio"
+          prefix="S/"
+          saving={savingField === 'referencePrice'}
+          onSave={onSavePrice}
+        />
+        <SellerVisibilityRow publishedCount={publishedCount} listingsCount={listingsCount} onOpen={onOpenListings} />
         <ProductInlineField
           label="Comisión"
           productId={product.id}
@@ -2230,7 +2201,6 @@ function ProductProperties({
         <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
         <PropertyRow label="Marca">{usableBrand(product.brand) || <PropertyEmpty>Sin marca</PropertyEmpty>}</PropertyRow>
         <PropertyRow label="Unidad">Unidad</PropertyRow>
-        <PropertyRow label="Stock disponible">{formatNumber(product.available)} u</PropertyRow>
         <PropertyRow label="Stock reservado">{formatNumber(product.quantityReserved)} u</PropertyRow>
         <PropertyRow label="Actualizado">{formatDate(product.updatedAt)}</PropertyRow>
       </dl>
@@ -2248,6 +2218,32 @@ function PropertyRow({ label, children }: { label: string; children: ReactNode }
   );
 }
 
+function SellerVisibilityRow({
+  publishedCount,
+  listingsCount,
+  onOpen,
+}: {
+  publishedCount: number;
+  listingsCount: number;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={listingsCount === 0 ? 'Sellers. Sin publicaciones' : `Sellers ${publishedCount}/${listingsCount} visibles`}
+      className="-mx-2 flex min-h-9 w-[calc(100%+1rem)] items-center gap-4 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+    >
+      <span className="w-32 shrink-0 text-sm text-muted-foreground">Sellers</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+        {listingsCount === 0
+          ? <PropertyEmpty>Sin publicaciones</PropertyEmpty>
+          : <span><span className="tabular-nums font-medium">{publishedCount}/{listingsCount}</span> visibles</span>}
+      </span>
+    </button>
+  );
+}
+
 function PropertyEmpty({ children }: { children: ReactNode }) {
   return <span className="text-muted-foreground/70">{children}</span>;
 }
@@ -2262,6 +2258,7 @@ function ProductInlineField({
   placeholder,
   list,
   prefix,
+  suffix,
   saving,
 }: {
   label: string;
@@ -2273,6 +2270,7 @@ function ProductInlineField({
   placeholder?: string;
   list?: string;
   prefix?: string;
+  suffix?: string;
   saving?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -2324,6 +2322,7 @@ function ProductInlineField({
             }
           }}
         />
+        {suffix && (focused || displayed) ? <span className="select-none text-sm text-muted-foreground">{suffix}</span> : null}
         {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
       </span>
     </label>
