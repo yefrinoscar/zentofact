@@ -1765,7 +1765,7 @@ function ProductDrawer({
 
         <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-            <MetricRow>
+            <MetricRow columns={3}>
               <Metric label="Stock" value={`${formatNumber(product.available)} u`} hint="disponible" />
               <MetricPriceField
                 productId={product.id}
@@ -1773,13 +1773,12 @@ function ProductDrawer({
                 saving={savingField === 'referencePrice'}
                 onSave={onSavePrice}
               />
-              <Metric label="Sellers" value={String(product.sellersCount || 0)} hint="asociados" />
               <Metric
-                label="Visibles"
-                value={String(publishedListings.length)}
+                label="Sellers"
+                value={String(product.sellersCount || 0)}
                 hint={associatedListings.length === 0
                   ? 'sin publicaciones'
-                  : `de ${associatedListings.length} publicación${associatedListings.length === 1 ? '' : 'es'}`}
+                  : `${publishedListings.length} visible${publishedListings.length === 1 ? '' : 's'}`}
               />
             </MetricRow>
             <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
