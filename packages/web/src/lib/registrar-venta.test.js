@@ -125,9 +125,163 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
-    'Busca el distrito o el departamento de envío.',
+    'Busca el distrito de Lima metropolitana.',
   );
   assert.equal(validateManualSale(validSale()), null);
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Arequipa',
+        district: 'Arequipa',
+        province: 'Arequipa',
+        department: 'Arequipa',
+        lat: -16.409,
+        lng: -71.537,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Huaral',
+        district: 'Huaral',
+        province: 'Huaral',
+        department: 'Lima',
+        lat: -11.495,
+        lng: -77.208,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Ancón',
+        district: 'Ancón',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -11.739,
+        lng: -77.15,
+      },
+    })),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Pucusana',
+        district: 'Pucusana',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    })),
+    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'nosotros',
+      dropoffPlace: {
+        label: 'Pucusana',
+        district: 'Pucusana',
+        province: 'Lima',
+        department: 'Lima',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    }), { districts: [{ key: 'pucusana', enabled: true, amount: 30 }] }),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      shippingCarrier: 'shaloom',
+      dropoffPlace: {
+        label: 'Madrid, España',
+        district: 'Madrid',
+        lat: 40.4168,
+        lng: -3.7038,
+      },
+    })),
+    'Esa dirección no está en el Perú.',
+  );
+});
+
+test('validateManualSale exige DNI, RUC o razón social si se pide comprobante', () => {
+  assert.equal(
+    validateManualSale(validSale({ documentRequest: 'boleta' })),
+    'Escribe el DNI de 8 dígitos.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'boleta',
+      customerDocumentNumber: '12345678',
+    })),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'boleta',
+      boletaIdentity: 'ce',
+      customerDocumentNumber: '001234567',
+    })),
+    null,
+  );
+  assert.equal(
+    validateManualSale(validSale({ documentRequest: 'factura', customerDocumentNumber: '20123456789' })),
+    'Escribe la razón social.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'factura',
+      customerDocumentNumber: '20123456789',
+      legalName: 'LIMBO SAC',
+    })),
+    'Escribe la dirección fiscal.',
+  );
+  assert.equal(
+    validateManualSale(validSale({
+      documentRequest: 'factura',
+      customerDocumentNumber: '20123456789',
+      legalName: 'LIMBO SAC',
+      fiscalAddress: 'Av. La Marina 2055',
+    })),
+    null,
+  );
+});
+
+test('buildManualSaleOrderPayload no pide comprobante si el cliente no lo requiere', () => {
+  const payload = buildManualSaleOrderPayload(validSale());
+  assert.equal(payload.requestedDocumentType, null);
+  assert.equal(payload.customer.documentNumber, undefined);
+});
+
+test('buildManualSaleOrderPayload guarda boleta o factura sin emitir', () => {
+  const boleta = buildManualSaleOrderPayload(validSale({
+    documentRequest: 'boleta',
+    customerDocumentNumber: '12345678',
+  }));
+  assert.equal(boleta.requestedDocumentType, 'boleta');
+  assert.equal(boleta.customer.documentType, '1');
+  assert.equal(boleta.customer.documentNumber, '12345678');
+
+  const factura = buildManualSaleOrderPayload(validSale({
+    documentRequest: 'factura',
+    customerDocumentNumber: '20990001001',
+    legalName: 'LIMBO PERU S.R.L.',
+    fiscalAddress: 'Av. La Marina 2055',
+  }));
+  assert.equal(factura.requestedDocumentType, 'factura');
+  assert.equal(factura.customer.documentType, '6');
+  assert.equal(factura.customer.documentNumber, '20990001001');
+  assert.equal(factura.customer.legalName, 'LIMBO PERU S.R.L.');
+  assert.equal(factura.customer.address, 'Av. La Marina 2055');
+  assert.equal(factura.customer.name, 'LIMBO PERU S.R.L.');
 });
 
 test('validateManualSale permite recojo sin repartidor ni mapa', () => {
@@ -208,6 +362,24 @@ test('Nosotros suma distrito y distancia al total de la venta', () => {
   assert.equal(payload.shipping.districtAmount, 8);
   assert.equal(payload.shipping.distanceAmount, 10);
   assert.equal(payload.shipping.zoneKind, 'lima_district');
+  assert.equal(payload.shipping.district, 'San Miguel');
+});
+
+test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () => {
+  const payload = buildManualSaleOrderPayload(validSale({
+    shippingCarrier: 'nosotros',
+    dropoffPlace: {
+      label: 'San Miguel, Lima 15047',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.114,
+      lng: -77.021,
+    },
+  }));
+  assert.equal(payload.shipping.district, 'Surquillo');
+  assert.equal(payload.shipping.districtAmount, 12);
+  assert.equal(payload.shipping.zoneLabel, 'Surquillo');
 });
 
 test('un repartidor tercero no cobra envío propio', () => {

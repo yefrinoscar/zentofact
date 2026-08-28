@@ -2,6 +2,7 @@
 // las cookies bajo el mismo origen del navegador.
 import { apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
+import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -172,6 +173,10 @@ const apiHttp = {
     key: string,
     data: { enabled: boolean; confirm?: string; force?: boolean; reason?: string },
   ) => req(`/system/config/${key}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  getOwnFleetConfig: () => req<OwnFleetConfig>('/order-management/own-fleet'),
+  updateOwnFleetConfig: (data: OwnFleetConfigInput) =>
+    req<OwnFleetConfig>('/order-management/own-fleet', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Dashboard consolidado
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>

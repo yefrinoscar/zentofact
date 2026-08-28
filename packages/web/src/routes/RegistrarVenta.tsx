@@ -17,6 +17,8 @@ import api from '../lib/api';
 import { usePermissions } from '../hooks/usePermissions';
 import { cn } from '../lib/cn';
 import {
+  BOLETA_IDENTITIES,
+  DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
   PICKUP_ADDRESS,
   SALE_SOURCES,
@@ -25,13 +27,17 @@ import {
   productPrice,
   saleLinesTotal,
   validateManualSale,
+  type BoletaIdentity,
   type CatalogProductForSale,
+  type DocumentRequest,
   type PaymentMethod,
   type SaleLine,
   type SaleSource,
 } from '../lib/registrar-venta';
 import {
   OWN_FLEET_CARRIER,
+  OWN_FLEET_COVERAGE_HINT,
+  OWN_FLEET_OUT_OF_RANGE_MESSAGE,
   quoteOwnFleetShipping,
   saleTotals,
 } from '../lib/own-fleet-shipping';
@@ -177,7 +183,14 @@ function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" role="radiogroup" aria-label={ariaLabel}>
+    <div
+      className={cn(
+        'grid gap-2 sm:flex sm:flex-wrap',
+        options.length >= 3 ? 'grid-cols-3' : 'grid-cols-2',
+      )}
+      role="radiogroup"
+      aria-label={ariaLabel}
+    >
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -277,7 +290,7 @@ export default function RegistrarVenta() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const afterSavePath = can('salesperson') && !can('order_management') ? '/mis-ventas' : '/orders';
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
@@ -285,6 +298,11 @@ export default function RegistrarVenta() {
   const [saleSource, setSaleSource] = useState<SaleSource>('marketplace');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [documentRequest, setDocumentRequest] = useState<DocumentRequest>('none');
+  const [boletaIdentity, setBoletaIdentity] = useState<BoletaIdentity>('dni');
+  const [customerDocumentNumber, setCustomerDocumentNumber] = useState('');
+  const [legalName, setLegalName] = useState('');
+  const [fiscalAddress, setFiscalAddress] = useState('');
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -344,6 +362,13 @@ export default function RegistrarVenta() {
     staleTime: 15_000,
   });
 
+  const fleetQuery = useQuery({
+    queryKey: ['own-fleet-config'],
+    queryFn: api.getOwnFleetConfig,
+    staleTime: 30_000,
+  });
+  const fleetConfig = fleetQuery.data;
+
   const manualAccount = useMemo(
     () => accounts.find((account) => account.channelCode === 'manual' && account.active) || null,
     [accounts],
@@ -351,7 +376,7 @@ export default function RegistrarVenta() {
   const products = (productsQuery.data?.products || []) as CatalogProduct[];
   const productsTotal = saleLinesTotal(lines);
   const shippingQuote = delivery === 'envio' && shippingCarrier === OWN_FLEET_CARRIER
-    ? quoteOwnFleetShipping(dropoffPlace)
+    ? quoteOwnFleetShipping(dropoffPlace, fleetConfig)
     : null;
   const totals = saleTotals(productsTotal, shippingQuote);
   const total = totals.total;
@@ -424,7 +449,12 @@ export default function RegistrarVenta() {
       paymentMethod,
       receivedBy,
       paymentProof,
-    });
+      documentRequest,
+      boletaIdentity,
+      customerDocumentNumber,
+      legalName,
+      fiscalAddress,
+    }, fleetConfig);
     if (validationError) {
       showFieldError(validationError);
       return;
@@ -446,7 +476,12 @@ export default function RegistrarVenta() {
         paymentMethod,
         receivedBy,
         paymentProof,
-      });
+        documentRequest,
+        boletaIdentity,
+        customerDocumentNumber,
+        legalName,
+        fiscalAddress,
+      }, fleetConfig);
     } catch (error: any) {
       showFieldError(humanizeSaleError(error?.message));
       return;
@@ -549,6 +584,107 @@ export default function RegistrarVenta() {
           </div>
         </div>
         <FieldHint message={fieldErrors.customer} />
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium">Comprobante</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">Se requiere boleta o factura. Se emite después desde Pedidos.</p>
+        </div>
+        <Choice
+          value={documentRequest}
+          options={DOCUMENT_REQUESTS}
+          onChange={(value) => {
+            setDocumentRequest(value);
+            if (value === 'factura' && !legalName.trim()) setLegalName(customerName);
+            setCustomerDocumentNumber('');
+            clearFieldError('document');
+          }}
+          ariaLabel="Se requiere boleta o factura"
+        />
+        {documentRequest === 'boleta' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Documento</Label>
+              <Choice
+                value={boletaIdentity}
+                options={BOLETA_IDENTITIES}
+                onChange={(value) => {
+                  setBoletaIdentity(value);
+                  setCustomerDocumentNumber('');
+                  clearFieldError('document');
+                }}
+                ariaLabel="Tipo de documento"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="customer-document">{boletaIdentity === 'ce' ? 'CE' : 'DNI'}</Label>
+              <Input
+                id="customer-document"
+                value={customerDocumentNumber}
+                onChange={(event) => {
+                  const next = boletaIdentity === 'dni'
+                    ? event.target.value.replace(/\D/g, '').slice(0, 8)
+                    : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+                  setCustomerDocumentNumber(next);
+                  clearFieldError('document');
+                }}
+                placeholder={boletaIdentity === 'ce' ? '001234567' : '12345678'}
+                inputMode={boletaIdentity === 'dni' ? 'numeric' : 'text'}
+                autoComplete="off"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </div>
+          </div>
+        )}
+        {documentRequest === 'factura' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="customer-ruc">RUC</Label>
+              <Input
+                id="customer-ruc"
+                value={customerDocumentNumber}
+                onChange={(event) => {
+                  setCustomerDocumentNumber(event.target.value.replace(/\D/g, '').slice(0, 11));
+                  clearFieldError('document');
+                }}
+                placeholder="20123456789"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="legal-name">Razón social</Label>
+              <Input
+                id="legal-name"
+                value={legalName}
+                onChange={(event) => {
+                  setLegalName(event.target.value);
+                  clearFieldError('document');
+                }}
+                placeholder="Empresa S.A.C."
+                autoComplete="organization"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="fiscal-address">Dirección fiscal</Label>
+              <Input
+                id="fiscal-address"
+                value={fiscalAddress}
+                onChange={(event) => {
+                  setFiscalAddress(event.target.value);
+                  clearFieldError('document');
+                }}
+                placeholder="Av. …"
+                autoComplete="street-address"
+                aria-invalid={!!fieldErrors.document}
+              />
+            </div>
+          </div>
+        )}
+        <FieldHint message={fieldErrors.document} />
       </section>
 
       <section className="space-y-3">
@@ -688,7 +824,21 @@ export default function RegistrarVenta() {
               ariaLabel="Reparto"
             />
             {shippingCarrier === OWN_FLEET_CARRIER && (
-              <p className="text-xs text-muted-foreground">Movilidad propia.</p>
+              <p className="text-xs text-muted-foreground">
+                {OWN_FLEET_COVERAGE_HINT}
+                {isAdmin ? (
+                  <>
+                    {' '}
+                    <button
+                      type="button"
+                      className="cursor-pointer underline-offset-2 hover:underline"
+                      onClick={() => navigate('/orders/envio')}
+                    >
+                      Distritos
+                    </button>
+                  </>
+                ) : null}
+              </p>
             )}
             <div className="space-y-1.5">
               <Label>Dirección</Label>
@@ -698,10 +848,10 @@ export default function RegistrarVenta() {
                   setDropoffPlace(place);
                   clearFieldError('delivery');
                 }}
-                placeholder="Distrito o departamento"
+                placeholder="Distrito de Lima metropolitana"
               />
             </div>
-            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && (
+            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote?.charged && (
               <div className="space-y-1 text-sm">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="truncate text-muted-foreground">
@@ -717,8 +867,11 @@ export default function RegistrarVenta() {
                 </div>
               </div>
             )}
+            {shippingCarrier === OWN_FLEET_CARRIER && dropoffPlace && shippingQuote && !shippingQuote.charged && (
+              <p className="text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
+            )}
             {shippingCarrier === OWN_FLEET_CARRIER && !dropoffPlace && (
-              <p className="text-xs text-muted-foreground">Busca el distrito o el departamento para ver el envío.</p>
+              <p className="text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="shipping-note">Referencia</Label>

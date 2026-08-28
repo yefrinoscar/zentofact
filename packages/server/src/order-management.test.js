@@ -587,6 +587,15 @@ test('rechaza una venta manual Envío sin repartidor', async () => {
   );
 });
 
+test('rechaza una venta manual con pin fuera del Perú', async () => {
+  await assert.rejects(
+    () => ingestOrder(manualSale({
+      shipping: { type: 'envio', carrier: 'shaloom', lat: 40.4168, lng: -3.7038 },
+    }), new IngestDb()),
+    /Esa dirección no está en el Perú/,
+  );
+});
+
 test('rechaza una venta manual Envío con un repartidor que no está en la lista', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio', carrier: 'otro' } }), new IngestDb()),

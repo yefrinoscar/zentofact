@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_DISTANCE_AMOUNT,
   OWN_FLEET_ORIGIN,
-  PROVINCE_DEPARTMENT_AMOUNT,
   applyOwnFleetShipping,
-  distanceAmountForKm,
   quoteOwnFleetShipping,
 } from './own-fleet-shipping.js';
 
@@ -40,7 +37,27 @@ test('applyOwnFleetShipping no altera un repartidor tercero', () => {
   assert.equal(applyOwnFleetShipping(order), order);
 });
 
-test('una provincia lejana queda en el tope de distancia', () => {
+test('el pin en Surquillo cobra Surquillo aunque el payload diga San Miguel', () => {
+  const quoted = applyOwnFleetShipping({
+    subtotal: 189.9,
+    total: 189.9,
+    shippingAmount: null,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.114,
+      lng: -77.021,
+    },
+  });
+  assert.equal(quoted.shipping.district, 'Surquillo');
+  assert.equal(quoted.shipping.zoneLabel, 'Surquillo');
+  assert.equal(quoted.shipping.districtAmount, 12);
+});
+
+test('Huaral y provincias no tienen movilidad propia; Ancón sí porque es Lima metropolitana', () => {
   const quote = quoteOwnFleetShipping({
     district: 'Cercado',
     province: 'Arequipa',
@@ -48,9 +65,97 @@ test('una provincia lejana queda en el tope de distancia', () => {
     lat: -16.409,
     lng: -71.537,
   });
-  assert.equal(quote.districtAmount, PROVINCE_DEPARTMENT_AMOUNT);
-  assert.equal(quote.distanceAmount, MAX_DISTANCE_AMOUNT);
-  assert.equal(quote.zone.kind, 'department');
+  assert.equal(quote.charged, false);
+  assert.equal(quote.zone.kind, 'out_of_range');
+  assert.equal(quote.total, 0);
   assert.ok(quote.distanceKm > 25);
-  assert.equal(distanceAmountForKm(quote.distanceKm), MAX_DISTANCE_AMOUNT);
+
+  const ancon = applyOwnFleetShipping({
+    subtotal: 250,
+    total: 250,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      lat: -11.739,
+      lng: -77.15,
+    },
+  });
+  assert.equal(ancon.shipping.district, 'Ancón');
+  assert.equal(ancon.shipping.districtAmount, 20);
+  assert.ok(ancon.shippingAmount > 20);
+
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -11.495,
+        lng: -77.208,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
+});
+
+test('applyOwnFleetShipping rechaza un pin fuera del Perú', () => {
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: 40.4168,
+        lng: -3.7038,
+      },
+    }),
+    /Esa dirección no está en el Perú/,
+  );
+});
+
+test('Pucusana y San Bartolo no se cobran hasta que el admin las encienda', () => {
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -12.481,
+        lng: -76.797,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
+  assert.throws(
+    () => applyOwnFleetShipping({
+      subtotal: 250,
+      total: 250,
+      shipping: {
+        type: 'envio',
+        carrier: 'nosotros',
+        lat: -12.388,
+        lng: -76.778,
+      },
+    }),
+    /Nosotros no llega ahí/,
+  );
+
+  const quoted = applyOwnFleetShipping({
+    subtotal: 250,
+    total: 250,
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      lat: -12.481,
+      lng: -76.797,
+    },
+  }, {
+    districts: [{ key: 'pucusana', enabled: true, amount: 30 }],
+  });
+  assert.equal(quoted.shipping.district, 'Pucusana');
+  assert.equal(quoted.shipping.districtAmount, 30);
+  assert.ok(quoted.shippingAmount > 30);
 });

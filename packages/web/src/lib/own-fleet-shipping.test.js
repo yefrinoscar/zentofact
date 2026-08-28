@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import {
   DISTANCE_TIERS,
   MAX_DISTANCE_AMOUNT,
+  METRO_POINTS,
   OWN_FLEET_ORIGIN,
   PROVINCE_DEPARTMENT_AMOUNT,
+  countryFromComponents,
   distanceAmountForKm,
   haversineKm,
+  isInPeru,
+  mergeOwnFleetConfig,
   peruPlaceFromComponents,
   quoteOwnFleetShipping,
   resolveShippingZone,
@@ -101,6 +105,30 @@ test('peruPlaceFromComponents extrae distrito limeño y departamento de provinci
     province: 'Arequipa',
     department: 'Arequipa',
   });
+  assert.equal(peruPlaceFromComponents([
+    { long_name: 'San Miguel', types: ['political'] },
+    { long_name: 'Lima', types: ['locality'] },
+    { long_name: 'Lima', types: ['administrative_area_level_2'] },
+    { long_name: 'Provincia de Lima', types: ['administrative_area_level_1'] },
+  ]).district, 'San Miguel');
+});
+
+test('isInPeru rechaza coordenadas o país fuera del Perú', () => {
+  assert.equal(isInPeru(-12.0776, -77.0905), true);
+  assert.equal(isInPeru(-16.409, -71.537), true);
+  assert.equal(isInPeru(-11.739, -77.15), true);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'PE'), true);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'Perú'), true);
+  assert.equal(isInPeru(40.4168, -3.7038), false);
+  assert.equal(isInPeru(-34.6037, -58.3816), false);
+  assert.equal(isInPeru(-3.48, -80.17, 'Ecuador'), false);
+  assert.equal(isInPeru(-12.0776, -77.0905, 'Chile'), false);
+  assert.equal(countryFromComponents([
+    { short_name: 'PE', long_name: 'Peru', types: ['country', 'political'] },
+  ]), 'PE');
+  assert.equal(countryFromComponents([
+    { shortName: 'CL', longName: 'Chile', types: ['country'] },
+  ]), 'CL');
 });
 
 test('la cotización suma distrito y distancia desde La Marina', () => {
@@ -128,7 +156,113 @@ test('la cotización suma distrito y distancia desde La Marina', () => {
   assert.equal(surco?.districtAmount, 16);
   assert.equal(surco?.distanceAmount, 20);
   assert.equal(surco?.total, 36);
-  assert.equal(surco?.zoneLabel, 'Surco');
+  assert.equal(surco?.zoneLabel, 'Santiago De Surco');
+});
+
+test('la cotización usa el distrito del pin, no el texto buscado', () => {
+  const mislabeledSurquillo = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -12.114,
+    lng: -77.021,
+  });
+  assert.equal(mislabeledSurquillo?.zoneLabel, 'Surquillo');
+  assert.equal(mislabeledSurquillo?.districtAmount, 12);
+
+  const googleSaidLima = quoteOwnFleetShipping({
+    district: 'Lima',
+    province: 'Lima',
+    department: 'Provincia De Lima',
+    lat: OWN_FLEET_ORIGIN.lat,
+    lng: OWN_FLEET_ORIGIN.lng,
+  });
+  assert.equal(googleSaidLima?.zoneLabel, 'San Miguel');
+  assert.equal(googleSaidLima?.districtAmount, 8);
+
+  const leftoverSanMiguelInArequipa = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -16.409,
+    lng: -71.537,
+  });
+  assert.equal(leftoverSanMiguelInArequipa?.charged, false);
+  assert.equal(leftoverSanMiguelInArequipa?.zone.kind, 'out_of_range');
+  assert.equal(leftoverSanMiguelInArequipa?.zoneLabel, 'Arequipa');
+  assert.equal(leftoverSanMiguelInArequipa?.total, 0);
+
+  const huaral = quoteOwnFleetShipping({
+    district: 'Ancón',
+    province: 'Lima',
+    department: 'Lima',
+    lat: -11.495,
+    lng: -77.208,
+  });
+  assert.equal(huaral?.charged, false);
+  assert.equal(huaral?.zone.kind, 'out_of_range');
+  assert.equal(huaral?.zoneLabel, 'Huaral');
+  assert.equal(huaral?.total, 0);
+
+  const ancon = quoteOwnFleetShipping({
+    district: 'San Miguel',
+    lat: -11.739,
+    lng: -77.15,
+  });
+  assert.equal(ancon?.charged, true);
+  assert.equal(ancon?.zoneLabel, 'Ancón');
+  assert.equal(ancon?.districtAmount, 20);
+});
+
+test('las playas del sur no tienen movilidad propia hasta que el admin las encienda', () => {
+  const pucusana = quoteOwnFleetShipping({
+    district: 'Pucusana',
+    lat: -12.481,
+    lng: -76.797,
+  });
+  assert.equal(pucusana?.charged, false);
+  assert.equal(pucusana?.zoneLabel, 'Pucusana');
+
+  const sanBartolo = quoteOwnFleetShipping({
+    district: 'San Bartolo',
+    lat: -12.388,
+    lng: -76.778,
+  });
+  assert.equal(sanBartolo?.charged, false);
+  assert.equal(sanBartolo?.zoneLabel, 'San Bartolo');
+
+  const enabled = mergeOwnFleetConfig({
+    districts: [{ key: 'pucusana', enabled: true, amount: 30 }],
+  });
+  const quoted = quoteOwnFleetShipping({
+    district: 'Pucusana',
+    lat: -12.481,
+    lng: -76.797,
+  }, enabled);
+  assert.equal(quoted?.charged, true);
+  assert.equal(quoted?.zoneLabel, 'Pucusana');
+  assert.equal(quoted?.districtAmount, 30);
+  assert.equal(quoted?.distanceAmount, MAX_DISTANCE_AMOUNT);
+
+  const lurin = quoteOwnFleetShipping({
+    district: 'Lurín',
+    lat: -12.274,
+    lng: -76.87,
+  });
+  assert.equal(lurin?.charged, true);
+  assert.equal(lurin?.districtAmount, 20);
+});
+
+test('la movilidad propia cubre Lima metropolitana: 43 distritos y Callao', () => {
+  const lima = METRO_POINTS.filter((place) => place.department === 'Lima').map((place) => place.district);
+  const callao = METRO_POINTS.filter((place) => place.department === 'Callao').map((place) => place.district);
+  assert.equal(lima.length, 43);
+  assert.equal(callao.length, 7);
+  assert.ok(lima.includes('Ancón'));
+  assert.ok(lima.includes('Santa Rosa'));
+  assert.ok(lima.includes('Pucusana'));
+  assert.ok(callao.includes('Mi Perú'));
+  assert.equal(lima.includes('Huaral'), false);
 });
 
 test('saleTotals agrega productos, distrito y distancia al total', () => {

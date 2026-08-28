@@ -1,4 +1,5 @@
-import { applyOwnFleetShipping } from './own-fleet-shipping.js';
+import { loadOwnFleetConfig } from './own-fleet-config.js';
+import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
 
@@ -65,6 +66,11 @@ function assertManualEnvioCarrier(shipping, source) {
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
     throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros.');
+  }
+  const lat = Number(shipping?.lat);
+  const lng = Number(shipping?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+    throw new Error(OUT_OF_PERU_MESSAGE);
   }
 }
 
@@ -590,11 +596,12 @@ async function ingestOrderInTransaction(input, db) {
     documentRequirement: existing.document_requirement,
     documentTypePolicy: existing.document_type_policy,
   } : account;
+  const fleetConfig = await loadOwnFleetConfig(db);
   const order = applyOwnFleetShipping(normalizeOrderInput({
     ...input,
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
-  }, policyAccount));
+  }, policyAccount), fleetConfig);
   assertManualEnvioCarrier(order.shipping, input.source);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {

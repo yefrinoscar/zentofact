@@ -1,6 +1,10 @@
 import {
   OWN_FLEET_CARRIER,
   OWN_FLEET_ORIGIN,
+  OWN_FLEET_OUT_OF_RANGE_MESSAGE,
+  OUT_OF_PERU_MESSAGE,
+  isInPeru,
+  placeAtCoordinates,
   quoteOwnFleetShipping,
   saleTotals,
 } from './own-fleet-shipping.ts';
@@ -23,9 +27,22 @@ export const PAYMENT_METHODS = [
 
 export const PICKUP_ADDRESS = OWN_FLEET_ORIGIN.address;
 
+export const DOCUMENT_REQUESTS = [
+  { value: 'none', label: 'No' },
+  { value: 'boleta', label: 'Boleta' },
+  { value: 'factura', label: 'Factura' },
+] as const;
+
+export const BOLETA_IDENTITIES = [
+  { value: 'dni', label: 'DNI' },
+  { value: 'ce', label: 'CE' },
+] as const;
+
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
+export type DocumentRequest = (typeof DOCUMENT_REQUESTS)[number]['value'];
+export type BoletaIdentity = (typeof BOLETA_IDENTITIES)[number]['value'];
 export type { ShippingCarrier };
 
 export type CatalogProductForSale = {
@@ -74,9 +91,69 @@ export type ManualSaleInput = {
   paymentMethod: PaymentMethod;
   receivedBy?: string;
   paymentProof?: { name: string; type: string; dataUrl: string } | null;
+  documentRequest?: DocumentRequest;
+  boletaIdentity?: BoletaIdentity;
+  customerDocumentNumber?: string;
+  legalName?: string;
+  fiscalAddress?: string;
   orderedAt?: string;
   orderNumber?: string;
 };
+
+function digitsOnly(value: string | null | undefined) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+export function validateDocumentRequest(input: ManualSaleInput) {
+  const kind = input.documentRequest || 'none';
+  if (kind === 'none') return null;
+  if (kind === 'boleta') {
+    const identity = input.boletaIdentity || 'dni';
+    const number = String(input.customerDocumentNumber || '').trim();
+    if (identity === 'ce') {
+      if (!/^[A-Za-z0-9]{8,12}$/.test(number)) return 'Escribe el carné de extranjería.';
+      return null;
+    }
+    if (!/^\d{8}$/.test(digitsOnly(number))) return 'Escribe el DNI de 8 dígitos.';
+    return null;
+  }
+  if (!/^\d{11}$/.test(digitsOnly(input.customerDocumentNumber))) {
+    return 'Escribe el RUC de 11 dígitos.';
+  }
+  if (!String(input.legalName || '').trim()) return 'Escribe la razón social.';
+  if (!String(input.fiscalAddress || '').trim()) return 'Escribe la dirección fiscal.';
+  return null;
+}
+
+export function customerTaxPayload(input: ManualSaleInput) {
+  const name = String(input.customerName || '').trim();
+  const phone = String(input.customerPhone || '').trim();
+  const kind = input.documentRequest || 'none';
+  if (kind === 'boleta') {
+    const identity = input.boletaIdentity || 'dni';
+    const number = identity === 'dni'
+      ? digitsOnly(input.customerDocumentNumber)
+      : String(input.customerDocumentNumber || '').trim();
+    return {
+      name,
+      phone,
+      documentType: identity === 'ce' ? '4' : '1',
+      documentNumber: number,
+    };
+  }
+  if (kind === 'factura') {
+    const legalName = String(input.legalName || name).trim();
+    return {
+      name: legalName,
+      phone,
+      documentType: '6',
+      documentNumber: digitsOnly(input.customerDocumentNumber),
+      legalName,
+      address: String(input.fiscalAddress || '').trim(),
+    };
+  }
+  return { name, phone };
+}
 
 export function productPrice(product: CatalogProductForSale) {
   const value = Number(product.sellerPriceMin ?? product.referencePrice ?? 0);
@@ -122,7 +199,7 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
-export function validateManualSale(input: ManualSaleInput) {
+export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
   if (!input.channelAccountId) {
     return 'Todavía no hay un canal de venta manual habilitado.';
   }
@@ -142,13 +219,24 @@ export function validateManualSale(input: ManualSaleInput) {
     return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
   }
   if (input.delivery === 'envio' && !input.dropoffPlace) {
-    return 'Busca el distrito o el departamento de envío.';
+    return 'Busca el distrito de Lima metropolitana.';
   }
-  return null;
+  if (input.delivery === 'envio' && input.dropoffPlace) {
+    const lat = Number(input.dropoffPlace.lat);
+    const lng = Number(input.dropoffPlace.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+      return OUT_OF_PERU_MESSAGE;
+    }
+  }
+  if (input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER) {
+    const quote = quoteOwnFleetShipping(input.dropoffPlace, fleetConfig);
+    if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
+  }
+  return validateDocumentRequest(input);
 }
 
-export function buildManualSaleOrderPayload(input: ManualSaleInput) {
-  const error = validateManualSale(input);
+export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
+  const error = validateManualSale(input, fleetConfig);
   if (error) throw new Error(error);
 
   const paidNow = input.paymentMethod !== 'despues';
@@ -157,9 +245,18 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
   );
   const productsTotal = saleLinesTotal(input.lines);
   const ownFleet = input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER;
-  const shippingQuote = ownFleet ? quoteOwnFleetShipping(input.dropoffPlace) : null;
+  const dropoff = input.dropoffPlace;
+  const dropoffLat = Number(dropoff?.lat);
+  const dropoffLng = Number(dropoff?.lng);
+  const atPin = dropoff && Number.isFinite(dropoffLat) && Number.isFinite(dropoffLng)
+    ? placeAtCoordinates(dropoffLat, dropoffLng, fleetConfig)
+    : null;
+  const shippingQuote = ownFleet ? quoteOwnFleetShipping(dropoff, fleetConfig) : null;
   const totals = saleTotals(productsTotal, shippingQuote);
   const deliveryDate = String(input.deliveryDate).trim();
+  const shippingDistrict = atPin ? (atPin.district || '') : (dropoff?.district || '');
+  const shippingProvince = atPin ? (atPin.province || '') : (dropoff?.province || '');
+  const shippingDepartment = atPin ? (atPin.department || '') : (dropoff?.department || '');
 
   return {
     channelAccountId: input.channelAccountId,
@@ -168,22 +265,21 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput) {
     orderStatus: 'confirmed' as const,
     paymentStatus: paidNow ? 'paid' as const : 'pending' as const,
     fulfillmentStatus: 'ready_to_ship' as const,
-    requestedDocumentType: 'boleta' as const,
+    requestedDocumentType: (input.documentRequest === 'boleta' || input.documentRequest === 'factura')
+      ? input.documentRequest
+      : null,
     currency: 'PEN',
     subtotal: totals.products,
     shippingAmount: totals.shipping || null,
     total: totals.total,
-    customer: {
-      name: String(input.customerName).trim(),
-      phone: String(input.customerPhone || '').trim(),
-    },
+    customer: customerTaxPayload(input),
     shipping: {
       type: input.delivery,
       carrier: input.delivery === 'envio' ? input.shippingCarrier : undefined,
       address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : PICKUP_ADDRESS,
-      district: input.delivery === 'envio' ? input.dropoffPlace?.district || '' : '',
-      province: input.delivery === 'envio' ? input.dropoffPlace?.province || '' : '',
-      department: input.delivery === 'envio' ? input.dropoffPlace?.department || '' : '',
+      district: input.delivery === 'envio' ? shippingDistrict : '',
+      province: input.delivery === 'envio' ? shippingProvince : '',
+      department: input.delivery === 'envio' ? shippingDepartment : '',
       reference: input.delivery === 'envio' ? String(input.shippingNote || '').trim() : '',
       lat: input.delivery === 'envio' ? input.dropoffPlace?.lat : undefined,
       lng: input.delivery === 'envio' ? input.dropoffPlace?.lng : undefined,
