@@ -2,25 +2,34 @@ import { FormEvent, Fragment, memo, ReactNode, useCallback, useMemo, useRef, use
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, ExpandedState, flexRender, getCoreRowModel, getExpandedRowModel, useReactTable } from '@tanstack/react-table';
 import {
+  AlignLeft,
   AlertTriangle,
+  BadgeDollarSign,
   BarChart3,
   Boxes,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Check,
+  CheckCircle2,
+  Clock3,
   Copy,
   ExternalLink,
   ImagePlus,
+  LayoutList,
   Loader2,
   Maximize2,
   MoreHorizontal,
   PackagePlus,
+  Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldAlert,
   Store,
+  Tag,
+  UserRound,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -270,18 +279,6 @@ function formatMoney(value: unknown) {
   return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(number);
 }
 
-function formatSoles(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return `${formatNumber(number)} soles`;
-}
-
-function formatUnits(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return `${formatNumber(number)} unidades`;
-}
-
 function formatDuration(value: number) {
   return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
 }
@@ -380,8 +377,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'profitOwner' | 'referencePrice' | 'name';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'profitOwner' | 'referencePrice' | 'name'>>;
+type ProductEditableField = 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -453,6 +450,7 @@ export default function Productos() {
   const [actionMessage, setActionMessage] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [savingField, setSavingField] = useState<ProductEditableField | null>(null);
+  const [savedField, setSavedField] = useState<ProductEditableField | null>(null);
   const [createForm, setCreateForm] = useState(initialCreate);
   const [adjustForm, setAdjustForm] = useState(initialAdjust);
   const [imageUrl, setImageUrl] = useState('');
@@ -469,6 +467,7 @@ export default function Productos() {
   const [unlinkListing, setUnlinkListing] = useState<Listing | null>(null);
   const searchTimer = useRef(0);
   const associationSearchTimer = useRef(0);
+  const savedFieldTimer = useRef(0);
 
   const applySearch = (value: string, immediate = false) => {
     setSearch(value);
@@ -679,6 +678,8 @@ export default function Productos() {
     mutationFn: ({ id, patch }: UpdateProductFieldVariables) => api.updateCatalogProduct(id, patch),
     onMutate: async ({ id, optimistic }) => {
       setFieldError('');
+      setSavedField(null);
+      window.clearTimeout(savedFieldTimer.current);
       setSavingField(optimistic.field);
       await queryClient.cancelQueries({ queryKey: ['catalog-product-detail', id] });
       const previousDetail = queryClient.getQueryData<Product>(['catalog-product-detail', id]);
@@ -692,6 +693,12 @@ export default function Productos() {
         context.previousLists.forEach(([key, data]) => queryClient.setQueryData(key, data));
       }
       setFieldError(error instanceof Error ? error.message : 'No se pudo guardar.');
+    },
+    onSuccess: (_data, variables) => {
+      setSavedField(variables.optimistic.field);
+      savedFieldTimer.current = window.setTimeout(() => {
+        setSavedField((current) => current === variables.optimistic.field ? null : current);
+      }, 1800);
     },
     onSettled: (_data, _error, variables) => {
       setSavingField(null);
@@ -1060,6 +1067,18 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveDescription = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const normalized = raw.trim() || null;
+    const current = selectedProduct.description || '';
+    if ((normalized || '') === current) return;
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { description: normalized },
+      optimistic: { field: 'description', patch: { description: normalized } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   const saveStock = useCallback((raw: string) => {
     if (!selectedProduct) return;
     const trimmed = raw.trim();
@@ -1070,8 +1089,10 @@ export default function Productos() {
     }
     if (parsed === Number(selectedProduct.quantityOnHand)) return;
     setFieldError('');
+    setActionError('');
+    setActionMessage('');
     setAdjustForm({ mode: 'absolute', value: String(parsed), reason: '' });
-    openModal('adjust');
+    setModal('adjust');
   }, [selectedProduct]);
 
   return (
@@ -1181,12 +1202,14 @@ export default function Productos() {
         }}
         profitOwners={profitOwnersQuery.data?.items || []}
         savingField={savingField}
+        savedField={savedField}
         fieldError={fieldError}
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
-        onSaveName={saveName}
         onSaveStock={saveStock}
+        onSaveName={saveName}
+        onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
@@ -1721,7 +1744,8 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName, onSaveStock,
+  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName,
+  onSaveDescription, onSaveStock,
 }: {
   open: boolean;
   product: Product | null;
@@ -1753,12 +1777,14 @@ function ProductDrawer({
   onTogglePublication: (listing: Listing) => void;
   profitOwners: string[];
   savingField: ProductEditableField | null;
+  savedField: ProductEditableField | null;
   fieldError: string;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
-  onSaveName: (value: string) => void;
   onSaveStock: (value: string) => void;
+  onSaveName: (value: string) => void;
+  onSaveDescription: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
@@ -1769,50 +1795,97 @@ function ProductDrawer({
       ? associatedListings.filter((listing) => !isActivelyPublished(listing))
       : associatedListings;
 
-  const notionTabClass = 'h-8 flex-none rounded-none bg-transparent px-0 text-[14px] font-normal text-[rgba(55,53,47,0.5)] shadow-none hover:bg-transparent hover:text-[#37352F] data-active:bg-transparent data-active:font-medium data-active:text-[#37352F] after:bottom-0 after:h-[1.5px] after:bg-[#37352F]';
+  const notionTabClass = 'h-9 flex-none rounded-lg px-3 text-[13px] font-medium text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground data-active:bg-muted! data-active:text-foreground! after:hidden';
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
       showCloseButton={false}
-      className="gap-0 overflow-hidden border-l border-[rgba(55,53,47,0.09)] bg-white p-0 text-[#37352F] shadow-none sm:max-w-[36rem] sm:rounded-none"
+      className="gap-0 overflow-hidden border-l border-border/70 bg-background p-0 text-foreground shadow-2xl sm:max-w-[46rem] sm:rounded-none"
       onEscapeKeyDown={(event) => {
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
     >
-      <div className="flex h-11 shrink-0 items-center justify-end px-2">
-        <nav aria-label="Navegación entre productos" className="flex items-center">
-          <Button variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft className="size-4" /></Button>
-          <span className="min-w-9 px-0.5 text-center text-[12px] tabular-nums text-[rgba(55,53,47,0.4)]" aria-live="polite">{productPosition ? `${productPosition}/${totalProducts}` : '—'}</span>
-          <Button variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-4" />}</Button>
-        </nav>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" aria-label="Más acciones" title="Más acciones">
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-auto min-w-44">
-            <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
-            <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
-            <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
-            {product?.imageUrl ? <DropdownMenuItem onClick={() => onOpenImage(product)}>Ampliar foto</DropdownMenuItem> : null}
-            <DropdownMenuItem onClick={onEditImage}>Cambiar foto</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" onClick={onClose} aria-label="Cerrar" title="Cerrar">
-          <X className="size-4" />
-        </Button>
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
+        <div className="flex min-w-0 items-center gap-2 pl-1 text-xs text-muted-foreground">
+          <span className="hidden sm:inline">Catálogo</span>
+          <ChevronRight className="hidden size-3 sm:block" aria-hidden="true" />
+          <span className="truncate font-mono text-foreground/70">{product?.mainSku || 'Producto'}</span>
+          {savingField ? <span className="ml-1 inline-flex items-center gap-1.5" role="status"><Loader2 className="size-3 animate-spin" /> Guardando</span> : null}
+          {!savingField && savedField ? <span className="ml-1 inline-flex items-center gap-1.5 text-emerald-700" role="status"><CheckCircle2 className="size-3" /> Guardado</span> : null}
+        </div>
+        <div className="flex items-center">
+          <nav aria-label="Navegación entre productos" className="flex items-center">
+            <Button variant="ghost" size="icon-sm" className="size-8 text-muted-foreground" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft className="size-4" /></Button>
+            <span className="min-w-12 px-1 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">{productPosition ? `${productPosition} / ${totalProducts}` : '—'}</span>
+            <Button variant="ghost" size="icon-sm" className="size-8 text-muted-foreground" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-4" />}</Button>
+          </nav>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" className="size-8 text-muted-foreground" aria-label="Más acciones" title="Más acciones">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto min-w-44">
+              <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
+              <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
+              <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
+              {product?.imageUrl ? <DropdownMenuItem onClick={() => onOpenImage(product)}>Ampliar foto</DropdownMenuItem> : null}
+              <DropdownMenuItem onClick={onEditImage}>Cambiar foto</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button type="button" variant="ghost" size="icon-sm" className="size-8 text-muted-foreground" onClick={onClose} aria-label="Cerrar" title="Cerrar">
+            <X className="size-4" />
+          </Button>
+        </div>
       </div>
 
-      <SheetHeader className="space-y-0 px-12 pb-5 pt-2">
+      <SheetHeader className="space-y-0 px-6 pb-6 pt-7 sm:px-10">
         {product ? (
-          <ProductTitleField
-            productId={product.id}
-            name={product.name}
-            saving={savingField === 'name'}
-            onSave={onSaveName}
-          />
+          <>
+            <div className="flex items-start gap-5">
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => product.imageUrl ? onOpenImage(product) : onEditImage()}
+                  className="group grid size-20 place-items-center overflow-hidden rounded-2xl bg-muted text-muted-foreground ring-1 ring-border/60 transition hover:ring-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={product.imageUrl ? `Ampliar foto de ${product.name}` : `Agregar foto a ${product.name}`}
+                >
+                  {product.imageUrl
+                    ? <img src={product.imageUrl} alt="" className="size-full object-contain p-1.5 transition duration-200 group-hover:scale-[1.03]" />
+                    : <ImagePlus className="size-6" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={onEditImage}
+                  className="absolute -bottom-1 -right-1 grid size-7 place-items-center rounded-full border border-border bg-background text-muted-foreground shadow-sm transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Cambiar foto"
+                  title="Cambiar foto"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              </div>
+              <div className="min-w-0 flex-1 pt-0.5">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <CopyableSku sku={product.mainSku} className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-foreground [&_svg]:size-3" />
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1.5"><span className={cn('size-1.5 rounded-full', product.status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground')} />{product.status === 'active' ? 'Activo' : product.status === 'archived' ? 'Archivado' : 'Inactivo'}</span>
+                </div>
+                <ProductTitleField
+                  productId={product.id}
+                  name={product.name}
+                  saving={savingField === 'name'}
+                  onSave={onSaveName}
+                />
+                <p className="mt-2 text-sm text-muted-foreground">{usableBrand(product.brand) || 'Sin marca'} · {associatedListings.length} {associatedListings.length === 1 ? 'publicación' : 'publicaciones'}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap items-center gap-2" aria-label="Acciones del producto">
+              <Button type="button" size="sm" onClick={onPublish}><PackagePlus data-icon="inline-start" /> Nueva publicación</Button>
+              <Button type="button" variant="outline" size="sm" onClick={onAssociate}><Plus data-icon="inline-start" /> Asociar</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={onAdjust}><CircleDollarSign data-icon="inline-start" /> Ajustar stock</Button>
+            </div>
+          </>
         ) : (
           <SheetTitle>Producto</SheetTitle>
         )}
@@ -1820,18 +1893,18 @@ function ProductDrawer({
       </SheetHeader>
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
-        <div className="shrink-0 border-b border-[rgba(55,53,47,0.09)] px-12">
-          <TabsList variant="line" className="h-8 w-full justify-start gap-5 rounded-none bg-transparent p-0">
-            <TabsTrigger value="overview" className={notionTabClass}>Resumen</TabsTrigger>
-            <TabsTrigger value="listings" className={notionTabClass}>Publicaciones{associatedListings.length ? <span className="ml-1 tabular-nums text-[rgba(55,53,47,0.4)]">{associatedListings.length}</span> : null}</TabsTrigger>
-            <TabsTrigger value="inventory" className={notionTabClass}>Inventario</TabsTrigger>
-            <TabsTrigger value="sales" className={notionTabClass}>Ventas</TabsTrigger>
-            <TabsTrigger value="returns" className={notionTabClass}>Devoluciones</TabsTrigger>
+        <div className="shrink-0 border-b border-border/70 px-4 pb-2 sm:px-8">
+          <TabsList variant="line" className="h-10 w-full justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0">
+            <TabsTrigger value="overview" className={notionTabClass}><LayoutList className="size-3.5" /> Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className={notionTabClass}><Store className="size-3.5" /> Publicaciones{associatedListings.length ? <span className="ml-0.5 rounded-full bg-background/15 px-1.5 text-[11px] tabular-nums">{associatedListings.length}</span> : null}</TabsTrigger>
+            <TabsTrigger value="inventory" className={notionTabClass}><Boxes className="size-3.5" /> Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className={notionTabClass}><BarChart3 className="size-3.5" /> Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className={notionTabClass}><RotateCcw className="size-3.5" /> Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
         <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-y-auto px-12 py-4">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-10">
             <ProductProperties
               product={product}
               profitOwners={profitOwners}
@@ -1840,12 +1913,13 @@ function ProductDrawer({
               onSavePrice={onSavePrice}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
+              onSaveDescription={onSaveDescription}
             />
-            {fieldError ? <p className="mt-3 text-xs text-red-600">{fieldError}</p> : null}
+            {fieldError ? <p className="mt-4 flex items-center gap-2 text-xs text-destructive" role="alert"><AlertTriangle className="size-3.5" />{fieldError}</p> : null}
           </div>
         </TabsContent>
 
-        <TabsContent value="listings" className="min-h-0 overflow-y-auto px-12 py-4">
+        <TabsContent value="listings" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <FilterChips
               ariaLabel="Filtrar publicaciones"
@@ -1860,32 +1934,32 @@ function ProductDrawer({
             />
             <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
           </div>
-          {!associatedListings.length ? <div className="py-12"><p className="text-sm font-medium text-[#37352F]">Sin publicaciones asociadas</p><p className="mt-1 text-[13px] text-[rgba(55,53,47,0.5)]">Asocia una publicación existente o prepara una nueva.</p></div>
-            : !listingRows.length ? <p className="py-10 text-[14px] text-[rgba(55,53,47,0.5)]">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
+          {!associatedListings.length ? <div className="py-12"><p className="text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-[13px] text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div>
+            : !listingRows.length ? <p className="py-10 text-sm text-muted-foreground">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
             : <div className="mt-2">{listingRows.map((listing) => {
               const publication = publicationPresentation(listing);
-              return <article key={listing.id} className="border-b border-[rgba(55,53,47,0.09)] py-4">
+              return <article key={listing.id} className="border-b border-border/70 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-[14px] font-medium text-[#37352F]">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</p>
+                    <p className="text-sm font-medium">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</p>
                     <div className="mt-1"><ChannelBadge value={listing.channelCode} listing={listing} /></div>
-                    <p className="mt-2 line-clamp-2 text-[14px] leading-5 text-[#37352F]">{listing.title || product.name}</p>
+                    <p className="mt-2 line-clamp-2 text-sm leading-5">{listing.title || product.name}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2"><span className={cn('text-[12px]', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
                 </div>
                 <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                   <dl className="grid min-w-0 grid-cols-2 gap-4">
-                    <div><dt className="text-[12px] text-[rgba(55,53,47,0.45)]">SKU del seller</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-[#37352F]">{listing.sellerSku}</dd></div>
-                    <div><dt className="text-[12px] text-[rgba(55,53,47,0.45)]">Shop SKU</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-[rgba(55,53,47,0.55)]">{listing.shopSku || '—'}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">SKU del seller</dt><dd className="mt-0.5 truncate font-mono text-[13px]">{listing.sellerSku}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Shop SKU</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-muted-foreground">{listing.shopSku || '—'}</dd></div>
                   </dl>
-                  <div><span className="text-[12px] text-[rgba(55,53,47,0.45)]">Precio</span><SellerPrice listing={listing} /></div>
-                  <div><span className="text-[12px] text-[rgba(55,53,47,0.45)]">Stock seller</span><SellerStock listing={listing} /></div>
+                  <div><span className="text-xs text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
+                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
                 </div>
               </article>;
             })}</div>}
         </TabsContent>
 
-        <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-12 py-5">
+        <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <MetricRow columns={3}>
             <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
@@ -1903,7 +1977,7 @@ function ProductDrawer({
           {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : <div className="mt-3 space-y-1">{movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 rounded-xl px-3 py-3"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.effectiveAt || movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}</div>}
         </TabsContent>
 
-        <TabsContent value="sales" className="min-h-0 overflow-y-auto px-12 py-5">
+        <TabsContent value="sales" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p>
             <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
@@ -1920,7 +1994,7 @@ function ProductDrawer({
           </div>}
         </TabsContent>
 
-        <TabsContent value="returns" className="min-h-0 overflow-y-auto px-12 py-5">
+        <TabsContent value="returns" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">{returns ? activityCaption(returns, 'pedidos devueltos') : 'Consulta bajo demanda.'}</p>
             <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
@@ -2059,8 +2133,8 @@ function FilterChips<T extends string>({
                 ? cn(
                   'inline-flex h-8 items-center gap-1.5 border-b-[1.5px] px-0 text-[13px] transition',
                   selected
-                    ? 'border-[#37352F] font-medium text-[#37352F]'
-                    : 'border-transparent text-[rgba(55,53,47,0.45)] hover:text-[#37352F]',
+                    ? 'border-foreground font-medium text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground',
                 )
                 : cn(
                   'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
@@ -2118,12 +2192,12 @@ function ProductTitleField({
   const cancelledRef = useRef(false);
   const focused = draft !== null;
   const displayed = draft ?? name;
-  const titleClass = 'w-full border-0 bg-transparent p-0 text-[40px] font-bold leading-[1.2] tracking-[-0.03em] text-[#37352F] shadow-none outline-none ring-0 placeholder:text-[rgba(55,53,47,0.25)] focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0';
+  const titleClass = 'w-full border-0 bg-transparent p-0 text-[32px] font-semibold leading-[1.12] tracking-[-0.035em] text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/50 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 sm:text-[36px]';
 
   return (
     <SheetTitle
       data-slot="sheet-title"
-      className="min-w-0 cursor-text text-[40px] font-bold leading-[1.2] tracking-[-0.03em] text-[#37352F]"
+      className="min-w-0 cursor-text text-[32px] font-semibold leading-[1.12] tracking-[-0.035em] text-foreground sm:text-[36px]"
       onClick={() => { if (!focused) setDraft(name); }}
     >
       {focused ? (
@@ -2151,7 +2225,7 @@ function ProductTitleField({
       ) : (
         name || 'Producto'
       )}
-      {saving ? <Loader2 className="ml-2 inline h-4 w-4 animate-spin text-[rgba(55,53,47,0.4)]" aria-hidden="true" /> : null}
+      {saving ? <Loader2 className="ml-2 inline size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
     </SheetTitle>
   );
 }
@@ -2159,10 +2233,10 @@ function ProductTitleField({
 function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
   return (
     <div className="flex shrink-0 items-center gap-4">
-      <button type="button" className="text-[13px] text-[rgba(55,53,47,0.55)] hover:text-[#37352F]" onClick={onAssociate}>
+      <button type="button" className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onAssociate}>
         Asociar
       </button>
-      <button type="button" className="text-[13px] text-[rgba(55,53,47,0.55)] hover:text-[#37352F]" onClick={onPublish}>
+      <button type="button" className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onPublish}>
         Nueva publicación
       </button>
     </div>
@@ -2177,6 +2251,7 @@ function ProductProperties({
   onSavePrice,
   onSaveCommission,
   onSaveProfitOwner,
+  onSaveDescription,
 }: {
   product: Product;
   profitOwners: string[];
@@ -2185,96 +2260,127 @@ function ProductProperties({
   onSavePrice: (value: string) => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
+  onSaveDescription: (value: string) => void;
 }) {
   const description = String(product.description || '').trim();
-  const statusLabel = product.status === 'active' ? 'Activo' : product.status === 'archived' ? 'Archivado' : 'Inactivo';
+  const listings = product.listings || [];
+  const published = listings.filter(isActivelyPublished).length;
   return (
-    <div>
-      <OverviewRow label="SKU">
-        <CopyableSku
-          sku={product.mainSku}
-          className="inline-flex items-center gap-1.5 font-mono text-[14px] font-normal tracking-normal text-[#37352F] hover:text-[#37352F] [&_svg]:size-3.5 [&_svg]:text-[rgba(55,53,47,0.35)]"
+    <div className="space-y-9">
+      <section aria-labelledby="product-properties-title">
+        <div className="mb-2 flex items-center gap-2">
+          <h3 id="product-properties-title" className="text-sm font-semibold">Propiedades</h3>
+          <span className="text-xs text-muted-foreground">Haz clic para editar</span>
+        </div>
+        <div>
+          <OverviewField
+            icon={<Boxes />}
+            label="Stock"
+            productId={product.id}
+            field="quantityOnHand"
+            value={String(product.quantityOnHand)}
+            display={`${formatNumber(product.quantityOnHand)} u`}
+            type="number"
+            saving={false}
+            onSave={onSaveStock}
+          />
+          <OverviewRow icon={<CheckCircle2 />} label="Disponible">
+            <span className="text-sm tabular-nums">{formatNumber(product.available)} u</span>
+          </OverviewRow>
+          <OverviewRow icon={<Clock3 />} label="Reservado">
+            <span className="text-sm tabular-nums">{formatNumber(product.quantityReserved)} u</span>
+          </OverviewRow>
+          <OverviewRow icon={<Store />} label="Sellers">
+            <span className="text-sm tabular-nums">{formatNumber(product.sellersCount ?? new Set(listings.map((listing) => listing.companyId)).size)}</span>
+          </OverviewRow>
+          <OverviewRow icon={<ExternalLink />} label="Publicadas">
+            <span className="text-sm tabular-nums">{published} de {listings.length}</span>
+          </OverviewRow>
+          <OverviewField
+            icon={<BadgeDollarSign />}
+            label="Precio"
+            productId={product.id}
+            field="referencePrice"
+            value={product.referencePrice == null ? '' : String(product.referencePrice)}
+            display={product.referencePrice == null ? '' : formatMoney(product.referencePrice)}
+            type="number"
+            placeholder="Sin precio"
+            saving={savingField === 'referencePrice'}
+            onSave={onSavePrice}
+          />
+          <OverviewField
+            icon={<CircleDollarSign />}
+            label="Comisión"
+            productId={product.id}
+            field="commissionAmount"
+            value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+            display={product.commissionAmount == null ? '' : formatMoney(product.commissionAmount)}
+            type="number"
+            placeholder="Sin comisión"
+            saving={savingField === 'commissionAmount'}
+            onSave={onSaveCommission}
+          />
+          <OverviewField
+            icon={<UserRound />}
+            label="Beneficiario"
+            productId={product.id}
+            field="profitOwner"
+            value={product.profitOwner || ''}
+            display={product.profitOwner || ''}
+            placeholder="Sin beneficiario"
+            list="profit-owner-inline-options"
+            saving={savingField === 'profitOwner'}
+            onSave={onSaveProfitOwner}
+          />
+          <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+          <OverviewRow icon={<Tag />} label="Marca">
+            <span className="text-sm">{usableBrand(product.brand) || 'Sin marca'}</span>
+          </OverviewRow>
+          <OverviewRow icon={<Clock3 />} label="Actualizado">
+            <span className="text-sm tabular-nums">{formatDay(product.updatedAt)}</span>
+          </OverviewRow>
+        </div>
+      </section>
+
+      <section aria-labelledby="product-description-title">
+        <div className="mb-3 flex items-center gap-2">
+          <AlignLeft className="size-4 text-muted-foreground" />
+          <h3 id="product-description-title" className="text-sm font-semibold">Descripción</h3>
+        </div>
+        <InlineDescription
+          productId={product.id}
+          value={description}
+          saving={savingField === 'description'}
+          onSave={onSaveDescription}
         />
-      </OverviewRow>
-      <OverviewRow label="Estado">
-        <span className="text-[14px] text-[#37352F]">{statusLabel}</span>
-      </OverviewRow>
-      <OverviewField
-        label="Stock"
-        productId={product.id}
-        field="quantityOnHand"
-        value={String(product.quantityOnHand)}
-        display={formatUnits(product.quantityOnHand)}
-        type="number"
-        onSave={onSaveStock}
-      />
-      <OverviewRow label="Reservado">
-        <span className="text-[14px] tabular-nums text-[#37352F]">{formatUnits(product.quantityReserved)}</span>
-      </OverviewRow>
-      <OverviewField
-        label="Precio"
-        productId={product.id}
-        field="referencePrice"
-        value={product.referencePrice == null ? '' : String(product.referencePrice)}
-        display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
-        type="number"
-        placeholder="Sin precio"
-        saving={savingField === 'referencePrice'}
-        onSave={onSavePrice}
-      />
-      <OverviewField
-        label="Comisión"
-        productId={product.id}
-        field="commissionAmount"
-        value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
-        display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
-        type="number"
-        placeholder="Sin comisión"
-        saving={savingField === 'commissionAmount'}
-        onSave={onSaveCommission}
-      />
-      <OverviewField
-        label="Beneficiario"
-        productId={product.id}
-        field="profitOwner"
-        value={product.profitOwner || ''}
-        display={product.profitOwner || ''}
-        placeholder="Sin beneficiario"
-        list="profit-owner-inline-options"
-        saving={savingField === 'profitOwner'}
-        onSave={onSaveProfitOwner}
-      />
-      <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-      <OverviewRow label="Actualizado">
-        <span className="text-[14px] text-[#37352F]">{formatDay(product.updatedAt)}</span>
-      </OverviewRow>
-      <p className="mt-8 text-[16px] leading-[1.6] text-[#37352F]">
-        {description || <span className="text-[rgba(55,53,47,0.35)]">Sin descripción</span>}
-      </p>
+      </section>
     </div>
   );
 }
 
-const OVERVIEW_ROW_CLASS = 'grid min-h-[34px] grid-cols-[9.5rem_minmax(0,1fr)] items-center gap-x-2 border-b border-[rgba(55,53,47,0.09)] hover:bg-[rgba(55,53,47,0.04)]';
+const OVERVIEW_ROW_CLASS = 'grid min-h-10 grid-cols-[9.5rem_minmax(0,1fr)] items-center gap-x-3 rounded-lg px-2 transition-colors hover:bg-muted/60';
 
 function OverviewRow({
+  icon,
   label,
   align = 'center',
   children,
 }: {
+  icon?: ReactNode;
   label: string;
   align?: 'center' | 'start';
   children: ReactNode;
 }) {
   return (
     <div className={cn(OVERVIEW_ROW_CLASS, align === 'start' ? 'items-start py-2' : 'items-center')}>
-      <span className="truncate text-[14px] text-[rgba(55,53,47,0.45)]">{label}</span>
+      <span className="flex min-w-0 items-center gap-2 truncate text-sm text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">{icon}{label}</span>
       <div className="min-w-0">{children}</div>
     </div>
   );
 }
 
 function OverviewField({
+  icon,
   label,
   productId,
   field,
@@ -2287,6 +2393,7 @@ function OverviewField({
   displayClassName,
   saving,
 }: {
+  icon?: ReactNode;
   label: string;
   productId: number;
   field: string;
@@ -2309,14 +2416,14 @@ function OverviewField({
       className={cn(OVERVIEW_ROW_CLASS, 'cursor-text items-center')}
       onClick={() => { if (!focused) setDraft(value); }}
     >
-      <span className="truncate text-[14px] text-[rgba(55,53,47,0.45)]">{label}</span>
+      <span className="flex min-w-0 items-center gap-2 truncate text-sm text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">{icon}{label}</span>
       <div className="flex min-w-0 items-center gap-1">
         {focused ? (
           <input
             key={`${productId}-${field}`}
             className={cn(
-              'w-full min-w-0 appearance-none border-0 bg-transparent p-0 text-left text-[14px] text-[#37352F] shadow-none outline-none ring-0',
-              'placeholder:font-normal placeholder:text-[rgba(55,53,47,0.3)]',
+              'w-full min-w-0 appearance-none border-0 bg-transparent p-0 text-left text-sm text-foreground shadow-none outline-none ring-0',
+              'placeholder:font-normal placeholder:text-muted-foreground/60',
               'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
               'autofill:bg-transparent',
               type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
@@ -2347,13 +2454,68 @@ function OverviewField({
             }}
           />
         ) : display ? (
-          <span className={cn('truncate text-left text-[14px] tabular-nums text-[#37352F]', displayClassName)}>{display}</span>
+          <span className={cn('truncate text-left text-sm tabular-nums text-foreground', displayClassName)}>{display}</span>
         ) : (
-          <span className="text-[14px] text-[rgba(55,53,47,0.3)]">{placeholder || 'Vacío'}</span>
+          <span className="text-sm text-muted-foreground/65">{placeholder || 'Vacío'}</span>
         )}
-        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[rgba(55,53,47,0.35)]" aria-hidden="true" /> : null}
+        {saving ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
       </div>
     </div>
+  );
+}
+
+function InlineDescription({
+  productId,
+  value,
+  saving,
+  onSave,
+}: {
+  productId: number;
+  value: string;
+  saving: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
+  const editing = draft !== null;
+
+  if (editing) {
+    return (
+      <textarea
+        key={`${productId}-description`}
+        className="min-h-28 w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-7 text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+        value={draft}
+        rows={4}
+        autoFocus
+        aria-label="Descripción"
+        placeholder="Describe el producto"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (!cancelledRef.current && draft !== value) onSave(draft);
+          cancelledRef.current = false;
+          setDraft(null);
+        }}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            cancelledRef.current = true;
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setDraft(value)}
+      className="group -mx-2 flex min-h-20 w-[calc(100%+1rem)] items-start rounded-lg px-2 py-1 text-left text-[15px] leading-7 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className={cn('flex-1', value ? 'text-foreground' : 'text-muted-foreground/65')}>{value || 'Escribe una descripción del producto.'}</span>
+      {saving ? <Loader2 className="mt-1.5 size-3.5 animate-spin text-muted-foreground" /> : <Pencil className="mt-1.5 size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />}
+    </button>
   );
 }
 
