@@ -32,8 +32,8 @@ export function commissionRateFromLine(line) {
 
 export function productNameFromLine(line) {
   const named = String(line.productName || '').trim();
-  if (named) return named;
-  return rawValueByHeader(line.raw, (header) => header.includes('nombre del producto'));
+  const rawName = named || rawValueByHeader(line.raw, (header) => header.includes('nombre del producto'));
+  return repairSettlementText(rawName);
 }
 
 function shopSkuFromLine(line) {
@@ -136,6 +136,8 @@ export function summarizeSettlementSales(sales) {
       pendingBruto: round2(totals.pendingBruto + (paid ? 0 : sale.bruto)),
       paidNeto: round2(totals.paidNeto + (paid ? sale.neto : 0)),
       pendingNeto: round2(totals.pendingNeto + (paid ? 0 : sale.neto)),
+      itemCount: totals.itemCount + Number(sale.itemCount || 0),
+      matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
     };
   }, {
     saleCount: 0,
@@ -150,12 +152,16 @@ export function summarizeSettlementSales(sales) {
     pendingBruto: 0,
     paidNeto: 0,
     pendingNeto: 0,
+    itemCount: 0,
+    matchedCount: 0,
   });
   return {
     ...summary,
     commissionRate: ratio(summary.commission, summary.bruto),
     shippingRate: ratio(summary.shipping, summary.bruto),
     takeRate: ratio(summary.take, summary.bruto),
+    ticket: summary.saleCount ? round2(summary.bruto / summary.saleCount) : 0,
+    arriveTicket: summary.saleCount ? round2(summary.neto / summary.saleCount) : 0,
   };
 }
 
