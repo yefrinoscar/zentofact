@@ -74,26 +74,18 @@ export type SaleFormView = {
 };
 
 export const PROTOTYPE_VARIANTS = [
-  { key: '1', name: 'Cinco tabs' },
-  { key: '2', name: 'Tres tiempos' },
-  { key: '3', name: 'Dos tiempos' },
-  { key: '4', name: 'Riel izquierdo' },
-  { key: '5', name: 'Barra de progreso' },
-  { key: '6', name: 'Segmented' },
-  { key: '7', name: 'Productos fijos' },
-  { key: '8', name: 'POS + pasos' },
-  { key: '9', name: 'Pregunta grande' },
-  { key: '10', name: 'Paso + recap' },
-  { key: '11', name: 'Checklist' },
-  { key: '12', name: 'Timeline' },
-  { key: '13', name: 'Tabs abajo' },
-  { key: '14', name: 'Ticket estrecho' },
-  { key: '15', name: 'Tabla primero' },
-  { key: '16', name: 'Origen fijo' },
-  { key: '17', name: 'Confirmar al final' },
-  { key: '18', name: 'Pasos opcionales' },
-  { key: '19', name: 'Peek siguiente' },
-  { key: '20', name: 'Tabs con checks' },
+  { key: '1', name: 'Tinta' },
+  { key: '2', name: 'Lima' },
+  { key: '3', name: 'Canela' },
+  { key: '4', name: 'Noche' },
+  { key: '5', name: 'Recibo' },
+  { key: '6', name: 'Baldosas' },
+  { key: '7', name: 'Franja' },
+  { key: '8', name: 'Columnas' },
+  { key: '9', name: 'Brutal' },
+  { key: '10', name: 'Globos' },
+  { key: '11', name: 'Lista' },
+  { key: '12', name: 'Escaparate' },
 ] as const;
 
 export type PrototypeKey = (typeof PROTOTYPE_VARIANTS)[number]['key'];

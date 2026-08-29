@@ -16,14 +16,6 @@ import {
   Variant10,
   Variant11,
   Variant12,
-  Variant13,
-  Variant14,
-  Variant15,
-  Variant16,
-  Variant17,
-  Variant18,
-  Variant19,
-  Variant20,
 } from './variants';
 
 const VARIANTS: Record<PrototypeKey, (props: { view: SaleFormView }) => React.JSX.Element> = {
@@ -39,14 +31,6 @@ const VARIANTS: Record<PrototypeKey, (props: { view: SaleFormView }) => React.JS
   10: Variant10,
   11: Variant11,
   12: Variant12,
-  13: Variant13,
-  14: Variant14,
-  15: Variant15,
-  16: Variant16,
-  17: Variant17,
-  18: Variant18,
-  19: Variant19,
-  20: Variant20,
 };
 
 export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
@@ -58,15 +42,13 @@ export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
   const filled = useRef(false);
   useEffect(() => {
     if (filled.current) return;
-    if (!view.customerName && view.lines.length === 0) {
-      filled.current = true;
-      view.fillDemo();
-    }
+    filled.current = true;
+    view.fillDemo();
   }, [view]);
 
   return (
     <form onSubmit={view.submit} className="pb-[calc(8rem+env(safe-area-inset-bottom))]">
-      {/* PROTOTYPE — throwaway. 20 stepper layouts of Nueva venta, `?variant=1`…`20`. */}
+      {/* PROTOTYPE — doce bases de color y forma, `?variant=1`…`12`. */}
       {view.setupError ? (
         <p className="mb-4 text-sm text-destructive">{view.setupError}</p>
       ) : null}
