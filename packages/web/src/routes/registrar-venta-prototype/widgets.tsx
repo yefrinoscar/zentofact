@@ -104,7 +104,7 @@ export function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={ariaLabel}>
+    <div className="inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1" role="radiogroup" aria-label={ariaLabel}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -115,10 +115,10 @@ export function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'h-9 cursor-pointer rounded-md px-3 text-sm font-medium transition-colors',
+              'h-7 cursor-pointer rounded-lg px-3 text-sm font-medium transition-colors',
               selected
-                ? 'bg-foreground text-background'
-                : 'bg-muted text-foreground hover:bg-muted/80',
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {option.label}

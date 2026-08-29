@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { Button } from '../../components/ui/button';
@@ -23,6 +23,72 @@ import {
   VentaBody,
 } from './bodies';
 import type { SaleFormView } from './view';
+
+function stepStatus(index: number, current: number): 'done' | 'current' | 'todo' {
+  if (index < current) return 'done';
+  if (index === current) return 'current';
+  return 'todo';
+}
+
+function StepMark({
+  status,
+  children,
+}: {
+  status: 'done' | 'current' | 'todo';
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        'grid size-6 shrink-0 place-items-center rounded-md text-[11px] font-medium',
+        status === 'current' && 'bg-background text-foreground shadow-sm',
+        status === 'done' && 'bg-muted text-muted-foreground',
+        status === 'todo' && 'text-muted-foreground/60',
+      )}
+    >
+      {status === 'done' ? <Check className="size-3.5" /> : children}
+    </span>
+  );
+}
+
+function StepTrack({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1', className)}>
+      {children}
+    </div>
+  );
+}
+
+function StepTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors',
+        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StepProgress({ current, total }: { current: number; total: number }) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-md bg-muted">
+      <div className="h-full bg-muted-foreground/35" style={{ width: `${((current + 1) / total) * 100}%` }} />
+    </div>
+  );
+}
 
 const FIVE = ['Origen', 'Cliente', 'Productos', 'Entrega', 'Pago'] as const;
 const THREE = ['Venta', 'Entrega', 'Pago'] as const;
@@ -59,29 +125,20 @@ function Recap({ view }: { view: SaleFormView }) {
   );
 }
 
-/** 1 — Cinco círculos unidos por una línea. */
+/** 1 — Cinco pasos numerados en segmented. */
 export function Variant1({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
     <div className="mx-auto max-w-xl space-y-6 pb-8">
       <Back view={view} />
-      <ol className="flex items-start justify-between gap-1">
+      <StepTrack>
         {FIVE.map((label, index) => (
-          <li key={label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-            <button
-              type="button"
-              onClick={() => nav.setStep(index)}
-              className={cn(
-                'grid size-8 cursor-pointer place-items-center rounded-full text-xs font-medium',
-                index <= nav.step ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-              )}
-            >
-              {index < nav.step ? <Check className="size-3.5" /> : index + 1}
-            </button>
-            <span className={cn('truncate text-[11px]', index === nav.step ? 'text-foreground' : 'text-muted-foreground')}>{label}</span>
-          </li>
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            <span className="tabular-nums text-[11px]">{index + 1}</span>
+            <span className="hidden sm:inline">{label}</span>
+          </StepTab>
         ))}
-      </ol>
+      </StepTrack>
       <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -95,21 +152,13 @@ export function Variant2({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
       <Back view={view} />
-      <div className="flex gap-2">
+      <StepTrack className="w-full">
         {THREE.map((label, index) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => nav.setStep(index)}
-            className={cn(
-              'h-9 flex-1 cursor-pointer rounded-md text-sm font-medium',
-              index === nav.step ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-            )}
-          >
-            {index + 1}. {label}
-          </button>
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
         ))}
-      </div>
+      </StepTrack>
       {nav.step === 0 && <VentaBody view={view} />}
       {nav.step === 1 && <EntregaBody view={view} />}
       {nav.step === 2 && <PagoBody view={view} />}
@@ -124,7 +173,13 @@ export function Variant3({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
       <Back view={view} />
-      <p className="text-sm text-muted-foreground">{nav.step === 0 ? '1 · Pedido' : '2 · Despacho y cobro'}</p>
+      <StepTrack>
+        {TWO.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
+        ))}
+      </StepTrack>
       {nav.step === 0 && <VentaBody view={view} />}
       {nav.step === 1 && (
         <div className="grid gap-8 sm:grid-cols-2">
@@ -144,20 +199,22 @@ export function Variant4({ view }: { view: SaleFormView }) {
     <div className="grid gap-8 pb-8 lg:grid-cols-[11rem_minmax(0,1fr)]">
       <aside className="space-y-1">
         <Back view={view} />
-        {FIVE.map((label, index) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => nav.setStep(index)}
-            className={cn(
-              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
-              index === nav.step ? 'bg-muted font-medium' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <span className="tabular-nums text-xs">{index + 1}</span>
-            {label}
-          </button>
-        ))}
+        <div className="flex flex-col gap-0.5 rounded-xl bg-muted p-1">
+          {FIVE.map((label, index) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => nav.setStep(index)}
+              className={cn(
+                'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm',
+                index === nav.step ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <span className="tabular-nums text-xs">{index + 1}</span>
+              {label}
+            </button>
+          ))}
+        </div>
       </aside>
       <div className="min-w-0 space-y-4">
         <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
@@ -174,9 +231,7 @@ export function Variant5({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-xl space-y-6 pb-8">
       <Back view={view} />
-      <div className="h-1 overflow-hidden rounded-full bg-muted">
-        <div className="h-full bg-foreground" style={{ width: `${((nav.step + 1) / 5) * 100}%` }} />
-      </div>
+      <StepProgress current={nav.step} total={5} />
       <p className="text-sm text-muted-foreground">Paso {nav.step + 1} de 5 · {FIVE[nav.step]}</p>
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -210,18 +265,13 @@ export function Variant7({ view }: { view: SaleFormView }) {
     <div className="space-y-6 pb-8">
       <Back view={view} />
       <ProductosBody view={view} />
-      <div className="flex gap-2 text-sm">
+      <StepTrack>
         {rest.map((label, index) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => nav.setStep(index)}
-            className={cn('cursor-pointer', index === nav.step ? 'font-medium' : 'text-muted-foreground')}
-          >
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
             {label}
-          </button>
+          </StepTab>
         ))}
-      </div>
+      </StepTrack>
       {nav.step === 0 && <OrigenBody view={view} />}
       {nav.step === 1 && <ClienteBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
@@ -242,7 +292,13 @@ export function Variant8({ view }: { view: SaleFormView }) {
         <ProductosBody view={view} />
       </div>
       <aside className="space-y-4">
-        <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+        <StepTrack>
+          {labels.map((label, index) => (
+            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+              {label}
+            </StepTab>
+          ))}
+        </StepTrack>
         {nav.step === 0 && <ClienteBody view={view} />}
         {nav.step === 1 && <OrigenBody view={view} />}
         {nav.step === 2 && <EntregaBody view={view} />}
@@ -260,6 +316,13 @@ export function Variant9({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-lg space-y-8 pb-8 pt-6">
       <Back view={view} />
+      <StepTrack>
+        {questions.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {index + 1}
+          </StepTab>
+        ))}
+      </StepTrack>
       <h2 className="text-2xl font-medium tracking-tight">{questions[nav.step]}</h2>
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -274,7 +337,13 @@ export function Variant10({ view }: { view: SaleFormView }) {
     <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_14rem]">
       <div className="min-w-0 space-y-4">
         <Back view={view} />
-        <p className="text-sm text-muted-foreground">{nav.step + 1} / 5 · {FIVE[nav.step]}</p>
+        <StepTrack>
+          {FIVE.map((label, index) => (
+            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+              {label}
+            </StepTab>
+          ))}
+        </StepTrack>
         <FiveBody view={view} step={nav.step} />
         <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
       </div>
@@ -300,9 +369,7 @@ export function Variant11({ view }: { view: SaleFormView }) {
               onClick={() => nav.setStep(index)}
               className="flex w-full cursor-pointer items-center gap-3 py-2.5 text-left text-sm"
             >
-              <span className={cn('grid size-5 place-items-center rounded-full border text-[10px]', index < nav.step && 'border-foreground bg-foreground text-background', index === nav.step && 'border-foreground')}>
-                {index < nav.step ? <Check className="size-3" /> : index + 1}
-              </span>
+              <StepMark status={stepStatus(index, nav.step)}>{index + 1}</StepMark>
               <span className={index === nav.step ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
             </button>
             {index === nav.step && <div className="pb-4 pl-8"><FiveBody view={view} step={nav.step} /></div>}
@@ -321,9 +388,9 @@ export function Variant12({ view }: { view: SaleFormView }) {
     <div className="mx-auto max-w-xl space-y-2 pb-8">
       <Back view={view} />
       {FIVE.map((label, index) => (
-        <div key={label} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+        <div key={label} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-3">
           <div className="flex flex-col items-center">
-            <span className={cn('size-2.5 rounded-full', index <= nav.step ? 'bg-foreground' : 'bg-muted-foreground/30')} />
+            <StepMark status={stepStatus(index, nav.step)}>{index + 1}</StepMark>
             {index < 4 && <span className="w-px flex-1 bg-border" />}
           </div>
           <div className="pb-6">
@@ -349,17 +416,13 @@ export function Variant13({ view }: { view: SaleFormView }) {
       </div>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background px-4 py-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-3">
         <div className="mx-auto flex max-w-xl items-center gap-3">
-          <div className="flex gap-1">
+          <StepTrack>
             {FIVE.map((label, index) => (
-              <button
-                key={label}
-                type="button"
-                aria-label={label}
-                onClick={() => nav.setStep(index)}
-                className={cn('size-2 cursor-pointer rounded-full', index === nav.step ? 'bg-foreground' : 'bg-muted-foreground/30')}
-              />
+              <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+                {index + 1}
+              </StepTab>
             ))}
-          </div>
+          </StepTrack>
           <p className="ml-auto text-lg font-semibold tabular-nums">{formatMoney(view.total)}</p>
           <Button type="button" variant="ghost" disabled={nav.isFirst} onClick={nav.back}>Atrás</Button>
           {nav.isLast ? (
@@ -379,7 +442,15 @@ export function Variant14({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-md space-y-5 pb-8">
       <Back view={view} />
-      <p className="text-center text-xs tabular-nums text-muted-foreground">{nav.step + 1} / 5</p>
+      <div className="flex justify-center">
+        <StepTrack>
+          {FIVE.map((label, index) => (
+            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+              {index + 1}
+            </StepTab>
+          ))}
+        </StepTrack>
+      </div>
       <h2 className="text-center text-base font-medium">{FIVE[nav.step]}</h2>
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -395,7 +466,13 @@ export function Variant15({ view }: { view: SaleFormView }) {
     <div className="space-y-4 pb-8">
       <div className="flex items-center gap-3">
         <Back view={view} />
-        <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+        <StepTrack>
+          {labels.map((label, index) => (
+            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+              {label}
+            </StepTab>
+          ))}
+        </StepTrack>
       </div>
       {nav.step === 0 && (
         <>
@@ -435,7 +512,13 @@ export function Variant16({ view }: { view: SaleFormView }) {
     <div className="mx-auto max-w-xl space-y-5 pb-8">
       <Back view={view} />
       <OrigenBody view={view} />
-      <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {FOUR[nav.step]}</p>
+      <StepTrack>
+        {FOUR.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
+        ))}
+      </StepTrack>
       {nav.step === 0 && <ClienteBody view={view} />}
       {nav.step === 1 && <ProductosBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
@@ -452,7 +535,13 @@ export function Variant17({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-xl space-y-5 pb-8">
       <Back view={view} />
-      <p className="text-sm text-muted-foreground">{nav.step + 1} / 4 · {labels[nav.step]}</p>
+      <StepTrack>
+        {labels.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
+        ))}
+      </StepTrack>
       {nav.step === 0 && <ClienteBody view={view} />}
       {nav.step === 1 && <ProductosBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
@@ -474,7 +563,14 @@ export function Variant18({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-xl space-y-5 pb-8">
       <Back view={view} />
-      <p className="text-sm text-muted-foreground">{FIVE[nav.step]}{skippable ? ' · opcional' : ''}</p>
+      <StepTrack>
+        {FIVE.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
+        ))}
+      </StepTrack>
+      {skippable ? <p className="text-xs text-muted-foreground">Opcional</p> : null}
       <FiveBody view={view} step={nav.step} />
       <StepFooter
         view={view}
@@ -494,7 +590,13 @@ export function Variant19({ view }: { view: SaleFormView }) {
   return (
     <div className="mx-auto max-w-xl space-y-5 pb-8">
       <Back view={view} />
-      <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+      <StepTrack>
+        {FIVE.map((label, index) => (
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {label}
+          </StepTab>
+        ))}
+      </StepTrack>
       <FiveBody view={view} step={nav.step} />
       {upcoming ? <p className="text-xs text-muted-foreground">Siguiente: {upcoming}</p> : null}
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -502,34 +604,20 @@ export function Variant19({ view }: { view: SaleFormView }) {
   );
 }
 
-/** 20 — Círculos clickeables con estado hecho / actual / pendiente. */
+/** 20 — Segmented con check en los pasos hechos. */
 export function Variant20({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
       <Back view={view} />
-      <ol className="flex items-center gap-0">
+      <StepTrack>
         {FIVE.map((label, index) => (
-          <li key={label} className="flex min-w-0 flex-1 items-center">
-            <button
-              type="button"
-              onClick={() => nav.setStep(index)}
-              className="flex min-w-0 cursor-pointer items-center gap-2"
-            >
-              <span className={cn(
-                'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-medium',
-                index < nav.step && 'bg-foreground text-background',
-                index === nav.step && 'border border-foreground',
-                index > nav.step && 'bg-muted text-muted-foreground',
-              )}>
-                {index < nav.step ? <Check className="size-3.5" /> : index + 1}
-              </span>
-              <span className="hidden truncate text-xs sm:inline">{label}</span>
-            </button>
-            {index < 4 && <span className="mx-2 h-px flex-1 bg-border" />}
-          </li>
+          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
+            {index < nav.step ? <Check className="size-3.5" /> : <span className="tabular-nums text-[11px]">{index + 1}</span>}
+            <span className="hidden sm:inline">{label}</span>
+          </StepTab>
         ))}
-      </ol>
+      </StepTrack>
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
