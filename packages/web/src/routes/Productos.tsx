@@ -1769,24 +1769,26 @@ function ProductDrawer({
       ? associatedListings.filter((listing) => !isActivelyPublished(listing))
       : associatedListings;
 
+  const notionTabClass = 'h-8 flex-none rounded-none bg-transparent px-0 text-[14px] font-normal text-[rgba(55,53,47,0.5)] shadow-none hover:bg-transparent hover:text-[#37352F] data-active:bg-transparent data-active:font-medium data-active:text-[#37352F] after:bottom-0 after:h-[1.5px] after:bg-[#37352F]';
+
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
       showCloseButton={false}
-      className="overflow-hidden border-l border-zinc-200 bg-white shadow-none sm:max-w-[480px] sm:rounded-none"
+      className="gap-0 overflow-hidden border-l border-[rgba(55,53,47,0.09)] bg-white p-0 text-[#37352F] shadow-none sm:max-w-[36rem] sm:rounded-none"
       onEscapeKeyDown={(event) => {
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
     >
-      <div className="absolute right-3 top-3 z-10 flex items-center">
+      <div className="flex h-11 shrink-0 items-center justify-end px-2">
         <nav aria-label="Navegación entre productos" className="flex items-center">
-          <Button variant="ghost" size="icon-sm" className="size-7 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft className="size-4" /></Button>
-          <span className="min-w-10 px-0.5 text-center text-[11px] tabular-nums text-zinc-400" aria-live="polite">{productPosition ? `${productPosition}/${totalProducts}` : `—`}</span>
-          <Button variant="ghost" size="icon-sm" className="size-7 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-4" />}</Button>
+          <Button variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" disabled={!hasPreviousProduct || productNavigationBusy} onClick={onPreviousProduct} aria-label="Producto anterior" title="Producto anterior"><ChevronLeft className="size-4" /></Button>
+          <span className="min-w-9 px-0.5 text-center text-[12px] tabular-nums text-[rgba(55,53,47,0.4)]" aria-live="polite">{productPosition ? `${productPosition}/${totalProducts}` : '—'}</span>
+          <Button variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" disabled={!hasNextProduct || productNavigationBusy} onClick={onNextProduct} aria-label="Siguiente producto" title="Siguiente producto">{productNavigationBusy ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-4" />}</Button>
         </nav>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" aria-label="Más acciones" title="Más acciones">
+            <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" aria-label="Más acciones" title="Más acciones">
               <MoreHorizontal className="size-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -1794,57 +1796,42 @@ function ProductDrawer({
             <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
             <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
             <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
+            {product?.imageUrl ? <DropdownMenuItem onClick={() => onOpenImage(product)}>Ampliar foto</DropdownMenuItem> : null}
             <DropdownMenuItem onClick={onEditImage}>Cambiar foto</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700" onClick={onClose} aria-label="Cerrar" title="Cerrar">
+        <Button type="button" variant="ghost" size="icon-sm" className="size-7 text-[rgba(55,53,47,0.35)] hover:bg-[rgba(55,53,47,0.06)] hover:text-[#37352F]" onClick={onClose} aria-label="Cerrar" title="Cerrar">
           <X className="size-4" />
         </Button>
       </div>
 
-      <SheetHeader className="space-y-0 px-8 pb-5 pt-14 pr-8">
-        <div className="flex items-start gap-3">
-          {product?.imageUrl ? (
-            <button
-              type="button"
-              onClick={() => onOpenImage(product)}
-              className="mt-1 size-8 shrink-0 overflow-hidden rounded-[4px] bg-zinc-100"
-              aria-label={`Ampliar foto de ${product.name}`}
-              title="Ampliar foto"
-            >
-              <img src={product.imageUrl} alt="" className="size-8 object-cover" />
-            </button>
-          ) : null}
-          <div className="min-w-0 flex-1">
-            {product ? (
-              <ProductTitleField
-                productId={product.id}
-                name={product.name}
-                saving={savingField === 'name'}
-                onSave={onSaveName}
-              />
-            ) : (
-              <SheetTitle>Producto</SheetTitle>
-            )}
-            <SheetDescription className="sr-only">Ficha del producto</SheetDescription>
-          </div>
-        </div>
+      <SheetHeader className="space-y-0 px-12 pb-5 pt-2">
+        {product ? (
+          <ProductTitleField
+            productId={product.id}
+            name={product.name}
+            saving={savingField === 'name'}
+            onSave={onSaveName}
+          />
+        ) : (
+          <SheetTitle>Producto</SheetTitle>
+        )}
+        <SheetDescription className="sr-only">Ficha del producto</SheetDescription>
       </SheetHeader>
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
-        <div className="shrink-0 overflow-x-auto border-b border-zinc-200 px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <TabsList variant="line" className="h-9 w-max min-w-full justify-start gap-5 rounded-none bg-transparent p-0">
-            <TabsTrigger value="overview" className="h-9 flex-none rounded-none px-0 text-[14px] font-normal data-active:font-medium">Resumen</TabsTrigger>
-            <TabsTrigger value="listings" className="h-9 flex-none rounded-none px-0 text-[14px] font-normal data-active:font-medium">Publicaciones <span className="tabular-nums text-zinc-400">{associatedListings.length}</span></TabsTrigger>
-            <TabsTrigger value="inventory" className="h-9 flex-none rounded-none px-0 text-[14px] font-normal data-active:font-medium">Inventario</TabsTrigger>
-            <TabsTrigger value="sales" className="h-9 flex-none rounded-none px-0 text-[14px] font-normal data-active:font-medium">Ventas</TabsTrigger>
-            <TabsTrigger value="returns" className="h-9 flex-none rounded-none px-0 text-[14px] font-normal data-active:font-medium">Devoluciones</TabsTrigger>
+        <div className="shrink-0 border-b border-[rgba(55,53,47,0.09)] px-12">
+          <TabsList variant="line" className="h-8 w-full justify-start gap-5 rounded-none bg-transparent p-0">
+            <TabsTrigger value="overview" className={notionTabClass}>Resumen</TabsTrigger>
+            <TabsTrigger value="listings" className={notionTabClass}>Publicaciones{associatedListings.length ? <span className="ml-1 tabular-nums text-[rgba(55,53,47,0.4)]">{associatedListings.length}</span> : null}</TabsTrigger>
+            <TabsTrigger value="inventory" className={notionTabClass}>Inventario</TabsTrigger>
+            <TabsTrigger value="sales" className={notionTabClass}>Ventas</TabsTrigger>
+            <TabsTrigger value="returns" className={notionTabClass}>Devoluciones</TabsTrigger>
           </TabsList>
         </div>
 
         <TabsContent value="overview" className="flex min-h-0 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-5">
-            <ProductOverviewCue available={product.available} listingsCount={associatedListings.length} />
+          <div className="min-h-0 flex-1 overflow-y-auto px-12 py-4">
             <ProductProperties
               product={product}
               profitOwners={profitOwners}
@@ -1858,7 +1845,7 @@ function ProductDrawer({
           </div>
         </TabsContent>
 
-        <TabsContent value="listings" className="min-h-0 overflow-y-auto px-8 py-5">
+        <TabsContent value="listings" className="min-h-0 overflow-y-auto px-12 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <FilterChips
               ariaLabel="Filtrar publicaciones"
@@ -1872,28 +1859,32 @@ function ProductDrawer({
             />
             <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
           </div>
-          {!associatedListings.length ? <div className="px-2 py-12 text-center"><Store className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-xs text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div>
-            : !listingRows.length ? <p className="px-2 py-10 text-center text-sm text-muted-foreground">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
-            : <div className="mt-4 space-y-3">{listingRows.map((listing) => {
+          {!associatedListings.length ? <div className="py-12"><p className="text-sm font-medium text-[#37352F]">Sin publicaciones asociadas</p><p className="mt-1 text-[13px] text-[rgba(55,53,47,0.5)]">Asocia una publicación existente o prepara una nueva.</p></div>
+            : !listingRows.length ? <p className="py-10 text-[14px] text-[rgba(55,53,47,0.5)]">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
+            : <div className="mt-2">{listingRows.map((listing) => {
               const publication = publicationPresentation(listing);
-              return <article key={listing.id} className="rounded-2xl bg-muted/50 px-4 py-4">
+              return <article key={listing.id} className="border-b border-[rgba(55,53,47,0.09)] py-4">
                 <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="text-base">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</strong><ChannelBadge value={listing.channelCode} listing={listing} /></div><p className="mt-2 line-clamp-2 text-sm font-medium leading-5">{listing.title || product.name}</p></div>
-                  <div className="flex shrink-0 items-center gap-2"><span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-medium text-[#37352F]">{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</p>
+                    <div className="mt-1"><ChannelBadge value={listing.channelCode} listing={listing} /></div>
+                    <p className="mt-2 line-clamp-2 text-[14px] leading-5 text-[#37352F]">{listing.title || product.name}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2"><span className={cn('text-[12px]', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
                 </div>
-                <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
+                <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                   <dl className="grid min-w-0 grid-cols-2 gap-4">
-                    <div><dt className="text-xs text-muted-foreground">SKU del seller</dt><dd className="mt-1 truncate font-mono text-sm font-medium text-foreground">{listing.sellerSku}</dd></div>
-                    <div><dt className="text-xs text-muted-foreground">Shop SKU</dt><dd className="mt-1 truncate font-mono text-sm text-muted-foreground">{listing.shopSku || '—'}</dd></div>
+                    <div><dt className="text-[12px] text-[rgba(55,53,47,0.45)]">SKU del seller</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-[#37352F]">{listing.sellerSku}</dd></div>
+                    <div><dt className="text-[12px] text-[rgba(55,53,47,0.45)]">Shop SKU</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-[rgba(55,53,47,0.55)]">{listing.shopSku || '—'}</dd></div>
                   </dl>
-                  <div><span className="text-xs text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
-                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
+                  <div><span className="text-[12px] text-[rgba(55,53,47,0.45)]">Precio</span><SellerPrice listing={listing} /></div>
+                  <div><span className="text-[12px] text-[rgba(55,53,47,0.45)]">Stock seller</span><SellerStock listing={listing} /></div>
                 </div>
               </article>;
             })}</div>}
         </TabsContent>
 
-        <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-8 py-5">
+        <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-12 py-5">
           <MetricRow columns={3}>
             <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
@@ -1911,7 +1902,7 @@ function ProductDrawer({
           {movementsLoading ? <LoadingBlock /> : movements.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">Todavía no hay movimientos registrados.</p> : <div className="mt-3 space-y-1">{movements.map((movement) => <div key={movement.id} className="flex items-start justify-between gap-3 rounded-xl px-3 py-3"><div><p className="text-sm font-medium">{movementLabel(movement.movementType, movement.reason)}</p><p className="mt-1 text-xs text-muted-foreground">{movementCaption(movement)} · {formatDate(movement.effectiveAt || movement.createdAt)}</p></div><div className="text-right"><p className={cn('font-mono text-sm font-semibold', movement.quantityDelta > 0 ? 'text-emerald-600' : 'text-red-600')}>{movement.quantityDelta > 0 ? '+' : ''}{formatNumber(movement.quantityDelta)}</p><small className="text-muted-foreground">saldo {formatNumber(movement.quantityAfter)}</small></div></div>)}</div>}
         </TabsContent>
 
-        <TabsContent value="sales" className="min-h-0 overflow-y-auto px-8 py-5">
+        <TabsContent value="sales" className="min-h-0 overflow-y-auto px-12 py-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">{sales ? activityCaption(sales, 'pedidos del periodo') : 'Consulta bajo demanda.'}</p>
             <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
@@ -1928,7 +1919,7 @@ function ProductDrawer({
           </div>}
         </TabsContent>
 
-        <TabsContent value="returns" className="min-h-0 overflow-y-auto px-8 py-5">
+        <TabsContent value="returns" className="min-h-0 overflow-y-auto px-12 py-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">{returns ? activityCaption(returns, 'pedidos devueltos') : 'Consulta bajo demanda.'}</p>
             <ActivityRangeChips value={salesRange} onChange={onSalesRangeChange} />
@@ -2100,16 +2091,6 @@ function InfoValue({ label, value }: { label: string; value: ReactNode }) {
   return <div><p className="text-xs text-muted-foreground">{label}</p><div className="mt-1 text-sm font-medium">{value}</div></div>;
 }
 
-function ProductOverviewCue({ available, listingsCount }: { available: number; listingsCount: number }) {
-  const message = available <= 0
-    ? 'Quiebre. Hay que reponer.'
-    : listingsCount === 0
-      ? 'Sin publicaciones. Asocia o publica.'
-      : null;
-  if (!message) return null;
-  return <p className="mb-3 text-[13px] text-zinc-500">{message}</p>;
-}
-
 function ProductTitleField({
   productId,
   name,
@@ -2125,20 +2106,18 @@ function ProductTitleField({
   const cancelledRef = useRef(false);
   const focused = draft !== null;
   const displayed = draft ?? name;
+  const titleClass = 'w-full border-0 bg-transparent p-0 text-[40px] font-bold leading-[1.2] tracking-[-0.03em] text-[#37352F] shadow-none outline-none ring-0 placeholder:text-[rgba(55,53,47,0.25)] focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0';
 
   return (
     <SheetTitle
       data-slot="sheet-title"
-      className={cn(
-        'min-w-0 cursor-text rounded-[4px] px-1 py-0.5 -mx-1 text-[28px] font-bold leading-8 tracking-[-0.03em] text-zinc-950',
-        focused ? 'bg-zinc-100' : 'hover:bg-zinc-50',
-      )}
+      className="min-w-0 cursor-text text-[40px] font-bold leading-[1.2] tracking-[-0.03em] text-[#37352F]"
       onClick={() => { if (!focused) setDraft(name); }}
     >
       {focused ? (
         <input
           key={`${productId}-name`}
-          className="w-full border-0 bg-transparent p-0 text-[28px] font-bold leading-8 tracking-[-0.03em] text-zinc-950 shadow-none outline-none ring-0 placeholder:text-zinc-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+          className={titleClass}
           value={displayed}
           aria-label="Nombre del producto"
           autoFocus
@@ -2160,7 +2139,7 @@ function ProductTitleField({
       ) : (
         name || 'Producto'
       )}
-      {saving ? <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+      {saving ? <Loader2 className="ml-2 inline h-4 w-4 animate-spin text-[rgba(55,53,47,0.4)]" aria-hidden="true" /> : null}
     </SheetTitle>
   );
 }
@@ -2199,74 +2178,72 @@ function ProductProperties({
   const statusLabel = product.status === 'active' ? 'Activo' : product.status === 'archived' ? 'Archivado' : 'Inactivo';
   return (
     <div>
-      <div className="border-t border-zinc-200">
-        <OverviewRow label="SKU">
-          <CopyableSku
-            sku={product.mainSku}
-            className="inline-flex items-center font-mono text-[14px] text-zinc-950 hover:text-zinc-950 [&_svg]:hidden"
-          />
-        </OverviewRow>
-        <OverviewRow label="Estado">
-          <span className="text-[14px] text-zinc-950">{statusLabel}</span>
-        </OverviewRow>
-        <OverviewField
-          label="Stock"
-          productId={product.id}
-          field="quantityOnHand"
-          value={String(product.quantityOnHand)}
-          display={formatUnits(product.quantityOnHand)}
-          type="number"
-          onSave={onSaveStock}
+      <OverviewRow label="SKU">
+        <CopyableSku
+          sku={product.mainSku}
+          className="inline-flex items-center gap-1.5 font-mono text-[14px] font-normal tracking-normal text-[#37352F] hover:text-[#37352F] [&_svg]:size-3.5 [&_svg]:text-[rgba(55,53,47,0.35)]"
         />
-        <OverviewRow label="Reservado">
-          <span className="text-[14px] tabular-nums text-zinc-950">{formatUnits(product.quantityReserved)}</span>
-        </OverviewRow>
-        <OverviewField
-          label="Precio"
-          productId={product.id}
-          field="referencePrice"
-          value={product.referencePrice == null ? '' : String(product.referencePrice)}
-          display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
-          type="number"
-          placeholder="Vacío"
-          saving={savingField === 'referencePrice'}
-          onSave={onSavePrice}
-        />
-        <OverviewField
-          label="Comisión"
-          productId={product.id}
-          field="commissionAmount"
-          value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
-          display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
-          type="number"
-          placeholder="Vacío"
-          saving={savingField === 'commissionAmount'}
-          onSave={onSaveCommission}
-        />
-        <OverviewField
-          label="Beneficiario"
-          productId={product.id}
-          field="profitOwner"
-          value={product.profitOwner || ''}
-          display={product.profitOwner || ''}
-          placeholder="Vacío"
-          list="profit-owner-inline-options"
-          saving={savingField === 'profitOwner'}
-          onSave={onSaveProfitOwner}
-        />
-        <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
-        <OverviewRow label="Actualizado">
-          <span className="text-[14px] text-zinc-950">{formatDay(product.updatedAt)}</span>
-        </OverviewRow>
-      </div>
-      <p className="mt-8 text-[15px] leading-7 text-zinc-800">
-        {description || <span className="text-zinc-400">Sin descripción</span>}
+      </OverviewRow>
+      <OverviewRow label="Estado">
+        <span className="text-[14px] text-[#37352F]">{statusLabel}</span>
+      </OverviewRow>
+      <OverviewField
+        label="Stock"
+        productId={product.id}
+        field="quantityOnHand"
+        value={String(product.quantityOnHand)}
+        display={formatUnits(product.quantityOnHand)}
+        type="number"
+        onSave={onSaveStock}
+      />
+      <OverviewRow label="Reservado">
+        <span className="text-[14px] tabular-nums text-[#37352F]">{formatUnits(product.quantityReserved)}</span>
+      </OverviewRow>
+      <OverviewField
+        label="Precio"
+        productId={product.id}
+        field="referencePrice"
+        value={product.referencePrice == null ? '' : String(product.referencePrice)}
+        display={product.referencePrice == null ? '' : formatSoles(product.referencePrice)}
+        type="number"
+        placeholder="Sin precio"
+        saving={savingField === 'referencePrice'}
+        onSave={onSavePrice}
+      />
+      <OverviewField
+        label="Comisión"
+        productId={product.id}
+        field="commissionAmount"
+        value={product.commissionAmount == null ? '' : String(product.commissionAmount)}
+        display={product.commissionAmount == null ? '' : formatSoles(product.commissionAmount)}
+        type="number"
+        placeholder="Sin comisión"
+        saving={savingField === 'commissionAmount'}
+        onSave={onSaveCommission}
+      />
+      <OverviewField
+        label="Beneficiario"
+        productId={product.id}
+        field="profitOwner"
+        value={product.profitOwner || ''}
+        display={product.profitOwner || ''}
+        placeholder="Sin beneficiario"
+        list="profit-owner-inline-options"
+        saving={savingField === 'profitOwner'}
+        onSave={onSaveProfitOwner}
+      />
+      <ProfitOwnerOptions owners={profitOwners} id="profit-owner-inline-options" />
+      <OverviewRow label="Actualizado">
+        <span className="text-[14px] text-[#37352F]">{formatDay(product.updatedAt)}</span>
+      </OverviewRow>
+      <p className="mt-8 text-[16px] leading-[1.6] text-[#37352F]">
+        {description || <span className="text-[rgba(55,53,47,0.35)]">Sin descripción</span>}
       </p>
     </div>
   );
 }
 
-const OVERVIEW_ROW_CLASS = 'grid min-h-[34px] grid-cols-[8.5rem_minmax(0,1fr)] items-center gap-x-4 border-b border-zinc-200 px-1';
+const OVERVIEW_ROW_CLASS = 'grid min-h-[34px] grid-cols-[9.5rem_minmax(0,1fr)] items-center gap-x-2 border-b border-[rgba(55,53,47,0.09)] hover:bg-[rgba(55,53,47,0.04)]';
 
 function OverviewRow({
   label,
@@ -2279,7 +2256,7 @@ function OverviewRow({
 }) {
   return (
     <div className={cn(OVERVIEW_ROW_CLASS, align === 'start' ? 'items-start py-2' : 'items-center')}>
-      <span className="truncate text-[14px] text-zinc-400">{label}</span>
+      <span className="truncate text-[14px] text-[rgba(55,53,47,0.45)]">{label}</span>
       <div className="min-w-0">{children}</div>
     </div>
   );
@@ -2317,17 +2294,17 @@ function OverviewField({
 
   return (
     <div
-      className={cn(OVERVIEW_ROW_CLASS, 'cursor-text items-center', focused ? 'bg-zinc-50' : 'hover:bg-zinc-50/80')}
+      className={cn(OVERVIEW_ROW_CLASS, 'cursor-text items-center', focused && 'bg-[rgba(55,53,47,0.03)]')}
       onClick={() => { if (!focused) setDraft(value); }}
     >
-      <span className="truncate text-[14px] text-zinc-400">{label}</span>
+      <span className="truncate text-[14px] text-[rgba(55,53,47,0.45)]">{label}</span>
       <div className="flex min-w-0 items-center gap-1">
         {focused ? (
           <input
             key={`${productId}-${field}`}
             className={cn(
-              'w-full min-w-0 border-0 bg-transparent p-0 text-left text-[14px] text-zinc-950 shadow-none outline-none ring-0',
-              'placeholder:font-normal placeholder:text-zinc-400',
+              'w-full min-w-0 border-0 bg-transparent p-0 text-left text-[14px] text-[#37352F] shadow-none outline-none ring-0',
+              'placeholder:font-normal placeholder:text-[rgba(55,53,47,0.3)]',
               'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
               'autofill:bg-transparent',
               type === 'number' && '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
@@ -2358,11 +2335,11 @@ function OverviewField({
             }}
           />
         ) : display ? (
-          <span className={cn('truncate text-left text-[14px] tabular-nums text-zinc-950', displayClassName)}>{display}</span>
+          <span className={cn('truncate text-left text-[14px] tabular-nums text-[#37352F]', displayClassName)}>{display}</span>
         ) : (
-          <span className="text-[14px] text-zinc-400">{placeholder || 'Vacío'}</span>
+          <span className="text-[14px] text-[rgba(55,53,47,0.3)]">{placeholder || 'Vacío'}</span>
         )}
-        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-400" aria-hidden="true" /> : null}
+        {saving ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[rgba(55,53,47,0.35)]" aria-hidden="true" /> : null}
       </div>
     </div>
   );
