@@ -190,9 +190,6 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   if (utf8.includes('\uFFFD') && /[áéíóúñ°]/i.test(latin) && headerLooksLikeSettlement(latin)) {
     return latin;
   }
-  if (/√[≠≥°©∫±]|Ã[¡-ÿ]/.test(utf8)) {
-    return repairProductText(utf8);
-  }
   return utf8;
 }
 
