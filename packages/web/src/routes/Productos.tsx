@@ -1849,6 +1849,7 @@ function ProductDrawer({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <FilterChips
               ariaLabel="Filtrar publicaciones"
+              variant="line"
               value={listingFilter}
               onChange={setListingFilter}
               options={[
@@ -2034,14 +2035,16 @@ function FilterChips<T extends string>({
   onChange,
   options,
   ariaLabel,
+  variant = 'pill',
 }: {
   value: T;
   onChange: (value: T) => void;
   options: { value: T; label: string; count?: number }[];
   ariaLabel: string;
+  variant?: 'pill' | 'line';
 }) {
   return (
-    <div role="tablist" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
+    <div role="tablist" aria-label={ariaLabel} className={cn('flex flex-wrap', variant === 'line' ? 'gap-4' : 'gap-1.5')}>
       {options.map((option) => {
         const selected = value === option.value;
         return (
@@ -2052,8 +2055,17 @@ function FilterChips<T extends string>({
             aria-selected={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
-              selected ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground hover:text-foreground',
+              variant === 'line'
+                ? cn(
+                  'inline-flex h-8 items-center gap-1.5 border-b-[1.5px] px-0 text-[13px] transition',
+                  selected
+                    ? 'border-[#37352F] font-medium text-[#37352F]'
+                    : 'border-transparent text-[rgba(55,53,47,0.45)] hover:text-[#37352F]',
+                )
+                : cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition',
+                  selected ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground hover:text-foreground',
+                ),
             )}
           >
             {option.label}
@@ -2146,12 +2158,12 @@ function ProductTitleField({
 
 function ProductPublicationActions({ onAssociate, onPublish }: { onAssociate: () => void; onPublish: () => void }) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-      <button type="button" className="secondary-button" onClick={onAssociate}>
-        <Plus className="h-4 w-4" /> Asociar producto
+    <div className="flex shrink-0 items-center gap-4">
+      <button type="button" className="text-[13px] text-[rgba(55,53,47,0.55)] hover:text-[#37352F]" onClick={onAssociate}>
+        Asociar
       </button>
-      <button type="button" className="primary-button" onClick={onPublish}>
-        <PackagePlus className="h-4 w-4" /> Nueva publicación
+      <button type="button" className="text-[13px] text-[rgba(55,53,47,0.55)] hover:text-[#37352F]" onClick={onPublish}>
+        Nueva publicación
       </button>
     </div>
   );
@@ -2294,7 +2306,7 @@ function OverviewField({
 
   return (
     <div
-      className={cn(OVERVIEW_ROW_CLASS, 'cursor-text items-center', focused && 'bg-[rgba(55,53,47,0.03)]')}
+      className={cn(OVERVIEW_ROW_CLASS, 'cursor-text items-center')}
       onClick={() => { if (!focused) setDraft(value); }}
     >
       <span className="truncate text-[14px] text-[rgba(55,53,47,0.45)]">{label}</span>
@@ -2303,7 +2315,7 @@ function OverviewField({
           <input
             key={`${productId}-${field}`}
             className={cn(
-              'w-full min-w-0 border-0 bg-transparent p-0 text-left text-[14px] text-[#37352F] shadow-none outline-none ring-0',
+              'w-full min-w-0 appearance-none border-0 bg-transparent p-0 text-left text-[14px] text-[#37352F] shadow-none outline-none ring-0',
               'placeholder:font-normal placeholder:text-[rgba(55,53,47,0.3)]',
               'focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
               'autofill:bg-transparent',
