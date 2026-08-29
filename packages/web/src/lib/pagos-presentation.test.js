@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, livelinePointsFromValues, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -138,7 +138,7 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
-  assert.deepEqual(charts.map((chart) => chart.kind), ['trend', 'share', 'split']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'focus', 'allocation']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
@@ -176,6 +176,11 @@ test('el trend diario agrupa facturado, neto y depósito', () => {
   assert.ok(points.length > 2);
   assert.equal(points[0].facturado, 132.88);
   assert.equal(points.at(-1).neto, 16.97);
+  const line = livelinePointsFromValues([132.88, 16.97]);
+  assert.ok(line.length > 2);
+  assert.equal(line[0].value, 132.88);
+  assert.equal(line.at(-1).value, 16.97);
+  assert.ok(line[0].time < line.at(-1).time);
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

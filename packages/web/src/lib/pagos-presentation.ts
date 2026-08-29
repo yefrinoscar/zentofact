@@ -369,6 +369,24 @@ export function settlementDailySeries(sales: Array<{
   return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
+export function livelinePointsFromValues(values: number[], spanSecs = 48) {
+  const source = (values || []).map((value) => Number(value) || 0);
+  const dense = smoothNumericSeries(source.length >= 2 ? source : [source[0] || 0, source[0] || 0]);
+  const end = Math.floor(Date.now() / 1000);
+  if (dense.length < 2) {
+    const value = dense[0] || 0;
+    return [
+      { time: end - spanSecs, value },
+      { time: end, value },
+    ];
+  }
+  const gap = spanSecs / (dense.length - 1);
+  return dense.map((value, index) => ({
+    time: Math.round(end - (dense.length - 1 - index) * gap),
+    value,
+  }));
+}
+
 export function settlementTrendPoints(
   days: Array<Record<string, number | string>>,
   keys: string[],
@@ -420,7 +438,7 @@ export function settlementCharts(summary: {
   return [
     {
       id: 'billed',
-      kind: 'trend' as const,
+      kind: 'compare' as const,
       hint: soldHint,
       items: [
         { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
@@ -429,7 +447,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'fees',
-      kind: 'share' as const,
+      kind: 'focus' as const,
       hint: takeHint,
       total: cash.kept,
       items: [
@@ -439,7 +457,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'payout',
-      kind: 'split' as const,
+      kind: 'allocation' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
       items: [
