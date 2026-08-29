@@ -1779,7 +1779,7 @@ function ProductDrawer({
 
   return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <SheetContent
-      className="overflow-hidden border-l border-zinc-200 bg-white shadow-none sm:max-w-[420px] sm:rounded-none"
+      className="overflow-hidden border-l border-zinc-200 bg-white shadow-none sm:max-w-[448px] sm:rounded-none"
       onEscapeKeyDown={(event) => {
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
@@ -1813,7 +1813,7 @@ function ProductDrawer({
               {product?.mainSku
                 ? <CopyableSku
                     sku={product.mainSku}
-                    className="inline-flex items-center gap-1 font-mono text-[13px] font-medium tracking-wide text-zinc-500 hover:text-zinc-950"
+                    className="inline-flex items-center font-mono text-[13px] font-medium tracking-wide text-zinc-500 hover:text-zinc-950 [&_svg]:hidden"
                   />
                 : <span className="font-mono text-[13px] text-zinc-500">—</span>}
               {product ? <span className="text-zinc-400">{product.status === 'active' ? 'Activo' : product.status === 'archived' ? 'Archivado' : 'Inactivo'}</span> : null}
@@ -1844,7 +1844,7 @@ function ProductDrawer({
 
       {!product || loading ? <LoadingBlock /> : <Tabs value={tab} onValueChange={(value) => onTabChange(value as typeof tab)} className="min-h-0 flex-1 gap-0 overflow-hidden">
         <div className="shrink-0 overflow-x-auto border-b border-zinc-100 px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <TabsList variant="line" className="h-9 w-max min-w-full justify-start gap-5 rounded-none bg-transparent p-0">
+          <TabsList variant="line" className="h-9 w-max min-w-full justify-start gap-4 rounded-none bg-transparent p-0">
             <TabsTrigger value="overview" className="h-9 flex-none rounded-none px-0 text-[13px] font-medium">Resumen</TabsTrigger>
             <TabsTrigger value="listings" className="h-9 flex-none rounded-none px-0 text-[13px] font-medium">Publicaciones <span className="tabular-nums text-zinc-400">{associatedListings.length}</span></TabsTrigger>
             <TabsTrigger value="inventory" className="h-9 flex-none rounded-none px-0 text-[13px] font-medium">Inventario</TabsTrigger>
