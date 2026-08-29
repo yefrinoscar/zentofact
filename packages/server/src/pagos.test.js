@@ -153,3 +153,80 @@ test('la página de ventas de Pagos admite hasta 2000 filas', () => {
   assert.equal(settlementSalesLimit(9000), 2000);
   assert.equal(settlementSalesLimit(0), 50);
 });
+
+test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async () => {
+  const calls = [];
+  const db = {
+    query: async (sql) => {
+      if (sql.includes('file_sha256') && sql.includes('from settlement_imports')) {
+        return {
+          rows: [{
+            id: 9,
+            filename: 'estado.csv',
+            file_sha256: 'abc',
+            company_id: null,
+            imported_at: '2026-08-27T12:00:00.000Z',
+            imported_by: 'admin',
+            line_count: 1,
+            matched_count: 1,
+            unmatched_count: 0,
+            paid_sales_count: 1,
+            reused: true,
+          }],
+        };
+      }
+      if (sql.includes('from falabella_orders')) {
+        return {
+          rows: [{
+            id: 2,
+            company_id: 1,
+            order_id: 'preview-seed-shipped',
+            order_number: 'PV-10002',
+            sale_date: '2026-08-27',
+            amount: 189.9,
+            skus: ['ag301'],
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    connect: async () => ({
+      query: async (sql, params) => {
+        calls.push(sql);
+        if (sql.includes('update settlement_imports')) {
+          return {
+            rows: [{
+              id: 9,
+              filename: params[1],
+              file_sha256: 'abc',
+              company_id: null,
+              imported_at: '2026-08-27T13:00:00.000Z',
+              imported_by: params[2],
+              line_count: params[4],
+              matched_count: params[5],
+              unmatched_count: params[6],
+              paid_sales_count: params[7],
+              reused: false,
+              replaced: true,
+            }],
+          };
+        }
+        return { rows: [] };
+      },
+      release() {},
+    }),
+  };
+  const result = await importSettlementCsv({
+    filename: 'estado.csv',
+    csv: CSV,
+    replace: true,
+    importedBy: 'admin',
+  }, db);
+  assert.equal(result.replaced, true);
+  assert.equal(result.reused, false);
+  assert.equal(result.id, 9);
+  assert.equal(calls.some((sql) => sql.includes('delete from settlement_lines')), true);
+  assert.equal(calls.some((sql) => sql.includes('update settlement_imports')), true);
+  assert.equal(calls.some((sql) => sql.includes('insert into settlement_lines')), true);
+  assert.equal(calls.some((sql) => sql.includes('insert into sale_settlements')), true);
+});

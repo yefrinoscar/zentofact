@@ -33,6 +33,7 @@ export function paymentStatusLabel(status: string | null | undefined) {
 
 export function importSummary(item: {
   reused?: boolean;
+  replaced?: boolean;
   matchedCount?: number;
   unmatchedCount?: number;
   paidSalesCount?: number;
@@ -43,16 +44,43 @@ export function importSummary(item: {
   if (item.reused) {
     const file = shortImportFilename(item.filename);
     const when = saleDateLabel(item.importedAt);
-    if (file && when) return `Este contenido ya se cruzó · ${file} · ${when}`;
-    if (file) return `Este contenido ya se cruzó · ${file}`;
-    if (when) return `Este contenido ya se cruzó · ${when}`;
-    return 'Este contenido ya se cruzó.';
+    if (file && when) return `Este CSV ya está cruzado · ${file} · ${when}`;
+    if (file) return `Este CSV ya está cruzado · ${file}`;
+    if (when) return `Este CSV ya está cruzado · ${when}`;
+    return 'Este CSV ya está cruzado.';
+  }
+  if (item.replaced) {
+    const cruzadas = `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
+    return `Se volvió a cruzar · ${cruzadas}`;
   }
   return `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
 }
 
 export function shortImportFilename(name: string | null | undefined) {
-  return String(name || '').replace(/^NewReportTransaction_/, '').trim();
+  const raw = String(name || '').trim();
+  const stripped = raw.replace(/^NewReportTransaction_/i, '');
+  return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.csv$|$)/i, '') || stripped || raw;
+}
+
+export function csvReadError(message: string | null | undefined) {
+  const title = String(message || 'No se pudo leer el CSV.').trim() || 'No se pudo leer el CSV.';
+  if (/vacío/i.test(title)) return { title, detail: 'Elige un archivo de Falabella.' };
+  if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
+  if (/cabecer|columna/i.test(title)) return { title, detail: 'Usa el NewReportTransaction de Falabella.' };
+  if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
+  return { title, detail: 'Revisa el archivo y vuelve a subir.' };
+}
+
+export function reusedImportNotice(item: {
+  filename?: string | null;
+  importedAt?: string | null;
+} | null | undefined) {
+  const file = shortImportFilename(item?.filename);
+  const when = saleDateLabel(item?.importedAt);
+  return {
+    title: 'Este CSV ya está cruzado.',
+    detail: [file, when].filter(Boolean).join(' · '),
+  };
 }
 
 export function formatElapsed(deciseconds: number) {
@@ -104,7 +132,7 @@ export function chargeKindLabel(kind: string | null | undefined) {
 const PRODUCT_FILLER = /^(emergencia|trekking|camping|hiking|outdoor|mylar|pack|set|kit|oferta|promo|original|premium|nuevo|unisex)$/i;
 
 export function shortProductName(name: string | null | undefined) {
-  const text = String(name || '').replace(/\s+/g, ' ').trim();
+  const text = repairProductText(String(name || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   const kept: string[] = [];
   for (const word of text.split(' ')) {
@@ -136,6 +164,7 @@ export function saleDateLabel(date: string | null | undefined) {
 
 export function saleOverview(summary: {
   saleCount?: number;
+  matchedCount?: number | null;
   commissionRate?: number | null;
   shippingRate?: number | null;
   takeRate?: number | null;
@@ -143,7 +172,10 @@ export function saleOverview(summary: {
   const count = Number(summary?.saleCount || 0);
   if (!count) return '';
   const ventas = count === 1 ? '1 venta' : `${count} ventas`;
-  return `${ventas} · comisión ${percentLabel(summary?.commissionRate)} · logística ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
+  const matchedRaw = summary?.matchedCount;
+  const matched = matchedRaw == null ? count : Number(matchedRaw);
+  const cruce = matched === count ? '' : ` · ${matched} cruzadas`;
+  return `${ventas}${cruce} · comisión ${percentLabel(summary?.commissionRate)} · logística ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
 }
 
 export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
@@ -158,16 +190,23 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   if (utf8.includes('\uFFFD') && /[áéíóúñ°]/i.test(latin) && headerLooksLikeSettlement(latin)) {
     return latin;
   }
-  if (/√[≠≥°©∫±]/.test(utf8)) {
-    return utf8
-      .replace(/√≠/g, 'í')
-      .replace(/√≥/g, 'ó')
-      .replace(/√°/g, 'á')
-      .replace(/√©/g, 'é')
-      .replace(/√∫/g, 'ú')
-      .replace(/√±/g, 'ñ');
-  }
   return utf8;
+}
+
+export function repairProductText(value: string | null | undefined) {
+  return String(value || '')
+    .replace(/√≠/g, 'í')
+    .replace(/√≥/g, 'ó')
+    .replace(/√°/g, 'á')
+    .replace(/√©/g, 'é')
+    .replace(/√∫/g, 'ú')
+    .replace(/√±/g, 'ñ')
+    .replace(/Ã­/g, 'í')
+    .replace(/Ã³/g, 'ó')
+    .replace(/Ã¡/g, 'á')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ãº/g, 'ú')
+    .replace(/Ã±/g, 'ñ');
 }
 
 function falabellaMediaUrl(sku?: string | null) {
@@ -242,5 +281,62 @@ export function settlementCash(summary: {
     paidCount: Number(summary?.paidCount || 0),
     pendingCount: Number(summary?.pendingCount || 0),
   };
+}
+
+function ventasHint(count: number, empty: string) {
+  if (!count) return empty;
+  return count === 1 ? '1 venta' : `${count} ventas`;
+}
+
+export function settlementIndicators(summary: {
+  saleCount?: number;
+  bruto?: number | null;
+  neto?: number | null;
+  take?: number | null;
+  paidNeto?: number | null;
+  pendingNeto?: number | null;
+  paidCount?: number | null;
+  pendingCount?: number | null;
+  takeRate?: number | null;
+  ticket?: number | null;
+  arriveTicket?: number | null;
+  itemCount?: number | null;
+  matchedCount?: number | null;
+} | null | undefined) {
+  const cash = settlementCash(summary);
+  const sales = Number(summary?.saleCount || 0);
+  const matched = Number(summary?.matchedCount || 0);
+  const ticket = Number(summary?.ticket || 0) || (sales ? cash.sold / sales : 0);
+  const items = Number(summary?.itemCount || 0);
+  const receiveRate = cash.sold ? cash.arrives / cash.sold : null;
+  const soldHint = matched && matched !== sales
+    ? `${ventasHint(sales, 'Lo vendido')} · ${matched} cruzadas`
+    : ventasHint(sales, 'Lo vendido');
+  return [
+    { id: 'sold', label: 'Precio', value: money.format(cash.sold), hint: soldHint },
+    {
+      id: 'arrives',
+      label: 'Te llega',
+      value: money.format(cash.arrives),
+      hint: percentLabel(receiveRate) === '—' ? 'Te depositan' : percentLabel(receiveRate),
+      tone: 'receive' as const,
+    },
+    {
+      id: 'kept',
+      label: 'Se queda',
+      value: money.format(cash.kept),
+      hint: percentLabel(summary?.takeRate) === '—' ? 'Comisión y logística' : percentLabel(summary?.takeRate),
+      tone: 'take' as const,
+    },
+    { id: 'paid', label: 'Pagado', value: money.format(cash.paid), hint: ventasHint(cash.paidCount, 'Ya depositaron') },
+    {
+      id: 'pending',
+      label: 'Pendiente',
+      value: money.format(cash.pending),
+      hint: ventasHint(cash.pendingCount, 'Aún no pagan'),
+      tone: 'wait' as const,
+    },
+    { id: 'ticket', label: 'Ticket', value: money.format(ticket), hint: items ? `${items} u` : 'Por venta' },
+  ];
 }
 

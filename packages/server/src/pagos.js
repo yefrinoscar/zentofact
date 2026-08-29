@@ -148,6 +148,7 @@ function mapImport(row) {
     unmatchedCount: Number(row.unmatched_count || 0),
     paidSalesCount: Number(row.paid_sales_count || 0),
     reused: Boolean(row.reused),
+    replaced: Boolean(row.replaced),
   };
 }
 
@@ -335,6 +336,7 @@ export async function importSettlementCsv(input = {}, db) {
   const filename = text(input.filename || 'estado-de-cuenta.csv', 'Archivo', 180);
   const companyId = optionalPositiveInt(input.companyId);
   const importedBy = input.importedBy ? String(input.importedBy) : null;
+  const replace = Boolean(input.replace);
   const fileHash = sha256(csv);
   const target = await resolvePool(db);
   const existing = await target.query(
@@ -346,45 +348,72 @@ export async function importSettlementCsv(input = {}, db) {
       limit 1`,
     [fileHash],
   );
-  if (existing.rows[0]) return mapImport(existing.rows[0]);
+  if (existing.rows[0] && !replace) return mapImport(existing.rows[0]);
 
   const parsed = parseSettlementCsv(csv);
   const sales = await loadSaleIndex(target, companyId);
   const matched = matchSettlementLines(parsed.lines, sales);
+  const stats = [
+    parsed.lines.length,
+    matched.results.filter((row) => row.status === 'matched').length,
+    matched.results.filter((row) => row.status === 'unmatched').length,
+    matched.paidSales.length,
+  ];
   const client = await target.connect();
   try {
     await client.query('begin');
-    const inserted = await client.query(
-      `insert into settlement_imports (
-         filename, file_sha256, company_id, imported_by, headers,
-         line_count, matched_count, unmatched_count, paid_sales_count
-       ) values ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)
-       on conflict (file_sha256) do nothing
-       returning id, filename, file_sha256, company_id, imported_at, imported_by,
-                 line_count, matched_count, unmatched_count, paid_sales_count, false as reused`,
-      [
-        filename,
-        fileHash,
-        companyId,
-        importedBy,
-        JSON.stringify(parsed.binding.headers),
-        parsed.lines.length,
-        matched.results.filter((row) => row.status === 'matched').length,
-        matched.results.filter((row) => row.status === 'unmatched').length,
-        matched.paidSales.length,
-      ],
-    );
-    if (!inserted.rows[0]) {
-      await client.query('rollback');
-      const race = await target.query(
-        `select id, filename, file_sha256, company_id, imported_at, imported_by,
-                line_count, matched_count, unmatched_count, paid_sales_count, true as reused
-           from settlement_imports where file_sha256 = $1 limit 1`,
-        [fileHash],
+    let importRow;
+    if (existing.rows[0]) {
+      const existingId = Number(existing.rows[0].id);
+      await client.query('delete from settlement_lines where import_id = $1', [existingId]);
+      const updated = await client.query(
+        `update settlement_imports
+            set filename = $2,
+                imported_by = $3,
+                headers = $4::jsonb,
+                line_count = $5,
+                matched_count = $6,
+                unmatched_count = $7,
+                paid_sales_count = $8,
+                imported_at = now()
+          where id = $1
+          returning id, filename, file_sha256, company_id, imported_at, imported_by,
+                    line_count, matched_count, unmatched_count, paid_sales_count,
+                    false as reused, true as replaced`,
+        [existingId, filename, importedBy, JSON.stringify(parsed.binding.headers), ...stats],
       );
-      return mapImport(race.rows[0]);
+      importRow = updated.rows[0];
+    } else {
+      const inserted = await client.query(
+        `insert into settlement_imports (
+           filename, file_sha256, company_id, imported_by, headers,
+           line_count, matched_count, unmatched_count, paid_sales_count
+         ) values ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)
+         on conflict (file_sha256) do nothing
+         returning id, filename, file_sha256, company_id, imported_at, imported_by,
+                   line_count, matched_count, unmatched_count, paid_sales_count, false as reused`,
+        [
+          filename,
+          fileHash,
+          companyId,
+          importedBy,
+          JSON.stringify(parsed.binding.headers),
+          ...stats,
+        ],
+      );
+      if (!inserted.rows[0]) {
+        await client.query('rollback');
+        const race = await target.query(
+          `select id, filename, file_sha256, company_id, imported_at, imported_by,
+                  line_count, matched_count, unmatched_count, paid_sales_count, true as reused
+             from settlement_imports where file_sha256 = $1 limit 1`,
+          [fileHash],
+        );
+        return mapImport(race.rows[0]);
+      }
+      importRow = inserted.rows[0];
     }
-    const importId = Number(inserted.rows[0].id);
+    const importId = Number(importRow.id);
     for (const result of matched.results) {
       const fingerprint = lineFingerprint(result.line);
       await client.query(
@@ -437,7 +466,7 @@ export async function importSettlementCsv(input = {}, db) {
       await upsertSaleSettlement(client, sale, 'pending', importId);
     }
     await client.query('commit');
-    return mapImport(inserted.rows[0]);
+    return mapImport(importRow);
   } catch (error) {
     await client.query('rollback');
     throw error;
