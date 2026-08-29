@@ -288,6 +288,64 @@ function ventasHint(count: number, empty: string) {
   return count === 1 ? '1 venta' : `${count} ventas`;
 }
 
+function countHint(count: number, singular: string, plural: string, empty: string) {
+  if (!count) return empty;
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+}
+
+export function settlementCharts(summary: {
+  saleCount?: number;
+  bruto?: number | null;
+  neto?: number | null;
+  take?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  paidNeto?: number | null;
+  pendingNeto?: number | null;
+  paidCount?: number | null;
+  pendingCount?: number | null;
+  takeRate?: number | null;
+  matchedCount?: number | null;
+} | null | undefined) {
+  const cash = settlementCash(summary);
+  const sales = Number(summary?.saleCount || 0);
+  const matched = Number(summary?.matchedCount || 0);
+  const soldHint = matched && matched !== sales
+    ? `${ventasHint(sales, 'Lo facturado')} · ${matched} cruzadas`
+    : ventasHint(sales, 'Lo facturado');
+  const takeHint = percentLabel(summary?.takeRate) === '—'
+    ? 'Comisión y logística'
+    : `${percentLabel(summary?.takeRate)} se queda`;
+  const paidHint = countHint(cash.paidCount, 'pagada', 'pagadas', 'Ya depositaron');
+  const pendingHint = countHint(cash.pendingCount, 'pendiente', 'pendientes', 'Aún no pagan');
+  return [
+    {
+      id: 'billed',
+      hint: soldHint,
+      items: [
+        { key: 'facturado', label: 'Facturado', value: cash.sold },
+        { key: 'neto', label: 'Neto', value: cash.arrives },
+      ],
+    },
+    {
+      id: 'fees',
+      hint: takeHint,
+      items: [
+        { key: 'commission', label: 'Comisión', value: Number(summary?.commission || 0) },
+        { key: 'shipping', label: 'Logística', value: Number(summary?.shipping || 0) },
+      ],
+    },
+    {
+      id: 'payout',
+      hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
+      items: [
+        { key: 'paid', label: 'Pagado', value: cash.paid },
+        { key: 'pending', label: 'Pendiente', value: cash.pending },
+      ],
+    },
+  ];
+}
+
 export function settlementIndicators(summary: {
   saleCount?: number;
   bruto?: number | null;
@@ -313,7 +371,7 @@ export function settlementIndicators(summary: {
     ? `${ventasHint(sales, 'Lo vendido')} · ${matched} cruzadas`
     : ventasHint(sales, 'Lo vendido');
   return [
-    { id: 'sold', label: 'Precio', value: money.format(cash.sold), hint: soldHint },
+    { id: 'sold', label: 'Facturado', value: money.format(cash.sold), hint: soldHint },
     {
       id: 'arrives',
       label: 'Te llega',

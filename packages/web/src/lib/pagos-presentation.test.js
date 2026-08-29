@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementIndicators, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementIndicators, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -110,6 +110,7 @@ test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
     matchedCount: 27,
   });
   assert.deepEqual(kpis.map((kpi) => kpi.id), ['sold', 'arrives', 'kept', 'paid', 'pending', 'ticket']);
+  assert.equal(kpis[0].label, 'Facturado');
   assert.equal(kpis[0].hint, '27 ventas');
   assert.equal(kpis[2].hint, '29.9%');
   assert.equal(kpis[3].hint, '11 ventas');
@@ -119,6 +120,42 @@ test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
     settlementIndicators({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,
     '27 ventas · 20 cruzadas',
   );
+});
+
+test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
+  const charts = settlementCharts({
+    saleCount: 27,
+    bruto: 1739.2,
+    neto: 1218.35,
+    take: 520.85,
+    commission: 148.2,
+    shipping: 372.65,
+    paidNeto: 381.96,
+    pendingNeto: 836.39,
+    paidCount: 11,
+    pendingCount: 16,
+    takeRate: 0.299,
+    matchedCount: 27,
+  });
+  assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
+  assert.deepEqual(
+    charts.flatMap((chart) => chart.items.map((item) => item.label)),
+    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
+  );
+  assert.equal(charts[0].items[0].value, 1739.2);
+  assert.equal(charts[0].items[1].value, 1218.35);
+  assert.equal(charts[1].items[0].value, 148.2);
+  assert.equal(charts[1].items[1].value, 372.65);
+  assert.equal(charts[2].items[0].value, 381.96);
+  assert.equal(charts[2].items[1].value, 836.39);
+  assert.equal(charts[0].hint, '27 ventas');
+  assert.equal(charts[1].hint, '29.9% se queda');
+  assert.equal(charts[2].hint, '11 pagadas · 16 pendientes');
+  assert.equal(
+    settlementCharts({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,
+    '27 ventas · 20 cruzadas',
+  );
+  assert.ok(!charts.some((chart) => /precio|ticket/i.test(`${chart.hint} ${chart.items.map((item) => item.label).join(' ')}`)));
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

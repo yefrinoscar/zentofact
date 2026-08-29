@@ -20,7 +20,7 @@ import {
   reusedImportNotice,
   saleDateLabel,
   salesPageNote,
-  settlementIndicators,
+  settlementCharts,
   shortImportFilename,
   shortProductName,
   skuLabel,
@@ -29,6 +29,8 @@ import {
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
+import { Bar, BarChart, LabelList, XAxis, YAxis } from 'recharts';
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -264,40 +266,149 @@ type PagosNotice = {
   canReplace?: boolean;
 };
 
+const SETTLEMENT_CHART_CONFIG = {
+  billed: {
+    amount: { label: 'Monto' },
+    facturado: { label: 'Facturado', color: 'var(--chart-2)' },
+    neto: {
+      label: 'Neto',
+      theme: { light: 'oklch(0.527 0.154 150.069)', dark: 'oklch(0.765 0.177 163.223)' },
+    },
+  },
+  fees: {
+    amount: { label: 'Monto' },
+    commission: {
+      label: 'Comisión',
+      theme: { light: 'oklch(0.577 0.245 27.325)', dark: 'oklch(0.704 0.191 22.216)' },
+    },
+    shipping: {
+      label: 'Logística',
+      theme: { light: 'oklch(0.666 0.179 58.318)', dark: 'oklch(0.769 0.188 70.08)' },
+    },
+  },
+  payout: {
+    amount: { label: 'Monto' },
+    paid: {
+      label: 'Pagado',
+      theme: { light: 'oklch(0.527 0.154 150.069)', dark: 'oklch(0.765 0.177 163.223)' },
+    },
+    pending: {
+      label: 'Pendiente',
+      theme: { light: 'oklch(0.666 0.179 58.318)', dark: 'oklch(0.828 0.189 84.429)' },
+    },
+  },
+} as const satisfies Record<'billed' | 'fees' | 'payout', ChartConfig>;
+
+function moneyTooltipValue(value: unknown) {
+  return money.format(Number(value) || 0);
+}
+
+function SettlementPairChart({
+  id,
+  hint,
+  items,
+}: {
+  id: keyof typeof SETTLEMENT_CHART_CONFIG;
+  hint: string;
+  items: Array<{ key: string; label: string; value: number }>;
+}) {
+  const config = SETTLEMENT_CHART_CONFIG[id];
+  const data = items.map((item) => ({
+    key: item.key,
+    label: item.label,
+    amount: item.value,
+    fill: `var(--color-${item.key})`,
+  }));
+  const caption = items.map((item) => `${item.label} ${money.format(item.value)}`).join(', ');
+  return (
+    <div>
+      <ChartContainer
+        id={`pagos-${id}`}
+        config={config}
+        className="aspect-auto h-[4.5rem] w-full"
+        initialDimension={{ width: 280, height: 72 }}
+        role="img"
+        aria-label={caption}
+      >
+        <BarChart
+          accessibilityLayer
+          data={data}
+          layout="vertical"
+          margin={{ left: 0, right: 88, top: 2, bottom: 2 }}
+        >
+          <YAxis
+            dataKey="key"
+            type="category"
+            tickLine={false}
+            axisLine={false}
+            width={78}
+            tickMargin={8}
+            tickFormatter={(value) => String(config[value as keyof typeof config]?.label ?? value)}
+          />
+          <XAxis type="number" dataKey="amount" hide />
+          <ChartTooltip
+            cursor={false}
+            content={(
+              <ChartTooltipContent
+                hideLabel
+                nameKey="key"
+                formatter={(value, _name, item) => {
+                  const key = String((item as { payload?: { key?: string } }).payload?.key || '');
+                  const label = String(config[key as keyof typeof config]?.label ?? key);
+                  return (
+                    <div className="flex w-full items-center justify-between gap-4">
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-mono font-medium tabular-nums text-foreground">
+                        {moneyTooltipValue(value)}
+                      </span>
+                    </div>
+                  );
+                }}
+              />
+            )}
+          />
+          <Bar dataKey="amount" radius={4} barSize={14} maxBarSize={14}>
+            <LabelList
+              dataKey="amount"
+              position="right"
+              className="fill-foreground text-[11px] tabular-nums"
+              formatter={moneyTooltipValue}
+            />
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+      {hint ? <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
 function SettlementKpiStrip({ summary }: {
   summary?: {
     saleCount?: number;
     bruto?: number | null;
     neto?: number | null;
     take?: number | null;
+    commission?: number | null;
+    shipping?: number | null;
     paidNeto?: number | null;
     pendingNeto?: number | null;
     paidCount?: number | null;
     pendingCount?: number | null;
     takeRate?: number | null;
-    ticket?: number | null;
-    itemCount?: number | null;
     matchedCount?: number | null;
   } | null;
 }) {
   if (!summary?.saleCount) return null;
-  const kpis = settlementIndicators(summary);
+  const charts = settlementCharts(summary);
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 xl:grid-cols-6">
-      {kpis.map((kpi) => (
-        <div key={kpi.id}>
-          <p className="text-[11px] text-muted-foreground">{kpi.label}</p>
-          <p className={cn(
-            'text-lg font-semibold tabular-nums leading-tight',
-            kpi.tone === 'receive' && llegaText,
-            kpi.tone === 'take' && takeText,
-            kpi.tone === 'wait' && 'text-amber-800 dark:text-amber-400',
-          )}
-          >
-            {kpi.value}
-          </p>
-          <p className="text-[11px] leading-snug text-muted-foreground">{kpi.hint}</p>
-        </div>
+    <div className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-3">
+      {charts.map((chart) => (
+        <SettlementPairChart
+          key={chart.id}
+          id={chart.id as keyof typeof SETTLEMENT_CHART_CONFIG}
+          hint={chart.hint}
+          items={chart.items}
+        />
       ))}
     </div>
   );
