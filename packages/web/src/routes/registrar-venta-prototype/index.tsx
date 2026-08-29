@@ -3,20 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ProductSearchPicker } from '../../components/ProductSearchPicker';
 import { PrototypeSwitcher } from '../../components/PrototypeSwitcher';
 import { PROTOTYPE_VARIANTS, type PrototypeKey, type SaleFormView } from './view';
-import {
-  Variant1,
-  Variant2,
-  Variant3,
-  Variant4,
-  Variant5,
-  Variant6,
-  Variant7,
-  Variant8,
-  Variant9,
-  Variant10,
-  Variant11,
-  Variant12,
-} from './variants';
+import { Variant1, Variant2, Variant3, Variant4, Variant5 } from './variants';
 
 const VARIANTS: Record<PrototypeKey, (props: { view: SaleFormView }) => React.JSX.Element> = {
   1: Variant1,
@@ -24,13 +11,6 @@ const VARIANTS: Record<PrototypeKey, (props: { view: SaleFormView }) => React.JS
   3: Variant3,
   4: Variant4,
   5: Variant5,
-  6: Variant6,
-  7: Variant7,
-  8: Variant8,
-  9: Variant9,
-  10: Variant10,
-  11: Variant11,
-  12: Variant12,
 };
 
 export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
@@ -48,7 +28,7 @@ export function RegistrarVentaPrototype({ view }: { view: SaleFormView }) {
 
   return (
     <form onSubmit={view.submit} className="pb-[calc(8rem+env(safe-area-inset-bottom))]">
-      {/* PROTOTYPE — doce bases de color y forma, `?variant=1`…`12`. */}
+      {/* PROTOTYPE — cinco steppers en grises de DESIGN.md, `?variant=1`…`5`. */}
       {view.setupError ? (
         <p className="mb-4 text-sm text-destructive">{view.setupError}</p>
       ) : null}

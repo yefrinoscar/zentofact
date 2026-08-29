@@ -74,18 +74,11 @@ export type SaleFormView = {
 };
 
 export const PROTOTYPE_VARIANTS = [
-  { key: '1', name: 'Tinta' },
-  { key: '2', name: 'Lima' },
-  { key: '3', name: 'Canela' },
-  { key: '4', name: 'Noche' },
-  { key: '5', name: 'Recibo' },
-  { key: '6', name: 'Baldosas' },
-  { key: '7', name: 'Franja' },
-  { key: '8', name: 'Columnas' },
-  { key: '9', name: 'Brutal' },
-  { key: '10', name: 'Globos' },
-  { key: '11', name: 'Lista' },
-  { key: '12', name: 'Escaparate' },
+  { key: '1', name: 'Cinco pasos' },
+  { key: '2', name: 'Tres tiempos' },
+  { key: '3', name: 'Riel' },
+  { key: '4', name: 'Lista' },
+  { key: '5', name: 'Productos fijos' },
 ] as const;
 
 export type PrototypeKey = (typeof PROTOTYPE_VARIANTS)[number]['key'];

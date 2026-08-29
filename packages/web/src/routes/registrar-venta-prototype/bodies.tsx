@@ -2,7 +2,7 @@ import { ArrowLeft, Search, Trash2 } from 'lucide-react';
 import { SALE_SOURCES, type SaleLine } from '../../lib/registrar-venta';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Choice, FieldRow, NUMBER_INPUT, ProductPhoto, SaleSteps, formatMoney } from './widgets';
+import { Choice, FieldRow, GrayBar, NUMBER_INPUT, ProductPhoto, SaleSteps, formatMoney } from './widgets';
 import { ComprobanteChoice, DocumentFields, DeliveryFields, DeliveryHow, PaymentFields } from './fields';
 import type { SaleFormView } from './view';
 
@@ -61,7 +61,7 @@ export function ProductosBody({ view }: { view: SaleFormView }) {
           </Button>
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={() => view.setPickerOpen(true)}>
+      <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>
         <Search /> Agregar
       </Button>
     </div>
@@ -111,23 +111,26 @@ export function SaleToolbar({
   nextLabel?: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Back view={view} />
-      <SaleSteps
-        value={String(step)}
-        options={labels.map((label, index) => ({ value: String(index), label }))}
-        onChange={(value) => onStep(Number(value))}
-      />
-      <div className="ml-auto flex items-center gap-2">
-        <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
-        {isLast ? (
-          <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>
-            {view.creating ? 'Listo…' : 'Registrar venta'}
-          </Button>
-        ) : (
-          <Button type="button" className="rounded-full" onClick={onNext}>{nextLabel}</Button>
-        )}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Back view={view} />
+        <SaleSteps
+          value={String(step)}
+          options={labels.map((label, index) => ({ value: String(index), label }))}
+          onChange={(value) => onStep(Number(value))}
+        />
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
+          {isLast ? (
+            <Button type="submit" disabled={view.submitDisabled}>
+              {view.creating ? 'Listo…' : 'Registrar venta'}
+            </Button>
+          ) : (
+            <Button type="button" onClick={onNext}>{nextLabel}</Button>
+          )}
+        </div>
       </div>
+      <GrayBar step={step} total={labels.length} />
     </div>
   );
 }
@@ -180,15 +183,15 @@ export function StepFooter({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button type="button" variant="ghost" className="rounded-full" disabled={isFirst} onClick={onBack}>Atrás</Button>
+      <Button type="button" variant="ghost" disabled={isFirst} onClick={onBack}>Atrás</Button>
       {skip ? (
-        <Button type="button" variant="ghost" className="rounded-full" onClick={skip.onClick}>{skip.label}</Button>
+        <Button type="button" variant="ghost" onClick={skip.onClick}>{skip.label}</Button>
       ) : null}
       <p className="ml-auto text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
       {isLast ? (
-        <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>{view.creating ? 'Listo…' : 'Registrar venta'}</Button>
+        <Button type="submit" disabled={view.submitDisabled}>{view.creating ? 'Listo…' : 'Registrar venta'}</Button>
       ) : (
-        <Button type="button" className="rounded-full" onClick={onNext}>{nextLabel}</Button>
+        <Button type="button" onClick={onNext}>{nextLabel}</Button>
       )}
     </div>
   );

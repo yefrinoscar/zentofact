@@ -111,7 +111,7 @@ export function FieldRow({
   );
 }
 
-/** Chips de Productos. Selección invertida. No usar para steps. */
+/** Opciones: mismo segmented de DESIGN.md. No invertido, no rounded-full. */
 export function Choice<T extends string>({
   value,
   options,
@@ -124,7 +124,7 @@ export function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={ariaLabel}>
+    <div className="inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1" role="radiogroup" aria-label={ariaLabel}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -135,10 +135,10 @@ export function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex h-8 cursor-pointer items-center rounded-full px-3 text-sm font-medium transition',
+              'inline-flex h-7 cursor-pointer items-center rounded-lg px-3 text-sm font-medium',
               selected
-                ? 'bg-foreground text-background'
-                : 'bg-muted text-muted-foreground hover:text-foreground',
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {option.label}
@@ -149,10 +149,13 @@ export function Choice<T extends string>({
   );
 }
 
-const TABS_LIST = 'inline-flex h-9 w-auto justify-start gap-0.5 rounded-full bg-muted/70 p-1';
-const TABS_TRIGGER = 'flex-none rounded-full px-3 data-active:bg-background data-active:shadow-sm';
+function stepTone(index: number, current: number) {
+  if (index < current) return 'text-muted-foreground';
+  if (index === current) return 'bg-background text-foreground shadow-sm';
+  return 'text-muted-foreground/40';
+}
 
-/** Tabs de Productos. Este es el tono de los steps. */
+/** Stepper: Tabs de DESIGN.md + tres grises (hecho / actual / pendiente). */
 export function SaleSteps({
   value,
   options,
@@ -166,6 +169,7 @@ export function SaleSteps({
   orientation?: 'horizontal' | 'vertical';
   ariaLabel?: string;
 }) {
+  const current = options.findIndex((option) => option.value === value);
   return (
     <Tabs
       value={value}
@@ -176,21 +180,39 @@ export function SaleSteps({
       <TabsList
         aria-label={ariaLabel}
         className={cn(
-          TABS_LIST,
-          orientation === 'vertical' && 'h-auto w-full flex-col items-stretch justify-start rounded-2xl',
+          'h-9 justify-start gap-0.5 rounded-xl bg-muted p-1 sm:w-auto',
+          orientation === 'vertical' && 'h-auto w-full flex-col items-stretch',
         )}
       >
-        {options.map((option) => (
+        {options.map((option, index) => (
           <TabsTrigger
             key={option.value}
             value={option.value}
-            className={cn(TABS_TRIGGER, orientation === 'vertical' && 'w-full justify-start')}
+            className={cn(
+              'h-7 flex-none rounded-lg px-3 data-active:bg-background data-active:shadow-sm',
+              stepTone(index, current),
+              orientation === 'vertical' && 'w-full justify-start',
+            )}
           >
             {option.label}
           </TabsTrigger>
         ))}
       </TabsList>
     </Tabs>
+  );
+}
+
+export function GrayBar({ step, total }: { step: number; total: number }) {
+  const tints = ['bg-muted-foreground/20', 'bg-muted-foreground/35', 'bg-muted-foreground/50', 'bg-muted-foreground/65', 'bg-muted-foreground/80'];
+  return (
+    <div className="flex h-1.5 overflow-hidden rounded-md bg-muted">
+      {Array.from({ length: total }, (_, index) => (
+        <span
+          key={index}
+          className={cn('h-full flex-1', index <= step ? tints[Math.min(index, tints.length - 1)] : 'bg-transparent')}
+        />
+      ))}
+    </div>
   );
 }
 
