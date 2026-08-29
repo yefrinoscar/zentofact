@@ -296,6 +296,9 @@ test('separa lo vendido y lo que llega entre pagado y pendiente', () => {
   assert.equal(summary.pendingBruto, 20);
   assert.equal(summary.paidNeto, 7.64);
   assert.equal(summary.pendingNeto, 17);
+  assert.equal(summary.saleCount, 2);
+  assert.equal(summary.itemCount, 2);
+  assert.equal(summary.ticket, 14.5);
 });
 
 test('el pedido muestra boleta o factura si ya se emitió', () => {

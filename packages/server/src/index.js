@@ -308,7 +308,7 @@ app.post('/pagos/imports', async (c) => {
       importedBy: c.get('user')?.id || null,
     });
     dashboard.clearDashboardResponseCache();
-    return ok(c, result, result.reused ? 200 : 201);
+    return ok(c, result, result.reused || result.replaced ? 200 : 201);
   } catch (e) { return fail(c, e, e.status || 400); }
 });
 

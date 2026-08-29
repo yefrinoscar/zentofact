@@ -1,19 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, salesPageNote, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementIndicators, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
-  assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este contenido ya se cruzó.');
+  assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
   assert.equal(
     importSummary({
       reused: true,
       filename: 'NewReportTransaction_FAPE-SCDE75A-20260820-PEN.csv',
       importedAt: '2026-08-27T12:00:00.000Z',
     }),
-    'Este contenido ya se cruzó · FAPE-SCDE75A-20260820-PEN.csv · 27 ago.',
+    'Este CSV ya está cruzado · FAPE-SCDE75A-20260820-PEN.csv · 27 ago.',
   );
   assert.equal(importSummary({ reused: false, matchedCount: 2, unmatchedCount: 3, paidSalesCount: 1 }), '2 cruzadas · 3 sin cruzar · 1 pagadas');
+  assert.equal(
+    importSummary({ replaced: true, matchedCount: 2, unmatchedCount: 1, paidSalesCount: 1 }),
+    'Se volvió a cruzar · 2 cruzadas · 1 sin cruzar · 1 pagadas',
+  );
   assert.equal(shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN.csv'), 'FAPE-SCDE75A-20260820-PEN.csv');
+  assert.equal(
+    shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.csv'),
+    'FAPE-SCDE75A-20260820-PEN.csv',
+  );
+  assert.deepEqual(
+    reusedImportNotice({
+      filename: 'NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.csv',
+      importedAt: '2026-08-27T12:00:00.000Z',
+    }),
+    { title: 'Este CSV ya está cruzado.', detail: 'FAPE-SCDE75A-20260820-PEN.csv · 27 ago.' },
+  );
+  assert.deepEqual(csvReadError('El CSV está vacío.'), {
+    title: 'El CSV está vacío.',
+    detail: 'Elige un archivo de Falabella.',
+  });
+  assert.deepEqual(csvReadError('No reconocimos columnas para cruzar ventas. Cabeceras: Foo.'), {
+    title: 'No reconocimos columnas para cruzar ventas. Cabeceras: Foo.',
+    detail: 'Usa el NewReportTransaction de Falabella.',
+  });
   assert.equal(formatElapsed(14), '1.4s');
   assert.equal(formatElapsed(615), '1m 1.5s');
   assert.equal(remainingHoldMs(1000, CSV_UPLOAD_MIN_MS, 1000), 1400);
@@ -32,6 +55,10 @@ test('el overview nombra logística y lo que se queda', () => {
     saleOverview({ saleCount: 1, commissionRate: 0.15, shippingRate: 0.434, takeRate: 0.584 }),
     '1 venta · comisión 15% · logística 43.4% · se queda 58.4%',
   );
+  assert.equal(
+    saleOverview({ saleCount: 27, matchedCount: 20, commissionRate: 0.14, shippingRate: 0.21, takeRate: 0.35 }),
+    '27 ventas · 20 cruzadas · comisión 14% · logística 21% · se queda 35%',
+  );
   assert.equal(chargeKindLabel('shipping'), 'Logística');
   assert.equal(chargeKindLabel('buyer_shipping'), 'Envío del comprador');
 });
@@ -41,6 +68,8 @@ test('acorta el título de plaza y deja SKU e unidades aparte', () => {
     shortProductName('Manta Térmica Aluminizada Mylar Emergencia Trekking Camping'),
     'Manta Térmica Aluminizada',
   );
+  assert.equal(repairProductText('Manta TÃ©rmica'), 'Manta Térmica');
+  assert.equal(shortProductName('Manta TÃ©rmica Aluminizada Mylar'), 'Manta Térmica Aluminizada');
   assert.equal(skuLabel(['MTC12367890']), 'MTC12367890');
   assert.equal(skuLabel(['MTC12367890', 'HOG025']), 'MTC12367890 +1');
   assert.equal(unitsLabel(11), '11 u');
@@ -65,6 +94,30 @@ test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
       pendingCount: 1,
     }),
     { sold: 100, arrives: 50, kept: 50, paid: 30, pending: 20, paidCount: 2, pendingCount: 1 },
+  );
+  const kpis = settlementIndicators({
+    saleCount: 27,
+    bruto: 1739.2,
+    neto: 1218.35,
+    take: 520.85,
+    paidNeto: 381.96,
+    pendingNeto: 836.39,
+    paidCount: 11,
+    pendingCount: 16,
+    takeRate: 0.299,
+    ticket: 64.41,
+    itemCount: 45,
+    matchedCount: 27,
+  });
+  assert.deepEqual(kpis.map((kpi) => kpi.id), ['sold', 'arrives', 'kept', 'paid', 'pending', 'ticket']);
+  assert.equal(kpis[0].hint, '27 ventas');
+  assert.equal(kpis[2].hint, '29.9%');
+  assert.equal(kpis[3].hint, '11 ventas');
+  assert.equal(kpis[4].hint, '16 ventas');
+  assert.equal(kpis[5].hint, '45 u');
+  assert.equal(
+    settlementIndicators({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,
+    '27 ventas · 20 cruzadas',
   );
 });
 

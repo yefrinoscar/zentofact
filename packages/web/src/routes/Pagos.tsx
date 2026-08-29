@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Check, Copy, Search, Upload } from 'lucide-react';
+import { AlertCircle, Check, Copy, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
   PAGOS_SALES_PAGE,
   chargeKindLabel,
+  csvReadError,
   decodeSettlementCsv,
   documentLabel,
   holdAtLeast,
@@ -16,9 +17,10 @@ import {
   money,
   paymentStatusLabel,
   percentLabel,
+  reusedImportNotice,
   saleDateLabel,
-  saleOverview,
   salesPageNote,
+  settlementIndicators,
   shortImportFilename,
   shortProductName,
   skuLabel,
@@ -112,6 +114,43 @@ const cobroHeadEnd = `${cobroColEnd} text-muted-foreground`;
 const cobroCellEnd = `${cobroColEnd} group-hover:bg-muted/55`;
 const llegaHead = `${llegaCol} ${llegaText}`;
 const llegaCell = `${llegaCol} group-hover:bg-emerald-500/[0.12]`;
+
+function NoticeBanner({
+  tone,
+  title,
+  detail,
+  action,
+}: {
+  tone: 'ok' | 'warn' | 'error';
+  title: string;
+  detail?: string;
+  action?: { label: string; onClick: () => void; busy?: boolean };
+}) {
+  return (
+    <div
+      role={tone === 'error' ? 'alert' : 'status'}
+      className={cn(
+        'flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-2.5',
+        tone === 'error' && 'border-destructive/25 bg-destructive/5 text-destructive',
+        tone === 'warn' && 'border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200',
+        tone === 'ok' && 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300',
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        {tone === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : null}
+        <div className="min-w-0">
+          <p className="text-sm font-medium leading-5">{title}</p>
+          {detail ? <p className="mt-0.5 text-xs leading-5 opacity-90">{detail}</p> : null}
+        </div>
+      </div>
+      {action ? (
+        <Button type="button" size="sm" variant={tone === 'warn' ? 'outline' : 'secondary'} disabled={action.busy} onClick={action.onClick}>
+          {action.label}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function CopyableId({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -228,6 +267,52 @@ function AmountRate({
   );
 }
 
+type PagosNotice = {
+  tone: 'ok' | 'warn' | 'error';
+  title: string;
+  detail?: string;
+  canReplace?: boolean;
+};
+
+function SettlementKpiStrip({ summary }: {
+  summary?: {
+    saleCount?: number;
+    bruto?: number | null;
+    neto?: number | null;
+    take?: number | null;
+    paidNeto?: number | null;
+    pendingNeto?: number | null;
+    paidCount?: number | null;
+    pendingCount?: number | null;
+    takeRate?: number | null;
+    ticket?: number | null;
+    itemCount?: number | null;
+    matchedCount?: number | null;
+  } | null;
+}) {
+  if (!summary?.saleCount) return null;
+  const kpis = settlementIndicators(summary);
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-3 sm:grid-cols-3 xl:grid-cols-6">
+      {kpis.map((kpi) => (
+        <div key={kpi.id}>
+          <p className="text-[11px] text-muted-foreground">{kpi.label}</p>
+          <p className={cn(
+            'text-lg font-semibold tabular-nums leading-tight',
+            kpi.tone === 'receive' && llegaText,
+            kpi.tone === 'take' && takeText,
+            kpi.tone === 'wait' && 'text-amber-800 dark:text-amber-400',
+          )}
+          >
+            {kpi.value}
+          </p>
+          <p className="text-[11px] leading-snug text-muted-foreground">{kpi.hint}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ChargeRow({
   label,
   amount,
@@ -321,10 +406,9 @@ export default function Pagos() {
   const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
   const [importId, setImportId] = useState<'all' | string>('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
-  const [notice, setNotice] = useState('');
-  const [noticeReused, setNoticeReused] = useState(false);
-  const [error, setError] = useState('');
+  const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
+  const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
   const reading = Boolean(readingName);
 
   const importsQuery = useQuery({
@@ -344,30 +428,54 @@ export default function Pagos() {
   });
 
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, replace }: { file?: File; replace?: boolean }) => {
       const started = Date.now();
       try {
-        const csv = decodeSettlementCsv(await file.arrayBuffer());
-        const result = await api.importSettlementCsv({ filename: file.name, csv });
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['pagos-imports'] }),
-          queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
-          queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
-        ]);
+        let filename = file?.name || lastCsvRef.current?.filename || '';
+        let csv = lastCsvRef.current?.csv || '';
+        if (file) {
+          csv = decodeSettlementCsv(await file.arrayBuffer());
+          filename = file.name;
+          lastCsvRef.current = { filename, csv };
+        }
+        if (!csv || !filename) throw new Error('No hay CSV para subir.');
+        const result = await api.importSettlementCsv({
+          filename,
+          csv,
+          replace: Boolean(replace),
+        });
+        if (!result.reused) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['pagos-imports'] }),
+            queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+          ]);
+        }
         return result;
       } finally {
         await holdAtLeast(started, CSV_UPLOAD_MIN_MS);
       }
     },
     onSuccess: (result) => {
-      setError('');
-      setNoticeReused(Boolean(result.reused));
-      setNotice(importSummary(result));
+      if (result.reused) {
+        const copy = reusedImportNotice(result);
+        setNotice({
+          tone: 'warn',
+          title: copy.title,
+          detail: copy.detail,
+          canReplace: true,
+        });
+        return;
+      }
+      setNotice({
+        tone: 'ok',
+        title: result.replaced ? 'Se volvió a cruzar' : 'CSV cruzado',
+        detail: importSummary({ ...result, reused: false, replaced: false }),
+      });
     },
     onError: (nextError) => {
-      setNotice('');
-      setNoticeReused(false);
-      setError((nextError as Error).message || 'No se pudo leer el CSV.');
+      const copy = csvReadError((nextError as Error).message);
+      setNotice({ tone: 'error', title: copy.title, detail: copy.detail });
     },
     onSettled: () => {
       setReadingName('');
@@ -377,8 +485,8 @@ export default function Pagos() {
   const imports = (importsQuery.data?.items || []) as SettlementImport[];
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
-  const overview = saleOverview(summary);
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
+  const loadError = (salesQuery.error || importsQuery.error) as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
     {
@@ -524,11 +632,9 @@ export default function Pagos() {
             const file = event.target.files?.[0];
             event.target.value = '';
             if (!file) return;
-            setError('');
-            setNotice('');
-            setNoticeReused(false);
+            setNotice(null);
             setReadingName(file.name);
-            upload.mutate(file);
+            upload.mutate({ file, replace: false });
           }}
         />
         <Button
@@ -555,18 +661,32 @@ export default function Pagos() {
       ) : (
         <>
           {notice ? (
-            <p className={cn(
-              'text-sm',
-              noticeReused ? 'text-amber-800 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400',
-            )}
-            >
-              {notice}
-            </p>
+            <NoticeBanner
+              tone={notice.tone}
+              title={notice.title}
+              detail={notice.detail}
+              action={notice.canReplace ? {
+                label: 'Reemplazar',
+                busy: reading,
+                onClick: () => {
+                  const pending = lastCsvRef.current;
+                  if (!pending || reading) return;
+                  setReadingName(pending.filename);
+                  upload.mutate({ replace: true });
+                },
+              } : undefined}
+            />
           ) : null}
-          {overview ? <p className="text-sm text-muted-foreground">{overview}</p> : null}
+          {loadError ? (
+            <NoticeBanner
+              tone="error"
+              title="No se pudieron cargar los pagos."
+              detail="Recarga la página o vuelve a cruzar el CSV."
+            />
+          ) : null}
+          <SettlementKpiStrip summary={summary} />
         </>
       )}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <OrdersVirtualTable
         table={table}
