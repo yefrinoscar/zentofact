@@ -149,8 +149,8 @@ export function Choice<T extends string>({
   );
 }
 
-const TABS_LIST = 'h-10 w-full justify-start gap-0.5 rounded-full bg-muted/70 p-1 sm:h-9 sm:w-auto';
-const TABS_TRIGGER = 'rounded-full px-3';
+const TABS_LIST = 'inline-flex h-9 w-auto justify-start gap-0.5 rounded-full bg-muted/70 p-1';
+const TABS_TRIGGER = 'flex-none rounded-full px-3 data-active:bg-background data-active:shadow-sm';
 
 /** Tabs de Productos. Este es el tono de los steps. */
 export function SaleSteps({
