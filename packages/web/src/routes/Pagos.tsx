@@ -641,7 +641,7 @@ export default function Pagos() {
           disabled={reading || upload.isPending}
           onClick={() => {
             const input = fileInput.current;
-            if (!input || reading) return;
+            if (!input || reading || upload.isPending) return;
             input.value = '';
             input.click();
           }}
