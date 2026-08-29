@@ -1,23 +1,22 @@
-import type { Dispatch, FormEvent, SetStateAction } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type {
   BoletaIdentity,
-  CatalogProductForSale,
   DocumentRequest,
   PaymentMethod,
   SaleLine,
   SaleSource,
+  SaleStepId,
 } from '../../lib/registrar-venta';
-import type { SaleValidationField } from '../../lib/sale-feedback';
 import type { ShippingCarrier } from '../../lib/shipping-carrier';
 import type { MapPlace } from '../../components/PlacePicker';
 import type { OwnFleetQuote } from '../../lib/own-fleet-shipping';
+import type { SaleTotals } from '../../lib/sale-summary';
 
+export type PaymentProof = { name: string; type: string; dataUrl: string };
+
+/** Contrato entre la página y los cuerpos de cada paso. Toda la escritura pasa por aquí. */
 export type SaleFormView = {
-  afterSavePath: string;
-  setupError: string;
   isAdmin: boolean;
-  creating: boolean;
-  submitDisabled: boolean;
   saleSource: SaleSource;
   setSaleSource: (value: SaleSource) => void;
   customerName: string;
@@ -37,6 +36,7 @@ export type SaleFormView = {
   lines: SaleLine[];
   setLines: Dispatch<SetStateAction<SaleLine[]>>;
   updateLine: (id: string, patch: Partial<SaleLine>) => void;
+  removeLine: (id: string) => void;
   delivery: 'envio' | 'recojo';
   setDelivery: (value: 'envio' | 'recojo') => void;
   deliveryDate: string;
@@ -51,34 +51,12 @@ export type SaleFormView = {
   setPaymentMethod: (value: PaymentMethod) => void;
   receivedBy: string;
   setReceivedBy: (value: string) => void;
-  paymentProof: { name: string; type: string; dataUrl: string } | null;
-  setPaymentProof: (value: { name: string; type: string; dataUrl: string } | null) => void;
+  paymentProof: PaymentProof | null;
+  setPaymentProof: (value: PaymentProof | null) => void;
   attachProof: (file: File | undefined) => void;
-  fieldErrors: Partial<Record<SaleValidationField, string>>;
-  clearFieldError: (field: SaleValidationField) => void;
-  setPickerOpen: (open: boolean) => void;
-  pickerOpen: boolean;
-  search: string;
-  setSearch: (value: string) => void;
-  submitProductSearch: () => void;
-  products: CatalogProductForSale[];
-  productsFetching: boolean;
-  submittedSearch: string;
-  addProduct: (product: CatalogProductForSale) => void;
+  openProductPicker: () => void;
   shippingQuote: OwnFleetQuote | null;
-  totals: { products: number; shipping: number; districtAmount: number; distanceAmount: number };
-  total: number;
-  fillDemo: () => void;
+  totals: SaleTotals;
+  goToStep: (step: SaleStepId) => void;
   navigate: (path: string) => void;
-  submit: (event: FormEvent) => void;
 };
-
-export const PROTOTYPE_VARIANTS = [
-  { key: '1', name: 'Cinco pasos' },
-  { key: '2', name: 'Tres tiempos' },
-  { key: '3', name: 'Riel' },
-  { key: '4', name: 'Lista' },
-  { key: '5', name: 'Productos fijos' },
-] as const;
-
-export type PrototypeKey = (typeof PROTOTYPE_VARIANTS)[number]['key'];

@@ -38,6 +38,17 @@ export const BOLETA_IDENTITIES = [
   { value: 'ce', label: 'CE' },
 ] as const;
 
+/** El orden es el recorrido del vendedor: quién compra, qué compra, cómo llega, cómo paga y qué se registra. */
+export const SALE_STEPS = [
+  { id: 'cliente', label: 'Cliente' },
+  { id: 'productos', label: 'Productos' },
+  { id: 'entrega', label: 'Entrega' },
+  { id: 'pago', label: 'Pago' },
+  { id: 'resumen', label: 'Resumen' },
+] as const;
+
+export type SaleStepId = (typeof SALE_STEPS)[number]['id'];
+
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
@@ -199,40 +210,79 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
-export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
-  if (!input.channelAccountId) {
-    return 'Todavía no hay un canal de venta manual habilitado.';
-  }
+function validateCustomerName(input: ManualSaleInput) {
   if (!String(input.customerName || '').trim()) {
     return 'Escribe el nombre del cliente.';
   }
+  return null;
+}
+
+function validateSaleLines(input: ManualSaleInput) {
   if (!input.lines.length) {
     return 'Agrega al menos un producto.';
   }
   if (input.lines.some((line) => line.quantity < 1 || line.unitPrice < 0)) {
     return 'Revisa cantidad y precio de cada producto.';
   }
+  return null;
+}
+
+function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
   if (!String(input.deliveryDate || '').trim()) {
     return 'Indica la fecha de entrega.';
   }
-  if (input.delivery === 'envio' && !input.shippingCarrier) {
+  if (input.delivery !== 'envio') return null;
+  if (!input.shippingCarrier) {
     return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
   }
-  if (input.delivery === 'envio' && !input.dropoffPlace) {
+  if (!input.dropoffPlace) {
     return 'Busca el distrito de Lima metropolitana.';
   }
-  if (input.delivery === 'envio' && input.dropoffPlace) {
-    const lat = Number(input.dropoffPlace.lat);
-    const lng = Number(input.dropoffPlace.lng);
-    if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
-      return OUT_OF_PERU_MESSAGE;
-    }
+  const lat = Number(input.dropoffPlace.lat);
+  const lng = Number(input.dropoffPlace.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+    return OUT_OF_PERU_MESSAGE;
   }
-  if (input.delivery === 'envio' && input.shippingCarrier === OWN_FLEET_CARRIER) {
+  if (input.shippingCarrier === OWN_FLEET_CARRIER) {
     const quote = quoteOwnFleetShipping(input.dropoffPlace, fleetConfig);
     if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
   }
-  return validateDocumentRequest(input);
+  return null;
+}
+
+export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
+  if (!input.channelAccountId) {
+    return 'Todavía no hay un canal de venta manual habilitado.';
+  }
+  return validateCustomerName(input)
+    ?? validateSaleLines(input)
+    ?? validateDelivery(input, fleetConfig)
+    ?? validateDocumentRequest(input);
+}
+
+/** Lo que bloquea un paso del stepper. `pago` no exige nada: el método siempre trae un valor. */
+export function validateSaleStep(
+  step: SaleStepId,
+  input: ManualSaleInput,
+  fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1],
+) {
+  if (step === 'cliente') return validateCustomerName(input) ?? validateDocumentRequest(input);
+  if (step === 'productos') return validateSaleLines(input);
+  if (step === 'entrega') return validateDelivery(input, fleetConfig);
+  if (step === 'pago') return null;
+  return validateManualSale(input, fleetConfig);
+}
+
+/** Primer paso que impide registrar. El resumen usa esto para devolver al vendedor al campo que falta. */
+export function firstInvalidSaleStep(
+  input: ManualSaleInput,
+  fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1],
+): SaleStepId | null {
+  for (const step of SALE_STEPS) {
+    if (step.id === 'resumen') break;
+    if (validateSaleStep(step.id, input, fleetConfig)) return step.id;
+  }
+  return null;
 }
 
 export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
