@@ -21,6 +21,8 @@ import {
   saleDateLabel,
   salesPageNote,
   settlementCharts,
+  settlementDailySeries,
+  settlementTrendPoints,
   shortImportFilename,
   shortProductName,
   skuLabel,
@@ -29,7 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
-import { Bar, BarChart, LabelList, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -303,98 +305,119 @@ function moneyTooltipValue(value: unknown) {
   return money.format(Number(value) || 0);
 }
 
+function seriesColor(config: ChartConfig, key: string) {
+  const item = config[key];
+  if (!item) return 'var(--foreground)';
+  if ('color' in item && item.color) return item.color;
+  if ('theme' in item && item.theme) return item.theme.light;
+  return 'var(--foreground)';
+}
+
 function SettlementPairChart({
   id,
   hint,
   items,
+  days,
 }: {
   id: keyof typeof SETTLEMENT_CHART_CONFIG;
   hint: string;
-  items: Array<{ key: string; label: string; value: number }>;
+  items: Array<{ key: string; label: string; value: number; tone?: 'neutral' | 'receive' | 'take' | 'wait' }>;
+  days: Array<Record<string, number | string>>;
 }) {
   const config = SETTLEMENT_CHART_CONFIG[id];
-  const data = items.map((item) => ({
-    key: item.key,
-    label: item.label,
-    amount: item.value,
-    fill: `var(--color-${item.key})`,
-  }));
+  const keys = items.map((item) => item.key);
+  const points = settlementTrendPoints(days, keys);
   const caption = items.map((item) => `${item.label} ${money.format(item.value)}`).join(', ');
   return (
-    <div>
+    <div aria-label={caption}>
+      <div className="flex items-start gap-4">
+        {items.map((item) => (
+          <div key={item.key} className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+              <span className="size-2 shrink-0 rounded-full" style={{ background: seriesColor(config, item.key) }} />
+              {item.label}
+            </p>
+            <p className={cn(
+              'text-[17px] font-semibold tabular-nums tracking-[-0.01em] leading-tight',
+              item.tone === 'receive' && llegaText,
+              item.tone === 'take' && takeText,
+              item.tone === 'wait' && 'text-amber-800 dark:text-amber-400',
+            )}
+            >
+              {money.format(item.value)}
+            </p>
+          </div>
+        ))}
+      </div>
+      {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
       <ChartContainer
         id={`pagos-${id}`}
         config={config}
-        className="aspect-auto h-[4.5rem] w-full"
-        initialDimension={{ width: 280, height: 72 }}
-        role="img"
-        aria-label={caption}
+        className="mt-2 aspect-auto h-[7.5rem] w-full"
+        initialDimension={{ width: 280, height: 120 }}
       >
-        <BarChart
-          accessibilityLayer
-          data={data}
-          layout="vertical"
-          margin={{ left: 0, right: 88, top: 2, bottom: 2 }}
-        >
-          <YAxis
-            dataKey="key"
-            type="category"
-            tickLine={false}
-            axisLine={false}
-            width={78}
-            tickMargin={8}
-            tickFormatter={(value) => String(config[value as keyof typeof config]?.label ?? value)}
-          />
-          <XAxis type="number" dataKey="amount" hide />
+        <AreaChart data={points} margin={{ top: 10, right: 8, left: 8, bottom: 6 }}>
+          <defs>
+            {items.map((item) => (
+              <linearGradient key={item.key} id={`pagos-fill-${id}-${item.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={seriesColor(config, item.key)} stopOpacity={0.22} />
+                <stop offset="90%" stopColor={seriesColor(config, item.key)} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
+          <XAxis dataKey="i" hide />
+          <YAxis hide domain={['auto', 'auto']} />
           <ChartTooltip
-            cursor={false}
+            cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.45 }}
             content={(
               <ChartTooltipContent
                 hideLabel
-                nameKey="key"
-                formatter={(value, _name, item) => {
-                  const key = String((item as { payload?: { key?: string } }).payload?.key || '');
-                  const label = String(config[key as keyof typeof config]?.label ?? key);
-                  return (
-                    <div className="flex w-full items-center justify-between gap-4">
-                      <span className="text-muted-foreground">{label}</span>
-                      <span className="font-mono font-medium tabular-nums text-foreground">
-                        {moneyTooltipValue(value)}
-                      </span>
-                    </div>
-                  );
-                }}
+                indicator="dot"
+                formatter={(value, name) => (
+                  <div className="flex w-full items-center justify-between gap-3">
+                    <span className="text-muted-foreground">
+                      {String(config[String(name) as keyof typeof config]?.label ?? name)}
+                    </span>
+                    <span className="font-mono font-medium tabular-nums text-foreground">
+                      {moneyTooltipValue(value)}
+                    </span>
+                  </div>
+                )}
               />
             )}
           />
-          <Bar dataKey="amount" radius={4} barSize={14} maxBarSize={14} minPointSize={2}>
-            <LabelList
-              dataKey="amount"
-              position="right"
-              content={({ x, y, width, height, value }) => {
-                const left = Number(x || 0) + Number(width || 0) + 8;
-                const top = Number(y || 0) + Number(height || 0) / 2;
+          {items.map((item) => (
+            <Area
+              key={item.key}
+              type="monotone"
+              dataKey={item.key}
+              stroke={seriesColor(config, item.key)}
+              strokeWidth={2.25}
+              fill={`url(#pagos-fill-${id}-${item.key})`}
+              isAnimationActive={false}
+              activeDot={{ r: 3.5, strokeWidth: 2, stroke: 'var(--background)' }}
+              dot={(props: { index?: number; cx?: number; cy?: number }) => {
+                if (props.index !== points.length - 1) return null;
                 return (
-                  <text
-                    x={left}
-                    y={top}
-                    className="fill-foreground text-[11px] tabular-nums"
-                    dominantBaseline="central"
-                  >
-                    {moneyTooltipValue(value)}
-                  </text>
+                  <circle
+                    key={`${item.key}-end`}
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={3}
+                    fill={seriesColor(config, item.key)}
+                  />
                 );
               }}
             />
-          </Bar>
-        </BarChart>
+          ))}
+        </AreaChart>
       </ChartContainer>
-      {hint ? <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
 
-function SettlementKpiStrip({ summary }: {
+function SettlementKpiStrip({ summary, sales }: {
   summary?: {
     saleCount?: number;
     bruto?: number | null;
@@ -409,17 +432,27 @@ function SettlementKpiStrip({ summary }: {
     takeRate?: number | null;
     matchedCount?: number | null;
   } | null;
+  sales?: Array<{
+    date?: string | null;
+    paid?: boolean;
+    bruto?: number | null;
+    neto?: number | null;
+    commission?: number | null;
+    shipping?: number | null;
+  }>;
 }) {
   if (!summary?.saleCount) return null;
   const charts = settlementCharts(summary);
+  const days = settlementDailySeries(sales);
   return (
-    <div className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
       {charts.map((chart) => (
         <SettlementPairChart
           key={chart.id}
           id={chart.id as keyof typeof SETTLEMENT_CHART_CONFIG}
           hint={chart.hint}
           items={chart.items}
+          days={days}
         />
       ))}
     </div>
@@ -704,7 +737,7 @@ export default function Pagos() {
         />
       ) : (
         <>
-          <SettlementKpiStrip summary={summary} />
+          <SettlementKpiStrip summary={summary} sales={sales} />
           {notice ? (
             <SettlementAlert
               tone={notice.tone}

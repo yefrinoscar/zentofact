@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementIndicators, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -156,6 +156,25 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     '27 ventas · 20 cruzadas',
   );
   assert.ok(!charts.some((chart) => /precio|ticket/i.test(`${chart.hint} ${chart.items.map((item) => item.label).join(' ')}`)));
+});
+
+test('el trend diario agrupa facturado, neto y depósito', () => {
+  const days = settlementDailySeries([
+    { date: '2026-08-19', paid: true, bruto: 98.89, neto: 41.14, commission: 14.85, shipping: 42.9 },
+    { date: '2026-08-19', paid: true, bruto: 33.99, neto: 16.97, commission: 6.12, shipping: 10.9 },
+    { date: '2026-08-23', paid: false, bruto: 33.99, neto: 16.97, commission: 6.12, shipping: 10.9 },
+  ]);
+  assert.equal(days.length, 2);
+  assert.equal(days[0].date, '2026-08-19');
+  assert.equal(days[0].facturado, 132.88);
+  assert.equal(days[0].neto, 58.11);
+  assert.equal(days[0].paid, 58.11);
+  assert.equal(days[0].pending, 0);
+  assert.equal(days[1].pending, 16.97);
+  const points = settlementTrendPoints(days, ['facturado', 'neto']);
+  assert.ok(points.length > 2);
+  assert.equal(points[0].facturado, 132.88);
+  assert.equal(points.at(-1).neto, 16.97);
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

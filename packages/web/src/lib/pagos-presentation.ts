@@ -293,6 +293,103 @@ function countHint(count: number, singular: string, plural: string, empty: strin
   return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
 }
 
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+export function smoothNumericSeries(values: number[], perSegment = 8) {
+  const source = (values || []).map((value) => Number(value) || 0);
+  if (source.length < 2) return source.slice();
+  if (source.length === 2) {
+    const out = [];
+    for (let step = 0; step < perSegment; step += 1) {
+      const t = step / perSegment;
+      out.push(roundMoney(source[0] + (source[1] - source[0]) * t));
+    }
+    out.push(source[1]);
+    return out;
+  }
+  const out: number[] = [];
+  for (let index = 0; index < source.length - 1; index += 1) {
+    const p0 = source[Math.max(0, index - 1)];
+    const p1 = source[index];
+    const p2 = source[index + 1];
+    const p3 = source[Math.min(source.length - 1, index + 2)];
+    for (let step = 0; step < perSegment; step += 1) {
+      const t = step / perSegment;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out.push(roundMoney(
+        0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3),
+      ));
+    }
+  }
+  out.push(source[source.length - 1]);
+  return out;
+}
+
+export function settlementDailySeries(sales: Array<{
+  date?: string | null;
+  paid?: boolean;
+  bruto?: number | null;
+  neto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+}> | null | undefined) {
+  const days = new Map<string, {
+    date: string;
+    facturado: number;
+    neto: number;
+    commission: number;
+    shipping: number;
+    paid: number;
+    pending: number;
+  }>();
+  for (const sale of sales || []) {
+    const date = String(sale.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const current = days.get(date) || {
+      date,
+      facturado: 0,
+      neto: 0,
+      commission: 0,
+      shipping: 0,
+      paid: 0,
+      pending: 0,
+    };
+    const neto = Number(sale.neto || 0);
+    current.facturado = roundMoney(current.facturado + Number(sale.bruto || 0));
+    current.neto = roundMoney(current.neto + neto);
+    current.commission = roundMoney(current.commission + Number(sale.commission || 0));
+    current.shipping = roundMoney(current.shipping + Number(sale.shipping || 0));
+    if (sale.paid) current.paid = roundMoney(current.paid + neto);
+    else current.pending = roundMoney(current.pending + neto);
+    days.set(date, current);
+  }
+  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function settlementTrendPoints(
+  days: Array<Record<string, number | string>>,
+  keys: string[],
+) {
+  const rows = days || [];
+  if (!rows.length || !keys.length) return [];
+  if (rows.length === 1) {
+    const first = Object.fromEntries(keys.map((key) => [key, Number(rows[0][key] || 0)]));
+    return [{ i: 0, ...first }, { i: 1, ...first }];
+  }
+  const columns = Object.fromEntries(
+    keys.map((key) => [key, smoothNumericSeries(rows.map((row) => Number(row[key] || 0)))]),
+  );
+  const length = columns[keys[0]]?.length || 0;
+  return Array.from({ length }, (_, index) => {
+    const point: Record<string, number> = { i: index };
+    for (const key of keys) point[key] = columns[key][index];
+    return point;
+  });
+}
+
 export function settlementCharts(summary: {
   saleCount?: number;
   bruto?: number | null;
@@ -323,24 +420,24 @@ export function settlementCharts(summary: {
       id: 'billed',
       hint: soldHint,
       items: [
-        { key: 'facturado', label: 'Facturado', value: cash.sold },
-        { key: 'neto', label: 'Neto', value: cash.arrives },
+        { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
+        { key: 'neto', label: 'Neto', value: cash.arrives, tone: 'receive' as const },
       ],
     },
     {
       id: 'fees',
       hint: takeHint,
       items: [
-        { key: 'commission', label: 'Comisión', value: Number(summary?.commission || 0) },
-        { key: 'shipping', label: 'Logística', value: Number(summary?.shipping || 0) },
+        { key: 'commission', label: 'Comisión', value: Number(summary?.commission || 0), tone: 'take' as const },
+        { key: 'shipping', label: 'Logística', value: Number(summary?.shipping || 0), tone: 'wait' as const },
       ],
     },
     {
       id: 'payout',
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       items: [
-        { key: 'paid', label: 'Pagado', value: cash.paid },
-        { key: 'pending', label: 'Pendiente', value: cash.pending },
+        { key: 'paid', label: 'Pagado', value: cash.paid, tone: 'receive' as const },
+        { key: 'pending', label: 'Pendiente', value: cash.pending, tone: 'wait' as const },
       ],
     },
   ];
