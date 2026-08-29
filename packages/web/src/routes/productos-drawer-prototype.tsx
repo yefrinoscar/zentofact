@@ -155,7 +155,7 @@ function UnderlineTabs({
 }) {
   return (
     <div className="relative">
-      <div className="flex gap-5 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex gap-5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((item) => (
           <button
             key={item.value}
@@ -207,32 +207,32 @@ function Propiedades({
         ) : product ? (
           <div className="space-y-5">
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Stock</p>
+              <p className="text-[12px] text-zinc-400">Stock</p>
               <p className="mt-1 text-[15px] tabular-nums text-zinc-950">{count(product.quantityOnHand)} unidades</p>
               <p className="mt-0.5 text-[13px] tabular-nums text-zinc-500">{count(product.quantityReserved)} reservadas</p>
             </div>
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Precio</p>
+              <p className="text-[12px] text-zinc-400">Precio</p>
               <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
                 {money(product.referencePrice) ? `${money(product.referencePrice)} soles` : 'Sin precio'}
               </p>
             </div>
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Comisión</p>
+              <p className="text-[12px] text-zinc-400">Comisión</p>
               <p className="mt-1 text-[15px] text-zinc-950">
                 {product.commissionAmount == null ? 'Sin comisión' : `${money(product.commissionAmount)} soles`}
               </p>
             </div>
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Beneficiario</p>
+              <p className="text-[12px] text-zinc-400">Beneficiario</p>
               <p className="mt-1 text-[15px] text-zinc-950">{product.profitOwner || 'Sin beneficiario'}</p>
             </div>
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Actualizado</p>
+              <p className="text-[12px] text-zinc-400">Actualizado</p>
               <p className="mt-1 text-[15px] text-zinc-950">{day(product.updatedAt)}</p>
             </div>
             <div>
-              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Descripción</p>
+              <p className="text-[12px] text-zinc-400">Descripción</p>
               <p className="mt-1 text-[15px] leading-6 text-zinc-700">{product.description || 'Sin descripción'}</p>
             </div>
           </div>
