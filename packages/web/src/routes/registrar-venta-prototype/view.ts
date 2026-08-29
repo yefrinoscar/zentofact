@@ -74,7 +74,7 @@ export type SaleFormView = {
 };
 
 export const PROTOTYPE_VARIANTS = [
-  { key: '1', name: 'Cinco numerados' },
+  { key: '1', name: 'Cinco tabs' },
   { key: '2', name: 'Tres tiempos' },
   { key: '3', name: 'Dos tiempos' },
   { key: '4', name: 'Riel izquierdo' },
@@ -86,14 +86,14 @@ export const PROTOTYPE_VARIANTS = [
   { key: '10', name: 'Paso + recap' },
   { key: '11', name: 'Checklist' },
   { key: '12', name: 'Timeline' },
-  { key: '13', name: 'Dots abajo' },
+  { key: '13', name: 'Tabs abajo' },
   { key: '14', name: 'Ticket estrecho' },
   { key: '15', name: 'Tabla primero' },
   { key: '16', name: 'Origen fijo' },
   { key: '17', name: 'Confirmar al final' },
   { key: '18', name: 'Pasos opcionales' },
   { key: '19', name: 'Peek siguiente' },
-  { key: '20', name: 'Línea con checks' },
+  { key: '20', name: 'Tabs con checks' },
 ] as const;
 
 export type PrototypeKey = (typeof PROTOTYPE_VARIANTS)[number]['key'];

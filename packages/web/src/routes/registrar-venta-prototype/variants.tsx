@@ -11,7 +11,7 @@ import {
   TablePanel,
   TableRow,
 } from '../../components/ui/table';
-import { Segmented, formatMoney } from './widgets';
+import { SaleSteps, formatMoney } from './widgets';
 import {
   Back,
   ClienteBody,
@@ -19,76 +19,11 @@ import {
   OrigenBody,
   PagoBody,
   ProductosBody,
+  SaleToolbar,
   StepFooter,
   VentaBody,
 } from './bodies';
 import type { SaleFormView } from './view';
-
-function stepStatus(index: number, current: number): 'done' | 'current' | 'todo' {
-  if (index < current) return 'done';
-  if (index === current) return 'current';
-  return 'todo';
-}
-
-function StepMark({
-  status,
-  children,
-}: {
-  status: 'done' | 'current' | 'todo';
-  children: ReactNode;
-}) {
-  return (
-    <span
-      className={cn(
-        'grid size-6 shrink-0 place-items-center rounded-md text-[11px] font-medium',
-        status === 'current' && 'bg-background text-foreground shadow-sm',
-        status === 'done' && 'bg-muted text-muted-foreground',
-        status === 'todo' && 'text-muted-foreground/60',
-      )}
-    >
-      {status === 'done' ? <Check className="size-3.5" /> : children}
-    </span>
-  );
-}
-
-function StepTrack({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={cn('inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1', className)}>
-      {children}
-    </div>
-  );
-}
-
-function StepTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function StepProgress({ current, total }: { current: number; total: number }) {
-  return (
-    <div className="h-1.5 overflow-hidden rounded-md bg-muted">
-      <div className="h-full bg-muted-foreground/35" style={{ width: `${((current + 1) / total) * 100}%` }} />
-    </div>
-  );
-}
 
 const FIVE = ['Origen', 'Cliente', 'Productos', 'Entrega', 'Pago'] as const;
 const THREE = ['Venta', 'Entrega', 'Pago'] as const;
@@ -125,24 +60,42 @@ function Recap({ view }: { view: SaleFormView }) {
   );
 }
 
-/** 1 — Cinco pasos numerados en segmented. */
+function Shell({
+  view,
+  labels,
+  nav,
+  nextLabel,
+  children,
+}: {
+  view: SaleFormView;
+  labels: readonly string[];
+  nav: ReturnType<typeof useStep>;
+  nextLabel?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-4 pb-8">
+      <SaleToolbar
+        view={view}
+        labels={labels}
+        step={nav.step}
+        onStep={nav.setStep}
+        onNext={nav.next}
+        isLast={nav.isLast}
+        nextLabel={nextLabel}
+      />
+      {children}
+    </div>
+  );
+}
+
+/** 1 — Cinco tabs de Productos. */
 export function Variant1({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-xl space-y-6 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {FIVE.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            <span className="tabular-nums text-[11px]">{index + 1}</span>
-            <span className="hidden sm:inline">{label}</span>
-          </StepTab>
-        ))}
-      </StepTrack>
-      <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+    <Shell view={view} labels={FIVE} nav={nav}>
       <FiveBody view={view} step={nav.step} />
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
-    </div>
+    </Shell>
   );
 }
 
@@ -150,20 +103,11 @@ export function Variant1({ view }: { view: SaleFormView }) {
 export function Variant2({ view }: { view: SaleFormView }) {
   const nav = useStep(3, 0);
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pb-8">
-      <Back view={view} />
-      <StepTrack className="w-full">
-        {THREE.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <Shell view={view} labels={THREE} nav={nav}>
       {nav.step === 0 && <VentaBody view={view} />}
       {nav.step === 1 && <EntregaBody view={view} />}
       {nav.step === 2 && <PagoBody view={view} />}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
-    </div>
+    </Shell>
   );
 }
 
@@ -171,15 +115,7 @@ export function Variant2({ view }: { view: SaleFormView }) {
 export function Variant3({ view }: { view: SaleFormView }) {
   const nav = useStep(2, 0);
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {TWO.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <Shell view={view} labels={TWO} nav={nav} nextLabel="Despacho">
       {nav.step === 0 && <VentaBody view={view} />}
       {nav.step === 1 && (
         <div className="grid gap-8 sm:grid-cols-2">
@@ -187,8 +123,7 @@ export function Variant3({ view }: { view: SaleFormView }) {
           <PagoBody view={view} />
         </div>
       )}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} nextLabel="Despacho" />
-    </div>
+    </Shell>
   );
 }
 
@@ -196,28 +131,17 @@ export function Variant3({ view }: { view: SaleFormView }) {
 export function Variant4({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="grid gap-8 pb-8 lg:grid-cols-[11rem_minmax(0,1fr)]">
-      <aside className="space-y-1">
+    <div className="grid gap-8 pb-8 lg:grid-cols-[12rem_minmax(0,1fr)]">
+      <aside className="space-y-3">
         <Back view={view} />
-        <div className="flex flex-col gap-0.5 rounded-xl bg-muted p-1">
-          {FIVE.map((label, index) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => nav.setStep(index)}
-              className={cn(
-                'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm',
-                index === nav.step ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <span className="tabular-nums text-xs">{index + 1}</span>
-              {label}
-            </button>
-          ))}
-        </div>
+        <SaleSteps
+          value={String(nav.step)}
+          options={FIVE.map((label, index) => ({ value: String(index), label }))}
+          onChange={(value) => nav.setStep(Number(value))}
+          orientation="vertical"
+        />
       </aside>
       <div className="min-w-0 space-y-4">
-        <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
         <FiveBody view={view} step={nav.step} />
         <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
       </div>
@@ -225,31 +149,41 @@ export function Variant4({ view }: { view: SaleFormView }) {
   );
 }
 
-/** 5 — Solo barra de progreso. */
+/** 5 — Barra de progreso suave. */
 export function Variant5({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-xl space-y-6 pb-8">
-      <Back view={view} />
-      <StepProgress current={nav.step} total={5} />
-      <p className="text-sm text-muted-foreground">Paso {nav.step + 1} de 5 · {FIVE[nav.step]}</p>
+    <div className="space-y-4 pb-8">
+      <div className="flex flex-wrap items-center gap-3">
+        <Back view={view} />
+        <p className="text-sm text-muted-foreground">{FIVE[nav.step]}</p>
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
+          {nav.isLast ? (
+            <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>Registrar venta</Button>
+          ) : (
+            <Button type="button" className="rounded-full" onClick={nav.next}>Siguiente</Button>
+          )}
+        </div>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted/70">
+        <div className="h-full bg-foreground/25" style={{ width: `${((nav.step + 1) / 5) * 100}%` }} />
+      </div>
       <FiveBody view={view} step={nav.step} />
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
 
-/** 6 — Steps como segmented h-9. */
+/** 6 — Tabs + cuerpo, sin toolbar extra. */
 export function Variant6({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pb-8">
+    <div className="space-y-4 pb-8">
       <Back view={view} />
-      <Segmented
+      <SaleSteps
         value={String(nav.step)}
         options={FIVE.map((label, index) => ({ value: String(index), label }))}
         onChange={(value) => nav.setStep(Number(value))}
-        ariaLabel="Paso"
       />
       <FiveBody view={view} step={nav.step} />
       <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
@@ -262,21 +196,13 @@ export function Variant7({ view }: { view: SaleFormView }) {
   const rest = ['Origen', 'Cliente', 'Entrega', 'Pago'] as const;
   const nav = useStep(4, 1);
   return (
-    <div className="space-y-6 pb-8">
-      <Back view={view} />
+    <div className="space-y-4 pb-8">
+      <SaleToolbar view={view} labels={rest} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       <ProductosBody view={view} />
-      <StepTrack>
-        {rest.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
       {nav.step === 0 && <OrigenBody view={view} />}
       {nav.step === 1 && <ClienteBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
       {nav.step === 3 && <PagoBody view={view} />}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
@@ -286,19 +212,17 @@ export function Variant8({ view }: { view: SaleFormView }) {
   const nav = useStep(4, 0);
   const labels = ['Cliente', 'Origen', 'Entrega', 'Pago'] as const;
   return (
-    <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
       <div className="min-w-0 space-y-3">
         <Back view={view} />
         <ProductosBody view={view} />
       </div>
       <aside className="space-y-4">
-        <StepTrack>
-          {labels.map((label, index) => (
-            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-              {label}
-            </StepTab>
-          ))}
-        </StepTrack>
+        <SaleSteps
+          value={String(nav.step)}
+          options={labels.map((label, index) => ({ value: String(index), label }))}
+          onChange={(value) => nav.setStep(Number(value))}
+        />
         {nav.step === 0 && <ClienteBody view={view} />}
         {nav.step === 1 && <OrigenBody view={view} />}
         {nav.step === 2 && <EntregaBody view={view} />}
@@ -314,18 +238,10 @@ export function Variant9({ view }: { view: SaleFormView }) {
   const questions = ['¿De dónde sale?', '¿Quién compra?', '¿Qué lleva?', '¿Cómo se entrega?', '¿Cómo paga?'] as const;
   const nav = useStep(5, 1);
   return (
-    <div className="mx-auto max-w-lg space-y-8 pb-8 pt-6">
-      <Back view={view} />
-      <StepTrack>
-        {questions.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {index + 1}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <div className="space-y-6 pb-8 pt-2">
+      <SaleToolbar view={view} labels={[...FIVE]} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       <h2 className="text-2xl font-medium tracking-tight">{questions[nav.step]}</h2>
       <FiveBody view={view} step={nav.step} />
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
@@ -335,21 +251,11 @@ export function Variant10({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
     <div className="grid gap-8 pb-8 lg:grid-cols-[minmax(0,1fr)_14rem]">
-      <div className="min-w-0 space-y-4">
-        <Back view={view} />
-        <StepTrack>
-          {FIVE.map((label, index) => (
-            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-              {label}
-            </StepTab>
-          ))}
-        </StepTrack>
+      <Shell view={view} labels={FIVE} nav={nav}>
         <FiveBody view={view} step={nav.step} />
-        <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
-      </div>
+      </Shell>
       <aside className="lg:sticky lg:top-4 lg:self-start">
         <Recap view={view} />
-        <p className="mt-3 text-2xl font-semibold tabular-nums">{formatMoney(view.total)}</p>
       </aside>
     </div>
   );
@@ -359,76 +265,85 @@ export function Variant10({ view }: { view: SaleFormView }) {
 export function Variant11({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-xl space-y-4 pb-8">
-      <Back view={view} />
-      <ul className="divide-y divide-border">
-        {FIVE.map((label, index) => (
-          <li key={label}>
-            <button
-              type="button"
-              onClick={() => nav.setStep(index)}
-              className="flex w-full cursor-pointer items-center gap-3 py-2.5 text-left text-sm"
-            >
-              <StepMark status={stepStatus(index, nav.step)}>{index + 1}</StepMark>
-              <span className={index === nav.step ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
-            </button>
-            {index === nav.step && <div className="pb-4 pl-8"><FiveBody view={view} step={nav.step} /></div>}
-          </li>
-        ))}
+    <div className="space-y-4 pb-8">
+      <div className="flex flex-wrap items-center gap-3">
+        <Back view={view} />
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
+          {nav.isLast ? (
+            <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>Registrar venta</Button>
+          ) : (
+            <Button type="button" className="rounded-full" onClick={nav.next}>Siguiente</Button>
+          )}
+        </div>
+      </div>
+      <ul>
+        {FIVE.map((label, index) => {
+          const current = index === nav.step;
+          return (
+            <li key={label} className={cn(index > 0 && 'border-t border-border/70')}>
+              <button
+                type="button"
+                onClick={() => nav.setStep(index)}
+                className="flex w-full cursor-pointer items-center gap-3 py-2.5 text-left text-sm"
+              >
+                {index < nav.step
+                  ? <Check className="size-4 text-muted-foreground" />
+                  : <span className="w-4 text-center text-xs tabular-nums text-muted-foreground">{index + 1}</span>}
+                <span className={current ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
+              </button>
+              {current && <div className="pb-4 pl-7"><FiveBody view={view} step={nav.step} /></div>}
+            </li>
+          );
+        })}
       </ul>
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
 
-/** 12 — Timeline vertical. */
+/** 12 — Lista vertical con el actual abierto. */
 export function Variant12({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-xl space-y-2 pb-8">
-      <Back view={view} />
+    <div className="space-y-2 pb-8">
+      <SaleToolbar view={view} labels={FIVE} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       {FIVE.map((label, index) => (
-        <div key={label} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-3">
-          <div className="flex flex-col items-center">
-            <StepMark status={stepStatus(index, nav.step)}>{index + 1}</StepMark>
-            {index < 4 && <span className="w-px flex-1 bg-border" />}
-          </div>
-          <div className="pb-6">
-            <button type="button" className="cursor-pointer text-sm font-medium" onClick={() => nav.setStep(index)}>{label}</button>
-            {index === nav.step && <div className="mt-3"><FiveBody view={view} step={nav.step} /></div>}
-          </div>
+        <div key={label} className="pb-4">
+          <button
+            type="button"
+            className={cn('cursor-pointer text-sm', index === nav.step ? 'font-medium' : 'text-muted-foreground')}
+            onClick={() => nav.setStep(index)}
+          >
+            {label}
+          </button>
+          {index === nav.step && <div className="mt-3"><FiveBody view={view} step={nav.step} /></div>}
         </div>
       ))}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
 
-/** 13 — Dots y acciones pegados abajo. */
+/** 13 — Tabs y acciones pegados abajo. */
 export function Variant13({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-xl pb-28">
+    <div className="pb-28">
       <Back view={view} />
-      <div className="mt-6 space-y-4">
-        <h2 className="text-base font-medium">{FIVE[nav.step]}</h2>
+      <div className="mt-6">
         <FiveBody view={view} step={nav.step} />
       </div>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background px-4 py-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-3">
-        <div className="mx-auto flex max-w-xl items-center gap-3">
-          <StepTrack>
-            {FIVE.map((label, index) => (
-              <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-                {index + 1}
-              </StepTab>
-            ))}
-          </StepTrack>
-          <p className="ml-auto text-lg font-semibold tabular-nums">{formatMoney(view.total)}</p>
-          <Button type="button" variant="ghost" disabled={nav.isFirst} onClick={nav.back}>Atrás</Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <SaleSteps
+            value={String(nav.step)}
+            options={FIVE.map((label, index) => ({ value: String(index), label }))}
+            onChange={(value) => nav.setStep(Number(value))}
+          />
+          <p className="ml-auto text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
           {nav.isLast ? (
-            <Button type="submit" disabled={view.submitDisabled}>Registrar</Button>
+            <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>Registrar</Button>
           ) : (
-            <Button type="button" onClick={nav.next}>Siguiente</Button>
+            <Button type="button" className="rounded-full" onClick={nav.next}>Siguiente</Button>
           )}
         </div>
       </div>
@@ -436,24 +351,13 @@ export function Variant13({ view }: { view: SaleFormView }) {
   );
 }
 
-/** 14 — Ticket estrecho. */
+/** 14 — Columna estrecha. */
 export function Variant14({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-md space-y-5 pb-8">
-      <Back view={view} />
-      <div className="flex justify-center">
-        <StepTrack>
-          {FIVE.map((label, index) => (
-            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-              {index + 1}
-            </StepTab>
-          ))}
-        </StepTrack>
-      </div>
-      <h2 className="text-center text-base font-medium">{FIVE[nav.step]}</h2>
+    <div className="mx-auto max-w-md space-y-4 pb-8">
+      <SaleToolbar view={view} labels={FIVE} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       <FiveBody view={view} step={nav.step} />
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
@@ -463,17 +367,7 @@ export function Variant15({ view }: { view: SaleFormView }) {
   const labels = ['Productos', 'Cliente', 'Entrega', 'Pago'] as const;
   const nav = useStep(4, 0);
   return (
-    <div className="space-y-4 pb-8">
-      <div className="flex items-center gap-3">
-        <Back view={view} />
-        <StepTrack>
-          {labels.map((label, index) => (
-            <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-              {label}
-            </StepTab>
-          ))}
-        </StepTrack>
-      </div>
+    <Shell view={view} labels={labels} nav={nav}>
       {nav.step === 0 && (
         <>
           <TablePanel>
@@ -494,14 +388,13 @@ export function Variant15({ view }: { view: SaleFormView }) {
               </TableBody>
             </Table>
           </TablePanel>
-          <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>Agregar producto</Button>
+          <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={() => view.setPickerOpen(true)}>Agregar producto</Button>
         </>
       )}
       {nav.step === 1 && <ClienteBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
       {nav.step === 3 && <PagoBody view={view} />}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
-    </div>
+    </Shell>
   );
 }
 
@@ -509,21 +402,13 @@ export function Variant15({ view }: { view: SaleFormView }) {
 export function Variant16({ view }: { view: SaleFormView }) {
   const nav = useStep(4, 0);
   return (
-    <div className="mx-auto max-w-xl space-y-5 pb-8">
-      <Back view={view} />
+    <div className="space-y-4 pb-8">
+      <SaleToolbar view={view} labels={FOUR} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       <OrigenBody view={view} />
-      <StepTrack>
-        {FOUR.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
       {nav.step === 0 && <ClienteBody view={view} />}
       {nav.step === 1 && <ProductosBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
       {nav.step === 3 && <PagoBody view={view} />}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }
@@ -533,15 +418,7 @@ export function Variant17({ view }: { view: SaleFormView }) {
   const labels = ['Cliente', 'Productos', 'Entrega', 'Confirmar'] as const;
   const nav = useStep(4, 3);
   return (
-    <div className="mx-auto max-w-xl space-y-5 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {labels.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <Shell view={view} labels={labels} nav={nav} nextLabel={nav.step === 2 ? 'Confirmar' : 'Siguiente'}>
       {nav.step === 0 && <ClienteBody view={view} />}
       {nav.step === 1 && <ProductosBody view={view} />}
       {nav.step === 2 && <EntregaBody view={view} />}
@@ -551,8 +428,7 @@ export function Variant17({ view }: { view: SaleFormView }) {
           <PagoBody view={view} />
         </div>
       )}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} nextLabel={nav.step === 2 ? 'Confirmar' : 'Siguiente'} />
-    </div>
+    </Shell>
   );
 }
 
@@ -561,24 +437,13 @@ export function Variant18({ view }: { view: SaleFormView }) {
   const nav = useStep(5, 3);
   const skippable = nav.step === 3 || nav.step === 4;
   return (
-    <div className="mx-auto max-w-xl space-y-5 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {FIVE.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <div className="space-y-4 pb-8">
+      <SaleToolbar view={view} labels={FIVE} step={nav.step} onStep={nav.setStep} onNext={nav.next} isLast={nav.isLast} />
       {skippable ? <p className="text-xs text-muted-foreground">Opcional</p> : null}
       <FiveBody view={view} step={nav.step} />
-      <StepFooter
-        view={view}
-        {...nav}
-        onBack={nav.back}
-        onNext={nav.next}
-        skip={skippable && !nav.isLast ? { label: 'Saltar', onClick: nav.next } : undefined}
-      />
+      {skippable && !nav.isLast ? (
+        <Button type="button" variant="ghost" className="rounded-full" onClick={nav.next}>Saltar</Button>
+      ) : null}
     </div>
   );
 }
@@ -588,38 +453,38 @@ export function Variant19({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   const upcoming = FIVE[nav.step + 1];
   return (
-    <div className="mx-auto max-w-xl space-y-5 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {FIVE.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {label}
-          </StepTab>
-        ))}
-      </StepTrack>
+    <Shell view={view} labels={FIVE} nav={nav}>
       <FiveBody view={view} step={nav.step} />
       {upcoming ? <p className="text-xs text-muted-foreground">Siguiente: {upcoming}</p> : null}
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
-    </div>
+    </Shell>
   );
 }
 
-/** 20 — Segmented con check en los pasos hechos. */
+/** 20 — Tabs con check en los pasos hechos. */
 export function Variant20({ view }: { view: SaleFormView }) {
   const nav = useStep(5);
   return (
-    <div className="mx-auto max-w-2xl space-y-6 pb-8">
-      <Back view={view} />
-      <StepTrack>
-        {FIVE.map((label, index) => (
-          <StepTab key={label} active={index === nav.step} onClick={() => nav.setStep(index)}>
-            {index < nav.step ? <Check className="size-3.5" /> : <span className="tabular-nums text-[11px]">{index + 1}</span>}
-            <span className="hidden sm:inline">{label}</span>
-          </StepTab>
-        ))}
-      </StepTrack>
+    <div className="space-y-4 pb-8">
+      <div className="flex flex-wrap items-center gap-3">
+        <Back view={view} />
+        <SaleSteps
+          value={String(nav.step)}
+          options={FIVE.map((label, index) => ({
+            value: String(index),
+            label: index < nav.step ? `✓ ${label}` : label,
+          }))}
+          onChange={(value) => nav.setStep(Number(value))}
+        />
+        <div className="ml-auto flex items-center gap-2">
+          <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
+          {nav.isLast ? (
+            <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>Registrar venta</Button>
+          ) : (
+            <Button type="button" className="rounded-full" onClick={nav.next}>Siguiente</Button>
+          )}
+        </div>
+      </div>
       <FiveBody view={view} step={nav.step} />
-      <StepFooter view={view} {...nav} onBack={nav.back} onNext={nav.next} />
     </div>
   );
 }

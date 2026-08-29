@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CalendarDays, Package } from 'lucide-react';
 import { es } from 'date-fns/locale';
 import { cn } from '../../lib/cn';
@@ -6,7 +6,9 @@ import { limaTodayKey } from '../../lib/registrar-venta';
 import { dateFromKey } from '../../lib/documentDateRange';
 import { Button } from '../../components/ui/button';
 import { Calendar } from '../../components/ui/calendar';
+import { Label } from '../../components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
+import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 
 export const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
 
@@ -92,6 +94,24 @@ export function DeliveryDatePicker({
   );
 }
 
+export function FieldRow({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5 sm:grid-cols-[8.25rem_minmax(0,1fr)] sm:items-start sm:gap-x-4">
+      <Label htmlFor={htmlFor} className="text-sm text-muted-foreground sm:pt-2">{label}</Label>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/** Chips de Productos. Selección invertida. No usar para steps. */
 export function Choice<T extends string>({
   value,
   options,
@@ -104,7 +124,7 @@ export function Choice<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1" role="radiogroup" aria-label={ariaLabel}>
+    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={ariaLabel}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -115,10 +135,10 @@ export function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'h-7 cursor-pointer rounded-lg px-3 text-sm font-medium transition-colors',
+              'inline-flex h-8 cursor-pointer items-center rounded-full px-3 text-sm font-medium transition',
               selected
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
+                ? 'bg-foreground text-background'
+                : 'bg-muted text-muted-foreground hover:text-foreground',
             )}
           >
             {option.label}
@@ -126,6 +146,51 @@ export function Choice<T extends string>({
         );
       })}
     </div>
+  );
+}
+
+const TABS_LIST = 'h-10 w-full justify-start gap-0.5 rounded-full bg-muted/70 p-1 sm:h-9 sm:w-auto';
+const TABS_TRIGGER = 'rounded-full px-3';
+
+/** Tabs de Productos. Este es el tono de los steps. */
+export function SaleSteps({
+  value,
+  options,
+  onChange,
+  orientation = 'horizontal',
+  ariaLabel = 'Paso',
+}: {
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  orientation?: 'horizontal' | 'vertical';
+  ariaLabel?: string;
+}) {
+  return (
+    <Tabs
+      value={value}
+      onValueChange={onChange}
+      orientation={orientation}
+      className={orientation === 'vertical' ? 'w-full gap-0' : 'gap-0'}
+    >
+      <TabsList
+        aria-label={ariaLabel}
+        className={cn(
+          TABS_LIST,
+          orientation === 'vertical' && 'h-auto w-full flex-col items-stretch justify-start rounded-2xl',
+        )}
+      >
+        {options.map((option) => (
+          <TabsTrigger
+            key={option.value}
+            value={option.value}
+            className={cn(TABS_TRIGGER, orientation === 'vertical' && 'w-full justify-start')}
+          >
+            {option.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
 
@@ -141,26 +206,12 @@ export function Segmented<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="inline-flex h-9 items-center rounded-xl bg-muted p-1" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((option) => {
-        const selected = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              'h-7 cursor-pointer rounded-lg px-3 text-sm font-medium transition-colors',
-              selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
+    <SaleSteps
+      value={value}
+      options={options}
+      onChange={(next) => onChange(next as T)}
+      ariaLabel={ariaLabel}
+    />
   );
 }
 

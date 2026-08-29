@@ -2,8 +2,8 @@ import { ArrowLeft, Search, Trash2 } from 'lucide-react';
 import { SALE_SOURCES, type SaleLine } from '../../lib/registrar-venta';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Choice, NUMBER_INPUT, ProductPhoto, formatMoney } from './widgets';
-import { ComprobanteChoice, DeliveryFields, DeliveryHow, PaymentFields } from './fields';
+import { Choice, FieldRow, NUMBER_INPUT, ProductPhoto, SaleSteps, formatMoney } from './widgets';
+import { ComprobanteChoice, DocumentFields, DeliveryFields, DeliveryHow, PaymentFields } from './fields';
 import type { SaleFormView } from './view';
 
 export function Back({ view }: { view: SaleFormView }) {
@@ -61,7 +61,7 @@ export function ProductosBody({ view }: { view: SaleFormView }) {
           </Button>
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" onClick={() => view.setPickerOpen(true)}>
+      <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={() => view.setPickerOpen(true)}>
         <Search /> Agregar
       </Button>
     </div>
@@ -69,15 +69,65 @@ export function ProductosBody({ view }: { view: SaleFormView }) {
 }
 
 export function OrigenBody({ view }: { view: SaleFormView }) {
-  return <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />;
+  return (
+    <FieldRow label="Canal">
+      <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen" />
+    </FieldRow>
+  );
 }
 
 export function ClienteBody({ view }: { view: SaleFormView }) {
   return (
     <div className="space-y-3">
-      <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Nombre" />
-      <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="Teléfono" />
-      <ComprobanteChoice view={view} />
+      <FieldRow label="Nombre" htmlFor="customer-name">
+        <Input id="customer-name" value={view.customerName} onChange={(event) => view.setCustomerName(event.target.value)} placeholder="Ana Pérez" />
+      </FieldRow>
+      <FieldRow label="Teléfono" htmlFor="customer-phone">
+        <Input id="customer-phone" value={view.customerPhone} onChange={(event) => view.setCustomerPhone(event.target.value)} placeholder="999 111 222" />
+      </FieldRow>
+      <FieldRow label="Comprobante">
+        <ComprobanteChoice view={view} />
+      </FieldRow>
+      <DocumentFields view={view} />
+    </div>
+  );
+}
+
+export function SaleToolbar({
+  view,
+  labels,
+  step,
+  onStep,
+  onNext,
+  isLast,
+  nextLabel = 'Siguiente',
+}: {
+  view: SaleFormView;
+  labels: readonly string[];
+  step: number;
+  onStep: (index: number) => void;
+  onNext: () => void;
+  isLast: boolean;
+  nextLabel?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Back view={view} />
+      <SaleSteps
+        value={String(step)}
+        options={labels.map((label, index) => ({ value: String(index), label }))}
+        onChange={(value) => onStep(Number(value))}
+      />
+      <div className="ml-auto flex items-center gap-2">
+        <p className="text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
+        {isLast ? (
+          <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>
+            {view.creating ? 'Listo…' : 'Registrar venta'}
+          </Button>
+        ) : (
+          <Button type="button" className="rounded-full" onClick={onNext}>{nextLabel}</Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -85,14 +135,20 @@ export function ClienteBody({ view }: { view: SaleFormView }) {
 export function EntregaBody({ view }: { view: SaleFormView }) {
   return (
     <div className="space-y-3">
-      <DeliveryHow view={view} />
+      <FieldRow label="Cómo">
+        <DeliveryHow view={view} />
+      </FieldRow>
       <DeliveryFields view={view} />
     </div>
   );
 }
 
 export function PagoBody({ view }: { view: SaleFormView }) {
-  return <PaymentFields view={view} />;
+  return (
+    <FieldRow label="Pago">
+      <PaymentFields view={view} />
+    </FieldRow>
+  );
 }
 
 export function VentaBody({ view }: { view: SaleFormView }) {
@@ -123,16 +179,16 @@ export function StepFooter({
   skip?: { label: string; onClick: () => void };
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
-      <Button type="button" variant="ghost" disabled={isFirst} onClick={onBack}>Atrás</Button>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" variant="ghost" className="rounded-full" disabled={isFirst} onClick={onBack}>Atrás</Button>
       {skip ? (
-        <Button type="button" variant="ghost" onClick={skip.onClick}>{skip.label}</Button>
+        <Button type="button" variant="ghost" className="rounded-full" onClick={skip.onClick}>{skip.label}</Button>
       ) : null}
-      <p className="ml-auto text-lg font-semibold tabular-nums">{formatMoney(view.total)}</p>
+      <p className="ml-auto text-sm font-medium tabular-nums">{formatMoney(view.total)}</p>
       {isLast ? (
-        <Button type="submit" disabled={view.submitDisabled}>{view.creating ? 'Listo…' : 'Registrar venta'}</Button>
+        <Button type="submit" className="rounded-full" disabled={view.submitDisabled}>{view.creating ? 'Listo…' : 'Registrar venta'}</Button>
       ) : (
-        <Button type="button" onClick={onNext}>{nextLabel}</Button>
+        <Button type="button" className="rounded-full" onClick={onNext}>{nextLabel}</Button>
       )}
     </div>
   );

@@ -15,9 +15,8 @@ import { PAYMENT_METHODS } from '../../lib/registrar-venta';
 import { PlacePicker } from '../../components/PlacePicker';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
 import { ImagePlus, X } from 'lucide-react';
-import { Choice, DeliveryDatePicker, Segmented, formatMoney } from './widgets';
+import { Choice, DeliveryDatePicker, FieldRow, Segmented, formatMoney } from './widgets';
 import type { SaleFormView } from './view';
 
 export function selectDocument(view: SaleFormView, value: DocumentRequest) {
@@ -30,38 +29,39 @@ export function selectDocument(view: SaleFormView, value: DocumentRequest) {
 export function DocumentFields({ view }: { view: SaleFormView }) {
   if (view.documentRequest === 'boleta') {
     return (
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Segmented
-          value={view.boletaIdentity}
-          options={BOLETA_IDENTITIES}
-          onChange={(value) => {
-            view.setBoletaIdentity(value);
-            view.setCustomerDocumentNumber('');
-            view.clearFieldError('document');
-          }}
-          ariaLabel="Tipo de documento"
-        />
-        <Input
-          id="customer-document"
-          value={view.customerDocumentNumber}
-          onChange={(event) => {
-            const next = view.boletaIdentity === 'dni'
-              ? event.target.value.replace(/\D/g, '').slice(0, 8)
-              : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
-            view.setCustomerDocumentNumber(next);
-            view.clearFieldError('document');
-          }}
-          placeholder={view.boletaIdentity === 'ce' ? '001234567' : '12345678'}
-          className="sm:max-w-56"
-        />
-      </div>
+      <FieldRow label={view.boletaIdentity === 'ce' ? 'CE' : 'DNI'} htmlFor="customer-document">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Segmented
+            value={view.boletaIdentity}
+            options={BOLETA_IDENTITIES}
+            onChange={(value) => {
+              view.setBoletaIdentity(value);
+              view.setCustomerDocumentNumber('');
+              view.clearFieldError('document');
+            }}
+            ariaLabel="Tipo de documento"
+          />
+          <Input
+            id="customer-document"
+            value={view.customerDocumentNumber}
+            onChange={(event) => {
+              const next = view.boletaIdentity === 'dni'
+                ? event.target.value.replace(/\D/g, '').slice(0, 8)
+                : event.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+              view.setCustomerDocumentNumber(next);
+              view.clearFieldError('document');
+            }}
+            placeholder={view.boletaIdentity === 'ce' ? '001234567' : '12345678'}
+            className="sm:max-w-56"
+          />
+        </div>
+      </FieldRow>
     );
   }
   if (view.documentRequest === 'factura') {
     return (
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="customer-ruc">RUC</Label>
+      <div className="space-y-3">
+        <FieldRow label="RUC" htmlFor="customer-ruc">
           <Input
             id="customer-ruc"
             value={view.customerDocumentNumber}
@@ -71,9 +71,8 @@ export function DocumentFields({ view }: { view: SaleFormView }) {
             }}
             placeholder="20123456789"
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="legal-name">Razón social</Label>
+        </FieldRow>
+        <FieldRow label="Razón social" htmlFor="legal-name">
           <Input
             id="legal-name"
             value={view.legalName}
@@ -83,9 +82,8 @@ export function DocumentFields({ view }: { view: SaleFormView }) {
             }}
             placeholder="Empresa S.A.C."
           />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor="fiscal-address">Dirección fiscal</Label>
+        </FieldRow>
+        <FieldRow label="Dirección fiscal" htmlFor="fiscal-address">
           <Input
             id="fiscal-address"
             value={view.fiscalAddress}
@@ -95,7 +93,7 @@ export function DocumentFields({ view }: { view: SaleFormView }) {
             }}
             placeholder="Av. …"
           />
-        </div>
+        </FieldRow>
       </div>
     );
   }
@@ -108,15 +106,17 @@ export function DeliveryFields({ view }: { view: SaleFormView }) {
   }
   return (
     <div className="space-y-3">
-      <Choice
-        value={view.shippingCarrier}
-        options={SHIPPING_CARRIERS}
-        onChange={(value) => {
-          view.setShippingCarrier(value);
-          view.clearFieldError('delivery');
-        }}
-        ariaLabel="Reparto"
-      />
+      <FieldRow label="Reparto">
+        <Choice
+          value={view.shippingCarrier}
+          options={SHIPPING_CARRIERS}
+          onChange={(value) => {
+            view.setShippingCarrier(value);
+            view.clearFieldError('delivery');
+          }}
+          ariaLabel="Reparto"
+        />
+      </FieldRow>
       {view.shippingCarrier === OWN_FLEET_CARRIER && (
         <p className="text-xs text-muted-foreground">
           {OWN_FLEET_COVERAGE_HINT}
@@ -130,33 +130,39 @@ export function DeliveryFields({ view }: { view: SaleFormView }) {
           ) : null}
         </p>
       )}
-      <PlacePicker
-        value={view.dropoffPlace}
-        onChange={(place) => {
-          view.setDropoffPlace(place);
-          view.clearFieldError('delivery');
-        }}
-        placeholder="Distrito de Lima metropolitana"
-      />
-      {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote?.charged && (
-        <p className="text-sm tabular-nums text-muted-foreground">
-          {view.shippingQuote.zoneLabel || 'Distrito'} {formatMoney(view.shippingQuote.districtAmount)}
-          {' · '}
-          {view.shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km {formatMoney(view.shippingQuote.distanceAmount)}
-        </p>
-      )}
-      {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote && !view.shippingQuote.charged && (
-        <p className="text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
-      )}
-      <Input
-        id="shipping-note"
-        value={view.shippingNote}
-        onChange={(event) => {
-          view.setShippingNote(event.target.value);
-          view.clearFieldError('delivery');
-        }}
-        placeholder="Dpto, color de puerta…"
-      />
+      <FieldRow label="Dirección">
+        <div className="space-y-2">
+          <PlacePicker
+            value={view.dropoffPlace}
+            onChange={(place) => {
+              view.setDropoffPlace(place);
+              view.clearFieldError('delivery');
+            }}
+            placeholder="Distrito de Lima metropolitana"
+          />
+          {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote?.charged && (
+            <p className="text-sm tabular-nums text-muted-foreground">
+              {view.shippingQuote.zoneLabel || 'Distrito'} {formatMoney(view.shippingQuote.districtAmount)}
+              {' · '}
+              {view.shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km {formatMoney(view.shippingQuote.distanceAmount)}
+            </p>
+          )}
+          {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote && !view.shippingQuote.charged && (
+            <p className="text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
+          )}
+        </div>
+      </FieldRow>
+      <FieldRow label="Referencia" htmlFor="shipping-note">
+        <Input
+          id="shipping-note"
+          value={view.shippingNote}
+          onChange={(event) => {
+            view.setShippingNote(event.target.value);
+            view.clearFieldError('delivery');
+          }}
+          placeholder="Dpto, color de puerta…"
+        />
+      </FieldRow>
     </div>
   );
 }
@@ -206,7 +212,7 @@ export function PaymentFields({ view }: { view: SaleFormView }) {
 export function DeliveryHow({ view }: { view: SaleFormView }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Segmented
+      <Choice
         value={view.delivery}
         options={[
           { value: 'envio', label: 'Envío' },
@@ -248,7 +254,6 @@ export function ComprobanteChoice({ view }: { view: SaleFormView }) {
       {view.documentRequest !== 'none' ? (
         <p className="text-xs text-muted-foreground">Se emite después desde Pedidos.</p>
       ) : null}
-      <DocumentFields view={view} />
     </div>
   );
 }
