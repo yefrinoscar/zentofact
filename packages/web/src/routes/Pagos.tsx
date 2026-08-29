@@ -367,12 +367,24 @@ function SettlementPairChart({
               />
             )}
           />
-          <Bar dataKey="amount" radius={4} barSize={14} maxBarSize={14}>
+          <Bar dataKey="amount" radius={4} barSize={14} maxBarSize={14} minPointSize={2}>
             <LabelList
               dataKey="amount"
               position="right"
-              className="fill-foreground text-[11px] tabular-nums"
-              formatter={moneyTooltipValue}
+              content={({ x, y, width, height, value }) => {
+                const left = Number(x || 0) + Number(width || 0) + 8;
+                const top = Number(y || 0) + Number(height || 0) / 2;
+                return (
+                  <text
+                    x={left}
+                    y={top}
+                    className="fill-foreground text-[11px] tabular-nums"
+                    dominantBaseline="central"
+                  >
+                    {moneyTooltipValue(value)}
+                  </text>
+                );
+              }}
             />
           </Bar>
         </BarChart>
