@@ -6,7 +6,6 @@ import {
   PICKUP_ADDRESS,
   SALE_SOURCES,
   limaTodayKey,
-  saleLinesTotal,
   type DocumentRequest,
 } from '../../lib/registrar-venta';
 import {
@@ -187,7 +186,7 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                     <Trash2 />
                   </Button>
                 </div>
-                <div className="mt-3 grid grid-cols-[4.75rem_minmax(0,1fr)_auto] items-end gap-2">
+                <div className="mt-3 grid grid-cols-[4.75rem_7.5rem_minmax(0,1fr)] items-end gap-2">
                   <div className="space-y-1">
                     <Label htmlFor={`qty-${line.id}`} className="text-[11px] text-muted-foreground">Cant.</Label>
                     <Input
@@ -222,13 +221,6 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
           </li>
         ))}
       </ul>
-
-      <div className="flex items-baseline justify-between border-t border-border pt-3 text-sm">
-        <span className="text-muted-foreground">
-          {view.lines.length === 1 ? '1 producto' : `${view.lines.length} productos`}
-        </span>
-        <span className="font-semibold tabular-nums">{formatSaleMoney(saleLinesTotal(view.lines))}</span>
-      </div>
     </div>
   );
 }

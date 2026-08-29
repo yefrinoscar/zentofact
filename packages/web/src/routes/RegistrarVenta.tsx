@@ -429,12 +429,17 @@ export default function RegistrarVenta() {
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:mt-6 sm:bg-transparent sm:px-0 sm:py-0 sm:pt-6 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center gap-3 pb-[env(safe-area-inset-bottom)]">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted-foreground">
-              {totals.shipping > 0 ? `Productos ${formatSaleMoney(totals.products)} · Envío ${formatSaleMoney(totals.shipping)}` : 'Total'}
-            </p>
-            <p className="truncate text-xl font-semibold tabular-nums">{formatSaleMoney(totals.total)}</p>
-          </div>
+          {/* El resumen ya muestra el desglose completo; aquí solo se repite mientras se arma la venta. */}
+          {!isLastStep && totals.total > 0 ? (
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground">
+                {totals.shipping > 0 ? `Productos ${formatSaleMoney(totals.products)} · Envío ${formatSaleMoney(totals.shipping)}` : 'Total'}
+              </p>
+              <p className="truncate text-xl font-semibold tabular-nums">{formatSaleMoney(totals.total)}</p>
+            </div>
+          ) : (
+            <div className="flex-1" aria-hidden="true" />
+          )}
           {stepIndex > 0 ? (
             <Button type="button" variant="ghost" className="h-11 shrink-0 cursor-pointer sm:h-9" onClick={goBack}>
               Atrás
