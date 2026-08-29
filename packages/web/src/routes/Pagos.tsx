@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, Copy, Search, Upload } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Copy, Info, Search, Upload } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
@@ -29,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -115,7 +116,7 @@ const cobroCellEnd = `${cobroColEnd} group-hover:bg-muted/55`;
 const llegaHead = `${llegaCol} ${llegaText}`;
 const llegaCell = `${llegaCol} group-hover:bg-emerald-500/[0.12]`;
 
-function NoticeBanner({
+function SettlementAlert({
   tone,
   title,
   detail,
@@ -126,29 +127,27 @@ function NoticeBanner({
   detail?: string;
   action?: { label: string; onClick: () => void; busy?: boolean };
 }) {
+  const Icon = tone === 'error' ? AlertCircle : tone === 'ok' ? CheckCircle2 : Info;
   return (
-    <div
+    <Alert
+      variant={tone === 'error' ? 'destructive' : 'default'}
       role={tone === 'error' ? 'alert' : 'status'}
       className={cn(
-        'flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-2.5',
-        tone === 'error' && 'border-destructive/25 bg-destructive/5 text-destructive',
-        tone === 'warn' && 'border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200',
-        tone === 'ok' && 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300',
+        tone === 'warn' && 'bg-amber-50 dark:bg-amber-950',
+        tone === 'ok' && 'bg-emerald-50 dark:bg-emerald-950',
       )}
     >
-      <div className="flex min-w-0 items-start gap-2">
-        {tone === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : null}
-        <div className="min-w-0">
-          <p className="text-sm font-medium leading-5">{title}</p>
-          {detail ? <p className="mt-0.5 text-xs leading-5 opacity-90">{detail}</p> : null}
-        </div>
-      </div>
+      <Icon />
+      <AlertTitle>{title}</AlertTitle>
+      {detail ? <AlertDescription>{detail}</AlertDescription> : null}
       {action ? (
-        <Button type="button" size="sm" variant={tone === 'warn' ? 'outline' : 'secondary'} disabled={action.busy} onClick={action.onClick}>
-          {action.label}
-        </Button>
+        <AlertAction>
+          <Button type="button" size="sm" variant="outline" disabled={action.busy} onClick={action.onClick}>
+            {action.busy ? 'Cruzando…' : action.label}
+          </Button>
+        </AlertAction>
       ) : null}
-    </div>
+    </Alert>
   );
 }
 
@@ -453,7 +452,7 @@ export default function Pagos() {
         }
         return result;
       } finally {
-        await holdAtLeast(started, CSV_UPLOAD_MIN_MS);
+        if (!replace) await holdAtLeast(started, CSV_UPLOAD_MIN_MS);
       }
     },
     onSuccess: (result) => {
@@ -639,7 +638,7 @@ export default function Pagos() {
         />
         <Button
           type="button"
-          disabled={reading}
+          disabled={reading || upload.isPending}
           onClick={() => {
             const input = fileInput.current;
             if (!input || reading) return;
@@ -652,7 +651,7 @@ export default function Pagos() {
         </Button>
       </div>
 
-      {reading ? (
+      {reading && !summary?.saleCount ? (
         <WorkLoader
           key={readingName}
           label="Leyendo CSV"
@@ -661,24 +660,22 @@ export default function Pagos() {
       ) : (
         <>
           {notice ? (
-            <NoticeBanner
+            <SettlementAlert
               tone={notice.tone}
               title={notice.title}
               detail={notice.detail}
               action={notice.canReplace ? {
                 label: 'Reemplazar',
-                busy: reading,
+                busy: upload.isPending,
                 onClick: () => {
-                  const pending = lastCsvRef.current;
-                  if (!pending || reading) return;
-                  setReadingName(pending.filename);
+                  if (!lastCsvRef.current || upload.isPending) return;
                   upload.mutate({ replace: true });
                 },
               } : undefined}
             />
           ) : null}
           {loadError ? (
-            <NoticeBanner
+            <SettlementAlert
               tone="error"
               title="No se pudieron cargar los pagos."
               detail="Recarga la página o vuelve a cruzar el CSV."
