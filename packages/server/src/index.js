@@ -27,7 +27,7 @@ if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
   process.env.AUTH_ALLOW_SIGNUP = 'true';
 }
 
-const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
+const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
@@ -52,6 +52,7 @@ await systemConfig.ensureSystemConfigTable();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const orderManagement = await import('./order-management.js');
+const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
@@ -338,6 +339,16 @@ app.get('/order-management/geo/maps-key', async (c) => {
     const key = String(process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
     return ok(c, { key });
   } catch (e) { return fail(c, e); }
+});
+app.get('/order-management/own-fleet', async (c) => {
+  try { return ok(c, await ownFleetConfig.loadOwnFleetConfig()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.put('/order-management/own-fleet', requireAdmin(), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await ownFleetConfig.saveOwnFleetConfig(null, body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, 400); }
 });
 
 // ── Pedidos multicanal (backend nuevo; no reemplaza la bandeja actual) ──

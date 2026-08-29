@@ -3,6 +3,9 @@ import type { PermissionKey } from './permissions';
 export function isNavItemActive(pathname: string, to: string) {
   const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (to === '/credit-notes') return activePath === to;
+  if (to === '/orders') {
+    return activePath === to || activePath === '/orders/nueva' || activePath.startsWith('/orders/nueva/');
+  }
   return activePath === to || activePath.startsWith(`${to}/`);
 }
 
@@ -16,4 +19,26 @@ export function mobileNavPathname(
     if (can('salesperson') && !can('order_management')) return '/mis-ventas';
   }
   return activePath;
+}
+
+export type NavVisibilityItem = {
+  to: string;
+  permission?: PermissionKey;
+  adminOnly?: boolean;
+  superadminOnly?: boolean;
+  hiddenInProduction?: boolean;
+};
+
+export function isNavItemVisible(
+  item: NavVisibilityItem,
+  can: (permission: PermissionKey) => boolean,
+  isProd = false,
+  options: { isAdmin?: boolean; isSuperadmin?: boolean } = {},
+) {
+  if (isProd && item.hiddenInProduction) return false;
+  if (item.adminOnly) return options.isAdmin === true || options.isSuperadmin === true;
+  if (item.superadminOnly) return options.isSuperadmin === true;
+  if (!item.permission) return false;
+  if (item.to === '/salidas') return can('salidas') || can('productos');
+  return can(item.permission);
 }

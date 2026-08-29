@@ -7,8 +7,8 @@ import { firstAllowedPath, PERMISSIONS } from '../lib/permissions';
 const descriptions = new Map(PERMISSIONS.map((permission) => [permission.key, permission.description]));
 
 export default function MobileMenu({ isMobile }: { isMobile: boolean }) {
-  const { user, can, isSuperadmin, loading } = usePermissions();
-  const groups = visibleNavigation(can, undefined, { isSuperadmin });
+  const { user, can, isAdmin, isSuperadmin, loading } = usePermissions();
+  const groups = visibleNavigation(can, undefined, { isAdmin, isSuperadmin });
 
   if (!isMobile) return <Navigate to={firstAllowedPath(user)} replace />;
 

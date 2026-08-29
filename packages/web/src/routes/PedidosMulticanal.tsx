@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -34,6 +34,12 @@ import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
+import {
+  generateDocumentLabel,
+  generateDocumentPath,
+  pendingDocumentKind,
+} from '../lib/order-document';
+import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -140,17 +146,33 @@ type ManagedOrder = {
     needsCustomerChoice: boolean;
   };
   currency: string;
+  subtotal?: number | null;
+  shippingAmount?: number | null;
   total?: number | null;
-  customer?: { name?: string; documentNumber?: string; phone?: string };
+  customer?: {
+    name?: string;
+    documentNumber?: string;
+    documentType?: string;
+    phone?: string;
+    legalName?: string;
+    address?: string;
+  };
   shipping?: {
     type?: string;
     carrier?: string;
     trackingCode?: string;
     address?: string;
     district?: string;
+    province?: string;
+    department?: string;
     reference?: string;
     lat?: number;
     lng?: number;
+    districtAmount?: number;
+    distanceAmount?: number;
+    distanceKm?: number;
+    zoneKind?: string;
+    zoneLabel?: string;
   };
   metadata?: {
     paymentMethod?: string;
@@ -228,6 +250,12 @@ type SalesPulse = {
     ordersCount: number;
     salesTotal: number;
   }>;
+  ownFleetShipping?: {
+    total: number;
+    districtTotal: number;
+    distanceTotal: number;
+    deliveries: number;
+  };
 };
 
 const DAY_LIMIT = 500;
@@ -611,6 +639,14 @@ export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+
+  const goToGenerateDocument = useCallback((order: ManagedOrder) => {
+    const kind = pendingDocumentKind(order);
+    if (!kind) return;
+    navigate(generateDocumentPath(kind), {
+      state: { fromOrderId: order.id, fromOrder: order },
+    });
+  }, [navigate]);
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
@@ -722,9 +758,9 @@ export default function PedidosMulticanal() {
   );
 
   useEffect(() => {
-    const registered = (location.state as { registered?: string } | null)?.registered;
+    const registered = registeredFromMisVentasState(location.state as { registered?: string } | null);
     if (!registered) return;
-    setSuccessMessage(`Venta ${registered} registrada.`);
+    setSuccessMessage(saleSavedSnackbarMessage(registered));
     void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
     void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
     navigate(location.pathname, { replace: true, state: null });
@@ -1088,6 +1124,14 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              {pendingDocumentKind(row.original) && (
+                <>
+                  <DropdownMenuItem onClick={() => goToGenerateDocument(row.original)}>
+                    <FileText /> {generateDocumentLabel(pendingDocumentKind(row.original)!)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
@@ -1102,7 +1146,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById]);
+  }, [companyById, goToGenerateDocument]);
 
   const table = useReactTable({
     data: orders,
@@ -1129,6 +1173,15 @@ export default function PedidosMulticanal() {
               </h2>
             )}
           </div>
+          {salesPulse?.ownFleetShipping && salesPulse.ownFleetShipping.total > 0 && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Envío propio {formatMoney(salesPulse.ownFleetShipping.total)}
+              {salesPulse.ownFleetShipping.deliveries
+                ? ` · ${salesPulse.ownFleetShipping.deliveries} ${salesPulse.ownFleetShipping.deliveries === 1 ? 'entrega' : 'entregas'}`
+                : ''}
+              {` · Distrito ${formatMoney(salesPulse.ownFleetShipping.districtTotal)} · Distancia ${formatMoney(salesPulse.ownFleetShipping.distanceTotal)}`}
+            </p>
+          )}
           {pulseError && (
             <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
               Reintentar
@@ -1336,7 +1389,26 @@ export default function PedidosMulticanal() {
                       <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
                       <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
                       <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
+                      {pendingDocumentKind(detail) && (
+                        <div className="py-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="cursor-pointer"
+                            onClick={() => goToGenerateDocument(detail)}
+                          >
+                            <FileText /> {generateDocumentLabel(pendingDocumentKind(detail)!)}
+                          </Button>
+                        </div>
+                      )}
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
+                      {Number(detail.shippingAmount) > 0 && (
+                        <>
+                          <DetailField icon={<Truck />} label="Envío distrito" content={<span className="tabular-nums">{formatMoney(detail.shipping?.districtAmount, detail.currency)}{detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}</span>} />
+                          <DetailField icon={<Truck />} label="Distancia" content={<span className="tabular-nums">{formatMoney(detail.shipping?.distanceAmount, detail.currency)}{detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}</span>} />
+                        </>
+                      )}
                     </div>
                   </section>
 

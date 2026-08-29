@@ -12,6 +12,7 @@ import {
   CircleDollarSign,
   RefreshCw,
   Store,
+  Truck,
   WalletCards,
 } from 'lucide-react';
 import {
@@ -485,6 +486,12 @@ export default function Dashboard() {
           detail="Aún no pagan"
           icon={WalletCards}
           tone="wait"
+        />
+        <KpiCard
+          title="Envío propio"
+          value={money.format(data?.ownFleetShipping?.total || 0)}
+          detail={`Distrito ${money.format(data?.ownFleetShipping?.districtTotal || 0)} · Distancia ${money.format(data?.ownFleetShipping?.distanceTotal || 0)}`}
+          icon={Truck}
         />
       </div>
 

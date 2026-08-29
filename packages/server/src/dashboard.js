@@ -337,6 +337,22 @@ export async function getDashboard(input = {}, db) {
     filters.previousTo,
     filters.companyId,
   ]);
+  const shippingQuery = await target.query(
+    `select
+       coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total,
+       coalesce(sum(nullif(o.shipping->>'districtAmount', '')::numeric), 0)::numeric as district_total,
+       coalesce(sum(nullif(o.shipping->>'distanceAmount', '')::numeric), 0)::numeric as distance_total,
+       count(*) filter (where coalesce(o.shipping_amount, 0) > 0)::int as deliveries
+     from orders o
+     where o.order_status not in ('cancelled', 'failed')
+       and o.payment_status not in ('refunded', 'failed')
+       and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+       and lower(coalesce(o.shipping->>'carrier', '')) = 'nosotros'
+       and lower(coalesce(o.shipping->>'type', '')) = 'envio'
+       and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date between $1::date and $2::date
+       and ($3::int is null or o.company_id = $3)`,
+    [filters.from, filters.to, filters.companyId],
+  );
   const row = query.rows[0] || {};
   const summary = normalizeSummary(row.summary);
   const previousSummary = normalizeSummary(row.previous_summary);
@@ -384,6 +400,13 @@ export async function getDashboard(input = {}, db) {
   previousSummary.cancellationRate = previousSummary.totalOrders > 0
     ? (previousSummary.cancelledOrders / previousSummary.totalOrders) * 100
     : 0;
+  const shippingRow = shippingQuery.rows[0] || {};
+  const ownFleetShipping = {
+    total: numeric(shippingRow.shipping_total),
+    districtTotal: numeric(shippingRow.district_total),
+    distanceTotal: numeric(shippingRow.distance_total),
+    deliveries: numeric(shippingRow.deliveries),
+  };
   const value = {
     filters,
     summary,
@@ -398,6 +421,7 @@ export async function getDashboard(input = {}, db) {
     salesByDay,
     companyRanking,
     companies: row.companies || [],
+    ownFleetShipping,
     dataThrough: row.data_through ? new Date(row.data_through).toISOString() : null,
     generatedAt: new Date().toISOString(),
     cache: { hit: false, ttlSeconds: RESPONSE_CACHE_TTL_MS / 1000 },

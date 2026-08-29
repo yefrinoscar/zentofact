@@ -17,6 +17,7 @@ const CARRIER_LABELS: Record<string, string> = {
   marvisuar: 'Marvisuar',
   shaloom: 'Shaloom',
   dinsides: 'Dinsides',
+  nosotros: 'Nosotros',
 };
 
 export type ManagedOrderDeliveryInput = {

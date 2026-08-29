@@ -16,6 +16,7 @@ import {
   ShoppingBag,
   Shuffle,
   TrendingDown,
+  Truck,
   Users,
   Wallet,
   WalletCards,
@@ -23,7 +24,7 @@ import {
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 import type { PermissionKey } from './permissions';
-import { isNavItemActive, mobileNavPathname } from './nav-path';
+import { isNavItemActive, isNavItemVisible, mobileNavPathname } from './nav-path';
 
 export { isNavItemActive, mobileNavPathname };
 
@@ -35,6 +36,7 @@ export type NavItem = {
   /** Los ítems solo para superadmin no dependen de un permiso del menú. */
   permission?: PermissionKey;
   description?: string;
+  adminOnly?: boolean;
   superadminOnly?: boolean;
   hiddenInProduction?: boolean;
 };
@@ -65,6 +67,13 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
+      {
+        to: '/orders/envio',
+        icon: Truck,
+        label: 'Envío propio',
+        adminOnly: true,
+        description: 'Distritos y precios de movilidad propia.',
+      },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
     ],
@@ -101,18 +110,12 @@ export const NAV_GROUPS: NavGroup[] = [
 export function visibleNavigation(
   can: (permission: PermissionKey) => boolean,
   isProd = import.meta.env.VITE_APP_ENV === 'production',
-  options: { isSuperadmin?: boolean } = {},
+  options: { isAdmin?: boolean; isSuperadmin?: boolean } = {},
 ) {
   return NAV_GROUPS
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => {
-        if (isProd && item.hiddenInProduction) return false;
-        if (item.superadminOnly) return options.isSuperadmin === true;
-        if (!item.permission) return false;
-        if (item.to === '/salidas') return can('salidas') || can('productos');
-        return can(item.permission);
-      }),
+      items: group.items.filter((item) => isNavItemVisible(item, can, isProd, options)),
     }))
     .filter((group) => group.items.length > 0);
 }

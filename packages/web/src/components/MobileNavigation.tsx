@@ -20,9 +20,9 @@ import {
 
 export function MobileTopNavigation({ title }: { title: string }) {
   const { pathname } = useLocation();
-  const { can } = usePermissions();
+  const { can, isAdmin, isSuperadmin } = usePermissions();
   const navPath = mobileNavPathname(pathname, can);
-  const groups = visibleNavigation(can);
+  const groups = visibleNavigation(can, undefined, { isAdmin, isSuperadmin });
   const activeGroup = groups.find((group) => group.items.some((item) => isNavItemActive(navPath, item.to)));
   const onMenu = pathname === '/menu';
   const registeringSale = pathname === '/orders/nueva' || pathname.startsWith('/orders/nueva/');
