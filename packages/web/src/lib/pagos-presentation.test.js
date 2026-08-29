@@ -138,6 +138,7 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['trend', 'share', 'split']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],

@@ -31,7 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Label, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -313,23 +313,45 @@ function seriesColor(config: ChartConfig, key: string) {
   return 'var(--foreground)';
 }
 
-function SettlementPairChart({
-  id,
-  hint,
-  items,
-  days,
+type SettlementChartItem = {
+  key: string;
+  label: string;
+  value: number;
+  tone?: 'neutral' | 'receive' | 'take' | 'wait';
+};
+
+function MoneyTooltip({
+  config,
+  value,
+  name,
 }: {
-  id: keyof typeof SETTLEMENT_CHART_CONFIG;
-  hint: string;
-  items: Array<{ key: string; label: string; value: number; tone?: 'neutral' | 'receive' | 'take' | 'wait' }>;
-  days: Array<Record<string, number | string>>;
+  config: ChartConfig;
+  value: unknown;
+  name: unknown;
 }) {
-  const config = SETTLEMENT_CHART_CONFIG[id];
-  const keys = items.map((item) => item.key);
-  const points = settlementTrendPoints(days, keys);
-  const caption = items.map((item) => `${item.label} ${money.format(item.value)}`).join(', ');
   return (
-    <div aria-label={caption}>
+    <div className="flex w-full items-center justify-between gap-3">
+      <span className="text-muted-foreground">
+        {String(config[String(name) as keyof typeof config]?.label ?? name)}
+      </span>
+      <span className="font-mono font-medium tabular-nums text-foreground">
+        {moneyTooltipValue(value)}
+      </span>
+    </div>
+  );
+}
+
+function SettlementMetricHeader({
+  items,
+  hint,
+  config,
+}: {
+  items: SettlementChartItem[];
+  hint: string;
+  config: ChartConfig;
+}) {
+  return (
+    <>
       <div className="flex items-start gap-4">
         {items.map((item) => (
           <div key={item.key} className="min-w-0 flex-1">
@@ -350,69 +372,213 @@ function SettlementPairChart({
         ))}
       </div>
       {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
+    </>
+  );
+}
+
+function BilledTrendChart({
+  items,
+  days,
+  config,
+}: {
+  items: SettlementChartItem[];
+  days: Array<Record<string, number | string>>;
+  config: ChartConfig;
+}) {
+  const points = settlementTrendPoints(days, items.map((item) => item.key));
+  return (
+    <ChartContainer
+      id="pagos-billed"
+      config={config}
+      className="mt-2 aspect-auto h-[7.5rem] w-full"
+      initialDimension={{ width: 280, height: 120 }}
+    >
+      <AreaChart data={points} margin={{ top: 10, right: 8, left: 8, bottom: 6 }}>
+        <defs>
+          {items.map((item) => (
+            <linearGradient key={item.key} id={`pagos-fill-billed-${item.key}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={seriesColor(config, item.key)} stopOpacity={0.22} />
+              <stop offset="90%" stopColor={seriesColor(config, item.key)} stopOpacity={0} />
+            </linearGradient>
+          ))}
+        </defs>
+        <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
+        <XAxis dataKey="i" hide />
+        <YAxis hide domain={['auto', 'auto']} />
+        <ChartTooltip
+          cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.45 }}
+          content={(
+            <ChartTooltipContent
+              hideLabel
+              indicator="dot"
+              formatter={(value, name) => <MoneyTooltip config={config} value={value} name={name} />}
+            />
+          )}
+        />
+        {items.map((item) => (
+          <Area
+            key={item.key}
+            type="monotone"
+            dataKey={item.key}
+            stroke={seriesColor(config, item.key)}
+            strokeWidth={2.25}
+            fill={`url(#pagos-fill-billed-${item.key})`}
+            isAnimationActive={false}
+            activeDot={{ r: 3.5, strokeWidth: 2, stroke: 'var(--background)' }}
+            dot={(props: { index?: number; cx?: number; cy?: number }) => {
+              if (props.index !== points.length - 1) return null;
+              return (
+                <circle
+                  key={`${item.key}-end`}
+                  cx={props.cx}
+                  cy={props.cy}
+                  r={3}
+                  fill={seriesColor(config, item.key)}
+                />
+              );
+            }}
+          />
+        ))}
+      </AreaChart>
+    </ChartContainer>
+  );
+}
+
+function FeesShareChart({
+  items,
+  total,
+  config,
+}: {
+  items: SettlementChartItem[];
+  total: number;
+  config: ChartConfig;
+}) {
+  const data = items.map((item) => ({
+    key: item.key,
+    label: item.label,
+    value: item.value,
+    fill: seriesColor(config, item.key),
+  }));
+  return (
+    <ChartContainer
+      id="pagos-fees"
+      config={config}
+      className="mx-auto mt-1 aspect-square h-[7.5rem]"
+      initialDimension={{ width: 120, height: 120 }}
+    >
+      <PieChart>
+        <ChartTooltip
+          cursor={false}
+          content={(
+            <ChartTooltipContent
+              hideLabel
+              nameKey="key"
+              formatter={(value, name) => <MoneyTooltip config={config} value={value} name={name} />}
+            />
+          )}
+        />
+        <Pie
+          data={data}
+          dataKey="value"
+          nameKey="key"
+          innerRadius={36}
+          outerRadius={54}
+          strokeWidth={3}
+          stroke="var(--background)"
+          paddingAngle={2}
+          isAnimationActive={false}
+        >
+          {data.map((item) => (
+            <Cell key={item.key} fill={item.fill} />
+          ))}
+          <Label
+            content={({ viewBox }) => {
+              if (!viewBox || !('cx' in viewBox) || !('cy' in viewBox)) return null;
+              return (
+                <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                  <tspan className="fill-foreground text-sm font-semibold tabular-nums">
+                    {money.format(total)}
+                  </tspan>
+                  <tspan x={viewBox.cx} dy="1.2em" className="fill-muted-foreground text-[10px]">
+                    Se queda
+                  </tspan>
+                </text>
+              );
+            }}
+          />
+        </Pie>
+      </PieChart>
+    </ChartContainer>
+  );
+}
+
+function PayoutSplitChart({
+  items,
+  config,
+}: {
+  items: SettlementChartItem[];
+  config: ChartConfig;
+}) {
+  const [active, setActive] = useState(items[0]?.key || 'paid');
+  const row = Object.fromEntries(items.map((item) => [item.key, item.value]));
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  return (
+    <div className="mt-3">
       <ChartContainer
-        id={`pagos-${id}`}
+        id="pagos-payout"
         config={config}
-        className="mt-2 aspect-auto h-[7.5rem] w-full"
-        initialDimension={{ width: 280, height: 120 }}
+        className="aspect-auto h-10 w-full"
+        initialDimension={{ width: 280, height: 40 }}
       >
-        <AreaChart data={points} margin={{ top: 10, right: 8, left: 8, bottom: 6 }}>
-          <defs>
-            {items.map((item) => (
-              <linearGradient key={item.key} id={`pagos-fill-${id}-${item.key}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={seriesColor(config, item.key)} stopOpacity={0.22} />
-                <stop offset="90%" stopColor={seriesColor(config, item.key)} stopOpacity={0} />
-              </linearGradient>
-            ))}
-          </defs>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
-          <XAxis dataKey="i" hide />
-          <YAxis hide domain={['auto', 'auto']} />
+        <BarChart
+          data={[{ split: 'Depósito', ...row }]}
+          layout="vertical"
+          margin={{ left: 0, right: 0, top: 4, bottom: 4 }}
+        >
+          <XAxis type="number" hide />
+          <YAxis type="category" dataKey="split" hide />
           <ChartTooltip
-            cursor={{ stroke: 'var(--muted-foreground)', strokeDasharray: '3 4', strokeOpacity: 0.45 }}
+            cursor={false}
             content={(
               <ChartTooltipContent
                 hideLabel
-                indicator="dot"
-                formatter={(value, name) => (
-                  <div className="flex w-full items-center justify-between gap-3">
-                    <span className="text-muted-foreground">
-                      {String(config[String(name) as keyof typeof config]?.label ?? name)}
-                    </span>
-                    <span className="font-mono font-medium tabular-nums text-foreground">
-                      {moneyTooltipValue(value)}
-                    </span>
-                  </div>
-                )}
+                formatter={(value, name) => <MoneyTooltip config={config} value={value} name={name} />}
               />
             )}
           />
-          {items.map((item) => (
-            <Area
+          {items.map((item, index) => (
+            <Bar
               key={item.key}
-              type="monotone"
               dataKey={item.key}
-              stroke={seriesColor(config, item.key)}
-              strokeWidth={2.25}
-              fill={`url(#pagos-fill-${id}-${item.key})`}
+              stackId="deposito"
+              fill={seriesColor(config, item.key)}
+              radius={index === 0 ? [8, 0, 0, 8] : [0, 8, 8, 0]}
+              barSize={22}
+              maxBarSize={22}
               isAnimationActive={false}
-              activeDot={{ r: 3.5, strokeWidth: 2, stroke: 'var(--background)' }}
-              dot={(props: { index?: number; cx?: number; cy?: number }) => {
-                if (props.index !== points.length - 1) return null;
-                return (
-                  <circle
-                    key={`${item.key}-end`}
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={3}
-                    fill={seriesColor(config, item.key)}
-                  />
-                );
-              }}
+              onClick={() => setActive(item.key)}
+              style={{ opacity: active === item.key ? 1 : 0.62, cursor: 'pointer' }}
             />
           ))}
-        </AreaChart>
+        </BarChart>
       </ChartContainer>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {items.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            aria-pressed={active === item.key}
+            onClick={() => setActive(item.key)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] tabular-nums transition-colors',
+              active === item.key ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <span className="size-1.5 rounded-full" style={{ background: seriesColor(config, item.key) }} />
+            {item.label} {percentLabel(total ? item.value / total : null)}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -446,15 +612,25 @@ function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   return (
     <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
-      {charts.map((chart) => (
-        <SettlementPairChart
-          key={chart.id}
-          id={chart.id as keyof typeof SETTLEMENT_CHART_CONFIG}
-          hint={chart.hint}
-          items={chart.items}
-          days={days}
-        />
-      ))}
+      {charts.map((chart) => {
+        const id = chart.id as keyof typeof SETTLEMENT_CHART_CONFIG;
+        const config = SETTLEMENT_CHART_CONFIG[id];
+        const caption = chart.items.map((item) => `${item.label} ${money.format(item.value)}`).join(', ');
+        return (
+          <div key={chart.id} aria-label={caption}>
+            <SettlementMetricHeader items={chart.items} hint={chart.hint} config={config} />
+            {chart.kind === 'trend' ? (
+              <BilledTrendChart items={chart.items} days={days} config={config} />
+            ) : null}
+            {chart.kind === 'share' ? (
+              <FeesShareChart items={chart.items} total={chart.total || 0} config={config} />
+            ) : null}
+            {chart.kind === 'split' ? (
+              <PayoutSplitChart items={chart.items} config={config} />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
