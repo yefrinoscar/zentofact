@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, chooseLinesPerOrder, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -44,6 +44,29 @@ function row(overrides = {}) {
   ].map((value) => `"${value}"`).join(',');
 }
 
+test('el envío que paga el comprador no aparece ni mueve lo que te llega', () => {
+  const csv = [
+    HEADER,
+    row(),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-1.35' }),
+    row({ 'Tipo de transacción': 'Cobro por cofinanciamiento log√≠stico', 'Monto con IVA': '-3.9' }),
+    row({ 'Tipo de transacción': 'Pago de env√≠o comprador', 'Monto con IVA': '3.17' }),
+    row({ 'Tipo de transacción': 'Reversa de pago de env√≠o comprador', 'Monto con IVA': '-3.17' }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.bruto, 8.99);
+  assert.equal(sale.commission, 1.35);
+  assert.equal(sale.shipping, 3.9);
+  assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, -3.17);
+  assert.equal(sale.other, 0);
+  assert.equal(sale.neto, 3.74);
+  assert.equal(sale.neto, Math.round((sale.bruto - sale.commission - sale.shipping) * 100) / 100);
+  assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
+  assert.equal(sale.chargeGroups.some((group) => /comprador/i.test(group.type)), false);
+});
+
 test('agrega comisión envío y porcentaje por pedido sin inflar el envío comprador', () => {
   const csv = [
     HEADER,
@@ -62,10 +85,13 @@ test('agrega comisión envío y porcentaje por pedido sin inflar el envío compr
   assert.equal(sale.commissionRate, 0.15);
   assert.equal(sale.shipping, 3.9);
   assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, -3.17);
   assert.equal(sale.neto, 3.74);
   assert.equal(sale.take, 5.25);
   assert.equal(sale.takeRate, 0.584);
   assert.equal(sale.items.length, 1);
+  assert.equal(parsed.lines.filter((line) => line.chargeKind === 'buyer_shipping').every((line) => line.other === 0), true);
 });
 
 test('el porcentaje de comisión no es fijo entre ventas', () => {
@@ -148,6 +174,8 @@ test('agrupa unidades iguales en un producto y cobra envío por tipo', () => {
   assert.equal(sale.bruto, 98.89);
   assert.equal(sale.commission, 14.85);
   assert.equal(sale.shipping, 42.9);
+  assert.equal(sale.buyerShippingPaid, 34.87);
+  assert.equal(sale.buyerShippingReversed, -34.87);
   assert.equal(sale.neto, 41.14);
   const byKind = Object.fromEntries(sale.chargeGroups.map((group) => [group.kind, group]));
   assert.equal(byKind.sale.count, 11);
@@ -155,6 +183,36 @@ test('agrupa unidades iguales en un producto y cobra envío por tipo', () => {
   assert.equal(byKind.commission.amount, -14.85);
   assert.equal(byKind.shipping.count, 11);
   assert.equal(byKind.shipping.unitAmount, -3.9);
+  assert.equal(byKind.buyer_shipping, undefined);
+});
+
+test('el duplicado se resuelve por pedido: un CSV, no se mezclan archivos', () => {
+  const once = Array.from({ length: 11 }, (_, index) => unitLines(`item-${index + 1}`)).flat();
+  const csv = [HEADER, ...once].join('\n');
+  const older = parseSettlementCsv(csv).lines.map((line) => ({ ...line, importId: 6 }));
+  const newer = parseSettlementCsv(csv).lines.map((line) => ({ ...line, importId: 9 }));
+  const leftover = parseSettlementCsv([
+    HEADER,
+    row({
+      'Falabella-Id': 'item-1',
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto con IVA': '-3.9',
+    }),
+  ].join('\n')).lines.map((line) => ({ ...line, importId: 10 }));
+  const [sale] = aggregateSettlementSales([...older, ...newer, ...leftover]);
+  assert.equal(chooseLinesPerOrder([...older, ...newer, ...leftover]).every((line) => line.importId === 9), true);
+  assert.equal(sale.itemCount, 11);
+  assert.equal(sale.bruto, 98.89);
+  assert.equal(sale.commission, 14.85);
+  assert.equal(sale.shipping, 42.9);
+  assert.equal(sale.take, 57.75);
+  assert.equal(sale.neto, 41.14);
+  assert.equal(sale.buyerShipping, 0);
+  assert.equal(sale.buyerShippingPaid, 34.87);
+  assert.equal(sale.buyerShippingReversed, -34.87);
+  const byKind = Object.fromEntries(sale.chargeGroups.map((group) => [group.kind, group]));
+  assert.equal(byKind.commission.count, 11);
+  assert.equal(byKind.shipping.count, 11);
   assert.equal(byKind.buyer_shipping, undefined);
 });
 
@@ -195,6 +253,21 @@ test('pedidos mixtos quedan un grupo por SKU y precio', () => {
   assert.equal(shipping[0].unitAmount, null);
   assert.equal(shipping[0].amount, -10.3);
   assert.equal(charges.some((group) => group.kind === 'buyer_shipping'), false);
+});
+
+test('un envío comprador sin reversa tampoco entra a cobros ni a te llega', () => {
+  const csv = [
+    HEADER,
+    row(),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-1.35' }),
+    row({ 'Tipo de transacción': 'Pago de envío comprador', 'Monto con IVA': '3.17' }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.neto, 7.64);
+  assert.equal(sale.buyerShipping, 3.17);
+  assert.equal(sale.buyerShippingPaid, 3.17);
+  assert.equal(sale.buyerShippingReversed, 0);
+  assert.equal(sale.chargeGroups.some((group) => group.kind === 'buyer_shipping'), false);
 });
 
 test('separa lo vendido y lo que llega entre pagado y pendiente', () => {

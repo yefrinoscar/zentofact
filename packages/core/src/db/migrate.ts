@@ -1721,6 +1721,52 @@ const DDL = `
   GROUP BY sl.sale_source, sl.sale_id
   ON CONFLICT (sale_source, sale_id) DO NOTHING;
 
+  UPDATE settlement_lines
+     SET other_fees = 0
+   WHERE other_fees <> 0
+     AND lower(transaction_type) LIKE '%comprador%';
+
+  UPDATE sale_settlements ss
+     SET bruto = sub.bruto,
+         commission = sub.commission,
+         other_fees = sub.other_fees,
+         neto = sub.neto,
+         updated_at = now()
+    FROM (
+      SELECT sl.sale_source,
+             sl.sale_id,
+             COALESCE(SUM(sl.bruto), 0) AS bruto,
+             COALESCE(SUM(sl.commission), 0) AS commission,
+             COALESCE(SUM(sl.other_fees), 0) AS other_fees,
+             COALESCE(SUM(sl.neto), 0) AS neto
+        FROM settlement_lines sl
+        JOIN (
+          SELECT DISTINCT ON (order_ref)
+                 order_ref, import_id
+            FROM (
+              SELECT order_ref,
+                     import_id,
+                     COUNT(*) FILTER (WHERE kind = 'sale') AS sale_lines,
+                     COUNT(*) AS import_lines
+                FROM settlement_lines
+               WHERE match_status = 'matched'
+                 AND sale_id IS NOT NULL
+                 AND sale_source IS NOT NULL
+                 AND order_ref <> ''
+               GROUP BY order_ref, import_id
+            ) scored
+           ORDER BY order_ref, sale_lines DESC, import_lines DESC, import_id DESC
+        ) best
+          ON best.order_ref = sl.order_ref
+         AND best.import_id = sl.import_id
+       WHERE sl.match_status = 'matched'
+         AND sl.sale_id IS NOT NULL
+         AND sl.sale_source IS NOT NULL
+       GROUP BY sl.sale_source, sl.sale_id
+    ) sub
+   WHERE ss.sale_source = sub.sale_source
+     AND ss.sale_id = sub.sale_id;
+
   UPDATE orders o
   SET created_by = e.actor_user_id
   FROM (

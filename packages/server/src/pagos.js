@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
+import { classifyChargeKind, lineFingerprint, normalizeHeader, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, attachDocumentsToSales, summarizeSettlementSales } from './pagos-sales.js';
 
@@ -167,6 +167,7 @@ function mapLine(row) {
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
     type: row.transaction_type || '',
     kind: row.kind || '',
+    chargeKind: classifyChargeKind(row.transaction_type || ''),
     paid: normalizeHeader(row.payment_status || '') !== 'no pagado',
     paymentStatus: row.payment_status || '',
     itemId: row.item_id || '',
@@ -244,6 +245,12 @@ export async function listSettlementLines(filter = {}, db) {
   };
 }
 
+export const SETTLEMENT_SALES_PAGE_MAX = 2000;
+
+export function settlementSalesLimit(raw) {
+  return Math.min(Math.max(Number(raw) || 50, 1), SETTLEMENT_SALES_PAGE_MAX);
+}
+
 export async function listSettlementSales(filter = {}, db) {
   const target = await resolvePool(db);
   const importId = optionalPositiveInt(filter.importId);
@@ -252,7 +259,7 @@ export async function listSettlementSales(filter = {}, db) {
     throw httpError('Estado de pago inválido.');
   }
   const search = String(filter.search || '').trim().toLowerCase();
-  const limit = Math.min(Math.max(Number(filter.limit) || 50, 1), 200);
+  const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
   const values = [];
   const where = [];

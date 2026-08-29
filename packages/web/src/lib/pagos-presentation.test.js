@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, saleOverview, salesPageNote, settlementCash, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este contenido ya se cruzó.');
@@ -23,15 +23,17 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusLabel('No Pagado'), 'No pagado');
 });
 
-test('el overview nombra cobro envío y lo que se queda', () => {
+test('el overview nombra logística y lo que se queda', () => {
   assert.equal(
     saleOverview({ saleCount: 27, commissionRate: 0.14, shippingRate: 0.21, takeRate: 0.35 }),
-    '27 ventas · comisión 14% · cobro envío 21% · se queda 35%',
+    '27 ventas · comisión 14% · logística 21% · se queda 35%',
   );
   assert.equal(
     saleOverview({ saleCount: 1, commissionRate: 0.15, shippingRate: 0.434, takeRate: 0.584 }),
-    '1 venta · comisión 15% · cobro envío 43.4% · se queda 58.4%',
+    '1 venta · comisión 15% · logística 43.4% · se queda 58.4%',
   );
+  assert.equal(chargeKindLabel('shipping'), 'Logística');
+  assert.equal(chargeKindLabel('buyer_shipping'), 'Envío del comprador');
 });
 
 test('acorta el título de plaza y deja SKU e unidades aparte', () => {
@@ -72,6 +74,19 @@ test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', 
   const decoded = decodeSettlementCsv(bytes);
   assert.match(decoded, /creación/);
   assert.match(decoded, /Estado de pago/);
+});
+
+test('las cabeceras de dinero caben en título y una explicación', () => {
+  for (const column of Object.values(PAGOS_COLUMN_COPY)) {
+    assert.equal(column.label.split(/\s+/).length <= 2, true, column.label);
+    assert.equal(column.hint.split(/\s+/).length <= 4, true, column.hint);
+    assert.equal(column.hint.includes('\n'), false);
+  }
+  assert.equal(PAGOS_COLUMN_COPY.neto.hint, 'Te depositan');
+  assert.equal(PAGOS_COLUMN_COPY.take.hint, 'Comisión + logística');
+  assert.equal(salesPageNote(27, 27), '27 ventas');
+  assert.equal(salesPageNote(1, 1), '1 venta');
+  assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');
 });
 
 test('el cruce se nombra como en la mesa', () => {

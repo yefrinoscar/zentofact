@@ -82,6 +82,18 @@ test('agrega bruto comisión y neto al marcar la venta pagada', () => {
   assert.equal(paidSales[0].amounts.neto, 161.41);
 });
 
+test('el envío del comprador no infla otros cobros al marcar pagada', () => {
+  const { paidSales } = matchSettlementLines([
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 8.99, commission: 0, other: 0, neto: 8.99 },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 1.35, other: 0, neto: -1.35 },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 0, other: 0, neto: 3.17 },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 0, other: 0, neto: -3.17 },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 0, other: 3.9, neto: -3.9 },
+  ], sales);
+  assert.equal(paidSales[0].amounts.other, 3.9);
+  assert.equal(paidSales[0].amounts.neto, 3.74);
+});
+
 test('un pedido desconocido no se adivina por SKU', () => {
   const match = matchSettlementLine({
     orderId: '3248910865',

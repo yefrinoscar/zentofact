@@ -3,6 +3,7 @@ import {
   normalizeHeader,
   parseRate,
   rawValueByHeader,
+  repairSettlementText,
 } from './pagos-csv.js';
 
 function round2(value) {
@@ -53,6 +54,8 @@ function emptyItem(itemId, sku, productName, shopSku) {
     commission: 0,
     shipping: 0,
     buyerShipping: 0,
+    buyerShippingPaid: 0,
+    buyerShippingReversed: 0,
     other: 0,
     neto: 0,
     csvRates: [],
@@ -72,6 +75,8 @@ function emptySale(orderId, line) {
     commission: 0,
     shipping: 0,
     buyerShipping: 0,
+    buyerShippingPaid: 0,
+    buyerShippingReversed: 0,
     other: 0,
     neto: 0,
     csvRates: [],
@@ -86,7 +91,12 @@ function applyCharge(target, kind, amount) {
   if (kind === 'sale') target.bruto = round2(target.bruto + Math.abs(signed));
   else if (kind === 'commission') target.commission = round2(target.commission + Math.abs(signed));
   else if (kind === 'shipping') target.shipping = round2(target.shipping + Math.abs(signed));
-  else if (kind === 'buyer_shipping') target.buyerShipping = round2(target.buyerShipping + signed);
+  else if (kind === 'buyer_shipping') {
+    target.buyerShipping = round2(target.buyerShipping + signed);
+    if (signed > 0) target.buyerShippingPaid = round2((target.buyerShippingPaid || 0) + signed);
+    else if (signed < 0) target.buyerShippingReversed = round2((target.buyerShippingReversed || 0) + signed);
+    return;
+  }
   else target.other = round2(target.other + signed);
   target.neto = round2(target.neto + signed);
 }
@@ -99,6 +109,8 @@ function finalizeTotals(row) {
     commission: row.commission,
     shipping: row.shipping,
     buyerShipping: row.buyerShipping,
+    buyerShippingPaid: row.buyerShippingPaid || 0,
+    buyerShippingReversed: row.buyerShippingReversed || 0,
     other: row.other,
     neto: row.neto,
     take,
@@ -169,6 +181,8 @@ export function groupSaleProducts(items) {
       commission: 0,
       shipping: 0,
       buyerShipping: 0,
+      buyerShippingPaid: 0,
+      buyerShippingReversed: 0,
       other: 0,
       neto: 0,
       csvRates: [],
@@ -178,6 +192,8 @@ export function groupSaleProducts(items) {
     current.commission = round2(current.commission + Number(item.commission || 0));
     current.shipping = round2(current.shipping + Number(item.shipping || 0));
     current.buyerShipping = round2(current.buyerShipping + Number(item.buyerShipping || 0));
+    current.buyerShippingPaid = round2(current.buyerShippingPaid + Number(item.buyerShippingPaid || 0));
+    current.buyerShippingReversed = round2(current.buyerShippingReversed + Number(item.buyerShippingReversed || 0));
     current.other = round2(current.other + Number(item.other || 0));
     current.neto = round2(current.neto + Number(item.neto || 0));
     if (item.commissionRate != null && Number.isFinite(Number(item.commissionRate))) {
@@ -216,14 +232,12 @@ const CHARGE_KIND_ORDER = {
 
 export function groupSaleCharges(charges) {
   const groups = new Map();
-  let buyerNet = 0;
   for (const charge of charges || []) {
     const kind = charge.kind || 'other';
-    if (kind === 'buyer_shipping') {
-      buyerNet = round2(buyerNet + Number(charge.amount || 0));
-      continue;
-    }
-    const key = `${kind}|${charge.type || ''}`;
+    if (kind === 'buyer_shipping') continue;
+    const key = ['sale', 'commission', 'shipping'].includes(kind)
+      ? kind
+      : `${kind}|${charge.type || ''}`;
     const current = groups.get(key) || {
       kind,
       type: charge.type || '',
@@ -236,16 +250,6 @@ export function groupSaleCharges(charges) {
     current.amount = round2(current.amount + amount);
     current.unitAmounts.push(amount);
     groups.set(key, current);
-  }
-
-  if (buyerNet !== 0) {
-    groups.set('buyer_shipping|', {
-      kind: 'buyer_shipping',
-      type: '',
-      count: 1,
-      amount: buyerNet,
-      unitAmounts: [buyerNet],
-    });
   }
 
   return [...groups.values()]
@@ -265,9 +269,71 @@ export function groupSaleCharges(charges) {
     ));
 }
 
+function importKey(line) {
+  const value = Number(line.importId);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function chargeKindOf(line) {
+  return line.chargeKind || classifyChargeKind(line.type);
+}
+
+function scoreOrderImport(importId, lines) {
+  const hasSale = lines.some((line) => chargeKindOf(line) === 'sale');
+  return { importId, lines, hasSale, count: lines.length };
+}
+
+export function chooseLinesPerOrder(lines) {
+  const byOrder = new Map();
+  for (const line of lines || []) {
+    const orderId = String(line.orderId || '').trim();
+    if (!orderId) continue;
+    const imports = byOrder.get(orderId) || new Map();
+    const key = importKey(line);
+    const bucket = imports.get(key) || [];
+    bucket.push(line);
+    imports.set(key, bucket);
+    byOrder.set(orderId, imports);
+  }
+  const chosen = [];
+  for (const imports of byOrder.values()) {
+    const ranked = [...imports.entries()]
+      .map(([importId, orderLines]) => scoreOrderImport(importId, orderLines))
+      .sort((left, right) => (
+        Number(right.hasSale) - Number(left.hasSale)
+        || right.count - left.count
+        || right.importId - left.importId
+      ));
+    chosen.push(...(ranked[0]?.lines || []));
+  }
+  return chosen;
+}
+
+function uniqueSettlementLines(lines) {
+  const kept = [];
+  const seen = new Set();
+  for (const line of lines || []) {
+    const itemId = String(line.itemId || '').trim();
+    if (!itemId) {
+      kept.push(line);
+      continue;
+    }
+    const key = [
+      String(line.orderId || '').trim(),
+      itemId,
+      chargeKindOf(line),
+      round2(signedAmount(line)).toFixed(2),
+    ].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(line);
+  }
+  return kept;
+}
+
 export function aggregateSettlementSales(lines) {
   const groups = new Map();
-  for (const line of lines || []) {
+  for (const line of uniqueSettlementLines(chooseLinesPerOrder(lines))) {
     const orderId = String(line.orderId || '').trim();
     if (!orderId) continue;
     const current = groups.get(orderId) || emptySale(orderId, line);
@@ -275,7 +341,7 @@ export function aggregateSettlementSales(lines) {
     const amount = signedAmount(line);
     applyCharge(current, kind, amount);
     current.charges.push({
-      type: line.type || '',
+      type: repairSettlementText(line.type || ''),
       kind,
       amount,
       sku: line.sku || '',

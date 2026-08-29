@@ -95,8 +95,8 @@ export function percentLabel(rate: number | null | undefined) {
 export function chargeKindLabel(kind: string | null | undefined) {
   if (kind === 'sale') return 'Precio';
   if (kind === 'commission') return 'Comisión';
-  if (kind === 'shipping') return 'Cobro envío';
-  if (kind === 'buyer_shipping') return 'Envío comprador';
+  if (kind === 'shipping') return 'Logística';
+  if (kind === 'buyer_shipping') return 'Envío del comprador';
   if (kind === 'refund') return 'Devolución';
   return 'Otro';
 }
@@ -143,7 +143,7 @@ export function saleOverview(summary: {
   const count = Number(summary?.saleCount || 0);
   if (!count) return '';
   const ventas = count === 1 ? '1 venta' : `${count} ventas`;
-  return `${ventas} · comisión ${percentLabel(summary?.commissionRate)} · cobro envío ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
+  return `${ventas} · comisión ${percentLabel(summary?.commissionRate)} · logística ${percentLabel(summary?.shippingRate)} · se queda ${percentLabel(summary?.takeRate)}`;
 }
 
 export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
@@ -157,6 +157,15 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
   }
   if (utf8.includes('\uFFFD') && /[áéíóúñ°]/i.test(latin) && headerLooksLikeSettlement(latin)) {
     return latin;
+  }
+  if (/√[≠≥°©∫±]/.test(utf8)) {
+    return utf8
+      .replace(/√≠/g, 'í')
+      .replace(/√≥/g, 'ó')
+      .replace(/√°/g, 'á')
+      .replace(/√©/g, 'é')
+      .replace(/√∫/g, 'ú')
+      .replace(/√±/g, 'ñ');
   }
   return utf8;
 }
@@ -195,6 +204,24 @@ export function documentLabel(document: {
   if (document?.kind === 'factura') return number ? `Factura ${number}` : 'Factura emitida';
   if (document?.kind === 'boleta') return number ? `Boleta ${number}` : 'Boleta emitida';
   return 'Sin boleta ni factura';
+}
+
+export const PAGOS_SALES_PAGE = 2000;
+
+export const PAGOS_COLUMN_COPY = {
+  precio: { label: 'Precio', hint: 'Pagó el cliente' },
+  commission: { label: 'Comisión', hint: '% del precio' },
+  shipping: { label: 'Logística', hint: 'Cofinanciamiento' },
+  take: { label: 'Se queda', hint: 'Comisión + logística' },
+  neto: { label: 'Te llega', hint: 'Te depositan' },
+} as const;
+
+export function salesPageNote(shown: number, total: number) {
+  const count = Number(total) || 0;
+  const visible = Number(shown) || 0;
+  if (!count) return '';
+  if (visible >= count) return count === 1 ? '1 venta' : `${count} ventas`;
+  return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
 }
 
 export function settlementCash(summary: {

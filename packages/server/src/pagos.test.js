@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv } from './pagos.js';
+import { importSettlementCsv, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -143,4 +143,13 @@ test('No Pagado cruza el pedido e inserta liquidación pendiente', async () => {
   assert.equal(Boolean(settlement), true);
   assert.equal(settlement.params[2], 'pending');
   assert.match(settlement.sql, /sale_settlements\.status = 'pending'/);
+});
+
+test('la página de ventas de Pagos admite hasta 2000 filas', () => {
+  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 2000);
+  assert.equal(settlementSalesLimit(undefined), 50);
+  assert.equal(settlementSalesLimit(100), 100);
+  assert.equal(settlementSalesLimit(2000), 2000);
+  assert.equal(settlementSalesLimit(9000), 2000);
+  assert.equal(settlementSalesLimit(0), 50);
 });
