@@ -1,31 +1,19 @@
 // Five chrome options for the product drawer Resumen, switchable via ?variant=, on /#/productos.
 // Question: what should the drawer chrome look like (header, tabs, metrics, actions)?
 import type { ReactNode } from 'react';
-import {
-  BarChart3,
-  Boxes,
-  ChevronDown,
-  LayoutDashboard,
-  MoreHorizontal,
-  Package,
-  PackagePlus,
-  Plus,
-  RefreshCw,
-  Store,
-} from 'lucide-react';
+import { ChevronDown, MoreHorizontal } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { cn } from '../lib/cn';
 import type { PrototypeVariant } from '../components/PrototypeSwitcher';
 
 export const DRAWER_PROTOTYPE_VARIANTS: PrototypeVariant[] = [
-  { key: 'A', name: 'Ficha · una fila' },
-  { key: 'B', name: 'Cartel · foto + pie' },
-  { key: 'C', name: 'Carril · iconos' },
-  { key: 'D', name: 'Compacto · chips' },
-  { key: 'E', name: 'Tres + Más' },
+  { key: 'A', name: 'Propiedades' },
+  { key: 'B', name: 'Cifras' },
+  { key: 'C', name: 'Sección' },
+  { key: 'D', name: 'Dos columnas' },
+  { key: 'E', name: 'Ficha alta' },
 ];
 
 export type PrototypeDrawerProduct = {
@@ -60,37 +48,38 @@ type PrototypeProductDrawerProps = {
   onSaveStock: (value: string) => void;
 };
 
-const TABS: Array<{ value: DrawerTab; label: string; short: string }> = [
-  { value: 'overview', label: 'Resumen', short: 'Resumen' },
-  { value: 'listings', label: 'Publicaciones', short: 'Pubs' },
-  { value: 'inventory', label: 'Inventario', short: 'Stock' },
-  { value: 'sales', label: 'Ventas', short: 'Ventas' },
-  { value: 'returns', label: 'Devoluciones', short: 'Dev.' },
+const TABS: Array<{ value: DrawerTab; label: string }> = [
+  { value: 'overview', label: 'Resumen' },
+  { value: 'listings', label: 'Publicaciones' },
+  { value: 'inventory', label: 'Inventario' },
+  { value: 'sales', label: 'Ventas' },
+  { value: 'returns', label: 'Devoluciones' },
 ];
 
-function soles(value: unknown) {
+const SHEET_CLASS: Record<string, string> = {
+  A: 'overflow-hidden border-l border-zinc-200/80 bg-white sm:max-w-[400px]',
+  B: 'overflow-hidden border-l border-zinc-200/80 bg-white sm:max-w-[440px]',
+  C: 'overflow-hidden border-l border-zinc-200/80 bg-white sm:max-w-[420px]',
+  D: 'overflow-hidden border-l border-zinc-200/80 bg-white p-0 sm:max-w-[560px]',
+  E: 'overflow-hidden border-l border-zinc-200/80 bg-white sm:max-w-[420px]',
+};
+
+function money(value: unknown) {
   const number = Number(value);
-  return Number.isFinite(number) ? `${number} soles` : 'Sin precio';
+  return Number.isFinite(number) ? number.toLocaleString('es-PE', { maximumFractionDigits: 2 }) : null;
 }
 
-function units(value: unknown) {
+function count(value: unknown) {
   const number = Number(value);
-  return Number.isFinite(number) ? `${number} unidades` : '—';
+  return Number.isFinite(number) ? number.toLocaleString('es-PE') : '—';
 }
 
-function when(value?: string | null) {
+function day(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('es-PE');
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('es-PE', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-
-const SHEET_CLASS: Record<string, string> = {
-  A: 'overflow-hidden border-l bg-background sm:max-w-md',
-  B: 'overflow-hidden border-l-0 p-0 sm:max-w-sm',
-  C: 'overflow-hidden border-l p-0 sm:max-w-2xl',
-  D: 'overflow-hidden sm:max-w-lg',
-  E: 'overflow-hidden sm:max-w-xl',
-};
 
 export function PrototypeProductDrawer(props: PrototypeProductDrawerProps) {
   const { open, onClose, variant } = props;
@@ -106,63 +95,157 @@ export function PrototypeProductDrawer(props: PrototypeProductDrawerProps) {
         onInteractOutside={keepSwitcher}
         onFocusOutside={keepSwitcher}
       >
-        {variant === 'B' ? <CartelDrawer {...props} />
-          : variant === 'C' ? <RailDrawer {...props} />
-            : variant === 'D' ? <CompactDrawer {...props} />
-              : variant === 'E' ? <ThreeTabDrawer {...props} />
-                : <FichaDrawer {...props} />}
+        {variant === 'B' ? <Cifras {...props} />
+          : variant === 'C' ? <Seccion {...props} />
+            : variant === 'D' ? <DosColumnas {...props} />
+              : variant === 'E' ? <FichaAlta {...props} />
+                : <Propiedades {...props} />}
       </SheetContent>
     </Sheet>
   );
 }
 
-function Field({
-  label,
-  value,
-  strong,
-  onClick,
-}: {
-  label: string;
-  value: ReactNode;
-  strong?: boolean;
-  onClick?: () => void;
-}) {
+function Actions({ onAdjust, onAssociate, onPublish }: Pick<PrototypeProductDrawerProps, 'onAdjust' | 'onAssociate' | 'onPublish'>) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-sm" className="absolute right-14 top-4 size-8 text-zinc-500" aria-label="Más acciones">
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-44">
+        <DropdownMenuItem onClick={onAdjust}>Ajustar stock</DropdownMenuItem>
+        <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
+        <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function Sku({ sku }: { sku?: string }) {
+  if (!sku) return null;
   return (
     <button
       type="button"
-      disabled={!onClick}
-      onClick={onClick}
-      className="grid w-full grid-cols-[7.5rem_minmax(0,1fr)] items-baseline gap-x-4 py-2 text-left disabled:cursor-default"
+      title="Copiar SKU"
+      className="font-mono text-[13px] font-medium tracking-wide text-zinc-500 hover:text-zinc-950"
+      onClick={() => void navigator.clipboard.writeText(sku)}
     >
-      <span className="text-[13px] text-muted-foreground">{label}</span>
-      <span className={cn('text-[15px] text-foreground', strong && 'text-lg font-semibold tracking-tight text-zinc-950')}>
-        {value}
-      </span>
+      {sku}
     </button>
   );
 }
 
-function OtherTab({ children }: { children: ReactNode }) {
-  return <p className="px-1 py-8 text-sm text-muted-foreground">{children}</p>;
+function Status({ value }: { value?: string | null }) {
+  if (!value) return null;
+  const label = value === 'active' ? 'Activo' : value === 'inactive' ? 'Inactivo' : 'Archivado';
+  return <span className="text-[13px] text-zinc-400">{label}</span>;
 }
 
-function PlaceholderTabs({ tab }: { tab: DrawerTab }) {
-  const copy = {
-    listings: 'Publicaciones se quedan en esta pestaña, fuera del Resumen.',
-    inventory: 'Inventario y movimientos siguen aquí.',
-    sales: 'Ventas del producto.',
-    returns: 'Devoluciones del producto.',
-    overview: '',
-  } as const;
-  return <TabsContent value={tab} className="px-5"><OtherTab>{copy[tab]}</OtherTab></TabsContent>;
+function Quiet({ children }: { children: ReactNode }) {
+  return <p className="pt-8 text-[14px] leading-6 text-zinc-500">{children}</p>;
 }
 
-function FichaDrawer({
-  open,
+function UnderlineTabs({
+  tab,
+  onTabChange,
+}: {
+  tab: DrawerTab;
+  onTabChange: (tab: DrawerTab) => void;
+}) {
+  return (
+    <div className="relative">
+      <div className="flex gap-5 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {TABS.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            onClick={() => onTabChange(item.value)}
+            className={cn(
+              'relative shrink-0 pb-2.5 text-[13px] tracking-[-0.01em]',
+              tab === item.value ? 'font-medium text-zinc-950' : 'text-zinc-400 hover:text-zinc-700',
+            )}
+          >
+            {item.label}
+            {tab === item.value ? <span className="absolute inset-x-0 -bottom-px h-px bg-zinc-950" /> : null}
+          </button>
+        ))}
+      </div>
+      <div className="absolute inset-x-0 bottom-0 h-px bg-zinc-200/90" />
+    </div>
+  );
+}
+
+function Propiedades({
   product,
   tab,
   onTabChange,
-  onClose,
+  onAdjust,
+  onAssociate,
+  onPublish,
+}: PrototypeProductDrawerProps) {
+  return (
+    <>
+      <Actions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
+      <SheetHeader className="space-y-3 px-6 pb-5 pt-11 pr-24">
+        <p className="flex items-center gap-2">
+          <Sku sku={product?.mainSku} />
+          {product?.mainSku && product?.status ? <span className="text-zinc-300">·</span> : null}
+          <Status value={product?.status} />
+        </p>
+        <SheetTitle className="text-[22px] font-semibold leading-7 tracking-[-0.03em] text-zinc-950">
+          {product?.name || 'Producto'}
+        </SheetTitle>
+        <SheetDescription className="sr-only">Resumen del producto</SheetDescription>
+      </SheetHeader>
+      <div className="px-6">
+        <UnderlineTabs tab={tab} onTabChange={onTabChange} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        {tab !== 'overview' ? (
+          <Quiet>{TABS.find((item) => item.value === tab)?.label}.</Quiet>
+        ) : product ? (
+          <div className="space-y-5">
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Stock</p>
+              <p className="mt-1 text-[15px] tabular-nums text-zinc-950">{count(product.quantityOnHand)} unidades</p>
+              <p className="mt-0.5 text-[13px] tabular-nums text-zinc-500">{count(product.quantityReserved)} reservadas</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Precio</p>
+              <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
+                {money(product.referencePrice) ? `${money(product.referencePrice)} soles` : 'Sin precio'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Comisión</p>
+              <p className="mt-1 text-[15px] text-zinc-950">
+                {product.commissionAmount == null ? 'Sin comisión' : `${money(product.commissionAmount)} soles`}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Beneficiario</p>
+              <p className="mt-1 text-[15px] text-zinc-950">{product.profitOwner || 'Sin beneficiario'}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Actualizado</p>
+              <p className="mt-1 text-[15px] text-zinc-950">{day(product.updatedAt)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium tracking-[0.08em] text-zinc-400 uppercase">Descripción</p>
+              <p className="mt-1 text-[15px] leading-6 text-zinc-700">{product.description || 'Sin descripción'}</p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function Cifras({
+  product,
+  tab,
+  onTabChange,
   onAdjust,
   onAssociate,
   onPublish,
@@ -171,343 +254,254 @@ function FichaDrawer({
 }: PrototypeProductDrawerProps) {
   return (
     <>
-        <SheetHeader className="space-y-2 px-5 pb-3 pt-9 pr-14">
-          <p className="text-xs text-muted-foreground">
-            {product?.mainSku} · {product?.status === 'active' ? 'Activo' : 'Inactivo'}
-          </p>
-          <SheetTitle className="text-xl leading-7">{product?.name || 'Producto'}</SheetTitle>
-          <SheetDescription className="sr-only">Ficha del producto</SheetDescription>
-        </SheetHeader>
-        <Tabs value={tab} onValueChange={(value) => onTabChange(value as DrawerTab)} className="min-h-0 flex-1 overflow-hidden">
-          <div className="overflow-x-auto px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <TabsList variant="line" className="h-11 w-max min-w-full justify-start gap-5 bg-transparent p-0">
-              {TABS.map((item) => (
-                <TabsTrigger key={item.value} value={item.value} className="h-11 flex-none rounded-none px-0 text-sm">
-                  {item.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+      <Actions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
+      <SheetHeader className="space-y-2 px-6 pb-5 pt-11 pr-24">
+        <SheetTitle className="text-[22px] font-semibold leading-7 tracking-[-0.03em] text-zinc-950">
+          {product?.name || 'Producto'}
+        </SheetTitle>
+        <SheetDescription className="sr-only">Resumen del producto</SheetDescription>
+        <p className="flex items-center gap-2">
+          <Sku sku={product?.mainSku} />
+          <Status value={product?.status} />
+        </p>
+      </SheetHeader>
+      {tab === 'overview' && product ? (
+        <div className="grid grid-cols-3 px-6 pb-6">
+          <button type="button" className="pr-4 text-left" onClick={() => onSavePrice(product.referencePrice == null ? '' : String(product.referencePrice))}>
+            <p className="text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
+              {money(product.referencePrice) ?? '—'}
+            </p>
+            <p className="mt-1 text-[12px] text-zinc-500">Precio, soles</p>
+          </button>
+          <button type="button" className="border-l border-zinc-200 px-4 text-left" onClick={() => onSaveStock(String(product.quantityOnHand))}>
+            <p className="text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">{count(product.quantityOnHand)}</p>
+            <p className="mt-1 text-[12px] text-zinc-500">Stock</p>
+          </button>
+          <div className="border-l border-zinc-200 pl-4">
+            <p className="text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">{count(product.quantityReserved)}</p>
+            <p className="mt-1 text-[12px] text-zinc-500">Reservado</p>
           </div>
-          <TabsContent value="overview" className="min-h-0 overflow-y-auto px-5 py-4">
-            {product ? (
+        </div>
+      ) : null}
+      <div className="px-6">
+        <UnderlineTabs tab={tab} onTabChange={onTabChange} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        {tab !== 'overview' ? (
+          <Quiet>{TABS.find((item) => item.value === tab)?.label}.</Quiet>
+        ) : product ? (
+          <div className="space-y-6">
+            <p className="text-[15px] leading-7 text-zinc-700">{product.description || 'Sin descripción'}</p>
+            <p className="text-[13px] leading-6 text-zinc-500">
+              {product.commissionAmount == null ? 'Sin comisión' : `Comisión ${money(product.commissionAmount)} soles`}
+              {' · '}
+              {product.profitOwner || 'Sin beneficiario'}
+              {' · '}
+              {day(product.updatedAt)}
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function Seccion({
+  product,
+  tab,
+  onTabChange,
+  onAdjust,
+  onAssociate,
+  onPublish,
+}: PrototypeProductDrawerProps) {
+  return (
+    <>
+      <Actions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
+      <SheetHeader className="space-y-4 px-6 pb-2 pt-11 pr-24">
+        <label className="block">
+          <span className="sr-only">Sección</span>
+          <span className="relative block">
+            <select
+              value={tab}
+              onChange={(event) => onTabChange(event.target.value as DrawerTab)}
+              className="h-9 w-full appearance-none border-0 bg-transparent pr-8 text-[13px] font-medium text-zinc-500 outline-none"
+            >
+              {TABS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-0 top-2.5 size-4 text-zinc-400" />
+          </span>
+        </label>
+        <SheetTitle className="text-[22px] font-semibold leading-7 tracking-[-0.03em] text-zinc-950">
+          {product?.name || 'Producto'}
+        </SheetTitle>
+        <SheetDescription className="sr-only">Resumen del producto</SheetDescription>
+        <p><Sku sku={product?.mainSku} /></p>
+      </SheetHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        {tab !== 'overview' ? (
+          <Quiet>{TABS.find((item) => item.value === tab)?.label}.</Quiet>
+        ) : product ? (
+          <div>
+            <p className="text-[16px] leading-7 text-zinc-800">{product.description || 'Sin descripción'}</p>
+            <dl className="mt-8 space-y-4">
               <div>
-                <Field label="Stock" value={units(product.quantityOnHand)} onClick={() => onSaveStock(String(product.quantityOnHand))} />
-                <Field label="Reservado" value={units(product.quantityReserved)} />
-                <Field
-                  label="Precio"
-                  value={soles(product.referencePrice)}
-                  strong
-                  onClick={() => onSavePrice(product.referencePrice == null ? '' : String(product.referencePrice))}
-                />
-                <Field label="Comisión" value={product.commissionAmount == null ? 'Sin comisión' : soles(product.commissionAmount)} />
-                <Field label="Beneficiario" value={product.profitOwner || 'Sin beneficiario'} />
-                <Field label="Actualizado" value={when(product.updatedAt)} />
-                <div className="pt-3">
-                  <p className="text-[13px] text-muted-foreground">Descripción</p>
-                  <p className="mt-1 text-[15px] leading-6">{product.description || 'Sin descripción'}</p>
-                </div>
-                <div className="mt-6 flex gap-2">
-                  <button type="button" className="secondary-button h-9" onClick={onAdjust}>Ajustar stock</button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button type="button" variant="ghost" size="icon-sm" aria-label="Más acciones">
-                        <MoreHorizontal />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-auto min-w-44">
-                      <DropdownMenuItem onClick={onAssociate}>Asociar producto</DropdownMenuItem>
-                      <DropdownMenuItem onClick={onPublish}>Nueva publicación</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                <dt className="text-[12px] text-zinc-400">Stock</dt>
+                <dd className="mt-0.5 text-[15px] tabular-nums text-zinc-950">
+                  {count(product.quantityOnHand)} unidades
+                  <span className="text-zinc-500"> · {count(product.quantityReserved)} reservadas</span>
+                </dd>
               </div>
-            ) : null}
-          </TabsContent>
-          <PlaceholderTabs tab="listings" />
-          <PlaceholderTabs tab="inventory" />
-          <PlaceholderTabs tab="sales" />
-          <PlaceholderTabs tab="returns" />
-        </Tabs>
-    </>
-  );
-}
-
-function CartelDrawer({
-  open,
-  product,
-  tab,
-  onTabChange,
-  onClose,
-  onAdjust,
-  onAssociate,
-  onPublish,
-}: PrototypeProductDrawerProps) {
-  return (
-    <>
-        <div className="h-44 bg-muted">
-          {product?.imageUrl ? (
-            <img src={product.imageUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <div className="grid h-full place-items-center">
-              <Boxes className="size-8 text-muted-foreground" />
-            </div>
-          )}
-        </div>
-        <SheetHeader className="space-y-2 px-5 pb-3 pt-4 pr-14">
-          <SheetTitle className="text-xl leading-7">{product?.name || 'Producto'}</SheetTitle>
-          <SheetDescription className="font-mono text-sm text-foreground">{product?.mainSku}</SheetDescription>
-          <p className="text-2xl font-semibold tracking-tight text-zinc-950">{product ? soles(product.referencePrice) : '—'}</p>
-          <div className="flex gap-8 text-sm">
-            <p>
-              <span className="block text-muted-foreground">Stock</span>
-              <strong>{product ? units(product.quantityOnHand) : '—'}</strong>
-            </p>
-            <p>
-              <span className="block text-muted-foreground">Reservado</span>
-              <strong>{product ? units(product.quantityReserved) : '—'}</strong>
-            </p>
-          </div>
-        </SheetHeader>
-        <Tabs value={tab} onValueChange={(value) => onTabChange(value as DrawerTab)} className="min-h-0 flex-1 overflow-hidden">
-          <div className="overflow-x-auto px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <TabsList className="h-9 w-max justify-start gap-1">
-              {TABS.map((item) => (
-                <TabsTrigger key={item.value} value={item.value} className="flex-none px-2.5 text-xs">
-                  {item.short}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
-          <TabsContent value="overview" className="min-h-0 overflow-y-auto px-5 py-3">
-            <Field label="Comisión" value={product?.commissionAmount == null ? 'Sin comisión' : soles(product.commissionAmount)} />
-            <Field label="Beneficiario" value={product?.profitOwner || 'Sin beneficiario'} />
-            <Field label="Actualizado" value={when(product?.updatedAt)} />
-            <p className="pt-3 text-[15px] leading-6">{product?.description || 'Sin descripción'}</p>
-          </TabsContent>
-          <PlaceholderTabs tab="listings" />
-          <PlaceholderTabs tab="inventory" />
-          <PlaceholderTabs tab="sales" />
-          <PlaceholderTabs tab="returns" />
-        </Tabs>
-        <div className="grid gap-2 border-t px-5 py-3">
-          <button type="button" className="primary-button h-10" onClick={onAdjust}>Ajustar stock</button>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" className="secondary-button h-9 justify-center" onClick={onAssociate}>Asociar</button>
-            <button type="button" className="secondary-button h-9 justify-center" onClick={onPublish}>Publicar</button>
-          </div>
-        </div>
-    </>
-  );
-}
-
-function RailDrawer({
-  open,
-  product,
-  tab,
-  onTabChange,
-  onClose,
-  onAdjust,
-  onAssociate,
-  onPublish,
-}: PrototypeProductDrawerProps) {
-  return (
-    <>
-        <Tabs
-          value={tab}
-          onValueChange={(value) => onTabChange(value as DrawerTab)}
-          orientation="vertical"
-          className="flex min-h-0 flex-1 flex-row overflow-hidden"
-        >
-          <TabsList className="h-auto w-16 shrink-0 flex-col gap-1 rounded-none bg-muted/50 p-2">
-            <TabsTrigger value="overview" className="size-12 flex-none p-0" title="Resumen"><LayoutDashboard className="size-5" /></TabsTrigger>
-            <TabsTrigger value="listings" className="size-12 flex-none p-0" title="Publicaciones"><Store className="size-5" /></TabsTrigger>
-            <TabsTrigger value="inventory" className="size-12 flex-none p-0" title="Inventario"><Boxes className="size-5" /></TabsTrigger>
-            <TabsTrigger value="sales" className="size-12 flex-none p-0" title="Ventas"><BarChart3 className="size-5" /></TabsTrigger>
-            <TabsTrigger value="returns" className="size-12 flex-none p-0" title="Devoluciones"><RefreshCw className="size-5" /></TabsTrigger>
-          </TabsList>
-          <div className="min-w-0 flex-1 overflow-y-auto px-7 py-8 pr-14">
-            <SheetHeader className="mb-6 space-y-2 p-0">
-              <SheetTitle className="text-2xl leading-8">{product?.name || 'Producto'}</SheetTitle>
-              <SheetDescription className="font-mono text-sm text-foreground">{product?.mainSku}</SheetDescription>
-              <p className="flex gap-4 text-sm">
-                <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={onAdjust}>Ajustar stock</button>
-                <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={onAssociate}>Asociar</button>
-                <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={onPublish}>Publicar</button>
-              </p>
-            </SheetHeader>
-            <TabsContent value="overview" className="mt-0">
-              <div className="max-w-sm">
-                <div className="mb-5 space-y-1">
-                  <p className="text-[13px] text-muted-foreground">Stock</p>
-                  <p className="text-lg font-medium">{product ? units(product.quantityOnHand) : '—'}</p>
-                  <p className="text-sm text-muted-foreground">Reservado {product ? units(product.quantityReserved) : '—'}</p>
-                </div>
-                <p className="text-2xl font-semibold tracking-tight text-zinc-950">{product ? soles(product.referencePrice) : '—'}</p>
-                <div className="mt-5">
-                  <Field label="Comisión" value={product?.commissionAmount == null ? 'Sin comisión' : soles(product.commissionAmount)} />
-                  <Field label="Beneficiario" value={product?.profitOwner || 'Sin beneficiario'} />
-                  <Field label="Actualizado" value={when(product?.updatedAt)} />
-                </div>
-                <p className="mt-5 text-[15px] leading-6">{product?.description || 'Sin descripción'}</p>
+              <div>
+                <dt className="text-[12px] text-zinc-400">Precio</dt>
+                <dd className="mt-0.5 text-[18px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
+                  {money(product.referencePrice) ? `${money(product.referencePrice)} soles` : 'Sin precio'}
+                </dd>
               </div>
-            </TabsContent>
-            <TabsContent value="listings"><OtherTab>Publicaciones a la derecha del carril.</OtherTab></TabsContent>
-            <TabsContent value="inventory"><OtherTab>Inventario.</OtherTab></TabsContent>
-            <TabsContent value="sales"><OtherTab>Ventas.</OtherTab></TabsContent>
-            <TabsContent value="returns"><OtherTab>Devoluciones.</OtherTab></TabsContent>
+              <div>
+                <dt className="text-[12px] text-zinc-400">Comisión</dt>
+                <dd className="mt-0.5 text-[15px] text-zinc-950">
+                  {product.commissionAmount == null ? 'Sin comisión' : `${money(product.commissionAmount)} soles`}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[12px] text-zinc-400">Beneficiario</dt>
+                <dd className="mt-0.5 text-[15px] text-zinc-950">{product.profitOwner || 'Sin beneficiario'}</dd>
+              </div>
+              <div>
+                <dt className="text-[12px] text-zinc-400">Actualizado</dt>
+                <dd className="mt-0.5 text-[15px] text-zinc-950">{day(product.updatedAt)}</dd>
+              </div>
+            </dl>
           </div>
-        </Tabs>
+        ) : null}
+      </div>
     </>
   );
 }
 
-function CompactDrawer({
-  open,
+function DosColumnas({
   product,
   tab,
   onTabChange,
-  onClose,
   onAdjust,
   onAssociate,
   onPublish,
 }: PrototypeProductDrawerProps) {
   return (
-    <>
-        <SheetHeader className="flex-row items-center gap-3 px-5 pb-3 pt-8 pr-14">
-          <div className="grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted">
-            {product?.imageUrl ? (
-              <img src={product.imageUrl} alt="" className="size-11 object-cover" />
-            ) : (
-              <Package className="size-5 text-muted-foreground" />
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <Actions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
+      <nav className="flex w-[10.5rem] shrink-0 flex-col gap-0.5 border-r border-zinc-200/80 px-3 pt-11 pb-6">
+        {TABS.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            onClick={() => onTabChange(item.value)}
+            className={cn(
+              'h-8 rounded-md px-2.5 text-left text-[13px]',
+              tab === item.value ? 'bg-zinc-100 font-medium text-zinc-950' : 'text-zinc-500 hover:text-zinc-800',
             )}
-          </div>
-          <div className="min-w-0">
-            <SheetTitle className="truncate text-base">{product?.name || 'Producto'}</SheetTitle>
-            <SheetDescription className="font-mono text-xs">{product?.mainSku}</SheetDescription>
-          </div>
-        </SheetHeader>
-        <Tabs value={tab} onValueChange={(value) => onTabChange(value as DrawerTab)} className="min-h-0 flex-1 overflow-hidden">
-          <div className="px-5">
-            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1.5 bg-transparent p-0">
-              {TABS.map((item) => (
-                <TabsTrigger
-                  key={item.value}
-                  value={item.value}
-                  className="h-7 flex-none rounded-full border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 shadow-none data-active:border-zinc-900 data-active:bg-zinc-900 data-active:text-white"
-                >
-                  {item.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
-          <p className="px-5 py-2 text-sm text-muted-foreground">
-            <button type="button" className="hover:text-foreground" onClick={onAdjust}>Ajustar</button>
-            {' · '}
-            <button type="button" className="hover:text-foreground" onClick={onAssociate}>Asociar</button>
-            {' · '}
-            <button type="button" className="hover:text-foreground" onClick={onPublish}>Publicar</button>
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div className="min-w-0 flex-1 overflow-y-auto px-7 py-11 pr-24">
+        <SheetHeader className="mb-8 space-y-2 p-0">
+          <SheetTitle className="text-[22px] font-semibold leading-7 tracking-[-0.03em] text-zinc-950">
+            {product?.name || 'Producto'}
+          </SheetTitle>
+          <SheetDescription className="sr-only">Resumen del producto</SheetDescription>
+          <p className="flex items-center gap-2">
+            <Sku sku={product?.mainSku} />
+            <Status value={product?.status} />
           </p>
-          <TabsContent value="overview" className="min-h-0 overflow-y-auto px-5 py-1">
-            <Field label="Stock" value={product ? units(product.quantityOnHand) : '—'} />
-            <Field label="Reservado" value={product ? units(product.quantityReserved) : '—'} />
-            <Field label="Precio" value={product ? soles(product.referencePrice) : '—'} strong />
-            <Field label="Comisión" value={product?.commissionAmount == null ? 'Sin comisión' : soles(product.commissionAmount)} />
-            <Field label="Beneficiario" value={product?.profitOwner || 'Sin beneficiario'} />
-            <Field label="Actualizado" value={when(product?.updatedAt)} />
-            <p className="pt-3 text-sm leading-6">{product?.description || 'Sin descripción'}</p>
-          </TabsContent>
-          <PlaceholderTabs tab="listings" />
-          <PlaceholderTabs tab="inventory" />
-          <PlaceholderTabs tab="sales" />
-          <PlaceholderTabs tab="returns" />
-        </Tabs>
-    </>
+        </SheetHeader>
+        {tab !== 'overview' ? (
+          <Quiet>{TABS.find((item) => item.value === tab)?.label}.</Quiet>
+        ) : product ? (
+          <div className="max-w-sm space-y-6">
+            <div>
+              <p className="text-[12px] text-zinc-400">Stock</p>
+              <p className="mt-1 text-[17px] font-medium tabular-nums text-zinc-950">{count(product.quantityOnHand)} unidades</p>
+              <p className="mt-0.5 text-[13px] text-zinc-500">{count(product.quantityReserved)} reservadas</p>
+            </div>
+            <p className="text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
+              {money(product.referencePrice) ? `${money(product.referencePrice)} soles` : 'Sin precio'}
+            </p>
+            <dl className="space-y-3 text-[14px]">
+              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3">
+                <dt className="text-zinc-400">Comisión</dt>
+                <dd>{product.commissionAmount == null ? 'Sin comisión' : `${money(product.commissionAmount)} soles`}</dd>
+              </div>
+              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3">
+                <dt className="text-zinc-400">Beneficiario</dt>
+                <dd>{product.profitOwner || 'Sin beneficiario'}</dd>
+              </div>
+              <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3">
+                <dt className="text-zinc-400">Actualizado</dt>
+                <dd>{day(product.updatedAt)}</dd>
+              </div>
+            </dl>
+            <p className="text-[15px] leading-7 text-zinc-700">{product.description || 'Sin descripción'}</p>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-function ThreeTabDrawer({
-  open,
+function FichaAlta({
   product,
   tab,
   onTabChange,
-  onClose,
   onAdjust,
   onAssociate,
   onPublish,
 }: PrototypeProductDrawerProps) {
-  const moreActive = tab === 'inventory' || tab === 'sales' || tab === 'returns';
   return (
     <>
-        <SheetHeader className="space-y-2 px-5 pb-4 pt-8 pr-14">
-          <div className="flex gap-4">
-            <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-muted">
-              {product?.imageUrl ? (
-                <img src={product.imageUrl} alt="" className="size-16 object-cover" />
-              ) : (
-                <Boxes className="size-6 text-muted-foreground" />
-              )}
-            </div>
-            <div className="min-w-0">
-              <SheetTitle className="text-lg leading-6">{product?.name || 'Producto'}</SheetTitle>
-              <SheetDescription className="mt-1 font-mono text-sm text-foreground">{product?.mainSku}</SheetDescription>
-            </div>
-          </div>
-        </SheetHeader>
-        <div className="px-5 pb-3">
-          <div className="flex gap-1 rounded-xl bg-muted/70 p-1">
-            <button
-              type="button"
-              className={cn('h-10 flex-1 rounded-lg text-sm', tab === 'overview' && 'bg-background shadow-sm')}
-              onClick={() => onTabChange('overview')}
-            >
-              Resumen
-            </button>
-            <button
-              type="button"
-              className={cn('h-10 flex-1 rounded-lg text-sm', tab === 'listings' && 'bg-background shadow-sm')}
-              onClick={() => onTabChange('listings')}
-            >
-              Publicaciones
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn('inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-lg text-sm', moreActive && 'bg-background shadow-sm')}
-                >
-                  Más <ChevronDown className="size-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-auto min-w-44">
-                <DropdownMenuItem onClick={() => onTabChange('inventory')}>Inventario</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onTabChange('sales')}>Ventas</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onTabChange('returns')}>Devoluciones</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
+      <Actions onAdjust={onAdjust} onAssociate={onAssociate} onPublish={onPublish} />
+      <div className="px-6 pt-11 pr-24">
+        <UnderlineTabs tab={tab} onTabChange={onTabChange} />
+      </div>
+      <SheetHeader className="space-y-3 px-6 pb-5 pt-6">
+        {product?.imageUrl ? (
+          <img src={product.imageUrl} alt="" className="size-[52px] rounded-lg object-cover" />
+        ) : null}
+        <SheetTitle className="text-[22px] font-semibold leading-7 tracking-[-0.03em] text-zinc-950">
+          {product?.name || 'Producto'}
+        </SheetTitle>
+        <SheetDescription className="sr-only">Resumen del producto</SheetDescription>
+        <p><Sku sku={product?.mainSku} /></p>
         {tab === 'overview' && product ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2">
-            <Field label="Stock" value={units(product.quantityOnHand)} />
-            <Field label="Reservado" value={units(product.quantityReserved)} />
-            <Field label="Precio" value={soles(product.referencePrice)} strong />
-            <Field label="Comisión" value={product.commissionAmount == null ? 'Sin comisión' : soles(product.commissionAmount)} />
-            <Field label="Beneficiario" value={product.profitOwner || 'Sin beneficiario'} />
-            <Field label="Actualizado" value={when(product.updatedAt)} />
-            <p className="pt-3 text-[15px] leading-6">{product.description || 'Sin descripción'}</p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              <button type="button" className="secondary-button h-9" onClick={onAdjust}><Plus className="size-4" /> Ajustar</button>
-              <button type="button" className="secondary-button h-9" onClick={onAssociate}>Asociar</button>
-              <button type="button" className="secondary-button h-9" onClick={onPublish}><PackagePlus className="size-4" /> Publicar</button>
-            </div>
+          <div className="space-y-1 pt-1">
+            <p className="text-[22px] font-semibold tabular-nums tracking-[-0.03em] text-zinc-950">
+              {money(product.referencePrice) ? `${money(product.referencePrice)} soles` : 'Sin precio'}
+            </p>
+            <p className="text-[13px] tabular-nums text-zinc-500">
+              {count(product.quantityOnHand)} en almacén · {count(product.quantityReserved)} reservadas
+            </p>
           </div>
-        ) : (
-          <div className="px-5">
-            <OtherTab>
-              {tab === 'listings' ? 'Publicaciones.' : tab === 'inventory' ? 'Inventario.' : tab === 'sales' ? 'Ventas.' : 'Devoluciones.'}
-            </OtherTab>
+        ) : null}
+      </SheetHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8">
+        {tab !== 'overview' ? (
+          <Quiet>{TABS.find((item) => item.value === tab)?.label}.</Quiet>
+        ) : product ? (
+          <div className="space-y-4 border-t border-zinc-200/90 pt-5">
+            <p className="text-[15px] leading-7 text-zinc-700">{product.description || 'Sin descripción'}</p>
+            <p className="text-[13px] leading-6 text-zinc-500">
+              {product.commissionAmount == null ? 'Sin comisión' : `Comisión ${money(product.commissionAmount)} soles`}
+              {' · '}
+              {product.profitOwner || 'Sin beneficiario'}
+              {' · '}
+              {day(product.updatedAt)}
+            </p>
           </div>
-        )}
+        ) : null}
+      </div>
     </>
   );
 }
