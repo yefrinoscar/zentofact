@@ -1,35 +1,75 @@
 import { useState, type ReactNode } from 'react';
-import { CalendarDays, Package } from 'lucide-react';
+import { CalendarDays, Check, Package } from 'lucide-react';
 import { es } from 'date-fns/locale';
 import { cn } from '../../lib/cn';
-import { limaTodayKey } from '../../lib/registrar-venta';
+import { formatSaleDate } from '../../lib/sale-summary';
 import { dateFromKey } from '../../lib/documentDateRange';
 import { Button } from '../../components/ui/button';
 import { Calendar } from '../../components/ui/calendar';
 import { Label } from '../../components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover';
-import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 
 export const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
 
-export function formatMoney(value: number) {
-  try {
-    return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(Number(value || 0));
-  } catch {
-    return `S/ ${Number(value || 0).toFixed(2)}`;
-  }
-}
+export type StepState = 'done' | 'current' | 'invalid' | 'pending';
 
-function formatDeliveryDateLabel(value: string, nowKey = limaTodayKey()) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Elegir fecha';
-  const date = dateFromKey(value);
-  const sameYear = value.slice(0, 4) === nowKey.slice(0, 4);
-  return new Intl.DateTimeFormat('es-PE', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    ...(sameYear ? {} : { year: 'numeric' as const }),
-  }).format(date).replace(/\.$/, '').toLocaleLowerCase('es-PE');
+export function SaleStepper<T extends string>({
+  steps,
+  current,
+  stateOf,
+  onSelect,
+}: {
+  steps: ReadonlyArray<{ id: T; label: string }>;
+  current: T;
+  stateOf: (id: T) => StepState;
+  onSelect: (id: T) => void;
+}) {
+  return (
+    <nav aria-label="Pasos de la venta">
+      <ol className="flex items-center">
+        {steps.map((step, index) => {
+          const state = stateOf(step.id);
+          const reachable = state !== 'pending';
+          return (
+            <li key={step.id} className={cn('flex min-w-0 items-center', index > 0 && 'flex-1')}>
+              {index > 0 ? <span aria-hidden="true" className="mx-1 h-px min-w-2 flex-1 bg-border sm:mx-2" /> : null}
+              <button
+                type="button"
+                disabled={!reachable}
+                aria-current={state === 'current' ? 'step' : undefined}
+                onClick={() => onSelect(step.id)}
+                className={cn(
+                  'flex h-9 shrink-0 items-center gap-2 rounded-md px-1.5 text-sm transition-colors',
+                  reachable ? 'cursor-pointer hover:bg-muted' : 'cursor-default',
+                )}
+              >
+                <span
+                  className={cn(
+                    'grid size-6 shrink-0 place-items-center rounded-md text-[11px] font-semibold tabular-nums',
+                    state === 'current' && 'bg-foreground text-background',
+                    state === 'done' && 'bg-muted text-foreground',
+                    state === 'invalid' && 'border border-destructive text-destructive',
+                    state === 'pending' && 'border border-border text-muted-foreground',
+                  )}
+                >
+                  {state === 'done' ? <Check className="size-3.5" /> : index + 1}
+                </span>
+                <span
+                  className={cn(
+                    'truncate',
+                    state === 'current' ? 'font-medium text-foreground' : 'hidden text-muted-foreground sm:inline',
+                    state === 'invalid' && 'sm:text-destructive',
+                  )}
+                >
+                  {step.label}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
 }
 
 export function DeliveryDatePicker({
@@ -37,13 +77,11 @@ export function DeliveryDatePicker({
   onChange,
   minDateKey,
   ariaLabel,
-  className,
 }: {
   value: string;
   onChange: (value: string) => void;
   minDateKey: string;
   ariaLabel: string;
-  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = /^\d{4}-\d{2}-\d{2}$/.test(value) ? dateFromKey(value) : undefined;
@@ -55,14 +93,14 @@ export function DeliveryDatePicker({
         <Button
           type="button"
           variant="outline"
+          id="delivery-date"
           aria-label={ariaLabel}
           className={cn(
-            'h-9 justify-between gap-2 px-3 font-normal tabular-nums',
+            'h-11 w-full justify-between gap-2 px-3 font-normal tabular-nums sm:h-9 sm:w-44',
             !selected && 'text-muted-foreground',
-            className,
           )}
         >
-          <span className="truncate">{formatDeliveryDateLabel(value, minDateKey)}</span>
+          <span className="truncate">{formatSaleDate(value, minDateKey)}</span>
           <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
@@ -94,6 +132,47 @@ export function DeliveryDatePicker({
   );
 }
 
+export function Choice<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: {
+  value: T | '';
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div
+      className="inline-flex min-h-11 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1 sm:min-h-9"
+      role="radiogroup"
+      aria-label={ariaLabel}
+    >
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              'inline-flex h-9 cursor-pointer items-center rounded-lg px-3 text-sm font-medium transition-colors sm:h-7',
+              selected
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function FieldRow({
   label,
   htmlFor,
@@ -111,130 +190,9 @@ export function FieldRow({
   );
 }
 
-/** Opciones: mismo segmented de DESIGN.md. No invertido, no rounded-full. */
-export function Choice<T extends string>({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-}: {
-  value: T | '';
-  options: ReadonlyArray<{ value: T; label: string }>;
-  onChange: (value: T) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <div className="inline-flex min-h-9 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((option) => {
-        const selected = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              'inline-flex h-7 cursor-pointer items-center rounded-lg px-3 text-sm font-medium',
-              selected
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function stepTone(index: number, current: number) {
-  if (index < current) return 'text-muted-foreground';
-  if (index === current) return 'bg-background text-foreground shadow-sm';
-  return 'text-muted-foreground/40';
-}
-
-/** Stepper: Tabs de DESIGN.md + tres grises (hecho / actual / pendiente). */
-export function SaleSteps({
-  value,
-  options,
-  onChange,
-  orientation = 'horizontal',
-  ariaLabel = 'Paso',
-}: {
-  value: string;
-  options: ReadonlyArray<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-  orientation?: 'horizontal' | 'vertical';
-  ariaLabel?: string;
-}) {
-  const current = options.findIndex((option) => option.value === value);
-  return (
-    <Tabs
-      value={value}
-      onValueChange={onChange}
-      orientation={orientation}
-      className={orientation === 'vertical' ? 'w-full gap-0' : 'gap-0'}
-    >
-      <TabsList
-        aria-label={ariaLabel}
-        className={cn(
-          'h-9 justify-start gap-0.5 rounded-xl bg-muted p-1 sm:w-auto',
-          orientation === 'vertical' && 'h-auto w-full flex-col items-stretch',
-        )}
-      >
-        {options.map((option, index) => (
-          <TabsTrigger
-            key={option.value}
-            value={option.value}
-            className={cn(
-              'h-7 flex-none rounded-lg px-3 data-active:bg-background data-active:shadow-sm',
-              stepTone(index, current),
-              orientation === 'vertical' && 'w-full justify-start',
-            )}
-          >
-            {option.label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
-  );
-}
-
-export function GrayBar({ step, total }: { step: number; total: number }) {
-  const tints = ['bg-muted-foreground/20', 'bg-muted-foreground/35', 'bg-muted-foreground/50', 'bg-muted-foreground/65', 'bg-muted-foreground/80'];
-  return (
-    <div className="flex h-1.5 overflow-hidden rounded-md bg-muted">
-      {Array.from({ length: total }, (_, index) => (
-        <span
-          key={index}
-          className={cn('h-full flex-1', index <= step ? tints[Math.min(index, tints.length - 1)] : 'bg-transparent')}
-        />
-      ))}
-    </div>
-  );
-}
-
-export function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-}: {
-  value: T;
-  options: ReadonlyArray<{ value: T; label: string }>;
-  onChange: (value: T) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <SaleSteps
-      value={value}
-      options={options}
-      onChange={(next) => onChange(next as T)}
-      ariaLabel={ariaLabel}
-    />
-  );
+export function FieldHint({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="text-sm text-destructive">{message}</p>;
 }
 
 function falabellaMediaUrl(shopSku?: string | null) {
@@ -268,7 +226,7 @@ export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
     .filter((src, index, list) => src && list.indexOf(src) === index);
   const [failedCount, setFailedCount] = useState(0);
   const src = candidates[failedCount] || '';
-  const box = size === 'sm' ? 'size-9' : 'size-11';
+  const box = size === 'sm' ? 'size-9' : 'size-12';
   if (!src) {
     return (
       <span className={cn('grid shrink-0 place-items-center rounded-md bg-muted', box)} aria-hidden="true">
