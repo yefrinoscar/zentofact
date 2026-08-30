@@ -12,28 +12,21 @@ import {
 import { cn } from '@/lib/utils';
 
 const LINE_COLOR = {
-  facturado: '#6f6d66',
-  neto: '#059669',
-  commission: '#dc2626',
-  shipping: '#d97706',
-  take: '#44403c',
-  paid: '#059669',
-  pending: '#d97706',
+  facturado: '#7A7672',
+  neto: '#3B8F72',
+  commission: '#7A72E3',
+  shipping: '#E07838',
+  take: '#5C57A8',
+  paid: '#3B8F72',
+  pending: '#E07838',
 } as const;
-
-const LLEGA = 'text-emerald-700 dark:text-emerald-400';
-const TAKE = 'text-red-600 dark:text-red-400';
-const WAIT = 'text-amber-800 dark:text-amber-400';
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
 type ChartItem = { key: string; label: string; value: number; tone?: Tone };
 type DayRow = Record<string, number | string>;
 
-function toneClass(tone?: Tone) {
-  if (tone === 'receive') return LLEGA;
-  if (tone === 'take') return TAKE;
-  if (tone === 'wait') return WAIT;
-  return '';
+function seriesColor(key: string) {
+  return LINE_COLOR[key as keyof typeof LINE_COLOR] || LINE_COLOR.take;
 }
 
 function seriesFromDays(days: DayRow[], key: keyof typeof LINE_COLOR, label: string): LivelineSeries {
@@ -51,7 +44,7 @@ function MetricDot({ itemKey }: { itemKey: string }) {
   return (
     <span
       className="size-2 shrink-0 rounded-[2px]"
-      style={{ background: LINE_COLOR[itemKey as keyof typeof LINE_COLOR] || LINE_COLOR.take }}
+      style={{ background: seriesColor(itemKey) }}
     />
   );
 }
@@ -68,7 +61,10 @@ function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
               <MetricDot itemKey={item.key} />
               {item.label}
             </p>
-            <p className={cn('text-[17px] font-semibold tabular-nums tracking-[-0.01em] leading-tight', toneClass(item.tone))}>
+            <p
+              className="text-[17px] font-semibold tabular-nums tracking-[-0.01em] leading-tight"
+              style={{ color: seriesColor(item.key) }}
+            >
               {money.format(item.value)}
             </p>
           </div>
@@ -78,7 +74,7 @@ function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
         <p key={item.key} className="mt-1 flex items-baseline gap-1.5 text-[12px] text-muted-foreground">
           <MetricDot itemKey={item.key} />
           <span>{item.label}</span>
-          <span className={cn('font-semibold tabular-nums text-foreground', toneClass(item.tone))}>
+          <span className="font-semibold tabular-nums" style={{ color: seriesColor(item.key) }}>
             {money.format(item.value)}
           </span>
         </p>
@@ -162,7 +158,7 @@ function DepositRing({ items }: { items: ChartItem[] }) {
             key={slice.key}
             d={arcPath(cx, cy, radius, slice.start, slice.end)}
             fill="none"
-            stroke={LINE_COLOR[slice.key as keyof typeof LINE_COLOR]}
+            stroke={seriesColor(slice.key)}
             strokeWidth={active === slice.key ? 16 : 13}
             strokeLinecap="round"
             opacity={active === slice.key ? 1 : 0.7}
@@ -203,7 +199,7 @@ function DepositRing({ items }: { items: ChartItem[] }) {
                 active === item.key ? 'text-foreground' : 'hover:text-foreground',
               )}
             >
-              <span className="size-2 rounded-[2px]" style={{ background: LINE_COLOR[item.key as keyof typeof LINE_COLOR] }} />
+              <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
               {item.label}
             </button>
           </span>
