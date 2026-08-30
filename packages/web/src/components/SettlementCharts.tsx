@@ -267,8 +267,10 @@ export function SettlementKpiStrip({ summary, sales }: {
             {chart.kind === 'share' ? (
               <SplitRing items={chart.items} hero={chart.hero} ariaLabel="Comisión y logística" />
             ) : null}
-            {chart.kind === 'ring' ? (
-              <SplitRing items={chart.items} ariaLabel="Pagado y pendiente" />
+            {chart.kind === 'together' ? (
+              <MultiSeriesChart
+                series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
+              />
             ) : null}
           </div>
         );

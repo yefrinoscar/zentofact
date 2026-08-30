@@ -398,8 +398,8 @@ export function livelinePointsFromDays(
 
 export function livelineWindowSecs(points: Array<{ time: number }>) {
   if (!points.length) return 86400;
-  if (points.length === 1) return 86400;
-  return Math.max(86400, points[points.length - 1].time - points[0].time + 43200);
+  const now = Math.floor(Date.now() / 1000);
+  return Math.max(86400, now - points[0].time + 43200);
 }
 
 export function formatLivelineDay(time: number) {
@@ -496,7 +496,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'payout',
-      kind: 'ring' as const,
+      kind: 'together' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
       hero: undefined,

@@ -138,7 +138,7 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
-  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'share', 'ring']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'share', 'together']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
@@ -187,7 +187,9 @@ test('el trend diario agrupa facturado, neto y depósito', () => {
   const byDay = livelinePointsFromDays(days, 'take');
   assert.equal(byDay[0].value, 74.77);
   assert.equal(byDay.at(-1).value, 17.02);
-  assert.ok(livelineWindowSecs(byDay) >= 86400);
+  const windowSecs = livelineWindowSecs(byDay);
+  assert.ok(windowSecs >= 86400);
+  assert.ok(windowSecs >= Math.floor(Date.now() / 1000) - byDay[0].time);
   assert.match(formatLivelineDay(byDay[0].time), /ago|set|ene|feb|mar|abr|may|jun|jul|oct|nov|dic/i);
 });
 
