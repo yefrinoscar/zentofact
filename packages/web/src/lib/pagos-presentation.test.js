@@ -138,20 +138,21 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
-  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'together', 'ring']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'share', 'ring']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
-    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Se queda', 'Pagado', 'Pendiente'],
+    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
   );
   assert.equal(charts[0].items[0].value, 1739.2);
   assert.equal(charts[0].items[1].value, 1218.35);
+  assert.equal(charts[1].hero.label, 'Se queda');
+  assert.equal(charts[1].hero.value, 520.85);
   assert.equal(charts[1].items[0].value, 148.2);
   assert.equal(charts[1].items[1].value, 372.65);
-  assert.equal(charts[1].items[2].value, 520.85);
   assert.equal(charts[2].items[0].value, 381.96);
   assert.equal(charts[2].items[1].value, 836.39);
   assert.equal(charts[0].hint, '27 ventas');
-  assert.equal(charts[1].hint, '29.9% se queda');
+  assert.equal(charts[1].hint, '29.9% del facturado');
   assert.equal(charts[2].hint, '11 pagadas · 16 pendientes');
   assert.equal(
     settlementCharts({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,

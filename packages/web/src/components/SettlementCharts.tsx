@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Liveline, type LivelineSeries } from 'liveline';
 import {
   formatLivelineDay,
@@ -49,12 +49,19 @@ function MetricDot({ itemKey }: { itemKey: string }) {
   );
 }
 
-function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
-  const lead = items.slice(0, 2);
-  const extra = items.slice(2);
+function MetricHeader({
+  hero,
+  items,
+  hint,
+}: {
+  hero?: ChartItem;
+  items: ChartItem[];
+  hint: string;
+}) {
+  const lead = hero ? [hero] : items.slice(0, 2);
   return (
     <>
-      <div className="flex items-start gap-4">
+      <div className={cn('flex items-start gap-4', hero && 'flex-col gap-0')}>
         {lead.map((item) => (
           <div key={item.key} className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
@@ -70,15 +77,6 @@ function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
           </div>
         ))}
       </div>
-      {extra.map((item) => (
-        <p key={item.key} className="mt-1 flex items-baseline gap-1.5 text-[12px] text-muted-foreground">
-          <MetricDot itemKey={item.key} />
-          <span>{item.label}</span>
-          <span className="font-semibold tabular-nums" style={{ color: seriesColor(item.key) }}>
-            {money.format(item.value)}
-          </span>
-        </p>
-      ))}
       {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
     </>
   );
@@ -125,10 +123,18 @@ function arcPath(cx: number, cy: number, radius: number, start: number, end: num
   return `M ${from.x} ${from.y} A ${radius} ${radius} 0 ${large} 1 ${to.x} ${to.y}`;
 }
 
-function DepositRing({ items }: { items: ChartItem[] }) {
-  const [active, setActive] = useState(items[0]?.key || 'paid');
+function SplitRing({
+  items,
+  hero,
+  ariaLabel,
+}: {
+  items: ChartItem[];
+  hero?: ChartItem;
+  ariaLabel: string;
+}) {
+  const [active, setActive] = useState(hero ? '' : items[0]?.key || '');
   const total = items.reduce((sum, item) => sum + item.value, 0);
-  const selected = items.find((item) => item.key === active) ?? items[0];
+  const selected = items.find((item) => item.key === active);
   const selectedShare = total && selected ? selected.value / total : 0;
   const size = 176;
   const cx = size / 2;
@@ -147,10 +153,16 @@ function DepositRing({ items }: { items: ChartItem[] }) {
     const label = polar(cx, cy, 80, mid);
     return { ...item, start, end, sweep, mid, share, label };
   });
+  const centerLabel = selected?.label || hero?.label || items[0]?.label || '';
+  const centerValue = selected
+    ? percentLabel(selectedShare)
+    : hero
+      ? money.format(hero.value)
+      : percentLabel(0);
 
   return (
-    <div className="mt-2">
-      <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto h-[168px] w-[168px]" role="img" aria-label="Pagado y pendiente">
+    <div className="mt-2" onMouseLeave={() => hero && setActive('')}>
+      <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto h-[168px] w-[168px]" role="img" aria-label={ariaLabel}>
         <circle cx={cx} cy={cy} r={70} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
         <circle cx={cx} cy={cy} r={38} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
         {slices.filter((slice) => slice.sweep > 0).map((slice) => (
@@ -161,7 +173,7 @@ function DepositRing({ items }: { items: ChartItem[] }) {
             stroke={seriesColor(slice.key)}
             strokeWidth={active === slice.key ? 16 : 13}
             strokeLinecap="round"
-            opacity={active === slice.key ? 1 : 0.7}
+            opacity={!active || active === slice.key ? 1 : 0.62}
             className="cursor-pointer"
             onMouseEnter={() => setActive(slice.key)}
             onClick={() => setActive(slice.key)}
@@ -180,10 +192,10 @@ function DepositRing({ items }: { items: ChartItem[] }) {
           </text>
         ))}
         <text x={cx} y={cy - 11} textAnchor="middle" className="fill-muted-foreground text-[10px]">
-          {selected?.label || 'Pagado'}
+          {centerLabel}
         </text>
-        <text x={cx} y={cy + 10} textAnchor="middle" className="fill-foreground text-[18px] font-semibold tabular-nums">
-          {percentLabel(selectedShare)}
+        <text x={cx} y={cy + 10} textAnchor="middle" className="fill-foreground text-[15px] font-semibold tabular-nums">
+          {centerValue}
         </text>
       </svg>
       <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -201,6 +213,7 @@ function DepositRing({ items }: { items: ChartItem[] }) {
             >
               <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
               {item.label}
+              <span className="tabular-nums text-foreground/80">{percentLabel(total ? item.value / total : 0)}</span>
             </button>
           </span>
         ))}
@@ -235,29 +248,28 @@ export function SettlementKpiStrip({ summary, sales }: {
 }) {
   const charts = settlementCharts(summary);
   const days = settlementDailySeries(sales);
-  const feeSeries = useMemo(
-    () => [
-      seriesFromDays(days, 'commission', 'Comisión'),
-      seriesFromDays(days, 'shipping', 'Logística'),
-      seriesFromDays(days, 'take', 'Se queda'),
-    ],
-    [days],
-  );
   if (!summary?.saleCount) return null;
   return (
     <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
       {charts.map((chart) => {
-        const caption = chart.items.map((item) => `${item.label} ${money.format(item.value)}`).join(', ');
+        const caption = [
+          chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
+          ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
+        ].filter(Boolean).join(', ');
         return (
           <div key={chart.id} aria-label={caption}>
-            <MetricHeader items={chart.items} hint={chart.hint} />
+            <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
               <MultiSeriesChart
                 series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
               />
             ) : null}
-            {chart.kind === 'together' ? <MultiSeriesChart series={feeSeries} /> : null}
-            {chart.kind === 'ring' ? <DepositRing items={chart.items} /> : null}
+            {chart.kind === 'share' ? (
+              <SplitRing items={chart.items} hero={chart.hero} ariaLabel="Comisión y logística" />
+            ) : null}
+            {chart.kind === 'ring' ? (
+              <SplitRing items={chart.items} ariaLabel="Pagado y pendiente" />
+            ) : null}
           </div>
         );
       })}

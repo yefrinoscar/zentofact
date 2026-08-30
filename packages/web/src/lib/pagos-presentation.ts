@@ -467,7 +467,7 @@ export function settlementCharts(summary: {
     : ventasHint(sales, 'Lo facturado');
   const takeHint = percentLabel(summary?.takeRate) === '—'
     ? 'Comisión y logística'
-    : `${percentLabel(summary?.takeRate)} se queda`;
+    : `${percentLabel(summary?.takeRate)} del facturado`;
   const paidHint = countHint(cash.paidCount, 'pagada', 'pagadas', 'Ya depositaron');
   const pendingHint = countHint(cash.pendingCount, 'pendiente', 'pendientes', 'Aún no pagan');
   const commission = Number(summary?.commission || 0);
@@ -477,6 +477,7 @@ export function settlementCharts(summary: {
       id: 'billed',
       kind: 'compare' as const,
       hint: soldHint,
+      hero: undefined,
       items: [
         { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
         { key: 'neto', label: 'Neto', value: cash.arrives, tone: 'receive' as const },
@@ -484,13 +485,13 @@ export function settlementCharts(summary: {
     },
     {
       id: 'fees',
-      kind: 'together' as const,
+      kind: 'share' as const,
       hint: takeHint,
       total: cash.kept,
+      hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
       items: [
         { key: 'commission', label: 'Comisión', value: commission, tone: 'take' as const },
         { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
-        { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
       ],
     },
     {
@@ -498,6 +499,7 @@ export function settlementCharts(summary: {
       kind: 'ring' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
+      hero: undefined,
       items: [
         { key: 'paid', label: 'Pagado', value: cash.paid, tone: 'receive' as const },
         { key: 'pending', label: 'Pendiente', value: cash.pending, tone: 'wait' as const },
