@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Liveline, type LivelinePoint, type LivelineSeries } from 'liveline';
+import { Liveline, type LivelineSeries } from 'liveline';
 import {
-  livelinePointsFromValues,
+  formatLivelineDay,
+  livelinePointsFromDays,
+  livelineWindowSecs,
   money,
   percentLabel,
   settlementCharts,
@@ -14,6 +16,7 @@ const LINE_COLOR = {
   neto: '#059669',
   commission: '#dc2626',
   shipping: '#d97706',
+  take: '#44403c',
   paid: '#059669',
   pending: '#d97706',
 } as const;
@@ -21,7 +24,6 @@ const LINE_COLOR = {
 const LLEGA = 'text-emerald-700 dark:text-emerald-400';
 const TAKE = 'text-red-600 dark:text-red-400';
 const WAIT = 'text-amber-800 dark:text-amber-400';
-const SPAN_SECS = 48;
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
 type ChartItem = { key: string; label: string; value: number; tone?: Tone };
@@ -35,8 +37,7 @@ function toneClass(tone?: Tone) {
 }
 
 function seriesFromDays(days: DayRow[], key: keyof typeof LINE_COLOR, label: string): LivelineSeries {
-  const values = days.length ? days.map((day) => Number(day[key] || 0)) : [0];
-  const data = livelinePointsFromValues(values, SPAN_SECS);
+  const data = livelinePointsFromDays(days, key);
   return {
     id: key,
     label,
@@ -46,17 +47,25 @@ function seriesFromDays(days: DayRow[], key: keyof typeof LINE_COLOR, label: str
   };
 }
 
+function MetricDot({ itemKey }: { itemKey: string }) {
+  return (
+    <span
+      className="size-2 shrink-0 rounded-[2px]"
+      style={{ background: LINE_COLOR[itemKey as keyof typeof LINE_COLOR] || LINE_COLOR.take }}
+    />
+  );
+}
+
 function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
+  const lead = items.slice(0, 2);
+  const extra = items.slice(2);
   return (
     <>
       <div className="flex items-start gap-4">
-        {items.map((item) => (
+        {lead.map((item) => (
           <div key={item.key} className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ background: LINE_COLOR[item.key as keyof typeof LINE_COLOR] }}
-              />
+              <MetricDot itemKey={item.key} />
               {item.label}
             </p>
             <p className={cn('text-[17px] font-semibold tabular-nums tracking-[-0.01em] leading-tight', toneClass(item.tone))}>
@@ -65,130 +74,139 @@ function MetricHeader({ items, hint }: { items: ChartItem[]; hint: string }) {
           </div>
         ))}
       </div>
+      {extra.map((item) => (
+        <p key={item.key} className="mt-1 flex items-baseline gap-1.5 text-[12px] text-muted-foreground">
+          <MetricDot itemKey={item.key} />
+          <span>{item.label}</span>
+          <span className={cn('font-semibold tabular-nums text-foreground', toneClass(item.tone))}>
+            {money.format(item.value)}
+          </span>
+        </p>
+      ))}
       {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
     </>
   );
 }
 
-function CompareLines({ days, items }: { days: DayRow[]; items: ChartItem[] }) {
-  const series = useMemo(
-    () => items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label)),
-    [days, items],
-  );
+function MultiSeriesChart({ series }: { series: LivelineSeries[] }) {
+  const windowSecs = livelineWindowSecs(series[0]?.data || []);
   return (
-    <div className="mt-2 h-[148px]">
+    <div className="mt-2 h-[148px] [&>div:first-child]:hidden">
       <Liveline
         data={[]}
         value={0}
         series={series}
         theme="light"
-        grid={false}
+        grid
         badge={false}
         pulse={false}
-        window={SPAN_SECS}
+        window={windowSecs}
         paused
         scrub
         cursor="crosshair"
         lineWidth={2.25}
-        padding={{ top: 28, right: 8, bottom: 18, left: 8 }}
+        padding={{ top: 28, right: 8, bottom: 22, left: 8 }}
         formatValue={(value) => money.format(value)}
+        formatTime={(time) => formatLivelineDay(time)}
       />
     </div>
   );
 }
 
-function FocusLine({ days, items }: { days: DayRow[]; items: ChartItem[] }) {
-  const [metric, setMetric] = useState(items[0]?.key || 'commission');
-  const selected = items.find((item) => item.key === metric) ?? items[0];
-  const points = useMemo<LivelinePoint[]>(() => {
-    const values = days.length ? days.map((day) => Number(day[metric] || 0)) : [0];
-    return livelinePointsFromValues(values, SPAN_SECS);
-  }, [days, metric]);
-  const value = points.at(-1)?.value ?? selected?.value ?? 0;
-  const color = LINE_COLOR[metric as keyof typeof LINE_COLOR] || LINE_COLOR.commission;
-  return (
-    <div className="mt-2">
-      <div className="mb-1 flex justify-end">
-        <span className="flex rounded-full bg-muted p-0.5">
-          {items.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              aria-pressed={metric === item.key}
-              onClick={() => setMetric(item.key)}
-              className={cn(
-                'rounded-full px-2 py-0.5 text-[10.5px] font-medium transition-colors',
-                metric === item.key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </span>
-      </div>
-      <div className="h-[128px]">
-        <Liveline
-          data={points}
-          value={value}
-          theme="light"
-          color={color}
-          grid
-          badge={false}
-          pulse={false}
-          fill
-          window={SPAN_SECS}
-          paused
-          scrub
-          cursor="crosshair"
-          lineWidth={2.25}
-          padding={{ top: 28, right: 8, bottom: 18, left: 8 }}
-          formatValue={(next) => money.format(next)}
-        />
-      </div>
-    </div>
-  );
+function polar(cx: number, cy: number, radius: number, angle: number) {
+  const rad = ((angle - 90) * Math.PI) / 180;
+  return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
 }
 
-function AllocationBar({ items }: { items: ChartItem[] }) {
+function arcPath(cx: number, cy: number, radius: number, start: number, end: number) {
+  const sweep = end - start;
+  if (sweep >= 359.5) {
+    return `M ${cx} ${cy - radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy + radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy - radius}`;
+  }
+  const from = polar(cx, cy, radius, start);
+  const to = polar(cx, cy, radius, end);
+  const large = sweep > 180 ? 1 : 0;
+  return `M ${from.x} ${from.y} A ${radius} ${radius} 0 ${large} 1 ${to.x} ${to.y}`;
+}
+
+function DepositRing({ items }: { items: ChartItem[] }) {
   const [active, setActive] = useState(items[0]?.key || 'paid');
   const total = items.reduce((sum, item) => sum + item.value, 0);
+  const selected = items.find((item) => item.key === active) ?? items[0];
+  const selectedShare = total && selected ? selected.value / total : 0;
+  const size = 176;
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = 54;
+  const present = items.filter((item) => item.value > 0);
+  const gap = present.length > 1 ? 12 : 0;
+  let cursor = -90;
+  const slices = items.map((item) => {
+    const share = total ? item.value / total : 0;
+    const sweep = item.value > 0 ? Math.max(share * 360 - gap, present.length === 1 ? 360 : 14) : 0;
+    const start = cursor + gap / 2;
+    const end = start + sweep;
+    cursor += share * 360;
+    const mid = (start + end) / 2;
+    const label = polar(cx, cy, 80, mid);
+    return { ...item, start, end, sweep, mid, share, label };
+  });
+
   return (
-    <div className="mt-3">
-      <div className="flex h-9 gap-0.5 overflow-hidden rounded-full bg-muted p-0.5" role="group" aria-label="Depósito">
-        {items.map((item) => {
-          const width = total ? Math.max((item.value / total) * 100, item.value ? 8 : 0) : 50;
-          return (
+    <div className="mt-2">
+      <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto h-[168px] w-[168px]" role="img" aria-label="Pagado y pendiente">
+        <circle cx={cx} cy={cy} r={70} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
+        <circle cx={cx} cy={cy} r={38} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
+        {slices.filter((slice) => slice.sweep > 0).map((slice) => (
+          <path
+            key={slice.key}
+            d={arcPath(cx, cy, radius, slice.start, slice.end)}
+            fill="none"
+            stroke={LINE_COLOR[slice.key as keyof typeof LINE_COLOR]}
+            strokeWidth={active === slice.key ? 16 : 13}
+            strokeLinecap="round"
+            opacity={active === slice.key ? 1 : 0.7}
+            className="cursor-pointer"
+            onMouseEnter={() => setActive(slice.key)}
+            onClick={() => setActive(slice.key)}
+          />
+        ))}
+        {slices.filter((slice) => slice.value > 0).map((slice) => (
+          <text
+            key={`${slice.key}-label`}
+            x={slice.label.x}
+            y={slice.label.y}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            className="fill-muted-foreground text-[10px] tabular-nums"
+          >
+            {percentLabel(slice.share)}
+          </text>
+        ))}
+        <text x={cx} y={cy - 11} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+          {selected?.label || 'Pagado'}
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" className="fill-foreground text-[18px] font-semibold tabular-nums">
+          {percentLabel(selectedShare)}
+        </text>
+      </svg>
+      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {items.map((item, index) => (
+          <span key={item.key} className="inline-flex items-center gap-3">
+            {index > 0 ? <span className="text-[8px] text-border" aria-hidden>◆</span> : null}
             <button
-              key={item.key}
               type="button"
               aria-pressed={active === item.key}
-              aria-label={`${item.label}: ${money.format(item.value)}`}
               onClick={() => setActive(item.key)}
-              className="relative h-full overflow-hidden rounded-full transition-opacity"
-              style={{
-                width: `${width}%`,
-                background: LINE_COLOR[item.key as keyof typeof LINE_COLOR],
-                opacity: active === item.key ? 1 : 0.55,
-              }}
-            />
-          );
-        })}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {items.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            aria-pressed={active === item.key}
-            onClick={() => setActive(item.key)}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] tabular-nums transition-colors',
-              active === item.key ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <span className="size-1.5 rounded-full" style={{ background: LINE_COLOR[item.key as keyof typeof LINE_COLOR] }} />
-            {item.label} {percentLabel(total ? item.value / total : null)}
-          </button>
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md px-1 py-0.5',
+                active === item.key ? 'text-foreground' : 'hover:text-foreground',
+              )}
+            >
+              <span className="size-2 rounded-[2px]" style={{ background: LINE_COLOR[item.key as keyof typeof LINE_COLOR] }} />
+              {item.label}
+            </button>
+          </span>
         ))}
       </div>
     </div>
@@ -219,9 +237,17 @@ export function SettlementKpiStrip({ summary, sales }: {
     shipping?: number | null;
   }>;
 }) {
-  if (!summary?.saleCount) return null;
   const charts = settlementCharts(summary);
   const days = settlementDailySeries(sales);
+  const feeSeries = useMemo(
+    () => [
+      seriesFromDays(days, 'commission', 'Comisión'),
+      seriesFromDays(days, 'shipping', 'Logística'),
+      seriesFromDays(days, 'take', 'Se queda'),
+    ],
+    [days],
+  );
+  if (!summary?.saleCount) return null;
   return (
     <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
       {charts.map((chart) => {
@@ -229,9 +255,13 @@ export function SettlementKpiStrip({ summary, sales }: {
         return (
           <div key={chart.id} aria-label={caption}>
             <MetricHeader items={chart.items} hint={chart.hint} />
-            {chart.kind === 'compare' ? <CompareLines days={days} items={chart.items} /> : null}
-            {chart.kind === 'focus' ? <FocusLine days={days} items={chart.items} /> : null}
-            {chart.kind === 'allocation' ? <AllocationBar items={chart.items} /> : null}
+            {chart.kind === 'compare' ? (
+              <MultiSeriesChart
+                series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
+              />
+            ) : null}
+            {chart.kind === 'together' ? <MultiSeriesChart series={feeSeries} /> : null}
+            {chart.kind === 'ring' ? <DepositRing items={chart.items} /> : null}
           </div>
         );
       })}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, livelinePointsFromValues, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, formatLivelineDay, importSummary, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -138,15 +138,16 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
-  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'focus', 'allocation']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'together', 'ring']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
-    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
+    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Se queda', 'Pagado', 'Pendiente'],
   );
   assert.equal(charts[0].items[0].value, 1739.2);
   assert.equal(charts[0].items[1].value, 1218.35);
   assert.equal(charts[1].items[0].value, 148.2);
   assert.equal(charts[1].items[1].value, 372.65);
+  assert.equal(charts[1].items[2].value, 520.85);
   assert.equal(charts[2].items[0].value, 381.96);
   assert.equal(charts[2].items[1].value, 836.39);
   assert.equal(charts[0].hint, '27 ventas');
@@ -171,6 +172,7 @@ test('el trend diario agrupa facturado, neto y depósito', () => {
   assert.equal(days[0].neto, 58.11);
   assert.equal(days[0].paid, 58.11);
   assert.equal(days[0].pending, 0);
+  assert.equal(days[0].take, 74.77);
   assert.equal(days[1].pending, 16.97);
   const points = settlementTrendPoints(days, ['facturado', 'neto']);
   assert.ok(points.length > 2);
@@ -181,6 +183,11 @@ test('el trend diario agrupa facturado, neto y depósito', () => {
   assert.equal(line[0].value, 132.88);
   assert.equal(line.at(-1).value, 16.97);
   assert.ok(line[0].time < line.at(-1).time);
+  const byDay = livelinePointsFromDays(days, 'take');
+  assert.equal(byDay[0].value, 74.77);
+  assert.equal(byDay.at(-1).value, 17.02);
+  assert.ok(livelineWindowSecs(byDay) >= 86400);
+  assert.match(formatLivelineDay(byDay[0].time), /ago|set|ene|feb|mar|abr|may|jun|jul|oct|nov|dic/i);
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

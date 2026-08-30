@@ -344,6 +344,7 @@ export function settlementDailySeries(sales: Array<{
     shipping: number;
     paid: number;
     pending: number;
+    take: number;
   }>();
   for (const sale of sales || []) {
     const date = String(sale.date || '').slice(0, 10);
@@ -356,17 +357,53 @@ export function settlementDailySeries(sales: Array<{
       shipping: 0,
       paid: 0,
       pending: 0,
+      take: 0,
     };
     const neto = Number(sale.neto || 0);
     current.facturado = roundMoney(current.facturado + Number(sale.bruto || 0));
     current.neto = roundMoney(current.neto + neto);
     current.commission = roundMoney(current.commission + Number(sale.commission || 0));
     current.shipping = roundMoney(current.shipping + Number(sale.shipping || 0));
+    current.take = roundMoney(current.commission + current.shipping);
     if (sale.paid) current.paid = roundMoney(current.paid + neto);
     else current.pending = roundMoney(current.pending + neto);
     days.set(date, current);
   }
   return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function livelinePointsFromDays(
+  days: Array<Record<string, number | string>>,
+  key: string,
+) {
+  const rows = (days || []).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(String(row.date || '')));
+  if (!rows.length) return livelinePointsFromValues([0]);
+  const values = rows.map((row) => Number(row[key] || 0));
+  const dense = smoothNumericSeries(values.length >= 2 ? values : [values[0], values[0]]);
+  const start = Date.parse(`${rows[0].date}T12:00:00-05:00`) / 1000;
+  const end = Date.parse(`${rows[rows.length - 1].date}T12:00:00-05:00`) / 1000;
+  const span = Math.max(86400, end - start);
+  if (dense.length < 2) {
+    return [
+      { time: Math.round(start), value: dense[0] || 0 },
+      { time: Math.round(start + span), value: dense[0] || 0 },
+    ];
+  }
+  const gap = span / (dense.length - 1);
+  return dense.map((value, index) => ({
+    time: Math.round(start + index * gap),
+    value,
+  }));
+}
+
+export function livelineWindowSecs(points: Array<{ time: number }>) {
+  if (!points.length) return 86400;
+  if (points.length === 1) return 86400;
+  return Math.max(86400, points[points.length - 1].time - points[0].time + 43200);
+}
+
+export function formatLivelineDay(time: number) {
+  return saleDateLabel(new Date(Number(time) * 1000).toISOString().slice(0, 10));
 }
 
 export function livelinePointsFromValues(values: number[], spanSecs = 48) {
@@ -447,17 +484,18 @@ export function settlementCharts(summary: {
     },
     {
       id: 'fees',
-      kind: 'focus' as const,
+      kind: 'together' as const,
       hint: takeHint,
       total: cash.kept,
       items: [
         { key: 'commission', label: 'Comisión', value: commission, tone: 'take' as const },
         { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
+        { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
       ],
     },
     {
       id: 'payout',
-      kind: 'allocation' as const,
+      kind: 'ring' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
       items: [
