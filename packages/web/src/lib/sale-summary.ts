@@ -7,7 +7,7 @@ import {
   type ManualSaleInput,
   type SaleStepId,
 } from './registrar-venta.ts';
-import { shippingCarrierLabel } from './shipping-carrier.ts';
+import { isSellerPricedShipping, shippingCarrierLabel } from './shipping-carrier.ts';
 import { dateFromKey } from './documentDateRange.ts';
 
 export type SaleTotals = {
@@ -144,11 +144,14 @@ export function saleTotalRows(
   totals: SaleTotals,
   priceZoneName?: string | null,
   distanceKm?: number | null,
+  shippingCarrier?: string | null,
 ): SummaryRow[] {
   const rows: SummaryRow[] = [{ label: 'Productos', value: formatSaleMoney(totals.products) }];
   if (totals.shipping > 0) {
     rows.push({
-      label: ownFleetShippingLabel(priceZoneName, distanceKm),
+      label: isSellerPricedShipping(shippingCarrier)
+        ? `Envío ${shippingCarrierLabel(shippingCarrier)}`
+        : ownFleetShippingLabel(priceZoneName, distanceKm),
       value: formatSaleMoney(totals.shipping),
     });
   }

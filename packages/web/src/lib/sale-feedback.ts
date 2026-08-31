@@ -65,7 +65,7 @@ export function saleValidationField(message: string | null | undefined): SaleVal
   const value = String(message || '').trim();
   if (!value) return null;
   if (value.includes('canal de venta manual')) return 'channel';
-  if (value.includes('nombre del cliente')) return 'customer';
+  if (value.includes('nombre del cliente') || value.includes('teléfono')) return 'customer';
   if (
     value.includes('DNI')
     || value.includes('RUC')
@@ -75,14 +75,15 @@ export function saleValidationField(message: string | null | undefined): SaleVal
   ) {
     return 'document';
   }
-  if (value.includes('producto')) return 'products';
-  if (value.includes('cantidad') || value.includes('precio')) return 'lines';
+  if (value.includes('stock') || value.includes('producto')) return 'products';
+  if (value.includes('cantidad y precio')) return 'lines';
   if (
     value.includes('fecha de entrega')
     || value.includes('reparto')
     || value.includes('dirección')
     || value.includes('no llega')
     || value.includes('Lima metropolitana')
+    || value.includes('precio de envío')
   ) {
     return 'delivery';
   }

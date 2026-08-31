@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SHIPPING_CARRIERS, shippingCarrierLabel } from './shipping-carrier.ts';
+import { SHIPPING_CARRIERS, isSellerPricedShipping, shippingCarrierLabel } from './shipping-carrier.ts';
 
 test('shipping carriers are Marvisuar, Shaloom, Dinsides and Express', () => {
   assert.deepEqual(SHIPPING_CARRIERS.map((carrier) => carrier.label), [
@@ -24,4 +24,13 @@ test('shipping carrier labels resolve known values and ignore blanks', () => {
   assert.equal(shippingCarrierLabel(''), '');
   assert.equal(shippingCarrierLabel(null), '');
   assert.equal(shippingCarrierLabel('otro'), '');
+});
+
+test('Marvisuar, Shaloom y Dinsides cobran el precio que pone el vendedor', () => {
+  assert.equal(isSellerPricedShipping('marvisuar'), true);
+  assert.equal(isSellerPricedShipping('Shaloom'), true);
+  assert.equal(isSellerPricedShipping('dinsides'), true);
+  assert.equal(isSellerPricedShipping('nosotros'), false);
+  assert.equal(isSellerPricedShipping(''), false);
+  assert.equal(isSellerPricedShipping(null), false);
 });

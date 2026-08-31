@@ -11,6 +11,10 @@ import {
   limaTodayKey,
   productPrice,
   productStock,
+  remainingSaleStock,
+  canSelectProductForSale,
+  clampSaleQuantity,
+  parseSellerShippingAmount,
   saleLinesTotal,
   validateManualSale,
   validateSaleStep,
@@ -35,6 +39,7 @@ function validSale(overrides = {}) {
     delivery: 'envio',
     deliveryDate: '2026-08-25',
     shippingCarrier: 'shaloom',
+    sellerShippingAmount: 0,
     dropoffPlace: {
       label: 'Av. Primavera 123, Surco',
       district: 'Surco',
@@ -81,6 +86,26 @@ test('el stock del modal usa available y formatea unidades', () => {
   assert.equal(formatProductStock({ id: 1, mainSku: 'A', name: 'X', available: 0 }), '0 u');
 });
 
+test('un producto en 0 no se puede elegir y la cantidad no pasa el stock', () => {
+  const product = { id: 1, mainSku: 'A', name: 'X', available: 0 };
+  assert.equal(canSelectProductForSale(product), false);
+  assert.equal(remainingSaleStock({ id: 2, mainSku: 'B', name: 'Y', available: 3 }, [
+    { ...baseLine, productId: 2, quantity: 2 },
+  ]), 1);
+  assert.equal(canSelectProductForSale({ id: 2, mainSku: 'B', name: 'Y', available: 3 }, [
+    { ...baseLine, productId: 2, quantity: 3 },
+  ]), false);
+  assert.equal(clampSaleQuantity(9, 3), 3);
+  assert.equal(clampSaleQuantity(0, 5), 1);
+});
+
+test('parseSellerShippingAmount trata vacío como no puesto y 0 como válido', () => {
+  assert.equal(parseSellerShippingAmount(''), null);
+  assert.equal(parseSellerShippingAmount(null), null);
+  assert.equal(parseSellerShippingAmount('12,5'), 12.5);
+  assert.equal(parseSellerShippingAmount(0), 0);
+});
+
 test('limaTodayKey usa el calendario de Lima, no UTC', () => {
   // 2026-08-25 02:30 UTC = 2026-08-24 21:30 Lima
   assert.equal(limaTodayKey(new Date('2026-08-25T02:30:00.000Z')), '2026-08-24');
@@ -116,10 +141,20 @@ test('saleLinesTotal suma precio por cantidad', () => {
 test('validateManualSale exige canal, cliente, productos, fecha y datos de envío', () => {
   assert.equal(validateManualSale(validSale({ channelAccountId: null })), 'Todavía no hay un canal de venta manual habilitado.');
   assert.equal(validateManualSale(validSale({ customerName: '  ' })), 'Escribe el nombre del cliente.');
+  assert.equal(validateManualSale(validSale({ customerPhone: '343434' })), 'Escribe un teléfono de 9 dígitos.');
+  assert.equal(validateManualSale(validSale({ customerPhone: '' })), 'Escribe un teléfono de 9 dígitos.');
   assert.equal(validateManualSale(validSale({ lines: [] })), 'Agrega al menos un producto.');
   assert.equal(
     validateManualSale(validSale({ lines: [{ ...baseLine, quantity: 0 }] })),
     'Revisa cantidad y precio de cada producto.',
+  );
+  assert.equal(
+    validateManualSale(validSale({ lines: [{ ...baseLine, available: 0, quantity: 1 }] })),
+    'Ese producto no tiene stock.',
+  );
+  assert.equal(
+    validateManualSale(validSale({ lines: [{ ...baseLine, available: 2, quantity: 3 }] })),
+    'No hay stock para esa cantidad.',
   );
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
@@ -129,6 +164,10 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
     'Busca el distrito de Lima metropolitana.',
+  );
+  assert.equal(
+    validateManualSale(validSale({ sellerShippingAmount: null })),
+    'Indica el precio de envío.',
   );
   assert.equal(validateManualSale(validSale()), null);
   assert.equal(
@@ -311,6 +350,11 @@ test('buildManualSaleOrderPayload incluye fecha de entrega y promisedShippingAt'
   assert.equal(payload.customer.phone, '999111222');
 });
 
+test('el teléfono del pedido se guarda solo con dígitos', () => {
+  const payload = buildManualSaleOrderPayload(validSale({ customerPhone: '999 111 222' }));
+  assert.equal(payload.customer.phone, '999111222');
+});
+
 test('buildManualSaleOrderPayload en recojo usa la dirección de tienda', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     delivery: 'recojo',
@@ -387,10 +431,32 @@ test('Express persiste el distrito del pin aunque la búsqueda diga otro', () =>
   assert.equal(payload.shipping.priceZone, 'Cerca');
 });
 
-test('un repartidor tercero no cobra envío propio', () => {
-  const payload = buildManualSaleOrderPayload(validSale());
-  assert.equal(payload.shippingAmount, null);
-  assert.equal(payload.total, 250);
+test('un repartidor tercero cobra el precio que pone el vendedor', () => {
+  const sinCobro = buildManualSaleOrderPayload(validSale({ sellerShippingAmount: 0 }));
+  assert.equal(sinCobro.shippingAmount, null);
+  assert.equal(sinCobro.total, 250);
+
+  const conCobro = buildManualSaleOrderPayload(validSale({ sellerShippingAmount: 18 }));
+  assert.equal(conCobro.shippingAmount, 18);
+  assert.equal(conCobro.total, 268);
+  assert.equal(conCobro.shipping.carrier, 'shaloom');
+});
+
+test('Express cobra la zona y no el precio de un tercero', () => {
+  const payload = buildManualSaleOrderPayload(validSale({
+    shippingCarrier: 'nosotros',
+    sellerShippingAmount: 40,
+    dropoffPlace: {
+      label: 'Av. La Marina 2055, San Miguel',
+      district: 'San Miguel',
+      province: 'Lima',
+      department: 'Lima',
+      lat: -12.0776,
+      lng: -77.0905,
+    },
+  }));
+  assert.equal(payload.shippingAmount, 15);
+  assert.equal(payload.total, 265);
 });
 
 test('regresión: el modal de productos muestra stock aunque sea cero', () => {
@@ -419,11 +485,19 @@ test('cada paso solo bloquea por sus propios campos', () => {
   assert.equal(validateSaleStep('cliente', sinCliente), 'Escribe el nombre del cliente.');
   assert.equal(validateSaleStep('productos', sinCliente), null);
 
+  const sinTelefono = validSale({ customerPhone: '343434' });
+  assert.equal(validateSaleStep('cliente', sinTelefono), 'Escribe un teléfono de 9 dígitos.');
+  assert.equal(validateSaleStep('entrega', sinTelefono), null);
+
   // Falta la dirección: solo bloquea Entrega.
   const sinDireccion = validSale({ dropoffPlace: null });
   assert.equal(validateSaleStep('entrega', sinDireccion), 'Busca el distrito de Lima metropolitana.');
   assert.equal(validateSaleStep('cliente', sinDireccion), null);
   assert.equal(validateSaleStep('productos', sinDireccion), null);
+
+  const sinPrecioEnvio = validSale({ sellerShippingAmount: null });
+  assert.equal(validateSaleStep('entrega', sinPrecioEnvio), 'Indica el precio de envío.');
+  assert.equal(validateSaleStep('cliente', sinPrecioEnvio), null);
 });
 
 test('el comprobante incompleto bloquea el paso Cliente, no el de Entrega', () => {
@@ -451,8 +525,10 @@ test('el resumen valida la venta completa antes de registrar', () => {
 test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () => {
   assert.equal(firstInvalidSaleStep(validSale()), null);
   assert.equal(firstInvalidSaleStep(validSale({ customerName: '' })), 'cliente');
+  assert.equal(firstInvalidSaleStep(validSale({ customerPhone: '123' })), 'cliente');
   assert.equal(firstInvalidSaleStep(validSale({ lines: [] })), 'productos');
   assert.equal(firstInvalidSaleStep(validSale({ shippingCarrier: '' })), 'entrega');
+  assert.equal(firstInvalidSaleStep(validSale({ sellerShippingAmount: null })), 'entrega');
   // Con dos pasos rotos, devuelve el primero para no hacer retroceder al vendedor dos veces.
   assert.equal(firstInvalidSaleStep(validSale({ customerName: '', lines: [] })), 'cliente');
   // El canal es un error de configuración, no un paso del recorrido.

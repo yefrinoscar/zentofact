@@ -146,17 +146,33 @@ function SearchField({
 
 const ProductRow = memo(function ProductRow({
   product,
+  disabled,
   onSelect,
 }: {
   product: CatalogProductForSale;
+  disabled: boolean;
   onSelect: (product: CatalogProductForSale) => void;
 }) {
+  const outOfStock = productStock(product) <= 0;
   return (
     <li>
       <button
         type="button"
-        onClick={() => onSelect(product)}
-        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left active:bg-muted/70 sm:px-5 sm:py-3 sm:hover:bg-muted/50"
+        disabled={disabled}
+        aria-disabled={disabled}
+        aria-label={disabled
+          ? (outOfStock ? `${product.name}, sin stock` : `${product.name}, ya está en el pedido`)
+          : product.name}
+        onClick={() => {
+          if (disabled) return;
+          onSelect(product);
+        }}
+        className={cn(
+          'flex w-full items-center gap-3 px-4 py-3.5 text-left sm:px-5 sm:py-3',
+          disabled
+            ? 'cursor-not-allowed opacity-50'
+            : 'cursor-pointer active:bg-muted/70 sm:hover:bg-muted/50',
+        )}
       >
         <ProductPhoto
           url={product.imageUrl}
@@ -174,10 +190,10 @@ const ProductRow = memo(function ProductRow({
           </span>
           <span className={cn(
             'mt-0.5 block text-xs tabular-nums sm:text-[11px]',
-            productStock(product) <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
+            outOfStock ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
           )}
           >
-            {formatProductStock(product)}
+            {outOfStock ? 'Sin stock' : formatProductStock(product)}
           </span>
         </span>
       </button>
@@ -190,11 +206,13 @@ function ProductResults({
   isFetching,
   submittedSearch,
   onSelect,
+  canSelect,
 }: {
   products: CatalogProductForSale[];
   isFetching: boolean;
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
+  canSelect: (product: CatalogProductForSale) => boolean;
 }) {
   if (isFetching && !products.length) {
     return (
@@ -216,7 +234,12 @@ function ProductResults({
   return (
     <ul className="divide-y divide-border pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {products.map((product) => (
-        <ProductRow key={product.id} product={product} onSelect={onSelect} />
+        <ProductRow
+          key={product.id}
+          product={product}
+          disabled={!canSelect(product)}
+          onSelect={onSelect}
+        />
       ))}
     </ul>
   );
@@ -244,7 +267,7 @@ function MobilePickerChrome({
             <SheetHeader className="gap-1 text-left">
               <SheetTitle className="text-[17px] leading-tight">Elegir producto</SheetTitle>
               <SheetDescription className="text-[13px] leading-snug">
-                Busca por nombre o SKU y toca para agregarlo.
+                Busca por nombre o SKU. Sin stock no se agrega.
               </SheetDescription>
             </SheetHeader>
           </div>
@@ -279,6 +302,7 @@ function DesktopPickerBody({
   isFetching,
   submittedSearch,
   onSelect,
+  canSelect,
   searchInputRef,
 }: {
   search: string;
@@ -288,6 +312,7 @@ function DesktopPickerBody({
   isFetching: boolean;
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
+  canSelect: (product: CatalogProductForSale) => boolean;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   return (
@@ -306,6 +331,7 @@ function DesktopPickerBody({
           isFetching={isFetching}
           submittedSearch={submittedSearch}
           onSelect={onSelect}
+          canSelect={canSelect}
         />
       </div>
     </>
@@ -322,6 +348,7 @@ export function ProductSearchPicker({
   isFetching,
   submittedSearch,
   onSelect,
+  canSelect,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -332,11 +359,13 @@ export function ProductSearchPicker({
   isFetching: boolean;
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
+  canSelect?: (product: CatalogProductForSale) => boolean;
 }) {
   const isMobile = useIsMobile();
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useVisualViewportCssVar(open && isMobile);
+  const productSelectable = canSelect || ((product: CatalogProductForSale) => productStock(product) > 0);
 
   useEffect(() => {
     if (!open) return;
@@ -375,6 +404,7 @@ export function ProductSearchPicker({
               isFetching={isFetching}
               submittedSearch={submittedSearch}
               onSelect={onSelect}
+              canSelect={productSelectable}
             />
           </div>
         </SheetContent>
@@ -387,7 +417,7 @@ export function ProductSearchPicker({
       <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         <DialogHeader className="border-b border-border px-5 py-4 pr-14">
           <DialogTitle>Elegir producto</DialogTitle>
-          <DialogDescription>Busca por nombre o SKU y toca para agregarlo.</DialogDescription>
+          <DialogDescription>Busca por nombre o SKU. Sin stock no se agrega.</DialogDescription>
         </DialogHeader>
         <DesktopPickerBody
           search={search}
@@ -397,6 +427,7 @@ export function ProductSearchPicker({
           isFetching={isFetching}
           submittedSearch={submittedSearch}
           onSelect={onSelect}
+          canSelect={productSelectable}
           searchInputRef={searchRef}
         />
       </DialogContent>
