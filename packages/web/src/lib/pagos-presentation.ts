@@ -527,7 +527,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'payout',
-      kind: 'split' as const,
+      kind: 'pie' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
       hero: undefined,

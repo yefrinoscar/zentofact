@@ -1,4 +1,5 @@
 import { Liveline, type LivelineSeries } from 'liveline';
+import { Label, Pie, PieChart } from 'recharts';
 import {
   formatLivelineDay,
   livelinePointsFromDays,
@@ -10,6 +11,12 @@ import {
   waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart';
 
 const LINE_COLOR = {
   facturado: '#7A7672',
@@ -151,33 +158,68 @@ function WaffleHundred({
   );
 }
 
-function NetoSplit({ paid, pending }: { paid: number; pending: number }) {
+const payoutChartConfig = {
+  amount: { label: 'Neto' },
+  paid: { label: 'Pagado', color: LINE_COLOR.paid },
+  pending: { label: 'Pendiente', color: LINE_COLOR.pending },
+} satisfies ChartConfig;
+
+function NetoPie({ paid, pending }: { paid: number; pending: number }) {
   const paidValue = Math.max(0, paid);
   const pendingValue = Math.max(0, pending);
   const total = paidValue + pendingValue;
   const paidShare = total ? paidValue / total : 0;
   const pendingShare = total ? pendingValue / total : 0;
+  const data = [
+    { slice: 'paid', amount: paidValue, fill: 'var(--color-paid)' },
+    { slice: 'pending', amount: pendingValue, fill: 'var(--color-pending)' },
+  ].filter((item) => item.amount > 0);
   return (
-    <div className="mt-3" role="img" aria-label={`Neto ${money.format(total)}: pagado ${percentLabel(paidShare)}, pendiente ${percentLabel(pendingShare)}`}>
-      <div className="flex h-9 overflow-hidden rounded-md">
-        {paidShare > 0 ? (
-          <div
-            className="flex min-w-0 items-center justify-center px-2 text-[11px] font-medium tabular-nums text-primary-foreground"
-            style={{ width: `${Math.max(paidShare * 100, paidShare > 0 ? 8 : 0)}%`, background: LINE_COLOR.paid }}
+    <div
+      className="mt-2"
+      role="img"
+      aria-label={`Neto ${money.format(total)}: pagado ${percentLabel(paidShare)}, pendiente ${percentLabel(pendingShare)}`}
+    >
+      <ChartContainer
+        config={payoutChartConfig}
+        className="aspect-square h-[148px] w-[148px]"
+        initialDimension={{ width: 148, height: 148 }}
+      >
+        <PieChart>
+          <ChartTooltip
+            cursor={false}
+            content={<ChartTooltipContent hideLabel nameKey="slice" />}
+          />
+          <Pie
+            data={data}
+            dataKey="amount"
+            nameKey="slice"
+            innerRadius="62%"
+            outerRadius="88%"
+            paddingAngle={data.length > 1 ? 5 : 0}
+            cornerRadius="50%"
+            stroke="none"
+            startAngle={90}
+            endAngle={450}
           >
-            {paidShare >= 0.16 ? percentLabel(paidShare) : ''}
-          </div>
-        ) : null}
-        {pendingShare > 0 ? (
-          <div
-            className="flex min-w-0 items-center justify-center px-2 text-[11px] font-medium tabular-nums text-primary"
-            style={{ width: `${Math.max(pendingShare * 100, pendingShare > 0 ? 8 : 0)}%`, background: LINE_COLOR.pending }}
-          >
-            {pendingShare >= 0.16 ? percentLabel(pendingShare) : ''}
-          </div>
-        ) : null}
-      </div>
-      <p className="mt-2 text-[11px] leading-snug text-muted-foreground">Neto {money.format(total)}</p>
+            <Label
+              content={({ viewBox }) => {
+                if (!viewBox || !('cx' in viewBox) || !('cy' in viewBox)) return null;
+                return (
+                  <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                    <tspan x={viewBox.cx} y={(viewBox.cy || 0) - 7} className="fill-foreground text-[12px] font-semibold tabular-nums">
+                      {money.format(total)}
+                    </tspan>
+                    <tspan x={viewBox.cx} y={(viewBox.cy || 0) + 10} className="fill-muted-foreground text-[10px]">
+                      Neto
+                    </tspan>
+                  </text>
+                );
+              }}
+            />
+          </Pie>
+        </PieChart>
+      </ChartContainer>
     </div>
   );
 }
@@ -210,7 +252,7 @@ export function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
-    <div className="grid grid-cols-1 items-start gap-x-5 gap-y-5 sm:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 items-start gap-x-12 gap-y-8 sm:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)]">
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
@@ -231,8 +273,8 @@ export function SettlementKpiStrip({ summary, sales }: {
                 shipping={Number(summary.shipping || 0)}
               />
             ) : null}
-            {chart.kind === 'split' ? (
-              <NetoSplit
+            {chart.kind === 'pie' ? (
+              <NetoPie
                 paid={Number(summary.paidNeto || 0)}
                 pending={Number(summary.pendingNeto || 0)}
               />
