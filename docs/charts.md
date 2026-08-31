@@ -1,18 +1,13 @@
 # Charts
 
-Opciones de visualización en Pagos. El strip actual es Facturado/Neto en líneas, Se queda en waffle de 100 y Pagado/Pendiente en áreas apiladas.
+Opciones de visualización en Pagos. El strip actual es Facturado/Neto en líneas, Se queda en waffle de 100 y Pagado/Pendiente en cascada.
 
-## Cascada de Se queda
+## Cascada
 
-No está en pantalla. Queda como alternativa si el waffle no alcanza para ver el golpe de cada cobro sobre lo que llega.
+Va en el último chart (Pagado / Pendiente). Barras juntas, no un área.
 
-Una cascada corta, barras juntas:
+- Pagado — tono oscuro
+- Pendiente — el mismo color, tono claro
+- Neto — gris (los dos juntos)
 
-- Facturado — gris
-- Comisión — tono oscuro del color de cobros
-- Logística — el mismo color, tono claro
-- Neto — gris
-
-Se queda (el total Comisión + Logística) va en carbón o negro, no en el color de los cobros. Facturado y Neto se quedan grises para que se lean solo Comisión y Logística.
-
-El helper sigue siendo `30% del facturado`. No usar naranja contra violeta en esta lectura: un color, dos tonos.
+Facturado, neto y se queda en gris cuando aparecen. Un color, dos tonos, para las partes que hay que distinguir.

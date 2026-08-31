@@ -1,15 +1,11 @@
-import { useMemo, useState } from 'react';
 import { Liveline, type LivelineSeries } from 'liveline';
 import {
   formatLivelineDay,
   livelinePointsFromDays,
   livelineWindowSecs,
   money,
-  percentLabel,
-  saleDateLabel,
   settlementCharts,
   settlementDailySeries,
-  settlementTrendPoints,
   waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
@@ -22,7 +18,7 @@ const LINE_COLOR = {
   shipping: '#2DD4BF',
   arrives: '#C9C5C0',
   paid: '#3B8F72',
-  pending: '#E07838',
+  pending: '#86C4A8',
 } as const;
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
@@ -127,7 +123,7 @@ function WaffleHundred({
     { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives },
   ];
   return (
-    <div className="mt-2 flex items-start gap-3">
+    <div className="mt-2 flex w-max items-start gap-3">
       <div
         className="grid grid-cols-10 gap-[3px]"
         role="img"
@@ -154,111 +150,45 @@ function WaffleHundred({
   );
 }
 
-function stackedPath(points: Array<{ x: number; y: number }>, baseline: number) {
-  if (!points.length) return '';
-  const top = points.map((point) => `${point.x},${point.y}`).join(' L ');
-  const last = points[points.length - 1];
-  const first = points[0];
-  return `M ${first.x},${baseline} L ${top} L ${last.x},${baseline} Z`;
-}
-
-function linePath(points: Array<{ x: number; y: number }>) {
-  if (!points.length) return '';
-  return `M ${points.map((point) => `${point.x},${point.y}`).join(' L ')}`;
-}
-
-function StackedPayout({ days }: { days: DayRow[] }) {
-  const [active, setActive] = useState<number | null>(null);
-  const trend = useMemo(() => settlementTrendPoints(days, ['paid', 'pending']), [days]);
-  const width = 280;
-  const height = 132;
-  const pad = { top: 10, right: 8, bottom: 22, left: 8 };
-  const innerW = width - pad.left - pad.right;
-  const innerH = height - pad.top - pad.bottom;
-  const max = Math.max(1, ...trend.map((point) => Number(point.paid || 0) + Number(point.pending || 0)));
-  const plotted = trend.map((point, index) => {
-    const paid = Math.max(0, Number(point.paid || 0));
-    const pending = Math.max(0, Number(point.pending || 0));
-    const x = pad.left + (trend.length < 2 ? innerW / 2 : (index / (trend.length - 1)) * innerW);
-    const yPaid = pad.top + innerH - (paid / max) * innerH;
-    const yTop = pad.top + innerH - ((paid + pending) / max) * innerH;
-    return { x, paid, pending, neto: paid + pending, yPaid, yTop };
-  });
-  const paidArea = stackedPath(plotted.map((point) => ({ x: point.x, y: point.yPaid })), pad.top + innerH);
-  const pendingArea = plotted.length
-    ? `M ${plotted.map((point) => `${point.x},${point.yPaid}`).join(' L ')} L ${[...plotted].reverse().map((point) => `${point.x},${point.yTop}`).join(' L ')} Z`
-    : '';
-  const labels = days.length
-    ? [days[0], days[Math.floor((days.length - 1) / 2)], days[days.length - 1]]
-        .map((row) => saleDateLabel(String(row.date || '')))
-        .filter((label, index, list) => label && list.indexOf(label) === index)
-    : [];
-  const hover = active == null ? null : plotted[active];
+function DepositCascade({ paid, pending }: { paid: number; pending: number }) {
+  const neto = Math.max(0, paid) + Math.max(0, pending);
+  const paidValue = Math.max(0, paid);
+  const pendingValue = Math.max(0, pending);
+  const max = Math.max(neto, 1);
+  const width = 220;
+  const height = 148;
+  const top = 16;
+  const bottom = 26;
+  const innerH = height - top - bottom;
+  const barW = 34;
+  const gap = 8;
+  const origin = 28;
+  const y = (value: number) => top + innerH - (value / max) * innerH;
+  const h = (value: number) => (value / max) * innerH;
+  const paidX = origin;
+  const pendingX = origin + barW + gap;
+  const netoX = origin + (barW + gap) * 2;
+  const paidTop = y(paidValue);
+  const pendingTop = y(neto);
+  const pendingBottom = y(paidValue);
+  const netoTop = y(neto);
+  const base = top + innerH;
 
   return (
-    <div className="relative mt-2">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-[148px] w-full"
-        role="img"
-        aria-label="Pagado y pendiente apilados"
-        onMouseLeave={() => setActive(null)}
-        onMouseMove={(event) => {
-          const box = event.currentTarget.getBoundingClientRect();
-          const ratio = (event.clientX - box.left) / box.width;
-          const index = Math.round(ratio * (plotted.length - 1));
-          setActive(Math.min(plotted.length - 1, Math.max(0, index)));
-        }}
-      >
-        {[0.25, 0.5, 0.75].map((tick) => (
-          <line
-            key={tick}
-            x1={pad.left}
-            x2={width - pad.right}
-            y1={pad.top + innerH * tick}
-            y2={pad.top + innerH * tick}
-            stroke="currentColor"
-            strokeDasharray="3 4"
-            className="text-border"
-          />
-        ))}
-        <path d={pendingArea} fill={LINE_COLOR.pending} fillOpacity="0.35" />
-        <path d={paidArea} fill={LINE_COLOR.paid} fillOpacity="0.9" />
-        <path d={linePath(plotted.map((point) => ({ x: point.x, y: point.yTop })))} fill="none" stroke={LINE_COLOR.pending} strokeWidth="1.75" />
-        <path d={linePath(plotted.map((point) => ({ x: point.x, y: point.yPaid })))} fill="none" stroke={LINE_COLOR.paid} strokeWidth="1.75" />
-        {hover ? (
-          <line
-            x1={hover.x}
-            x2={hover.x}
-            y1={pad.top}
-            y2={pad.top + innerH}
-            stroke="currentColor"
-            className="text-foreground/30"
-          />
-        ) : null}
-        {labels.map((label, index) => {
-          const x = pad.left + (labels.length < 2 ? innerW / 2 : (index / (labels.length - 1)) * innerW);
-          return (
-            <text key={`${label}-${index}`} x={x} y={height - 6} textAnchor="middle" className="fill-muted-foreground text-[10px]">
-              {label}
-            </text>
-          );
-        })}
-      </svg>
-      {hover ? (
-        <div className="pointer-events-none absolute left-1/2 top-2 z-10 min-w-[9rem] -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-[11px] text-white shadow">
-          <p className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.paid }} />
-            Pagado {money.format(hover.paid)}
-          </p>
-          <p className="flex items-center gap-1.5">
-            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.pending }} />
-            Pendiente {money.format(hover.pending)}
-          </p>
-          <p className="mt-0.5 border-t border-white/15 pt-0.5 text-white/80">Neto {money.format(hover.neto)}</p>
-        </div>
+    <svg viewBox={`0 0 ${width} ${height}`} className="mt-2 h-[148px] w-[220px]" role="img" aria-label="Cascada de pagado, pendiente y neto">
+      <line x1={paidX + barW} y1={paidTop} x2={pendingX} y2={pendingBottom} stroke="currentColor" strokeDasharray="3 3" className="text-border" />
+      <line x1={pendingX + barW} y1={pendingTop} x2={netoX} y2={netoTop} stroke="currentColor" strokeDasharray="3 3" className="text-border" />
+      {paidValue > 0 ? (
+        <rect x={paidX} y={paidTop} width={barW} height={h(paidValue)} rx="3" fill={LINE_COLOR.paid} />
       ) : null}
-    </div>
+      {pendingValue > 0 ? (
+        <rect x={pendingX} y={pendingTop} width={barW} height={h(pendingValue)} rx="3" fill={LINE_COLOR.pending} />
+      ) : null}
+      <rect x={netoX} y={netoTop} width={barW} height={h(neto)} rx="3" fill={LINE_COLOR.arrives} />
+      <text x={paidX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Pagado</text>
+      <text x={pendingX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Pendiente</text>
+      <text x={netoX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Neto</text>
+    </svg>
   );
 }
 
@@ -290,14 +220,14 @@ export function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
-    <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-3">
+    <div className="grid grid-cols-1 items-start gap-x-5 gap-y-5 sm:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)]">
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
           ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
         ].filter(Boolean).join(', ');
         return (
-          <div key={chart.id} aria-label={caption}>
+          <div key={chart.id} aria-label={caption} className={chart.kind === 'waffle' ? 'w-max' : 'min-w-0'}>
             <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
               <MultiSeriesChart
@@ -311,7 +241,12 @@ export function SettlementKpiStrip({ summary, sales }: {
                 shipping={Number(summary.shipping || 0)}
               />
             ) : null}
-            {chart.kind === 'stack' ? <StackedPayout days={days} /> : null}
+            {chart.kind === 'cascade' ? (
+              <DepositCascade
+                paid={Number(summary.paidNeto || 0)}
+                pending={Number(summary.pendingNeto || 0)}
+              />
+            ) : null}
           </div>
         );
       })}
