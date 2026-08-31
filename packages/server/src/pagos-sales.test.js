@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, chooseLinesPerOrder, groupSaleCharges, groupSaleProducts, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -414,6 +414,88 @@ test('la reversa de otro archivo se junta con la venta ya pagada', () => {
   assert.equal(sale.take, 80.82);
   assert.equal(sale.neto, -80.82);
   assertReturnLegs(sale);
+});
+
+test('guarda la fecha de la orden y la del pago, y filtra por mes', () => {
+  const header = [
+    '"Fecha creación de la orden"',
+    '"Nombre del producto"',
+    '"N° del orden"',
+    '"SKU vendedor"',
+    '"SKU Falabella"',
+    '"Falabella-Id"',
+    '"Tipo de transacción"',
+    '"Fecha de transacción"',
+    '"Monto con IVA"',
+    '"Estado de pago"',
+  ].join(',');
+  const line = (orderId, sku, itemId, date, tx, amount, status, type = 'Pago por precio del producto') => [
+    `"${date}"`,
+    '"Funda"',
+    `"${orderId}"`,
+    `"${sku}"`,
+    '"135"',
+    `"${itemId}"`,
+    `"${type}"`,
+    `"${tx}"`,
+    `"${amount}"`,
+    `"${status}"`,
+  ].join(',');
+  const sales = aggregateSettlementSales(parseSettlementCsv([
+    header,
+    line('3243000099', 'ADC9000100', 'item-a', '2026-08-19 09:25:12', '2026-08-20', '100.00', 'Pagado'),
+    line('3243000099', 'ADC9000100', 'item-a', '2026-08-19 09:25:12', '2026-08-20', '-10.00', 'Pagado', 'Cobro por comisión por venta'),
+    line('3243000100', 'ADC9000101', 'item-b', '2026-07-03 10:00:00', '2026-07-10', '80.00', 'Pagado'),
+    line('3243000101', 'ADC9000102', 'item-c', '2026-08-12 09:00:00', '', '80.00', 'No Pagado'),
+    line('3243000102', 'ADC9000103', 'item-d', '2026-08-15 09:00:00', '', '90.00', 'Programado para 05/09/2026'),
+  ].join('\n')).lines);
+  const byId = Object.fromEntries(sales.map((sale) => [sale.orderId, sale]));
+  assert.equal(byId['3243000099'].date, '2026-08-19');
+  assert.equal(byId['3243000099'].paidDate, '2026-08-20');
+  assert.equal(byId['3243000101'].paidDate, null);
+  assert.equal(byId['3243000102'].paidDate, '2026-09-05');
+  assert.deepEqual(settlementMonthOptions(sales), {
+    orderMonths: ['2026-08', '2026-07'],
+    paidMonths: ['2026-09', '2026-08', '2026-07'],
+  });
+  assert.deepEqual(
+    filterAggregatedSales(sales, { orderMonth: '2026-08' }).map((sale) => sale.orderId).sort(),
+    ['3243000099', '3243000101', '3243000102'],
+  );
+  assert.deepEqual(
+    filterAggregatedSales(sales, { paidMonth: '2026-08' }).map((sale) => sale.orderId),
+    ['3243000099'],
+  );
+});
+
+test('la reversa de otra semana no cambia la fecha del pago original', () => {
+  const header = [
+    '"Fecha creación de la orden"',
+    '"Nombre del producto"',
+    '"N° del orden"',
+    '"SKU vendedor"',
+    '"SKU Falabella"',
+    '"Falabella-Id"',
+    '"Tipo de transacción"',
+    '"Fecha de transacción"',
+    '"Monto con IVA"',
+    '"Estado de pago"',
+  ].join(',');
+  const sold = parseSettlementCsv([
+    header,
+    '"2026-08-19 09:25:12","Funda","3248910865","MTC12367890","135","item-1","Pago por precio del producto","2026-08-20","99.90","Pagado"',
+    '"2026-08-19 09:25:12","Funda","3248910865","MTC12367890","135","item-1","Cobro por comisión por venta","2026-08-20","-29.98","Pagado"',
+    '"2026-08-19 09:25:12","Funda","3248910865","MTC12367890","135","item-1","Cobro por cofinanciamiento logístico","2026-08-20","-80.82","Pagado"',
+  ].join('\n')).lines.map((line) => ({ ...line, importId: 1 }));
+  const returned = parseSettlementCsv([
+    header,
+    '"2026-08-19 09:25:12","Funda","3248910865","MTC12367890","135","item-1","Pago por precio del producto","2026-08-26","-99.90","Pagado"',
+    '"2026-08-19 09:25:12","Funda","3248910865","MTC12367890","135","item-1","Cobro por comisión por venta","2026-08-26","29.98","Pagado"',
+  ].join('\n')).lines.map((line) => ({ ...line, importId: 2 }));
+  const [sale] = aggregateSettlementSales([...sold, ...returned]);
+  assert.equal(sale.date, '2026-08-19');
+  assert.equal(sale.paidDate, '2026-08-20');
+  assert.equal(sale.returned, true);
 });
 
 test('el pedido muestra boleta o factura si ya se emitió', () => {

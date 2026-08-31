@@ -243,6 +243,29 @@ export function saleDateLabel(date: string | null | undefined) {
   return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${day}T12:00:00`));
 }
 
+export function monthKey(date: string | null | undefined) {
+  const day = String(date || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day.slice(0, 7) : '';
+}
+
+export function monthLabel(month: string | null | undefined) {
+  const value = String(month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(value)) return '';
+  return new Intl.DateTimeFormat('es-PE', { month: 'short', year: 'numeric' }).format(new Date(`${value}-01T12:00:00`));
+}
+
+export function saleDatesHint(sale: {
+  date?: string | null;
+  paidDate?: string | null;
+} | null | undefined) {
+  const order = saleDateLabel(sale?.date);
+  const paid = saleDateLabel(sale?.paidDate);
+  if (order && paid) return `orden ${order} · pago ${paid}`;
+  if (order) return `orden ${order}`;
+  if (paid) return `pago ${paid}`;
+  return '';
+}
+
 export function saleOverview(summary: {
   saleCount?: number;
   matchedCount?: number | null;
@@ -374,6 +397,7 @@ export function documentLabel(document: {
 export const PAGOS_SALES_PAGE = 2000;
 
 export const PAGOS_COLUMN_COPY = {
+  dates: { label: 'Fechas', hint: 'Orden · pago' },
   precio: { label: 'Precio', hint: 'Pagó el cliente' },
   commission: { label: 'Comisión', hint: '% del precio' },
   shipping: { label: 'Logística', hint: 'Cofinanciamiento' },

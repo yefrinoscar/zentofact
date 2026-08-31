@@ -1,6 +1,9 @@
 import {
   classifyChargeKind,
+  collectMonthKeys,
+  monthKey,
   normalizeHeader,
+  paidDateFromLine,
   parseRate,
   rawValueByHeader,
   repairSettlementText,
@@ -66,6 +69,7 @@ function emptySale(orderId, line) {
   return {
     orderId,
     date: line.date || null,
+    paidDate: null,
     paid: false,
     paymentStatus: '',
     matched: false,
@@ -84,6 +88,17 @@ function emptySale(orderId, line) {
     items: new Map(),
     orderNumbers: [],
   };
+}
+
+function applyPaidDate(sale, line) {
+  const next = paidDateFromLine(line);
+  if (!next) return;
+  if (isReturnMovement(line) && sale.paidDate) return;
+  if (!isReturnMovement(line)) {
+    if (!sale.paidDate || String(next) > String(sale.paidDate)) sale.paidDate = next;
+    return;
+  }
+  sale.paidDate = sale.paidDate || next;
 }
 
 function applyCharge(target, kind, amount) {
@@ -435,6 +450,7 @@ export function aggregateSettlementSales(lines) {
       itemId: line.itemId || '',
     });
     if (line.date && (!current.date || String(line.date) < String(current.date))) current.date = line.date;
+    applyPaidDate(current, line);
     if (line.paid === true || normalizeHeader(line.paymentStatus) === 'pagado') {
       current.paid = true;
       current.paymentStatus = line.paymentStatus || 'Pagado';
@@ -480,6 +496,7 @@ export function aggregateSettlementSales(lines) {
     return {
       orderId: sale.orderId,
       date: sale.date,
+      paidDate: sale.paidDate || null,
       paid: sale.paid,
       returned,
       paymentStatus: sale.paymentStatus || (sale.paid ? 'Pagado' : 'No Pagado'),
@@ -496,6 +513,33 @@ export function aggregateSettlementSales(lines) {
       products: groupSaleProducts(items),
     };
   }).sort((left, right) => (right.takeRate || 0) - (left.takeRate || 0) || String(right.orderId).localeCompare(String(left.orderId)));
+}
+
+export function filterAggregatedSales(sales, filter = {}) {
+  const paid = String(filter.paid || '').trim().toLowerCase();
+  const search = String(filter.search || '').trim().toLowerCase();
+  const orderMonth = String(filter.orderMonth || '').trim();
+  const paidMonth = String(filter.paidMonth || '').trim();
+  let next = sales || [];
+  if (paid === 'pagado') next = next.filter((sale) => sale.paid);
+  if (paid === 'no-pagado' || paid === 'no_pagado') next = next.filter((sale) => !sale.paid);
+  if (search) {
+    next = next.filter((sale) => (
+      String(sale.orderId || '').toLowerCase().includes(search)
+      || String(sale.productName || '').toLowerCase().includes(search)
+      || (sale.skus || []).some((sku) => String(sku || '').toLowerCase().includes(search))
+    ));
+  }
+  if (orderMonth) next = next.filter((sale) => monthKey(sale.date) === orderMonth);
+  if (paidMonth) next = next.filter((sale) => monthKey(sale.paidDate) === paidMonth);
+  return next;
+}
+
+export function settlementMonthOptions(sales) {
+  return {
+    orderMonths: collectMonthKeys((sales || []).map((sale) => sale.date)),
+    paidMonths: collectMonthKeys((sales || []).map((sale) => sale.paidDate)),
+  };
 }
 
 export function attachDocumentsToSales(sales, documents) {

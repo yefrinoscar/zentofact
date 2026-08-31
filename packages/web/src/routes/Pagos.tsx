@@ -21,7 +21,9 @@ import {
   productPhotoSrc,
   readSettlementUpload,
   reusedImportNotice,
+  monthLabel,
   saleDateLabel,
+  saleDatesHint,
   salesPageNote,
   settlementPair,
   shortProductName,
@@ -70,6 +72,7 @@ type SettlementChargeGroup = {
 type SettlementSale = {
   orderId: string;
   date?: string | null;
+  paidDate?: string | null;
   paid: boolean;
   returned?: boolean;
   paymentStatus?: string;
@@ -292,6 +295,17 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
   );
 }
 
+function SaleDates({ sale }: { sale: SettlementSale }) {
+  const order = saleDateLabel(sale.date);
+  const paid = saleDateLabel(sale.paidDate);
+  return (
+    <div className="leading-tight">
+      <p className="tabular-nums text-[12px]">{order || '—'}</p>
+      <p className="text-[10px] tabular-nums text-muted-foreground">{paid ? `pago ${paid}` : 'sin pago'}</p>
+    </div>
+  );
+}
+
 function TwoLineHead({ label, hint }: { label: string; hint?: string }) {
   return (
     <span className="flex flex-col leading-tight">
@@ -430,8 +444,8 @@ function saleSubtitle(sale: SettlementSale) {
   } else if ((sale.itemCount || 0) > 1) {
     parts.push(`${sale.itemCount} u`);
   }
-  const date = saleDateLabel(sale.date);
-  if (date) parts.push(date);
+  const dates = saleDatesHint(sale);
+  if (dates) parts.push(dates);
   return parts.join(' · ');
 }
 
@@ -470,6 +484,8 @@ export default function Pagos() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
+  const [orderMonth, setOrderMonth] = useState('all');
+  const [paidMonth, setPaidMonth] = useState('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
@@ -499,10 +515,12 @@ export default function Pagos() {
   }
 
   const salesQuery = useQuery({
-    queryKey: ['pagos-sales', search, paid],
+    queryKey: ['pagos-sales', search, paid, orderMonth, paidMonth],
     queryFn: () => api.listSettlementSales({
       search: search.trim() || undefined,
       paid: paid === 'all' ? undefined : paid,
+      orderMonth: orderMonth === 'all' ? undefined : orderMonth,
+      paidMonth: paidMonth === 'all' ? undefined : paidMonth,
       limit: PAGOS_SALES_PAGE,
     }),
     placeholderData: keepPreviousData,
@@ -565,6 +583,8 @@ export default function Pagos() {
 
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
+  const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
+  const paidMonths = (salesQuery.data?.paidMonths || []) as string[];
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
   const loadError = salesQuery.error as Error | undefined;
 
@@ -609,6 +629,13 @@ export default function Pagos() {
       size: 120,
       meta: { cellClassName: 'min-w-0 overflow-hidden' },
       cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} returned={row.original.returned} />,
+    },
+    {
+      id: 'dates',
+      accessorKey: 'date',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.dates} />,
+      size: 88,
+      cell: ({ row }) => <SaleDates sale={row.original} />,
     },
     {
       id: 'precio',
@@ -706,18 +733,44 @@ export default function Pagos() {
     <div className="space-y-4 pb-8">
       <SettlementKpiStrip summary={summary} sales={sales} />
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-56 flex-1">
+        <div className="relative w-44 shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Pedido, SKU o producto"
+            placeholder="Pedido o SKU"
             aria-label="Buscar venta"
             className="pl-8"
           />
         </div>
+        <Select value={orderMonth} onValueChange={setOrderMonth}>
+          <SelectTrigger className="w-[8.25rem]" aria-label="Mes de la orden">
+            <SelectValue>
+              {orderMonth === 'all' ? 'Mes orden' : `Orden ${monthLabel(orderMonth)}`}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Mes orden</SelectItem>
+            {(orderMonth !== 'all' && !orderMonths.includes(orderMonth) ? [orderMonth, ...orderMonths] : orderMonths).map((month) => (
+              <SelectItem key={`orden-${month}`} value={month}>{monthLabel(month)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={paidMonth} onValueChange={setPaidMonth}>
+          <SelectTrigger className="w-[8.25rem]" aria-label="Mes del pago">
+            <SelectValue>
+              {paidMonth === 'all' ? 'Mes pago' : `Pago ${monthLabel(paidMonth)}`}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Mes pago</SelectItem>
+            {(paidMonth !== 'all' && !paidMonths.includes(paidMonth) ? [paidMonth, ...paidMonths] : paidMonths).map((month) => (
+              <SelectItem key={`pago-${month}`} value={month}>{monthLabel(month)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={paid} onValueChange={(value) => setPaid(value as 'all' | 'pagado' | 'no-pagado')}>
-          <SelectTrigger className="w-36" aria-label="Estado de pago">
+          <SelectTrigger className="w-32" aria-label="Estado de pago">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
