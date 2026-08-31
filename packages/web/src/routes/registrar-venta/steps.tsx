@@ -194,7 +194,6 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
             placeholder="999 999 999"
             inputMode="numeric"
             autoComplete="tel"
-            minLength={9}
           />
       </FieldRow>
       <FieldRow label="Comprobante">
