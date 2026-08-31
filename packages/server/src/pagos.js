@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
-import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
+import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
-import { aggregateSettlementSales, attachDocumentsToSales, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -34,6 +34,13 @@ function optionalPositiveInt(value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw httpError('Empresa inválida.');
   return parsed;
+}
+
+function monthFilter(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (!/^\d{4}-\d{2}$/.test(value)) throw httpError('Mes inválido.');
+  return value;
 }
 
 function money(value) {
@@ -166,6 +173,11 @@ function mapLine(row) {
       header === 'sku falabella' || header === 'shop sku' || header === 'shopsku'
     )),
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
+    paidDate: paidDateFromLine({
+      raw: row.raw || {},
+      paymentStatus: row.payment_status || '',
+      paid: isPaidSettlementStatus(row.payment_status),
+    }),
     type: row.transaction_type || '',
     kind: row.kind || '',
     chargeKind: classifyChargeKind(row.transaction_type || ''),
@@ -260,6 +272,8 @@ export async function listSettlementSales(filter = {}, db) {
     throw httpError('Estado de pago inválido.');
   }
   const search = String(filter.search || '').trim().toLowerCase();
+  const orderMonth = monthFilter(filter.orderMonth);
+  const paidMonth = monthFilter(filter.paidMonth);
   const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
   const values = [];
@@ -283,15 +297,8 @@ export async function listSettlementSales(filter = {}, db) {
     values,
   );
   let sales = aggregateSettlementSales(query.rows.map(mapLine));
-  if (paid === 'pagado') sales = sales.filter((sale) => sale.paid);
-  if (paid === 'no-pagado' || paid === 'no_pagado') sales = sales.filter((sale) => !sale.paid);
-  if (search) {
-    sales = sales.filter((sale) => (
-      sale.orderId.toLowerCase().includes(search)
-      || sale.productName.toLowerCase().includes(search)
-      || sale.skus.some((sku) => sku.toLowerCase().includes(search))
-    ));
-  }
+  const months = settlementMonthOptions(sales);
+  sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth });
   const summary = summarizeSettlementSales(sales);
   const page = sales.slice(offset, offset + limit);
   const items = await attachSaleDocuments(page, target);
@@ -301,6 +308,7 @@ export async function listSettlementSales(filter = {}, db) {
     totalCount: sales.length,
     limit,
     offset,
+    ...months,
   };
 }
 

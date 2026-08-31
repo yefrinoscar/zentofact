@@ -8,6 +8,7 @@ import {
   lineFingerprint,
   parseMoney,
   parseDateKey,
+  parseScheduledPaymentDate,
   isPaidSettlementStatus,
   parsePaymentStatus,
   parseSettlementCsv,
@@ -256,12 +257,15 @@ test('parsea líneas item-level del NewReportTransaction y usa la fecha de la or
   assert.equal(parsed.lines[0].sku, 'MTC12367890');
   assert.equal(parsed.lines[0].itemId, '53afee02-98f2-41f6-b488-da4f68e19f09');
   assert.equal(parsed.lines[0].date, '2026-08-19');
+  assert.equal(parsed.lines[0].paidDate, '2026-08-20');
   assert.equal(parsed.lines[0].kind, 'sale');
   assert.equal(parsed.lines[0].paid, true);
   assert.equal(parsed.lines[0].bruto, 8.99);
   assert.equal(parsed.lines[1].kind, 'commission');
   assert.equal(parsed.lines[1].commission, 1.35);
   assert.equal(parsed.lines[2].paid, false);
+  assert.equal(parsed.lines[2].paidDate, null);
+  assert.equal(parseScheduledPaymentDate('Programado para 20/08/2026'), '2026-08-20');
   assert.equal(new Set(parsed.lines.map(lineFingerprint)).size, 3);
 });
 

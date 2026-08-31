@@ -280,6 +280,43 @@ export function isPaidSettlementStatus(value) {
   return parsePaymentStatus(value) === true;
 }
 
+export function parseScheduledPaymentDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const latin = raw.match(/(\d{1,2}[/-]\d{1,2}[/-]\d{4})/);
+  if (latin) return parseDateKey(latin[1]);
+  const iso = raw.match(/(\d{4}-\d{2}-\d{2})/);
+  return iso ? parseDateKey(iso[1]) : null;
+}
+
+export function isTransactionDateHeader(header) {
+  return header.includes('fecha de transacci')
+    || header === 'fecha transaccion'
+    || header.includes('fecha de liquidacion')
+    || header === 'transaction date';
+}
+
+export function paidDateFromRaw(raw, paymentStatus, paid) {
+  const tx = parseDateKey(rawValueByHeader(raw, isTransactionDateHeader));
+  const scheduled = parseScheduledPaymentDate(paymentStatus);
+  if (paid === true || isPaidSettlementStatus(paymentStatus)) return tx || scheduled;
+  return scheduled || null;
+}
+
+export function paidDateFromLine(line) {
+  if (line?.paidDate) return parseDateKey(line.paidDate);
+  return paidDateFromRaw(line?.raw, line?.paymentStatus, line?.paid);
+}
+
+export function monthKey(date) {
+  const day = String(date || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day.slice(0, 7) : '';
+}
+
+export function collectMonthKeys(dates) {
+  return [...new Set((dates || []).map((date) => monthKey(date)).filter(Boolean))].sort().reverse();
+}
+
 function cell(row, headerIndex, headerName) {
   if (headerName == null) return '';
   return String(row[headerIndex.get(headerName)] ?? '').trim();
@@ -359,6 +396,11 @@ export function parseSettlementCsv(text) {
       productName: cell(row, headerIndex, binding.columns.productName),
       date: parseDateKey(cell(row, headerIndex, binding.columns.orderDate))
         || parseDateKey(cell(row, headerIndex, binding.columns.date)),
+      paidDate: paidDateFromRaw(
+        raw,
+        paymentStatus,
+        parsePaymentStatus(paymentStatus),
+      ),
       type: typeValue,
       kind,
       chargeKind,
