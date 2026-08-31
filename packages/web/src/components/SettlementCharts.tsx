@@ -252,18 +252,14 @@ export function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
-    <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:gap-10">
+    <div className="grid grid-cols-1 items-start gap-x-8 gap-y-8 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
           ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
         ].filter(Boolean).join(', ');
         return (
-          <div
-            key={chart.id}
-            aria-label={caption}
-            className={chart.kind === 'compare' ? 'min-w-0 flex-1' : 'shrink-0'}
-          >
+          <div key={chart.id} aria-label={caption} className="min-w-0">
             <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
               <MultiSeriesChart
