@@ -238,6 +238,26 @@ test('pasa un Excel de liquidación a CSV y reconoce la extensión', async () =>
   );
 });
 
+test('lee el NewReportTransaction xlsx de Falabella con preámbulo y dimensión corta', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseSettlementCsv } = await import('../../../server/src/pagos-csv.js');
+  const bytes = readFileSync(new URL('./fixtures/new-report-transaction.xlsx', import.meta.url));
+  const csv = decodeSettlementSpreadsheet(bytes);
+  assert.match(csv.split('\n')[0], /Nº de orden|N° de orden|Estado de pago/);
+  assert.doesNotMatch(csv.split('\n')[0], /Fecha de actualización/);
+  assert.match(csv, /Ergonómico/);
+  assert.match(csv, /3249878585/);
+  assert.match(csv, /CAM1471111/);
+  assert.match(csv, /Pago por precio del producto/);
+  const parsed = parseSettlementCsv(csv);
+  assert.equal(parsed.binding.columns.orderId, 'Nº de orden');
+  assert.equal(parsed.lines.length, 12);
+  const sale = parsed.lines.find((line) => line.type.includes('precio del producto') && line.orderId === '3249878585');
+  assert.equal(sale.productName, 'Mochila de camping trekking 40L - Resistente y Ergonómico');
+  assert.equal(sale.sku, '13457');
+  assert.equal(sale.amount, 54.99);
+});
+
 test('las cabeceras de dinero caben en título y una explicación', () => {
   for (const column of Object.values(PAGOS_COLUMN_COPY)) {
     assert.equal(column.label.split(/\s+/).length <= 2, true, column.label);

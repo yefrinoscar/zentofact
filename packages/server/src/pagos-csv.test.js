@@ -148,6 +148,37 @@ test('reconoce el NewReportTransaction de Falabella Seller Center Perú', () => 
   assert.equal(binding.columns.commissionRate, '% comisión');
 });
 
+test('reconoce Nº de orden del Excel NewReportTransaction', () => {
+  const binding = bindCsvHeaders([
+    'Fecha creación de la orden',
+    'Nombre del producto',
+    'Nº de orden',
+    'SKU vendedor',
+    'Estado de pago',
+    'Monto con IVA',
+    'Tipo de transacción',
+  ]);
+  assert.equal(binding.columns.orderId, 'Nº de orden');
+  assert.equal(binding.columns.productName, 'Nombre del producto');
+});
+
+test('salta el preámbulo del Excel exportado a CSV', () => {
+  const csv = [
+    'Fecha de actualización,31/08/26 12:49',
+    '',
+    'Este reporte podría tener cambios hasta el cierre del período de facturación',
+    '',
+    'Información de la orden,,,,,,,,,Información Transacción',
+    '"Fecha creación de la orden","Nombre del producto","Nº de orden","SKU vendedor","Estado de pago","Monto con IVA","Tipo de transacción"',
+    '"2026-08-28 11:09:54","Mochila de camping trekking 40L - Resistente y Ergonómico","3249878585","13457","No Pagado","54.99","Pago por precio del producto"',
+  ].join('\n');
+  const parsed = parseSettlementCsv(csv);
+  assert.equal(parsed.lines.length, 1);
+  assert.equal(parsed.lines[0].orderId, '3249878585');
+  assert.equal(parsed.lines[0].productName, 'Mochila de camping trekking 40L - Resistente y Ergonómico');
+  assert.equal(parsed.lines[0].amount, 54.99);
+});
+
 test('rechaza un CSV sin columnas para cruzar y cita las cabeceras reales', () => {
   assert.throws(
     () => bindCsvHeaders(['Nombre', 'Comentario']),

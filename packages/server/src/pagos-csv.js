@@ -130,6 +130,10 @@ export function parseCsvRows(text) {
 
 const HEADER_MATCHERS = {
   orderId: (n) => n.includes('del orden')
+    || n.includes('n de orden')
+    || n.includes('numero de orden')
+    || n.includes('nro de orden')
+    || n.includes('num de orden')
     || n.includes('de pedido')
     || n.includes('order number')
     || n === 'order id'
@@ -276,17 +280,40 @@ function cell(row, headerIndex, headerName) {
   return String(row[headerIndex.get(headerName)] ?? '').trim();
 }
 
+function findSettlementHeaderRow(rows) {
+  let lastError;
+  let bestError;
+  let bestWidth = -1;
+  const scanTo = Math.min(rows.length, 40);
+  for (let index = 0; index < scanTo; index += 1) {
+    try {
+      return { index, binding: bindCsvHeaders(rows[index]) };
+    } catch (error) {
+      lastError = error;
+      const width = (rows[index] || []).filter((value) => String(value || '').trim()).length;
+      if (width > bestWidth) {
+        bestWidth = width;
+        bestError = error;
+      }
+    }
+  }
+  throw bestError || lastError || httpError('El CSV no tiene cabecera.');
+}
+
 export function parseSettlementCsv(text) {
   const rows = parseCsvRows(text);
-  if (rows.length < 2) throw httpError('El CSV no tiene líneas de detalle.');
-  const binding = bindCsvHeaders(rows[0]);
+  if (!rows.length) throw httpError('El CSV está vacío.');
+  const found = findSettlementHeaderRow(rows);
+  const headerRow = rows[found.index];
+  const binding = found.binding;
+  if (rows.length < found.index + 2) throw httpError('El CSV no tiene líneas de detalle.');
   const headerIndex = new Map();
-  for (let index = 0; index < rows[0].length; index += 1) {
-    const name = String(rows[0][index] || '').trim();
+  for (let index = 0; index < headerRow.length; index += 1) {
+    const name = String(headerRow[index] || '').trim();
     if (name && !headerIndex.has(name)) headerIndex.set(name, index);
   }
   const lines = [];
-  for (let index = 1; index < rows.length; index += 1) {
+  for (let index = found.index + 1; index < rows.length; index += 1) {
     const row = rows[index];
     const raw = {};
     for (const header of binding.headers) raw[header] = cell(row, headerIndex, header);
