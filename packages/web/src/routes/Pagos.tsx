@@ -485,7 +485,6 @@ export default function Pagos() {
   const [search, setSearch] = useState('');
   const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
   const [orderMonth, setOrderMonth] = useState('all');
-  const [paidMonth, setPaidMonth] = useState('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
@@ -515,12 +514,11 @@ export default function Pagos() {
   }
 
   const salesQuery = useQuery({
-    queryKey: ['pagos-sales', search, paid, orderMonth, paidMonth],
+    queryKey: ['pagos-sales', search, paid, orderMonth],
     queryFn: () => api.listSettlementSales({
       search: search.trim() || undefined,
       paid: paid === 'all' ? undefined : paid,
       orderMonth: orderMonth === 'all' ? undefined : orderMonth,
-      paidMonth: paidMonth === 'all' ? undefined : paidMonth,
       limit: PAGOS_SALES_PAGE,
     }),
     placeholderData: keepPreviousData,
@@ -584,7 +582,6 @@ export default function Pagos() {
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
-  const paidMonths = (salesQuery.data?.paidMonths || []) as string[];
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
   const loadError = salesQuery.error as Error | undefined;
 
@@ -753,19 +750,6 @@ export default function Pagos() {
             <SelectItem value="all">Mes orden</SelectItem>
             {(orderMonth !== 'all' && !orderMonths.includes(orderMonth) ? [orderMonth, ...orderMonths] : orderMonths).map((month) => (
               <SelectItem key={`orden-${month}`} value={month}>{monthLabel(month)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={paidMonth} onValueChange={setPaidMonth}>
-          <SelectTrigger className="w-[8.25rem]" aria-label="Mes del pago">
-            <SelectValue>
-              {paidMonth === 'all' ? 'Mes pago' : monthLabel(paidMonth)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Mes pago</SelectItem>
-            {(paidMonth !== 'all' && !paidMonths.includes(paidMonth) ? [paidMonth, ...paidMonths] : paidMonths).map((month) => (
-              <SelectItem key={`pago-${month}`} value={month}>{monthLabel(month)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
