@@ -1,13 +1,5 @@
 # Charts
 
-Opciones de visualización en Pagos. El strip actual es Facturado/Neto en líneas, Se queda en waffle de 100 y Pagado/Pendiente en cascada.
+Pagos: Facturado/Neto en líneas (gris y verde), Se queda en waffle de 100, Pagado/Pendiente en áreas apiladas.
 
-## Cascada
-
-Va en el último chart (Pagado / Pendiente). Barras juntas, no un área.
-
-- Pagado — tono oscuro
-- Pendiente — el mismo color, tono claro
-- Neto — gris (los dos juntos)
-
-Facturado, neto y se queda en gris cuando aparecen. Un color, dos tonos, para las partes que hay que distinguir.
+Comisión, logística, pagado y pendiente usan el azul principal, en dos tonos. Facturado y Neto del primer chart no.

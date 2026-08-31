@@ -1,11 +1,14 @@
+import { useMemo, useState } from 'react';
 import { Liveline, type LivelineSeries } from 'liveline';
 import {
   formatLivelineDay,
   livelinePointsFromDays,
   livelineWindowSecs,
   money,
+  saleDateLabel,
   settlementCharts,
   settlementDailySeries,
+  settlementTrendPoints,
   waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
@@ -14,11 +17,11 @@ const LINE_COLOR = {
   facturado: '#7A7672',
   neto: '#3B8F72',
   take: '#1C1917',
-  commission: '#0F766E',
-  shipping: '#2DD4BF',
+  commission: 'var(--primary)',
+  shipping: 'color-mix(in oklch, var(--primary) 52%, white)',
   arrives: '#C9C5C0',
-  paid: '#3B8F72',
-  pending: '#86C4A8',
+  paid: 'var(--primary)',
+  pending: 'color-mix(in oklch, var(--primary) 46%, white)',
 } as const;
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
@@ -150,45 +153,115 @@ function WaffleHundred({
   );
 }
 
-function DepositCascade({ paid, pending }: { paid: number; pending: number }) {
-  const neto = Math.max(0, paid) + Math.max(0, pending);
-  const paidValue = Math.max(0, paid);
-  const pendingValue = Math.max(0, pending);
-  const max = Math.max(neto, 1);
-  const width = 220;
-  const height = 148;
-  const top = 16;
-  const bottom = 26;
-  const innerH = height - top - bottom;
-  const barW = 34;
-  const gap = 8;
-  const origin = 28;
-  const y = (value: number) => top + innerH - (value / max) * innerH;
-  const h = (value: number) => (value / max) * innerH;
-  const paidX = origin;
-  const pendingX = origin + barW + gap;
-  const netoX = origin + (barW + gap) * 2;
-  const paidTop = y(paidValue);
-  const pendingTop = y(neto);
-  const pendingBottom = y(paidValue);
-  const netoTop = y(neto);
-  const base = top + innerH;
+function stackedPath(points: Array<{ x: number; y: number }>, baseline: number) {
+  if (!points.length) return '';
+  const top = points.map((point) => `${point.x},${point.y}`).join(' L ');
+  const last = points[points.length - 1];
+  const first = points[0];
+  return `M ${first.x},${baseline} L ${top} L ${last.x},${baseline} Z`;
+}
+
+function linePath(points: Array<{ x: number; y: number }>) {
+  if (!points.length) return '';
+  return `M ${points.map((point) => `${point.x},${point.y}`).join(' L ')}`;
+}
+
+function StackedPayout({ days }: { days: DayRow[] }) {
+  const [active, setActive] = useState<number | null>(null);
+  const trend = useMemo(() => settlementTrendPoints(days, ['paid', 'pending']), [days]);
+  const width = 280;
+  const height = 132;
+  const pad = { top: 10, right: 8, bottom: 22, left: 8 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const plotted = trend.map((point, index) => {
+    const paid = Math.max(0, Number(point.paid || 0));
+    const pending = Math.max(0, Number(point.pending || 0));
+    return { paid, pending, neto: paid + pending, index };
+  });
+  const max = Math.max(1, ...plotted.map((point) => point.neto));
+  const coords = plotted.map((point, index) => {
+    const x = pad.left + (plotted.length < 2 ? innerW / 2 : (index / (plotted.length - 1)) * innerW);
+    const yPaid = pad.top + innerH - (point.paid / max) * innerH;
+    const yTop = pad.top + innerH - (point.neto / max) * innerH;
+    return { ...point, x, yPaid, yTop };
+  });
+  const paidArea = stackedPath(coords.map((point) => ({ x: point.x, y: point.yPaid })), pad.top + innerH);
+  const pendingArea = coords.length
+    ? `M ${coords.map((point) => `${point.x},${point.yPaid}`).join(' L ')} L ${[...coords].reverse().map((point) => `${point.x},${point.yTop}`).join(' L ')} Z`
+    : '';
+  const labels = days.length
+    ? [days[0], days[Math.floor((days.length - 1) / 2)], days[days.length - 1]]
+        .map((row) => saleDateLabel(String(row.date || '')))
+        .filter((label, index, list) => label && list.indexOf(label) === index)
+    : [];
+  const hover = active == null ? null : coords[active];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="mt-2 h-[148px] w-[220px]" role="img" aria-label="Cascada de pagado, pendiente y neto">
-      <line x1={paidX + barW} y1={paidTop} x2={pendingX} y2={pendingBottom} stroke="currentColor" strokeDasharray="3 3" className="text-border" />
-      <line x1={pendingX + barW} y1={pendingTop} x2={netoX} y2={netoTop} stroke="currentColor" strokeDasharray="3 3" className="text-border" />
-      {paidValue > 0 ? (
-        <rect x={paidX} y={paidTop} width={barW} height={h(paidValue)} rx="3" fill={LINE_COLOR.paid} />
+    <div className="relative mt-2">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-[148px] w-full"
+        role="img"
+        aria-label="Pagado y pendiente apilados"
+        onMouseLeave={() => setActive(null)}
+        onMouseMove={(event) => {
+          if (coords.length < 2) return;
+          const box = event.currentTarget.getBoundingClientRect();
+          const ratio = (event.clientX - box.left) / box.width;
+          const index = Math.round(ratio * (coords.length - 1));
+          setActive(Math.min(coords.length - 1, Math.max(0, index)));
+        }}
+      >
+        {[0.25, 0.5, 0.75].map((tick) => (
+          <line
+            key={tick}
+            x1={pad.left}
+            x2={width - pad.right}
+            y1={pad.top + innerH * tick}
+            y2={pad.top + innerH * tick}
+            stroke="currentColor"
+            strokeDasharray="3 4"
+            className="text-border"
+          />
+        ))}
+        <path d={pendingArea} fill={LINE_COLOR.pending} />
+        <path d={paidArea} fill={LINE_COLOR.paid} fillOpacity="0.92" />
+        <path d={linePath(coords.map((point) => ({ x: point.x, y: point.yTop })))} fill="none" stroke={LINE_COLOR.pending} strokeWidth="1.75" />
+        <path d={linePath(coords.map((point) => ({ x: point.x, y: point.yPaid })))} fill="none" stroke={LINE_COLOR.paid} strokeWidth="1.75" />
+        {hover ? (
+          <line
+            x1={hover.x}
+            x2={hover.x}
+            y1={pad.top}
+            y2={pad.top + innerH}
+            stroke="currentColor"
+            className="text-foreground/30"
+          />
+        ) : null}
+        {labels.map((label, index) => {
+          const x = pad.left + (labels.length < 2 ? innerW / 2 : (index / (labels.length - 1)) * innerW);
+          return (
+            <text key={`${label}-${index}`} x={x} y={height - 6} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+              {label}
+            </text>
+          );
+        })}
+      </svg>
+      {hover ? (
+        <div className="pointer-events-none absolute left-1/2 top-2 z-10 min-w-[9rem] -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-[11px] text-white shadow">
+          <p className="flex items-center gap-1.5">
+            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.paid }} />
+            Pagado {money.format(hover.paid)}
+          </p>
+          <p className="flex items-center gap-1.5">
+            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.pending }} />
+            Pendiente {money.format(hover.pending)}
+          </p>
+          <p className="mt-0.5 border-t border-white/15 pt-0.5 text-white/80">Neto {money.format(hover.neto)}</p>
+        </div>
       ) : null}
-      {pendingValue > 0 ? (
-        <rect x={pendingX} y={pendingTop} width={barW} height={h(pendingValue)} rx="3" fill={LINE_COLOR.pending} />
-      ) : null}
-      <rect x={netoX} y={netoTop} width={barW} height={h(neto)} rx="3" fill={LINE_COLOR.arrives} />
-      <text x={paidX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Pagado</text>
-      <text x={pendingX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Pendiente</text>
-      <text x={netoX + barW / 2} y={base + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">Neto</text>
-    </svg>
+    </div>
   );
 }
 
@@ -241,12 +314,7 @@ export function SettlementKpiStrip({ summary, sales }: {
                 shipping={Number(summary.shipping || 0)}
               />
             ) : null}
-            {chart.kind === 'cascade' ? (
-              <DepositCascade
-                paid={Number(summary.paidNeto || 0)}
-                pending={Number(summary.pendingNeto || 0)}
-              />
-            ) : null}
+            {chart.kind === 'stack' ? <StackedPayout days={days} /> : null}
           </div>
         );
       })}
