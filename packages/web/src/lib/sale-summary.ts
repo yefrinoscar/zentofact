@@ -124,22 +124,23 @@ export function formatDistanceKm(distanceKm?: number | null) {
   return Number.isFinite(km) && km > 0 ? `${km.toFixed(1).replace('.', ',')} km` : '';
 }
 
-/** El envío propio se cobra una vez; distrito y distancia son partes de ese único cobro. */
-export function ownFleetShippingLabel(zoneLabel?: string | null, distanceKm?: number | null) {
-  const detail = [String(zoneLabel || '').trim(), formatDistanceKm(distanceKm)].filter(Boolean).join(', ');
+/** El envío propio se cobra una vez, por zona. Los kilómetros acompañan como referencia. */
+export function ownFleetShippingLabel(priceZoneName?: string | null, distanceKm?: number | null) {
+  const zone = String(priceZoneName || '').trim();
+  const detail = [zone ? `zona ${zone}` : '', formatDistanceKm(distanceKm)].filter(Boolean).join(', ');
   return detail ? `Envío Express · ${detail}` : 'Envío Express';
 }
 
 /** Desglose de cobro: una sola línea de envío para no leerse como dos envíos. */
 export function saleTotalRows(
   totals: SaleTotals,
-  zoneLabel?: string | null,
+  priceZoneName?: string | null,
   distanceKm?: number | null,
 ): SummaryRow[] {
   const rows: SummaryRow[] = [{ label: 'Productos', value: formatSaleMoney(totals.products) }];
   if (totals.shipping > 0) {
     rows.push({
-      label: ownFleetShippingLabel(zoneLabel, distanceKm),
+      label: ownFleetShippingLabel(priceZoneName, distanceKm),
       value: formatSaleMoney(totals.shipping),
     });
   }

@@ -6,13 +6,17 @@ export const OWN_FLEET_ORIGIN = {
   address: 'Av. La Marina 2055, San Miguel',
 } as const;
 
-export const DISTANCE_TIERS = [
-  { maxKm: 10, amount: 10 },
-  { maxKm: 15, amount: 20 },
-  { maxKm: 25, amount: 25 },
+/**
+ * Zonas de envío propio: grupos de distritos por distancia a la bodega. El pedido paga el precio
+ * de su zona una sola vez; los kilómetros se muestran como dato, nunca se cobran aparte.
+ * `maxKm` solo reparte los distritos la primera vez. Después el admin reasigna a mano.
+ */
+export const DEFAULT_OWN_FLEET_ZONES = [
+  { key: 'cerca', name: 'Cerca', amount: 10, maxKm: 11 },
+  { key: 'media', name: 'Media', amount: 15, maxKm: 20 },
+  { key: 'lejos', name: 'Lejos', amount: 25, maxKm: Infinity },
 ] as const;
 
-export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
 export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
 export const OWN_FLEET_COVERAGE_HINT = 'Reparto propio. Solo Lima metropolitana.';
@@ -20,72 +24,6 @@ export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
 
 /** Caja que cubre el territorio peruano. Un país vecino puede colarse; el país de Google lo corta. */
 export const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
-
-const LIMA_DISTRICT_AMOUNTS: Record<string, number> = {
-  'san miguel': 8,
-  'magdalena del mar': 8,
-  magdalena: 8,
-  'pueblo libre': 8,
-  lima: 8,
-  cercado: 8,
-  'cercado de lima': 8,
-  brena: 8,
-  'jesus maria': 8,
-  lince: 12,
-  'la victoria': 12,
-  'san isidro': 12,
-  miraflores: 12,
-  'san borja': 12,
-  surquillo: 12,
-  barranco: 12,
-  rimac: 12,
-  'san luis': 12,
-  'santiago de surco': 16,
-  surco: 16,
-  chorrillos: 16,
-  independencia: 16,
-  'los olivos': 16,
-  'san martin de porres': 16,
-  smp: 16,
-  'el agustino': 16,
-  'santa anita': 16,
-  ate: 16,
-  'san juan de miraflores': 18,
-  sjm: 18,
-  'la molina': 18,
-  'san juan de lurigancho': 20,
-  sjl: 20,
-  comas: 20,
-  carabayllo: 20,
-  'puente piedra': 20,
-  'santa rosa': 20,
-  ancon: 20,
-  'villa el salvador': 20,
-  'villa maria del triunfo': 20,
-  vmt: 20,
-  lurin: 20,
-  pachacamac: 20,
-  pucusana: 20,
-  'punta hermosa': 20,
-  'punta negra': 20,
-  'san bartolo': 20,
-  'santa maria del mar': 20,
-  cieneguilla: 20,
-  chaclacayo: 20,
-  lurigancho: 20,
-  chosica: 20,
-};
-
-const CALLAO_DISTRICT_AMOUNTS: Record<string, number> = {
-  callao: 12,
-  bellavista: 12,
-  'carmen de la legua reynoso': 12,
-  'carmen de la legua': 12,
-  'la perla': 12,
-  'la punta': 12,
-  ventanilla: 18,
-  'mi peru': 18,
-};
 
 const GENERIC_LIMA_DISTRICT = new Set(['lima', 'cercado', 'cercado de lima']);
 
@@ -111,6 +49,13 @@ const DISTRICT_ALIASES: Record<string, string> = {
   'carmen de la legua reynoso': 'carmen de la legua',
 };
 
+/** Grupo de distritos con un solo precio. El admin la renombra y le cambia el precio. */
+export type OwnFleetZone = {
+  key: string;
+  name: string;
+  amount: number;
+};
+
 export type OwnFleetDistrictSetting = {
   key: string;
   name: string;
@@ -118,16 +63,23 @@ export type OwnFleetDistrictSetting = {
   department: string;
   lat: number;
   lng: number;
+  distanceKm: number;
+  /** Zona a la que pertenece. Manda sobre `amount`. */
+  zone: string;
+  /** Precio efectivo, copiado de la zona. */
   amount: number;
   enabled: boolean;
 };
 
 export type OwnFleetConfig = {
+  zones: OwnFleetZone[];
   districts: OwnFleetDistrictSetting[];
 };
 
 export type OwnFleetConfigInput = {
-  districts?: Array<{ key?: string; name?: string; amount?: number; enabled?: boolean }>;
+  zones?: Array<{ key?: string; name?: string; amount?: number }>;
+  /** `amount` solo llega en configuraciones viejas, de cuando el precio era por distrito. */
+  districts?: Array<{ key?: string; name?: string; zone?: string; amount?: number; enabled?: boolean }>;
 };
 
 /** Centroides de Lima metropolitana: 43 distritos de Lima y 7 del Callao. Huaral y Cañete no entran. */
@@ -250,12 +202,27 @@ function nearestPoint(point: { lat: number; lng: number }, places: ZonePoint[]) 
   return best ? { place: best, km: bestKm } : null;
 }
 
+export function zoneKey(value?: string | null) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function districtDistanceKm(place: { lat: number; lng: number }) {
+  return roundMoney(haversineKm(OWN_FLEET_ORIGIN, place));
+}
+
+function defaultZoneFor(distanceKm: number) {
+  return DEFAULT_OWN_FLEET_ZONES.find((zone) => distanceKm <= zone.maxKm)
+    ?? DEFAULT_OWN_FLEET_ZONES[DEFAULT_OWN_FLEET_ZONES.length - 1];
+}
+
 export function defaultOwnFleetConfig(): OwnFleetConfig {
   const beaches = new Set<string>(OWN_FLEET_BEACH_KEYS);
   return {
+    zones: DEFAULT_OWN_FLEET_ZONES.map(({ key, name, amount }) => ({ key, name, amount })),
     districts: METRO_POINTS.map((place) => {
       const key = foldName(place.district);
-      const amount = LIMA_DISTRICT_AMOUNTS[key] ?? CALLAO_DISTRICT_AMOUNTS[key] ?? 20;
+      const distanceKm = districtDistanceKm(place);
+      const zone = defaultZoneFor(distanceKm);
       return {
         key,
         name: place.district,
@@ -263,30 +230,81 @@ export function defaultOwnFleetConfig(): OwnFleetConfig {
         department: place.department,
         lat: place.lat,
         lng: place.lng,
-        amount,
+        distanceKm,
+        zone: zone.key,
+        amount: zone.amount,
         enabled: !beaches.has(key),
       };
     }),
   };
 }
 
+function normalizeZones(rows?: OwnFleetConfigInput['zones'] | OwnFleetZone[]): OwnFleetZone[] {
+  const zones: OwnFleetZone[] = [];
+  const seen = new Set<string>();
+  for (const row of rows || []) {
+    const key = zoneKey(row?.key);
+    if (!key || seen.has(key)) continue;
+    const amount = Number(row?.amount);
+    zones.push({
+      key,
+      name: String(row?.name || '').trim() || key,
+      amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : 0,
+    });
+    seen.add(key);
+  }
+  return zones;
+}
+
+/** Config vieja: el precio vivía en cada distrito. Cada precio distinto se vuelve una zona. */
+function zonesFromAmounts(amounts: number[]): OwnFleetZone[] {
+  const distinct = [...new Set(amounts.map(roundMoney))].sort((first, second) => first - second);
+  return distinct.map((amount, index) => ({
+    key: `zona-${index + 1}`,
+    name: `Zona ${index + 1}`,
+    amount,
+  }));
+}
+
 export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig | null): OwnFleetConfig {
   const base = defaultOwnFleetConfig();
-  const overrides = new Map<string, { amount?: number; enabled?: boolean }>();
+  const overrides = new Map<string, { zone?: string; amount?: number; enabled?: boolean }>();
   for (const row of saved?.districts || []) {
     const key = foldName(row.key || row.name || '');
     if (!key) continue;
     overrides.set(DISTRICT_ALIASES[key] || key, row);
   }
+
+  const savedAmount = (district: OwnFleetDistrictSetting) => {
+    const amount = Number(overrides.get(district.key)?.amount);
+    return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount;
+  };
+
+  // Sin zonas guardadas hay dos casos: config vieja con precio por distrito, o nada guardado aún.
+  const declared = normalizeZones(saved?.zones);
+  const legacyPricing = [...overrides.values()].some((row) => Number.isFinite(Number(row?.amount)));
+  const zones = declared.length
+    ? declared
+    : legacyPricing
+      ? zonesFromAmounts(base.districts.map(savedAmount))
+      : base.zones;
+  const byKey = new Map(zones.map((zone) => [zone.key, zone]));
+  const fallback = zones[0];
+
   return {
+    zones,
     districts: base.districts.map((district) => {
       const override = overrides.get(district.key);
-      if (!override) return district;
-      const amount = Number(override.amount);
+      const amount = savedAmount(district);
+      const zone = byKey.get(zoneKey(override?.zone))
+        ?? zones.find((candidate) => candidate.amount === amount)
+        ?? byKey.get(district.zone)
+        ?? fallback;
       return {
         ...district,
-        enabled: override.enabled === undefined ? district.enabled : Boolean(override.enabled),
-        amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount,
+        zone: zone.key,
+        amount: zone.amount,
+        enabled: override?.enabled === undefined ? district.enabled : Boolean(override.enabled),
       };
     }),
   };
@@ -295,10 +313,12 @@ export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig
 export function serializeOwnFleetConfig(
   saved?: OwnFleetConfigInput | OwnFleetConfig | null,
 ): OwnFleetConfigInput {
+  const config = mergeOwnFleetConfig(saved);
   return {
-    districts: mergeOwnFleetConfig(saved).districts.map((district) => ({
+    zones: config.zones.map((zone) => ({ key: zone.key, name: zone.name, amount: zone.amount })),
+    districts: config.districts.map((district) => ({
       key: district.key,
-      amount: district.amount,
+      zone: district.zone,
       enabled: district.enabled,
     })),
   };
@@ -379,10 +399,17 @@ export type OwnFleetDestination = {
 
 export type OwnFleetQuote = {
   charged: boolean;
+  /** Clasificación geográfica del destino. No es la zona de precio. */
   zone: ShippingZone;
+  /** Nombre del distrito resuelto. */
   zoneLabel: string;
+  priceZoneKey: string;
+  priceZoneName: string;
+  /** Precio de la zona. Se llama así porque es el campo ya persistido en los pedidos. */
   districtAmount: number;
+  /** Informativo: los kilómetros no se cobran. */
   distanceKm: number;
+  /** Siempre 0 desde que el envío se cobra por zona. Los pedidos viejos conservan su recargo. */
   distanceAmount: number;
   total: number;
 };
@@ -483,15 +510,6 @@ export function haversineKm(
   return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-export function distanceAmountForKm(km: number) {
-  const distance = Number(km);
-  if (!Number.isFinite(distance) || distance < 0) return 0;
-  for (const tier of DISTANCE_TIERS) {
-    if (distance <= tier.maxKm) return tier.amount;
-  }
-  return MAX_DISTANCE_AMOUNT;
-}
-
 function lookupDistrict(
   name: string,
   department: string,
@@ -500,13 +518,14 @@ function lookupDistrict(
   const setting = districtSetting(name, department, config);
   if (!setting || !setting.enabled) return null;
   const kind = foldName(setting.department) === 'callao' ? 'callao_district' as const : 'lima_district' as const;
-  return { kind, name: setting.name, amount: setting.amount };
+  const priceZone = config.zones.find((zone) => zone.key === setting.zone) || null;
+  return { kind, name: setting.name, amount: setting.amount, priceZone };
 }
 
 export function resolveShippingZone(
   place: OwnFleetDestination | PeruPlace,
   configInput?: OwnFleetConfigInput | OwnFleetConfig | null,
-): { zone: ShippingZone; amount: number } {
+): { zone: ShippingZone; amount: number; priceZone: OwnFleetZone | null } {
   const config = mergeOwnFleetConfig(configInput);
   const districtHit = lookupDistrict(place.district || '', place.department || '', config)
     || (foldName(place.province || '') && foldName(place.province || '') !== 'lima'
@@ -517,6 +536,7 @@ export function resolveShippingZone(
     return {
       zone: { kind: districtHit.kind, name: districtHit.name },
       amount: districtHit.amount,
+      priceZone: districtHit.priceZone,
     };
   }
 
@@ -525,12 +545,14 @@ export function resolveShippingZone(
     return {
       zone: { kind: 'department', name: department },
       amount: PROVINCE_DEPARTMENT_AMOUNT,
+      priceZone: null,
     };
   }
 
   return {
     zone: { kind: 'unknown', name: '' },
     amount: 0,
+    priceZone: null,
   };
 }
 
@@ -557,6 +579,8 @@ export function quoteOwnFleetShipping(
       charged: false,
       zone: { kind: 'out_of_range', name: label },
       zoneLabel: label,
+      priceZoneKey: '',
+      priceZoneName: '',
       districtAmount: 0,
       distanceKm,
       distanceAmount: 0,
@@ -574,22 +598,26 @@ export function quoteOwnFleetShipping(
       charged: false,
       zone: { kind: 'out_of_range', name: zoneQuote.zone.name },
       zoneLabel: zoneQuote.zone.name,
+      priceZoneKey: '',
+      priceZoneName: '',
       districtAmount: 0,
       distanceKm,
       distanceAmount: 0,
       total: 0,
     };
   }
-  const distanceAmount = hasPoint ? distanceAmountForKm(distanceKm) : 0;
+  // Un solo cobro: el precio de la zona. Los kilómetros solo se informan.
   const districtAmount = zoneQuote.amount;
   return {
     charged: true,
     zone: zoneQuote.zone,
     zoneLabel: zoneQuote.zone.name,
+    priceZoneKey: zoneQuote.priceZone?.key || '',
+    priceZoneName: zoneQuote.priceZone?.name || '',
     districtAmount,
     distanceKm,
-    distanceAmount,
-    total: roundMoney(districtAmount + distanceAmount),
+    distanceAmount: 0,
+    total: roundMoney(districtAmount),
   };
 }
 

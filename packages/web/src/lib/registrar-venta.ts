@@ -338,6 +338,7 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       distanceKm: shippingQuote?.distanceKm,
       zoneKind: shippingQuote?.zone.kind,
       zoneLabel: shippingQuote?.zoneLabel,
+      priceZone: shippingQuote?.priceZoneName,
     },
     metadata: {
       origin: 'manual_ui',

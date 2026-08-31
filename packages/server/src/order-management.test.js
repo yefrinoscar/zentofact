@@ -622,7 +622,7 @@ test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async (
   assert.equal(result.order.shipping.carrier, 'shaloom');
 });
 
-test('Express persiste distrito, distancia y el total con envío', async () => {
+test('Express persiste la zona, la distancia informativa y el total con envío', async () => {
   const result = await ingestOrder(manualSale({
     subtotal: 250,
     total: 250,
@@ -638,10 +638,12 @@ test('Express persiste distrito, distancia y el total con envío', async () => {
   }), new IngestDb());
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'nosotros');
-  assert.equal(result.order.shippingAmount, 18);
-  assert.equal(result.order.total, 268);
-  assert.equal(result.order.shipping.districtAmount, 8);
-  assert.equal(result.order.shipping.distanceAmount, 10);
+  assert.equal(result.order.shippingAmount, 10);
+  assert.equal(result.order.total, 260);
+  assert.equal(result.order.shipping.priceZone, 'Cerca');
+  assert.equal(result.order.shipping.districtAmount, 10);
+  assert.equal(result.order.shipping.distanceAmount, 0);
+  assert.equal(result.order.shipping.distanceKm, 0);
 });
 
 test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {

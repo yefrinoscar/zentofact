@@ -173,6 +173,7 @@ type ManagedOrder = {
     distanceKm?: number;
     zoneKind?: string;
     zoneLabel?: string;
+    priceZone?: string;
   };
   metadata?: {
     paymentMethod?: string;
@@ -1404,7 +1405,7 @@ export default function PedidosMulticanal() {
                       )}
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
-                        // Un solo cobro de envío; distrito y distancia son sus componentes.
+                        // Un solo cobro, el de la zona. Los kilómetros son referencia.
                         <DetailField
                           icon={<Truck />}
                           label="Envío"
@@ -1412,9 +1413,8 @@ export default function PedidosMulticanal() {
                             <span>
                               <span className="tabular-nums">{formatMoney(detail.shippingAmount, detail.currency)}</span>
                               <span className="block text-xs text-muted-foreground tabular-nums">
-                                {`Base ${formatMoney(detail.shipping?.districtAmount, detail.currency)}`}
+                                {detail.shipping?.priceZone ? `Zona ${detail.shipping.priceZone}` : 'Envío propio'}
                                 {detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}
-                                {` + Distancia ${formatMoney(detail.shipping?.distanceAmount, detail.currency)}`}
                                 {detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}
                               </span>
                             </span>

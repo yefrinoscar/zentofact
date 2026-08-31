@@ -6,83 +6,21 @@ export const OWN_FLEET_ORIGIN = {
   address: 'Av. La Marina 2055, San Miguel',
 };
 
-export const DISTANCE_TIERS = [
-  { maxKm: 10, amount: 10 },
-  { maxKm: 15, amount: 20 },
-  { maxKm: 25, amount: 25 },
+/**
+ * Zonas de envío propio: grupos de distritos por distancia a la bodega. El pedido paga el precio
+ * de su zona una sola vez; los kilómetros se muestran como dato, nunca se cobran aparte.
+ * `maxKm` solo reparte los distritos la primera vez. Después el admin reasigna a mano.
+ */
+export const DEFAULT_OWN_FLEET_ZONES = [
+  { key: 'cerca', name: 'Cerca', amount: 10, maxKm: 11 },
+  { key: 'media', name: 'Media', amount: 15, maxKm: 20 },
+  { key: 'lejos', name: 'Lejos', amount: 25, maxKm: Infinity },
 ];
 
 export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
 export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
-export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
 export const PERU_BBOX = { minLat: -18.4, maxLat: -0.04, minLng: -81.4, maxLng: -68.6 };
-
-const LIMA_DISTRICT_AMOUNTS = {
-  'san miguel': 8,
-  'magdalena del mar': 8,
-  magdalena: 8,
-  'pueblo libre': 8,
-  lima: 8,
-  cercado: 8,
-  'cercado de lima': 8,
-  brena: 8,
-  'jesus maria': 8,
-  lince: 12,
-  'la victoria': 12,
-  'san isidro': 12,
-  miraflores: 12,
-  'san borja': 12,
-  surquillo: 12,
-  barranco: 12,
-  rimac: 12,
-  'san luis': 12,
-  'santiago de surco': 16,
-  surco: 16,
-  chorrillos: 16,
-  independencia: 16,
-  'los olivos': 16,
-  'san martin de porres': 16,
-  smp: 16,
-  'el agustino': 16,
-  'santa anita': 16,
-  ate: 16,
-  'san juan de miraflores': 18,
-  sjm: 18,
-  'la molina': 18,
-  'san juan de lurigancho': 20,
-  sjl: 20,
-  comas: 20,
-  carabayllo: 20,
-  'puente piedra': 20,
-  'santa rosa': 20,
-  ancon: 20,
-  'villa el salvador': 20,
-  'villa maria del triunfo': 20,
-  vmt: 20,
-  lurin: 20,
-  pachacamac: 20,
-  pucusana: 20,
-  'punta hermosa': 20,
-  'punta negra': 20,
-  'san bartolo': 20,
-  'santa maria del mar': 20,
-  cieneguilla: 20,
-  chaclacayo: 20,
-  lurigancho: 20,
-  chosica: 20,
-};
-
-const CALLAO_DISTRICT_AMOUNTS = {
-  callao: 12,
-  bellavista: 12,
-  'carmen de la legua reynoso': 12,
-  'carmen de la legua': 12,
-  'la perla': 12,
-  'la punta': 12,
-  ventanilla: 18,
-  'mi peru': 18,
-};
 
 export const METRO_SNAP_MAX_KM = 20;
 
@@ -258,14 +196,27 @@ function nearestPoint(point, places) {
   return best ? { place: best, km: bestKm } : null;
 }
 
+export function zoneKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function districtDistanceKm(place) {
+  return roundMoney(haversineKm(OWN_FLEET_ORIGIN, place));
+}
+
+function defaultZoneFor(distanceKm) {
+  return DEFAULT_OWN_FLEET_ZONES.find((zone) => distanceKm <= zone.maxKm)
+    || DEFAULT_OWN_FLEET_ZONES[DEFAULT_OWN_FLEET_ZONES.length - 1];
+}
+
 export function defaultOwnFleetConfig() {
   const beaches = new Set(OWN_FLEET_BEACH_KEYS);
   return {
+    zones: DEFAULT_OWN_FLEET_ZONES.map(({ key, name, amount }) => ({ key, name, amount })),
     districts: METRO_POINTS.map((place) => {
       const key = foldName(place.district);
-      const amount = Object.prototype.hasOwnProperty.call(LIMA_DISTRICT_AMOUNTS, key)
-        ? LIMA_DISTRICT_AMOUNTS[key]
-        : (Object.prototype.hasOwnProperty.call(CALLAO_DISTRICT_AMOUNTS, key) ? CALLAO_DISTRICT_AMOUNTS[key] : 20);
+      const distanceKm = districtDistanceKm(place);
+      const zone = defaultZoneFor(distanceKm);
       return {
         key,
         name: place.district,
@@ -273,11 +224,40 @@ export function defaultOwnFleetConfig() {
         department: place.department,
         lat: place.lat,
         lng: place.lng,
-        amount,
+        distanceKm,
+        zone: zone.key,
+        amount: zone.amount,
         enabled: !beaches.has(key),
       };
     }),
   };
+}
+
+function normalizeZones(rows) {
+  const zones = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    const key = zoneKey(row?.key);
+    if (!key || seen.has(key)) continue;
+    const amount = Number(row?.amount);
+    zones.push({
+      key,
+      name: String(row?.name || '').trim() || key,
+      amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : 0,
+    });
+    seen.add(key);
+  }
+  return zones;
+}
+
+/** Config vieja: el precio vivía en cada distrito. Cada precio distinto se vuelve una zona. */
+function zonesFromAmounts(amounts) {
+  const distinct = [...new Set(amounts.map(roundMoney))].sort((first, second) => first - second);
+  return distinct.map((amount, index) => ({
+    key: `zona-${index + 1}`,
+    name: `Zona ${index + 1}`,
+    amount,
+  }));
 }
 
 export function mergeOwnFleetConfig(saved) {
@@ -288,25 +268,49 @@ export function mergeOwnFleetConfig(saved) {
     if (!key) continue;
     overrides.set(DISTRICT_ALIASES[key] || key, row);
   }
+
+  const savedAmount = (district) => {
+    const amount = Number(overrides.get(district.key)?.amount);
+    return Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount;
+  };
+
+  // Sin zonas guardadas hay dos casos: config vieja con precio por distrito, o nada guardado aún.
+  const declared = normalizeZones(saved?.zones);
+  const legacyPricing = [...overrides.values()].some((row) => Number.isFinite(Number(row?.amount)));
+  const zones = declared.length
+    ? declared
+    : legacyPricing
+      ? zonesFromAmounts(base.districts.map(savedAmount))
+      : base.zones;
+  const byKey = new Map(zones.map((zone) => [zone.key, zone]));
+  const fallback = zones[0];
+
   return {
+    zones,
     districts: base.districts.map((district) => {
       const override = overrides.get(district.key);
-      if (!override) return district;
-      const amount = Number(override.amount);
+      const amount = savedAmount(district);
+      const zone = byKey.get(zoneKey(override?.zone))
+        || zones.find((candidate) => candidate.amount === amount)
+        || byKey.get(district.zone)
+        || fallback;
       return {
         ...district,
-        enabled: override.enabled === undefined ? district.enabled : Boolean(override.enabled),
-        amount: Number.isFinite(amount) && amount >= 0 ? roundMoney(amount) : district.amount,
+        zone: zone.key,
+        amount: zone.amount,
+        enabled: override?.enabled === undefined ? district.enabled : Boolean(override.enabled),
       };
     }),
   };
 }
 
 export function serializeOwnFleetConfig(saved) {
+  const config = mergeOwnFleetConfig(saved);
   return {
-    districts: mergeOwnFleetConfig(saved).districts.map((district) => ({
+    zones: config.zones.map((zone) => ({ key: zone.key, name: zone.name, amount: zone.amount })),
+    districts: config.districts.map((district) => ({
       key: district.key,
-      amount: district.amount,
+      zone: district.zone,
       enabled: district.enabled,
     })),
   };
@@ -354,20 +358,12 @@ export function placeAtCoordinates(lat, lng, configInput) {
   return { lat, lng, reachable: false };
 }
 
-export function distanceAmountForKm(km) {
-  const distance = Number(km);
-  if (!Number.isFinite(distance) || distance < 0) return 0;
-  for (const tier of DISTANCE_TIERS) {
-    if (distance <= tier.maxKm) return tier.amount;
-  }
-  return MAX_DISTANCE_AMOUNT;
-}
-
 function lookupDistrict(name, department, config) {
   const setting = districtSetting(name, department, config);
   if (!setting || !setting.enabled) return null;
   const kind = foldName(setting.department) === 'callao' ? 'callao_district' : 'lima_district';
-  return { kind, name: setting.name, amount: setting.amount };
+  const priceZone = config.zones.find((zone) => zone.key === setting.zone) || null;
+  return { kind, name: setting.name, amount: setting.amount, priceZone };
 }
 
 export function resolveShippingZone(place = {}, configInput) {
@@ -381,6 +377,7 @@ export function resolveShippingZone(place = {}, configInput) {
     return {
       zone: { kind: districtHit.kind, name: districtHit.name },
       amount: districtHit.amount,
+      priceZone: districtHit.priceZone,
     };
   }
 
@@ -389,12 +386,14 @@ export function resolveShippingZone(place = {}, configInput) {
     return {
       zone: { kind: 'department', name: department },
       amount: PROVINCE_DEPARTMENT_AMOUNT,
+      priceZone: null,
     };
   }
 
   return {
     zone: { kind: 'unknown', name: '' },
     amount: 0,
+    priceZone: null,
   };
 }
 
@@ -414,6 +413,8 @@ export function quoteOwnFleetShipping(destination, configInput) {
       charged: false,
       zone: { kind: 'out_of_range', name: label },
       zoneLabel: label,
+      priceZoneKey: '',
+      priceZoneName: '',
       districtAmount: 0,
       distanceKm,
       distanceAmount: 0,
@@ -431,22 +432,26 @@ export function quoteOwnFleetShipping(destination, configInput) {
       charged: false,
       zone: { kind: 'out_of_range', name: zoneQuote.zone.name },
       zoneLabel: zoneQuote.zone.name,
+      priceZoneKey: '',
+      priceZoneName: '',
       districtAmount: 0,
       distanceKm,
       distanceAmount: 0,
       total: 0,
     };
   }
-  const distanceAmount = hasPoint ? distanceAmountForKm(distanceKm) : 0;
+  // Un solo cobro: el precio de la zona. Los kilómetros solo se informan.
   const districtAmount = zoneQuote.amount;
   return {
     charged: true,
     zone: zoneQuote.zone,
     zoneLabel: zoneQuote.zone.name,
+    priceZoneKey: zoneQuote.priceZone?.key || '',
+    priceZoneName: zoneQuote.priceZone?.name || '',
     districtAmount,
     distanceKm,
-    distanceAmount,
-    total: roundMoney(districtAmount + distanceAmount),
+    distanceAmount: 0,
+    total: roundMoney(districtAmount),
   };
 }
 
@@ -489,6 +494,7 @@ export function applyOwnFleetShipping(order, configInput) {
       distanceKm: quote.distanceKm,
       zoneKind: quote.zone.kind,
       zoneLabel: quote.zoneLabel,
+      priceZone: quote.priceZoneName,
     },
   };
 }

@@ -150,21 +150,21 @@ test('el desglose de totales cobra el envío una sola vez', () => {
   assert.equal(sinEnvio[0].label, 'Productos');
   assert.equal(money(sinEnvio[0].value), 'S/ 250.00');
 
-  // Distrito y distancia son partes de un único cobro, no dos envíos.
+  // El envío es una sola línea: el precio de la zona.
   const conEnvio = saleTotalRows(
-    saleTotals(250, { charged: true, districtAmount: 8, distanceAmount: 10 }),
-    'San Miguel',
-    4.32,
+    saleTotals(250, { charged: true, districtAmount: 15, distanceAmount: 0 }),
+    'Media',
+    12.19,
   );
   assert.equal(conEnvio.length, 2);
   assert.equal(conEnvio[0].label, 'Productos');
-  assert.equal(conEnvio[1].label, 'Envío Express · San Miguel, 4,3 km');
-  assert.equal(money(conEnvio[1].value), 'S/ 18.00');
+  assert.equal(conEnvio[1].label, 'Envío Express · zona Media, 12,2 km');
+  assert.equal(money(conEnvio[1].value), 'S/ 15.00');
 });
 
-test('la etiqueta de envío propio resume zona y distancia sin duplicar el cobro', () => {
-  assert.equal(ownFleetShippingLabel('Lurigancho', 44.34), 'Envío Express · Lurigancho, 44,3 km');
-  assert.equal(ownFleetShippingLabel('Lurigancho', 0), 'Envío Express · Lurigancho');
+test('la etiqueta de envío propio nombra la zona y acompaña con los kilómetros', () => {
+  assert.equal(ownFleetShippingLabel('Lejos', 44.34), 'Envío Express · zona Lejos, 44,3 km');
+  assert.equal(ownFleetShippingLabel('Lejos', 0), 'Envío Express · zona Lejos');
   assert.equal(ownFleetShippingLabel('', null), 'Envío Express');
   assert.equal(formatDistanceKm(44.34), '44,3 km');
   assert.equal(formatDistanceKm(0), '');

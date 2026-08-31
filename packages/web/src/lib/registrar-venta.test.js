@@ -345,7 +345,7 @@ test('regresión: la venta manual siempre envía fecha de entrega al backend', (
   assert.equal(payload.metadata.deliveryDate, '2026-08-26');
 });
 
-test('Express suma distrito y distancia al total de la venta', () => {
+test('Express cobra el precio de la zona, sin recargo por distancia', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -359,11 +359,12 @@ test('Express suma distrito y distancia al total de la venta', () => {
   }));
 
   assert.equal(payload.subtotal, 250);
-  assert.equal(payload.shippingAmount, 18);
-  assert.equal(payload.total, 268);
+  assert.equal(payload.shippingAmount, 10);
+  assert.equal(payload.total, 260);
   assert.equal(payload.shipping.carrier, 'nosotros');
-  assert.equal(payload.shipping.districtAmount, 8);
-  assert.equal(payload.shipping.distanceAmount, 10);
+  assert.equal(payload.shipping.districtAmount, 10);
+  assert.equal(payload.shipping.distanceAmount, 0);
+  assert.equal(payload.shipping.priceZone, 'Cerca');
   assert.equal(payload.shipping.zoneKind, 'lima_district');
   assert.equal(payload.shipping.district, 'San Miguel');
 });
@@ -381,8 +382,9 @@ test('Express persiste el distrito del pin aunque la búsqueda diga otro', () =>
     },
   }));
   assert.equal(payload.shipping.district, 'Surquillo');
-  assert.equal(payload.shipping.districtAmount, 12);
+  assert.equal(payload.shipping.districtAmount, 10);
   assert.equal(payload.shipping.zoneLabel, 'Surquillo');
+  assert.equal(payload.shipping.priceZone, 'Cerca');
 });
 
 test('un repartidor tercero no cobra envío propio', () => {

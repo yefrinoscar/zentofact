@@ -303,23 +303,17 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
             {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote?.charged && (
               <div className="mt-3 rounded-md bg-muted/50 px-3 py-2.5 ring-1 ring-border">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm font-semibold">Envío Express</span>
+                  <span className="text-sm font-semibold">
+                    Zona {view.shippingQuote.priceZoneName || 'sin nombre'}
+                  </span>
                   <span className="shrink-0 text-sm font-semibold tabular-nums">
                     {formatSaleMoney(view.shippingQuote.total)}
                   </span>
                 </div>
-                <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs text-muted-foreground">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="truncate">Base · {view.shippingQuote.zoneLabel || 'Distrito'}</span>
-                    <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.districtAmount)}</span>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span>Distancia · {formatDistanceKm(view.shippingQuote.distanceKm)}</span>
-                    <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.distanceAmount)}</span>
-                  </div>
-                </div>
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  Un solo cobro. La distancia se suma a la base.
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {view.shippingQuote.zoneLabel}
+                  {' · '}
+                  {formatDistanceKm(view.shippingQuote.distanceKm)} desde la bodega
                 </p>
               </div>
             )}

@@ -69,13 +69,17 @@ Persona a la que se atribuye la ganancia del Producto al filtrar o exportar repo
 _Avoid_: Flag, tag, dueño, owner, seller
 
 **Envío propio**:
-Entrega con movilidad de la bodega, identificada por el repartidor Nosotros.
-_Avoid_: Movilidad propia as stored id
+Entrega con movilidad de la bodega. Se muestra como el repartidor Express y se guarda como `nosotros`.
+_Avoid_: Movilidad propia as stored id, Nosotros as label
 
-**Precio de envío distrito**:
-Monto de Envío propio según distrito de Lima Metropolitana o, fuera de ella, según departamento.
-_Avoid_: tarifa zonal, fee de envío
+**Zona de envío**:
+Grupo de distritos de Lima Metropolitana con un solo precio. El admin la nombra, le pone precio y le asigna distritos en Envío propio. Por defecto son tres, repartidas por distancia a la bodega: Cerca, Media y Lejos.
+_Avoid_: tarifa zonal, tramo, rango de km
 
-**Precio por distancia**:
-Monto de Envío propio según kilómetros desde la bodega, con tope.
-_Avoid_: recargo km
+**Precio de envío**:
+Monto que cobra un Envío propio: el precio de la Zona de envío del destino, cobrado una sola vez.
+_Avoid_: recargo, precio por distrito, suma de distrito más distancia
+
+**Distancia a la bodega**:
+Kilómetros entre la bodega y el destino. Sirve para agrupar distritos en zonas y se muestra al vendedor. No se cobra.
+_Avoid_: recargo km, precio por distancia
