@@ -1,5 +1,5 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
-import { ensureRipleyOrderAccount, ingestRipleyOrder } from './order-adapters/ripley.js';
+import { ensureRipleyOrderAccount, ingestRipleyOrder, mapRipleyOrderItems } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
 
@@ -102,6 +102,75 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
     ).catch(() => {});
     throw error;
   }
+}
+
+export async function drainMissingRipleyOrderItems(companyIdInput, options = {}, dependencies = {}) {
+  const companyId = Number(companyIdInput);
+  if (!Number.isInteger(companyId) || companyId <= 0) throw new Error('Empresa inválida.');
+  const core = dependencies.getCompany && dependencies.db ? null : await loadCore();
+  const db = dependencies.db || core.pool;
+  const company = await (dependencies.getCompany || core.getCompany)(companyId);
+  if (!company?.ripleyApiKey?.trim()) {
+    throw new Error('La empresa no tiene configurada la API key de Ripley.');
+  }
+  const client = dependencies.client || clientFor(company, dependencies.fetchImpl);
+  const ingest = dependencies.ingestRipleyOrder || ingestRipleyOrder;
+  const since = options.since || '2026-05-01T05:00:00.000Z';
+  const account = dependencies.account || await ensureRipleyOrderAccount(
+    db,
+    companyId,
+    company.nombre || company.nombreComercial || company.razonSocial,
+    company.ripleyShopId,
+  );
+  const totals = { batches: 0, candidates: 0, hydrated: 0, failed: 0, stillEmpty: 0 };
+  for (let i = 0; i < 50; i += 1) {
+    const missing = await db.query(
+      `select o.external_order_id
+       from orders o
+       join order_channel_accounts a on a.id = o.channel_account_id
+       join order_channels ch on ch.id = a.channel_id
+       where o.company_id=$1
+         and ch.code='ripley'
+         and coalesce(o.ordered_at, o.created_at) >= $2
+         and not exists (select 1 from order_items oi where oi.order_id = o.id)
+       order by o.id
+       limit 50`,
+      [companyId, since],
+    );
+    if (!missing.rows.length) break;
+    totals.batches += 1;
+    totals.candidates += missing.rows.length;
+    const ids = missing.rows.map((row) => String(row.external_order_id));
+    let fetched = [];
+    try {
+      fetched = await client.listAllOrders({ orderIds: ids });
+    } catch {
+      totals.failed += ids.length;
+      break;
+    }
+    const byId = new Map(fetched.map((order) => [order.orderId, order]));
+    let hydratedThisBatch = 0;
+    for (const orderId of ids) {
+      const normalized = byId.get(orderId);
+      if (!normalized) {
+        totals.failed += 1;
+        continue;
+      }
+      await ingest({
+        companyId,
+        normalized,
+        account,
+        shopId: company.ripleyShopId,
+        source: 'sync',
+      }, db);
+      if (mapRipleyOrderItems(normalized.raw || {}).length) {
+        totals.hydrated += 1;
+        hydratedThisBatch += 1;
+      } else totals.stillEmpty += 1;
+    }
+    if (hydratedThisBatch === 0) break;
+  }
+  return totals;
 }
 
 export function startRipleySyncScheduler() {

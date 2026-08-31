@@ -1,0 +1,879 @@
+import {
+  INVENTORY_COUNT_MASTER_SKUS,
+  INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY,
+} from '../../../../scripts/lib/inventory-count-2026-08-21.mjs';
+import { excelMasterForSku } from './historical-sku-map.js';
+import { MAPPING_CHANNELS, ORDER_SINCE_SQL, PHYSICAL_COUNT_CUTOFF, SALES_HISTORY_SINCE } from './historical-sales-mapping.js';
+import { falabellaOrderItemsPayload, mapFalabellaCanonicalStatus, mapFalabellaOrderItems } from '../order-adapters/falabella.js';
+import { mapRipleyOrderItems } from '../order-adapters/ripley.js';
+
+export const BUNDLE_VERSION = 1;
+export const BUNDLE_SOURCE = 'sales_mapping_bundle';
+
+const ORDER_STATUSES = new Set(['new', 'confirmed', 'completed', 'cancelled', 'failed']);
+const FULFILLMENT_STATUSES = new Set([
+  'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
+]);
+
+export const EXPORT_SALES_MAPPING_BUNDLE_SQL_REF = 'yefrinoscar/zentofact/cursor/map-sales-from-may-2fe9/scripts/export-sales-mapping-bundle.sql';
+
+export const EXPORT_SALES_MAPPING_BUNDLE_COMMAND = [
+  'psql "$DATABASE_URL_POSTGRES" -v ON_ERROR_STOP=1 -t -A -f scripts/export-sales-mapping-bundle.sql > sales-mapping-bundle.json',
+].join('\n');
+
+export const EXPORT_SALES_MAPPING_BUNDLE_REMOTE_COMMAND = [
+  `curl -fsSL https://raw.githubusercontent.com/${EXPORT_SALES_MAPPING_BUNDLE_SQL_REF} \\`,
+  '| psql "$DATABASE_URL_POSTGRES" -v ON_ERROR_STOP=1 -t -A \\',
+  '> sales-mapping-bundle.json',
+].join('\n');
+
+function integerQuantity(value) {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity) || quantity < 0) return null;
+  const rounded = Math.round(quantity);
+  if (Math.abs(quantity - rounded) > 0.0001) return null;
+  return rounded;
+}
+
+export function bundleItemQuantity(item) {
+  const quantity = Number(item?.quantity);
+  return Number.isFinite(quantity) ? quantity : 1;
+}
+
+export function bundleItemRawData(item) {
+  const raw = item?.rawData || item?.raw_data;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  if (Object.prototype.hasOwnProperty.call(raw, 'Quantity')) {
+    return { Quantity: raw.Quantity };
+  }
+  return {};
+}
+
+export function bundleItemsFromRawPayload(channel, raw = {}) {
+  const payload = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  if (channel === 'ripley') {
+    return mapRipleyOrderItems(payload).map((item) => ({
+      externalItemId: item.externalItemId,
+      sku: item.sku,
+      providerSku: item.providerSku,
+      productSku: null,
+      description: item.description,
+      quantity: item.quantity,
+      rawData: Number.isFinite(Number(item.quantity)) ? { Quantity: item.quantity } : {},
+    }));
+  }
+  if (channel === 'falabella') {
+    return mapFalabellaOrderItems(falabellaOrderItemsPayload(payload)).map((item) => ({
+      externalItemId: item.externalItemId,
+      sku: item.sku,
+      providerSku: item.providerSku,
+      productSku: null,
+      description: item.description,
+      quantity: item.quantity,
+      rawData: bundleItemRawData(item),
+    }));
+  }
+  return [];
+}
+
+export function resolveBundleOrderItems(order = {}) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  if (items.length) return items;
+  return bundleItemsFromRawPayload(
+    order.channel,
+    order.rawPayload || order.rawData || order.raw_payload || {},
+  );
+}
+
+function inboxRawPayload(row) {
+  return falabellaOrderItemsPayload(row?.rawData || row?.raw_data || {});
+}
+
+export function falabellaInboxToBundleOrders(rows = []) {
+  return rows.flatMap((row) => {
+    const companyRuc = String(row.companyRuc || row.company_ruc || '').trim();
+    const orderId = String(row.orderId || row.order_id || '').trim();
+    if (!companyRuc || !orderId) return [];
+    const statuses = mapFalabellaCanonicalStatus(row.status);
+    const mappedItems = mapFalabellaOrderItems(inboxRawPayload(row));
+    if (!mappedItems.length) return [];
+    const orderedAt = row.orderedAt || row.falabella_created_at || null;
+    const updatedAt = row.updatedAt || row.falabella_updated_at || null;
+    return [{
+      channel: 'falabella',
+      companyRuc,
+      externalOrderId: orderId,
+      externalOrderNumber: String(row.orderNumber || row.order_number || orderId),
+      orderedAt,
+      orderStatus: statuses.orderStatus,
+      fulfillmentStatus: statuses.fulfillmentStatus,
+      items: mappedItems.map((item) => ({
+        externalItemId: item.externalItemId,
+        sku: item.sku,
+        providerSku: item.providerSku,
+        productSku: null,
+        description: item.description,
+        quantity: item.quantity,
+        rawData: bundleItemRawData(item),
+      })),
+      events: updatedAt ? [{
+        eventType: 'status',
+        providerOccurredAt: updatedAt,
+        newValues: {
+          fulfillmentStatus: statuses.fulfillmentStatus,
+          orderStatus: statuses.orderStatus,
+        },
+      }] : [],
+    }];
+  });
+}
+
+export function mergeBundleOrders(orders = [], inboxOrders = []) {
+  const byKey = new Map();
+  for (const order of orders) {
+    if (!order?.externalOrderId) continue;
+    byKey.set(`${order.channel}\u0000${order.companyRuc}\u0000${order.externalOrderId}`, order);
+  }
+  for (const order of inboxOrders) {
+    const key = `${order.channel}\u0000${order.companyRuc}\u0000${order.externalOrderId}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, order);
+      continue;
+    }
+    const existingIds = new Set(
+      (existing.items || []).map((item) => String(item.externalItemId || '')).filter(Boolean),
+    );
+    const extra = (order.items || []).filter((item) => {
+      const id = String(item.externalItemId || '');
+      return id ? !existingIds.has(id) : (existing.items || []).length === 0;
+    });
+    if (!(existing.items || []).length && (order.items || []).length) {
+      byKey.set(key, {
+        ...existing,
+        items: order.items,
+        events: (existing.events || []).length ? existing.events : order.events,
+        fulfillmentStatus: existing.fulfillmentStatus || order.fulfillmentStatus,
+      });
+      continue;
+    }
+    if (extra.length) {
+      byKey.set(key, {
+        ...existing,
+        items: [...(existing.items || []), ...extra],
+        events: (existing.events || []).length ? existing.events : order.events,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
+const FALABELLA_INBOX_ORPHAN_SQL = `
+select c.ruc as company_ruc, fo.order_id, fo.order_number, fo.status,
+  fo.falabella_created_at, fo.falabella_updated_at, fo.raw_data
+from falabella_orders fo
+join companies c on c.id = fo.company_id
+where coalesce(fo.falabella_created_at, fo.first_seen_at) >= $1::timestamptz
+order by fo.falabella_created_at, fo.order_id
+`;
+
+export async function loadFalabellaInboxOrphans(db, since = SALES_HISTORY_SINCE) {
+  return (await db.query(FALABELLA_INBOX_ORPHAN_SQL, [since])).rows;
+}
+
+const EXISTING_FALABELLA_UNIFIED_SQL = `
+select c.ruc as company_ruc, o.id as order_id, o.external_order_id, oi.external_item_id
+from orders o
+join companies c on c.id = o.company_id
+join order_channel_accounts a on a.id = o.channel_account_id
+join order_channels ch on ch.id = a.channel_id
+left join order_items oi on oi.order_id = o.id
+where ch.code = 'falabella'
+  and ${ORDER_SINCE_SQL} >= $1::timestamptz
+`;
+
+export async function loadExistingFalabellaUnifiedOrders(db, since = SALES_HISTORY_SINCE) {
+  const { rows } = await db.query(EXISTING_FALABELLA_UNIFIED_SQL, [since]);
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = `${String(row.company_ruc || '').trim()}\u0000${String(row.external_order_id || '').trim()}`;
+    const current = byKey.get(key) || { orderId: Number(row.order_id), itemIds: new Set() };
+    if (row.external_item_id) current.itemIds.add(String(row.external_item_id));
+    byKey.set(key, current);
+  }
+  return byKey;
+}
+
+function falabellaOrderKey(order) {
+  return `${String(order.companyRuc || '').trim()}\u0000${String(order.externalOrderId || '').trim()}`;
+}
+
+async function upsertBundleOrderItem(db, orderId, order, item, index, { skus, idBySku, unlinkedKeys }) {
+  const unlinked = unlinkedKeys.has(`${order.channel}\u0000${String(order.companyRuc || '').trim()}\u0000${item.sku}`);
+  const master = listingMasterSku({
+    sellerSku: item.sku,
+    shopSku: item.providerSku,
+    productSku: unlinked ? null : item.productSku,
+  }, skus);
+  if (master) await ensureAnchorProduct(db, master, skus, idBySku);
+  await db.query(
+    `insert into order_items (
+       order_id, external_item_id, sku, provider_sku, description, quantity,
+       product_id, listing_id, main_sku, stock_state, metadata, raw_data
+     ) values ($1,$2,$3,$4,$5,$6,null,null,$7,'none',$8::jsonb,$9::jsonb)
+     on conflict (order_id, external_item_id) do nothing`,
+    [
+      orderId,
+      String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`),
+      item.sku || null,
+      item.providerSku || null,
+      item.description || item.sku || '',
+      bundleItemQuantity(item),
+      master,
+      JSON.stringify({ source: BUNDLE_SOURCE, productSku: item.productSku || master || null }),
+      JSON.stringify(bundleItemRawData(item)),
+    ],
+  );
+}
+
+export async function hydrateUnifiedOrdersFromFalabellaInbox(db, since = SALES_HISTORY_SINCE) {
+  const rows = await loadFalabellaInboxOrphans(db, since);
+  const inboxOrders = falabellaInboxToBundleOrders(rows);
+  if (!inboxOrders.length) return { orders: 0, items: 0, events: 0 };
+  const existing = await loadExistingFalabellaUnifiedOrders(db, since);
+  const newOrders = [];
+  const extraByOrder = [];
+  for (const order of inboxOrders) {
+    const found = existing.get(falabellaOrderKey(order));
+    if (!found) {
+      newOrders.push(order);
+      continue;
+    }
+    const extra = (order.items || []).filter((item, index) => {
+      const id = String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`);
+      return !found.itemIds.has(id);
+    });
+    if (extra.length) extraByOrder.push({ orderId: found.orderId, order, items: extra });
+  }
+  const companies = [...new Map(inboxOrders.map((order) => [order.companyRuc, {
+    ruc: order.companyRuc,
+    nombre: order.companyRuc,
+  }])).values()];
+  const ingested = newOrders.length
+    ? await ingestSalesMappingBundle(db, {
+      version: BUNDLE_VERSION,
+      companies,
+      listings: [],
+      orders: newOrders,
+    })
+    : { orders: 0, items: 0, events: 0 };
+  if (!extraByOrder.length) return ingested;
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const unlinkedKeys = new Set();
+  let extraItems = 0;
+  for (const entry of extraByOrder) {
+    for (const [index, item] of entry.items.entries()) {
+      await upsertBundleOrderItem(db, entry.orderId, entry.order, item, index, { skus, idBySku, unlinkedKeys });
+      extraItems += 1;
+    }
+  }
+  return {
+    orders: ingested.orders,
+    items: ingested.items + extraItems,
+    events: ingested.events,
+  };
+}
+
+const EMPTY_UNIFIED_ORDERS_WITH_SNAPSHOTS_SQL = `
+select o.id as order_id, o.external_order_id, c.ruc as company_ruc, ch.code as channel,
+  s.raw_payload
+from orders o
+join companies c on c.id = o.company_id
+join order_channel_accounts a on a.id = o.channel_account_id
+join order_channels ch on ch.id = a.channel_id
+join lateral (
+  select raw_payload
+  from order_snapshots
+  where order_id = o.id
+  order by observed_at desc, id desc
+  limit 1
+) s on true
+where ch.code = any($1::text[])
+  and ${ORDER_SINCE_SQL} >= $2::timestamptz
+  and not exists (select 1 from order_items oi where oi.order_id = o.id)
+`;
+
+export async function hydrateUnifiedOrdersFromSnapshots(db, since = SALES_HISTORY_SINCE) {
+  const { rows } = await db.query(EMPTY_UNIFIED_ORDERS_WITH_SNAPSHOTS_SQL, [MAPPING_CHANNELS, since]);
+  if (!rows.length) return { orders: 0, items: 0 };
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const unlinkedKeys = new Set();
+  let items = 0;
+  const recoveredOrders = new Set();
+  for (const row of rows) {
+    const recovered = bundleItemsFromRawPayload(row.channel, row.raw_payload);
+    if (!recovered.length) continue;
+    const order = {
+      channel: row.channel,
+      companyRuc: row.company_ruc,
+      externalOrderId: row.external_order_id,
+    };
+    recoveredOrders.add(Number(row.order_id));
+    for (const [index, item] of recovered.entries()) {
+      await upsertBundleOrderItem(db, Number(row.order_id), order, item, index, {
+        skus, idBySku, unlinkedKeys,
+      });
+      items += 1;
+    }
+    await db.query(
+      `update orders set items_status='complete', updated_at=now()
+       where id=$1 and items_status <> 'complete'`,
+      [Number(row.order_id)],
+    );
+  }
+  return { orders: recoveredOrders.size, items };
+}
+
+export function workbookFromReconciliationAnchors({ run, rows } = {}) {
+  if (new Date(run.cutoff_at).getTime() !== new Date(PHYSICAL_COUNT_CUTOFF).getTime()) {
+    throw new Error(`El ancla no es el conteo del viernes (${PHYSICAL_COUNT_CUTOFF}).`);
+  }
+  const catalog = new Set([...INVENTORY_COUNT_MASTER_SKUS, ...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY]);
+  const grouped = new Map();
+  for (const row of rows || []) {
+    const quantity = integerQuantity(row.cutoff_quantity);
+    if (quantity == null) {
+      throw new Error(`La cantidad de corte de ${row.main_sku} no es un entero.`);
+    }
+    const master = excelMasterForSku(row.main_sku, catalog);
+    if (!master || INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY.has(master)) continue;
+    if (!INVENTORY_COUNT_MASTER_SKUS.has(master)) continue;
+    const list = grouped.get(master) || [];
+    list.push({ mainSku: row.main_sku, quantity });
+    grouped.set(master, list);
+  }
+  const targets = [];
+  for (const masterSku of [...INVENTORY_COUNT_MASTER_SKUS].sort()) {
+    const entries = grouped.get(masterSku) || [];
+    const exact = entries.find((entry) => entry.mainSku === masterSku);
+    let chosen = exact || (entries.length === 1 ? entries[0] : null);
+    if (!chosen && entries.length > 1) {
+      const quantities = new Set(entries.map((entry) => entry.quantity));
+      if (quantities.size === 1) chosen = entries[0];
+    }
+    if (!chosen) {
+      throw new Error(`No hay cantidad de corte unívoca para ${masterSku}.`);
+    }
+    targets.push({ masterSku, sourceRows: [], targetQuantity: chosen.quantity });
+  }
+  return {
+    targets,
+    sourceHash: run.source_hash || null,
+    skippedRows: [],
+    presentWithoutQuantity: [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY],
+    source: 'reconciliation_anchors',
+  };
+}
+
+export async function loadFridayWorkbookFromDb(db) {
+  const run = (await db.query(
+    `select id, source_hash, cutoff_at, applied_at
+     from inventory_reconciliation_runs
+     where cutoff_at = $1::timestamptz
+     order by applied_at desc, id desc
+     limit 1`,
+    [PHYSICAL_COUNT_CUTOFF],
+  )).rows[0];
+  if (!run) return null;
+  const rows = (await db.query(
+    `select p.main_sku, a.cutoff_quantity
+     from inventory_reconciliation_anchors a
+     join products p on p.id = a.product_id
+     where a.run_id = $1`,
+    [run.id],
+  )).rows;
+  return workbookFromReconciliationAnchors({ run, rows });
+}
+
+export function bundleHasSales(bundle) {
+  return Boolean(
+    (Array.isArray(bundle?.orders) && bundle.orders.length)
+    || (Array.isArray(bundle?.falabellaOrders) && bundle.falabellaOrders.length),
+  );
+}
+
+export function parseSalesMappingBundle(raw) {
+  const bundle = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!bundle || Number(bundle.version) !== BUNDLE_VERSION) {
+    throw new Error('El bundle debe ser version 1.');
+  }
+  if (bundle.error && !bundleHasSales(bundle)) {
+    const missing = Array.isArray(bundle.missing) && bundle.missing.length
+      ? ` Faltan: ${bundle.missing.join(', ')}.`
+      : '';
+    throw new Error(`El bundle no se pudo armar: ${bundle.error}.${missing}`);
+  }
+  return bundle;
+}
+
+export function workbookFromBundleExcel(excel) {
+  if (!excel?.targets?.length) return null;
+  return {
+    targets: excel.targets.map((target) => ({
+      masterSku: String(target.masterSku || '').trim(),
+      sourceRows: target.sourceRows || [],
+      targetQuantity: Number(target.targetQuantity),
+    })),
+    sourceHash: excel.sourceHash || null,
+    skippedRows: excel.skippedRows || [],
+    presentWithoutQuantity: excel.presentWithoutQuantity || [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY],
+  };
+}
+
+export function assertBundleWorkbook(workbook) {
+  if (!workbook?.targets?.length) throw new Error('El bundle no trae las cantidades del Excel del viernes.');
+  const skus = new Set(workbook.targets.map((target) => target.masterSku));
+  const missing = [...INVENTORY_COUNT_MASTER_SKUS].filter((sku) => !skus.has(sku));
+  if (missing.length) {
+    throw new Error(`El conteo del bundle no tiene estos maestros: ${missing.join(', ')}.`);
+  }
+  for (const target of workbook.targets) {
+    if (!target.masterSku || !Number.isInteger(target.targetQuantity) || target.targetQuantity < 0) {
+      throw new Error(`Cantidad inválida para ${target.masterSku || '(sin código)'}.`);
+    }
+  }
+  return workbook;
+}
+
+export function coerceOrderStatus(value) {
+  const status = String(value || '').toLowerCase();
+  if (ORDER_STATUSES.has(status)) return status;
+  if (status.includes('cancel')) return 'cancelled';
+  if (status.includes('fail')) return 'failed';
+  if (status.includes('complete') || status.includes('deliver')) return 'completed';
+  return 'confirmed';
+}
+
+export function coerceFulfillmentStatus(value) {
+  const status = String(value || '').toLowerCase();
+  if (FULFILLMENT_STATUSES.has(status)) return status;
+  if (status.includes('ready')) return 'ready_to_ship';
+  if (status.includes('deliver')) return 'delivered';
+  if (status.includes('ship')) return 'shipped';
+  if (status.includes('cancel')) return 'cancelled';
+  if (status.includes('return')) return 'returned';
+  if (status.includes('prepar')) return 'preparing';
+  return 'pending';
+}
+
+async function ensureCompany(db, company) {
+  const ruc = String(company.ruc || '').trim();
+  if (!ruc) throw new Error('Una empresa del bundle no tiene RUC.');
+  const nombre = String(company.nombre || company.nombreComercial || company.razonSocial || ruc).trim();
+  const existing = await db.query('select id from companies where ruc=$1 order by id limit 1', [ruc]);
+  if (existing.rows[0]) return Number(existing.rows[0].id);
+  const inserted = await db.query(
+    `insert into companies (nombre, ruc, razon_social, nombre_comercial, activo)
+     values ($1,$2,$1,$3,true) returning id`,
+    [nombre, ruc, company.nombreComercial || nombre],
+  );
+  return Number(inserted.rows[0].id);
+}
+
+async function ensureChannelAccount(db, companyId, channelCode, displayName) {
+  const channel = await db.query('select id from order_channels where code=$1', [channelCode]);
+  const channelId = Number(channel.rows[0]?.id);
+  if (!channelId) throw new Error(`No existe el canal ${channelCode}.`);
+  await db.query(
+    `insert into order_channel_accounts (
+       company_id, channel_id, external_account_id, display_name,
+       auto_create_orders, document_requirement, document_type_policy, settings
+     )
+     values ($1,$2,'default',$3,true,'optional','automatic','{}'::jsonb)
+     on conflict (company_id, channel_id, external_account_id) do nothing`,
+    [companyId, channelId, displayName || channelCode],
+  );
+  const account = await db.query(
+    `select id from order_channel_accounts
+     where company_id=$1 and channel_id=$2 and external_account_id='default'`,
+    [companyId, channelId],
+  );
+  return Number(account.rows[0].id);
+}
+
+export function listingMasterSku(listing, catalogSkus) {
+  const productSku = String(listing?.productSku || listing?.mainSku || '').trim();
+  return excelMasterForSku(listing?.sellerSku, catalogSkus)
+    || excelMasterForSku(listing?.shopSku, catalogSkus)
+    || excelMasterForSku(productSku, catalogSkus)
+    || productSku
+    || null;
+}
+
+export async function ensureAnchorProduct(db, sku, skus, idBySku) {
+  const master = String(sku || '').trim();
+  if (!master) return null;
+  if (idBySku.has(master)) return idBySku.get(master);
+  const inserted = await db.query(
+    `insert into products (main_sku, name, status, attributes)
+     values ($1,$1,'active',$2)
+     on conflict (main_sku) do update
+       set status='active', attributes=excluded.attributes, updated_at=now()
+     returning id`,
+    [master, JSON.stringify({ source: 'historical_master_absent_from_excel' })],
+  );
+  const productId = Number(inserted.rows[0].id);
+  await db.query(
+    `insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+     select id, 0, 0 from products where id=$1
+     on conflict (product_id) do nothing`,
+    [productId],
+  );
+  skus.add(master);
+  idBySku.set(master, productId);
+  return productId;
+}
+
+export async function ingestSalesMappingBundle(db, bundle, { catalogSkus } = {}) {
+  const parsed = parseSalesMappingBundle(bundle);
+  const products = (await db.query('select id, main_sku from products')).rows;
+  const skus = catalogSkus || new Set(products.map((product) => product.main_sku));
+  const idBySku = new Map(products.map((product) => [product.main_sku, Number(product.id)]));
+  const companyIds = new Map();
+  let listings = 0;
+  let orders = 0;
+  let items = 0;
+  let events = 0;
+
+  await db.query(`delete from orders where metadata->>'source'=$1`, [BUNDLE_SOURCE]);
+
+  for (const company of parsed.companies || []) {
+    const companyId = await ensureCompany(db, company);
+    companyIds.set(String(company.ruc).trim(), companyId);
+    for (const channel of MAPPING_CHANNELS) {
+      await ensureChannelAccount(db, companyId, channel, company.nombreComercial || company.nombre);
+    }
+  }
+  for (const row of parsed.falabellaOrders || []) {
+    const ruc = String(row.companyRuc || row.company_ruc || '').trim();
+    if (!ruc) continue;
+    if (!companyIds.has(ruc)) {
+      const companyId = await ensureCompany(db, { ruc, nombre: row.nombre || ruc });
+      companyIds.set(ruc, companyId);
+      await ensureChannelAccount(db, companyId, 'falabella', ruc);
+    }
+    const companyId = companyIds.get(ruc);
+    const orderId = String(row.orderId || row.order_id || '').trim();
+    if (!companyId || !orderId) continue;
+    const raw = inboxRawPayload(row);
+    await db.query(
+      `insert into falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, raw_data, first_seen_at, last_seen_at, synchronized_at
+       ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,now(),now(),now())
+       on conflict (company_id, order_id) do update set
+         order_number=coalesce(nullif(excluded.order_number,''), falabella_orders.order_number),
+         falabella_created_at=coalesce(excluded.falabella_created_at, falabella_orders.falabella_created_at),
+         falabella_updated_at=coalesce(excluded.falabella_updated_at, falabella_orders.falabella_updated_at),
+         status=coalesce(excluded.status, falabella_orders.status),
+         raw_data=case
+           when falabella_orders.raw_data ? 'OrderItems'
+             or falabella_orders.raw_data ? 'orderItems'
+             or falabella_orders.raw_data #>> '{SuccessResponse,Body,OrderItems}' is not null
+           then falabella_orders.raw_data
+           else excluded.raw_data
+         end,
+         last_seen_at=now()`,
+      [
+        companyId,
+        orderId,
+        String(row.orderNumber || row.order_number || orderId),
+        row.orderedAt || row.falabella_created_at || null,
+        row.updatedAt || row.falabella_updated_at || null,
+        row.status || null,
+        JSON.stringify(raw && typeof raw === 'object' ? raw : {}),
+      ],
+    );
+  }
+
+  for (const listing of parsed.listings || []) {
+    const companyId = companyIds.get(String(listing.companyRuc || '').trim());
+    if (!companyId) continue;
+    const master = listingMasterSku(listing, skus);
+    const productId = master ? await ensureAnchorProduct(db, master, skus, idBySku) : null;
+    if (!productId) continue;
+    const accountId = await ensureChannelAccount(db, companyId, listing.channel, listing.companyRuc);
+    await db.query(
+      `insert into product_listings (
+         product_id, channel_code, company_id, channel_account_id, seller_sku, shop_sku,
+         title, status, marketplace_quantity, metadata
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,0,$9::jsonb)
+       on conflict (channel_code, company_id, seller_sku) do update
+         set product_id=excluded.product_id, shop_sku=coalesce(excluded.shop_sku, product_listings.shop_sku),
+             title=coalesce(excluded.title, product_listings.title),
+             status=excluded.status, updated_at=now()`,
+      [
+        productId,
+        listing.channel,
+        companyId,
+        accountId,
+        listing.sellerSku,
+        listing.shopSku || null,
+        listing.title || listing.sellerSku,
+        listing.status === 'active' || listing.status === 'inactive' || listing.status === 'unlinked'
+          ? listing.status
+          : 'inactive',
+        JSON.stringify({ source: BUNDLE_SOURCE }),
+      ],
+    );
+    listings += 1;
+  }
+
+  const unlinkedKeys = new Set(
+    (parsed.listings || [])
+      .filter((listing) => listing.status === 'unlinked' && listing.sellerSku)
+      .map((listing) => `${listing.channel}\u0000${String(listing.companyRuc || '').trim()}\u0000${listing.sellerSku}`),
+  );
+
+  const ordersToIngest = mergeBundleOrders(
+    parsed.orders,
+    falabellaInboxToBundleOrders(parsed.falabellaOrders),
+  );
+
+  for (const order of ordersToIngest) {
+    const companyId = companyIds.get(String(order.companyRuc || '').trim());
+    if (!companyId || !MAPPING_CHANNELS.includes(order.channel)) continue;
+    const accountId = await ensureChannelAccount(db, companyId, order.channel, order.companyRuc);
+    const orderItems = resolveBundleOrderItems(order);
+    const inserted = await db.query(
+      `insert into orders (
+         company_id, channel_account_id, external_order_id, external_order_number,
+         order_status, payment_status, fulfillment_status, document_status, provider_status,
+         document_requirement, document_type_policy, currency, customer, shipping, metadata,
+         ordered_at, items_status
+       ) values (
+         $1,$2,$3,$4,
+         $5,'unknown',$6,'not_requested',$6,
+         'optional','automatic','PEN','{}'::jsonb,'{}'::jsonb,$7::jsonb,
+         $8,$9
+       )
+       on conflict (channel_account_id, external_order_id) do update set
+         order_status=excluded.order_status,
+         fulfillment_status=excluded.fulfillment_status,
+         ordered_at=excluded.ordered_at,
+         metadata=excluded.metadata,
+         items_status=excluded.items_status,
+         updated_at=now()
+       returning id`,
+      [
+        companyId,
+        accountId,
+        String(order.externalOrderId),
+        String(order.externalOrderNumber || order.externalOrderId),
+        coerceOrderStatus(order.orderStatus),
+        coerceFulfillmentStatus(order.fulfillmentStatus),
+        JSON.stringify({ source: BUNDLE_SOURCE, companyRuc: order.companyRuc, channel: order.channel }),
+        order.orderedAt,
+        orderItems.length > 0 ? 'complete' : 'pending',
+      ],
+    );
+    const orderId = Number(inserted.rows[0].id);
+    orders += 1;
+    for (const [index, item] of orderItems.entries()) {
+      const unlinked = unlinkedKeys.has(`${order.channel}\u0000${String(order.companyRuc || '').trim()}\u0000${item.sku}`);
+      const master = listingMasterSku({
+        sellerSku: item.sku,
+        shopSku: item.providerSku,
+        productSku: unlinked ? null : item.productSku,
+      }, skus);
+      if (master) await ensureAnchorProduct(db, master, skus, idBySku);
+      await db.query(
+        `insert into order_items (
+           order_id, external_item_id, sku, provider_sku, description, quantity,
+           product_id, listing_id, main_sku, stock_state, metadata, raw_data
+         ) values ($1,$2,$3,$4,$5,$6,null,null,$7,'none',$8::jsonb,$9::jsonb)
+         on conflict (order_id, external_item_id) do update set
+           sku=excluded.sku, provider_sku=excluded.provider_sku, quantity=excluded.quantity,
+           product_id=null, listing_id=null, main_sku=excluded.main_sku,
+           raw_data=excluded.raw_data, updated_at=now()`,
+        [
+          orderId,
+          String(item.externalItemId || `${order.externalOrderId}-item-${index + 1}`),
+          item.sku || null,
+          item.providerSku || null,
+          item.description || item.sku || '',
+          bundleItemQuantity(item),
+          master,
+          JSON.stringify({ source: BUNDLE_SOURCE, productSku: item.productSku || master || null }),
+          JSON.stringify(bundleItemRawData(item)),
+        ],
+      );
+      items += 1;
+    }
+    for (const event of order.events || []) {
+      if (!event.providerOccurredAt) continue;
+      await db.query(
+        `insert into order_events (
+           order_id, event_type, source, idempotency_key, new_values, payload, provider_occurred_at
+         ) values ($1,$2,'sync',$3,$4::jsonb,'{}'::jsonb,$5)
+         on conflict (order_id, idempotency_key) do nothing`,
+        [
+          orderId,
+          String(event.eventType || 'status'),
+          `bundle:${order.externalOrderId}:${event.providerOccurredAt}:${event.eventType || 'status'}`,
+          JSON.stringify(event.newValues || {}),
+          event.providerOccurredAt,
+        ],
+      );
+      events += 1;
+    }
+  }
+
+  return {
+    companies: companyIds.size,
+    listings,
+    orders,
+    items,
+    events,
+    since: parsed.since || SALES_HISTORY_SINCE,
+    cutoffAt: parsed.cutoffAt || PHYSICAL_COUNT_CUTOFF,
+  };
+}
+
+export async function buildSalesMappingBundle(db, { workbook, since = SALES_HISTORY_SINCE } = {}) {
+  const companies = (await db.query(
+    `select distinct c.id, c.ruc, c.nombre, c.nombre_comercial, c.razon_social
+     from companies c
+     where exists (
+         select 1 from orders o
+         join order_channel_accounts a on a.id=o.channel_account_id
+         join order_channels ch on ch.id=a.channel_id
+         where o.company_id=c.id and ch.code=any($1::text[]) and ${ORDER_SINCE_SQL} >= $2
+       )
+       or exists (
+         select 1 from falabella_orders fo
+         where fo.company_id=c.id
+           and coalesce(fo.falabella_created_at, fo.first_seen_at) >= $2
+       )
+     order by c.id`,
+    [MAPPING_CHANNELS, since],
+  )).rows;
+  const listings = companies.length ? (await db.query(
+    `select l.channel_code as channel, c.ruc as "companyRuc", l.seller_sku as "sellerSku",
+       l.shop_sku as "shopSku", p.main_sku as "productSku", l.status, l.title
+     from product_listings l
+     join companies c on c.id=l.company_id
+     left join products p on p.id=l.product_id
+     where l.channel_code=any($1::text[]) and c.id=any($2::int[])
+     order by l.id`,
+    [MAPPING_CHANNELS, companies.map((row) => Number(row.id))],
+  )).rows : [];
+  const orderRows = (await db.query(
+    `select o.id, o.external_order_id, o.external_order_number, ${ORDER_SINCE_SQL} as ordered_at,
+       o.order_status, o.fulfillment_status, c.ruc as company_ruc, ch.code as channel
+     from orders o
+     join companies c on c.id=o.company_id
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where ch.code=any($1::text[]) and ${ORDER_SINCE_SQL} >= $2
+     order by o.id`,
+    [MAPPING_CHANNELS, since],
+  )).rows;
+  const orderIds = orderRows.map((row) => Number(row.id));
+  const itemRows = orderIds.length ? (await db.query(
+    `select oi.order_id, oi.external_item_id, oi.sku, oi.provider_sku, oi.description, oi.quantity,
+       oi.raw_data, coalesce(p.main_sku, oi.main_sku) as product_sku
+     from order_items oi
+     left join products p on p.id=oi.product_id
+     where oi.order_id=any($1::bigint[]) order by oi.id`,
+    [orderIds],
+  )).rows : [];
+  const eventRows = orderIds.length ? (await db.query(
+    `select order_id, event_type, new_values, provider_occurred_at
+     from order_events
+     where order_id=any($1::bigint[]) and provider_occurred_at is not null
+     order by id`,
+    [orderIds],
+  )).rows : [];
+  const snapshotRows = orderIds.length ? (await db.query(
+    `select distinct on (order_id) order_id, raw_payload
+     from order_snapshots
+     where order_id=any($1::bigint[])
+     order by order_id, observed_at desc, id desc`,
+    [orderIds],
+  )).rows : [];
+  const itemsByOrder = new Map();
+  for (const item of itemRows) {
+    const list = itemsByOrder.get(Number(item.order_id)) || [];
+    list.push({
+      externalItemId: item.external_item_id,
+      sku: item.sku,
+      providerSku: item.provider_sku,
+      productSku: item.product_sku || null,
+      description: item.description,
+      quantity: bundleItemQuantity(item),
+      rawData: bundleItemRawData(item),
+    });
+    itemsByOrder.set(Number(item.order_id), list);
+  }
+  const eventsByOrder = new Map();
+  for (const event of eventRows) {
+    const list = eventsByOrder.get(Number(event.order_id)) || [];
+    list.push({
+      eventType: event.event_type,
+      providerOccurredAt: event.provider_occurred_at,
+      newValues: event.new_values || {},
+    });
+    eventsByOrder.set(Number(event.order_id), list);
+  }
+  const snapshotByOrder = new Map(
+    snapshotRows.map((row) => [Number(row.order_id), row.raw_payload || {}]),
+  );
+  return {
+    version: BUNDLE_VERSION,
+    since,
+    cutoffAt: PHYSICAL_COUNT_CUTOFF,
+    excel: workbook ? {
+      sourceHash: workbook.sourceHash,
+      targets: workbook.targets.map((target) => ({
+        masterSku: target.masterSku,
+        sourceRows: target.sourceRows,
+        targetQuantity: target.targetQuantity,
+      })),
+      skippedRows: workbook.skippedRows || [],
+      presentWithoutQuantity: workbook.presentWithoutQuantity || [...INVENTORY_COUNT_SKUS_WITHOUT_QUANTITY],
+    } : null,
+    companies: companies.map((row) => ({
+      ruc: row.ruc,
+      nombre: row.nombre,
+      nombreComercial: row.nombre_comercial,
+      razonSocial: row.razon_social,
+    })),
+    listings,
+    orders: orderRows.map((row) => ({
+      channel: row.channel,
+      companyRuc: row.company_ruc,
+      externalOrderId: row.external_order_id,
+      externalOrderNumber: row.external_order_number,
+      orderedAt: row.ordered_at,
+      orderStatus: row.order_status,
+      fulfillmentStatus: row.fulfillment_status,
+      items: itemsByOrder.get(Number(row.id)) || [],
+      events: eventsByOrder.get(Number(row.id)) || [],
+      rawPayload: snapshotByOrder.get(Number(row.id)) || null,
+    })),
+    falabellaOrders: (await loadFalabellaInboxOrphans(db, since)).map((row) => ({
+      companyRuc: row.company_ruc,
+      orderId: row.order_id,
+      orderNumber: row.order_number,
+      orderedAt: row.falabella_created_at,
+      updatedAt: row.falabella_updated_at,
+      status: row.status,
+      rawData: falabellaOrderItemsPayload(row.raw_data),
+    })),
+  };
+}

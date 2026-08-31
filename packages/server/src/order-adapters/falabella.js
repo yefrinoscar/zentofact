@@ -101,8 +101,23 @@ function shippingFrom(raw) {
   };
 }
 
+export function falabellaOrderItemsPayload(raw) {
+  const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  if (data.OrderItems || data.orderItems || data.Items) return data;
+  if (data.data?.OrderItems || data.data?.orderItems || data.data?.Items) return data.data;
+  return data.SuccessResponse?.Body || data;
+}
+
 export function mapFalabellaOrderItems(raw) {
-  const candidate = raw?.OrderItems?.OrderItem || raw?.OrderItems || raw?.Items?.Item || raw?.Items;
+  const payload = falabellaOrderItemsPayload(raw);
+  const candidate = payload?.OrderItems?.OrderItem
+    || payload?.OrderItems
+    || payload?.orderItems
+    || payload?.Items?.Item
+    || payload?.Items
+    || payload?.data?.OrderItems?.OrderItem
+    || payload?.data?.OrderItems
+    || payload?.data?.orderItems;
   const items = Array.isArray(candidate) ? candidate : candidate && typeof candidate === 'object' ? [candidate] : [];
   return items.map((item, index) => ({
     externalItemId: text(item?.OrderItemId || item?.OrderItemID || item?.Id || item?.ID || `line-${index + 1}`),

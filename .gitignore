@@ -20,6 +20,7 @@ storage.backup-*/
 
 # Generated / debug artifacts
 scripts/output/
+.audit/
 *.log
 
 # macOS
