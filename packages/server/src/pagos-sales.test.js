@@ -301,6 +301,36 @@ test('separa lo vendido y lo que llega entre pagado y pendiente', () => {
   assert.equal(summary.ticket, 14.5);
 });
 
+test('Programado no queda pagado y el tag corto se arma desde el estado', () => {
+  const csv = [
+    HEADER,
+    row({ 'Estado de pago': 'Programado para 20/08/2026' }),
+    row({
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-1.35',
+      'Estado de pago': 'Programado para 20/08/2026',
+    }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.paid, false);
+  assert.equal(sale.paymentStatus, 'Programado para 20/08/2026');
+});
+
+test('si comisión y logística superan el precio, te llega queda en pérdida', () => {
+  const csv = [
+    HEADER,
+    row({ 'Monto con IVA': '99.90' }),
+    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-29.98' }),
+    row({ 'Tipo de transacción': 'Cobro por cofinanciamiento logístico', 'Monto con IVA': '-80.82' }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  assert.equal(sale.bruto, 99.9);
+  assert.equal(sale.commission, 29.98);
+  assert.equal(sale.shipping, 80.82);
+  assert.equal(sale.take, 110.8);
+  assert.equal(sale.neto, -10.9);
+});
+
 test('el pedido muestra boleta o factura si ya se emitió', () => {
   const [sale] = attachDocumentsToSales(
     [{ orderId: '3248910865', orderNumbers: ['PV-10001'], bruto: 98.89 }],

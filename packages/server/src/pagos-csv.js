@@ -271,8 +271,13 @@ export function parsePaymentStatus(value) {
   const normalized = normalizeHeader(value);
   if (!normalized) return null;
   if (normalized.includes('no pagado') || normalized === 'unpaid' || normalized === 'not paid') return false;
+  if (normalized.includes('programado')) return false;
   if (normalized === 'pagado' || normalized === 'paid') return true;
   return null;
+}
+
+export function isPaidSettlementStatus(value) {
+  return parsePaymentStatus(value) === true;
 }
 
 function cell(row, headerIndex, headerName) {

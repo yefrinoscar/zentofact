@@ -117,6 +117,15 @@ test('Estado de pago No Pagado cruza y deja la venta pendiente', () => {
   assert.equal(pendingSales[0].amounts.neto, 161.41);
 });
 
+test('Programado para una fecha cruza y deja la venta pendiente', () => {
+  const { paidSales, pendingSales } = matchSettlementLines([
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 189.9, commission: 0, other: 0, neto: 189.9, paid: false, paymentStatus: 'Programado para 20/08/2026' },
+    { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 0, commission: 28.49, other: 0, neto: -28.49, paid: false, paymentStatus: 'Programado para 20/08/2026' },
+  ], sales);
+  assert.equal(paidSales.length, 0);
+  assert.equal(pendingSales.length, 1);
+});
+
 test('si hay líneas pagadas, la venta queda pagada y no pendiente', () => {
   const { paidSales, pendingSales } = matchSettlementLines([
     { orderId: 'PV-10002', sku: 'AG301', date: '2026-08-27', bruto: 189.9, commission: 0, other: 0, neto: 189.9, paid: true },

@@ -16,6 +16,7 @@ import {
   importSummary,
   money,
   paymentStatusLabel,
+  paymentStatusTone,
   percentLabel,
   productPhotoSrc,
   readSettlementUpload,
@@ -291,6 +292,31 @@ function TwoLineHead({ label, hint }: { label: string; hint?: string }) {
   );
 }
 
+function amountToneClass(tone: 'take' | 'receive' | undefined, amount: number) {
+  if (tone === 'take') return takeText;
+  if (tone === 'receive') return amount < 0 ? takeText : llegaText;
+  return undefined;
+}
+
+function PaymentStatusBadge({ status }: { status?: string | null }) {
+  const tone = paymentStatusTone(status);
+  const label = paymentStatusLabel(status);
+  const full = String(status || '').trim();
+  return (
+    <Badge
+      variant={tone === 'paid' ? 'secondary' : 'outline'}
+      title={full && full !== label ? full : undefined}
+      className={cn(
+        'h-5 max-w-full min-w-0 shrink truncate px-1.5 text-[11px]',
+        tone === 'paid' && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+        tone === 'scheduled' && 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300',
+      )}
+    >
+      {label}
+    </Badge>
+  );
+}
+
 function AmountRate({
   amount,
   rate,
@@ -303,8 +329,7 @@ function AmountRate({
   return (
     <div className={cn(
       'text-right leading-tight',
-      tone === 'take' && takeText,
-      tone === 'receive' && llegaText,
+      amountToneClass(tone, amount),
     )}
     >
       <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-medium')}>{money.format(amount)}</p>
@@ -350,8 +375,7 @@ function ChargeRow({
       <p className={cn(
         'shrink-0 tabular-nums text-sm',
         strong && 'font-medium',
-        tone === 'take' && takeText,
-        tone === 'receive' && llegaText,
+        amountToneClass(tone, amount),
       )}
       >
         {money.format(amount)}
@@ -547,15 +571,9 @@ export default function Pagos() {
       id: 'paid',
       accessorKey: 'paid',
       header: 'Pago',
-      size: 84,
-      cell: ({ row }) => (
-        <Badge
-          variant={row.original.paid ? 'secondary' : 'outline'}
-          className={cn('h-5 px-1.5 text-[11px]', row.original.paid && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')}
-        >
-          {paymentStatusLabel(row.original.paymentStatus)}
-        </Badge>
-      ),
+      size: 104,
+      meta: { cellClassName: 'min-w-0 overflow-hidden' },
+      cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} />,
     },
     {
       id: 'precio',
@@ -712,7 +730,7 @@ export default function Pagos() {
               <span className="text-muted-foreground"> · </span>
               Se queda <span className={takeText}>{money.format(summary.take || 0)}</span>
               <span className="text-muted-foreground"> · </span>
-              Te llega <span className={cn('font-medium', llegaText)}>{money.format(summary.neto || 0)}</span>
+              Te llega <span className={cn('font-medium', amountToneClass('receive', summary.neto || 0))}>{money.format(summary.neto || 0)}</span>
             </p>
           </div>
         ) : undefined}
@@ -757,7 +775,7 @@ export default function Pagos() {
                 <ChargeRow
                   label="Te llega"
                   amount={selected.neto || 0}
-                  hint="Lo que te depositan."
+                  hint={Number(selected.neto || 0) < 0 ? 'Falabella cobró más que el precio.' : 'Lo que te depositan.'}
                   rate={receiveRate(selected.bruto, selected.neto)}
                   tone="receive"
                   strong
@@ -781,7 +799,7 @@ export default function Pagos() {
                         </p>
                         <div className="mt-1 flex justify-between gap-3 text-sm">
                           <span className="tabular-nums text-muted-foreground">Se queda {percentLabel(product.takeRate)}</span>
-                          <span className={cn('tabular-nums font-medium', llegaText)}>Te llega {money.format(product.unitNeto)} c/u</span>
+                          <span className={cn('tabular-nums font-medium', amountToneClass('receive', product.unitNeto))}>Te llega {money.format(product.unitNeto)} c/u</span>
                         </div>
                       </div>
                     ))}

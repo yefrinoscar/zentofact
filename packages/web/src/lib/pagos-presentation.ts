@@ -26,11 +26,22 @@ export function unmatchedReasonLabel(reason: string | null | undefined) {
   return 'Sin match único';
 }
 
-export function paymentStatusLabel(status: string | null | undefined) {
+export type PaymentStatusTone = 'paid' | 'unpaid' | 'scheduled' | 'unknown';
+
+export function paymentStatusTone(status: string | null | undefined): PaymentStatusTone {
   const value = String(status || '').trim().toLowerCase();
-  if (value === 'pagado' || value === 'paid') return 'Pagado';
-  if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'No pagado';
-  return status || '—';
+  if (value === 'pagado' || value === 'paid') return 'paid';
+  if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'unpaid';
+  if (value.includes('programado')) return 'scheduled';
+  return 'unknown';
+}
+
+export function paymentStatusLabel(status: string | null | undefined) {
+  const tone = paymentStatusTone(status);
+  if (tone === 'paid') return 'Pagado';
+  if (tone === 'unpaid') return 'No pagado';
+  if (tone === 'scheduled') return 'Programado';
+  return String(status || '').trim() || '—';
 }
 
 export function importSummary(item: {
