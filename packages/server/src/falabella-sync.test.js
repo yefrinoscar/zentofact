@@ -262,6 +262,7 @@ test('la lectura local resuelve documentos en una sola consulta SQL', async () =
           boleta_id: 8,
           boleta_numero: 'B001-8',
           boleta_fecha: '2026-07-03',
+          boleta_total: '149.90',
           boleta_estado: 'ACEPTADO',
           boleta_xml: 'boletas/xml/B001-8.xml',
           boleta_cdr: 'boletas/cdr/R-B001-8.zip',
@@ -285,6 +286,7 @@ test('la lectura local resuelve documentos en una sola consulta SQL', async () =
   assert.equal(result.source, 'postgres');
   assert.equal(result.totalCount, 1);
   assert.equal(result.orders[0].__resolved.boleta.numeroCompleto, 'B001-8');
+  assert.equal(result.orders[0].__resolved.boleta.total, '149.90');
   assert.equal(result.orders[0].__resolved.boleta.canUploadPdf, true);
   assert.equal(result.orders[0].__resolved.boleta.falabellaPdfUploadedAt, '2026-07-03T12:30:00.000Z');
   assert.equal(queries.filter((query) => query.includes('from falabella_orders')).length, 1);
