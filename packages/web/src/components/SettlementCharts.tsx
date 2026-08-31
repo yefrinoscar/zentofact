@@ -1,11 +1,8 @@
-import { Liveline, type LivelineSeries } from 'liveline';
-import { Label, Pie, PieChart } from 'recharts';
+import { CartesianGrid, Label, Line, LineChart, Pie, PieChart, XAxis } from 'recharts';
 import {
-  formatLivelineDay,
-  livelinePointsFromDays,
-  livelineWindowSecs,
   money,
   percentLabel,
+  saleDateLabel,
   settlementCharts,
   settlementDailySeries,
   waffleOutOf100,
@@ -31,22 +28,15 @@ const LINE_COLOR = {
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
 type ChartItem = { key: string; label: string; value: number; tone?: Tone };
-type DayRow = Record<string, number | string>;
 
 function seriesColor(key: string) {
   return LINE_COLOR[key as keyof typeof LINE_COLOR] || LINE_COLOR.take;
 }
 
-function seriesFromDays(days: DayRow[], key: keyof typeof LINE_COLOR, label: string): LivelineSeries {
-  const data = livelinePointsFromDays(days, key);
-  return {
-    id: key,
-    label,
-    data,
-    value: data.at(-1)?.value ?? 0,
-    color: LINE_COLOR[key],
-  };
-}
+const compareChartConfig = {
+  facturado: { label: 'Facturado', color: LINE_COLOR.facturado },
+  neto: { label: 'Neto', color: LINE_COLOR.neto },
+} satisfies ChartConfig;
 
 function MetricDot({ itemKey }: { itemKey: string }) {
   return (
@@ -90,28 +80,57 @@ function MetricHeader({
   );
 }
 
-function MultiSeriesChart({ series }: { series: LivelineSeries[] }) {
-  const windowSecs = livelineWindowSecs(series[0]?.data || []);
+function CompareLineChart({ days }: { days: Array<{ date: string; facturado: number; neto: number }> }) {
+  const data = days.length === 1 ? [days[0], days[0]] : days;
   return (
-    <div className="mt-2 h-[148px] [&>div:first-child]:hidden">
-      <Liveline
-        data={[]}
-        value={0}
-        series={series}
-        theme="light"
-        grid
-        badge={false}
-        pulse={false}
-        window={windowSecs}
-        paused
-        scrub
-        cursor="crosshair"
-        lineWidth={2.25}
-        padding={{ top: 28, right: 8, bottom: 22, left: 8 }}
-        formatValue={(value) => money.format(value)}
-        formatTime={(time) => formatLivelineDay(time)}
-      />
-    </div>
+    <ChartContainer
+      config={compareChartConfig}
+      className="mt-2 aspect-auto h-[148px] w-full"
+      initialDimension={{ width: 640, height: 148 }}
+    >
+      <LineChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis dataKey="date" hide />
+        <ChartTooltip
+          cursor={{ stroke: 'var(--border)', strokeDasharray: '3 3' }}
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div className="grid min-w-36 gap-1.5 rounded-xl bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg ring-1 ring-foreground/5">
+                <p className="font-medium">{saleDateLabel(String(label || ''))}</p>
+                {payload.map((item) => (
+                  <p key={String(item.dataKey)} className="flex items-center justify-between gap-4">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <span className="size-2 rounded-[2px]" style={{ background: String(item.color || '') }} />
+                      {item.name}
+                    </span>
+                    <span className="font-medium tabular-nums">{money.format(Number(item.value || 0))}</span>
+                  </p>
+                ))}
+              </div>
+            );
+          }}
+        />
+        <Line
+          type="monotone"
+          dataKey="facturado"
+          name="Facturado"
+          stroke="var(--color-facturado)"
+          strokeWidth={2.25}
+          dot={false}
+          activeDot={{ r: 4 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="neto"
+          name="Neto"
+          stroke="var(--color-neto)"
+          strokeWidth={2.25}
+          dot={false}
+          activeDot={{ r: 4 }}
+        />
+      </LineChart>
+    </ChartContainer>
   );
 }
 
@@ -262,9 +281,7 @@ export function SettlementKpiStrip({ summary, sales }: {
           <div key={chart.id} aria-label={caption} className="min-w-0">
             <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
-              <MultiSeriesChart
-                series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
-              />
+              <CompareLineChart days={days} />
             ) : null}
             {chart.kind === 'waffle' ? (
               <WaffleHundred

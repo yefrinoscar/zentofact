@@ -9,7 +9,6 @@ import {
   PAGOS_SALES_PAGE,
   chargeKindLabel,
   csvReadError,
-  decodeSettlementCsv,
   documentLabel,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
@@ -17,17 +16,18 @@ import {
   money,
   paymentStatusLabel,
   percentLabel,
+  productPhotoSrc,
+  readSettlementUpload,
   reusedImportNotice,
   saleDateLabel,
   salesPageNote,
-  shortImportFilename,
   shortProductName,
   skuLabel,
   unitsLabel,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
-import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
+import { WorkLoaderMark } from '@/components/WorkLoader';
 import { SettlementKpiStrip } from '@/components/SettlementCharts';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -134,7 +134,8 @@ function SettlementAlert({
       {action ? (
         <AlertAction>
           <Button type="button" size="sm" variant="outline" disabled={action.busy} onClick={action.onClick}>
-            {action.busy ? 'Cruzando…' : action.label}
+            {action.busy ? <WorkLoaderMark data-icon="inline-start" /> : null}
+            {action.busy ? 'Cruzando' : action.label}
           </Button>
         </AlertAction>
       ) : null}
@@ -163,9 +164,46 @@ function CopyableId({ value, label }: { value: string; label: string }) {
   );
 }
 
+function salePhotoInput(sale: SettlementSale) {
+  const product = sale.products?.[0];
+  return {
+    shopSku: product?.shopSku,
+    sku: product?.sku || sale.skus?.[0],
+  };
+}
+
+function SaleProductPhoto({
+  sale,
+  className,
+}: {
+  sale: SettlementSale;
+  className?: string;
+}) {
+  const [status, setStatus] = useState<'loading' | 'ok' | 'fail'>('loading');
+  const src = productPhotoSrc(salePhotoInput(sale));
+  if (!src || status === 'fail') return null;
+  return (
+    <div className={cn('relative overflow-hidden rounded-md bg-muted', className)}>
+      {status === 'loading' ? (
+        <span className="absolute inset-0 grid place-items-center text-muted-foreground">
+          <WorkLoaderMark />
+        </span>
+      ) : null}
+      <img
+        src={src}
+        alt=""
+        className={cn('h-full w-full object-cover', status === 'loading' && 'opacity-0')}
+        onLoad={() => setStatus('ok')}
+        onError={() => setStatus('fail')}
+      />
+    </div>
+  );
+}
+
 function SalePreviewCard({ sale }: { sale: SettlementSale }) {
   return (
     <div className="w-64 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+      <SaleProductPhoto sale={sale} className="mb-2 h-28 w-full" />
       <p className="font-mono text-sm font-semibold text-foreground">{sale.orderId}</p>
       <p className="mt-2 text-lg font-semibold tabular-nums tracking-tight">{money.format(sale.bruto || 0)}</p>
       <p className="text-xs text-muted-foreground">Total de la venta</p>
@@ -184,7 +222,7 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
       setPosition({
-        top: Math.min(rect.bottom + 10, window.innerHeight - 180),
+        top: Math.min(rect.bottom + 10, window.innerHeight - 280),
         left: Math.min(rect.left, window.innerWidth - 280),
       });
     }
@@ -378,11 +416,11 @@ export default function Pagos() {
         let filename = file?.name || lastCsvRef.current?.filename || '';
         let csv = lastCsvRef.current?.csv || '';
         if (file) {
-          csv = decodeSettlementCsv(await file.arrayBuffer());
+          csv = await readSettlementUpload(file);
           filename = file.name;
           lastCsvRef.current = { filename, csv };
         }
-        if (!csv || !filename) throw new Error('No hay CSV para subir.');
+        if (!csv || !filename) throw new Error('No hay archivo para subir.');
         const result = await api.importSettlementCsv({
           filename,
           csv,
@@ -413,7 +451,7 @@ export default function Pagos() {
       }
       setNotice({
         tone: 'ok',
-        title: result.replaced ? 'Se volvió a cruzar' : 'CSV cruzado',
+        title: result.replaced ? 'Se volvió a cruzar' : 'Archivo cruzado',
         detail: importSummary({ ...result, reused: false, replaced: false }),
       });
     },
@@ -534,39 +572,7 @@ export default function Pagos() {
 
   return (
     <div className="space-y-4 pb-8">
-      {reading && !summary?.saleCount ? (
-        <WorkLoader
-          key={readingName}
-          label="Leyendo CSV"
-          detail={shortImportFilename(readingName)}
-        />
-      ) : (
-        <>
-          <SettlementKpiStrip summary={summary} sales={sales} />
-          {notice ? (
-            <SettlementAlert
-              tone={notice.tone}
-              title={notice.title}
-              detail={notice.detail}
-              action={notice.canReplace ? {
-                label: 'Reemplazar',
-                busy: upload.isPending,
-                onClick: () => {
-                  if (!lastCsvRef.current || upload.isPending) return;
-                  upload.mutate({ replace: true });
-                },
-              } : undefined}
-            />
-          ) : null}
-          {loadError ? (
-            <SettlementAlert
-              tone="error"
-              title="No se pudieron cargar los pagos."
-              detail="Recarga la página o vuelve a cruzar el CSV."
-            />
-          ) : null}
-        </>
-      )}
+      <SettlementKpiStrip summary={summary} sales={sales} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -591,7 +597,7 @@ export default function Pagos() {
         <input
           ref={fileInput}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="sr-only"
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -613,9 +619,31 @@ export default function Pagos() {
           }}
         >
           {reading ? <WorkLoaderMark data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
-          {reading ? 'Leyendo CSV' : 'Subir CSV'}
+          {reading ? 'Leyendo archivo' : 'Subir archivo'}
         </Button>
       </div>
+      {notice ? (
+        <SettlementAlert
+          tone={notice.tone}
+          title={notice.title}
+          detail={notice.detail}
+          action={notice.canReplace ? {
+            label: 'Reemplazar',
+            busy: upload.isPending,
+            onClick: () => {
+              if (!lastCsvRef.current || upload.isPending) return;
+              upload.mutate({ replace: true });
+            },
+          } : undefined}
+        />
+      ) : null}
+      {loadError ? (
+        <SettlementAlert
+          tone="error"
+          title="No se pudieron cargar los pagos."
+          detail="Recarga la página o vuelve a cruzar el archivo."
+        />
+      ) : null}
 
       <OrdersVirtualTable
         table={table}
@@ -629,7 +657,7 @@ export default function Pagos() {
         aria-label="Cobros de Falabella por venta"
         empty={(
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            Sube un CSV de Falabella para ver comisión, logística y lo que te llega.
+            Sube un CSV o Excel de Falabella para ver comisión, logística y lo que te llega.
           </div>
         )}
         footer={summary?.saleCount ? (
@@ -654,12 +682,17 @@ export default function Pagos() {
           {selected ? (
             <>
               <SheetHeader className="border-b border-border px-5 py-4 pr-12">
-                <SheetTitle className="text-[17px] leading-tight" title={selected.productName || undefined}>
-                  {saleTitle(selected)}
-                </SheetTitle>
-                <SheetDescription className="text-[13px] leading-snug">
-                  {saleSubtitle(selected)}
-                </SheetDescription>
+                <div className="flex items-start gap-3">
+                  <SaleProductPhoto sale={selected} className="size-14 shrink-0" />
+                  <div className="min-w-0">
+                    <SheetTitle className="text-[17px] leading-tight" title={selected.productName || undefined}>
+                      {saleTitle(selected)}
+                    </SheetTitle>
+                    <SheetDescription className="text-[13px] leading-snug">
+                      {saleSubtitle(selected)}
+                    </SheetDescription>
+                  </div>
+                </div>
               </SheetHeader>
               <div className="px-5 py-4">
                 <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
