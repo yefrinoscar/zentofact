@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, formatLivelineDay, importSummary, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, formatLivelineDay, importSummary, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -138,7 +138,7 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     matchedCount: 27,
   });
   assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
-  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'share', 'together']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'waffle', 'stack']);
   assert.deepEqual(
     charts.flatMap((chart) => chart.items.map((item) => item.label)),
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
@@ -159,6 +159,21 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     '27 ventas · 20 cruzadas',
   );
   assert.ok(!charts.some((chart) => /precio|ticket/i.test(`${chart.hint} ${chart.items.map((item) => item.label).join(' ')}`)));
+});
+
+test('de cada 100 llena las diez columnas y parte comisión, logística y te llega', () => {
+  const waffle = waffleOutOf100({ sold: 1739.2, commission: 258.35, shipping: 262.5 });
+  assert.equal(waffle.cells.length, 100);
+  assert.equal(waffle.counts.commission + waffle.counts.shipping + waffle.counts.arrives, 100);
+  assert.equal(waffle.counts.commission, 15);
+  assert.equal(waffle.counts.shipping, 15);
+  assert.equal(waffle.counts.arrives, 70);
+  assert.equal(waffle.cells[9], 'commission');
+  assert.equal(waffle.cells[14], 'commission');
+  assert.equal(waffle.cells[15], 'shipping');
+  assert.equal(waffle.cells[29], 'shipping');
+  assert.equal(waffle.cells[30], 'arrives');
+  assert.equal(waffle.cells[99], 'arrives');
 });
 
 test('el trend diario agrupa facturado, neto y depósito', () => {

@@ -445,6 +445,37 @@ export function settlementTrendPoints(
   });
 }
 
+export function waffleOutOf100(input: {
+  sold?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+}) {
+  const sold = Number(input?.sold || 0);
+  const commission = Math.max(0, Number(input?.commission || 0));
+  const shipping = Math.max(0, Number(input?.shipping || 0));
+  if (sold <= 0) {
+    return {
+      counts: { commission: 0, shipping: 0, arrives: 100 },
+      cells: Array.from({ length: 100 }, () => 'arrives' as const),
+    };
+  }
+  const shares = [commission / sold, shipping / sold, Math.max(0, 1 - (commission + shipping) / sold)];
+  const raw = shares.map((share) => share * 100);
+  const floors = raw.map((value) => Math.floor(value));
+  let rest = 100 - floors.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, frac: value - floors[index] }))
+    .sort((left, right) => right.frac - left.frac);
+  const counts = floors.slice();
+  for (let step = 0; step < rest; step += 1) counts[order[step].index] += 1;
+  const keys = ['commission', 'shipping', 'arrives'] as const;
+  const cells = keys.flatMap((key, index) => Array.from({ length: counts[index] }, () => key));
+  return {
+    counts: { commission: counts[0], shipping: counts[1], arrives: counts[2] },
+    cells,
+  };
+}
+
 export function settlementCharts(summary: {
   saleCount?: number;
   bruto?: number | null;
@@ -485,7 +516,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'fees',
-      kind: 'share' as const,
+      kind: 'waffle' as const,
       hint: takeHint,
       total: cash.kept,
       hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
@@ -496,7 +527,7 @@ export function settlementCharts(summary: {
     },
     {
       id: 'payout',
-      kind: 'together' as const,
+      kind: 'stack' as const,
       hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
       total: cash.arrives,
       hero: undefined,

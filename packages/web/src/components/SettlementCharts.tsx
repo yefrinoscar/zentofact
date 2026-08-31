@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Liveline, type LivelineSeries } from 'liveline';
 import {
   formatLivelineDay,
@@ -6,17 +6,21 @@ import {
   livelineWindowSecs,
   money,
   percentLabel,
+  saleDateLabel,
   settlementCharts,
   settlementDailySeries,
+  settlementTrendPoints,
+  waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
 
 const LINE_COLOR = {
   facturado: '#7A7672',
   neto: '#3B8F72',
-  commission: '#7A72E3',
-  shipping: '#E07838',
-  take: '#5C57A8',
+  take: '#1C1917',
+  commission: '#0F766E',
+  shipping: '#2DD4BF',
+  arrives: '#E7E5E4',
   paid: '#3B8F72',
   pending: '#E07838',
 } as const;
@@ -107,117 +111,153 @@ function MultiSeriesChart({ series }: { series: LivelineSeries[] }) {
   );
 }
 
-function polar(cx: number, cy: number, radius: number, angle: number) {
-  const rad = ((angle - 90) * Math.PI) / 180;
-  return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
-}
-
-function arcPath(cx: number, cy: number, radius: number, start: number, end: number) {
-  const sweep = end - start;
-  if (sweep >= 359.5) {
-    return `M ${cx} ${cy - radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy + radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy - radius}`;
-  }
-  const from = polar(cx, cy, radius, start);
-  const to = polar(cx, cy, radius, end);
-  const large = sweep > 180 ? 1 : 0;
-  return `M ${from.x} ${from.y} A ${radius} ${radius} 0 ${large} 1 ${to.x} ${to.y}`;
-}
-
-function SplitRing({
-  items,
-  hero,
-  ariaLabel,
+function WaffleHundred({
+  sold,
+  commission,
+  shipping,
 }: {
-  items: ChartItem[];
-  hero?: ChartItem;
-  ariaLabel: string;
+  sold: number;
+  commission: number;
+  shipping: number;
 }) {
-  const [active, setActive] = useState(hero ? '' : items[0]?.key || '');
-  const total = items.reduce((sum, item) => sum + item.value, 0);
-  const selected = items.find((item) => item.key === active);
-  const selectedShare = total && selected ? selected.value / total : 0;
-  const size = 176;
-  const cx = size / 2;
-  const cy = size / 2;
-  const radius = 54;
-  const present = items.filter((item) => item.value > 0);
-  const gap = present.length > 1 ? 12 : 0;
-  let cursor = -90;
-  const slices = items.map((item) => {
-    const share = total ? item.value / total : 0;
-    const sweep = item.value > 0 ? Math.max(share * 360 - gap, present.length === 1 ? 360 : 14) : 0;
-    const start = cursor + gap / 2;
-    const end = start + sweep;
-    cursor += share * 360;
-    const mid = (start + end) / 2;
-    const label = polar(cx, cy, 80, mid);
-    return { ...item, start, end, sweep, mid, share, label };
-  });
-  const centerLabel = selected?.label || hero?.label || items[0]?.label || '';
-  const centerValue = selected
-    ? percentLabel(selectedShare)
-    : hero
-      ? money.format(hero.value)
-      : percentLabel(0);
-
+  const waffle = waffleOutOf100({ sold, commission, shipping });
+  const legend = [
+    { key: 'commission', label: 'Comisión', count: waffle.counts.commission },
+    { key: 'shipping', label: 'Logística', count: waffle.counts.shipping },
+    { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives },
+  ];
   return (
-    <div className="mt-2" onMouseLeave={() => hero && setActive('')}>
-      <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto h-[168px] w-[168px]" role="img" aria-label={ariaLabel}>
-        <circle cx={cx} cy={cy} r={70} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
-        <circle cx={cx} cy={cy} r={38} fill="none" stroke="var(--border)" strokeDasharray="2 5" strokeWidth="1" />
-        {slices.filter((slice) => slice.sweep > 0).map((slice) => (
-          <path
-            key={slice.key}
-            d={arcPath(cx, cy, radius, slice.start, slice.end)}
-            fill="none"
-            stroke={seriesColor(slice.key)}
-            strokeWidth={active === slice.key ? 16 : 13}
-            strokeLinecap="round"
-            opacity={!active || active === slice.key ? 1 : 0.62}
-            className="cursor-pointer"
-            onMouseEnter={() => setActive(slice.key)}
-            onClick={() => setActive(slice.key)}
+    <div className="mt-2 flex items-start gap-3">
+      <div
+        className="grid grid-cols-10 gap-[3px]"
+        role="img"
+        aria-label={`De cada 100: ${waffle.counts.commission} comisión, ${waffle.counts.shipping} logística, ${waffle.counts.arrives} te llega`}
+      >
+        {waffle.cells.map((key, index) => (
+          <span
+            key={index}
+            className="size-[11px] rounded-[2px]"
+            style={{ background: seriesColor(key) }}
           />
         ))}
-        {slices.filter((slice) => slice.value > 0).map((slice) => (
-          <text
-            key={`${slice.key}-label`}
-            x={slice.label.x}
-            y={slice.label.y}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            className="fill-muted-foreground text-[10px] tabular-nums"
-          >
-            {percentLabel(slice.share)}
-          </text>
-        ))}
-        <text x={cx} y={cy - 11} textAnchor="middle" className="fill-muted-foreground text-[10px]">
-          {centerLabel}
-        </text>
-        <text x={cx} y={cy + 10} textAnchor="middle" className="fill-foreground text-[15px] font-semibold tabular-nums">
-          {centerValue}
-        </text>
-      </svg>
-      <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-        {items.map((item, index) => (
-          <span key={item.key} className="inline-flex items-center gap-3">
-            {index > 0 ? <span className="text-[8px] text-border" aria-hidden>◆</span> : null}
-            <button
-              type="button"
-              aria-pressed={active === item.key}
-              onClick={() => setActive(item.key)}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-md px-1 py-0.5',
-                active === item.key ? 'text-foreground' : 'hover:text-foreground',
-              )}
-            >
-              <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
-              {item.label}
-              <span className="tabular-nums text-foreground/80">{percentLabel(total ? item.value / total : 0)}</span>
-            </button>
-          </span>
+      </div>
+      <div className="flex min-w-0 flex-col gap-1 pt-0.5 text-[11px] text-muted-foreground">
+        {legend.map((item) => (
+          <p key={item.key} className="flex items-center gap-1.5">
+            <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
+            {item.label}
+            <span className="tabular-nums text-foreground/80">{item.count}%</span>
+          </p>
         ))}
       </div>
+    </div>
+  );
+}
+
+function stackedPath(points: Array<{ x: number; y: number }>, baseline: number) {
+  if (!points.length) return '';
+  const top = points.map((point) => `${point.x},${point.y}`).join(' L ');
+  const last = points[points.length - 1];
+  const first = points[0];
+  return `M ${first.x},${baseline} L ${top} L ${last.x},${baseline} Z`;
+}
+
+function linePath(points: Array<{ x: number; y: number }>) {
+  if (!points.length) return '';
+  return `M ${points.map((point) => `${point.x},${point.y}`).join(' L ')}`;
+}
+
+function StackedPayout({ days }: { days: DayRow[] }) {
+  const [active, setActive] = useState<number | null>(null);
+  const trend = useMemo(() => settlementTrendPoints(days, ['paid', 'pending']), [days]);
+  const width = 280;
+  const height = 132;
+  const pad = { top: 10, right: 8, bottom: 22, left: 8 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const max = Math.max(1, ...trend.map((point) => Number(point.paid || 0) + Number(point.pending || 0)));
+  const plotted = trend.map((point, index) => {
+    const paid = Number(point.paid || 0);
+    const pending = Number(point.pending || 0);
+    const x = pad.left + (trend.length < 2 ? innerW / 2 : (index / (trend.length - 1)) * innerW);
+    const yPaid = pad.top + innerH - (paid / max) * innerH;
+    const yTop = pad.top + innerH - ((paid + pending) / max) * innerH;
+    return { x, paid, pending, neto: paid + pending, yPaid, yTop };
+  });
+  const paidArea = stackedPath(plotted.map((point) => ({ x: point.x, y: point.yPaid })), pad.top + innerH);
+  const pendingArea = plotted.length
+    ? `M ${plotted.map((point) => `${point.x},${point.yPaid}`).join(' L ')} L ${[...plotted].reverse().map((point) => `${point.x},${point.yTop}`).join(' L ')} Z`
+    : '';
+  const labels = days.length
+    ? [days[0], days[Math.floor((days.length - 1) / 2)], days[days.length - 1]]
+        .map((row) => saleDateLabel(String(row.date || '')))
+        .filter((label, index, list) => label && list.indexOf(label) === index)
+    : [];
+  const hover = active == null ? null : plotted[active];
+
+  return (
+    <div className="relative mt-2">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-[148px] w-full"
+        role="img"
+        aria-label="Pagado y pendiente apilados"
+        onMouseLeave={() => setActive(null)}
+        onMouseMove={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          const ratio = (event.clientX - box.left) / box.width;
+          const index = Math.round(ratio * (plotted.length - 1));
+          setActive(Math.min(plotted.length - 1, Math.max(0, index)));
+        }}
+      >
+        {[0.25, 0.5, 0.75].map((tick) => (
+          <line
+            key={tick}
+            x1={pad.left}
+            x2={width - pad.right}
+            y1={pad.top + innerH * tick}
+            y2={pad.top + innerH * tick}
+            stroke="currentColor"
+            strokeDasharray="3 4"
+            className="text-border"
+          />
+        ))}
+        <path d={pendingArea} fill={LINE_COLOR.pending} fillOpacity="0.35" />
+        <path d={paidArea} fill={LINE_COLOR.paid} fillOpacity="0.9" />
+        <path d={linePath(plotted.map((point) => ({ x: point.x, y: point.yTop })))} fill="none" stroke={LINE_COLOR.pending} strokeWidth="1.75" />
+        <path d={linePath(plotted.map((point) => ({ x: point.x, y: point.yPaid })))} fill="none" stroke={LINE_COLOR.paid} strokeWidth="1.75" />
+        {hover ? (
+          <line
+            x1={hover.x}
+            x2={hover.x}
+            y1={pad.top}
+            y2={pad.top + innerH}
+            stroke="currentColor"
+            className="text-foreground/30"
+          />
+        ) : null}
+        {labels.map((label, index) => {
+          const x = pad.left + (labels.length < 2 ? innerW / 2 : (index / (labels.length - 1)) * innerW);
+          return (
+            <text key={`${label}-${index}`} x={x} y={height - 6} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+              {label}
+            </text>
+          );
+        })}
+      </svg>
+      {hover ? (
+        <div className="pointer-events-none absolute left-1/2 top-2 z-10 min-w-[9rem] -translate-x-1/2 rounded-md bg-zinc-900 px-2.5 py-1.5 text-[11px] text-white shadow">
+          <p className="flex items-center gap-1.5">
+            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.paid }} />
+            Pagado {money.format(hover.paid)}
+          </p>
+          <p className="flex items-center gap-1.5">
+            <span className="size-1.5 rounded-[2px]" style={{ background: LINE_COLOR.pending }} />
+            Pendiente {money.format(hover.pending)}
+          </p>
+          <p className="mt-0.5 border-t border-white/15 pt-0.5 text-white/80">Neto {money.format(hover.neto)}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -264,14 +304,14 @@ export function SettlementKpiStrip({ summary, sales }: {
                 series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
               />
             ) : null}
-            {chart.kind === 'share' ? (
-              <SplitRing items={chart.items} hero={chart.hero} ariaLabel="Comisión y logística" />
-            ) : null}
-            {chart.kind === 'together' ? (
-              <MultiSeriesChart
-                series={chart.items.map((item) => seriesFromDays(days, item.key as keyof typeof LINE_COLOR, item.label))}
+            {chart.kind === 'waffle' ? (
+              <WaffleHundred
+                sold={Number(summary.bruto || 0)}
+                commission={Number(summary.commission || 0)}
+                shipping={Number(summary.shipping || 0)}
               />
             ) : null}
+            {chart.kind === 'stack' ? <StackedPayout days={days} /> : null}
           </div>
         );
       })}
