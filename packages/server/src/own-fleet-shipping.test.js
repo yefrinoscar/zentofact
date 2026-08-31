@@ -161,7 +161,7 @@ test('Pucusana y San Bartolo no se cobran hasta que el admin las encienda', () =
   });
   assert.equal(quoted.shipping.district, 'Pucusana');
   assert.equal(quoted.shipping.districtAmount, 30);
-  // A 55 km de la bodega y aun así paga solo su zona.
+  // A más de 40 km del almacén y aun así paga solo su zona.
   assert.equal(quoted.shippingAmount, 30);
-  assert.ok(quoted.shipping.distanceKm > 50);
+  assert.ok(quoted.shipping.distanceKm > 40);
 });

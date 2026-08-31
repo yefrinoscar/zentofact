@@ -359,12 +359,12 @@ test('Express cobra el precio de la zona, sin recargo por distancia', () => {
   }));
 
   assert.equal(payload.subtotal, 250);
-  assert.equal(payload.shippingAmount, 10);
-  assert.equal(payload.total, 260);
+  assert.equal(payload.shippingAmount, 15);
+  assert.equal(payload.total, 265);
   assert.equal(payload.shipping.carrier, 'nosotros');
-  assert.equal(payload.shipping.districtAmount, 10);
+  assert.equal(payload.shipping.districtAmount, 15);
   assert.equal(payload.shipping.distanceAmount, 0);
-  assert.equal(payload.shipping.priceZone, 'Cerca');
+  assert.equal(payload.shipping.priceZone, 'Media');
   assert.equal(payload.shipping.zoneKind, 'lima_district');
   assert.equal(payload.shipping.district, 'San Miguel');
 });

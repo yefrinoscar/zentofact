@@ -82,7 +82,7 @@ export function ResumenStep({
     customerDocumentNumber: view.customerDocumentNumber,
     legalName: view.legalName,
     fiscalAddress: view.fiscalAddress,
-  });
+  }, undefined, view.fleetOrigin?.address);
   const totalRows = saleTotalRows(view.totals, view.shippingQuote?.priceZoneName, view.shippingQuote?.distanceKm);
   const [cliente, entrega, pago] = groups;
 

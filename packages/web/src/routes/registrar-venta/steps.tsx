@@ -1,9 +1,24 @@
-import { ImagePlus, Package, Plus, Search, Trash2, TriangleAlert, Truck, User, Wallet, X } from 'lucide-react';
+import { useState } from 'react';
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  ImagePlus,
+  MapPin,
+  Package,
+  Plus,
+  Search,
+  Trash2,
+  TriangleAlert,
+  Truck,
+  User,
+  Wallet,
+  X,
+} from 'lucide-react';
 import {
   BOLETA_IDENTITIES,
   DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
-  PICKUP_ADDRESS,
   SALE_SOURCES,
   limaTodayKey,
   type DocumentRequest,
@@ -15,6 +30,13 @@ import {
 } from '../../lib/own-fleet-shipping';
 import { SHIPPING_CARRIERS } from '../../lib/shipping-carrier';
 import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
+import {
+  pickupHours,
+  pickupMapsUrl,
+  pickupMessage,
+  pickupPoint,
+  type PickupPoint,
+} from '../../lib/pickup-message';
 import { cn } from '../../lib/cn';
 import { PlacePicker } from '../../components/PlacePicker';
 import { Button } from '../../components/ui/button';
@@ -22,6 +44,55 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Choice, DeliveryDatePicker, FieldRow, NUMBER_INPUT, ProductPhoto, StepPanel } from './widgets';
 import type { SaleFormView } from './view';
+
+/** Lo que el vendedor le manda al cliente: dónde recoger, a qué hora y el pin. */
+function PickupCard({ origin }: { origin?: Partial<PickupPoint> | null }) {
+  const point = pickupPoint(origin);
+  const message = pickupMessage(point);
+  const mapsUrl = pickupMapsUrl(point);
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="space-y-2 rounded-md bg-muted/50 px-3 py-2.5 ring-1 ring-border">
+      <div className="flex items-start gap-2">
+        <MapPin className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium leading-5">{point.address}</p>
+          <p className="text-xs text-muted-foreground">Recojo de {pickupHours(point)}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 cursor-pointer"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(message);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1600);
+            } catch {
+              // El texto sigue visible abajo para copiarlo a mano.
+            }
+          }}
+        >
+          {copied ? <Check className="text-emerald-600" /> : <Copy />}
+          {copied ? 'Copiado' : 'Copiar indicaciones'}
+        </Button>
+        <a
+          href={mapsUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ExternalLink className="size-3.5" /> Abrir mapa
+        </a>
+      </div>
+      <p className="whitespace-pre-line break-words text-xs leading-5 text-muted-foreground">{message}</p>
+    </div>
+  );
+}
 
 function selectDocument(view: SaleFormView, value: DocumentRequest) {
   view.setDocumentRequest(value);
@@ -313,7 +384,7 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
                 <p className="mt-1 text-xs text-muted-foreground">
                   {view.shippingQuote.zoneLabel}
                   {' · '}
-                  {formatDistanceKm(view.shippingQuote.distanceKm)} desde la bodega
+                  {formatDistanceKm(view.shippingQuote.distanceKm)} desde el almacén
                 </p>
               </div>
             )}
@@ -337,7 +408,7 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
         </>
       ) : (
         <FieldRow label="Tienda">
-          <p className="rounded-md bg-muted/50 px-3 py-2 text-sm leading-6 ring-1 ring-border">{PICKUP_ADDRESS}</p>
+          <PickupCard origin={view.fleetOrigin} />
         </FieldRow>
       )}
       </div>

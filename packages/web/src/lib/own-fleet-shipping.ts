@@ -1,9 +1,12 @@
 export const OWN_FLEET_CARRIER = 'nosotros' as const;
 
+/** Almacén de salida. El admin lo mueve desde Envío propio; las distancias se recalculan solas. */
 export const OWN_FLEET_ORIGIN = {
-  lat: -12.0776,
-  lng: -77.0905,
-  address: 'Av. La Marina 2055, San Miguel',
+  lat: -12.154351,
+  lng: -76.97931,
+  address: 'C. las Almendras Mz.Z1 - Lt.5',
+  pickupFrom: '07:00',
+  pickupTo: '17:00',
 } as const;
 
 /**
@@ -56,6 +59,16 @@ export type OwnFleetZone = {
   amount: number;
 };
 
+/** Punto desde el que sale el reparto. Mover el pin recalcula la distancia de cada distrito. */
+export type OwnFleetOrigin = {
+  address: string;
+  lat: number;
+  lng: number;
+  /** Horario de recojo en tienda, formato HH:MM. */
+  pickupFrom: string;
+  pickupTo: string;
+};
+
 export type OwnFleetDistrictSetting = {
   key: string;
   name: string;
@@ -72,11 +85,13 @@ export type OwnFleetDistrictSetting = {
 };
 
 export type OwnFleetConfig = {
+  origin: OwnFleetOrigin;
   zones: OwnFleetZone[];
   districts: OwnFleetDistrictSetting[];
 };
 
 export type OwnFleetConfigInput = {
+  origin?: { address?: string; lat?: number; lng?: number; pickupFrom?: string; pickupTo?: string };
   zones?: Array<{ key?: string; name?: string; amount?: number }>;
   /** `amount` solo llega en configuraciones viejas, de cuando el precio era por distrito. */
   districts?: Array<{ key?: string; name?: string; zone?: string; amount?: number; enabled?: boolean }>;
@@ -206,36 +221,68 @@ export function zoneKey(value?: string | null) {
   return String(value || '').trim().toLowerCase();
 }
 
-export function districtDistanceKm(place: { lat: number; lng: number }) {
-  return roundMoney(haversineKm(OWN_FLEET_ORIGIN, place));
+export function districtDistanceKm(
+  place: { lat: number; lng: number },
+  origin: { lat: number; lng: number } = OWN_FLEET_ORIGIN,
+) {
+  return roundMoney(haversineKm(origin, place));
 }
 
-function defaultZoneFor(distanceKm: number) {
+export function defaultZoneFor(distanceKm: number) {
   return DEFAULT_OWN_FLEET_ZONES.find((zone) => distanceKm <= zone.maxKm)
     ?? DEFAULT_OWN_FLEET_ZONES[DEFAULT_OWN_FLEET_ZONES.length - 1];
 }
 
-export function defaultOwnFleetConfig(): OwnFleetConfig {
-  const beaches = new Set<string>(OWN_FLEET_BEACH_KEYS);
+function normalizeHour(value: unknown, fallback: string) {
+  const raw = String(value || '').trim();
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(raw) ? raw : fallback;
+}
+
+function normalizeOrigin(saved?: OwnFleetConfigInput['origin'] | OwnFleetOrigin): OwnFleetOrigin {
+  const lat = Number(saved?.lat);
+  const lng = Number(saved?.lng);
+  const placed = Number.isFinite(lat) && Number.isFinite(lng) && inPeruBounds(lat, lng);
   return {
+    address: String(saved?.address || '').trim() || OWN_FLEET_ORIGIN.address,
+    lat: placed ? lat : OWN_FLEET_ORIGIN.lat,
+    lng: placed ? lng : OWN_FLEET_ORIGIN.lng,
+    pickupFrom: normalizeHour(saved?.pickupFrom, OWN_FLEET_ORIGIN.pickupFrom),
+    pickupTo: normalizeHour(saved?.pickupTo, OWN_FLEET_ORIGIN.pickupTo),
+  };
+}
+
+/** Las distancias siempre salen del almacén configurado: mover el pin las regenera todas. */
+function districtsFrom(origin: OwnFleetOrigin): OwnFleetDistrictSetting[] {
+  const beaches = new Set<string>(OWN_FLEET_BEACH_KEYS);
+  return METRO_POINTS.map((place) => {
+    const key = foldName(place.district);
+    const distanceKm = districtDistanceKm(place, origin);
+    const zone = defaultZoneFor(distanceKm);
+    return {
+      key,
+      name: place.district,
+      province: place.province,
+      department: place.department,
+      lat: place.lat,
+      lng: place.lng,
+      distanceKm,
+      zone: zone.key,
+      amount: zone.amount,
+      enabled: !beaches.has(key),
+    };
+  });
+}
+
+export function ownFleetOriginAddress(config?: OwnFleetConfigInput | OwnFleetConfig | null) {
+  return String(config?.origin?.address || '').trim() || OWN_FLEET_ORIGIN.address;
+}
+
+export function defaultOwnFleetConfig(): OwnFleetConfig {
+  const origin = { ...OWN_FLEET_ORIGIN };
+  return {
+    origin,
     zones: DEFAULT_OWN_FLEET_ZONES.map(({ key, name, amount }) => ({ key, name, amount })),
-    districts: METRO_POINTS.map((place) => {
-      const key = foldName(place.district);
-      const distanceKm = districtDistanceKm(place);
-      const zone = defaultZoneFor(distanceKm);
-      return {
-        key,
-        name: place.district,
-        province: place.province,
-        department: place.department,
-        lat: place.lat,
-        lng: place.lng,
-        distanceKm,
-        zone: zone.key,
-        amount: zone.amount,
-        enabled: !beaches.has(key),
-      };
-    }),
+    districts: districtsFrom(origin),
   };
 }
 
@@ -267,7 +314,8 @@ function zonesFromAmounts(amounts: number[]): OwnFleetZone[] {
 }
 
 export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig | null): OwnFleetConfig {
-  const base = defaultOwnFleetConfig();
+  const origin = normalizeOrigin(saved?.origin);
+  const base = { origin, zones: defaultOwnFleetConfig().zones, districts: districtsFrom(origin) };
   const overrides = new Map<string, { zone?: string; amount?: number; enabled?: boolean }>();
   for (const row of saved?.districts || []) {
     const key = foldName(row.key || row.name || '');
@@ -292,6 +340,7 @@ export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig
   const fallback = zones[0];
 
   return {
+    origin,
     zones,
     districts: base.districts.map((district) => {
       const override = overrides.get(district.key);
@@ -315,7 +364,9 @@ export function serializeOwnFleetConfig(
 ): OwnFleetConfigInput {
   const config = mergeOwnFleetConfig(saved);
   return {
+    origin: { ...config.origin },
     zones: config.zones.map((zone) => ({ key: zone.key, name: zone.name, amount: zone.amount })),
+    // La distancia no se guarda: se recalcula desde el almacén cada vez que se lee la config.
     districts: config.districts.map((district) => ({
       key: district.key,
       zone: district.zone,
@@ -570,9 +621,7 @@ export function quoteOwnFleetShipping(
   const lng = Number(destination.lng);
   const hasPoint = Number.isFinite(lat) && Number.isFinite(lng);
   const atPin = hasPoint ? placeAtCoordinates(lat, lng, config) : null;
-  const distanceKm = hasPoint
-    ? roundMoney(haversineKm(OWN_FLEET_ORIGIN, { lat, lng }))
-    : 0;
+  const distanceKm = hasPoint ? districtDistanceKm({ lat, lng }, config.origin) : 0;
   if (atPin && atPin.reachable === false) {
     const label = atPin.district || atPin.department || '';
     return {

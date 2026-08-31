@@ -638,12 +638,13 @@ test('Express persiste la zona, la distancia informativa y el total con envío',
   }), new IngestDb());
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'nosotros');
-  assert.equal(result.order.shippingAmount, 10);
-  assert.equal(result.order.total, 260);
-  assert.equal(result.order.shipping.priceZone, 'Cerca');
-  assert.equal(result.order.shipping.districtAmount, 10);
+  assert.equal(result.order.shippingAmount, 15);
+  assert.equal(result.order.total, 265);
+  assert.equal(result.order.shipping.priceZone, 'Media');
+  assert.equal(result.order.shipping.districtAmount, 15);
+  // La distancia se guarda como referencia, no como cobro.
   assert.equal(result.order.shipping.distanceAmount, 0);
-  assert.equal(result.order.shipping.distanceKm, 0);
+  assert.ok(result.order.shipping.distanceKm > 10);
 });
 
 test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {

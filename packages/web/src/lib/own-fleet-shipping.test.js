@@ -37,9 +37,11 @@ test('las zonas por defecto agrupan los distritos por distancia a la bodega', ()
   // Y su precio es exactamente el de esa zona.
   assert.ok(config.districts.every((district) => zoneOf(config, district.key).amount === district.amount));
 
-  assert.equal(zoneOf(config, 'san miguel').name, 'Cerca');
+  // El almacén está en San Juan de Miraflores, así que el sur queda cerca.
+  assert.equal(zoneOf(config, 'san juan de miraflores').name, 'Cerca');
+  assert.equal(zoneOf(config, 'santiago de surco').name, 'Cerca');
   assert.equal(zoneOf(config, 'surquillo').name, 'Cerca');
-  assert.equal(zoneOf(config, 'santiago de surco').name, 'Media');
+  assert.equal(zoneOf(config, 'san miguel').name, 'Media');
   assert.equal(zoneOf(config, 'ate').name, 'Media');
   assert.equal(zoneOf(config, 'lurigancho').name, 'Lejos');
   assert.equal(zoneOf(config, 'pucusana').name, 'Lejos');
@@ -47,10 +49,46 @@ test('las zonas por defecto agrupan los distritos por distancia a la bodega', ()
 
 test('cada distrito guarda su distancia a la bodega como referencia', () => {
   const config = defaultOwnFleetConfig();
-  const sanMiguel = config.districts.find((row) => row.key === 'san miguel');
+  const surco = config.districts.find((row) => row.key === 'santiago de surco');
   const lurigancho = config.districts.find((row) => row.key === 'lurigancho');
-  assert.equal(sanMiguel.distanceKm, 0);
-  assert.ok(lurigancho.distanceKm > 40, `Lurigancho está lejos, km=${lurigancho.distanceKm}`);
+  assert.ok(surco.distanceKm < 5, `Surco está al lado del almacén, km=${surco.distanceKm}`);
+  assert.ok(lurigancho.distanceKm > 30, `Lurigancho está lejos, km=${lurigancho.distanceKm}`);
+});
+
+test('mover el almacén regenera las distancias y reagrupa los distritos', () => {
+  const enSurco = mergeOwnFleetConfig({ origin: { address: 'Bodega Surco', lat: -12.135, lng: -76.995 } });
+  const desdeSurco = enSurco.districts.find((row) => row.key === 'santiago de surco').distanceKm;
+
+  const enSanMiguel = mergeOwnFleetConfig({ origin: { address: 'Bodega San Miguel', lat: -12.0776, lng: -77.0905 } });
+  const desdeSanMiguel = enSanMiguel.districts.find((row) => row.key === 'santiago de surco').distanceKm;
+
+  assert.ok(desdeSurco < 1, `Surco medido desde Surco, km=${desdeSurco}`);
+  assert.ok(desdeSanMiguel > 10, `Surco medido desde San Miguel, km=${desdeSanMiguel}`);
+  assert.equal(enSurco.origin.address, 'Bodega Surco');
+  // Y la zona sigue a la nueva distancia.
+  assert.equal(zoneOf(enSanMiguel, 'santiago de surco').name, 'Media');
+  assert.equal(zoneOf(enSurco, 'santiago de surco').name, 'Cerca');
+});
+
+test('el horario de recojo vive junto al almacén', () => {
+  assert.deepEqual(defaultOwnFleetConfig().origin, {
+    address: 'C. las Almendras Mz.Z1 - Lt.5',
+    lat: -12.154351,
+    lng: -76.97931,
+    pickupFrom: '07:00',
+    pickupTo: '17:00',
+  });
+  const custom = mergeOwnFleetConfig({ origin: { pickupFrom: '09:30', pickupTo: '18:00' } });
+  assert.equal(custom.origin.pickupFrom, '09:30');
+  assert.equal(custom.origin.pickupTo, '18:00');
+  // Una hora inválida no rompe la config.
+  assert.equal(mergeOwnFleetConfig({ origin: { pickupFrom: '25:99' } }).origin.pickupFrom, '07:00');
+});
+
+test('un pin fuera del Perú no reemplaza el almacén', () => {
+  const config = mergeOwnFleetConfig({ origin: { address: 'Madrid', lat: 40.4168, lng: -3.7038 } });
+  assert.equal(config.origin.lat, -12.154351);
+  assert.equal(config.origin.lng, -76.97931);
 });
 
 test('el precio sale de la zona del distrito, no de la distancia', () => {
@@ -60,11 +98,11 @@ test('el precio sale de la zona del distrito, no de la distancia', () => {
     department: 'Lima',
   }), {
     zone: { kind: 'lima_district', name: 'Santiago De Surco' },
-    amount: 15,
-    priceZone: { key: 'media', name: 'Media', amount: 15 },
+    amount: 10,
+    priceZone: { key: 'cerca', name: 'Cerca', amount: 10 },
   });
-  assert.equal(resolveShippingZone({ district: 'Surco', province: 'Lima', department: 'Lima' }).amount, 15);
-  assert.equal(resolveShippingZone({ district: 'San Miguel', province: 'Lima', department: 'Lima' }).amount, 10);
+  assert.equal(resolveShippingZone({ district: 'Surco', province: 'Lima', department: 'Lima' }).amount, 10);
+  assert.equal(resolveShippingZone({ district: 'San Miguel', province: 'Lima', department: 'Lima' }).amount, 15);
   assert.equal(resolveShippingZone({ district: 'Ventanilla', province: 'Callao', department: 'Callao' }).amount, 25);
 
   assert.deepEqual(resolveShippingZone({ district: 'Huaral', province: 'Huaral', department: 'Lima' }), {
@@ -139,39 +177,37 @@ test('isInPeru rechaza coordenadas o país fuera del Perú', () => {
 
 test('la cotización cobra la zona una sola vez y no recarga por distancia', () => {
   const atWarehouse = quoteOwnFleetShipping({
-    district: 'San Miguel',
-    province: 'Lima',
-    department: 'Lima',
     lat: OWN_FLEET_ORIGIN.lat,
     lng: OWN_FLEET_ORIGIN.lng,
   });
+  assert.equal(atWarehouse?.zoneLabel, 'San Juan De Miraflores');
   assert.equal(atWarehouse?.priceZoneName, 'Cerca');
   assert.equal(atWarehouse?.districtAmount, 10);
   assert.equal(atWarehouse?.distanceKm, 0);
   assert.equal(atWarehouse?.distanceAmount, 0);
   assert.equal(atWarehouse?.total, 10);
 
-  const surco = quoteOwnFleetShipping({
-    district: 'Surco',
+  const sanMiguel = quoteOwnFleetShipping({
+    district: 'San Miguel',
     province: 'Lima',
     department: 'Lima',
-    lat: -12.135,
-    lng: -76.995,
+    lat: -12.0776,
+    lng: -77.0905,
   });
-  assert.equal(surco?.priceZoneName, 'Media');
-  assert.equal(surco?.districtAmount, 15);
-  assert.equal(surco?.distanceAmount, 0);
-  assert.equal(surco?.total, 15);
-  assert.equal(surco?.zoneLabel, 'Santiago De Surco');
+  assert.equal(sanMiguel?.priceZoneName, 'Media');
+  assert.equal(sanMiguel?.districtAmount, 15);
+  assert.equal(sanMiguel?.distanceAmount, 0);
+  assert.equal(sanMiguel?.total, 15);
+  assert.equal(sanMiguel?.zoneLabel, 'San Miguel');
   // Los kilómetros se informan, no se cobran.
-  assert.equal(surco?.distanceKm, Math.round(haversineKm(OWN_FLEET_ORIGIN, { lat: -12.135, lng: -76.995 }) * 100) / 100);
+  assert.equal(sanMiguel?.distanceKm, Math.round(haversineKm(OWN_FLEET_ORIGIN, { lat: -12.0776, lng: -77.0905 }) * 100) / 100);
 });
 
 test('un destino lejano paga su zona, no un recargo proporcional', () => {
   const lurigancho = quoteOwnFleetShipping({ district: 'Lurigancho', lat: -11.937, lng: -76.709 });
   assert.equal(lurigancho?.charged, true);
   assert.equal(lurigancho?.priceZoneName, 'Lejos');
-  assert.ok(lurigancho.distanceKm > 40, `Lurigancho está lejos, km=${lurigancho.distanceKm}`);
+  assert.ok(lurigancho.distanceKm > 30, `Lurigancho está lejos, km=${lurigancho.distanceKm}`);
   assert.equal(lurigancho?.distanceAmount, 0);
   assert.equal(lurigancho?.total, 25);
 });
@@ -191,11 +227,11 @@ test('la cotización usa el distrito del pin, no el texto buscado', () => {
     district: 'Lima',
     province: 'Lima',
     department: 'Provincia De Lima',
-    lat: OWN_FLEET_ORIGIN.lat,
-    lng: OWN_FLEET_ORIGIN.lng,
+    lat: -12.0776,
+    lng: -77.0905,
   });
   assert.equal(googleSaidLima?.zoneLabel, 'San Miguel');
-  assert.equal(googleSaidLima?.districtAmount, 10);
+  assert.equal(googleSaidLima?.districtAmount, 15);
 
   const leftoverSanMiguelInArequipa = quoteOwnFleetShipping({
     district: 'San Miguel',
@@ -246,7 +282,7 @@ test('las playas del sur no tienen envío propio hasta que el admin las encienda
 
   const lurin = quoteOwnFleetShipping({ district: 'Lurín', lat: -12.274, lng: -76.87 });
   assert.equal(lurin?.charged, true);
-  assert.equal(lurin?.districtAmount, 25);
+  assert.equal(lurin?.districtAmount, 15);
 });
 
 test('el admin cambia el precio de una zona y todos sus distritos lo siguen', () => {
@@ -257,17 +293,17 @@ test('el admin cambia el precio de una zona y todos sus distritos lo siguen', ()
       { key: 'lejos', name: 'Lejos', amount: 30 },
     ],
   });
-  assert.equal(zoneOf(config, 'san miguel').amount, 12);
-  assert.equal(config.districts.find((row) => row.key === 'san miguel').amount, 12);
-  assert.equal(quoteOwnFleetShipping({ district: 'San Miguel', lat: -12.0776, lng: -77.0905 }, config)?.total, 12);
+  assert.equal(zoneOf(config, 'santiago de surco').amount, 12);
+  assert.equal(config.districts.find((row) => row.key === 'santiago de surco').amount, 12);
+  assert.equal(quoteOwnFleetShipping({ district: 'Surco', lat: -12.135, lng: -76.995 }, config)?.total, 12);
 });
 
 test('el admin mueve un distrito de zona y cambia su precio', () => {
   const config = mergeOwnFleetConfig({
-    districts: [{ key: 'santiago de surco', zone: 'cerca', enabled: true }],
+    districts: [{ key: 'santiago de surco', zone: 'lejos', enabled: true }],
   });
-  assert.equal(zoneOf(config, 'santiago de surco').name, 'Cerca');
-  assert.equal(quoteOwnFleetShipping({ district: 'Surco', lat: -12.135, lng: -76.995 }, config)?.total, 10);
+  assert.equal(zoneOf(config, 'santiago de surco').name, 'Lejos');
+  assert.equal(quoteOwnFleetShipping({ district: 'Surco', lat: -12.135, lng: -76.995 }, config)?.total, 25);
 });
 
 test('una configuración vieja con precio por distrito se convierte en zonas sin perder precios', () => {
@@ -276,7 +312,7 @@ test('una configuración vieja con precio por distrito se convierte en zonas sin
       key: district.key,
       enabled: district.enabled,
       // Precios del modelo anterior: dos grupos distintos.
-      amount: district.key === 'san miguel' ? 8 : 16,
+      amount: district.key === 'santiago de surco' ? 8 : 16,
     })),
   };
   const migrated = mergeOwnFleetConfig(legacy);
@@ -284,7 +320,7 @@ test('una configuración vieja con precio por distrito se convierte en zonas sin
     ['Zona 1', 8],
     ['Zona 2', 16],
   ]);
-  assert.equal(migrated.districts.find((row) => row.key === 'san miguel').amount, 8);
+  assert.equal(migrated.districts.find((row) => row.key === 'santiago de surco').amount, 8);
   assert.equal(migrated.districts.find((row) => row.key === 'surquillo').amount, 16);
 });
 

@@ -9,7 +9,7 @@ import type {
 } from '../../lib/registrar-venta';
 import type { ShippingCarrier } from '../../lib/shipping-carrier';
 import type { MapPlace } from '../../components/PlacePicker';
-import type { OwnFleetQuote } from '../../lib/own-fleet-shipping';
+import type { OwnFleetOrigin, OwnFleetQuote } from '../../lib/own-fleet-shipping';
 import type { SaleTotals } from '../../lib/sale-summary';
 
 export type PaymentProof = { name: string; type: string; dataUrl: string };
@@ -55,6 +55,8 @@ export type SaleFormView = {
   setPaymentProof: (value: PaymentProof | null) => void;
   attachProof: (file: File | undefined) => void;
   openProductPicker: () => void;
+  /** Almacén configurado: dirección, pin y horario de recojo. */
+  fleetOrigin: OwnFleetOrigin | null;
   shippingQuote: OwnFleetQuote | null;
   totals: SaleTotals;
   goToStep: (step: SaleStepId) => void;

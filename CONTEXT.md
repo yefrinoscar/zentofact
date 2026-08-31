@@ -80,6 +80,10 @@ _Avoid_: tarifa zonal, tramo, rango de km
 Monto que cobra un Envío propio: el precio de la Zona de envío del destino, cobrado una sola vez.
 _Avoid_: recargo, precio por distrito, suma de distrito más distancia
 
-**Distancia a la bodega**:
-Kilómetros entre la bodega y el destino. Sirve para agrupar distritos en zonas y se muestra al vendedor. No se cobra.
+**Almacén**:
+Punto del que sale el reparto y al que el cliente va cuando elige Recojo. Guarda dirección, pin y horario de recojo, y se edita en Envío propio. Mover el pin regenera la distancia de todos los distritos.
+_Avoid_: bodega, origen, depósito
+
+**Distancia al almacén**:
+Kilómetros entre el Almacén y el destino. Sirve para agrupar distritos en zonas y se muestra al vendedor. No se cobra.
 _Avoid_: recargo km, precio por distancia

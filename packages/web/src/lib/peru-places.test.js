@@ -15,16 +15,16 @@ test('busca distritos de Lima y departamentos', () => {
 test('la búsqueda local alimenta la misma cotización de envío propio', () => {
   const surco = peruPlaceById('lima-surco');
   const quote = quoteOwnFleetShipping(surco);
-  assert.equal(quote?.priceZoneName, 'Media');
-  assert.equal(quote?.districtAmount, 15);
+  assert.equal(quote?.priceZoneName, 'Cerca');
+  assert.equal(quote?.districtAmount, 10);
   assert.equal(quote?.distanceAmount, 0);
-  assert.equal(quote?.total, 15);
+  assert.equal(quote?.total, 10);
 
-  const warehouse = quoteOwnFleetShipping(peruPlaceById('lima-san-miguel'));
-  assert.equal(warehouse?.priceZoneName, 'Cerca');
-  assert.equal(warehouse?.districtAmount, 10);
-  assert.equal(warehouse?.distanceAmount, 0);
-  assert.equal(warehouse?.total, 10);
+  const sanMiguel = quoteOwnFleetShipping(peruPlaceById('lima-san-miguel'));
+  assert.equal(sanMiguel?.priceZoneName, 'Media');
+  assert.equal(sanMiguel?.districtAmount, 15);
+  assert.equal(sanMiguel?.distanceAmount, 0);
+  assert.equal(sanMiguel?.total, 15);
 
   const arequipa = quoteOwnFleetShipping(peruPlaceById('dep-arequipa'));
   assert.equal(arequipa?.charged, false);

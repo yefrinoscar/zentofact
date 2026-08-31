@@ -23,8 +23,8 @@ import {
   TablePanelHeader,
   TableRow,
 } from '../components/ui/table';
-import type { OwnFleetDistrictSetting, OwnFleetZone } from '../lib/own-fleet-shipping';
-import { foldName } from '../lib/own-fleet-shipping';
+import type { OwnFleetDistrictSetting, OwnFleetOrigin, OwnFleetZone } from '../lib/own-fleet-shipping';
+import { OWN_FLEET_ORIGIN, foldName } from '../lib/own-fleet-shipping';
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
@@ -40,6 +40,7 @@ export default function EnvioPropio() {
   const { showSnackbar } = useOperatorSnackbar();
   const [search, setSearch] = useState('');
   const [zoneDraft, setZoneDraft] = useState<OwnFleetZone[] | null>(null);
+  const [originDraft, setOriginDraft] = useState<OwnFleetOrigin | null>(null);
   const [districtEdits, setDistrictEdits] = useState<Record<string, DistrictEdit>>({});
 
   const configQuery = useQuery({
@@ -53,8 +54,9 @@ export default function EnvioPropio() {
     onSuccess: (data) => {
       queryClient.setQueryData(QUERY_KEY, data);
       setZoneDraft(null);
+      setOriginDraft(null);
       setDistrictEdits({});
-      showSnackbar({ message: 'Zonas y cobertura guardadas.', tone: 'success' });
+      showSnackbar({ message: 'Almacén, zonas y cobertura guardados.', tone: 'success' });
     },
     onError: (error: Error) => {
       showSnackbar({ message: error.message || 'No se pudo guardar.', tone: 'error', duration: 6000 });
@@ -62,6 +64,11 @@ export default function EnvioPropio() {
   });
 
   const zones = zoneDraft ?? configQuery.data?.zones ?? [];
+  const origin = originDraft ?? configQuery.data?.origin ?? OWN_FLEET_ORIGIN;
+
+  const patchOrigin = (patch: Partial<OwnFleetOrigin>) => {
+    setOriginDraft({ ...origin, ...patch });
+  };
 
   const districts = useMemo(() => (
     (configQuery.data?.districts || []).map((district) => ({
@@ -84,7 +91,7 @@ export default function EnvioPropio() {
     return districts.filter((district) => foldName(`${district.name} ${district.department}`).includes(needle));
   }, [districts, search]);
 
-  const dirty = zoneDraft !== null || Object.keys(districtEdits).length > 0;
+  const dirty = zoneDraft !== null || originDraft !== null || Object.keys(districtEdits).length > 0;
   const loadError = configQuery.error instanceof Error
     ? configQuery.error.message
     : configQuery.error
@@ -110,6 +117,7 @@ export default function EnvioPropio() {
   const submit = () => {
     if (!dirty || save.isPending || nameless) return;
     save.mutate({
+      origin,
       zones: zones.map((zone) => ({ key: zone.key, name: zone.name.trim(), amount: zone.amount })),
       districts: districts.map((district) => ({
         key: district.key,
@@ -140,6 +148,59 @@ export default function EnvioPropio() {
 
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
       {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
+
+      <TablePanel aria-label="Almacén de salida">
+        <TablePanelHeader>
+          <p className="text-sm font-medium">Almacén</p>
+          <p className="text-sm text-muted-foreground">
+            De aquí sale el reparto. Mover el pin recalcula la distancia de todos los distritos.
+          </p>
+        </TablePanelHeader>
+        <div className="grid gap-4 px-4 py-4 sm:grid-cols-2 sm:px-5">
+          <label className="grid gap-1.5 sm:col-span-2">
+            <span className="text-xs font-medium text-muted-foreground">Dirección</span>
+            <Input
+              value={origin.address}
+              onChange={(event) => patchOrigin({ address: event.target.value })}
+              placeholder="C. las Almendras Mz.Z1 - Lt.5"
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Latitud</span>
+            <Input
+              value={origin.lat}
+              inputMode="decimal"
+              onChange={(event) => patchOrigin({ lat: Number(event.target.value) })}
+              className={NUMBER_INPUT}
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Longitud</span>
+            <Input
+              value={origin.lng}
+              inputMode="decimal"
+              onChange={(event) => patchOrigin({ lng: Number(event.target.value) })}
+              className={NUMBER_INPUT}
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Recojo desde</span>
+            <Input
+              type="time"
+              value={origin.pickupFrom}
+              onChange={(event) => patchOrigin({ pickupFrom: event.target.value })}
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Recojo hasta</span>
+            <Input
+              type="time"
+              value={origin.pickupTo}
+              onChange={(event) => patchOrigin({ pickupTo: event.target.value })}
+            />
+          </label>
+        </div>
+      </TablePanel>
 
       <TablePanel aria-label="Zonas de envío propio">
         <TablePanelHeader>
@@ -222,7 +283,7 @@ export default function EnvioPropio() {
         <TablePanelHeader>
           <p className="text-sm font-medium">Distritos</p>
           <p className="text-sm text-muted-foreground">
-            La distancia es desde la bodega. Sirve para agrupar; no se cobra.
+            La distancia es desde el almacén. Sirve para agrupar; no se cobra.
           </p>
         </TablePanelHeader>
         <Table>

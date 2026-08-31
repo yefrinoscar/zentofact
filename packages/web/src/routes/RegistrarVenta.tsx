@@ -378,6 +378,7 @@ export default function RegistrarVenta() {
     setPaymentProof,
     attachProof,
     openProductPicker: () => setPickerOpen(true),
+    fleetOrigin: fleetConfig?.origin ?? null,
     shippingQuote,
     totals,
     goToStep,
