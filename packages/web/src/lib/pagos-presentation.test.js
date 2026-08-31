@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -35,8 +35,9 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   });
   assert.deepEqual(csvReadError('No reconocimos columnas para cruzar ventas. Cabeceras: Foo.'), {
     title: 'No reconocimos columnas para cruzar ventas. Cabeceras: Foo.',
-    detail: 'Usa el NewReportTransaction de Falabella.',
+    detail: '',
   });
+  assert.equal(SUCCESS_NOTICE_MS, 5000);
   assert.equal(formatElapsed(14), '1.4s');
   assert.equal(formatElapsed(615), '1m 1.5s');
   assert.equal(remainingHoldMs(1000, CSV_UPLOAD_MIN_MS, 1000), 1400);
