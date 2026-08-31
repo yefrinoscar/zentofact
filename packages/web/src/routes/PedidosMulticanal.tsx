@@ -1404,10 +1404,22 @@ export default function PedidosMulticanal() {
                       )}
                       <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
                       {Number(detail.shippingAmount) > 0 && (
-                        <>
-                          <DetailField icon={<Truck />} label="Envío distrito" content={<span className="tabular-nums">{formatMoney(detail.shipping?.districtAmount, detail.currency)}{detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}</span>} />
-                          <DetailField icon={<Truck />} label="Distancia" content={<span className="tabular-nums">{formatMoney(detail.shipping?.distanceAmount, detail.currency)}{detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}</span>} />
-                        </>
+                        // Un solo cobro de envío; distrito y distancia son sus componentes.
+                        <DetailField
+                          icon={<Truck />}
+                          label="Envío"
+                          content={(
+                            <span>
+                              <span className="tabular-nums">{formatMoney(detail.shippingAmount, detail.currency)}</span>
+                              <span className="block text-xs text-muted-foreground tabular-nums">
+                                {`Base ${formatMoney(detail.shipping?.districtAmount, detail.currency)}`}
+                                {detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}
+                                {` + Distancia ${formatMoney(detail.shipping?.distanceAmount, detail.currency)}`}
+                                {detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}
+                              </span>
+                            </span>
+                          )}
+                        />
                       )}
                     </div>
                   </section>
