@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, importSummary, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementIndicators, settlementMethodLabel, settlementStatusLabel, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, formatLivelineDay, importSummary, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
@@ -110,6 +110,7 @@ test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
     matchedCount: 27,
   });
   assert.deepEqual(kpis.map((kpi) => kpi.id), ['sold', 'arrives', 'kept', 'paid', 'pending', 'ticket']);
+  assert.equal(kpis[0].label, 'Facturado');
   assert.equal(kpis[0].hint, '27 ventas');
   assert.equal(kpis[2].hint, '29.9%');
   assert.equal(kpis[3].hint, '11 ventas');
@@ -119,6 +120,92 @@ test('la caja del dashboard separa vendido, lo que llega y lo pagado', () => {
     settlementIndicators({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,
     '27 ventas · 20 cruzadas',
   );
+});
+
+test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
+  const charts = settlementCharts({
+    saleCount: 27,
+    bruto: 1739.2,
+    neto: 1218.35,
+    take: 520.85,
+    commission: 148.2,
+    shipping: 372.65,
+    paidNeto: 381.96,
+    pendingNeto: 836.39,
+    paidCount: 11,
+    pendingCount: 16,
+    takeRate: 0.299,
+    matchedCount: 27,
+  });
+  assert.deepEqual(charts.map((chart) => chart.id), ['billed', 'fees', 'payout']);
+  assert.deepEqual(charts.map((chart) => chart.kind), ['compare', 'waffle', 'pie']);
+  assert.deepEqual(
+    charts.flatMap((chart) => chart.items.map((item) => item.label)),
+    ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
+  );
+  assert.equal(charts[0].items[0].value, 1739.2);
+  assert.equal(charts[0].items[1].value, 1218.35);
+  assert.equal(charts[1].hero.label, 'Se queda');
+  assert.equal(charts[1].hero.value, 520.85);
+  assert.equal(charts[1].items[0].value, 148.2);
+  assert.equal(charts[1].items[1].value, 372.65);
+  assert.equal(charts[2].items[0].value, 381.96);
+  assert.equal(charts[2].items[1].value, 836.39);
+  assert.equal(charts[0].hint, '27 ventas');
+  assert.equal(charts[1].hint, '29.9% del facturado');
+  assert.equal(charts[2].hint, '11 pagadas · 16 pendientes');
+  assert.equal(
+    settlementCharts({ saleCount: 27, matchedCount: 20, bruto: 100, neto: 70 })[0].hint,
+    '27 ventas · 20 cruzadas',
+  );
+  assert.ok(!charts.some((chart) => /precio|ticket/i.test(`${chart.hint} ${chart.items.map((item) => item.label).join(' ')}`)));
+});
+
+test('de cada 100 llena las diez columnas y parte comisión, logística y te llega', () => {
+  const waffle = waffleOutOf100({ sold: 1739.2, commission: 258.35, shipping: 262.5 });
+  assert.equal(waffle.cells.length, 100);
+  assert.equal(waffle.counts.commission + waffle.counts.shipping + waffle.counts.arrives, 100);
+  assert.equal(waffle.counts.commission, 15);
+  assert.equal(waffle.counts.shipping, 15);
+  assert.equal(waffle.counts.arrives, 70);
+  assert.equal(waffle.cells[9], 'commission');
+  assert.equal(waffle.cells[14], 'commission');
+  assert.equal(waffle.cells[15], 'shipping');
+  assert.equal(waffle.cells[29], 'shipping');
+  assert.equal(waffle.cells[30], 'arrives');
+  assert.equal(waffle.cells[99], 'arrives');
+});
+
+test('el trend diario agrupa facturado, neto y depósito', () => {
+  const days = settlementDailySeries([
+    { date: '2026-08-19', paid: true, bruto: 98.89, neto: 41.14, commission: 14.85, shipping: 42.9 },
+    { date: '2026-08-19', paid: true, bruto: 33.99, neto: 16.97, commission: 6.12, shipping: 10.9 },
+    { date: '2026-08-23', paid: false, bruto: 33.99, neto: 16.97, commission: 6.12, shipping: 10.9 },
+  ]);
+  assert.equal(days.length, 2);
+  assert.equal(days[0].date, '2026-08-19');
+  assert.equal(days[0].facturado, 132.88);
+  assert.equal(days[0].neto, 58.11);
+  assert.equal(days[0].paid, 58.11);
+  assert.equal(days[0].pending, 0);
+  assert.equal(days[0].take, 74.77);
+  assert.equal(days[1].pending, 16.97);
+  const points = settlementTrendPoints(days, ['facturado', 'neto']);
+  assert.ok(points.length > 2);
+  assert.equal(points[0].facturado, 132.88);
+  assert.equal(points.at(-1).neto, 16.97);
+  const line = livelinePointsFromValues([132.88, 16.97]);
+  assert.ok(line.length > 2);
+  assert.equal(line[0].value, 132.88);
+  assert.equal(line.at(-1).value, 16.97);
+  assert.ok(line[0].time < line.at(-1).time);
+  const byDay = livelinePointsFromDays(days, 'take');
+  assert.equal(byDay[0].value, 74.77);
+  assert.equal(byDay.at(-1).value, 17.02);
+  const windowSecs = livelineWindowSecs(byDay);
+  assert.ok(windowSecs >= 86400);
+  assert.ok(windowSecs >= Math.floor(Date.now() / 1000) - byDay[0].time);
+  assert.match(formatLivelineDay(byDay[0].time), /ago|set|ene|feb|mar|abr|may|jun|jul|oct|nov|dic/i);
 });
 
 test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', () => {

@@ -20,7 +20,6 @@ import {
   reusedImportNotice,
   saleDateLabel,
   salesPageNote,
-  settlementIndicators,
   shortImportFilename,
   shortProductName,
   skuLabel,
@@ -29,6 +28,7 @@ import {
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoader, WorkLoaderMark } from '@/components/WorkLoader';
+import { SettlementKpiStrip } from '@/components/SettlementCharts';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -90,15 +90,6 @@ type SettlementSale = {
     number?: string | null;
     status?: string | null;
   } | null;
-};
-
-type SettlementImport = {
-  id: number;
-  filename: string;
-  importedAt?: string;
-  matchedCount: number;
-  unmatchedCount: number;
-  paidSalesCount: number;
 };
 
 const cobroCol = 'bg-muted/40';
@@ -273,45 +264,6 @@ type PagosNotice = {
   canReplace?: boolean;
 };
 
-function SettlementKpiStrip({ summary }: {
-  summary?: {
-    saleCount?: number;
-    bruto?: number | null;
-    neto?: number | null;
-    take?: number | null;
-    paidNeto?: number | null;
-    pendingNeto?: number | null;
-    paidCount?: number | null;
-    pendingCount?: number | null;
-    takeRate?: number | null;
-    ticket?: number | null;
-    itemCount?: number | null;
-    matchedCount?: number | null;
-  } | null;
-}) {
-  if (!summary?.saleCount) return null;
-  const kpis = settlementIndicators(summary);
-  return (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-3 sm:grid-cols-3 xl:grid-cols-6">
-      {kpis.map((kpi) => (
-        <div key={kpi.id}>
-          <p className="text-[11px] text-muted-foreground">{kpi.label}</p>
-          <p className={cn(
-            'text-lg font-semibold tabular-nums leading-tight',
-            kpi.tone === 'receive' && llegaText,
-            kpi.tone === 'take' && takeText,
-            kpi.tone === 'wait' && 'text-amber-800 dark:text-amber-400',
-          )}
-          >
-            {kpi.value}
-          </p>
-          <p className="text-[11px] leading-snug text-muted-foreground">{kpi.hint}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ChargeRow({
   label,
   amount,
@@ -403,24 +355,17 @@ export default function Pagos() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
-  const [importId, setImportId] = useState<'all' | string>('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
   const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
   const reading = Boolean(readingName);
 
-  const importsQuery = useQuery({
-    queryKey: ['pagos-imports'],
-    queryFn: () => api.listSettlementImports({ limit: 20 }),
-    placeholderData: keepPreviousData,
-  });
   const salesQuery = useQuery({
-    queryKey: ['pagos-sales', search, paid, importId],
+    queryKey: ['pagos-sales', search, paid],
     queryFn: () => api.listSettlementSales({
       search: search.trim() || undefined,
       paid: paid === 'all' ? undefined : paid,
-      importId: importId === 'all' ? undefined : Number(importId),
       limit: PAGOS_SALES_PAGE,
     }),
     placeholderData: keepPreviousData,
@@ -481,11 +426,10 @@ export default function Pagos() {
     },
   });
 
-  const imports = (importsQuery.data?.items || []) as SettlementImport[];
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
-  const loadError = (salesQuery.error || importsQuery.error) as Error | undefined;
+  const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
     {
@@ -590,6 +534,39 @@ export default function Pagos() {
 
   return (
     <div className="space-y-4 pb-8">
+      {reading && !summary?.saleCount ? (
+        <WorkLoader
+          key={readingName}
+          label="Leyendo CSV"
+          detail={shortImportFilename(readingName)}
+        />
+      ) : (
+        <>
+          <SettlementKpiStrip summary={summary} sales={sales} />
+          {notice ? (
+            <SettlementAlert
+              tone={notice.tone}
+              title={notice.title}
+              detail={notice.detail}
+              action={notice.canReplace ? {
+                label: 'Reemplazar',
+                busy: upload.isPending,
+                onClick: () => {
+                  if (!lastCsvRef.current || upload.isPending) return;
+                  upload.mutate({ replace: true });
+                },
+              } : undefined}
+            />
+          ) : null}
+          {loadError ? (
+            <SettlementAlert
+              tone="error"
+              title="No se pudieron cargar los pagos."
+              detail="Recarga la página o vuelve a cruzar el CSV."
+            />
+          ) : null}
+        </>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -609,17 +586,6 @@ export default function Pagos() {
             <SelectItem value="all">Todas</SelectItem>
             <SelectItem value="pagado">Pagadas</SelectItem>
             <SelectItem value="no-pagado">No pagadas</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={importId} onValueChange={setImportId}>
-          <SelectTrigger className="w-52" aria-label="Archivo de liquidación">
-            <SelectValue placeholder="Todos los archivos" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los archivos</SelectItem>
-            {imports.map((item) => (
-              <SelectItem key={item.id} value={String(item.id)}>{shortImportFilename(item.filename)}</SelectItem>
-            ))}
           </SelectContent>
         </Select>
         <input
@@ -650,40 +616,6 @@ export default function Pagos() {
           {reading ? 'Leyendo CSV' : 'Subir CSV'}
         </Button>
       </div>
-
-      {reading && !summary?.saleCount ? (
-        <WorkLoader
-          key={readingName}
-          label="Leyendo CSV"
-          detail={shortImportFilename(readingName)}
-        />
-      ) : (
-        <>
-          {notice ? (
-            <SettlementAlert
-              tone={notice.tone}
-              title={notice.title}
-              detail={notice.detail}
-              action={notice.canReplace ? {
-                label: 'Reemplazar',
-                busy: upload.isPending,
-                onClick: () => {
-                  if (!lastCsvRef.current || upload.isPending) return;
-                  upload.mutate({ replace: true });
-                },
-              } : undefined}
-            />
-          ) : null}
-          {loadError ? (
-            <SettlementAlert
-              tone="error"
-              title="No se pudieron cargar los pagos."
-              detail="Recarga la página o vuelve a cruzar el CSV."
-            />
-          ) : null}
-          <SettlementKpiStrip summary={summary} />
-        </>
-      )}
 
       <OrdersVirtualTable
         table={table}

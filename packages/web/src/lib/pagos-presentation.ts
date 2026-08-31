@@ -288,6 +288,257 @@ function ventasHint(count: number, empty: string) {
   return count === 1 ? '1 venta' : `${count} ventas`;
 }
 
+function countHint(count: number, singular: string, plural: string, empty: string) {
+  if (!count) return empty;
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+export function smoothNumericSeries(values: number[], perSegment = 8) {
+  const source = (values || []).map((value) => Number(value) || 0);
+  if (source.length < 2) return source.slice();
+  if (source.length === 2) {
+    const out = [];
+    for (let step = 0; step < perSegment; step += 1) {
+      const t = step / perSegment;
+      out.push(roundMoney(source[0] + (source[1] - source[0]) * t));
+    }
+    out.push(source[1]);
+    return out;
+  }
+  const out: number[] = [];
+  for (let index = 0; index < source.length - 1; index += 1) {
+    const p0 = source[Math.max(0, index - 1)];
+    const p1 = source[index];
+    const p2 = source[index + 1];
+    const p3 = source[Math.min(source.length - 1, index + 2)];
+    for (let step = 0; step < perSegment; step += 1) {
+      const t = step / perSegment;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out.push(roundMoney(
+        0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3),
+      ));
+    }
+  }
+  out.push(source[source.length - 1]);
+  return out;
+}
+
+export function settlementDailySeries(sales: Array<{
+  date?: string | null;
+  paid?: boolean;
+  bruto?: number | null;
+  neto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+}> | null | undefined) {
+  const days = new Map<string, {
+    date: string;
+    facturado: number;
+    neto: number;
+    commission: number;
+    shipping: number;
+    paid: number;
+    pending: number;
+    take: number;
+  }>();
+  for (const sale of sales || []) {
+    const date = String(sale.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const current = days.get(date) || {
+      date,
+      facturado: 0,
+      neto: 0,
+      commission: 0,
+      shipping: 0,
+      paid: 0,
+      pending: 0,
+      take: 0,
+    };
+    const neto = Number(sale.neto || 0);
+    current.facturado = roundMoney(current.facturado + Number(sale.bruto || 0));
+    current.neto = roundMoney(current.neto + neto);
+    current.commission = roundMoney(current.commission + Number(sale.commission || 0));
+    current.shipping = roundMoney(current.shipping + Number(sale.shipping || 0));
+    current.take = roundMoney(current.commission + current.shipping);
+    if (sale.paid) current.paid = roundMoney(current.paid + neto);
+    else current.pending = roundMoney(current.pending + neto);
+    days.set(date, current);
+  }
+  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function livelinePointsFromDays(
+  days: Array<Record<string, number | string>>,
+  key: string,
+) {
+  const rows = (days || []).filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(String(row.date || '')));
+  if (!rows.length) return livelinePointsFromValues([0]);
+  const values = rows.map((row) => Number(row[key] || 0));
+  const dense = smoothNumericSeries(values.length >= 2 ? values : [values[0], values[0]]);
+  const start = Date.parse(`${rows[0].date}T12:00:00-05:00`) / 1000;
+  const end = Date.parse(`${rows[rows.length - 1].date}T12:00:00-05:00`) / 1000;
+  const span = Math.max(86400, end - start);
+  if (dense.length < 2) {
+    return [
+      { time: Math.round(start), value: dense[0] || 0 },
+      { time: Math.round(start + span), value: dense[0] || 0 },
+    ];
+  }
+  const gap = span / (dense.length - 1);
+  return dense.map((value, index) => ({
+    time: Math.round(start + index * gap),
+    value,
+  }));
+}
+
+export function livelineWindowSecs(points: Array<{ time: number }>) {
+  if (!points.length) return 86400;
+  const now = Math.floor(Date.now() / 1000);
+  return Math.max(86400, now - points[0].time + 43200);
+}
+
+export function formatLivelineDay(time: number) {
+  return saleDateLabel(new Date(Number(time) * 1000).toISOString().slice(0, 10));
+}
+
+export function livelinePointsFromValues(values: number[], spanSecs = 48) {
+  const source = (values || []).map((value) => Number(value) || 0);
+  const dense = smoothNumericSeries(source.length >= 2 ? source : [source[0] || 0, source[0] || 0]);
+  const end = Math.floor(Date.now() / 1000);
+  if (dense.length < 2) {
+    const value = dense[0] || 0;
+    return [
+      { time: end - spanSecs, value },
+      { time: end, value },
+    ];
+  }
+  const gap = spanSecs / (dense.length - 1);
+  return dense.map((value, index) => ({
+    time: Math.round(end - (dense.length - 1 - index) * gap),
+    value,
+  }));
+}
+
+export function settlementTrendPoints(
+  days: Array<Record<string, number | string>>,
+  keys: string[],
+) {
+  const rows = days || [];
+  if (!rows.length || !keys.length) return [];
+  if (rows.length === 1) {
+    const first = Object.fromEntries(keys.map((key) => [key, Number(rows[0][key] || 0)]));
+    return [{ i: 0, ...first }, { i: 1, ...first }];
+  }
+  const columns = Object.fromEntries(
+    keys.map((key) => [key, smoothNumericSeries(rows.map((row) => Number(row[key] || 0)))]),
+  );
+  const length = columns[keys[0]]?.length || 0;
+  return Array.from({ length }, (_, index) => {
+    const point: Record<string, number> = { i: index };
+    for (const key of keys) point[key] = columns[key][index];
+    return point;
+  });
+}
+
+export function waffleOutOf100(input: {
+  sold?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+}) {
+  const sold = Number(input?.sold || 0);
+  const commission = Math.max(0, Number(input?.commission || 0));
+  const shipping = Math.max(0, Number(input?.shipping || 0));
+  if (sold <= 0) {
+    return {
+      counts: { commission: 0, shipping: 0, arrives: 100 },
+      cells: Array.from({ length: 100 }, () => 'arrives' as const),
+    };
+  }
+  const shares = [commission / sold, shipping / sold, Math.max(0, 1 - (commission + shipping) / sold)];
+  const raw = shares.map((share) => share * 100);
+  const floors = raw.map((value) => Math.floor(value));
+  let rest = 100 - floors.reduce((sum, value) => sum + value, 0);
+  const order = raw
+    .map((value, index) => ({ index, frac: value - floors[index] }))
+    .sort((left, right) => right.frac - left.frac);
+  const counts = floors.slice();
+  for (let step = 0; step < rest; step += 1) counts[order[step].index] += 1;
+  const keys = ['commission', 'shipping', 'arrives'] as const;
+  const cells = keys.flatMap((key, index) => Array.from({ length: counts[index] }, () => key));
+  return {
+    counts: { commission: counts[0], shipping: counts[1], arrives: counts[2] },
+    cells,
+  };
+}
+
+export function settlementCharts(summary: {
+  saleCount?: number;
+  bruto?: number | null;
+  neto?: number | null;
+  take?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  paidNeto?: number | null;
+  pendingNeto?: number | null;
+  paidCount?: number | null;
+  pendingCount?: number | null;
+  takeRate?: number | null;
+  matchedCount?: number | null;
+} | null | undefined) {
+  const cash = settlementCash(summary);
+  const sales = Number(summary?.saleCount || 0);
+  const matched = Number(summary?.matchedCount || 0);
+  const soldHint = matched && matched !== sales
+    ? `${ventasHint(sales, 'Lo facturado')} · ${matched} cruzadas`
+    : ventasHint(sales, 'Lo facturado');
+  const takeHint = percentLabel(summary?.takeRate) === '—'
+    ? 'Comisión y logística'
+    : `${percentLabel(summary?.takeRate)} del facturado`;
+  const paidHint = countHint(cash.paidCount, 'pagada', 'pagadas', 'Ya depositaron');
+  const pendingHint = countHint(cash.pendingCount, 'pendiente', 'pendientes', 'Aún no pagan');
+  const commission = Number(summary?.commission || 0);
+  const shipping = Number(summary?.shipping || 0);
+  return [
+    {
+      id: 'billed',
+      kind: 'compare' as const,
+      hint: soldHint,
+      hero: undefined,
+      items: [
+        { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
+        { key: 'neto', label: 'Neto', value: cash.arrives, tone: 'receive' as const },
+      ],
+    },
+    {
+      id: 'fees',
+      kind: 'waffle' as const,
+      hint: takeHint,
+      total: cash.kept,
+      hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
+      items: [
+        { key: 'commission', label: 'Comisión', value: commission, tone: 'take' as const },
+        { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
+      ],
+    },
+    {
+      id: 'payout',
+      kind: 'pie' as const,
+      hint: cash.paidCount || cash.pendingCount ? `${paidHint} · ${pendingHint}` : 'Depósito',
+      total: cash.arrives,
+      hero: undefined,
+      items: [
+        { key: 'paid', label: 'Pagado', value: cash.paid, tone: 'receive' as const },
+        { key: 'pending', label: 'Pendiente', value: cash.pending, tone: 'wait' as const },
+      ],
+    },
+  ];
+}
+
 export function settlementIndicators(summary: {
   saleCount?: number;
   bruto?: number | null;
@@ -313,7 +564,7 @@ export function settlementIndicators(summary: {
     ? `${ventasHint(sales, 'Lo vendido')} · ${matched} cruzadas`
     : ventasHint(sales, 'Lo vendido');
   return [
-    { id: 'sold', label: 'Precio', value: money.format(cash.sold), hint: soldHint },
+    { id: 'sold', label: 'Facturado', value: money.format(cash.sold), hint: soldHint },
     {
       id: 'arrives',
       label: 'Te llega',
