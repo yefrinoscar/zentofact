@@ -23,6 +23,12 @@ import {
 import { useAppStore } from '../stores/app';
 import { usePermissions } from '../hooks/usePermissions';
 import api from '../lib/api';
+import {
+  matchesInvoiceFlowFilter,
+  summarizeDocumentRows,
+  type InvoiceFlowBucket,
+  type InvoiceFlowFilter,
+} from '../lib/falabellaInvoiceFlow';
 import { waitForDevLoadingDelay } from '../config/dev';
 
 // Tooltip estilo shadcn (sin dependencia): burbuja oscura al hover con flecha.
@@ -442,9 +448,6 @@ type EmissionItem = {
   message: string;
   error: string;
 };
-
-type InvoiceFlowBucket = 'ready_to_invoice' | 'has_document' | 'not_ready' | 'review';
-type InvoiceFlowFilter = InvoiceFlowBucket;
 
 type InvoiceFlowRow = {
   order: FalabellaOrder;
@@ -1175,6 +1178,9 @@ export default function FalabellaApi() {
       canceledOrders: 0,
       returnedOrders: 0,
     };
+    const documentSummary = summarizeDocumentRows(invoiceFlow.rows);
+    base.hasDocument = documentSummary.count;
+    base.hasDocumentAmount = documentSummary.amount;
 
     for (const row of invoiceFlow.rows) {
       if (isCanceledStatus(row.statusKey)) base.canceledOrders += 1;
@@ -1218,13 +1224,10 @@ export default function FalabellaApi() {
       if (row.bucket === 'ready_to_invoice') {
         base.readyToInvoice += 1;
         base.readyToInvoiceAmount += row.total;
-      } else if (row.bucket === 'has_document') {
-        base.hasDocument += 1;
-        base.hasDocumentAmount += row.total;
       } else if (row.bucket === 'not_ready') {
         base.notReady += 1;
         base.notReadyAmount += row.total;
-      } else {
+      } else if (row.bucket === 'review') {
         base.review += 1;
         base.reviewAmount += row.total;
         if (row.hasSalesDocument) {
@@ -1237,7 +1240,7 @@ export default function FalabellaApi() {
   }, [invoiceFlow.rows]);
 
   const filteredFlowRows = useMemo(
-    () => invoiceFlow.rows.filter((row) => row.bucket === selectedFlowFilter),
+    () => invoiceFlow.rows.filter((row) => matchesInvoiceFlowFilter(row, selectedFlowFilter)),
     [invoiceFlow.rows, selectedFlowFilter],
   );
 
