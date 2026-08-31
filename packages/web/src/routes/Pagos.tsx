@@ -25,6 +25,7 @@ import {
   salesPageNote,
   shortProductName,
   skuLabel,
+  teLlegaHint,
   unitsLabel,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
@@ -69,6 +70,7 @@ type SettlementSale = {
   orderId: string;
   date?: string | null;
   paid: boolean;
+  returned?: boolean;
   paymentStatus?: string;
   matched?: boolean;
   productName?: string;
@@ -298,18 +300,19 @@ function amountToneClass(tone: 'take' | 'receive' | undefined, amount: number) {
   return undefined;
 }
 
-function PaymentStatusBadge({ status }: { status?: string | null }) {
-  const tone = paymentStatusTone(status);
-  const label = paymentStatusLabel(status);
+function PaymentStatusBadge({ status, returned }: { status?: string | null; returned?: boolean }) {
+  const tone = paymentStatusTone(status, returned);
+  const label = paymentStatusLabel(status, returned);
   const full = String(status || '').trim();
   return (
     <Badge
       variant={tone === 'paid' ? 'secondary' : 'outline'}
-      title={full && full !== label ? full : undefined}
+      title={tone === 'returned' ? 'Descontaron el producto y te devolvieron la comisión.' : full && full !== label ? full : undefined}
       className={cn(
         'h-5 max-w-full min-w-0 shrink truncate px-1.5 text-[11px]',
         tone === 'paid' && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         tone === 'scheduled' && 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300',
+        tone === 'returned' && 'border-stone-400/50 bg-stone-500/10 text-stone-700 dark:text-stone-300',
       )}
     >
       {label}
@@ -573,7 +576,7 @@ export default function Pagos() {
       header: 'Pago',
       size: 104,
       meta: { cellClassName: 'min-w-0 overflow-hidden' },
-      cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} />,
+      cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} returned={row.original.returned} />,
     },
     {
       id: 'precio',
@@ -754,13 +757,19 @@ export default function Pagos() {
                 </div>
               </SheetHeader>
               <div className="px-5 py-4">
-                <ChargeRow label="Precio" amount={selected.bruto || 0} hint="Lo que pagó el cliente." />
+                <ChargeRow
+                  label="Precio"
+                  amount={selected.bruto || 0}
+                  hint={selected.returned ? 'Se descuenta el producto.' : 'Lo que pagó el cliente.'}
+                />
                 {hasBuyerShipping(selected) ? (
                   <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
                 ) : null}
                 <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
-                  <p className="pt-2 text-xs font-medium">Falabella cobra</p>
-                  <p className="text-[11px] text-muted-foreground">Comisión + logística</p>
+                  <p className="pt-2 text-xs font-medium">{selected.returned ? 'Falabella ajusta' : 'Falabella cobra'}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {selected.returned ? 'Te devuelven la comisión. La logística suele quedarse.' : 'Comisión + logística'}
+                  </p>
                   <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
                   <ChargeRow label="Logística" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
                   <ChargeRow
@@ -775,7 +784,7 @@ export default function Pagos() {
                 <ChargeRow
                   label="Te llega"
                   amount={selected.neto || 0}
-                  hint={Number(selected.neto || 0) < 0 ? 'Falabella cobró más que el precio.' : 'Lo que te depositan.'}
+                  hint={teLlegaHint(selected)}
                   rate={receiveRate(selected.bruto, selected.neto)}
                   tone="receive"
                   strong

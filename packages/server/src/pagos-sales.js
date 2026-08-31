@@ -88,9 +88,9 @@ function emptySale(orderId, line) {
 
 function applyCharge(target, kind, amount) {
   const signed = Number(amount || 0);
-  if (kind === 'sale') target.bruto = round2(target.bruto + Math.abs(signed));
-  else if (kind === 'commission') target.commission = round2(target.commission + Math.abs(signed));
-  else if (kind === 'shipping') target.shipping = round2(target.shipping + Math.abs(signed));
+  if (kind === 'sale') target.bruto = round2(target.bruto + signed);
+  else if (kind === 'commission') target.commission = round2(target.commission - signed);
+  else if (kind === 'shipping') target.shipping = round2(target.shipping - signed);
   else if (kind === 'buyer_shipping') {
     target.buyerShipping = round2(target.buyerShipping + signed);
     if (signed > 0) target.buyerShippingPaid = round2((target.buyerShippingPaid || 0) + signed);
@@ -284,9 +284,64 @@ function chargeKindOf(line) {
   return line.chargeKind || classifyChargeKind(line.type);
 }
 
+function lineDedupeKey(line) {
+  return [
+    String(line.orderId || '').trim(),
+    String(line.itemId || line.sku || '').trim(),
+    chargeKindOf(line),
+    round2(signedAmount(line)).toFixed(2),
+  ].join('|');
+}
+
+export function isReturnMovement(line) {
+  const kind = chargeKindOf(line);
+  if (kind === 'buyer_shipping') return false;
+  const type = normalizeHeader(repairSettlementText(line.type || ''));
+  if (type.includes('reversa') || type.includes('devoluc') || type.includes('refund') || type.includes('reembolso')) {
+    return true;
+  }
+  const amount = signedAmount(line);
+  if (kind === 'sale' && amount < 0) return true;
+  if (kind === 'commission' && amount > 0) return true;
+  if (kind === 'shipping' && amount > 0) return true;
+  return false;
+}
+
+function hasPositiveSale(lines) {
+  return (lines || []).some((line) => chargeKindOf(line) === 'sale' && signedAmount(line) > 0);
+}
+
 function scoreOrderImport(importId, lines) {
   const hasSale = lines.some((line) => chargeKindOf(line) === 'sale');
-  return { importId, lines, hasSale, count: lines.length };
+  return {
+    importId,
+    lines,
+    hasSale,
+    hasPositiveSale: hasPositiveSale(lines),
+    hasReturn: lines.some((line) => isReturnMovement(line)),
+    count: lines.length,
+  };
+}
+
+function mergeComplementaryImports(ranked) {
+  const primary = ranked[0];
+  if (!primary) return [];
+  const merged = [...primary.lines];
+  const seen = new Set(merged.map(lineDedupeKey));
+  const primaryHasPositiveSale = primary.hasPositiveSale;
+  const primaryHasReturn = primary.hasReturn;
+  for (const other of ranked.slice(1)) {
+    const shouldMerge = (primaryHasReturn && !primaryHasPositiveSale && other.hasPositiveSale)
+      || (primaryHasPositiveSale && !primaryHasReturn && other.hasReturn);
+    if (!shouldMerge) continue;
+    for (const line of other.lines) {
+      const key = lineDedupeKey(line);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(line);
+    }
+  }
+  return merged;
 }
 
 export function chooseLinesPerOrder(lines) {
@@ -306,11 +361,12 @@ export function chooseLinesPerOrder(lines) {
     const ranked = [...imports.entries()]
       .map(([importId, orderLines]) => scoreOrderImport(importId, orderLines))
       .sort((left, right) => (
-        Number(right.hasSale) - Number(left.hasSale)
+        Number(right.hasPositiveSale) - Number(left.hasPositiveSale)
+        || Number(right.hasSale) - Number(left.hasSale)
         || right.count - left.count
         || right.importId - left.importId
       ));
-    chosen.push(...(ranked[0]?.lines || []));
+    chosen.push(...mergeComplementaryImports(ranked));
   }
   return chosen;
 }
@@ -390,10 +446,17 @@ export function aggregateSettlementSales(lines) {
       productName: item.productName,
       ...finalizeTotals(item),
     }));
+    const returned = sale.charges.some((charge) => isReturnMovement({
+      type: charge.type,
+      chargeKind: charge.kind,
+      neto: charge.amount,
+      amount: charge.amount,
+    }));
     return {
       orderId: sale.orderId,
       date: sale.date,
       paid: sale.paid,
+      returned,
       paymentStatus: sale.paymentStatus || (sale.paid ? 'Pagado' : 'No Pagado'),
       matched: sale.matched,
       productName: sale.productName,

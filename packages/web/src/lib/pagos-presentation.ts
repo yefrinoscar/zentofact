@@ -26,22 +26,38 @@ export function unmatchedReasonLabel(reason: string | null | undefined) {
   return 'Sin match único';
 }
 
-export type PaymentStatusTone = 'paid' | 'unpaid' | 'scheduled' | 'unknown';
+export type PaymentStatusTone = 'paid' | 'unpaid' | 'scheduled' | 'returned' | 'unknown';
 
-export function paymentStatusTone(status: string | null | undefined): PaymentStatusTone {
+export function paymentStatusTone(status: string | null | undefined, returned?: boolean): PaymentStatusTone {
+  if (returned) return 'returned';
   const value = String(status || '').trim().toLowerCase();
+  if (value.includes('devol')) return 'returned';
   if (value === 'pagado' || value === 'paid') return 'paid';
   if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'unpaid';
   if (value.includes('programado')) return 'scheduled';
   return 'unknown';
 }
 
-export function paymentStatusLabel(status: string | null | undefined) {
-  const tone = paymentStatusTone(status);
+export function paymentStatusLabel(status: string | null | undefined, returned?: boolean) {
+  const tone = paymentStatusTone(status, returned);
+  if (tone === 'returned') return 'Devolución';
   if (tone === 'paid') return 'Pagado';
   if (tone === 'unpaid') return 'No pagado';
   if (tone === 'scheduled') return 'Programado';
   return String(status || '').trim() || '—';
+}
+
+export function teLlegaHint(sale: {
+  returned?: boolean | null;
+  neto?: number | null;
+  shipping?: number | null;
+} | null | undefined) {
+  if (sale?.returned) {
+    if (Number(sale.shipping || 0) > 0) return 'En la devolución suele quedarse la logística.';
+    return 'Descontaron el producto y te devolvieron la comisión.';
+  }
+  if (Number(sale?.neto || 0) < 0) return 'Falabella cobró más que el precio.';
+  return 'Lo que te depositan.';
 }
 
 export function importSummary(item: {
