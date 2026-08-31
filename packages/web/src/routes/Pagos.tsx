@@ -304,15 +304,17 @@ function PaymentStatusBadge({ status, returned }: { status?: string | null; retu
   const tone = paymentStatusTone(status, returned);
   const label = paymentStatusLabel(status, returned);
   const full = String(status || '').trim();
+  const long = label.length > 12;
   return (
     <Badge
-      variant={tone === 'paid' ? 'secondary' : 'outline'}
+      variant="outline"
       title={tone === 'returned' ? 'Descontaron el producto y te devolvieron la comisión.' : full && full !== label ? full : undefined}
       className={cn(
-        'h-5 max-w-full min-w-0 shrink truncate px-1.5 text-[11px]',
-        tone === 'paid' && 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+        'h-5 min-w-0 px-1.5 text-[11px]',
+        long ? 'max-w-full shrink truncate' : 'shrink-0',
+        tone === 'paid' && 'border-transparent bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         tone === 'scheduled' && 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300',
-        tone === 'returned' && 'border-stone-400/50 bg-stone-500/10 text-stone-700 dark:text-stone-300',
+        tone === 'returned' && 'border-zinc-300 bg-zinc-100 text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200',
       )}
     >
       {label}
@@ -574,7 +576,7 @@ export default function Pagos() {
       id: 'paid',
       accessorKey: 'paid',
       header: 'Pago',
-      size: 104,
+      size: 120,
       meta: { cellClassName: 'min-w-0 overflow-hidden' },
       cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} returned={row.original.returned} />,
     },
