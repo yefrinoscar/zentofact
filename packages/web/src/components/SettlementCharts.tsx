@@ -252,14 +252,14 @@ export function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
-    <div className="grid grid-cols-1 items-start gap-x-12 gap-y-8 sm:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 items-start gap-x-10 gap-y-8 sm:grid-cols-3">
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
           ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
         ].filter(Boolean).join(', ');
         return (
-          <div key={chart.id} aria-label={caption} className={chart.kind === 'waffle' ? 'w-max' : 'min-w-0'}>
+          <div key={chart.id} aria-label={caption} className="min-w-0">
             <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
               <MultiSeriesChart
@@ -274,10 +274,12 @@ export function SettlementKpiStrip({ summary, sales }: {
               />
             ) : null}
             {chart.kind === 'pie' ? (
-              <NetoPie
-                paid={Number(summary.paidNeto || 0)}
-                pending={Number(summary.pendingNeto || 0)}
-              />
+              <div className="sm:flex sm:justify-center">
+                <NetoPie
+                  paid={Number(summary.paidNeto || 0)}
+                  pending={Number(summary.pendingNeto || 0)}
+                />
+              </div>
             ) : null}
           </div>
         );
