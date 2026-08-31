@@ -33,6 +33,7 @@ function validSale(overrides = {}) {
     delivery: 'envio',
     deliveryDate: '2026-08-25',
     shippingCarrier: 'shaloom',
+    sellerShippingAmount: 0,
     dropoffPlace: { label: 'Av. Primavera 123, Surco', district: 'Surco', lat: -12.1, lng: -77.0 },
     shippingNote: 'Tocar timbre',
     saleSource: 'whatsapp',
@@ -160,6 +161,10 @@ test('el desglose de totales cobra el envío una sola vez', () => {
   assert.equal(conEnvio[0].label, 'Productos');
   assert.equal(conEnvio[1].label, 'Envío Express · zona Media, 12,2 km');
   assert.equal(money(conEnvio[1].value), 'S/ 15.00');
+
+  const tercero = saleTotalRows(saleTotals(250, null, 18), null, null, 'shaloom');
+  assert.equal(tercero[1].label, 'Envío Shaloom');
+  assert.equal(money(tercero[1].value), 'S/ 18.00');
 });
 
 test('la etiqueta de envío propio nombra la zona y acompaña con los kilómetros', () => {

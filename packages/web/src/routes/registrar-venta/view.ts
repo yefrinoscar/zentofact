@@ -43,6 +43,8 @@ export type SaleFormView = {
   setDeliveryDate: (value: string) => void;
   shippingCarrier: ShippingCarrier | '';
   setShippingCarrier: (value: ShippingCarrier | '') => void;
+  sellerShippingInput: string;
+  setSellerShippingInput: (value: string) => void;
   dropoffPlace: MapPlace | null;
   setDropoffPlace: (place: MapPlace | null) => void;
   shippingNote: string;

@@ -20,6 +20,7 @@ import {
   DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
   SALE_SOURCES,
+  clampSaleQuantity,
   limaTodayKey,
   type DocumentRequest,
 } from '../../lib/registrar-venta';
@@ -28,7 +29,7 @@ import {
   OWN_FLEET_COVERAGE_HINT,
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
 } from '../../lib/own-fleet-shipping';
-import { SHIPPING_CARRIERS } from '../../lib/shipping-carrier';
+import { SHIPPING_CARRIERS, isSellerPricedShipping } from '../../lib/shipping-carrier';
 import { copyText } from '../../lib/clipboard';
 import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
 import {
@@ -186,14 +187,14 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
         />
       </FieldRow>
       <FieldRow label="Teléfono" htmlFor="customer-phone">
-        <Input
-          id="customer-phone"
-          value={view.customerPhone}
-          onChange={(event) => view.setCustomerPhone(event.target.value)}
-          placeholder="999 999 999"
-          inputMode="tel"
-          autoComplete="tel"
-        />
+          <Input
+            id="customer-phone"
+            value={view.customerPhone}
+            onChange={(event) => view.setCustomerPhone(event.target.value.replace(/\D/g, '').slice(0, 15))}
+            placeholder="999 999 999"
+            inputMode="numeric"
+            autoComplete="tel"
+          />
       </FieldRow>
       <FieldRow label="Comprobante">
         <Choice
@@ -271,8 +272,11 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                       type="number"
                       inputMode="numeric"
                       min={1}
+                      max={line.available ?? undefined}
                       value={line.quantity}
-                      onChange={(event) => view.updateLine(line.id, { quantity: Math.max(1, Math.floor(Number(event.target.value || 1))) })}
+                      onChange={(event) => view.updateLine(line.id, {
+                        quantity: clampSaleQuantity(event.target.value, line.available),
+                      })}
                       className={cn('h-10 bg-background sm:h-9', NUMBER_INPUT)}
                     />
                   </div>
@@ -320,6 +324,7 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
                 view.setShippingCarrier('');
                 view.setDropoffPlace(null);
                 view.setShippingNote('');
+                view.setSellerShippingInput('');
               }
             }}
             ariaLabel="Método de entrega"
@@ -363,6 +368,22 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
               </div>
             )}
           </FieldRow>
+          {isSellerPricedShipping(view.shippingCarrier) ? (
+            <FieldRow label="Precio envío" htmlFor="seller-shipping">
+              <Input
+                id="seller-shipping"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={view.sellerShippingInput}
+                onChange={(event) => view.setSellerShippingInput(event.target.value)}
+                placeholder="0.00"
+                className={cn('h-10 bg-background sm:max-w-40 sm:h-9', NUMBER_INPUT)}
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">Lo pone el vendedor.</p>
+            </FieldRow>
+          ) : null}
           <FieldRow label="Dirección">
             <PlacePicker
               value={view.dropoffPlace}

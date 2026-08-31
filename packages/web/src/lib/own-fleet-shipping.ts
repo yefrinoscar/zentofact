@@ -670,15 +670,29 @@ export function quoteOwnFleetShipping(
   };
 }
 
-export function saleTotals(productsTotal: number, quote: OwnFleetQuote | null) {
+export function saleTotals(
+  productsTotal: number,
+  quote: OwnFleetQuote | null,
+  sellerShipping = 0,
+) {
   const products = roundMoney(productsTotal);
-  const districtAmount = quote?.charged ? quote.districtAmount : 0;
-  const distanceAmount = quote?.charged ? quote.distanceAmount : 0;
-  const shipping = roundMoney(districtAmount + distanceAmount);
+  if (quote?.charged) {
+    const districtAmount = quote.districtAmount;
+    const distanceAmount = quote.distanceAmount;
+    const shipping = roundMoney(districtAmount + distanceAmount);
+    return {
+      products,
+      districtAmount,
+      distanceAmount,
+      shipping,
+      total: roundMoney(products + shipping),
+    };
+  }
+  const shipping = roundMoney(Math.max(0, Number(sellerShipping) || 0));
   return {
     products,
-    districtAmount,
-    distanceAmount,
+    districtAmount: 0,
+    distanceAmount: 0,
     shipping,
     total: roundMoney(products + shipping),
   };

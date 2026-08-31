@@ -374,4 +374,11 @@ test('saleTotals suma productos y un único envío', () => {
     shipping: 0,
     total: 250,
   });
+  assert.deepEqual(saleTotals(250, null, 18), {
+    products: 250,
+    districtAmount: 0,
+    distanceAmount: 0,
+    shipping: 18,
+    total: 268,
+  });
 });

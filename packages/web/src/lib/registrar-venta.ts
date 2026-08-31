@@ -9,7 +9,7 @@ import {
   quoteOwnFleetShipping,
   saleTotals,
 } from './own-fleet-shipping.ts';
-import type { ShippingCarrier } from './shipping-carrier.ts';
+import { isSellerPricedShipping, type ShippingCarrier } from './shipping-carrier.ts';
 
 export const SALE_SOURCES = [
   { value: 'marketplace', label: 'Marketplace' },
@@ -78,6 +78,7 @@ export type SaleLine = {
   catalogPrice: number;
   unitPrice: number;
   quantity: number;
+  available?: number | null;
 };
 
 export type DropoffPlace = {
@@ -97,6 +98,8 @@ export type ManualSaleInput = {
   delivery: DeliveryMethod;
   deliveryDate: string;
   shippingCarrier: ShippingCarrier | '';
+  /** Precio de envío que escribe el vendedor para Marvisuar, Shaloom o Dinsides. `null` = no lo puso. */
+  sellerShippingAmount?: number | null;
   dropoffPlace: DropoffPlace | null;
   shippingNote?: string;
   saleSource: SaleSource;
@@ -112,8 +115,25 @@ export type ManualSaleInput = {
   orderNumber?: string;
 };
 
+export const MIN_CUSTOMER_PHONE_DIGITS = 9;
+export const NO_STOCK_MESSAGE = 'Ese producto no tiene stock.';
+export const STOCK_SHORT_MESSAGE = 'No hay stock para esa cantidad.';
+export const PHONE_REQUIRED_MESSAGE = 'Escribe un teléfono de 9 dígitos.';
+export const SELLER_SHIPPING_REQUIRED_MESSAGE = 'Indica el precio de envío.';
+
 function digitsOnly(value: string | null | undefined) {
   return String(value || '').replace(/\D/g, '');
+}
+
+export function customerPhoneDigits(value: string | null | undefined) {
+  return digitsOnly(value);
+}
+
+export function parseSellerShippingAmount(value: string | number | null | undefined) {
+  if (value === '' || value == null) return null;
+  const parsed = typeof value === 'number' ? value : Number(String(value).trim().replace(',', '.'));
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 }
 
 export function validateDocumentRequest(input: ManualSaleInput) {
@@ -139,7 +159,7 @@ export function validateDocumentRequest(input: ManualSaleInput) {
 
 export function customerTaxPayload(input: ManualSaleInput) {
   const name = String(input.customerName || '').trim();
-  const phone = String(input.customerPhone || '').trim();
+  const phone = customerPhoneDigits(input.customerPhone);
   const kind = input.documentRequest || 'none';
   if (kind === 'boleta') {
     const identity = input.boletaIdentity || 'dni';
@@ -181,6 +201,25 @@ export function formatProductStock(product: CatalogProductForSale) {
   return `${productStock(product)} u`;
 }
 
+export function remainingSaleStock(product: CatalogProductForSale, lines: SaleLine[] = []) {
+  const used = lines
+    .filter((line) => line.productId === product.id)
+    .reduce((sum, line) => sum + line.quantity, 0);
+  return Math.max(0, productStock(product) - used);
+}
+
+export function canSelectProductForSale(product: CatalogProductForSale, lines: SaleLine[] = []) {
+  return remainingSaleStock(product, lines) > 0;
+}
+
+export function clampSaleQuantity(quantity: number | string, available?: number | null) {
+  const qty = Math.max(1, Math.floor(Number(quantity) || 1));
+  if (available == null || !Number.isFinite(Number(available))) return qty;
+  const stock = Math.max(0, Math.floor(Number(available)));
+  if (stock < 1) return qty;
+  return Math.min(qty, stock);
+}
+
 export function limaTodayKey(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Lima',
@@ -218,13 +257,45 @@ function validateCustomerName(input: ManualSaleInput) {
   return null;
 }
 
+function validateCustomerPhone(input: ManualSaleInput) {
+  const digits = customerPhoneDigits(input.customerPhone);
+  if (digits.length < MIN_CUSTOMER_PHONE_DIGITS) return PHONE_REQUIRED_MESSAGE;
+  return null;
+}
+
+function validateCustomer(input: ManualSaleInput) {
+  return validateCustomerName(input) ?? validateCustomerPhone(input);
+}
+
 function validateSaleLines(input: ManualSaleInput) {
   if (!input.lines.length) {
     return 'Agrega al menos un producto.';
   }
+  if (input.lines.some((line) => line.available != null && Number(line.available) <= 0)) {
+    return NO_STOCK_MESSAGE;
+  }
+  if (input.lines.some((line) => (
+    line.available != null
+    && Number.isFinite(Number(line.available))
+    && line.quantity > Number(line.available)
+  ))) {
+    return STOCK_SHORT_MESSAGE;
+  }
   if (input.lines.some((line) => line.quantity < 1 || line.unitPrice < 0)) {
     return 'Revisa cantidad y precio de cada producto.';
   }
+  return null;
+}
+
+function sellerShippingForSale(input: ManualSaleInput) {
+  if (input.delivery !== 'envio' || !isSellerPricedShipping(input.shippingCarrier)) return 0;
+  return Number(input.sellerShippingAmount) || 0;
+}
+
+function validateSellerShipping(input: ManualSaleInput) {
+  if (input.delivery !== 'envio' || !isSellerPricedShipping(input.shippingCarrier)) return null;
+  const amount = parseSellerShippingAmount(input.sellerShippingAmount);
+  if (amount == null || amount < 0) return SELLER_SHIPPING_REQUIRED_MESSAGE;
   return null;
 }
 
@@ -248,14 +319,14 @@ function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeo
     const quote = quoteOwnFleetShipping(input.dropoffPlace, fleetConfig);
     if (quote && !quote.charged) return OWN_FLEET_OUT_OF_RANGE_MESSAGE;
   }
-  return null;
+  return validateSellerShipping(input);
 }
 
 export function validateManualSale(input: ManualSaleInput, fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1]) {
   if (!input.channelAccountId) {
     return 'Todavía no hay un canal de venta manual habilitado.';
   }
-  return validateCustomerName(input)
+  return validateCustomer(input)
     ?? validateSaleLines(input)
     ?? validateDelivery(input, fleetConfig)
     ?? validateDocumentRequest(input);
@@ -267,7 +338,7 @@ export function validateSaleStep(
   input: ManualSaleInput,
   fleetConfig?: Parameters<typeof quoteOwnFleetShipping>[1],
 ) {
-  if (step === 'cliente') return validateCustomerName(input) ?? validateDocumentRequest(input);
+  if (step === 'cliente') return validateCustomer(input) ?? validateDocumentRequest(input);
   if (step === 'productos') return validateSaleLines(input);
   if (step === 'entrega') return validateDelivery(input, fleetConfig);
   if (step === 'pago') return null;
@@ -303,7 +374,7 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
     ? placeAtCoordinates(dropoffLat, dropoffLng, fleetConfig)
     : null;
   const shippingQuote = ownFleet ? quoteOwnFleetShipping(dropoff, fleetConfig) : null;
-  const totals = saleTotals(productsTotal, shippingQuote);
+  const totals = saleTotals(productsTotal, shippingQuote, sellerShippingForSale(input));
   const deliveryDate = String(input.deliveryDate).trim();
   const shippingDistrict = atPin ? (atPin.district || '') : (dropoff?.district || '');
   const shippingProvince = atPin ? (atPin.province || '') : (dropoff?.province || '');

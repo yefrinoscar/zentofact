@@ -71,6 +71,7 @@ export function ResumenStep({
     delivery: view.delivery,
     deliveryDate: view.deliveryDate,
     shippingCarrier: view.shippingCarrier,
+    sellerShippingAmount: Number(view.sellerShippingInput) || null,
     dropoffPlace: view.dropoffPlace,
     shippingNote: view.shippingNote,
     saleSource: view.saleSource,
@@ -83,7 +84,7 @@ export function ResumenStep({
     legalName: view.legalName,
     fiscalAddress: view.fiscalAddress,
   }, undefined, view.fleetOrigin?.address);
-  const totalRows = saleTotalRows(view.totals, view.shippingQuote?.priceZoneName, view.shippingQuote?.distanceKm);
+          const totalRows = saleTotalRows(view.totals, view.shippingQuote?.priceZoneName, view.shippingQuote?.distanceKm, view.shippingCarrier);
   const [cliente, entrega, pago] = groups;
 
   return (
