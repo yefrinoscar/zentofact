@@ -6,13 +6,14 @@ export async function copyText(text: string) {
   const value = String(text || '');
   if (!value) return false;
 
-  try {
-    if (navigator.clipboard?.writeText) {
+  // Sin foco el API rechaza con NotAllowedError, así que ni se intenta.
+  if (navigator.clipboard?.writeText && document.hasFocus()) {
+    try {
       await navigator.clipboard.writeText(value);
       return true;
+    } catch {
+      // Sigue con el respaldo.
     }
-  } catch {
-    // Sigue con el respaldo.
   }
 
   try {

@@ -72,7 +72,7 @@ function PickupCard({ origin }: { origin?: Partial<PickupPoint> | null }) {
             // Si el portapapeles falla, el texto sigue visible abajo para copiarlo a mano.
             if (!(await copyText(message))) return;
             setCopied(true);
-            window.setTimeout(() => setCopied(false), 1600);
+            window.setTimeout(() => setCopied(false), 2500);
           }}
         >
           {copied ? <Check className="text-emerald-600" /> : <Copy />}
