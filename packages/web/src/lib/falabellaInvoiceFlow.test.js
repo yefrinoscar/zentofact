@@ -4,6 +4,7 @@ import {
   isAcceptedSalesDocument,
   matchesInvoiceFlowFilter,
   needsSalesDocumentReview,
+  shouldIncludeInFinancialTotals,
   summarizeIssuedSalesDocuments,
   summarizeDocumentRows,
 } from './falabellaInvoiceFlow.ts';
@@ -66,6 +67,29 @@ test('emitido suma solo boletas y facturas aceptadas por SUNAT', () => {
   assert.equal(isAcceptedSalesDocument(rows[0]), true);
   assert.equal(isAcceptedSalesDocument(rows[1]), false);
   assert.equal(isAcceptedSalesDocument(rows[2]), false);
+});
+
+test('canceladas y devueltas solo cuentan si ya tienen documento', () => {
+  assert.equal(shouldIncludeInFinancialTotals({
+    statusKey: 'canceled',
+    hasSalesDocument: false,
+  }), false);
+  assert.equal(shouldIncludeInFinancialTotals({
+    statusKey: 'returned',
+    hasSalesDocument: false,
+  }), false);
+  assert.equal(shouldIncludeInFinancialTotals({
+    statusKey: 'cancelada',
+    hasSalesDocument: true,
+  }), true);
+  assert.equal(shouldIncludeInFinancialTotals({
+    statusKey: 'devuelta',
+    hasSalesDocument: true,
+  }), true);
+  assert.equal(shouldIncludeInFinancialTotals({
+    statusKey: 'delivered',
+    hasSalesDocument: false,
+  }), true);
 });
 
 test('documentos rechazados o no enviados quedan en revisión', () => {

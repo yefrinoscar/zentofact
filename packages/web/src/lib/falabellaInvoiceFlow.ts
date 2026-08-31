@@ -21,6 +21,11 @@ type SalesDocumentRow = SalesDocumentStatusRow & {
   salesDocumentAmount: number;
 };
 
+type FinancialOrderRow = {
+  statusKey: string;
+  hasSalesDocument: boolean;
+};
+
 export function matchesInvoiceFlowFilter(
   row: FilterableInvoiceFlowRow,
   filter: InvoiceFlowFilter,
@@ -35,6 +40,17 @@ export function summarizeDocumentRows(rows: DocumentAmountRow[]) {
       : summary,
     { count: 0, amount: 0 },
   );
+}
+
+export function shouldIncludeInFinancialTotals(row: FinancialOrderRow) {
+  const status = row.statusKey.trim().toLowerCase();
+  const canceledOrReturned = status.includes('canceled')
+    || status.includes('cancelled')
+    || status.includes('cancelada')
+    || status.includes('returned')
+    || status.includes('devuelta');
+
+  return !canceledOrReturned || row.hasSalesDocument;
 }
 
 export function isAcceptedSalesDocument(row: SalesDocumentStatusRow) {
