@@ -906,7 +906,7 @@ export default function Pagos() {
                   </div>
                 </div>
               ) : null}
-              {selected.chargeGroups?.some((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping') ? (
+              {!selected.returned && selected.chargeGroups?.some((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping') ? (
                 <div className="border-t border-border px-5 py-4">
                   <p className="text-sm font-medium">Cobros Falabella</p>
                   <div className="mt-2 divide-y divide-border">
