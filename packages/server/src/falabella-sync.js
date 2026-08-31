@@ -907,6 +907,7 @@ function documentFromRow(row) {
   const creditReady = uploadReadiness(row.credit_note_estado, row.credit_note_xml, row.credit_note_cdr);
   const boleta = row.boleta_id ? {
     id: row.boleta_id, numeroCompleto: row.boleta_numero, fechaEmision: row.boleta_fecha,
+    total: row.boleta_total,
     pdfPath: row.boleta_pdf, xmlPath: row.boleta_xml, cdrPath: row.boleta_cdr,
     estadoSunat: row.boleta_estado, respuestaSunat: row.boleta_respuesta || '',
     falabellaPdfUploadedAt: boletaFalabellaUploadedAt(row.boleta_datos_adicionales),
@@ -914,6 +915,7 @@ function documentFromRow(row) {
   } : null;
   const factura = row.factura_id ? {
     id: row.factura_id, numeroCompleto: row.factura_numero, fechaEmision: row.factura_fecha,
+    total: row.factura_total,
     pdfPath: row.factura_pdf, xmlPath: row.factura_xml, cdrPath: row.factura_cdr,
     estadoSunat: row.factura_estado, respuestaSunat: row.factura_respuesta || '',
     falabellaPdfUploadedAt: facturaFalabellaUploadedAt(row.factura_respuesta_falabella, row.factura_updated_at),
@@ -944,10 +946,12 @@ export async function listLocalFalabellaOrders(companyId, filters = {}, db) {
   const query = await target.query(
     `select fo.order_number, fo.raw_data,
        b.id boleta_id, b.numero_completo boleta_numero, b.fecha_emision boleta_fecha,
+       b.mto_imp_venta boleta_total,
        b.pdf_path boleta_pdf, b.xml_path boleta_xml, b.cdr_path boleta_cdr,
        b.estado_sunat boleta_estado, b.respuesta_sunat boleta_respuesta,
        b.datos_adicionales boleta_datos_adicionales,
        f.id factura_id, f.numero_completo factura_numero, f.fecha_emision factura_fecha,
+       f.mto_imp_venta factura_total,
        f.pdf_path factura_pdf, f.xml_path factura_xml, f.cdr_path factura_cdr,
        f.estado_sunat factura_estado, f.respuesta_sunat factura_respuesta,
        f.respuesta_falabella factura_respuesta_falabella, f.updated_at factura_updated_at,
