@@ -26,6 +26,7 @@ import api from '../lib/api';
 import {
   matchesInvoiceFlowFilter,
   needsSalesDocumentReview,
+  shouldIncludeInFinancialTotals,
   summarizeDocumentRows,
   summarizeIssuedSalesDocuments,
   type InvoiceFlowBucket,
@@ -1200,7 +1201,7 @@ export default function FalabellaApi() {
       // distintas: una orden en revisión también puede tener un documento emitido.
       // Una cancelada/devuelta solo participa en el total si alcanzó a generar su
       // boleta o factura. Su nota de crédito se presenta aparte como reversión.
-      const includeInFinancialTotals = !needsCreditNoteReview(row.statusKey) || row.hasSalesDocument;
+      const includeInFinancialTotals = shouldIncludeInFinancialTotals(row);
       if (includeInFinancialTotals) {
         if (row.invoiceKind === 'BOLETA') {
           base.totalBoleta += 1;
