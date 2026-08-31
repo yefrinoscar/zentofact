@@ -20,7 +20,7 @@ const LINE_COLOR = {
   take: '#1C1917',
   commission: '#0F766E',
   shipping: '#2DD4BF',
-  arrives: '#E7E5E4',
+  arrives: '#C9C5C0',
   paid: '#3B8F72',
   pending: '#E07838',
 } as const;
@@ -177,8 +177,8 @@ function StackedPayout({ days }: { days: DayRow[] }) {
   const innerH = height - pad.top - pad.bottom;
   const max = Math.max(1, ...trend.map((point) => Number(point.paid || 0) + Number(point.pending || 0)));
   const plotted = trend.map((point, index) => {
-    const paid = Number(point.paid || 0);
-    const pending = Number(point.pending || 0);
+    const paid = Math.max(0, Number(point.paid || 0));
+    const pending = Math.max(0, Number(point.pending || 0));
     const x = pad.left + (trend.length < 2 ? innerW / 2 : (index / (trend.length - 1)) * innerW);
     const yPaid = pad.top + innerH - (paid / max) * innerH;
     const yTop = pad.top + innerH - ((paid + pending) / max) * innerH;
