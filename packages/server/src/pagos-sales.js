@@ -236,6 +236,31 @@ const CHARGE_KIND_ORDER = {
   buyer_shipping: 5,
 };
 
+export function splitChargeLegs(charges) {
+  const legs = {
+    brutoCharged: 0,
+    brutoReversed: 0,
+    commissionCharged: 0,
+    commissionReversed: 0,
+    shippingCharged: 0,
+    shippingReversed: 0,
+  };
+  for (const charge of charges || []) {
+    const amount = round2(charge.amount);
+    if (charge.kind === 'sale') {
+      if (amount > 0) legs.brutoCharged = round2(legs.brutoCharged + amount);
+      else if (amount < 0) legs.brutoReversed = round2(legs.brutoReversed + amount);
+    } else if (charge.kind === 'commission') {
+      if (amount < 0) legs.commissionCharged = round2(legs.commissionCharged + Math.abs(amount));
+      else if (amount > 0) legs.commissionReversed = round2(legs.commissionReversed - amount);
+    } else if (charge.kind === 'shipping') {
+      if (amount < 0) legs.shippingCharged = round2(legs.shippingCharged + Math.abs(amount));
+      else if (amount > 0) legs.shippingReversed = round2(legs.shippingReversed - amount);
+    }
+  }
+  return legs;
+}
+
 export function groupSaleCharges(charges) {
   const groups = new Map();
   for (const charge of charges || []) {
@@ -464,6 +489,7 @@ export function aggregateSettlementSales(lines) {
       orderNumbers: sale.orderNumbers,
       itemCount: sale.items.size,
       ...totals,
+      ...splitChargeLegs(sale.charges),
       charges: sale.charges,
       chargeGroups: groupSaleCharges(sale.charges),
       items,

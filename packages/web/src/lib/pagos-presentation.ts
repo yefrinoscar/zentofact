@@ -60,6 +60,14 @@ export function teLlegaHint(sale: {
   return 'Lo que te depositan.';
 }
 
+export function settlementPair(charged?: number | null, reversed?: number | null) {
+  const up = Math.round(Number(charged || 0) * 100) / 100;
+  const down = Math.round(Number(reversed || 0) * 100) / 100;
+  if (up && down) return { amount: up, reversal: down };
+  if (down && !up) return { amount: down, reversal: null as number | null };
+  return { amount: up, reversal: null as number | null };
+}
+
 export function importSummary(item: {
   reused?: boolean;
   replaced?: boolean;

@@ -23,6 +23,7 @@ import {
   reusedImportNotice,
   saleDateLabel,
   salesPageNote,
+  settlementPair,
   shortProductName,
   skuLabel,
   teLlegaHint,
@@ -79,6 +80,12 @@ type SettlementSale = {
   bruto: number;
   commission: number;
   shipping: number;
+  brutoCharged?: number;
+  brutoReversed?: number;
+  commissionCharged?: number;
+  commissionReversed?: number;
+  shippingCharged?: number;
+  shippingReversed?: number;
   buyerShipping?: number;
   buyerShippingPaid?: number;
   buyerShippingReversed?: number;
@@ -324,21 +331,30 @@ function PaymentStatusBadge({ status, returned }: { status?: string | null; retu
 
 function AmountRate({
   amount,
+  reversal,
   rate,
   tone,
+  hideRate = false,
 }: {
   amount: number;
+  reversal?: number | null;
   rate?: number | null;
   tone?: 'take' | 'receive';
+  hideRate?: boolean;
 }) {
+  const showReversal = reversal != null && reversal !== 0;
   return (
     <div className={cn(
       'text-right leading-tight',
-      amountToneClass(tone, amount),
+      !showReversal && amountToneClass(tone, amount),
     )}
     >
-      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-medium')}>{money.format(amount)}</p>
-      <p className={cn('text-[10px] tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>{percentLabel(rate)}</p>
+      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && !showReversal && 'font-medium')}>{money.format(amount)}</p>
+      {showReversal ? (
+        <p className={cn('text-[10px] tabular-nums', takeText)}>{money.format(reversal)}</p>
+      ) : hideRate ? null : (
+        <p className={cn('text-[10px] tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>{percentLabel(rate)}</p>
+      )}
     </div>
   );
 }
@@ -353,6 +369,7 @@ type PagosNotice = {
 function ChargeRow({
   label,
   amount,
+  reversal,
   hint,
   rate,
   strong = false,
@@ -360,14 +377,16 @@ function ChargeRow({
 }: {
   label: string;
   amount: number;
+  reversal?: number | null;
   hint?: string;
   rate?: number | null;
   strong?: boolean;
   tone?: 'take' | 'receive';
 }) {
+  const showReversal = reversal != null && reversal !== 0;
   const details = [
     hint,
-    rate != null ? `${percentLabel(rate)} del precio` : '',
+    !showReversal && rate != null ? `${percentLabel(rate)} del precio` : '',
   ].filter(Boolean);
   return (
     <div className="flex items-baseline justify-between gap-4 py-2">
@@ -377,14 +396,19 @@ function ChargeRow({
           <p key={line} className="text-xs text-muted-foreground">{line}</p>
         ))}
       </div>
-      <p className={cn(
-        'shrink-0 tabular-nums text-sm',
-        strong && 'font-medium',
-        amountToneClass(tone, amount),
-      )}
-      >
-        {money.format(amount)}
-      </p>
+      <div className="shrink-0 text-right">
+        <p className={cn(
+          'tabular-nums text-sm',
+          strong && 'font-medium',
+          !showReversal && amountToneClass(tone, amount),
+        )}
+        >
+          {money.format(amount)}
+        </p>
+        {showReversal ? (
+          <p className={cn('text-xs tabular-nums', takeText)}>{money.format(reversal)}</p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -412,6 +436,12 @@ function saleSubtitle(sale: SettlementSale) {
 }
 
 function shippingHint(sale: SettlementSale) {
+  if (sale.returned) {
+    const pair = settlementPair(sale.shippingCharged, sale.shippingReversed);
+    if (pair.reversal) return 'Se descuenta la logística.';
+    if (Number(sale.shipping || 0) > 0) return 'Esta no se revirtió.';
+    return 'Sin cobro de logística.';
+  }
   const products = sale.products || [];
   if (products.length === 1 && products[0].quantity > 1 && products[0].unitShipping) {
     return `${money.format(products[0].unitShipping)} × ${products[0].quantity} unidades`;
@@ -586,9 +616,16 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
       size: 108,
       meta: { align: 'end' },
-      cell: ({ row }) => (
-        <p className="text-right text-[13px] tabular-nums leading-4">{money.format(row.original.bruto || 0)}</p>
-      ),
+      cell: ({ row }) => {
+        const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+        return (
+          <AmountRate
+            amount={pair.amount || row.original.bruto || 0}
+            reversal={pair.reversal}
+            hideRate={Boolean(row.original.returned || pair.reversal)}
+          />
+        );
+      },
     },
     {
       id: 'commission',
@@ -596,7 +633,17 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.commission} />,
       size: 96,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
-      cell: ({ row }) => <AmountRate amount={row.original.commission || 0} rate={row.original.commissionRate} />,
+      cell: ({ row }) => {
+        const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
+        return (
+          <AmountRate
+            amount={pair.amount || row.original.commission || 0}
+            reversal={pair.reversal}
+            rate={row.original.commissionRate}
+            hideRate={Boolean(row.original.returned || pair.reversal)}
+          />
+        );
+      },
     },
     {
       id: 'shipping',
@@ -604,7 +651,17 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.shipping} />,
       size: 124,
       meta: { align: 'end', headerClassName: cobroHead, cellClassName: cobroCell },
-      cell: ({ row }) => <AmountRate amount={row.original.shipping || 0} rate={row.original.shippingRate} />,
+      cell: ({ row }) => {
+        const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
+        return (
+          <AmountRate
+            amount={pair.amount || row.original.shipping || 0}
+            reversal={pair.reversal}
+            rate={row.original.shippingRate}
+            hideRate={Boolean(row.original.returned || pair.reversal)}
+          />
+        );
+      },
     },
     {
       id: 'take',
@@ -612,7 +669,14 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.take} />,
       size: 124,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
-      cell: ({ row }) => <AmountRate amount={row.original.take || 0} rate={row.original.takeRate} tone="take" />,
+      cell: ({ row }) => (
+        <AmountRate
+          amount={row.original.take || 0}
+          rate={row.original.takeRate}
+          tone="take"
+          hideRate={Boolean(row.original.returned)}
+        />
+      ),
     },
     {
       id: 'neto',
@@ -621,7 +685,12 @@ export default function Pagos() {
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => (
-        <AmountRate amount={row.original.neto || 0} rate={receiveRate(row.original.bruto, row.original.neto)} tone="receive" />
+        <AmountRate
+          amount={row.original.neto || 0}
+          rate={receiveRate(row.original.bruto, row.original.neto)}
+          tone="receive"
+          hideRate={Boolean(row.original.returned)}
+        />
       ),
     },
   ], []);
@@ -712,7 +781,7 @@ export default function Pagos() {
       <OrdersVirtualTable
         table={table}
         compact
-        rowHeight={40}
+        rowHeight={48}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
@@ -761,7 +830,8 @@ export default function Pagos() {
               <div className="px-5 py-4">
                 <ChargeRow
                   label="Precio"
-                  amount={selected.bruto || 0}
+                  amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
+                  reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
                   hint={selected.returned ? 'Se descuenta el producto.' : 'Lo que pagó el cliente.'}
                 />
                 {hasBuyerShipping(selected) ? (
@@ -772,13 +842,32 @@ export default function Pagos() {
                   <p className="text-[11px] text-muted-foreground">
                     {selected.returned ? 'Te devuelven la comisión. La logística suele quedarse.' : 'Comisión + logística'}
                   </p>
-                  <ChargeRow label="Comisión" amount={-(selected.commission || 0)} rate={selected.commissionRate} />
-                  <ChargeRow label="Logística" amount={-(selected.shipping || 0)} hint={shippingHint(selected)} rate={selected.shippingRate} />
+                  <ChargeRow
+                    label="Comisión"
+                    amount={selected.returned
+                      ? (settlementPair(selected.commissionCharged, selected.commissionReversed).amount || 0)
+                      : -(selected.commission || 0)}
+                    reversal={selected.returned
+                      ? settlementPair(selected.commissionCharged, selected.commissionReversed).reversal
+                      : undefined}
+                    rate={selected.returned ? undefined : selected.commissionRate}
+                  />
+                  <ChargeRow
+                    label="Logística"
+                    amount={selected.returned
+                      ? (settlementPair(selected.shippingCharged, selected.shippingReversed).amount || selected.shipping || 0)
+                      : -(selected.shipping || 0)}
+                    reversal={selected.returned
+                      ? settlementPair(selected.shippingCharged, selected.shippingReversed).reversal
+                      : undefined}
+                    hint={shippingHint(selected)}
+                    rate={selected.returned ? undefined : selected.shippingRate}
+                  />
                   <ChargeRow
                     label="Se queda"
                     amount={selected.take || 0}
-                    hint="Suma de los dos."
-                    rate={selected.takeRate}
+                    hint={selected.returned ? 'La logística que no se revirtió.' : 'Suma de los dos.'}
+                    rate={selected.returned ? undefined : selected.takeRate}
                     tone="take"
                     strong
                   />
@@ -787,7 +876,7 @@ export default function Pagos() {
                   label="Te llega"
                   amount={selected.neto || 0}
                   hint={teLlegaHint(selected)}
-                  rate={receiveRate(selected.bruto, selected.neto)}
+                  rate={selected.returned ? undefined : receiveRate(selected.bruto, selected.neto)}
                   tone="receive"
                   strong
                 />

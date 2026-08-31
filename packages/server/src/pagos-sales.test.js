@@ -332,6 +332,15 @@ test('si comisión y logística superan el precio, te llega queda en pérdida', 
   assert.equal(sale.returned, false);
 });
 
+function assertReturnLegs(sale) {
+  assert.equal(sale.brutoCharged, 99.9);
+  assert.equal(sale.brutoReversed, -99.9);
+  assert.equal(sale.commissionCharged, 29.98);
+  assert.equal(sale.commissionReversed, -29.98);
+  assert.equal(sale.shippingCharged, 80.82);
+  assert.equal(sale.shippingReversed, 0);
+}
+
 test('una devolución descuenta el producto, devuelve la comisión y deja la logística', () => {
   const csv = [
     HEADER,
@@ -347,6 +356,7 @@ test('una devolución descuenta el producto, devuelve la comisión y deja la log
   assert.equal(sale.commission, 0);
   assert.equal(sale.shipping, 80.82);
   assert.equal(sale.neto, -80.82);
+  assertReturnLegs(sale);
 });
 
 test('un archivo solo con la reversa no se pinta como venta nueva', () => {
@@ -360,26 +370,50 @@ test('un archivo solo con la reversa no se pinta como venta nueva', () => {
   assert.equal(sale.bruto, -99.9);
   assert.equal(sale.commission, -29.98);
   assert.equal(sale.neto, -69.92);
+  assert.equal(sale.brutoCharged, 0);
+  assert.equal(sale.brutoReversed, -99.9);
+  assert.equal(sale.commissionCharged, 0);
+  assert.equal(sale.commissionReversed, -29.98);
 });
 
 test('la reversa de otro archivo se junta con la venta ya pagada', () => {
   const sold = parseSettlementCsv([
     HEADER,
-    row({ 'Monto con IVA': '99.90' }),
-    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '-29.98' }),
-    row({ 'Tipo de transacción': 'Cobro por cofinanciamiento logístico', 'Monto con IVA': '-80.82' }),
+    row({
+      'Fecha creación de la orden': '2026-08-19 09:25:12',
+      'Monto con IVA': '99.90',
+    }),
+    row({
+      'Fecha creación de la orden': '2026-08-19 09:25:12',
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-29.98',
+    }),
+    row({
+      'Fecha creación de la orden': '2026-08-19 09:25:12',
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto con IVA': '-80.82',
+    }),
   ].join('\n')).lines.map((line) => ({ ...line, importId: 1 }));
   const returned = parseSettlementCsv([
     HEADER,
-    row({ 'Monto con IVA': '-99.90' }),
-    row({ 'Tipo de transacción': 'Cobro por comisión por venta', 'Monto con IVA': '29.98' }),
+    row({
+      'Fecha creación de la orden': '2026-08-26 11:02:00',
+      'Monto con IVA': '-99.90',
+    }),
+    row({
+      'Fecha creación de la orden': '2026-08-26 11:02:00',
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '29.98',
+    }),
   ].join('\n')).lines.map((line) => ({ ...line, importId: 2 }));
   const [sale] = aggregateSettlementSales([...sold, ...returned]);
   assert.equal(sale.returned, true);
   assert.equal(sale.bruto, 0);
   assert.equal(sale.commission, 0);
   assert.equal(sale.shipping, 80.82);
+  assert.equal(sale.take, 80.82);
   assert.equal(sale.neto, -80.82);
+  assertReturnLegs(sale);
 });
 
 test('el pedido muestra boleta o factura si ya se emitió', () => {
