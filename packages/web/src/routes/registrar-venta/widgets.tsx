@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { CalendarDays, Check, Package } from 'lucide-react';
+import { CalendarDays, Check, Package, type LucideIcon } from 'lucide-react';
 import { es } from 'date-fns/locale';
 import { cn } from '../../lib/cn';
 import { formatSaleDate } from '../../lib/sale-summary';
@@ -13,6 +13,20 @@ export const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-butto
 
 export type StepState = 'done' | 'current' | 'invalid' | 'pending';
 
+const STEP_BADGE: Record<StepState, string> = {
+  done: 'bg-emerald-500/12 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-400',
+  current: 'bg-primary text-primary-foreground shadow-sm ring-4 ring-primary/15',
+  invalid: 'bg-destructive/10 text-destructive ring-1 ring-destructive/30',
+  pending: 'bg-muted text-muted-foreground ring-1 ring-border',
+};
+
+const STEP_LABEL: Record<StepState, string> = {
+  done: 'text-foreground/70',
+  current: 'font-semibold text-foreground',
+  invalid: 'font-medium text-destructive',
+  pending: 'text-muted-foreground',
+};
+
 export function SaleStepper<T extends string>({
   steps,
   current,
@@ -25,42 +39,43 @@ export function SaleStepper<T extends string>({
   onSelect: (id: T) => void;
 }) {
   return (
-    <nav aria-label="Pasos de la venta">
+    <nav aria-label="Pasos de la venta" className="rounded-md border border-border bg-card px-2 py-2 sm:px-3">
       <ol className="flex items-center">
         {steps.map((step, index) => {
           const state = stateOf(step.id);
           const reachable = state !== 'pending';
+          // El tramo se pinta cuando el paso anterior ya quedó atrás.
+          const filled = stateOf(steps[index - 1]?.id) !== 'pending' && state !== 'pending';
           return (
             <li key={step.id} className={cn('flex min-w-0 items-center', index > 0 && 'flex-1')}>
-              {index > 0 ? <span aria-hidden="true" className="mx-1 h-px min-w-2 flex-1 bg-border sm:mx-2" /> : null}
+              {index > 0 ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'mx-1 h-0.5 min-w-2 flex-1 rounded-full sm:mx-2',
+                    filled ? 'bg-emerald-500/40' : 'bg-border',
+                  )}
+                />
+              ) : null}
               <button
                 type="button"
                 disabled={!reachable}
                 aria-current={state === 'current' ? 'step' : undefined}
                 onClick={() => onSelect(step.id)}
                 className={cn(
-                  'flex h-9 shrink-0 items-center gap-2 rounded-md px-1.5 text-sm transition-colors',
-                  reachable ? 'cursor-pointer hover:bg-muted' : 'cursor-default',
+                  'flex h-10 shrink-0 items-center gap-2 rounded-md px-2 text-sm transition-colors',
+                  reachable ? 'cursor-pointer hover:bg-muted/60' : 'cursor-default',
                 )}
               >
                 <span
                   className={cn(
-                    'grid size-6 shrink-0 place-items-center rounded-md text-[11px] font-semibold tabular-nums',
-                    state === 'current' && 'bg-foreground text-background',
-                    state === 'done' && 'bg-muted text-foreground',
-                    state === 'invalid' && 'border border-destructive text-destructive',
-                    state === 'pending' && 'border border-border text-muted-foreground',
+                    'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold tabular-nums transition-colors',
+                    STEP_BADGE[state],
                   )}
                 >
-                  {state === 'done' ? <Check className="size-3.5" /> : index + 1}
+                  {state === 'done' ? <Check className="size-3.5" strokeWidth={3} /> : index + 1}
                 </span>
-                <span
-                  className={cn(
-                    'truncate',
-                    state === 'current' ? 'font-medium text-foreground' : 'hidden text-muted-foreground sm:inline',
-                    state === 'invalid' && 'sm:text-destructive',
-                  )}
-                >
+                <span className={cn('truncate', STEP_LABEL[state], state !== 'current' && 'hidden sm:inline')}>
                   {step.label}
                 </span>
               </button>
@@ -69,6 +84,37 @@ export function SaleStepper<T extends string>({
         })}
       </ol>
     </nav>
+  );
+}
+
+/** Superficie de un paso: franja de contexto arriba y el formulario debajo. */
+export function StepPanel({
+  title,
+  hint,
+  icon: Icon,
+  action,
+  children,
+}: {
+  title: string;
+  hint: string;
+  icon: LucideIcon;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-md border border-border bg-card">
+      <header className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3 sm:px-5">
+        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-background text-muted-foreground ring-1 ring-border">
+          <Icon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold leading-tight">{title}</h2>
+          <p className="truncate text-xs text-muted-foreground">{hint}</p>
+        </div>
+        {action}
+      </header>
+      <div className="px-4 py-5 sm:px-5">{children}</div>
+    </section>
   );
 }
 
@@ -145,7 +191,7 @@ export function Choice<T extends string>({
 }) {
   return (
     <div
-      className="inline-flex min-h-11 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1 sm:min-h-9"
+      className="inline-flex min-h-11 flex-wrap items-center gap-0.5 rounded-xl bg-muted p-1 ring-1 ring-border/70 sm:min-h-9"
       role="radiogroup"
       aria-label={ariaLabel}
     >
@@ -159,10 +205,10 @@ export function Choice<T extends string>({
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex h-9 cursor-pointer items-center rounded-lg px-3 text-sm font-medium transition-colors sm:h-7',
+              'inline-flex h-9 cursor-pointer items-center rounded-lg px-3 text-sm transition-colors sm:h-7',
               selected
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
+                ? 'bg-background font-semibold text-foreground shadow-sm ring-1 ring-border'
+                : 'font-medium text-muted-foreground hover:bg-background/60 hover:text-foreground',
             )}
           >
             {option.label}
@@ -229,7 +275,7 @@ export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
   const box = size === 'sm' ? 'size-9' : 'size-12';
   if (!src) {
     return (
-      <span className={cn('grid shrink-0 place-items-center rounded-md bg-muted', box)} aria-hidden="true">
+      <span className={cn('grid shrink-0 place-items-center rounded-md bg-muted ring-1 ring-border', box)} aria-hidden="true">
         <Package className="size-4 text-muted-foreground" />
       </span>
     );
@@ -242,7 +288,7 @@ export function ProductPhoto({ url, shopSku, sku, name, size = 'md' }: {
       loading="lazy"
       decoding="async"
       onError={() => setFailedCount((current) => current + 1)}
-      className={cn('shrink-0 rounded-md bg-muted object-cover', box)}
+      className={cn('shrink-0 rounded-md bg-muted object-cover ring-1 ring-border', box)}
     />
   );
 }

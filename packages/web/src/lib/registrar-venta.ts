@@ -4,6 +4,7 @@ import {
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
   OUT_OF_PERU_MESSAGE,
   isInPeru,
+  ownFleetOriginAddress,
   placeAtCoordinates,
   quoteOwnFleetShipping,
   saleTotals,
@@ -25,7 +26,7 @@ export const PAYMENT_METHODS = [
   { value: 'transferencia', label: 'Transferencia' },
 ] as const;
 
-export const PICKUP_ADDRESS = OWN_FLEET_ORIGIN.address;
+export const PICKUP_ADDRESS: string = OWN_FLEET_ORIGIN.address;
 
 export const DOCUMENT_REQUESTS = [
   { value: 'none', label: 'Ninguno' },
@@ -233,7 +234,7 @@ function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeo
   }
   if (input.delivery !== 'envio') return null;
   if (!input.shippingCarrier) {
-    return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
+    return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.';
   }
   if (!input.dropoffPlace) {
     return 'Busca el distrito de Lima metropolitana.';
@@ -326,7 +327,7 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
     shipping: {
       type: input.delivery,
       carrier: input.delivery === 'envio' ? input.shippingCarrier : undefined,
-      address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : PICKUP_ADDRESS,
+      address: input.delivery === 'envio' ? input.dropoffPlace?.label || '' : ownFleetOriginAddress(fleetConfig),
       district: input.delivery === 'envio' ? shippingDistrict : '',
       province: input.delivery === 'envio' ? shippingProvince : '',
       department: input.delivery === 'envio' ? shippingDepartment : '',
@@ -338,6 +339,7 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       distanceKm: shippingQuote?.distanceKm,
       zoneKind: shippingQuote?.zone.kind,
       zoneLabel: shippingQuote?.zoneLabel,
+      priceZone: shippingQuote?.priceZoneName,
     },
     metadata: {
       origin: 'manual_ui',

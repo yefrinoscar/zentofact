@@ -124,7 +124,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
     validateManualSale(validSale({ shippingCarrier: '' })),
-    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.',
+    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.',
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
@@ -143,7 +143,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -71.537,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -157,7 +157,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -77.208,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -185,7 +185,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -76.797,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -345,7 +345,7 @@ test('regresión: la venta manual siempre envía fecha de entrega al backend', (
   assert.equal(payload.metadata.deliveryDate, '2026-08-26');
 });
 
-test('Nosotros suma distrito y distancia al total de la venta', () => {
+test('Express cobra el precio de la zona, sin recargo por distancia', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -359,16 +359,17 @@ test('Nosotros suma distrito y distancia al total de la venta', () => {
   }));
 
   assert.equal(payload.subtotal, 250);
-  assert.equal(payload.shippingAmount, 18);
-  assert.equal(payload.total, 268);
+  assert.equal(payload.shippingAmount, 15);
+  assert.equal(payload.total, 265);
   assert.equal(payload.shipping.carrier, 'nosotros');
-  assert.equal(payload.shipping.districtAmount, 8);
-  assert.equal(payload.shipping.distanceAmount, 10);
+  assert.equal(payload.shipping.districtAmount, 15);
+  assert.equal(payload.shipping.distanceAmount, 0);
+  assert.equal(payload.shipping.priceZone, 'Media');
   assert.equal(payload.shipping.zoneKind, 'lima_district');
   assert.equal(payload.shipping.district, 'San Miguel');
 });
 
-test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () => {
+test('Express persiste el distrito del pin aunque la búsqueda diga otro', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -381,8 +382,9 @@ test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () =
     },
   }));
   assert.equal(payload.shipping.district, 'Surquillo');
-  assert.equal(payload.shipping.districtAmount, 12);
+  assert.equal(payload.shipping.districtAmount, 10);
   assert.equal(payload.shipping.zoneLabel, 'Surquillo');
+  assert.equal(payload.shipping.priceZone, 'Cerca');
 });
 
 test('un repartidor tercero no cobra envío propio', () => {

@@ -40,8 +40,8 @@ test('saleValidationField ubica el error en la sección correcta', () => {
   assert.equal(saleValidationField('Escribe el RUC de 11 dígitos.'), 'document');
   assert.equal(saleValidationField('Escribe la dirección fiscal.'), 'document');
   assert.equal(saleValidationField('Agrega al menos un producto.'), 'products');
-  assert.equal(saleValidationField('Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.'), 'delivery');
-  assert.equal(saleValidationField('Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.'), 'delivery');
+  assert.equal(saleValidationField('Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.'), 'delivery');
+  assert.equal(saleValidationField('Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.'), 'delivery');
 });
 
 test('applyOptimisticSale agrega la venta y sube hoy/mes', () => {

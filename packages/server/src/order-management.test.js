@@ -583,7 +583,7 @@ function manualSale(overrides = {}) {
 test('rechaza una venta manual Envío sin repartidor', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Express/,
   );
 });
 
@@ -599,7 +599,7 @@ test('rechaza una venta manual con pin fuera del Perú', async () => {
 test('rechaza una venta manual Envío con un repartidor que no está en la lista', async () => {
   await assert.rejects(
     () => ingestOrder(manualSale({ shipping: { type: 'envio', carrier: 'otro' } }), new IngestDb()),
-    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros/,
+    /El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Express/,
   );
 });
 
@@ -622,7 +622,7 @@ test('acepta una venta manual Envío con Marvisuar, Shaloom o Dinsides', async (
   assert.equal(result.order.shipping.carrier, 'shaloom');
 });
 
-test('Nosotros persiste distrito, distancia y el total con envío', async () => {
+test('Express persiste la zona, la distancia informativa y el total con envío', async () => {
   const result = await ingestOrder(manualSale({
     subtotal: 250,
     total: 250,
@@ -638,10 +638,13 @@ test('Nosotros persiste distrito, distancia y el total con envío', async () => 
   }), new IngestDb());
   assert.equal(result.created, true);
   assert.equal(result.order.shipping.carrier, 'nosotros');
-  assert.equal(result.order.shippingAmount, 18);
-  assert.equal(result.order.total, 268);
-  assert.equal(result.order.shipping.districtAmount, 8);
-  assert.equal(result.order.shipping.distanceAmount, 10);
+  assert.equal(result.order.shippingAmount, 15);
+  assert.equal(result.order.total, 265);
+  assert.equal(result.order.shipping.priceZone, 'Media');
+  assert.equal(result.order.shipping.districtAmount, 15);
+  // La distancia se guarda como referencia, no como cobro.
+  assert.equal(result.order.shipping.distanceAmount, 0);
+  assert.ok(result.order.shipping.distanceKm > 10);
 });
 
 test('regresión: una venta manual conserva la fecha de entrega (promisedShippingAt)', async () => {

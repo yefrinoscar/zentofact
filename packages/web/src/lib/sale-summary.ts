@@ -79,13 +79,17 @@ export function customerSummaryRows(input: ManualSaleInput): SummaryRow[] {
   ];
 }
 
-export function deliverySummaryRows(input: ManualSaleInput, nowKey = limaTodayKey()): SummaryRow[] {
+export function deliverySummaryRows(
+  input: ManualSaleInput,
+  nowKey = limaTodayKey(),
+  pickupAddress = PICKUP_ADDRESS,
+): SummaryRow[] {
   const date = { label: 'Fecha', value: formatSaleDate(input.deliveryDate, nowKey) };
   if (input.delivery === 'recojo') {
     return [
       { label: 'Modo', value: 'Recojo en tienda' },
       date,
-      { label: 'Tienda', value: PICKUP_ADDRESS },
+      { label: 'Tienda', value: pickupAddress },
     ];
   }
   const rows: SummaryRow[] = [
@@ -111,31 +115,41 @@ export function paymentSummaryRows(input: ManualSaleInput): SummaryRow[] {
   return rows;
 }
 
-export function saleSummaryGroups(input: ManualSaleInput, nowKey = limaTodayKey()): SummaryGroup[] {
+export function saleSummaryGroups(
+  input: ManualSaleInput,
+  nowKey = limaTodayKey(),
+  pickupAddress = PICKUP_ADDRESS,
+): SummaryGroup[] {
   return [
     { step: 'cliente', title: 'Cliente', rows: customerSummaryRows(input) },
-    { step: 'entrega', title: 'Entrega', rows: deliverySummaryRows(input, nowKey) },
+    { step: 'entrega', title: 'Entrega', rows: deliverySummaryRows(input, nowKey, pickupAddress) },
     { step: 'pago', title: 'Pago', rows: paymentSummaryRows(input) },
   ];
 }
 
-/** Desglose de cobro. El envío propio se abre en distrito y distancia para que el vendedor lo pueda explicar. */
+export function formatDistanceKm(distanceKm?: number | null) {
+  const km = Number(distanceKm);
+  return Number.isFinite(km) && km > 0 ? `${km.toFixed(1).replace('.', ',')} km` : '';
+}
+
+/** El envío propio se cobra una vez, por zona. Los kilómetros acompañan como referencia. */
+export function ownFleetShippingLabel(priceZoneName?: string | null, distanceKm?: number | null) {
+  const zone = String(priceZoneName || '').trim();
+  const detail = [zone ? `zona ${zone}` : '', formatDistanceKm(distanceKm)].filter(Boolean).join(', ');
+  return detail ? `Envío Express · ${detail}` : 'Envío Express';
+}
+
+/** Desglose de cobro: una sola línea de envío para no leerse como dos envíos. */
 export function saleTotalRows(
   totals: SaleTotals,
-  zoneLabel?: string | null,
+  priceZoneName?: string | null,
   distanceKm?: number | null,
 ): SummaryRow[] {
   const rows: SummaryRow[] = [{ label: 'Productos', value: formatSaleMoney(totals.products) }];
   if (totals.shipping > 0) {
-    const zone = String(zoneLabel || '').trim();
     rows.push({
-      label: zone ? `Envío · ${zone}` : 'Envío · distrito',
-      value: formatSaleMoney(totals.districtAmount),
-    });
-    const km = Number(distanceKm);
-    rows.push({
-      label: Number.isFinite(km) && km > 0 ? `Envío · ${km.toFixed(1).replace('.', ',')} km` : 'Envío · distancia',
-      value: formatSaleMoney(totals.distanceAmount),
+      label: ownFleetShippingLabel(priceZoneName, distanceKm),
+      value: formatSaleMoney(totals.shipping),
     });
   }
   return rows;

@@ -6,7 +6,9 @@ import {
   customerSummaryRows,
   deliverySummaryRows,
   documentSummary,
+  formatDistanceKm,
   formatSaleDate,
+  ownFleetShippingLabel,
   paymentSummaryRows,
   saleSummaryGroups,
   saleTotalRows,
@@ -142,20 +144,29 @@ test('el resumen agrupa cliente, entrega y pago apuntando a su paso del stepper'
   assert.deepEqual(groups.map((group) => group.title), ['Cliente', 'Entrega', 'Pago']);
 });
 
-test('el desglose de totales abre el envío propio en distrito y distancia', () => {
+test('el desglose de totales cobra el envío una sola vez', () => {
   const sinEnvio = saleTotalRows(saleTotals(250, null));
   assert.equal(sinEnvio.length, 1);
   assert.equal(sinEnvio[0].label, 'Productos');
   assert.equal(money(sinEnvio[0].value), 'S/ 250.00');
 
+  // El envío es una sola línea: el precio de la zona.
   const conEnvio = saleTotalRows(
-    saleTotals(250, { charged: true, districtAmount: 8, distanceAmount: 10 }),
-    'San Miguel',
-    4.32,
+    saleTotals(250, { charged: true, districtAmount: 15, distanceAmount: 0 }),
+    'Media',
+    12.19,
   );
+  assert.equal(conEnvio.length, 2);
   assert.equal(conEnvio[0].label, 'Productos');
-  assert.equal(conEnvio[1].label, 'Envío · San Miguel');
-  assert.equal(money(conEnvio[1].value), 'S/ 8.00');
-  assert.equal(conEnvio[2].label, 'Envío · 4,3 km');
-  assert.equal(money(conEnvio[2].value), 'S/ 10.00');
+  assert.equal(conEnvio[1].label, 'Envío Express · zona Media, 12,2 km');
+  assert.equal(money(conEnvio[1].value), 'S/ 15.00');
+});
+
+test('la etiqueta de envío propio nombra la zona y acompaña con los kilómetros', () => {
+  assert.equal(ownFleetShippingLabel('Lejos', 44.34), 'Envío Express · zona Lejos, 44,3 km');
+  assert.equal(ownFleetShippingLabel('Lejos', 0), 'Envío Express · zona Lejos');
+  assert.equal(ownFleetShippingLabel('', null), 'Envío Express');
+  assert.equal(formatDistanceKm(44.34), '44,3 km');
+  assert.equal(formatDistanceKm(0), '');
+  assert.equal(formatDistanceKm(null), '');
 });

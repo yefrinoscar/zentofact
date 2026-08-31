@@ -378,6 +378,7 @@ export default function RegistrarVenta() {
     setPaymentProof,
     attachProof,
     openProductPicker: () => setPickerOpen(true),
+    fleetOrigin: fleetConfig?.origin ?? null,
     shippingQuote,
     totals,
     goToStep,
@@ -396,27 +397,29 @@ export default function RegistrarVenta() {
       }}
       className="mx-auto max-w-3xl pb-[calc(7rem+env(safe-area-inset-bottom))] sm:pb-4"
     >
-      <div className="flex items-center gap-2 pb-4">
-        <Button
-          type="button"
-          variant="ghost"
-          className="-ml-2 h-9 shrink-0 cursor-pointer px-2"
-          onClick={() => navigate(afterSavePath)}
-        >
-          <ArrowLeft /> Volver
-        </Button>
-        <div className="min-w-0 flex-1">
-          <SaleStepper steps={SALE_STEPS} current={stepId} stateOf={stepStateOf} onSelect={goToStep} />
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            className="-ml-2 h-9 shrink-0 cursor-pointer px-2 text-muted-foreground hover:text-foreground"
+            onClick={() => navigate(afterSavePath)}
+          >
+            <ArrowLeft /> Volver
+          </Button>
+          <p className="ml-auto text-xs text-muted-foreground tabular-nums">
+            Paso {stepIndex + 1} de {SALE_STEPS.length}
+          </p>
         </div>
-      </div>
 
-      {setupError && (
-        <p className="mb-6 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-          {setupError}
-        </p>
-      )}
+        <SaleStepper steps={SALE_STEPS} current={stepId} stateOf={stepStateOf} onSelect={goToStep} />
 
-      <div className="border-t border-border pt-6">
+        {setupError && (
+          <p className="rounded-md bg-destructive/5 px-3 py-2.5 text-sm font-medium text-destructive ring-1 ring-destructive/20">
+            {setupError}
+          </p>
+        )}
+
         {stepId === 'cliente' && <ClienteStep view={view} />}
         {stepId === 'productos' && <ProductosStep view={view} />}
         {stepId === 'entrega' && <EntregaStep view={view} />}
@@ -424,24 +427,29 @@ export default function RegistrarVenta() {
         {stepId === 'resumen' && (
           <ResumenStep view={view} blockingMessage={blockingMessage} blockingStep={blockingStep} />
         )}
-        {stepError ? <div className="pt-4"><FieldHint message={stepError} /></div> : null}
+
+        {stepError ? (
+          <p className="rounded-md bg-destructive/5 px-3 py-2.5 text-sm font-medium text-destructive ring-1 ring-destructive/20">
+            {stepError}
+          </p>
+        ) : null}
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:mt-6 sm:bg-transparent sm:px-0 sm:py-0 sm:pt-6 sm:backdrop-blur-none">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/90 sm:static sm:z-auto sm:mt-3 sm:rounded-md sm:border sm:border-border sm:bg-card sm:px-4 sm:py-3 sm:backdrop-blur-none">
         <div className="mx-auto flex max-w-3xl items-center gap-3 pb-[env(safe-area-inset-bottom)]">
           {/* El resumen ya muestra el desglose completo; aquí solo se repite mientras se arma la venta. */}
           {!isLastStep && totals.total > 0 ? (
             <div className="min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 {totals.shipping > 0 ? `Productos ${formatSaleMoney(totals.products)} · Envío ${formatSaleMoney(totals.shipping)}` : 'Total'}
               </p>
-              <p className="truncate text-xl font-semibold tabular-nums">{formatSaleMoney(totals.total)}</p>
+              <p className="truncate text-xl font-semibold tracking-tight tabular-nums">{formatSaleMoney(totals.total)}</p>
             </div>
           ) : (
             <div className="flex-1" aria-hidden="true" />
           )}
           {stepIndex > 0 ? (
-            <Button type="button" variant="ghost" className="h-11 shrink-0 cursor-pointer sm:h-9" onClick={goBack}>
+            <Button type="button" variant="outline" className="h-11 shrink-0 cursor-pointer sm:h-9" onClick={goBack}>
               Atrás
             </Button>
           ) : null}
