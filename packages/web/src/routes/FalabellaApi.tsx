@@ -1171,7 +1171,7 @@ export default function FalabellaApi() {
       review: 0,
       reviewAmount: 0,
       reviewSalesDocumentAmount: 0,
-      boletaCreditNoteAmount: 0,
+      creditNoteAmount: 0,
       canceledOrders: 0,
       returnedOrders: 0,
     };
@@ -1211,8 +1211,8 @@ export default function FalabellaApi() {
         }
       }
 
-      if (row.invoiceKind === 'BOLETA' && row.creditNoteId) {
-        base.boletaCreditNoteAmount += row.creditNoteAmount;
+      if (row.creditNoteId) {
+        base.creditNoteAmount += row.creditNoteAmount;
       }
 
       if (row.bucket === 'ready_to_invoice') {
@@ -2686,22 +2686,22 @@ export default function FalabellaApi() {
                     </p>
                   )}
                   <p className="mt-2 text-5xl font-semibold tracking-normal text-foreground">
-                    {money(flowStats.totalBoletaAmount)}
+                    {money(flowStats.totalBoletaAmount + flowStats.totalFacturaAmount)}
                   </p>
                   <p className="mt-1 text-xs text-red-700">
-                    {money(flowStats.boletaCreditNoteAmount)} en notas de crédito
+                    {money(flowStats.creditNoteAmount)} en notas de crédito
                   </p>
                   <div className="mt-2 grid max-w-xs grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-xs font-medium text-foreground/70">Emitido</p>
                       <p className="font-medium text-foreground">
-                        {money(flowStats.boletaWithDocumentAmount)}
+                        {money(flowStats.boletaWithDocumentAmount + flowStats.facturaWithDocumentAmount)}
                       </p>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Pendiente</p>
                       <p className="text-muted-foreground">
-                        {money(flowStats.boletaWithoutDocumentAmount)}
+                        {money(flowStats.boletaWithoutDocumentAmount + flowStats.facturaWithoutDocumentAmount)}
                       </p>
                     </div>
                   </div>
