@@ -252,14 +252,18 @@ export function SettlementKpiStrip({ summary, sales }: {
   const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
-    <div className="grid grid-cols-1 items-start gap-x-10 gap-y-8 sm:grid-cols-3">
+    <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:gap-10">
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
           ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
         ].filter(Boolean).join(', ');
         return (
-          <div key={chart.id} aria-label={caption} className="min-w-0">
+          <div
+            key={chart.id}
+            aria-label={caption}
+            className={chart.kind === 'compare' ? 'min-w-0 flex-1' : 'shrink-0'}
+          >
             <MetricHeader hero={chart.hero} items={chart.items} hint={chart.hint} />
             {chart.kind === 'compare' ? (
               <MultiSeriesChart
@@ -274,12 +278,10 @@ export function SettlementKpiStrip({ summary, sales }: {
               />
             ) : null}
             {chart.kind === 'pie' ? (
-              <div className="sm:flex sm:justify-center">
-                <NetoPie
-                  paid={Number(summary.paidNeto || 0)}
-                  pending={Number(summary.pendingNeto || 0)}
-                />
-              </div>
+              <NetoPie
+                paid={Number(summary.paidNeto || 0)}
+                pending={Number(summary.pendingNeto || 0)}
+              />
             ) : null}
           </div>
         );
