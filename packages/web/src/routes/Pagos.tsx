@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, CheckCircle2, Copy, Info, Search, Upload } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Copy, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
@@ -12,6 +12,7 @@ import {
   documentLabel,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
+  SUCCESS_NOTICE_MS,
   importSummary,
   money,
   paymentStatusLabel,
@@ -112,11 +113,13 @@ function SettlementAlert({
   title,
   detail,
   action,
+  onDismiss,
 }: {
   tone: 'ok' | 'warn' | 'error';
   title: string;
   detail?: string;
   action?: { label: string; onClick: () => void; busy?: boolean };
+  onDismiss?: () => void;
 }) {
   const Icon = tone === 'error' ? AlertCircle : tone === 'ok' ? CheckCircle2 : Info;
   return (
@@ -126,17 +129,32 @@ function SettlementAlert({
       className={cn(
         tone === 'warn' && 'bg-amber-50 dark:bg-amber-950',
         tone === 'ok' && 'bg-emerald-50 dark:bg-emerald-950',
+        action ? 'pr-36' : 'pr-14',
       )}
     >
       <Icon />
       <AlertTitle>{title}</AlertTitle>
       {detail ? <AlertDescription>{detail}</AlertDescription> : null}
-      {action ? (
-        <AlertAction>
-          <Button type="button" size="sm" variant="outline" disabled={action.busy} onClick={action.onClick}>
-            {action.busy ? <WorkLoaderMark data-icon="inline-start" /> : null}
-            {action.busy ? 'Cruzando' : action.label}
-          </Button>
+      {onDismiss || action ? (
+        <AlertAction className="flex items-center gap-1">
+          {action ? (
+            <Button type="button" size="sm" variant="outline" disabled={action.busy} onClick={action.onClick}>
+              {action.busy ? <WorkLoaderMark data-icon="inline-start" /> : null}
+              {action.busy ? 'Cruzando' : action.label}
+            </Button>
+          ) : null}
+          {onDismiss ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              className="size-8 text-muted-foreground hover:text-foreground"
+              aria-label="Cerrar aviso"
+              onClick={onDismiss}
+            >
+              <X />
+            </Button>
+          ) : null}
         </AlertAction>
       ) : null}
     </Alert>
@@ -397,7 +415,29 @@ export default function Pagos() {
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
   const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reading = Boolean(readingName);
+
+  function clearNoticeTimer() {
+    if (noticeTimer.current == null) return;
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = null;
+  }
+
+  function dismissNotice() {
+    clearNoticeTimer();
+    setNotice(null);
+  }
+
+  function showNotice(next: PagosNotice) {
+    clearNoticeTimer();
+    setNotice(next);
+    if (next.tone !== 'ok') return;
+    noticeTimer.current = setTimeout(() => {
+      noticeTimer.current = null;
+      setNotice(null);
+    }, SUCCESS_NOTICE_MS);
+  }
 
   const salesQuery = useQuery({
     queryKey: ['pagos-sales', search, paid],
@@ -441,7 +481,7 @@ export default function Pagos() {
     onSuccess: (result) => {
       if (result.reused) {
         const copy = reusedImportNotice(result);
-        setNotice({
+        showNotice({
           tone: 'warn',
           title: copy.title,
           detail: copy.detail,
@@ -449,7 +489,7 @@ export default function Pagos() {
         });
         return;
       }
-      setNotice({
+      showNotice({
         tone: 'ok',
         title: result.replaced ? 'Se volvió a cruzar' : 'Archivo cruzado',
         detail: importSummary({ ...result, reused: false, replaced: false }),
@@ -457,7 +497,7 @@ export default function Pagos() {
     },
     onError: (nextError) => {
       const copy = csvReadError((nextError as Error).message);
-      setNotice({ tone: 'error', title: copy.title, detail: copy.detail });
+      showNotice({ tone: 'error', title: copy.title, detail: copy.detail });
     },
     onSettled: () => {
       setReadingName('');
@@ -603,7 +643,7 @@ export default function Pagos() {
             const file = event.target.files?.[0];
             event.target.value = '';
             if (!file) return;
-            setNotice(null);
+            dismissNotice();
             setReadingName(file.name);
             upload.mutate({ file, replace: false });
           }}
@@ -627,6 +667,7 @@ export default function Pagos() {
           tone={notice.tone}
           title={notice.title}
           detail={notice.detail}
+          onDismiss={dismissNotice}
           action={notice.canReplace ? {
             label: 'Reemplazar',
             busy: upload.isPending,

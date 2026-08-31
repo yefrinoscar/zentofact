@@ -64,11 +64,13 @@ export function shortImportFilename(name: string | null | undefined) {
   return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.(csv|xlsx|xls|xlsm)$|$)/i, '') || stripped || raw;
 }
 
+export const SUCCESS_NOTICE_MS = 5000;
+
 export function csvReadError(message: string | null | undefined) {
   const title = String(message || 'No se pudo leer el archivo.').trim() || 'No se pudo leer el archivo.';
   if (/vacío/i.test(title)) return { title, detail: 'Elige un archivo de Falabella.' };
   if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
-  if (/cabecer|columna|hoja/i.test(title)) return { title, detail: 'Usa el NewReportTransaction de Falabella.' };
+  if (/cabecer|columna|hoja/i.test(title)) return { title, detail: '' };
   if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
   return { title, detail: 'Revisa el archivo y vuelve a subir.' };
 }
