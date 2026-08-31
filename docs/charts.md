@@ -1,5 +1,7 @@
 # Charts
 
-Pagos: Facturado/Neto en líneas (gris y verde), Se queda en waffle de 100, Pagado/Pendiente en áreas apiladas.
+Pagos: Facturado/Neto en líneas (el tiempo), Se queda en waffle de 100, Pagado/Pendiente en barra partida del neto.
 
-Comisión, logística, pagado y pendiente usan el azul principal, en dos tonos. Facturado y Neto del primer chart no.
+La serie en el tiempo queda en el primer chart. Pagado y Pendiente son un corte: cuánto del neto ya llegó y cuánto falta.
+
+Comisión, logística, pagado y pendiente usan el azul principal, dos tonos. Facturado y Neto del primero no.
