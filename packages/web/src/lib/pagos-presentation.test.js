@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, documentLabel, formatElapsed, formatLivelineDay, importSummary, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, paymentStatusLabel, remainingHoldMs, repairProductText, reusedImportNotice, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
-  assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este CSV ya está cruzado.');
+  assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
   assert.equal(
     importSummary({
       reused: true,
       filename: 'NewReportTransaction_FAPE-SCDE75A-20260820-PEN.csv',
       importedAt: '2026-08-27T12:00:00.000Z',
     }),
-    'Este CSV ya está cruzado · FAPE-SCDE75A-20260820-PEN.csv · 27 ago.',
+    'Este archivo ya está cruzado · FAPE-SCDE75A-20260820-PEN.csv · 27 ago.',
   );
   assert.equal(importSummary({ reused: false, matchedCount: 2, unmatchedCount: 3, paidSalesCount: 1 }), '2 cruzadas · 3 sin cruzar · 1 pagadas');
   assert.equal(
@@ -27,7 +27,7 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
       filename: 'NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.csv',
       importedAt: '2026-08-27T12:00:00.000Z',
     }),
-    { title: 'Este CSV ya está cruzado.', detail: 'FAPE-SCDE75A-20260820-PEN.csv · 27 ago.' },
+    { title: 'Este archivo ya está cruzado.', detail: 'FAPE-SCDE75A-20260820-PEN.csv · 27 ago.' },
   );
   assert.deepEqual(csvReadError('El CSV está vacío.'), {
     title: 'El CSV está vacío.',
@@ -214,6 +214,27 @@ test('decodifica un CSV Falabella en Windows-1252 cuando UTF-8 queda ilegible', 
   const decoded = decodeSettlementCsv(bytes);
   assert.match(decoded, /creación/);
   assert.match(decoded, /Estado de pago/);
+});
+
+test('pasa un Excel de liquidación a CSV y reconoce la extensión', async () => {
+  const { utils, write } = await import('xlsx');
+  const sheet = utils.aoa_to_sheet([
+    ['Fecha creación de la orden', 'N° del orden', 'Estado de pago', 'Monto con IVA', 'Tipo de transacción'],
+    ['2026-08-19', '3248910865', 'Pagado', '8.99', 'Pago por precio del producto'],
+  ]);
+  const workbook = utils.book_new();
+  utils.book_append_sheet(workbook, sheet, 'Reporte');
+  const bytes = write(workbook, { type: 'array', bookType: 'xlsx' });
+  const csv = decodeSettlementSpreadsheet(bytes);
+  assert.match(csv, /del orden/);
+  assert.match(csv, /Estado de pago/);
+  assert.match(csv, /3248910865/);
+  assert.equal(isSettlementSpreadsheet('NewReportTransaction.xlsx'), true);
+  assert.equal(isSettlementSpreadsheet('estado.csv'), false);
+  assert.equal(
+    shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.xlsx'),
+    'FAPE-SCDE75A-20260820-PEN.xlsx',
+  );
 });
 
 test('las cabeceras de dinero caben en título y una explicación', () => {

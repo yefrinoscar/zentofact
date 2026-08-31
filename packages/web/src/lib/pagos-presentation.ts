@@ -1,3 +1,5 @@
+import { read as readWorkbook, utils as xlsxUtils } from 'xlsx';
+
 export const money = new Intl.NumberFormat('es-PE', {
   style: 'currency',
   currency: 'PEN',
@@ -44,10 +46,10 @@ export function importSummary(item: {
   if (item.reused) {
     const file = shortImportFilename(item.filename);
     const when = saleDateLabel(item.importedAt);
-    if (file && when) return `Este CSV ya está cruzado · ${file} · ${when}`;
-    if (file) return `Este CSV ya está cruzado · ${file}`;
-    if (when) return `Este CSV ya está cruzado · ${when}`;
-    return 'Este CSV ya está cruzado.';
+    if (file && when) return `Este archivo ya está cruzado · ${file} · ${when}`;
+    if (file) return `Este archivo ya está cruzado · ${file}`;
+    if (when) return `Este archivo ya está cruzado · ${when}`;
+    return 'Este archivo ya está cruzado.';
   }
   if (item.replaced) {
     const cruzadas = `${item.matchedCount} cruzadas · ${item.unmatchedCount} sin cruzar · ${item.paidSalesCount || 0} pagadas`;
@@ -59,14 +61,14 @@ export function importSummary(item: {
 export function shortImportFilename(name: string | null | undefined) {
   const raw = String(name || '').trim();
   const stripped = raw.replace(/^NewReportTransaction_/i, '');
-  return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.csv$|$)/i, '') || stripped || raw;
+  return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.(csv|xlsx|xls|xlsm)$|$)/i, '') || stripped || raw;
 }
 
 export function csvReadError(message: string | null | undefined) {
-  const title = String(message || 'No se pudo leer el CSV.').trim() || 'No se pudo leer el CSV.';
+  const title = String(message || 'No se pudo leer el archivo.').trim() || 'No se pudo leer el archivo.';
   if (/vacío/i.test(title)) return { title, detail: 'Elige un archivo de Falabella.' };
   if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
-  if (/cabecer|columna/i.test(title)) return { title, detail: 'Usa el NewReportTransaction de Falabella.' };
+  if (/cabecer|columna|hoja/i.test(title)) return { title, detail: 'Usa el NewReportTransaction de Falabella.' };
   if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
   return { title, detail: 'Revisa el archivo y vuelve a subir.' };
 }
@@ -78,7 +80,7 @@ export function reusedImportNotice(item: {
   const file = shortImportFilename(item?.filename);
   const when = saleDateLabel(item?.importedAt);
   return {
-    title: 'Este CSV ya está cruzado.',
+    title: 'Este archivo ya está cruzado.',
     detail: [file, when].filter(Boolean).join(' · '),
   };
 }
@@ -191,6 +193,45 @@ export function decodeSettlementCsv(buffer: ArrayBuffer | Uint8Array) {
     return latin;
   }
   return utf8;
+}
+
+export function isSettlementSpreadsheet(filename: string, mime = '') {
+  const name = String(filename || '').toLowerCase();
+  const type = String(mime || '').toLowerCase();
+  if (name.endsWith('.csv')) return false;
+  return /\.(xlsx|xls|xlsm)$/.test(name)
+    || type.includes('spreadsheetml')
+    || (type.includes('excel') && !type.includes('csv'));
+}
+
+export function decodeSettlementSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
+  const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+  const workbook = readWorkbook(bytes, { type: 'array', cellDates: true });
+  const names = workbook.SheetNames || [];
+  if (!names.length) throw new Error('El Excel no tiene hojas.');
+  const sheetName = names.find((name) => {
+    const preview = xlsxUtils.sheet_to_csv(workbook.Sheets[name], { FS: ',', RS: '\n' });
+    return headerLooksLikeSettlement(preview);
+  }) || names[0];
+  const csv = xlsxUtils.sheet_to_csv(workbook.Sheets[sheetName], {
+    FS: ',',
+    RS: '\n',
+    dateNF: 'yyyy-mm-dd',
+  });
+  if (!String(csv || '').trim()) throw new Error('El Excel está vacío.');
+  return csv;
+}
+
+export async function readSettlementUpload(file: {
+  name?: string;
+  type?: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}) {
+  const buffer = await file.arrayBuffer();
+  if (isSettlementSpreadsheet(file.name || '', file.type || '')) {
+    return decodeSettlementSpreadsheet(buffer);
+  }
+  return decodeSettlementCsv(buffer);
 }
 
 export function repairProductText(value: string | null | undefined) {
