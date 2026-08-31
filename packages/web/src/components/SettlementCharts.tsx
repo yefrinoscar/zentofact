@@ -176,7 +176,7 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
   ].filter((item) => item.amount > 0);
   return (
     <div
-      className="mt-2"
+      className="mt-2 flex w-full justify-center"
       role="img"
       aria-label={`Neto ${money.format(total)}: pagado ${percentLabel(paidShare)}, pendiente ${percentLabel(pendingShare)}`}
     >
