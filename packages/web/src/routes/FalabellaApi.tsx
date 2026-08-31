@@ -459,6 +459,7 @@ type InvoiceFlowRow = {
   total: number;
   hasDocument: boolean;
   hasSalesDocument: boolean;
+  salesDocumentAmount: number;
   bucket: InvoiceFlowBucket;
   actionLabel: string;
   documentLabel: string;
@@ -532,6 +533,10 @@ function normalizeStatusKey(order: FalabellaOrder) {
 
 function orderTotal(order: FalabellaOrder) {
   const value = order.GrandTotal ?? order.Price ?? 0;
+  return numericAmount(value);
+}
+
+function numericAmount(value: unknown) {
   const parsed = Number(String(value).replace(/,/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -1165,7 +1170,8 @@ export default function FalabellaApi() {
       notReadyAmount: 0,
       review: 0,
       reviewAmount: 0,
-      creditNoteAmount: 0,
+      reviewSalesDocumentAmount: 0,
+      boletaCreditNoteAmount: 0,
       canceledOrders: 0,
       returnedOrders: 0,
     };
@@ -1205,8 +1211,8 @@ export default function FalabellaApi() {
         }
       }
 
-      if (row.creditNoteId) {
-        base.creditNoteAmount += row.creditNoteAmount;
+      if (row.invoiceKind === 'BOLETA' && row.creditNoteId) {
+        base.boletaCreditNoteAmount += row.creditNoteAmount;
       }
 
       if (row.bucket === 'ready_to_invoice') {
@@ -1221,6 +1227,9 @@ export default function FalabellaApi() {
       } else {
         base.review += 1;
         base.reviewAmount += row.total;
+        if (row.hasSalesDocument) {
+          base.reviewSalesDocumentAmount += row.salesDocumentAmount;
+        }
       }
     }
 
@@ -2127,6 +2136,11 @@ export default function FalabellaApi() {
           || existingOption?.boletaId
           || existingOption?.facturaId,
         );
+        const salesDocumentAmount = resolved?.boleta?.id
+          ? numericAmount(resolved.boleta.total)
+          : resolved?.factura?.id
+            ? numericAmount(resolved.factura.total)
+            : 0;
         const documentLabel = existingOption?.invoiceNumber
           || resolved?.boleta?.numeroCompleto
           || resolved?.creditNote?.numeroCompleto
@@ -2176,6 +2190,7 @@ export default function FalabellaApi() {
           total: orderTotal(order),
           hasDocument,
           hasSalesDocument,
+          salesDocumentAmount,
           bucket,
           actionLabel,
           documentLabel,
@@ -2671,22 +2686,22 @@ export default function FalabellaApi() {
                     </p>
                   )}
                   <p className="mt-2 text-5xl font-semibold tracking-normal text-foreground">
-                    {money(flowStats.totalBoletaAmount + flowStats.totalFacturaAmount)}
+                    {money(flowStats.totalBoletaAmount)}
                   </p>
                   <p className="mt-1 text-xs text-red-700">
-                    {money(flowStats.creditNoteAmount)} en notas de crédito
+                    {money(flowStats.boletaCreditNoteAmount)} en notas de crédito
                   </p>
                   <div className="mt-2 grid max-w-xs grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-xs font-medium text-foreground/70">Emitido</p>
                       <p className="font-medium text-foreground">
-                        {money(flowStats.boletaWithDocumentAmount + flowStats.facturaWithDocumentAmount)}
+                        {money(flowStats.boletaWithDocumentAmount)}
                       </p>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Pendiente</p>
                       <p className="text-muted-foreground">
-                        {money(flowStats.boletaWithoutDocumentAmount + flowStats.facturaWithoutDocumentAmount)}
+                        {money(flowStats.boletaWithoutDocumentAmount)}
                       </p>
                     </div>
                   </div>
@@ -2778,7 +2793,20 @@ export default function FalabellaApi() {
                           {tab.count}
                         </span>
                       </div>
-                      <p className="mt-2 text-xs font-medium opacity-80">{money(tab.amount)}</p>
+                      {tab.value === 'review' ? (
+                        <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+                          <div>
+                            <p className="opacity-70">Total en revisión</p>
+                            <p className="font-medium">{money(tab.amount)}</p>
+                          </div>
+                          <div>
+                            <p className="opacity-70">Con documento</p>
+                            <p className="font-medium">{money(flowStats.reviewSalesDocumentAmount)}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs font-medium opacity-80">{money(tab.amount)}</p>
+                      )}
                     </button>
                   );
                 })}
