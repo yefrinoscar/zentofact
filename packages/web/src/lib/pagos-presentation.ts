@@ -26,11 +26,46 @@ export function unmatchedReasonLabel(reason: string | null | undefined) {
   return 'Sin match único';
 }
 
-export function paymentStatusLabel(status: string | null | undefined) {
+export type PaymentStatusTone = 'paid' | 'unpaid' | 'scheduled' | 'returned' | 'unknown';
+
+export function paymentStatusTone(status: string | null | undefined, returned?: boolean): PaymentStatusTone {
+  if (returned) return 'returned';
   const value = String(status || '').trim().toLowerCase();
-  if (value === 'pagado' || value === 'paid') return 'Pagado';
-  if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'No pagado';
-  return status || '—';
+  if (value.includes('devol')) return 'returned';
+  if (value === 'pagado' || value === 'paid') return 'paid';
+  if (value === 'no pagado' || value === 'unpaid' || value === 'not paid') return 'unpaid';
+  if (value.includes('programado')) return 'scheduled';
+  return 'unknown';
+}
+
+export function paymentStatusLabel(status: string | null | undefined, returned?: boolean) {
+  const tone = paymentStatusTone(status, returned);
+  if (tone === 'returned') return 'Devolución';
+  if (tone === 'paid') return 'Pagado';
+  if (tone === 'unpaid') return 'No pagado';
+  if (tone === 'scheduled') return 'Programado';
+  return String(status || '').trim() || '—';
+}
+
+export function teLlegaHint(sale: {
+  returned?: boolean | null;
+  neto?: number | null;
+  shipping?: number | null;
+} | null | undefined) {
+  if (sale?.returned) {
+    if (Number(sale.shipping || 0) > 0) return 'En la devolución suele quedarse la logística.';
+    return 'Descontaron el producto y te devolvieron la comisión.';
+  }
+  if (Number(sale?.neto || 0) < 0) return 'Falabella cobró más que el precio.';
+  return 'Lo que te depositan.';
+}
+
+export function settlementPair(charged?: number | null, reversed?: number | null) {
+  const up = Math.round(Number(charged || 0) * 100) / 100;
+  const down = Math.round(Number(reversed || 0) * 100) / 100;
+  if (up && down) return { amount: up, reversal: down };
+  if (down && !up) return { amount: down, reversal: null as number | null };
+  return { amount: up, reversal: null as number | null };
 }
 
 export function importSummary(item: {

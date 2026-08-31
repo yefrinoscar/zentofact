@@ -8,6 +8,7 @@ import {
   lineFingerprint,
   parseMoney,
   parseDateKey,
+  isPaidSettlementStatus,
   parsePaymentStatus,
   parseSettlementCsv,
   repairSettlementText,
@@ -203,6 +204,11 @@ test('clasifica venta comisión y otros cobros', () => {
   assert.equal(repairSettlementText('Cobro por comisi√≥n por venta'), 'Cobro por comisión por venta');
   assert.equal(parsePaymentStatus('Pagado'), true);
   assert.equal(parsePaymentStatus('No Pagado'), false);
+  assert.equal(parsePaymentStatus('Programado para 20/08/2026'), false);
+  assert.equal(parsePaymentStatus('Programado para procesamiento'), false);
+  assert.equal(isPaidSettlementStatus('Pagado'), true);
+  assert.equal(isPaidSettlementStatus('Programado para 20/08/2026'), false);
+  assert.equal(isPaidSettlementStatus('No Pagado'), false);
 });
 
 test('parsea un estado de cuenta y no duplica la huella al reimportar la misma línea', () => {

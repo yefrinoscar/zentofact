@@ -157,7 +157,7 @@ export function OrdersVirtualTable<TData>({
                         role="cell"
                         style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
                         className={cn(
-                          'flex shrink-0 items-center text-sm',
+                          'flex shrink-0 items-center overflow-hidden text-sm',
                           compact ? 'px-2.5 py-0.5' : 'px-3 py-2',
                           edgeClass(cell.column.id, false),
                           alignClass(meta.align, cell.column.id),
