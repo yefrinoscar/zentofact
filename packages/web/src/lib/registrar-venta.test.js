@@ -124,7 +124,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
     validateManualSale(validSale({ shippingCarrier: '' })),
-    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.',
+    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.',
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
@@ -143,7 +143,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -71.537,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -157,7 +157,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -77.208,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -185,7 +185,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -76.797,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -345,7 +345,7 @@ test('regresión: la venta manual siempre envía fecha de entrega al backend', (
   assert.equal(payload.metadata.deliveryDate, '2026-08-26');
 });
 
-test('Nosotros suma distrito y distancia al total de la venta', () => {
+test('Express suma distrito y distancia al total de la venta', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -368,7 +368,7 @@ test('Nosotros suma distrito y distancia al total de la venta', () => {
   assert.equal(payload.shipping.district, 'San Miguel');
 });
 
-test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () => {
+test('Express persiste el distrito del pin aunque la búsqueda diga otro', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {

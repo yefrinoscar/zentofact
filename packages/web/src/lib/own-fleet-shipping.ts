@@ -14,8 +14,8 @@ export const DISTANCE_TIERS = [
 
 export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;
-export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
-export const OWN_FLEET_COVERAGE_HINT = 'Movilidad propia. Solo Lima metropolitana.';
+export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
+export const OWN_FLEET_COVERAGE_HINT = 'Reparto propio. Solo Lima metropolitana.';
 export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
 
 /** Caja que cubre el territorio peruano. Un país vecino puede colarse; el país de Google lo corta. */

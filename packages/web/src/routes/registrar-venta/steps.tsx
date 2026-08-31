@@ -1,4 +1,4 @@
-import { ImagePlus, Package, Plus, Search, Trash2, X } from 'lucide-react';
+import { ImagePlus, Package, Plus, Search, Trash2, TriangleAlert, Truck, User, Wallet, X } from 'lucide-react';
 import {
   BOLETA_IDENTITIES,
   DOCUMENT_REQUESTS,
@@ -14,13 +14,13 @@ import {
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
 } from '../../lib/own-fleet-shipping';
 import { SHIPPING_CARRIERS } from '../../lib/shipping-carrier';
-import { formatSaleMoney } from '../../lib/sale-summary';
+import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
 import { cn } from '../../lib/cn';
 import { PlacePicker } from '../../components/PlacePicker';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
-import { Choice, DeliveryDatePicker, FieldRow, NUMBER_INPUT, ProductPhoto } from './widgets';
+import { Choice, DeliveryDatePicker, FieldRow, NUMBER_INPUT, ProductPhoto, StepPanel } from './widgets';
 import type { SaleFormView } from './view';
 
 function selectDocument(view: SaleFormView, value: DocumentRequest) {
@@ -102,7 +102,8 @@ function DocumentFields({ view }: { view: SaleFormView }) {
 
 export function ClienteStep({ view }: { view: SaleFormView }) {
   return (
-    <div className="space-y-4">
+    <StepPanel title="Cliente" hint="Quién compra y qué comprobante pide." icon={User}>
+      <div className="space-y-4">
       <FieldRow label="Origen">
         <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen de la venta" />
       </FieldRow>
@@ -137,33 +138,40 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
         ) : null}
       </FieldRow>
       <DocumentFields view={view} />
-    </div>
+      </div>
+    </StepPanel>
   );
 }
 
 export function ProductosStep({ view }: { view: SaleFormView }) {
   if (!view.lines.length) {
     return (
-      <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <Package className="size-8 text-muted-foreground/50" />
-        <p className="text-sm font-medium">Todavía no hay productos</p>
-        <p className="text-sm text-muted-foreground">Busca en el catálogo y agrega lo que lleva el cliente.</p>
-        <Button type="button" variant="outline" className="mt-2 h-9 cursor-pointer" onClick={view.openProductPicker}>
-          <Search /> Buscar producto
-        </Button>
-      </div>
+      <StepPanel title="Productos" hint="Lo que lleva el cliente." icon={Package}>
+        <div className="flex flex-col items-center gap-2 py-10 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-muted ring-1 ring-border">
+            <Package className="size-5 text-muted-foreground" />
+          </span>
+          <p className="mt-1 text-sm font-medium">Todavía no hay productos</p>
+          <p className="text-sm text-muted-foreground">Busca en el catálogo y agrega lo que lleva.</p>
+          <Button type="button" variant="outline" className="mt-2 h-9 cursor-pointer" onClick={view.openProductPicker}>
+            <Search /> Buscar producto
+          </Button>
+        </div>
+      </StepPanel>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">Ajusta el precio si es por mayor.</p>
-        <Button type="button" variant="outline" className="h-9 shrink-0 cursor-pointer" onClick={view.openProductPicker}>
+    <StepPanel
+      title="Productos"
+      hint="Ajusta el precio si es por mayor."
+      icon={Package}
+      action={(
+        <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 cursor-pointer" onClick={view.openProductPicker}>
           <Plus /> Agregar
         </Button>
-      </div>
-
+      )}
+    >
       <ul className="divide-y divide-border">
         {view.lines.map((line, index) => (
           <li key={line.id} className={cn('py-3', index === 0 && 'pt-0')}>
@@ -221,13 +229,14 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
           </li>
         ))}
       </ul>
-    </div>
+    </StepPanel>
   );
 }
 
 export function EntregaStep({ view }: { view: SaleFormView }) {
   return (
-    <div className="space-y-4">
+    <StepPanel title="Entrega" hint="Cómo y cuándo lo recibe." icon={Truck}>
+      <div className="space-y-4">
       <FieldRow label="Cómo">
         <div className="flex flex-wrap items-center gap-2">
           <Choice
@@ -265,21 +274,24 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
               ariaLabel="Reparto"
             />
             {view.shippingCarrier === OWN_FLEET_CARRIER && (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {OWN_FLEET_COVERAGE_HINT}
-                {view.isAdmin ? (
-                  <>
-                    {' '}
-                    <button
-                      type="button"
-                      className="cursor-pointer underline-offset-2 hover:underline"
-                      onClick={() => view.navigate('/orders/envio')}
-                    >
-                      Distritos
-                    </button>
-                  </>
-                ) : null}
-              </p>
+              <div className="mt-2 flex items-start gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-amber-500/30 dark:text-amber-300">
+                <TriangleAlert className="mt-px size-3.5 shrink-0" />
+                <p className="min-w-0">
+                  {OWN_FLEET_COVERAGE_HINT}
+                  {view.isAdmin ? (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="cursor-pointer underline underline-offset-2"
+                        onClick={() => view.navigate('/orders/envio')}
+                      >
+                        Ver distritos
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              </div>
             )}
           </FieldRow>
           <FieldRow label="Dirección">
@@ -289,21 +301,32 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
               placeholder="Distrito de Lima metropolitana"
             />
             {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote?.charged && (
-              <div className="mt-3 space-y-1 text-sm">
+              <div className="mt-3 rounded-md bg-muted/50 px-3 py-2.5 ring-1 ring-border">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="truncate text-muted-foreground">{view.shippingQuote.zoneLabel || 'Distrito'}</span>
-                  <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.districtAmount)}</span>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground">
-                    {view.shippingQuote.distanceKm.toFixed(1).replace('.', ',')} km
+                  <span className="text-sm font-semibold">Envío Express</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">
+                    {formatSaleMoney(view.shippingQuote.total)}
                   </span>
-                  <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.distanceAmount)}</span>
                 </div>
+                <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs text-muted-foreground">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="truncate">Base · {view.shippingQuote.zoneLabel || 'Distrito'}</span>
+                    <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.districtAmount)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span>Distancia · {formatDistanceKm(view.shippingQuote.distanceKm)}</span>
+                    <span className="shrink-0 tabular-nums">{formatSaleMoney(view.shippingQuote.distanceAmount)}</span>
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Un solo cobro. La distancia se suma a la base.
+                </p>
               </div>
             )}
             {view.shippingCarrier === OWN_FLEET_CARRIER && view.dropoffPlace && view.shippingQuote && !view.shippingQuote.charged && (
-              <p className="mt-2 text-sm text-destructive">{OWN_FLEET_OUT_OF_RANGE_MESSAGE}</p>
+              <p className="mt-3 rounded-md bg-destructive/5 px-3 py-2 text-sm text-destructive ring-1 ring-destructive/20">
+                {OWN_FLEET_OUT_OF_RANGE_MESSAGE}
+              </p>
             )}
             {view.shippingCarrier === OWN_FLEET_CARRIER && !view.dropoffPlace && (
               <p className="mt-1.5 text-xs text-muted-foreground">Busca un distrito de Lima metropolitana.</p>
@@ -320,16 +343,18 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
         </>
       ) : (
         <FieldRow label="Tienda">
-          <p className="text-sm leading-6 text-muted-foreground sm:pt-2">{PICKUP_ADDRESS}</p>
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-sm leading-6 ring-1 ring-border">{PICKUP_ADDRESS}</p>
         </FieldRow>
       )}
-    </div>
+      </div>
+    </StepPanel>
   );
 }
 
 export function PagoStep({ view }: { view: SaleFormView }) {
   return (
-    <div className="space-y-4">
+    <StepPanel title="Pago" hint="Cómo cobras esta venta." icon={Wallet}>
+      <div className="space-y-4">
       <FieldRow label="Método">
         <Choice
           value={view.paymentMethod}
@@ -375,7 +400,7 @@ export function PagoStep({ view }: { view: SaleFormView }) {
               </Button>
             </div>
           ) : (
-            <label className="inline-flex h-9 cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+            <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground">
               <ImagePlus className="size-4" />
               Foto opcional
               <input
@@ -388,6 +413,7 @@ export function PagoStep({ view }: { view: SaleFormView }) {
           )}
         </FieldRow>
       )}
-    </div>
+      </div>
+    </StepPanel>
   );
 }

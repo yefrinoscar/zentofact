@@ -12,7 +12,7 @@ export const DISTANCE_TIERS = [
   { maxKm: 25, amount: 25 },
 ];
 
-export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
+export const OWN_FLEET_OUT_OF_RANGE_MESSAGE = 'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.';
 export const OUT_OF_PERU_MESSAGE = 'Esa dirección no está en el Perú.';
 export const MAX_DISTANCE_AMOUNT = 25;
 export const PROVINCE_DEPARTMENT_AMOUNT = 25;

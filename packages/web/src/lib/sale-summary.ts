@@ -119,7 +119,18 @@ export function saleSummaryGroups(input: ManualSaleInput, nowKey = limaTodayKey(
   ];
 }
 
-/** Desglose de cobro. El envío propio se abre en distrito y distancia para que el vendedor lo pueda explicar. */
+export function formatDistanceKm(distanceKm?: number | null) {
+  const km = Number(distanceKm);
+  return Number.isFinite(km) && km > 0 ? `${km.toFixed(1).replace('.', ',')} km` : '';
+}
+
+/** El envío propio se cobra una vez; distrito y distancia son partes de ese único cobro. */
+export function ownFleetShippingLabel(zoneLabel?: string | null, distanceKm?: number | null) {
+  const detail = [String(zoneLabel || '').trim(), formatDistanceKm(distanceKm)].filter(Boolean).join(', ');
+  return detail ? `Envío Express · ${detail}` : 'Envío Express';
+}
+
+/** Desglose de cobro: una sola línea de envío para no leerse como dos envíos. */
 export function saleTotalRows(
   totals: SaleTotals,
   zoneLabel?: string | null,
@@ -127,15 +138,9 @@ export function saleTotalRows(
 ): SummaryRow[] {
   const rows: SummaryRow[] = [{ label: 'Productos', value: formatSaleMoney(totals.products) }];
   if (totals.shipping > 0) {
-    const zone = String(zoneLabel || '').trim();
     rows.push({
-      label: zone ? `Envío · ${zone}` : 'Envío · distrito',
-      value: formatSaleMoney(totals.districtAmount),
-    });
-    const km = Number(distanceKm);
-    rows.push({
-      label: Number.isFinite(km) && km > 0 ? `Envío · ${km.toFixed(1).replace('.', ',')} km` : 'Envío · distancia',
-      value: formatSaleMoney(totals.distanceAmount),
+      label: ownFleetShippingLabel(zoneLabel, distanceKm),
+      value: formatSaleMoney(totals.shipping),
     });
   }
   return rows;

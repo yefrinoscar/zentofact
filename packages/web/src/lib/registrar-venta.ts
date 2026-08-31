@@ -233,7 +233,7 @@ function validateDelivery(input: ManualSaleInput, fleetConfig?: Parameters<typeo
   }
   if (input.delivery !== 'envio') return null;
   if (!input.shippingCarrier) {
-    return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.';
+    return 'Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.';
   }
   if (!input.dropoffPlace) {
     return 'Busca el distrito de Lima metropolitana.';

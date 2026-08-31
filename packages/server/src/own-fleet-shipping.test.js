@@ -95,7 +95,7 @@ test('Huaral y provincias no tienen movilidad propia; Ancón sí porque es Lima 
         lng: -77.208,
       },
     }),
-    /Nosotros no llega ahí/,
+    /Express no llega ahí/,
   );
 });
 
@@ -127,7 +127,7 @@ test('Pucusana y San Bartolo no se cobran hasta que el admin las encienda', () =
         lng: -76.797,
       },
     }),
-    /Nosotros no llega ahí/,
+    /Express no llega ahí/,
   );
   assert.throws(
     () => applyOwnFleetShipping({
@@ -140,7 +140,7 @@ test('Pucusana y San Bartolo no se cobran hasta que el admin las encienda', () =
         lng: -76.778,
       },
     }),
-    /Nosotros no llega ahí/,
+    /Express no llega ahí/,
   );
 
   const quoted = applyOwnFleetShipping({
