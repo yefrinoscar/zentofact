@@ -176,13 +176,13 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
   ].filter((item) => item.amount > 0);
   return (
     <div
-      className="mt-2 flex w-full justify-center"
+      className="mt-2 grid w-full place-items-center"
       role="img"
       aria-label={`Neto ${money.format(total)}: pagado ${percentLabel(paidShare)}, pendiente ${percentLabel(pendingShare)}`}
     >
       <ChartContainer
         config={payoutChartConfig}
-        className="aspect-square h-[148px] w-[148px]"
+        className="aspect-square size-[148px] min-h-[148px] min-w-[148px] max-h-[148px] max-w-[148px] shrink-0 overflow-hidden"
         initialDimension={{ width: 148, height: 148 }}
       >
         <PieChart>
