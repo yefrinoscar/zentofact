@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PICKUP_ADDRESS,
+  SALE_STEPS,
   buildManualSaleOrderPayload,
+  firstInvalidSaleStep,
   formatProductStock,
   generateManualOrderNumber,
   limaDateToIso,
@@ -11,6 +13,7 @@ import {
   productStock,
   saleLinesTotal,
   validateManualSale,
+  validateSaleStep,
 } from './registrar-venta.ts';
 
 const baseLine = {
@@ -121,7 +124,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
   assert.equal(validateManualSale(validSale({ deliveryDate: '' })), 'Indica la fecha de entrega.');
   assert.equal(
     validateManualSale(validSale({ shippingCarrier: '' })),
-    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Nosotros.',
+    'Elige el reparto: Marvisuar, Shaloom, Dinsides o Express.',
   );
   assert.equal(
     validateManualSale(validSale({ dropoffPlace: null })),
@@ -140,7 +143,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -71.537,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -154,7 +157,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -77.208,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -182,7 +185,7 @@ test('validateManualSale exige canal, cliente, productos, fecha y datos de enví
         lng: -76.797,
       },
     })),
-    'Nosotros no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
+    'Express no llega ahí. Elige Marvisuar, Shaloom o Dinsides.',
   );
   assert.equal(
     validateManualSale(validSale({
@@ -342,7 +345,7 @@ test('regresión: la venta manual siempre envía fecha de entrega al backend', (
   assert.equal(payload.metadata.deliveryDate, '2026-08-26');
 });
 
-test('Nosotros suma distrito y distancia al total de la venta', () => {
+test('Express cobra el precio de la zona, sin recargo por distancia', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -356,16 +359,17 @@ test('Nosotros suma distrito y distancia al total de la venta', () => {
   }));
 
   assert.equal(payload.subtotal, 250);
-  assert.equal(payload.shippingAmount, 18);
-  assert.equal(payload.total, 268);
+  assert.equal(payload.shippingAmount, 15);
+  assert.equal(payload.total, 265);
   assert.equal(payload.shipping.carrier, 'nosotros');
-  assert.equal(payload.shipping.districtAmount, 8);
-  assert.equal(payload.shipping.distanceAmount, 10);
+  assert.equal(payload.shipping.districtAmount, 15);
+  assert.equal(payload.shipping.distanceAmount, 0);
+  assert.equal(payload.shipping.priceZone, 'Media');
   assert.equal(payload.shipping.zoneKind, 'lima_district');
   assert.equal(payload.shipping.district, 'San Miguel');
 });
 
-test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () => {
+test('Express persiste el distrito del pin aunque la búsqueda diga otro', () => {
   const payload = buildManualSaleOrderPayload(validSale({
     shippingCarrier: 'nosotros',
     dropoffPlace: {
@@ -378,8 +382,9 @@ test('Nosotros persiste el distrito del pin aunque la búsqueda diga otro', () =
     },
   }));
   assert.equal(payload.shipping.district, 'Surquillo');
-  assert.equal(payload.shipping.districtAmount, 12);
+  assert.equal(payload.shipping.districtAmount, 10);
   assert.equal(payload.shipping.zoneLabel, 'Surquillo');
+  assert.equal(payload.shipping.priceZone, 'Cerca');
 });
 
 test('un repartidor tercero no cobra envío propio', () => {
@@ -391,4 +396,65 @@ test('un repartidor tercero no cobra envío propio', () => {
 test('regresión: el modal de productos muestra stock aunque sea cero', () => {
   assert.equal(formatProductStock({ id: 1, mainSku: 'A', name: 'X', available: 0 }), '0 u');
   assert.notEqual(formatProductStock({ id: 1, mainSku: 'A', name: 'X', available: 3 }), '');
+});
+
+test('el stepper recorre cliente, productos, entrega, pago y resumen', () => {
+  assert.deepEqual(SALE_STEPS.map((step) => step.id), [
+    'cliente',
+    'productos',
+    'entrega',
+    'pago',
+    'resumen',
+  ]);
+});
+
+test('cada paso solo bloquea por sus propios campos', () => {
+  // Faltan productos: el paso Cliente igual deja avanzar.
+  const sinProductos = validSale({ lines: [] });
+  assert.equal(validateSaleStep('cliente', sinProductos), null);
+  assert.equal(validateSaleStep('productos', sinProductos), 'Agrega al menos un producto.');
+
+  // Falta el cliente: el paso Productos igual deja avanzar.
+  const sinCliente = validSale({ customerName: '  ' });
+  assert.equal(validateSaleStep('cliente', sinCliente), 'Escribe el nombre del cliente.');
+  assert.equal(validateSaleStep('productos', sinCliente), null);
+
+  // Falta la dirección: solo bloquea Entrega.
+  const sinDireccion = validSale({ dropoffPlace: null });
+  assert.equal(validateSaleStep('entrega', sinDireccion), 'Busca el distrito de Lima metropolitana.');
+  assert.equal(validateSaleStep('cliente', sinDireccion), null);
+  assert.equal(validateSaleStep('productos', sinDireccion), null);
+});
+
+test('el comprobante incompleto bloquea el paso Cliente, no el de Entrega', () => {
+  const sinDni = validSale({ documentRequest: 'boleta' });
+  assert.equal(validateSaleStep('cliente', sinDni), 'Escribe el DNI de 8 dígitos.');
+  assert.equal(validateSaleStep('entrega', sinDni), null);
+  assert.equal(firstInvalidSaleStep(sinDni), 'cliente');
+});
+
+test('el paso Pago nunca bloquea: el método siempre trae un valor', () => {
+  assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'despues' })), null);
+  assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'yape_plin', paymentProof: null })), null);
+  assert.equal(validateSaleStep('pago', validSale({ paymentMethod: 'efectivo', receivedBy: '' })), null);
+});
+
+test('el resumen valida la venta completa antes de registrar', () => {
+  assert.equal(validateSaleStep('resumen', validSale()), null);
+  assert.equal(
+    validateSaleStep('resumen', validSale({ channelAccountId: null })),
+    'Todavía no hay un canal de venta manual habilitado.',
+  );
+  assert.equal(validateSaleStep('resumen', validSale({ lines: [] })), 'Agrega al menos un producto.');
+});
+
+test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () => {
+  assert.equal(firstInvalidSaleStep(validSale()), null);
+  assert.equal(firstInvalidSaleStep(validSale({ customerName: '' })), 'cliente');
+  assert.equal(firstInvalidSaleStep(validSale({ lines: [] })), 'productos');
+  assert.equal(firstInvalidSaleStep(validSale({ shippingCarrier: '' })), 'entrega');
+  // Con dos pasos rotos, devuelve el primero para no hacer retroceder al vendedor dos veces.
+  assert.equal(firstInvalidSaleStep(validSale({ customerName: '', lines: [] })), 'cliente');
+  // El canal es un error de configuración, no un paso del recorrido.
+  assert.equal(firstInvalidSaleStep(validSale({ channelAccountId: null })), null);
 });

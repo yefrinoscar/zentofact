@@ -70,7 +70,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/orders/envio': {
     title: 'Envío propio',
-    subtitle: 'Distritos y precios de movilidad propia.',
+    subtitle: 'Almacén, zonas y cobertura del reparto Express.',
   },
   '/scanner': {
     title: 'Preparación y escaneo',

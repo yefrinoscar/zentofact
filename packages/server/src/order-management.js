@@ -65,7 +65,7 @@ function assertManualEnvioCarrier(shipping, source) {
   if (type !== 'envio') return;
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
-    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Nosotros.');
+    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Express.');
   }
   const lat = Number(shipping?.lat);
   const lng = Number(shipping?.lng);
