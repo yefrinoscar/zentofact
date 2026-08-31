@@ -104,13 +104,55 @@ export async function holdAtLeast(startedAt: number, minMs = CSV_UPLOAD_MIN_MS) 
   if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
 }
 
-function headerLooksLikeSettlement(text: string) {
-  const header = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
-  const normalized = header
+function normalizeSettlementHeader(text: string) {
+  return String(text || '')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase();
-  return normalized.includes('del orden') || normalized.includes('de pedido') || normalized.includes('estado de pago');
+}
+
+function lineLooksLikeSettlementHeader(text: string) {
+  const normalized = normalizeSettlementHeader(text);
+  return normalized.includes('estado de pago')
+    || normalized.includes('del orden')
+    || normalized.includes('n de orden')
+    || normalized.includes('de pedido');
+}
+
+function headerLooksLikeSettlement(text: string) {
+  return String(text || '').split(/\r?\n/).some((line) => lineLooksLikeSettlementHeader(line));
+}
+
+function expandSheetRange(sheet: { '!ref'?: string } & Record<string, unknown>) {
+  const keys = Object.keys(sheet).filter((key) => /^[A-Z]+[0-9]+$/.test(key));
+  if (!keys.length) return;
+  const range = sheet['!ref']
+    ? xlsxUtils.decode_range(sheet['!ref'])
+    : { s: { r: Number.POSITIVE_INFINITY, c: Number.POSITIVE_INFINITY }, e: { r: 0, c: 0 } };
+  for (const key of keys) {
+    const cell = xlsxUtils.decode_cell(key);
+    if (cell.r < range.s.r) range.s.r = cell.r;
+    if (cell.c < range.s.c) range.s.c = cell.c;
+    if (cell.r > range.e.r) range.e.r = cell.r;
+    if (cell.c > range.e.c) range.e.c = cell.c;
+  }
+  if (!Number.isFinite(range.s.r) || !Number.isFinite(range.s.c)) return;
+  sheet['!ref'] = xlsxUtils.encode_range(range);
+}
+
+function settlementRowsFromSheet(sheet: { '!ref'?: string } & Record<string, unknown>) {
+  expandSheetRange(sheet);
+  const rows = xlsxUtils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+    blankrows: false,
+  }) as unknown[][];
+  const headerIndex = rows.findIndex((row) => (
+    lineLooksLikeSettlementHeader((row || []).map((cell) => String(cell ?? '')).join(','))
+  ));
+  if (headerIndex < 0) return rows;
+  return rows.slice(headerIndex);
 }
 
 export const percent = new Intl.NumberFormat('es-PE', {
@@ -208,14 +250,20 @@ export function isSettlementSpreadsheet(filename: string, mime = '') {
 
 export function decodeSettlementSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
   const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
-  const workbook = readWorkbook(bytes, { type: 'array', cellDates: true });
+  const workbook = readWorkbook(bytes, { type: 'array', cellDates: true, raw: false });
   const names = workbook.SheetNames || [];
   if (!names.length) throw new Error('El Excel no tiene hojas.');
-  const sheetName = names.find((name) => {
-    const preview = xlsxUtils.sheet_to_csv(workbook.Sheets[name], { FS: ',', RS: '\n' });
-    return headerLooksLikeSettlement(preview);
-  }) || names[0];
-  const csv = xlsxUtils.sheet_to_csv(workbook.Sheets[sheetName], {
+  let rows: unknown[][] = [];
+  for (const name of names) {
+    const next = settlementRowsFromSheet(workbook.Sheets[name] as { '!ref'?: string } & Record<string, unknown>);
+    const header = (next[0] || []).map((cell) => String(cell ?? '')).join(',');
+    if (lineLooksLikeSettlementHeader(header)) {
+      rows = next;
+      break;
+    }
+    if (!rows.length) rows = next;
+  }
+  const csv = xlsxUtils.sheet_to_csv(xlsxUtils.aoa_to_sheet(rows), {
     FS: ',',
     RS: '\n',
     dateNF: 'yyyy-mm-dd',
