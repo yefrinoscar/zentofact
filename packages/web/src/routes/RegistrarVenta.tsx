@@ -9,7 +9,10 @@ import {
   buildManualSaleOrderPayload,
   firstInvalidSaleStep,
   limaTodayKey,
+  parseSellerShippingAmount,
   productPrice,
+  productStock,
+  remainingSaleStock,
   saleLinesTotal,
   validateSaleStep,
   type BoletaIdentity,
@@ -29,7 +32,7 @@ import {
   humanizeSaleError,
   type OptimisticHome,
 } from '../lib/sale-feedback';
-import type { ShippingCarrier } from '../lib/shipping-carrier';
+import { isSellerPricedShipping, type ShippingCarrier } from '../lib/shipping-carrier';
 import type { MapPlace } from '../components/PlacePicker';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
@@ -112,6 +115,7 @@ export default function RegistrarVenta() {
   const [delivery, setDelivery] = useState<'recojo' | 'envio'>('envio');
   const [deliveryDate, setDeliveryDate] = useState(limaTodayKey);
   const [shippingCarrier, setShippingCarrier] = useState<ShippingCarrier | ''>('');
+  const [sellerShippingInput, setSellerShippingInput] = useState('');
   const [dropoffPlace, setDropoffPlace] = useState<MapPlace | null>(null);
   const [shippingNote, setShippingNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
@@ -161,10 +165,15 @@ export default function RegistrarVenta() {
     [accounts],
   );
   const products = (productsQuery.data?.products || []) as CatalogProductForSale[];
+  const sellerShippingAmount = parseSellerShippingAmount(sellerShippingInput);
   const shippingQuote = delivery === 'envio' && shippingCarrier === OWN_FLEET_CARRIER
     ? quoteOwnFleetShipping(dropoffPlace, fleetConfig)
     : null;
-  const totals = saleTotals(saleLinesTotal(lines), shippingQuote);
+  const totals = saleTotals(
+    saleLinesTotal(lines),
+    shippingQuote,
+    delivery === 'envio' && isSellerPricedShipping(shippingCarrier) ? (sellerShippingAmount ?? 0) : 0,
+  );
 
   const saleInput: ManualSaleInput = {
     channelAccountId: manualAccount?.id,
@@ -174,6 +183,7 @@ export default function RegistrarVenta() {
     delivery,
     deliveryDate,
     shippingCarrier,
+    sellerShippingAmount,
     dropoffPlace,
     shippingNote,
     saleSource,
@@ -221,12 +231,17 @@ export default function RegistrarVenta() {
   };
 
   const addProduct = (product: CatalogProductForSale) => {
+    if (remainingSaleStock(product, lines) <= 0) return;
     const price = productPrice(product);
+    const available = productStock(product);
     setStepError('');
     setLines((current) => {
+      if (remainingSaleStock(product, current) <= 0) return current;
       const existing = current.find((line) => line.productId === product.id);
       if (existing) {
-        return current.map((line) => line.productId === product.id ? { ...line, quantity: line.quantity + 1 } : line);
+        return current.map((line) => line.productId === product.id
+          ? { ...line, quantity: line.quantity + 1, available }
+          : line);
       }
       return [...current, {
         id: `${product.id}-${Date.now()}`,
@@ -238,6 +253,7 @@ export default function RegistrarVenta() {
         catalogPrice: price,
         unitPrice: price,
         quantity: 1,
+        available,
       }];
     });
     setSearch('');
@@ -330,7 +346,10 @@ export default function RegistrarVenta() {
       setStepError('');
     },
     customerPhone,
-    setCustomerPhone,
+    setCustomerPhone: (value) => {
+      setCustomerPhone(value);
+      setStepError('');
+    },
     documentRequest,
     setDocumentRequest,
     boletaIdentity,
@@ -361,6 +380,11 @@ export default function RegistrarVenta() {
     shippingCarrier,
     setShippingCarrier: (value) => {
       setShippingCarrier(value);
+      setStepError('');
+    },
+    sellerShippingInput,
+    setSellerShippingInput: (value) => {
+      setSellerShippingInput(value);
       setStepError('');
     },
     dropoffPlace,
@@ -476,6 +500,7 @@ export default function RegistrarVenta() {
         isFetching={productsQuery.isFetching}
         submittedSearch={submittedSearch}
         onSelect={addProduct}
+        canSelect={(product) => remainingSaleStock(product, lines) > 0}
       />
     </form>
   );
