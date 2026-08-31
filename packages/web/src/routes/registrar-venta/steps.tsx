@@ -29,6 +29,7 @@ import {
   OWN_FLEET_OUT_OF_RANGE_MESSAGE,
 } from '../../lib/own-fleet-shipping';
 import { SHIPPING_CARRIERS } from '../../lib/shipping-carrier';
+import { copyText } from '../../lib/clipboard';
 import { formatDistanceKm, formatSaleMoney } from '../../lib/sale-summary';
 import {
   pickupHours,
@@ -68,13 +69,10 @@ function PickupCard({ origin }: { origin?: Partial<PickupPoint> | null }) {
           size="sm"
           className="h-8 cursor-pointer"
           onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(message);
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1600);
-            } catch {
-              // El texto sigue visible abajo para copiarlo a mano.
-            }
+            // Si el portapapeles falla, el texto sigue visible abajo para copiarlo a mano.
+            if (!(await copyText(message))) return;
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1600);
           }}
         >
           {copied ? <Check className="text-emerald-600" /> : <Copy />}
