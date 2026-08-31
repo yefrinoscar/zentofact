@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Search, Trash2, Wand2 } from 'lucide-react';
 import api from '../lib/api';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
@@ -24,7 +24,7 @@ import {
   TableRow,
 } from '../components/ui/table';
 import type { OwnFleetDistrictSetting, OwnFleetOrigin, OwnFleetZone } from '../lib/own-fleet-shipping';
-import { OWN_FLEET_ORIGIN, foldName } from '../lib/own-fleet-shipping';
+import { OWN_FLEET_ORIGIN, defaultZoneFor, foldName } from '../lib/own-fleet-shipping';
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
@@ -90,6 +90,26 @@ export default function EnvioPropio() {
     if (!needle) return districts;
     return districts.filter((district) => foldName(`${district.name} ${district.department}`).includes(needle));
   }, [districts, search]);
+
+  // Un distrito queda desalineado cuando su zona ya no corresponde a su distancia actual.
+  const bandFor = (district: OwnFleetDistrictSetting) => {
+    const band = defaultZoneFor(district.distanceKm);
+    return zones.some((zone) => zone.key === band.key) ? band.key : null;
+  };
+  const mismatched = districts.filter((district) => {
+    const band = bandFor(district);
+    return band !== null && band !== district.zone;
+  });
+
+  const regroupByDistance = () => {
+    setDistrictEdits((current) => {
+      const next = { ...current };
+      for (const district of mismatched) {
+        next[district.key] = { ...next[district.key], zone: bandFor(district)! };
+      }
+      return next;
+    });
+  };
 
   const dirty = zoneDraft !== null || originDraft !== null || Object.keys(districtEdits).length > 0;
   const loadError = configQuery.error instanceof Error
@@ -280,11 +300,20 @@ export default function EnvioPropio() {
       </TablePanel>
 
       <TablePanel aria-label="Distritos de envío propio" aria-busy={configQuery.isPending}>
-        <TablePanelHeader>
-          <p className="text-sm font-medium">Distritos</p>
-          <p className="text-sm text-muted-foreground">
-            La distancia es desde el almacén. Sirve para agrupar; no se cobra.
-          </p>
+        <TablePanelHeader className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Distritos</p>
+            <p className="text-sm text-muted-foreground">
+              {mismatched.length
+                ? `${mismatched.length} ${mismatched.length === 1 ? 'distrito no coincide' : 'distritos no coinciden'} con su distancia al almacén.`
+                : 'La distancia es desde el almacén. Sirve para agrupar; no se cobra.'}
+            </p>
+          </div>
+          {mismatched.length ? (
+            <Button type="button" variant="outline" size="sm" className="shrink-0 cursor-pointer" onClick={regroupByDistance}>
+              <Wand2 /> Reagrupar por distancia
+            </Button>
+          ) : null}
         </TablePanelHeader>
         <Table>
           <TableHeader>
