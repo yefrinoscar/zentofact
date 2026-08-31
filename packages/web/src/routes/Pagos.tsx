@@ -746,7 +746,7 @@ export default function Pagos() {
         <Select value={orderMonth} onValueChange={setOrderMonth}>
           <SelectTrigger className="w-[8.25rem]" aria-label="Mes de la orden">
             <SelectValue>
-              {orderMonth === 'all' ? 'Mes orden' : `Orden ${monthLabel(orderMonth)}`}
+              {orderMonth === 'all' ? 'Mes orden' : monthLabel(orderMonth)}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
@@ -759,7 +759,7 @@ export default function Pagos() {
         <Select value={paidMonth} onValueChange={setPaidMonth}>
           <SelectTrigger className="w-[8.25rem]" aria-label="Mes del pago">
             <SelectValue>
-              {paidMonth === 'all' ? 'Mes pago' : `Pago ${monthLabel(paidMonth)}`}
+              {paidMonth === 'all' ? 'Mes pago' : monthLabel(paidMonth)}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
