@@ -362,12 +362,20 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { product: 84.75, envio: 42.37, boleta: 127.12, commission: 16.95, logistics: 42.37, total: 59.32, ganas: 67.8 },
+    { product: 84.75, envio: 42.37, boleta: 127.12, commission: 16.95, logistics: 42.37, total: 59.32, ganas: 67.8, returnLoss: 0, returnCount: 0 },
   );
   assert.deepEqual(
     settlementStatementTotals(null),
-    { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 },
+    { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0, returnLoss: 0, returnCount: 0 },
   );
+  const withReturn = settlementStatementTotals([
+    { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
+    { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+  ]);
+  assert.equal(withReturn.envio, 42.37);
+  assert.equal(withReturn.returnCount, 1);
+  assert.equal(withReturn.returnLoss, -igvSplit(21.8).net);
+  assert.equal(withReturn.ganas, Math.round((67.8 + withReturn.returnLoss) * 100) / 100);
 });
 
 test('en una devolución el producto se anula y Ganas es la logística que se queda', () => {

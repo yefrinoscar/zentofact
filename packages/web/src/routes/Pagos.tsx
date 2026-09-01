@@ -1273,22 +1273,14 @@ export default function Pagos() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
             <p className="text-muted-foreground">
               {salesPageNote(sales.length, totalCount)}
-              {summary.paidCount ? ` · ${summary.paidCount} pagados` : ''}
+              {footerTotals.returnCount
+                ? ` · ${footerTotals.returnCount === 1 ? '1 devolución' : `${footerTotals.returnCount} devoluciones`}`
+                : ''}
             </p>
             <p className="tabular-nums">
-              Precio {money.format(footerTotals.product)}
+              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))}>{money.format(footerTotals.returnLoss)}</span>
               <span className="text-muted-foreground"> · </span>
               Envío {money.format(footerTotals.envio)}
-              <span className="text-muted-foreground"> · </span>
-              Boleta {money.format(footerTotals.boleta)}
-              <span className="text-muted-foreground"> · </span>
-              Comisión <span className={takeText}>{money.format(footerTotals.commission)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Logística <span className={takeText}>{money.format(footerTotals.logistics)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Total <span className={takeText}>{money.format(footerTotals.total)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Ganas <span className={cn('font-medium', amountToneClass('receive', footerTotals.ganas))}>{money.format(footerTotals.ganas)}</span>
             </p>
           </div>
         ) : undefined}
