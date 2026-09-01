@@ -159,9 +159,9 @@ function WaffleHundred({
 }) {
   const waffle = waffleOutOf100({ sold, commission, shipping });
   const legend = [
-    { key: 'commission', label: 'Comisión', count: waffle.counts.commission, amount: commission },
-    { key: 'shipping', label: 'Logística', count: waffle.counts.shipping, amount: shipping },
-    { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives, amount: Math.max(0, sold - commission - shipping) },
+    { key: 'commission', label: 'Comisión', count: waffle.counts.commission },
+    { key: 'shipping', label: 'Logística', count: waffle.counts.shipping },
+    { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives },
   ];
   return (
     <div className="mt-2 flex w-max items-start gap-3">
@@ -183,7 +183,7 @@ function WaffleHundred({
           <p key={item.key} className="flex items-center gap-1.5">
             <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
             {item.label}
-            <span className="tabular-nums text-foreground/80">{money.format(item.amount)} · {item.count}%</span>
+            <span className="tabular-nums text-foreground/80">{item.count}%</span>
           </p>
         ))}
       </div>
