@@ -7,7 +7,6 @@ import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
   PAGOS_SALES_PAGE,
-  chargeKindLabel,
   csvReadError,
   documentLabel,
   holdAtLeast,
@@ -599,14 +598,6 @@ function hasBuyerShipping(sale: SettlementSale) {
   );
 }
 
-function chargeTimes(group: SettlementChargeGroup) {
-  if (group.count > 1 && group.unitAmount != null) {
-    return `${group.count} × ${money.format(Math.abs(group.unitAmount))}`;
-  }
-  if (group.count > 1) return `${group.count} movimientos`;
-  return '';
-}
-
 export default function Pagos() {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1036,7 +1027,7 @@ export default function Pagos() {
                   <SaleIgvBreakdown sale={selected} />
                 )}
               </div>
-              {(selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1 ? (
+              {selected.returned && ((selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1) ? (
                 <div className="border-t border-border px-5 py-4">
                   <p className="text-sm font-medium">Por producto</p>
                   <div className="mt-2 divide-y divide-border">
@@ -1056,24 +1047,6 @@ export default function Pagos() {
                           <span className="tabular-nums text-muted-foreground">Se queda {percentLabel(product.takeRate)}</span>
                           <span className={cn('tabular-nums font-medium', amountToneClass('receive', product.unitNeto))}>Te llega {money.format(product.unitNeto)} c/u</span>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {!selected.returned && selected.chargeGroups?.some((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping') ? (
-                <div className="border-t border-border px-5 py-4">
-                  <p className="text-sm font-medium">Cobros Falabella</p>
-                  <div className="mt-2 divide-y divide-border">
-                    {selected.chargeGroups.filter((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping').map((group) => (
-                      <div key={`${group.kind}-${group.type}`} className="flex items-baseline justify-between gap-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-sm leading-5">{chargeKindLabel(group.kind)}</p>
-                          {chargeTimes(group) ? (
-                            <p className="text-xs text-muted-foreground">{chargeTimes(group)}</p>
-                          ) : null}
-                        </div>
-                        <p className="shrink-0 tabular-nums text-sm">{money.format(group.amount || 0)}</p>
                       </div>
                     ))}
                   </div>
