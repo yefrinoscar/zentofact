@@ -9,7 +9,7 @@ import {
   resolveDocumentDecision,
   updateOrderPayment,
 } from './order-management.js';
-import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems, mapFalabellaShipping } from './order-adapters/falabella.js';
+import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems, mapFalabellaShipping, falabellaOrderShippingAmount } from './order-adapters/falabella.js';
 
 function account(overrides = {}) {
   return {
@@ -331,6 +331,21 @@ test('cada OrderItem de Falabella cuenta como una unidad cuando Quantity no vien
     },
   });
   assert.deepEqual(items.map((item) => item.quantity), [1, 1]);
+});
+
+test('el envío de la orden es la suma de ShippingAmount de cada item', () => {
+  const raw = {
+    OrderItems: {
+      OrderItem: [
+        { OrderItemId: '1', PaidPrice: '98.89', ShippingAmount: '17.45' },
+        { OrderItemId: '2', PaidPrice: '98.89', ShippingAmount: '17.45' },
+      ],
+    },
+  };
+  const items = mapFalabellaOrderItems(raw);
+  assert.deepEqual(items.map((item) => item.shippingAmount), [17.45, 17.45]);
+  assert.equal(falabellaOrderShippingAmount(raw, items), 34.9);
+  assert.equal(falabellaOrderShippingAmount({ ShippingFee: '9.90' }), 9.9);
 });
 
 test('resume qué sellers vendieron hoy e incluye a quienes no tuvieron ventas', async () => {

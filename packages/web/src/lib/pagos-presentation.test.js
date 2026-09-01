@@ -75,6 +75,24 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
     mismatch.queda,
   );
   assert.ok(mismatch.shippingAdjust < 0);
+  const fromOrder = saleIgvStory({
+    bruto: 100,
+    buyerShippingPaid: 0,
+    orderShipping: 50,
+    commission: 20,
+    shipping: 50,
+  });
+  assert.equal(fromOrder.envio, 50);
+  assert.equal(fromOrder.boleta.gross, 150);
+  assert.equal(fromOrder.queda, 67.8);
+  const orderWins = saleIgvStory({
+    bruto: 100,
+    buyerShippingPaid: 10,
+    orderShipping: 50,
+    commission: 20,
+    shipping: 50,
+  });
+  assert.equal(orderWins.envio, 50);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });
@@ -303,6 +321,7 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     assert.equal(column.hint.includes('\n'), false);
   }
   assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Producto + envío');
+  assert.equal(PAGOS_COLUMN_COPY.envio.hint, 'De la orden');
   assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'IGV 18%');
   assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'IGV 18%');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
@@ -313,9 +332,9 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { boleta: 150, commission: 20, logistics: 50, ganas: 67.8 },
+    { boleta: 150, envio: 50, commission: 20, logistics: 50, ganas: 67.8 },
   );
-  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, commission: 0, logistics: 0, ganas: 0 });
+  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, envio: 0, commission: 0, logistics: 0, ganas: 0 });
 });
 
 test('el cruce se nombra como en la mesa', () => {

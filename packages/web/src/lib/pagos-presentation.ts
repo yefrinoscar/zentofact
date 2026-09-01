@@ -77,9 +77,12 @@ export function saleIgvStory(sale: {
   commission?: number | null;
   shipping?: number | null;
   buyerShippingPaid?: number | null;
+  orderShipping?: number | null;
 } | null | undefined) {
   const product = money2(sale?.bruto);
-  const envio = Math.max(0, money2(sale?.buyerShippingPaid));
+  const envio = sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+    ? Math.max(0, money2(sale.orderShipping))
+    : Math.max(0, money2(sale?.buyerShippingPaid));
   const commission = money2(sale?.commission);
   const logistics = money2(sale?.shipping);
   const boleta = igvSplit(product + envio);
@@ -109,17 +112,20 @@ export function settlementStatementTotals(sales: Array<{
   commission?: number | null;
   shipping?: number | null;
   buyerShippingPaid?: number | null;
+  orderShipping?: number | null;
 }> | null | undefined) {
   return (sales || []).reduce((totals, sale) => {
     const story = saleIgvStory(sale);
     return {
       boleta: money2(totals.boleta + story.boleta.gross),
+      envio: money2(totals.envio + story.envio),
       commission: money2(totals.commission + story.commission),
       logistics: money2(totals.logistics + story.logistics),
       ganas: money2(totals.ganas + story.queda),
     };
-  }, { boleta: 0, commission: 0, logistics: 0, ganas: 0 } as {
+  }, { boleta: 0, envio: 0, commission: 0, logistics: 0, ganas: 0 } as {
     boleta: number;
+    envio: number;
     commission: number;
     logistics: number;
     ganas: number;
@@ -465,6 +471,7 @@ export const PAGOS_SALES_PAGE = 2000;
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
   boleta: { label: 'Boleta', hint: 'Producto + envío' },
+  envio: { label: 'Envío', hint: 'De la orden' },
   comision: { label: 'Comisión', hint: 'IGV 18%' },
   logistica: { label: 'Logística', hint: 'IGV 18%' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },

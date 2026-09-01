@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
-import { aggregateSettlementSales, attachDocumentsToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -364,7 +364,8 @@ export async function listSettlementSales(filter = {}, db) {
   sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth, companyId });
   const summary = summarizeSettlementSales(sales);
   const page = sales.slice(offset, offset + limit);
-  const items = await attachSaleDocuments(page, target);
+  const withDocuments = await attachSaleDocuments(page, target);
+  const items = await attachSaleOrderShipping(withDocuments, target);
   return {
     items,
     summary,
@@ -395,6 +396,51 @@ async function attachSaleDocuments(sales, db) {
     orderNumber: row.order_number,
     number: row.numero_completo,
     status: row.estado_sunat,
+  })));
+}
+
+async function attachSaleOrderShipping(sales, db) {
+  const refs = [...new Set(sales.flatMap((sale) => (
+    [sale.orderId, ...(sale.orderNumbers || [])]
+  )).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!refs.length) return attachOrderShippingToSales(sales, []);
+  const query = await db.query(
+    `select o.external_order_id as order_id,
+            o.external_order_number as order_number,
+            o.shipping_amount,
+            coalesce((
+              select jsonb_agg(oi.raw_data)
+                from order_items oi
+               where oi.order_id = o.id
+            ), '[]'::jsonb) as item_raws,
+            fo.raw_data as falabella_raw
+       from orders o
+       left join falabella_orders fo
+         on fo.company_id = o.company_id
+        and (fo.order_id = o.external_order_id or fo.order_number = o.external_order_number)
+      where o.external_order_id = any($1::text[])
+         or o.external_order_number = any($1::text[])
+      union all
+     select fo.order_id,
+            fo.order_number,
+            null::numeric,
+            '[]'::jsonb,
+            fo.raw_data
+       from falabella_orders fo
+      where (fo.order_id = any($1::text[]) or fo.order_number = any($1::text[]))
+        and not exists (
+          select 1 from orders o
+           where o.company_id = fo.company_id
+             and (o.external_order_id = fo.order_id or o.external_order_number = fo.order_number)
+        )`,
+    [refs],
+  );
+  return attachOrderShippingToSales(sales, query.rows.map((row) => ({
+    orderId: row.order_id,
+    orderNumber: row.order_number,
+    shippingAmount: row.shipping_amount,
+    itemRaws: row.item_raws || [],
+    falabellaRaw: row.falabella_raw || {},
   })));
 }
 

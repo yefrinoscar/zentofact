@@ -103,6 +103,7 @@ type SettlementSale = {
   buyerShipping?: number;
   buyerShippingPaid?: number;
   buyerShippingReversed?: number;
+  orderShipping?: number | null;
   neto: number;
   take: number;
   commissionRate: number | null;
@@ -767,6 +768,22 @@ export default function Pagos() {
       },
     },
     {
+      id: 'envio',
+      accessorFn: (sale) => saleIgvStory(sale).envio,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
+      size: 96,
+      meta: { align: 'end' },
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        if (row.original.returned || (story.envio <= 0 && row.original.orderShipping == null)) {
+          return <p className="text-right text-[13px] text-muted-foreground">—</p>;
+        }
+        return (
+          <p className="text-right tabular-nums text-[13px]">{money.format(story.envio)}</p>
+        );
+      },
+    },
+    {
       id: 'comision',
       accessorFn: (sale) => saleIgvStory(sale).commission,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
@@ -957,6 +974,8 @@ export default function Pagos() {
             </p>
             <p className="tabular-nums">
               Boleta {money.format(footerTotals.boleta)}
+              <span className="text-muted-foreground"> · </span>
+              Envío {money.format(footerTotals.envio)}
               <span className="text-muted-foreground"> · </span>
               Comisión <span className={takeText}>{money.format(footerTotals.commission)}</span>
               <span className="text-muted-foreground"> · </span>
