@@ -255,7 +255,14 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
-  getSalespersonHome: (filter: { from?: string; to?: string; limit?: number } = {}) =>
+  getSalespersonHome: (filter: {
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: 'orderedAt' | 'total';
+    sortDir?: 'asc' | 'desc';
+  } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
