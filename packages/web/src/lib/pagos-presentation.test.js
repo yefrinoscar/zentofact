@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementFooterTotals, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -292,16 +292,19 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     assert.equal(column.hint.split(/\s+/).length <= 4, true, column.hint);
     assert.equal(column.hint.includes('\n'), false);
   }
-  assert.equal(PAGOS_COLUMN_COPY.neto.hint, 'Te depositan');
-  assert.equal(PAGOS_COLUMN_COPY.take.hint, 'Comisión + logística');
+  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Producto + envío');
+  assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Comisión + logística');
+  assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Sin IGV');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
   assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');
   assert.deepEqual(
-    settlementFooterTotals({ bruto: 2352.91, shipping: 507.52, take: 871.54, neto: 1481.37 }),
-    { precio: 2352.91, logistica: 507.52, seQueda: 871.54, teLlega: 1481.37 },
+    settlementStatementTotals([
+      { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
+    ]),
+    { boleta: 150, factura: 70, ganas: 67.8 },
   );
-  assert.deepEqual(settlementFooterTotals(null), { precio: 0, logistica: 0, seQueda: 0, teLlega: 0 });
+  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, factura: 0, ganas: 0 });
 });
 
 test('el cruce se nombra como en la mesa', () => {

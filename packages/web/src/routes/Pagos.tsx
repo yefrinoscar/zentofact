@@ -26,8 +26,8 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
-  settlementFooterTotals,
   settlementPair,
+  settlementStatementTotals,
   shortProductName,
   skuLabel,
   teLlegaHint,
@@ -124,8 +124,6 @@ const cobroColEnd = `${cobroCol} border-r border-border`;
 const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
 const llegaText = 'text-emerald-700 dark:text-emerald-400';
 const takeText = 'text-red-600 dark:text-red-400';
-const cobroHead = `${cobroCol} text-muted-foreground`;
-const cobroCell = `${cobroCol} group-hover:bg-muted/55`;
 const cobroHeadStart = `${cobroColStart} text-muted-foreground`;
 const cobroCellStart = `${cobroColStart} group-hover:bg-muted/55`;
 const cobroHeadEnd = `${cobroColEnd} text-muted-foreground`;
@@ -443,73 +441,96 @@ function ChargeRow({
   );
 }
 
-function IgvLine({ net, igv }: { net: number; igv: number }) {
+function LedgerLine({
+  label,
+  amount,
+  dim = false,
+  minus = false,
+}: {
+  label: string;
+  amount: number;
+  dim?: boolean;
+  minus?: boolean;
+}) {
   return (
-    <p className="pb-2 text-xs tabular-nums text-muted-foreground">
-      Sin IGV {money.format(net)} · IGV {money.format(igv)}
-    </p>
+    <div className="flex items-baseline justify-between gap-4 py-0.5">
+      <span className={cn('text-sm', dim && 'text-muted-foreground')}>{label}</span>
+      <span className={cn('tabular-nums text-sm', dim && 'text-muted-foreground', minus && takeText)}>
+        {minus ? `− ${money.format(amount)}` : money.format(amount)}
+      </span>
+    </div>
+  );
+}
+
+function LedgerTotal({
+  amount,
+  tone,
+  label,
+}: {
+  amount: number;
+  tone?: 'take' | 'receive';
+  label?: string;
+}) {
+  return (
+    <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-border pt-1.5">
+      <span className="text-sm font-medium">{label || '\u00a0'}</span>
+      <span className={cn('tabular-nums text-sm font-medium', amountToneClass(tone, amount))}>
+        {money.format(amount)}
+      </span>
+    </div>
   );
 }
 
 function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
   const story = saleIgvStory(sale);
   return (
-    <>
-      <p className="text-xs font-medium">Boleta</p>
-      <p className="text-[11px] text-muted-foreground">Falabella pide este total.</p>
-      <ChargeRow label="Producto" amount={story.product} hint="Lo que pagó el cliente." />
-      {story.envio > 0 ? (
-        <ChargeRow label="Envío" amount={story.envio} hint="Lo pagó el cliente." />
-      ) : null}
-      <ChargeRow label="Total" amount={story.boleta.gross} strong />
-      <IgvLine net={story.boleta.net} igv={story.boleta.igv} />
-      <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
-        <p className="pt-2 text-xs font-medium">Factura</p>
-        <p className="text-[11px] text-muted-foreground">Comisión y logística.</p>
-        <ChargeRow
-          label="Comisión"
-          amount={-(story.commission || 0)}
-          rate={sale.commissionRate}
-        />
-        <ChargeRow
-          label="Logística"
-          amount={-(story.logistics || 0)}
-          hint={shippingHint(sale)}
-          rate={sale.shippingRate}
-        />
-        <ChargeRow
-          label="Se queda"
-          amount={sale.take || 0}
-          hint="Suma de los dos."
-          rate={sale.takeRate}
-          tone="take"
-          strong
-        />
-        <IgvLine net={story.factura.net} igv={story.factura.igv} />
-      </div>
-      <ChargeRow
-        label="Sin IGV"
-        amount={story.queda}
-        hint={Math.abs(story.productNet - story.commissionNet - story.queda) < 0.05
-          ? `Producto ${money.format(story.productNet)} − comisión ${money.format(story.commissionNet)}`
-          : 'Boleta menos factura.'}
-        strong
-      />
-      <ChargeRow
-        label="Te llega"
-        amount={sale.neto || 0}
-        hint={teLlegaHint(sale)}
-        rate={receiveRate(sale.bruto, sale.neto)}
-        tone="receive"
-        strong
-      />
-    </>
+    <div className="text-[13px]">
+      <section>
+        <LedgerLine label="Producto" amount={story.product} />
+        {story.envio > 0 ? <LedgerLine label="Envío" amount={story.envio} /> : null}
+        <LedgerTotal amount={story.boleta.gross} label="Boleta" />
+        <div className="mt-1">
+          <LedgerLine label="Sin IGV" amount={story.boleta.net} dim />
+          <LedgerLine label="IGV 18%" amount={story.boleta.igv} dim />
+        </div>
+      </section>
+      <section className="mt-5">
+        <LedgerLine label="Comisión" amount={story.commission} />
+        <LedgerLine label="Logística" amount={story.logistics} />
+        <LedgerTotal amount={story.factura.gross} tone="take" label="Factura" />
+        <div className="mt-1">
+          <LedgerLine label="Sin IGV" amount={story.factura.net} dim />
+          <LedgerLine label="IGV 18%" amount={story.factura.igv} dim />
+        </div>
+      </section>
+      <section className="mt-5">
+        <LedgerLine label="Sin IGV boleta" amount={story.boleta.net} />
+        <LedgerLine label="Sin IGV factura" amount={story.factura.net} minus />
+        <LedgerTotal amount={story.queda} tone="receive" label="Ganas" />
+      </section>
+    </div>
   );
 }
 
-function receiveRate(bruto: number | null | undefined, neto: number | null | undefined) {
-  if (!bruto) return null;
-  return Number(neto || 0) / Number(bruto);
+function StatementAmount({
+  gross,
+  net,
+  tone,
+}: {
+  gross: number;
+  net?: number;
+  tone?: 'take' | 'receive';
+}) {
+  return (
+    <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
+      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-medium')}>{money.format(gross)}</p>
+      {net != null ? (
+        <p className={cn('text-[10px] tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>
+          sin IGV {money.format(net)}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function saleTitle(sale: SettlementSale) {
@@ -676,7 +697,7 @@ export default function Pagos() {
     .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
   const selectedCompany = companies.find((company) => String(company.id) === companyId);
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
-  const footerTotals = settlementFooterTotals(summary);
+  const footerTotals = settlementStatementTotals(sales);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -729,85 +750,56 @@ export default function Pagos() {
       cell: ({ row }) => <SaleDates sale={row.original} />,
     },
     {
-      id: 'precio',
-      accessorKey: 'bruto',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
-      size: 108,
+      id: 'boleta',
+      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
+      size: 118,
       meta: { align: 'end' },
       cell: ({ row }) => {
-        const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
-        return (
-          <AmountRate
-            amount={pair.amount || row.original.bruto || 0}
-            reversal={pair.reversal}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
-        );
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+          return (
+            <AmountRate
+              amount={pair.amount || row.original.bruto || 0}
+              reversal={pair.reversal}
+              hideRate
+            />
+          );
+        }
+        return <StatementAmount gross={story.boleta.gross} net={story.boleta.net} />;
       },
     },
     {
-      id: 'commission',
-      accessorKey: 'commission',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.commission} />,
-      size: 96,
-      meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
-      cell: ({ row }) => {
-        const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
-        return (
-          <AmountRate
-            amount={pair.amount || row.original.commission || 0}
-            reversal={pair.reversal}
-            rate={row.original.commissionRate}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
-        );
-      },
-    },
-    {
-      id: 'shipping',
-      accessorKey: 'shipping',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.shipping} />,
+      id: 'factura',
+      accessorFn: (sale) => saleIgvStory(sale).factura.gross,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.factura} />,
       size: 124,
-      meta: { align: 'end', headerClassName: cobroHead, cellClassName: cobroCell },
+      meta: { align: 'end', headerClassName: `${cobroHeadStart} ${cobroHeadEnd}`, cellClassName: `${cobroCellStart} ${cobroCellEnd}` },
       cell: ({ row }) => {
-        const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
-        return (
-          <AmountRate
-            amount={pair.amount || row.original.shipping || 0}
-            reversal={pair.reversal}
-            rate={row.original.shippingRate}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
-        );
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          return (
+            <AmountRate
+              amount={row.original.take || 0}
+              tone="take"
+              hideRate
+            />
+          );
+        }
+        return <StatementAmount gross={story.factura.gross} net={story.factura.net} tone="take" />;
       },
     },
     {
-      id: 'take',
-      accessorKey: 'take',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.take} />,
-      size: 124,
-      meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
-      cell: ({ row }) => (
-        <AmountRate
-          amount={row.original.take || 0}
-          rate={row.original.takeRate}
-          tone="take"
-          hideRate={Boolean(row.original.returned)}
-        />
-      ),
-    },
-    {
-      id: 'neto',
-      accessorKey: 'neto',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.neto} />,
+      id: 'ganas',
+      accessorFn: (sale) => saleIgvStory(sale).queda,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => (
-        <AmountRate
-          amount={row.original.neto || 0}
-          rate={receiveRate(row.original.bruto, row.original.neto)}
+        <StatementAmount
+          gross={saleIgvStory(row.original).queda}
           tone="receive"
-          hideRate={Boolean(row.original.returned)}
         />
       ),
     },
@@ -934,7 +926,7 @@ export default function Pagos() {
         aria-label="Cobros de Falabella por venta"
         empty={(
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            Sube un CSV o Excel de Falabella para ver comisión, logística y lo que te llega.
+            Sube un Excel de Falabella para ver lo que ganas.
           </div>
         )}
         footer={summary?.saleCount ? (
@@ -944,13 +936,11 @@ export default function Pagos() {
               {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
             </p>
             <p className="tabular-nums">
-              Precio {money.format(footerTotals.precio)}
+              Boleta {money.format(footerTotals.boleta)}
               <span className="text-muted-foreground"> · </span>
-              Logística <span className={takeText}>{money.format(footerTotals.logistica)}</span>
+              Factura <span className={takeText}>{money.format(footerTotals.factura)}</span>
               <span className="text-muted-foreground"> · </span>
-              Se queda <span className={takeText}>{money.format(footerTotals.seQueda)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Te llega <span className={cn('font-medium', amountToneClass('receive', footerTotals.teLlega))}>{money.format(footerTotals.teLlega)}</span>
+              Ganas <span className={cn('font-medium', amountToneClass('receive', footerTotals.ganas))}>{money.format(footerTotals.ganas)}</span>
             </p>
           </div>
         ) : undefined}

@@ -99,6 +99,22 @@ export function saleIgvStory(sale: {
   };
 }
 
+export function settlementStatementTotals(sales: Array<{
+  bruto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  buyerShippingPaid?: number | null;
+}> | null | undefined) {
+  return (sales || []).reduce((totals, sale) => {
+    const story = saleIgvStory(sale);
+    return {
+      boleta: money2(totals.boleta + story.boleta.gross),
+      factura: money2(totals.factura + story.factura.gross),
+      ganas: money2(totals.ganas + story.queda),
+    };
+  }, { boleta: 0, factura: 0, ganas: 0 });
+}
+
 export function settlementPair(charged?: number | null, reversed?: number | null) {
   const up = Math.round(Number(charged || 0) * 100) / 100;
   const down = Math.round(Number(reversed || 0) * 100) / 100;
@@ -437,11 +453,9 @@ export const PAGOS_SALES_PAGE = 2000;
 
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
-  precio: { label: 'Precio', hint: 'Pagó el cliente' },
-  commission: { label: 'Comisión', hint: '% del precio' },
-  shipping: { label: 'Logística', hint: 'Cofinanciamiento' },
-  take: { label: 'Se queda', hint: 'Comisión + logística' },
-  neto: { label: 'Te llega', hint: 'Te depositan' },
+  boleta: { label: 'Boleta', hint: 'Producto + envío' },
+  factura: { label: 'Factura', hint: 'Comisión + logística' },
+  ganas: { label: 'Ganas', hint: 'Sin IGV' },
 } as const;
 
 export function salesPageNote(shown: number, total: number) {
@@ -450,20 +464,6 @@ export function salesPageNote(shown: number, total: number) {
   if (!count) return '';
   if (visible >= count) return count === 1 ? '1 venta' : `${count} ventas`;
   return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
-}
-
-export function settlementFooterTotals(summary: {
-  bruto?: number | null;
-  shipping?: number | null;
-  take?: number | null;
-  neto?: number | null;
-} | null | undefined) {
-  return {
-    precio: Number(summary?.bruto || 0),
-    logistica: Number(summary?.shipping || 0),
-    seQueda: Number(summary?.take || 0),
-    teLlega: Number(summary?.neto || 0),
-  };
 }
 
 export function settlementCash(summary: {
