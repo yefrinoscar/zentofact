@@ -444,69 +444,86 @@ function statementAmount(amount: number, minus?: boolean) {
   return minus ? `− ${money.format(amount)}` : money.format(amount);
 }
 
-function StatementRow({
-  label,
+function StatementCell({
   amount,
   minus = false,
+  muted = false,
   strong = false,
   tone,
 }: {
-  label: string;
   amount: number;
   minus?: boolean;
+  muted?: boolean;
   strong?: boolean;
   tone?: 'take' | 'receive';
 }) {
   return (
-    <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-6 py-1.5">
-      <span className={cn('text-[13px]', strong ? 'font-medium' : 'text-muted-foreground')}>{label}</span>
-      <span className={cn(
-        'tabular-nums text-[13px]',
-        strong && 'font-medium',
-        minus && takeText,
-        amountToneClass(tone, amount),
-      )}
-      >
-        {statementAmount(amount, minus)}
-      </span>
-    </div>
+    <td className={cn(
+      'py-2.5 text-right tabular-nums',
+      strong && 'font-medium',
+      muted && 'text-muted-foreground',
+      minus && takeText,
+      amountToneClass(tone, amount),
+    )}
+    >
+      {statementAmount(amount, minus)}
+    </td>
   );
 }
 
-function StatementSplit({
-  base,
-  igv,
-  minus = false,
-}: {
-  base: number;
-  igv: number;
-  minus?: boolean;
-}) {
-  return (
-    <p className={cn('pb-0.5 text-right text-[12px] tabular-nums text-muted-foreground', minus && takeText)}>
-      Base {statementAmount(base, minus)}
-      <span className="px-1.5 text-border">·</span>
-      IGV 18% {statementAmount(igv, minus)}
-    </p>
-  );
-}
-
-function StatementSection({
+function StatementTable({
   title,
   hint,
-  children,
+  lines,
+  base,
+  igv,
+  totalLabel,
+  total,
+  take = false,
 }: {
   title: string;
   hint: string;
-  children: ReactNode;
+  lines: Array<{ label: string; amount: number; minus?: boolean }>;
+  base: number;
+  igv: number;
+  totalLabel: string;
+  total: number;
+  take?: boolean;
 }) {
   return (
     <section>
-      <div className="flex items-baseline justify-between gap-4">
-        <h3 className="text-[13px] font-medium">{title}</h3>
-        <p className="text-[12px] text-muted-foreground">{hint}</p>
+      <div className="mb-2 flex items-baseline justify-between gap-4">
+        <h3 className="text-sm font-medium">{title}</h3>
+        <p className="text-xs text-muted-foreground">{hint}</p>
       </div>
-      <div className="mt-2">{children}</div>
+      <table className="w-full border-collapse text-[13px]">
+        <thead>
+          <tr className="border-b border-border bg-muted/50 text-[12px] text-muted-foreground">
+            <th className="py-2 text-left font-normal">Concepto</th>
+            <th className="py-2 text-right font-normal">Importe</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((line) => (
+            <tr key={line.label} className="border-b border-border">
+              <td className="py-2.5">{line.label}</td>
+              <StatementCell amount={line.amount} minus={line.minus} />
+            </tr>
+          ))}
+          <tr>
+            <td className="pt-3 text-muted-foreground">Base</td>
+            <StatementCell amount={base} minus={take} muted />
+          </tr>
+          <tr>
+            <td className="py-1.5 text-muted-foreground">IGV (18%)</td>
+            <StatementCell amount={igv} minus={take} muted />
+          </tr>
+          <tr className="border-t border-border">
+            <td className="pt-2.5 font-medium">{totalLabel}</td>
+            <StatementCell amount={total} minus={take} strong tone={take ? 'take' : undefined} />
+          </tr>
+        </tbody>
+      </table>
     </section>
   );
 }
@@ -519,45 +536,66 @@ function shippingAdjustLabel(story: ReturnType<typeof saleIgvStory>) {
 
 function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
   const story = saleIgvStory(sale);
+  const ganasLines = [
+    { label: 'Producto', amount: story.productNet },
+    { label: 'Comisión', amount: story.commissionNet, minus: true },
+    ...(Math.abs(story.shippingAdjust) >= 0.01
+      ? [{
+        label: shippingAdjustLabel(story),
+        amount: Math.abs(story.shippingAdjust),
+        minus: story.shippingAdjust < 0,
+      }]
+      : []),
+  ];
   return (
-    <div className="space-y-6">
-      <StatementSection title={PAGOS_COLUMN_COPY.boleta.label} hint={PAGOS_COLUMN_COPY.boleta.hint}>
-        <StatementRow label="Producto" amount={story.product} />
-        {story.envio > 0 ? <StatementRow label="Envío" amount={story.envio} /> : null}
-        <div className="mt-1 border-t border-border pt-1">
-          <StatementRow label="Boleta" amount={story.boleta.gross} strong />
-          <StatementSplit base={story.boleta.net} igv={story.boleta.igv} />
+    <div className="space-y-8">
+      <StatementTable
+        title={PAGOS_COLUMN_COPY.boleta.label}
+        hint={PAGOS_COLUMN_COPY.boleta.hint}
+        lines={[
+          { label: 'Producto', amount: story.product },
+          ...(story.envio > 0 ? [{ label: 'Envío', amount: story.envio }] : []),
+        ]}
+        base={story.boleta.net}
+        igv={story.boleta.igv}
+        totalLabel="Boleta"
+        total={story.boleta.gross}
+      />
+      <StatementTable
+        title={PAGOS_COLUMN_COPY.factura.label}
+        hint={PAGOS_COLUMN_COPY.factura.hint}
+        lines={[
+          { label: 'Comisión', amount: story.commission, minus: true },
+          { label: 'Logística', amount: story.logistics, minus: true },
+        ]}
+        base={story.factura.net}
+        igv={story.factura.igv}
+        totalLabel="Factura"
+        total={story.factura.gross}
+        take
+      />
+      <section>
+        <div className="mb-2 flex items-baseline justify-between gap-4">
+          <h3 className="text-sm font-medium">{PAGOS_COLUMN_COPY.ganas.label}</h3>
+          <p className="text-xs text-muted-foreground">{PAGOS_COLUMN_COPY.ganas.hint}</p>
         </div>
-      </StatementSection>
-      <StatementSection title={PAGOS_COLUMN_COPY.factura.label} hint={PAGOS_COLUMN_COPY.factura.hint}>
-        <StatementRow label="Comisión" amount={story.commission} minus />
-        <StatementRow label="Logística" amount={story.logistics} minus />
-        <div className="mt-1 border-t border-border pt-1">
-          <StatementRow label="Factura" amount={story.factura.gross} minus strong tone="take" />
-          <StatementSplit base={story.factura.net} igv={story.factura.igv} minus />
+        <div className="bg-muted/40 px-3 py-1">
+          <table className="w-full border-collapse text-[13px]">
+            <tbody>
+              {ganasLines.map((line) => (
+                <tr key={line.label}>
+                  <td className="py-2 text-muted-foreground">{line.label}</td>
+                  <StatementCell amount={line.amount} minus={line.minus} />
+                </tr>
+              ))}
+              <tr className="border-t border-border">
+                <td className="py-2.5 font-medium">Ganas</td>
+                <StatementCell amount={story.queda} strong tone="receive" />
+              </tr>
+            </tbody>
+          </table>
         </div>
-      </StatementSection>
-      <StatementSection title={PAGOS_COLUMN_COPY.ganas.label} hint={PAGOS_COLUMN_COPY.ganas.hint}>
-        <StatementRow label="Producto" amount={story.productNet} />
-        <StatementRow label="Comisión" amount={story.commissionNet} minus />
-        {Math.abs(story.shippingAdjust) >= 0.01 ? (
-          <StatementRow
-            label={shippingAdjustLabel(story)}
-            amount={Math.abs(story.shippingAdjust)}
-            minus={story.shippingAdjust < 0}
-          />
-        ) : null}
-        <div className={cn(
-          '-mx-5 mt-3 flex items-baseline justify-between gap-4 border-t border-border px-5 py-3',
-          story.queda < 0 ? 'bg-red-500/[0.08]' : 'bg-emerald-500/[0.08]',
-        )}
-        >
-          <span className="text-[15px] font-semibold">Ganas</span>
-          <span className={cn('tabular-nums text-[15px] font-semibold', amountToneClass('receive', story.queda))}>
-            {money.format(story.queda)}
-          </span>
-        </div>
-      </StatementSection>
+      </section>
     </div>
   );
 }
@@ -1005,7 +1043,7 @@ export default function Pagos() {
                   </div>
                 </div>
               </SheetHeader>
-              <div className={selected.returned ? 'px-5 py-4' : 'px-5 pt-5 pb-0'}>
+              <div className={selected.returned ? 'px-5 py-4' : 'px-5 py-5'}>
                 {selected.returned ? (
                   <>
                     <ChargeRow
