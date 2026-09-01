@@ -83,20 +83,23 @@ export function saleIgvStory(sale: {
   const commission = money2(sale?.commission);
   const logistics = money2(sale?.shipping);
   const boleta = igvSplit(product + envio);
+  const commissionSplit = igvSplit(commission);
+  const logisticsSplit = igvSplit(logistics);
   const factura = igvSplit(commission + logistics);
   const productNet = igvSplit(product).net;
-  const commissionNet = igvSplit(commission).net;
   const queda = money2(boleta.net - factura.net);
   return {
     product,
     envio,
     boleta,
     commission,
+    commissionSplit,
     logistics,
+    logisticsSplit,
     factura,
     productNet,
-    commissionNet,
-    shippingAdjust: money2(queda - (productNet - commissionNet)),
+    commissionNet: commissionSplit.net,
+    shippingAdjust: money2(queda - (productNet - commissionSplit.net)),
     queda,
   };
 }
@@ -111,10 +114,16 @@ export function settlementStatementTotals(sales: Array<{
     const story = saleIgvStory(sale);
     return {
       boleta: money2(totals.boleta + story.boleta.gross),
-      factura: money2(totals.factura + story.factura.gross),
+      commission: money2(totals.commission + story.commission),
+      logistics: money2(totals.logistics + story.logistics),
       ganas: money2(totals.ganas + story.queda),
     };
-  }, { boleta: 0, factura: 0, ganas: 0 });
+  }, { boleta: 0, commission: 0, logistics: 0, ganas: 0 } as {
+    boleta: number;
+    commission: number;
+    logistics: number;
+    ganas: number;
+  });
 }
 
 export function settlementPair(charged?: number | null, reversed?: number | null) {
@@ -456,7 +465,8 @@ export const PAGOS_SALES_PAGE = 2000;
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
   boleta: { label: 'Boleta', hint: 'Producto + envío' },
-  factura: { label: 'Factura', hint: 'Comisión + logística' },
+  comision: { label: 'Comisión', hint: 'IGV 18%' },
+  logistica: { label: 'Logística', hint: 'IGV 18%' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
 } as const;
 

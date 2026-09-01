@@ -64,6 +64,8 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(story.queda, 67.8);
   assert.equal(story.productNet, 84.75);
   assert.equal(story.commissionNet, 16.95);
+  assert.deepEqual(story.commissionSplit, { gross: 20, net: 16.95, igv: 3.05 });
+  assert.deepEqual(story.logisticsSplit, { gross: 50, net: 42.37, igv: 7.63 });
   assert.equal(story.shippingAdjust, 0);
   assert.equal(Math.round((story.productNet - story.commissionNet) * 100) / 100, 67.8);
   const mismatch = saleIgvStory({ bruto: 98.89, buyerShippingPaid: 34.9, commission: 14.85, shipping: 42.9 });
@@ -301,7 +303,8 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     assert.equal(column.hint.includes('\n'), false);
   }
   assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Producto + envío');
-  assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Comisión + logística');
+  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'IGV 18%');
+  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'IGV 18%');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
@@ -310,9 +313,9 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { boleta: 150, factura: 70, ganas: 67.8 },
+    { boleta: 150, commission: 20, logistics: 50, ganas: 67.8 },
   );
-  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, factura: 0, ganas: 0 });
+  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, commission: 0, logistics: 0, ganas: 0 });
 });
 
 test('el cruce se nombra como en la mesa', () => {
