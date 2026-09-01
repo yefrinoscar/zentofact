@@ -37,7 +37,7 @@ import {
   invoiceImportSummary,
   invoiceNumberLabel,
   isInvoiceReportFilename,
-  readInvoiceReportUpload,
+  readInvoiceReportPayload,
 } from '../lib/pagos-invoice-report';
 import { FalabellaInvoiceDialog } from '@/components/FalabellaInvoiceView';
 import { sellerShortName } from '../lib/seller-name';
@@ -651,7 +651,7 @@ export default function Pagos() {
   const [readingName, setReadingName] = useState('');
   const [readingInvoice, setReadingInvoice] = useState('');
   const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
-  const lastInvoiceRef = useRef<{ filename: string; csv: string } | null>(null);
+  const lastInvoiceRef = useRef<{ filename: string; csv: string; xlsxBase64?: string } | null>(null);
   const lastUploadFileRef = useRef<File | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reading = Boolean(readingName);
@@ -782,15 +782,19 @@ export default function Pagos() {
       try {
         let filename = file?.name || lastInvoiceRef.current?.filename || '';
         let csv = lastInvoiceRef.current?.csv || '';
+        let xlsxBase64 = lastInvoiceRef.current?.xlsxBase64 || '';
         if (file) {
-          csv = await readInvoiceReportUpload(file);
-          filename = file.name;
-          lastInvoiceRef.current = { filename, csv };
+          const payload = await readInvoiceReportPayload(file);
+          csv = payload.csv;
+          filename = file.name || payload.filename;
+          xlsxBase64 = payload.xlsxBase64;
+          lastInvoiceRef.current = { filename, csv, xlsxBase64 };
         }
-        if (!csv || !filename) throw new Error('No hay archivo para subir.');
+        if ((!csv && !xlsxBase64) || !filename) throw new Error('No hay archivo para subir.');
         const result = await api.importFalabellaInvoice({
           filename,
           csv,
+          xlsxBase64: xlsxBase64 || undefined,
           replace: Boolean(replace),
         });
         if (!result.reused) {

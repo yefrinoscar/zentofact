@@ -13,8 +13,10 @@ import {
   invoiceNumberLabel,
   invoicePeriodLabel,
   isInvoiceReportFilename,
+  readInvoiceReportPayload,
   readInvoiceReportUpload,
 } from './pagos-invoice-report.ts';
+import { repairSpreadsheetZip } from './xlsx-zip.ts';
 
 const HEADER = [
   'Numero de documento',
@@ -102,6 +104,13 @@ test('lee el InvoiceReport xlsx y rechaza el estado de cuenta', async () => {
     arrayBuffer: async () => write(invoiceBook, { type: 'array', bookType: 'xlsx' }),
   });
   assert.match(fromFile, /249302/);
+  const payload = await readInvoiceReportPayload({
+    name: 'InvoiceReport_demo.xlsx',
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    arrayBuffer: async () => write(invoiceBook, { type: 'array', bookType: 'xlsx' }),
+  });
+  assert.match(payload.csv, /249302/);
+  assert.ok(payload.xlsxBase64.length > 80);
 
   const spacedSheet = utils.aoa_to_sheet([
     ['InvoiceReport'],
@@ -114,4 +123,17 @@ test('lee el InvoiceReport xlsx y rechaza el estado de cuenta', async () => {
   assert.match(spacedCsv, /Numero de documento/);
   assert.match(spacedCsv, /249302/);
   assert.equal(spacedCsv.includes('InvoiceReport'), false);
+});
+
+test('reparar el ZIP no rompe un Excel normal', async () => {
+  const { utils, write } = await import('xlsx');
+  const sheet = utils.aoa_to_sheet([
+    HEADER,
+    ['249302', 'Factura', '2026-08-07', 'Comisiones', 'Cobro por comisión por venta', 'Mochila', 'df65dr6', '144957725', '-12.19', '-2.19', '-14.38', 'PEN', 'FAPE-SCDE75A-20260807-PEN', '3247518451', 'SCDE75A'],
+  ]);
+  const book = utils.book_new();
+  utils.book_append_sheet(book, sheet, 'settlement invoice');
+  const bytes = write(book, { type: 'array', bookType: 'xlsx' });
+  const csv = decodeInvoiceSpreadsheet(repairSpreadsheetZip(bytes));
+  assert.match(csv, /249302/);
 });
