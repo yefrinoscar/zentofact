@@ -35,6 +35,7 @@ import {
 import {
   invoiceImportSummary,
   invoiceNumberLabel,
+  isInvoiceReportFilename,
   readInvoiceReportUpload,
 } from '../lib/pagos-invoice-report';
 import { FalabellaInvoiceDialog } from '@/components/FalabellaInvoiceView';
@@ -650,6 +651,7 @@ export default function Pagos() {
   const [readingInvoice, setReadingInvoice] = useState('');
   const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
   const lastInvoiceRef = useRef<{ filename: string; csv: string } | null>(null);
+  const lastUploadFileRef = useRef<File | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reading = Boolean(readingName);
   const invoiceBusy = Boolean(readingInvoice);
@@ -757,7 +759,15 @@ export default function Pagos() {
       });
     },
     onError: (nextError) => {
-      const copy = csvReadError((nextError as Error).message);
+      const message = (nextError as Error).message || '';
+      const file = lastUploadFileRef.current;
+      if (file && /Subir facturas/i.test(message)) {
+        setReadingName('');
+        setReadingInvoice(file.name);
+        uploadInvoice.mutate({ file, replace: false });
+        return;
+      }
+      const copy = csvReadError(message);
       showNotice({ tone: 'error', title: copy.title, detail: copy.detail });
     },
     onSettled: () => {
@@ -1104,13 +1114,15 @@ export default function Pagos() {
           </SelectContent>
         </Select>
         <Select value={paid} onValueChange={(value) => setPaid(value as 'all' | 'pagado' | 'no-pagado')}>
-          <SelectTrigger className="w-32" aria-label="Estado de pago">
-            <SelectValue />
+          <SelectTrigger className="w-[8.5rem]" aria-label="Estado de pago">
+            <SelectValue>
+              {paid === 'all' ? 'Pago' : paid === 'pagado' ? 'Pagados' : 'No pagados'}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todas</SelectItem>
-            <SelectItem value="pagado">Pagadas</SelectItem>
-            <SelectItem value="no-pagado">No pagadas</SelectItem>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="pagado">Pagados</SelectItem>
+            <SelectItem value="no-pagado">No pagados</SelectItem>
           </SelectContent>
         </Select>
         <input
@@ -1123,6 +1135,12 @@ export default function Pagos() {
             event.target.value = '';
             if (!file) return;
             dismissNotice();
+            lastUploadFileRef.current = file;
+            if (isInvoiceReportFilename(file.name)) {
+              setReadingInvoice(file.name);
+              uploadInvoice.mutate({ file, replace: false });
+              return;
+            }
             setReadingName(file.name);
             upload.mutate({ file, replace: false });
           }}
@@ -1246,7 +1264,7 @@ export default function Pagos() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
             <p className="text-muted-foreground">
               {salesPageNote(sales.length, totalCount)}
-              {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
+              {summary.paidCount ? ` · ${summary.paidCount} pagados` : ''}
             </p>
             <p className="tabular-nums">
               Precio {money.format(footerTotals.product)}

@@ -122,6 +122,17 @@ test('los cobros de la factura Falabella se cruzan al pedido', () => {
   assert.equal(sale.invoiceCharges.logistics.net, 6.69);
 });
 
+test('lee líneas aunque la cabecera traiga espacios', () => {
+  const spaced = [
+    HEADER.split(',').map((name) => `${name} `).join(','),
+    ...CSV.split('\n').slice(1),
+  ].join('\n');
+  const parsed = parseInvoiceReportCsv(spaced);
+  assert.equal(parsed.lines.length, 4);
+  assert.equal(parsed.documents.find((document) => document.kind === 'factura').number, '249302');
+  assert.equal(parsed.lines[0].orderNumber, '3247518451');
+});
+
 test('el cruce de pagos rechaza el InvoiceReport', async () => {
   await assert.rejects(
     () => importSettlementCsv({ filename: 'InvoiceReport_FAPE-SCDE75A.xlsx', csv: CSV }, { query: async () => ({ rows: [] }) }),

@@ -102,4 +102,16 @@ test('lee el InvoiceReport xlsx y rechaza el estado de cuenta', async () => {
     arrayBuffer: async () => write(invoiceBook, { type: 'array', bookType: 'xlsx' }),
   });
   assert.match(fromFile, /249302/);
+
+  const spacedSheet = utils.aoa_to_sheet([
+    ['InvoiceReport'],
+    HEADER.map((name) => `${name} `),
+    ['249302', 'Factura', '2026-08-07', 'Comisiones', 'Cobro por comisión por venta', 'Mochila', 'df65dr6', '144957725', '-12.19', '-2.19', '-14.38', 'PEN', 'FAPE-SCDE75A-20260807-PEN', '3247518451', 'SCDE75A'],
+  ]);
+  const spacedBook = utils.book_new();
+  utils.book_append_sheet(spacedBook, spacedSheet, 'settlement invoice');
+  const spacedCsv = decodeInvoiceSpreadsheet(write(spacedBook, { type: 'array', bookType: 'xlsx' }));
+  assert.match(spacedCsv, /Numero de documento/);
+  assert.match(spacedCsv, /249302/);
+  assert.equal(spacedCsv.includes('InvoiceReport'), false);
 });

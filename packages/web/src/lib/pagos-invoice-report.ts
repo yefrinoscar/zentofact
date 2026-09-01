@@ -7,6 +7,47 @@ function normalizeHeader(text: string) {
     .toLowerCase();
 }
 
+function csvEscape(value: string) {
+  if (!/[",\n\r]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function cellText(cell: { w?: string; v?: unknown } | undefined) {
+  if (cell == null) return '';
+  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
+  const value = cell.v;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const iso = value.toISOString();
+    return iso.includes('T00:00:00') ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
+  }
+  return String(value ?? '');
+}
+
+function sheetToRows(sheet: { '!ref'?: string } & Record<string, unknown>) {
+  expandSheetRange(sheet);
+  const ref = sheet['!ref'];
+  if (!ref) return [] as string[][];
+  const range = xlsxUtils.decode_range(ref);
+  const rows: string[][] = [];
+  for (let r = range.s.r; r <= range.e.r; r += 1) {
+    const cells: string[] = [];
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const addr = xlsxUtils.encode_cell({ r, c });
+      cells.push(cellText(sheet[addr] as { w?: string; v?: unknown } | undefined));
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function rowsToCsv(rows: string[][]) {
+  return rows.map((row) => row.map((value) => csvEscape(String(value ?? ''))).join(',')).join('\n');
+}
+
+function rowLooksLikeInvoiceHeader(row: unknown[] | undefined) {
+  return headerLooksLikeInvoiceReport((row || []).map((cell) => String(cell ?? '')).join(','));
+}
+
 function expandSheetRange(sheet: { '!ref'?: string } & Record<string, unknown>) {
   const keys = Object.keys(sheet).filter((key) => /^[A-Z]+[0-9]+$/.test(key));
   if (!keys.length) return;
@@ -172,35 +213,26 @@ export function decodeInvoiceSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
   const workbook = readWorkbook(bytes, { type: 'array', cellDates: true, raw: false });
   const names = workbook.SheetNames || [];
   if (!names.length) throw new Error('El Excel no tiene hojas.');
-  let rows: unknown[][] = [];
+  let rows: string[][] = [];
   for (const name of names) {
-    const sheet = workbook.Sheets[name] as { '!ref'?: string } & Record<string, unknown>;
-    expandSheetRange(sheet);
-    const next = xlsxUtils.sheet_to_json(sheet, {
-      header: 1,
-      raw: false,
-      defval: '',
-      blankrows: false,
-    }) as unknown[][];
-    const header = (next[0] || []).map((cell) => String(cell ?? '')).join(',');
-    if (headerLooksLikeInvoiceReport(header) || /settlement invoice/i.test(name)) {
-      rows = next;
+    const next = sheetToRows(workbook.Sheets[name] as { '!ref'?: string } & Record<string, unknown>);
+    const headerIndex = next.findIndex((row) => rowLooksLikeInvoiceHeader(row));
+    if (headerIndex >= 0 || /settlement invoice/i.test(name)) {
+      rows = headerIndex >= 0 ? next.slice(headerIndex) : next;
       break;
     }
     if (!rows.length) rows = next;
   }
-  const header = (rows[0] || []).map((cell) => String(cell ?? '')).join(',');
+  const headerIndex = rows.findIndex((row) => rowLooksLikeInvoiceHeader(row));
+  const headerRow = headerIndex >= 0 ? rows[headerIndex] : rows[0];
+  const header = (headerRow || []).map((cell) => String(cell ?? '')).join(',');
   if (headerLooksLikeSettlementFile(header)) {
     throw new Error('Este es el estado de cuenta. Usa Subir archivo.');
   }
   if (!headerLooksLikeInvoiceReport(header)) {
     throw new Error('No reconocimos el reporte de facturas de Falabella.');
   }
-  const csv = xlsxUtils.sheet_to_csv(xlsxUtils.aoa_to_sheet(rows), {
-    FS: ',',
-    RS: '\n',
-    dateNF: 'yyyy-mm-dd',
-  });
+  const csv = rowsToCsv(headerIndex >= 0 ? rows.slice(headerIndex) : rows);
   if (!String(csv || '').trim()) throw new Error('El Excel está vacío.');
   return csv;
 }
