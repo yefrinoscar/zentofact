@@ -25,6 +25,7 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
+  returnProductPair,
   settlementPair,
   settlementStatementTotals,
   shortProductName,
@@ -933,10 +934,14 @@ export default function Pagos() {
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
         if (row.original.returned) {
-          const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+          const pair = returnProductPair(
+            row.original.brutoCharged,
+            row.original.brutoReversed,
+            row.original.bruto,
+          );
           return (
             <AmountRate
-              amount={pair.amount || row.original.bruto || 0}
+              amount={pair.amount}
               reversal={pair.reversal}
               hideRate
             />
@@ -1057,12 +1062,16 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
-      cell: ({ row }) => (
-        <StatementAmount
-          net={saleIgvStory(row.original).queda}
-          className={cn('font-semibold', llegaText)}
-        />
-      ),
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        return (
+          <StatementAmount
+            net={story.queda}
+            gross={row.original.returned ? -story.factura.gross : undefined}
+            className={cn('font-semibold', amountToneClass('receive', story.queda))}
+          />
+        );
+      },
     },
   ], []);
 
@@ -1307,8 +1316,8 @@ export default function Pagos() {
                   <>
                     <ChargeRow
                       label="Precio"
-                      amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
-                      reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
+                      amount={returnProductPair(selected.brutoCharged, selected.brutoReversed, selected.bruto).amount}
+                      reversal={returnProductPair(selected.brutoCharged, selected.brutoReversed, selected.bruto).reversal}
                       hint="Se descuenta el producto."
                     />
                     {hasBuyerShipping(selected) ? (
@@ -1338,7 +1347,7 @@ export default function Pagos() {
                     </div>
                     <ChargeRow
                       label="Te llega"
-                      amount={selected.neto || 0}
+                      amount={saleIgvStory(selected).queda}
                       hint={teLlegaHint(selected)}
                       tone="receive"
                       strong
