@@ -413,6 +413,20 @@ export function salesPageNote(shown: number, total: number) {
   return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
 }
 
+export function settlementFooterTotals(summary: {
+  bruto?: number | null;
+  shipping?: number | null;
+  take?: number | null;
+  neto?: number | null;
+} | null | undefined) {
+  return {
+    precio: Number(summary?.bruto || 0),
+    logistica: Number(summary?.shipping || 0),
+    seQueda: Number(summary?.take || 0),
+    teLlega: Number(summary?.neto || 0),
+  };
+}
+
 export function settlementCash(summary: {
   bruto?: number | null;
   neto?: number | null;

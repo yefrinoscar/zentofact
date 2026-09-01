@@ -25,6 +25,7 @@ import {
   saleDateLabel,
   saleDatesHint,
   salesPageNote,
+  settlementFooterTotals,
   settlementPair,
   shortProductName,
   skuLabel,
@@ -610,6 +611,7 @@ export default function Pagos() {
     .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
   const selectedCompany = companies.find((company) => String(company.id) === companyId);
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
+  const footerTotals = settlementFooterTotals(summary);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -877,11 +879,13 @@ export default function Pagos() {
               {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
             </p>
             <p className="tabular-nums">
-              Precio {money.format(summary.bruto || 0)}
+              Precio {money.format(footerTotals.precio)}
               <span className="text-muted-foreground"> · </span>
-              Se queda <span className={takeText}>{money.format(summary.take || 0)}</span>
+              Logística <span className={takeText}>{money.format(footerTotals.logistica)}</span>
               <span className="text-muted-foreground"> · </span>
-              Te llega <span className={cn('font-medium', amountToneClass('receive', summary.neto || 0))}>{money.format(summary.neto || 0)}</span>
+              Se queda <span className={takeText}>{money.format(footerTotals.seQueda)}</span>
+              <span className="text-muted-foreground"> · </span>
+              Te llega <span className={cn('font-medium', amountToneClass('receive', footerTotals.teLlega))}>{money.format(footerTotals.teLlega)}</span>
             </p>
           </div>
         ) : undefined}
