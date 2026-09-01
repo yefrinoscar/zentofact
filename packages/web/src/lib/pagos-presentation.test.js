@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -52,8 +52,8 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusTone('No Pagado'), 'unpaid');
   assert.equal(paymentStatusLabel('Pagado', true), 'Devolución');
   assert.equal(paymentStatusTone('Pagado', true), 'returned');
-  assert.equal(teLlegaHint({ returned: true, shipping: 80.82, neto: -80.82 }), 'En la devolución suele quedarse la logística.');
-  assert.equal(teLlegaHint({ returned: true, shipping: 0, neto: -69.92 }), 'Descontaron el producto y te devolvieron la comisión.');
+  assert.equal(teLlegaHint({ returned: true, shipping: 80.82, neto: -80.82 }), 'No ganas. La logística suele quedarse.');
+  assert.equal(teLlegaHint({ returned: true, shipping: 0, neto: -69.92 }), 'Producto y comisión se anulan. No te queda venta.');
   assert.deepEqual(igvSplit(150), { gross: 150, net: 127.12, igv: 22.88 });
   assert.deepEqual(igvSplit(70), { gross: 70, net: 59.32, igv: 10.68 });
   assert.deepEqual(igvSplit(100), { gross: 100, net: 84.75, igv: 15.25 });
@@ -367,6 +367,34 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   assert.deepEqual(
     settlementStatementTotals(null),
     { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 },
+  );
+});
+
+test('en una devolución el producto se anula y Ganas es la logística que se queda', () => {
+  assert.deepEqual(returnProductPair(67.98, 0, 67.98), { amount: 67.98, reversal: -67.98 });
+  assert.deepEqual(returnProductPair(99.9, -99.9), { amount: 99.9, reversal: -99.9 });
+  const incomplete = saleIgvStory({
+    returned: true,
+    bruto: 67.98,
+    commission: 0,
+    shipping: 21.8,
+  });
+  assert.equal(incomplete.product, 0);
+  assert.equal(incomplete.boleta.net, 0);
+  assert.equal(incomplete.logisticsSplit.net, igvSplit(21.8).net);
+  assert.equal(incomplete.queda, -igvSplit(21.8).net);
+  const complete = saleIgvStory({
+    returned: true,
+    bruto: 0,
+    commission: 0,
+    shipping: 80.82,
+  });
+  assert.equal(complete.queda, -igvSplit(80.82).net);
+  assert.equal(
+    settlementStatementTotals([
+      { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+    ]).ganas,
+    -igvSplit(21.8).net,
   );
 });
 
