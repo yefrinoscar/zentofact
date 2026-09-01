@@ -202,11 +202,16 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
   );
   assert.equal(charts[0].items[0].value, 1739.2);
   assert.equal(charts[0].items[1].value, 1218.35);
+  assert.equal(charts[0].items[1].withoutIgv, igvSplit(1218.35).net);
   assert.equal(charts[1].hero.label, 'Se queda');
   assert.equal(charts[1].hero.value, 520.85);
   assert.equal(charts[1].items[0].value, 148.2);
+  assert.equal(charts[1].items[0].withoutIgv, igvSplit(148.2).net);
+  assert.equal(charts[1].items[1].withoutIgv, undefined);
   assert.equal(charts[1].items[1].value, 372.65);
   assert.equal(charts[2].items[0].value, 381.96);
+  assert.equal(charts[2].items[0].withoutIgv, igvSplit(381.96).net);
+  assert.equal(charts[2].items[1].withoutIgv, undefined);
   assert.equal(charts[2].items[1].value, 836.39);
   assert.equal(charts[0].hint, '27 ventas');
   assert.equal(charts[1].hint, '29.9% del facturado');

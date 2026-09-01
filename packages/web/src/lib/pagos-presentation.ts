@@ -739,7 +739,7 @@ export function settlementCharts(summary: {
       hero: undefined,
       items: [
         { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
-        { key: 'neto', label: 'Neto', value: cash.arrives, tone: 'receive' as const },
+        { key: 'neto', label: 'Neto', value: cash.arrives, withoutIgv: igvSplit(cash.arrives).net, tone: 'receive' as const },
       ],
     },
     {
@@ -749,7 +749,7 @@ export function settlementCharts(summary: {
       total: cash.kept,
       hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
       items: [
-        { key: 'commission', label: 'Comisión', value: commission, tone: 'take' as const },
+        { key: 'commission', label: 'Comisión', value: commission, withoutIgv: igvSplit(commission).net, tone: 'take' as const },
         { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
       ],
     },
@@ -760,7 +760,7 @@ export function settlementCharts(summary: {
       total: cash.arrives,
       hero: undefined,
       items: [
-        { key: 'paid', label: 'Pagado', value: cash.paid, tone: 'receive' as const },
+        { key: 'paid', label: 'Pagado', value: cash.paid, withoutIgv: igvSplit(cash.paid).net, tone: 'receive' as const },
         { key: 'pending', label: 'Pendiente', value: cash.pending, tone: 'wait' as const },
       ],
     },
