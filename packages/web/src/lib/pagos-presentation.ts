@@ -218,6 +218,7 @@ export function csvReadError(message: string | null | undefined) {
   if (/estado de cuenta\. Usa Subir archivo/i.test(title)) return { title, detail: '' };
   if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
   if (/cabecer|columna|hoja/i.test(title)) return { title, detail: '' };
+  if (/reporte de facturas no trae/i.test(title)) return { title, detail: 'Revisa el Excel InvoiceReport.' };
   if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
   return { title, detail: 'Revisa el archivo y vuelve a subir.' };
 }

@@ -466,6 +466,14 @@ test('guarda la fecha de la orden y la del pago, y filtra por mes', () => {
     filterAggregatedSales(sales, { paidMonth: '2026-08' }).map((sale) => sale.orderId),
     ['3243000099'],
   );
+  assert.deepEqual(
+    filterAggregatedSales(sales, { paid: 'pagado' }).map((sale) => sale.orderId).sort(),
+    ['3243000099', '3243000100'],
+  );
+  assert.deepEqual(
+    filterAggregatedSales(sales, { paid: 'no-pagado' }).map((sale) => sale.orderId).sort(),
+    ['3243000101', '3243000102'],
+  );
 });
 
 test('filtra por compañía y deja todas si no hay filtro', () => {

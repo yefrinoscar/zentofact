@@ -114,10 +114,10 @@ const COLUMN_MATCHERS = {
 function pickHeader(headers, role, used) {
   const match = COLUMN_MATCHERS[role];
   for (const header of headers) {
-    if (used.has(header.original)) continue;
+    if (used.has(header.index) || !header.original) continue;
     if (match(header.normalized)) {
-      used.add(header.original);
-      return header.original;
+      used.add(header.index);
+      return header;
     }
   }
   return null;
@@ -128,14 +128,14 @@ export function bindInvoiceHeaders(headerRow) {
     original: String(original || '').trim(),
     normalized: normalizeHeader(original),
     index,
-  })).filter((header) => header.original);
-  if (!headers.length) throw httpError('El Excel no tiene cabecera.');
+  }));
+  if (!headers.some((header) => header.original)) throw httpError('El Excel no tiene cabecera.');
   const used = new Set();
   const columns = {};
   for (const role of Object.keys(COLUMN_MATCHERS)) {
-    columns[role] = pickHeader(headers, role, used);
+    columns[role] = pickHeader(headers, role, used)?.index ?? -1;
   }
-  if (!columns.documentNumber || !(columns.gross || columns.net)) {
+  if (columns.documentNumber < 0 || (columns.gross < 0 && columns.net < 0)) {
     throw httpError('No reconocimos el reporte de facturas de Falabella.');
   }
   return {
@@ -144,10 +144,8 @@ export function bindInvoiceHeaders(headerRow) {
   };
 }
 
-function cell(row, headers, column) {
-  if (!column) return '';
-  const index = headers.indexOf(column);
-  if (index < 0) return '';
+function cell(row, index) {
+  if (index == null || index < 0) return '';
   return String(row[index] ?? '').trim();
 }
 
@@ -174,34 +172,34 @@ export function parseInvoiceReportCsv(csv) {
   const { columns } = binding;
   const lines = [];
   rows.slice(headerIndex + 1).forEach((row, index) => {
-    const documentNumber = cell(row, headerRow, columns.documentNumber);
+    const documentNumber = cell(row, columns.documentNumber);
     if (!documentNumber) return;
-    const net = parseMoney(cell(row, headerRow, columns.net));
-    const igv = parseMoney(cell(row, headerRow, columns.igv));
-    const gross = parseMoney(cell(row, headerRow, columns.gross));
-    const transactedAt = cell(row, headerRow, columns.transactedAt);
-    const description = repairSettlementText(cell(row, headerRow, columns.description));
-    const transactionType = repairSettlementText(cell(row, headerRow, columns.transactionType));
+    const net = parseMoney(cell(row, columns.net));
+    const igv = parseMoney(cell(row, columns.igv));
+    const gross = parseMoney(cell(row, columns.gross));
+    const transactedAt = cell(row, columns.transactedAt);
+    const description = repairSettlementText(cell(row, columns.description));
+    const transactionType = repairSettlementText(cell(row, columns.transactionType));
     lines.push({
       rowNumber: headerIndex + index + 2,
       documentNumber,
-      documentKind: classifyInvoiceKind(cell(row, headerRow, columns.documentKind)),
+      documentKind: classifyInvoiceKind(cell(row, columns.documentKind)),
       transactedAt: parseTimestamp(transactedAt),
       transactedOn: parseDateKey(transactedAt),
       description,
       transactionType,
-      productName: repairSettlementText(cell(row, headerRow, columns.productName)),
-      sellerSku: cell(row, headerRow, columns.sellerSku),
-      falabellaSku: cell(row, headerRow, columns.falabellaSku),
+      productName: repairSettlementText(cell(row, columns.productName)),
+      sellerSku: cell(row, columns.sellerSku),
+      falabellaSku: cell(row, columns.falabellaSku),
       net: money(net),
       igv: money(igv),
       gross: money(gross ?? ((net || 0) + (igv || 0))),
-      currency: cell(row, headerRow, columns.currency) || 'PEN',
-      statementNumber: cell(row, headerRow, columns.statementNumber),
-      orderNumber: cell(row, headerRow, columns.orderNumber),
-      paidReference: cell(row, headerRow, columns.paidReference),
-      falabellaId: cell(row, headerRow, columns.falabellaId),
-      sellerId: cell(row, headerRow, columns.sellerId),
+      currency: cell(row, columns.currency) || 'PEN',
+      statementNumber: cell(row, columns.statementNumber),
+      orderNumber: cell(row, columns.orderNumber),
+      paidReference: cell(row, columns.paidReference),
+      falabellaId: cell(row, columns.falabellaId),
+      sellerId: cell(row, columns.sellerId),
       concept: classifyInvoiceConcept(description, transactionType),
     });
   });
