@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, PAYMENT_FILTERS, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentFilterLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -52,6 +52,19 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusTone('No Pagado'), 'unpaid');
   assert.equal(paymentStatusLabel('Pagado', true), 'Devolución');
   assert.equal(paymentStatusTone('Pagado', true), 'returned');
+  assert.equal(paymentFilterLabel('all', 'trigger'), 'Pago');
+  assert.equal(paymentFilterLabel('pagado'), 'Pagados');
+  assert.equal(paymentFilterLabel('no-pagado'), 'No pagados');
+  assert.equal(paymentFilterLabel('devolucion-pagado'), 'Devolución pagada');
+  assert.equal(paymentFilterLabel('devolucion-no-pagado'), 'Devolución no pagada');
+  assert.equal(paymentFilterLabel('devolucion-pagado', 'trigger'), 'Dev. pagada');
+  assert.deepEqual(PAYMENT_FILTERS.map((item) => item.value), [
+    'all',
+    'pagado',
+    'no-pagado',
+    'devolucion-pagado',
+    'devolucion-no-pagado',
+  ]);
   assert.equal(teLlegaHint({ returned: true, shipping: 80.82, neto: -80.82 }), 'No ganas. La logística suele quedarse.');
   assert.equal(teLlegaHint({ returned: true, shipping: 0, neto: -69.92 }), 'Producto y comisión se anulan. No te queda venta.');
   assert.deepEqual(igvSplit(150), { gross: 150, net: 127.12, igv: 22.88 });

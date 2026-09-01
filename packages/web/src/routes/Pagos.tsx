@@ -7,7 +7,10 @@ import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
   PAGOS_SALES_PAGE,
+  PAYMENT_FILTERS,
+  type PaymentFilterValue,
   csvReadError,
+  paymentFilterLabel,
   documentLabel,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
@@ -641,7 +644,7 @@ export default function Pagos() {
   const fileInput = useRef<HTMLInputElement>(null);
   const invoiceFileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
-  const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
+  const [paid, setPaid] = useState<PaymentFilterValue>('all');
   const [orderMonth, setOrderMonth] = useState('all');
   const [companyId, setCompanyId] = useState('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
@@ -1122,16 +1125,16 @@ export default function Pagos() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={paid} onValueChange={(value) => setPaid(value as 'all' | 'pagado' | 'no-pagado')}>
-          <SelectTrigger className="w-[8.5rem]" aria-label="Estado de pago">
+        <Select value={paid} onValueChange={(value) => setPaid(value as PaymentFilterValue)}>
+          <SelectTrigger className="w-[10.5rem]" aria-label="Estado de pago">
             <SelectValue>
-              {paid === 'all' ? 'Pago' : paid === 'pagado' ? 'Pagados' : 'No pagados'}
+              {paymentFilterLabel(paid, 'trigger')}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="pagado">Pagados</SelectItem>
-            <SelectItem value="no-pagado">No pagados</SelectItem>
+            {PAYMENT_FILTERS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <input

@@ -188,7 +188,7 @@ const apiHttp = {
     req(`/pagos/lines${qs(filter)}`),
   listSettlementSales: (filter: {
     search?: string;
-    paid?: 'pagado' | 'no-pagado' | '';
+    paid?: 'pagado' | 'no-pagado' | 'devolucion-pagado' | 'devolucion-no-pagado' | '';
     orderMonth?: string;
     paidMonth?: string;
     companyId?: number;
