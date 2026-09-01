@@ -79,51 +79,84 @@ export function saleIgvStory(sale: {
   shipping?: number | null;
   buyerShippingPaid?: number | null;
   orderShipping?: number | null;
+  invoiceCharges?: {
+    commission?: { net?: number; igv?: number; gross?: number } | null;
+    logistics?: { net?: number; igv?: number; gross?: number } | null;
+    buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
+    ads?: { net?: number; igv?: number; gross?: number } | null;
+  } | null;
 } | null | undefined) {
   const product = money2(sale?.bruto);
   const envio = sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
     ? Math.max(0, money2(sale.orderShipping))
     : Math.max(0, money2(sale?.buyerShippingPaid));
-  const commission = money2(sale?.commission);
-  const logistics = money2(sale?.shipping);
+  const settlementCommission = money2(sale?.commission);
+  const settlementLogistics = money2(sale?.shipping);
+  const productSplit = igvSplit(product);
+  const envioSplit = igvSplit(envio);
   const boleta = igvSplit(product + envio);
-  const commissionSplit = igvSplit(commission);
-  const logisticsSplit = igvSplit(logistics);
-  const factura = igvSplit(commission + logistics);
-  const productNet = igvSplit(product).net;
+  const invoice = sale?.invoiceCharges || null;
+  const commissionSplit = invoiceSplit(invoice?.commission) || igvSplit(settlementCommission);
+  const logisticsSplit = addSplits(
+    invoiceSplit(invoice?.logistics) || igvSplit(settlementLogistics),
+    invoiceSplit(invoice?.buyer_shipping),
+  ) || igvSplit(settlementLogistics);
+  const adsSplit = invoiceSplit(invoice?.ads);
+  const factura = invoice
+    ? addSplits(addSplits(commissionSplit, logisticsSplit), adsSplit) || commissionSplit
+    : igvSplit(settlementCommission + settlementLogistics);
   const queda = money2(boleta.net - factura.net);
   return {
     product,
+    productSplit,
     envio,
+    envioSplit,
     boleta,
-    commission,
+    commission: commissionSplit.gross,
     commissionSplit,
-    logistics,
+    logistics: logisticsSplit.gross,
     logisticsSplit,
+    adsSplit,
     factura,
-    productNet,
+    productNet: productSplit.net,
     commissionNet: commissionSplit.net,
-    shippingAdjust: money2(queda - (productNet - commissionSplit.net)),
+    shippingAdjust: money2(queda - (productSplit.net - commissionSplit.net)),
     queda,
   };
 }
 
-export function settlementStatementTotals(sales: Array<{
-  bruto?: number | null;
-  commission?: number | null;
-  shipping?: number | null;
-  buyerShippingPaid?: number | null;
-  orderShipping?: number | null;
-}> | null | undefined) {
+function invoiceSplit(row: { net?: number; igv?: number; gross?: number } | null | undefined) {
+  if (!row) return null;
+  const gross = money2(row.gross);
+  const net = money2(row.net);
+  const igv = money2(row.igv);
+  if (!gross && !net && !igv) return null;
+  return { gross, net, igv };
+}
+
+function addSplits(
+  left: { gross: number; net: number; igv: number } | null | undefined,
+  right: { gross: number; net: number; igv: number } | null | undefined,
+) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return {
+    gross: money2(left.gross + right.gross),
+    net: money2(left.net + right.net),
+    igv: money2(left.igv + right.igv),
+  };
+}
+
+export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>[0][] | null | undefined) {
   return (sales || []).reduce((totals, sale) => {
     const story = saleIgvStory(sale);
     return {
-      product: money2(totals.product + story.product),
-      envio: money2(totals.envio + story.envio),
-      boleta: money2(totals.boleta + story.boleta.gross),
-      commission: money2(totals.commission + story.commission),
-      logistics: money2(totals.logistics + story.logistics),
-      total: money2(totals.total + story.factura.gross),
+      product: money2(totals.product + story.productSplit.net),
+      envio: money2(totals.envio + story.envioSplit.net),
+      boleta: money2(totals.boleta + story.boleta.net),
+      commission: money2(totals.commission + story.commissionSplit.net),
+      logistics: money2(totals.logistics + story.logisticsSplit.net),
+      total: money2(totals.total + story.factura.net),
       ganas: money2(totals.ganas + story.queda),
     };
   }, { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 } as {
@@ -489,10 +522,10 @@ export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
   precio: { label: 'Precio', hint: 'Producto' },
   envio: { label: 'Envío', hint: 'De la orden' },
-  boleta: { label: 'Boleta', hint: 'Suma + IGV' },
-  comision: { label: 'Comisión', hint: 'Falabella' },
-  logistica: { label: 'Logística', hint: 'Falabella' },
-  total: { label: 'Total', hint: 'Suma + IGV' },
+  boleta: { label: 'Boleta', hint: 'Sin IGV' },
+  comision: { label: 'Comisión', hint: 'Sin IGV' },
+  logistica: { label: 'Logística', hint: 'Sin IGV' },
+  total: { label: 'Total', hint: 'Sin IGV' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
   factura: { label: 'Factura', hint: 'Falabella' },
 } as const;
@@ -752,7 +785,7 @@ export function settlementCharts(summary: {
       hint: soldHint,
       hero: undefined,
       items: [
-        { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
+        { key: 'facturado', label: 'Facturado', value: cash.sold, withoutIgv: igvSplit(cash.sold).net, tone: 'neutral' as const },
         { key: 'neto', label: 'Neto', value: cash.arrives, withoutIgv: igvSplit(cash.arrives).net, tone: 'receive' as const },
       ],
     },
@@ -761,10 +794,10 @@ export function settlementCharts(summary: {
       kind: 'waffle' as const,
       hint: takeHint,
       total: cash.kept,
-      hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
+      hero: { key: 'take', label: 'Se queda', value: cash.kept, withoutIgv: igvSplit(cash.kept).net, tone: 'neutral' as const },
       items: [
         { key: 'commission', label: 'Comisión', value: commission, withoutIgv: igvSplit(commission).net, tone: 'take' as const },
-        { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
+        { key: 'shipping', label: 'Logística', value: shipping, withoutIgv: igvSplit(shipping).net, tone: 'wait' as const },
       ],
     },
     {

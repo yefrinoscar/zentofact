@@ -138,6 +138,12 @@ type SettlementSale = {
     number: string;
     kind: string;
   }>;
+  invoiceCharges?: {
+    commission?: { net?: number; igv?: number; gross?: number } | null;
+    logistics?: { net?: number; igv?: number; gross?: number } | null;
+    buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
+    ads?: { net?: number; igv?: number; gross?: number } | null;
+  } | null;
 };
 
 const cobroCol = 'bg-muted/40';
@@ -493,20 +499,24 @@ function SaleIgvBreakdown({
     minus?: boolean;
     empty?: boolean;
   }> = [
-    { key: 'product', label: 'Producto', amount: story.product },
+    { key: 'product', label: 'Producto', amount: story.productSplit.net, igv: story.productSplit.igv },
     {
       key: 'envio',
       label: 'Envío',
-      amount: story.envio,
+      amount: story.envioSplit.net,
+      igv: story.envio > 0 ? story.envioSplit.igv : undefined,
       empty: story.envio <= 0 && sale.orderShipping == null,
     },
-    { key: 'boleta', label: 'Boleta', amount: story.boleta.gross, igv: story.boleta.igv },
-    { key: 'commission', label: 'Comisión', amount: story.commission, minus: true },
-    { key: 'logistics', label: 'Logística', amount: story.logistics, minus: true },
+    { key: 'boleta', label: 'Boleta', amount: story.boleta.net, igv: story.boleta.igv },
+    { key: 'commission', label: 'Comisión', amount: story.commissionSplit.net, igv: story.commissionSplit.igv, minus: true },
+    { key: 'logistics', label: 'Logística', amount: story.logisticsSplit.net, igv: story.logisticsSplit.igv, minus: true },
+    ...(story.adsSplit?.gross
+      ? [{ key: 'ads', label: 'Publicidad', amount: story.adsSplit.net, igv: story.adsSplit.igv, minus: true }]
+      : []),
     {
       key: 'total',
       label: 'Total',
-      amount: story.factura.gross,
+      amount: story.factura.net,
       igv: story.factura.igv,
       minus: true,
     },
@@ -566,21 +576,20 @@ function SaleIgvBreakdown({
 }
 
 function StatementAmount({
+  net,
   gross,
-  igv,
-  tone,
+  className,
 }: {
-  gross: number;
-  igv?: number;
-  tone?: 'take' | 'receive';
+  net: number;
+  gross?: number;
+  className?: string;
 }) {
+  const showGross = gross != null && Math.round(gross * 100) !== Math.round(net * 100);
   return (
-    <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
-      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-semibold')}>{money.format(gross)}</p>
-      {igv != null ? (
-        <p className={cn('text-[11px] tabular-nums', tone ? 'opacity-75' : 'text-muted-foreground')}>
-          IGV {money.format(igv)}
-        </p>
+    <div className={cn('text-right leading-tight', className)}>
+      <p className="tabular-nums text-[13px]">{money.format(net)}</p>
+      {showGross ? (
+        <p className="text-[11px] tabular-nums text-muted-foreground">{money.format(gross)}</p>
       ) : null}
     </div>
   );
@@ -907,7 +916,7 @@ export default function Pagos() {
     },
     {
       id: 'precio',
-      accessorFn: (sale) => saleIgvStory(sale).product,
+      accessorFn: (sale) => saleIgvStory(sale).productSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
       size: 92,
       meta: { align: 'end', headerClassName: ventaHeadStart, cellClassName: ventaCellStart },
@@ -923,12 +932,12 @@ export default function Pagos() {
             />
           );
         }
-        return <p className="text-right tabular-nums text-[13px]">{money.format(story.product)}</p>;
+        return <StatementAmount net={story.productSplit.net} gross={story.product} />;
       },
     },
     {
       id: 'envio',
-      accessorFn: (sale) => saleIgvStory(sale).envio,
+      accessorFn: (sale) => saleIgvStory(sale).envioSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
       size: 84,
       meta: { align: 'end' },
@@ -938,13 +947,13 @@ export default function Pagos() {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
-          <p className="text-right tabular-nums text-[13px]">{money.format(story.envio)}</p>
+          <StatementAmount net={story.envioSplit.net} gross={story.envio} />
         );
       },
     },
     {
       id: 'boleta',
-      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
+      accessorFn: (sale) => saleIgvStory(sale).boleta.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
       size: 108,
       meta: { align: 'end', headerClassName: ventaHeadEnd, cellClassName: ventaCellEnd },
@@ -953,12 +962,12 @@ export default function Pagos() {
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
+        return <StatementAmount net={story.boleta.net} gross={story.boleta.gross} />;
       },
     },
     {
       id: 'comision',
-      accessorFn: (sale) => saleIgvStory(sale).commission,
+      accessorFn: (sale) => saleIgvStory(sale).commissionSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
@@ -976,13 +985,17 @@ export default function Pagos() {
           );
         }
         return (
-          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.commission)}</p>
+          <StatementAmount
+            net={story.commissionSplit.net}
+            gross={story.commissionSplit.gross}
+            className={takeText}
+          />
         );
       },
     },
     {
       id: 'logistica',
-      accessorFn: (sale) => saleIgvStory(sale).logistics,
+      accessorFn: (sale) => saleIgvStory(sale).logisticsSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadMid, cellClassName: cobroCellMid },
@@ -1000,13 +1013,17 @@ export default function Pagos() {
           );
         }
         return (
-          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.logistics)}</p>
+          <StatementAmount
+            net={story.logisticsSplit.net}
+            gross={story.logisticsSplit.gross}
+            className={takeText}
+          />
         );
       },
     },
     {
       id: 'total',
-      accessorFn: (sale) => saleIgvStory(sale).factura.gross,
+      accessorFn: (sale) => saleIgvStory(sale).factura.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.total} />,
       size: 108,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
@@ -1015,7 +1032,13 @@ export default function Pagos() {
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount gross={story.factura.gross} igv={story.factura.igv} tone="take" />;
+        return (
+          <StatementAmount
+            net={story.factura.net}
+            gross={story.factura.gross}
+            className={takeText}
+          />
+        );
       },
     },
     {
@@ -1026,8 +1049,8 @@ export default function Pagos() {
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => (
         <StatementAmount
-          gross={saleIgvStory(row.original).queda}
-          tone="receive"
+          net={saleIgvStory(row.original).queda}
+          className={cn('font-semibold', llegaText)}
         />
       ),
     },

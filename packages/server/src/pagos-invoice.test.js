@@ -4,7 +4,9 @@ import {
   attachInvoicesToSales,
   classifyInvoiceConcept,
   classifyInvoiceKind,
+  cobroFromSigned,
   csvIsInvoiceReport,
+  foldInvoiceCharges,
   groupInvoiceDocuments,
   headerLooksLikeInvoiceReport,
   isInvoiceReportFilename,
@@ -101,6 +103,23 @@ test('el pedido apunta a la factura de Falabella y también a la nota', () => {
   assert.equal(sale.falabellaInvoices.length, 2);
   const [empty] = attachInvoicesToSales([{ orderId: 'no-existe' }], []);
   assert.equal(empty.falabellaInvoice, null);
+  assert.equal(empty.invoiceCharges, null);
+});
+
+test('los cobros de la factura Falabella se cruzan al pedido', () => {
+  assert.equal(cobroFromSigned(-14.38), 14.38);
+  assert.equal(cobroFromSigned(9), -9);
+  const charges = foldInvoiceCharges(parseInvoiceReportCsv(CSV).lines);
+  const order = charges.get('3247518451');
+  assert.equal(order.commission.gross, 5.38);
+  assert.equal(order.logistics.gross, 7.9);
+  const [sale] = attachInvoicesToSales(
+    [{ orderId: '3247518451' }],
+    [{ orderNumber: '3247518451', id: 11, number: '249302', kind: 'factura' }],
+    parseInvoiceReportCsv(CSV).lines,
+  );
+  assert.equal(sale.invoiceCharges.commission.gross, 5.38);
+  assert.equal(sale.invoiceCharges.logistics.net, 6.69);
 });
 
 test('el cruce de pagos rechaza el InvoiceReport', async () => {

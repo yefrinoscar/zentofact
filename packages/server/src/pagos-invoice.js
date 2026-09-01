@@ -280,8 +280,9 @@ export function groupInvoiceDocuments(lines) {
   });
 }
 
-export function attachInvoicesToSales(sales, invoices) {
+export function attachInvoicesToSales(sales, invoices, charges) {
   const byRef = new Map();
+  const chargeMap = charges instanceof Map ? charges : foldInvoiceCharges(charges);
   for (const invoice of invoices || []) {
     const key = String(invoice.orderNumber || '').trim();
     if (!key) continue;
@@ -309,8 +310,46 @@ export function attachInvoicesToSales(sales, invoices) {
       }
     }
     const primary = all.find((item) => item.kind === 'factura') || all[0] || null;
-    return { ...sale, falabellaInvoice: primary, falabellaInvoices: all };
+    const invoiceCharges = mergeInvoiceCharges(refs, chargeMap);
+    return { ...sale, falabellaInvoice: primary, falabellaInvoices: all, invoiceCharges };
   });
+}
+
+export function cobroFromSigned(signed) {
+  return money(-Number(signed || 0));
+}
+
+export function foldInvoiceCharges(rows) {
+  const byOrder = new Map();
+  for (const row of rows || []) {
+    const order = String(row.orderNumber || row.order_number || '').trim();
+    if (!order) continue;
+    const concept = row.concept || 'other';
+    const current = byOrder.get(order) || {};
+    const bucket = current[concept] || { net: 0, igv: 0, gross: 0 };
+    bucket.net = money(bucket.net + cobroFromSigned(row.net));
+    bucket.igv = money(bucket.igv + cobroFromSigned(row.igv));
+    bucket.gross = money(bucket.gross + cobroFromSigned(row.gross));
+    current[concept] = bucket;
+    byOrder.set(order, current);
+  }
+  return byOrder;
+}
+
+function mergeInvoiceCharges(refs, chargeMap) {
+  const merged = {};
+  for (const ref of refs) {
+    const charges = chargeMap.get(ref);
+    if (!charges) continue;
+    for (const [concept, bucket] of Object.entries(charges)) {
+      const current = merged[concept] || { net: 0, igv: 0, gross: 0 };
+      current.net = money(current.net + Number(bucket.net || 0));
+      current.igv = money(current.igv + Number(bucket.igv || 0));
+      current.gross = money(current.gross + Number(bucket.gross || 0));
+      merged[concept] = current;
+    }
+  }
+  return Object.keys(merged).length ? merged : null;
 }
 
 function mapImport(row) {
@@ -631,5 +670,26 @@ export async function loadInvoiceRefsForOrders(orderIds, db) {
     id: Number(row.id),
     number: row.document_number,
     kind: row.document_kind,
+  }));
+}
+
+export async function loadInvoiceChargesForOrders(orderIds, db) {
+  const refs = [...new Set((orderIds || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!refs.length) return [];
+  const target = await resolvePool(db);
+  const query = await target.query(
+    `select l.order_number, l.concept,
+            sum(l.net) as net, sum(l.igv) as igv, sum(l.gross) as gross
+       from falabella_invoice_lines l
+      where l.order_number = any($1::text[])
+      group by l.order_number, l.concept`,
+    [refs],
+  );
+  return query.rows.map((row) => ({
+    orderNumber: row.order_number,
+    concept: row.concept,
+    net: Number(row.net || 0),
+    igv: Number(row.igv || 0),
+    gross: Number(row.gross || 0),
   }));
 }
