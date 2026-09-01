@@ -444,98 +444,75 @@ function statementAmount(amount: number, minus?: boolean) {
   return minus ? `− ${money.format(amount)}` : money.format(amount);
 }
 
-function StatementLine({
-  label,
-  amount,
-  minus = false,
-  muted = false,
-  strong = false,
-  tone,
-}: {
-  label: string;
-  amount: number;
-  minus?: boolean;
-  muted?: boolean;
-  strong?: boolean;
-  tone?: 'take' | 'receive';
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-6 py-2">
-      <span className={cn('text-sm', muted && 'text-muted-foreground', strong && 'font-medium')}>{label}</span>
-      <span className={cn(
-        'tabular-nums text-sm',
-        muted && 'text-muted-foreground',
-        strong && 'font-medium',
-        minus && takeText,
-        amountToneClass(tone, amount),
-      )}
-      >
-        {statementAmount(amount, minus)}
-      </span>
-    </div>
-  );
-}
-
-function shippingAdjustLabel(story: ReturnType<typeof saleIgvStory>) {
-  if (story.envio <= 0 && story.shippingAdjust < 0) return 'Logística';
-  if (story.shippingAdjust < 0) return 'Logística extra';
-  return 'Envío extra';
-}
-
 function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
   const story = saleIgvStory(sale);
-  const items = [
-    { label: 'Producto', amount: story.product },
-    ...(story.envio > 0 ? [{ label: 'Envío', amount: story.envio }] : []),
-    { label: 'Comisión', amount: story.commission, minus: true },
-    { label: 'Logística', amount: story.logistics, minus: true },
+  const documents = [
+    {
+      key: 'boleta',
+      label: 'Boleta',
+      amount: story.boleta.gross,
+      igv: story.boleta.igv,
+      minus: false,
+      note: story.envio > 0
+        ? `Producto ${money.format(story.product)} · Envío ${money.format(story.envio)}`
+        : undefined,
+    },
+    {
+      key: 'commission',
+      label: 'Comisión',
+      amount: story.commission,
+      igv: story.commissionSplit.igv,
+      minus: true,
+    },
+    {
+      key: 'logistics',
+      label: 'Logística',
+      amount: story.logistics,
+      igv: story.logisticsSplit.igv,
+      minus: true,
+    },
   ];
   return (
-    <div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-muted/40 text-muted-foreground">
-            <th className="py-3 text-left font-medium">Concepto</th>
-            <th className="py-3 text-right font-medium">Importe</th>
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-border bg-muted/40 text-muted-foreground">
+          <th className="py-3 text-left font-medium">Concepto</th>
+          <th className="py-3 text-right font-medium">Importe</th>
+          <th className="w-24 py-3 text-right font-medium">IGV</th>
+        </tr>
+      </thead>
+      <tbody>
+        {documents.map((row) => (
+          <tr key={row.key} className="border-b border-border">
+            <td className="py-3 align-top">
+              <p>{row.label}</p>
+              {row.note ? <p className="mt-0.5 text-xs text-muted-foreground">{row.note}</p> : null}
+            </td>
+            <td className={cn('py-3 text-right align-top tabular-nums', row.minus && takeText)}>
+              {statementAmount(row.amount, row.minus)}
+            </td>
+            <td className={cn(
+              'py-3 text-right align-top tabular-nums',
+              row.minus ? takeText : 'text-muted-foreground',
+            )}
+            >
+              {statementAmount(row.igv, row.minus)}
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.label} className="border-b border-border">
-              <td className="py-3">{item.label}</td>
-              <td className={cn('py-3 text-right tabular-nums', item.minus && takeText)}>
-                {statementAmount(item.amount, item.minus)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="mt-6 rounded-md bg-muted/40 px-4 py-2">
-        <StatementLine label="Boleta" amount={story.boleta.gross} />
-        <StatementLine label="IGV (18%)" amount={story.boleta.igv} muted />
-        <StatementLine label="Comisión" amount={story.commission} minus />
-        <StatementLine label="IGV (18%)" amount={story.commissionSplit.igv} minus muted />
-        <StatementLine label="Logística" amount={story.logistics} minus />
-        <StatementLine label="IGV (18%)" amount={story.logisticsSplit.igv} minus muted />
-        <div className="mt-1 border-t border-border pt-1">
-          <StatementLine label="Producto" amount={story.productNet} />
-          <StatementLine label="Comisión" amount={story.commissionNet} minus />
-          {Math.abs(story.shippingAdjust) >= 0.01 ? (
-            <StatementLine
-              label={shippingAdjustLabel(story)}
-              amount={Math.abs(story.shippingAdjust)}
-              minus={story.shippingAdjust < 0}
-            />
-          ) : null}
-        </div>
-        <div className="mt-1 flex items-baseline justify-between gap-6 border-t border-border py-3">
-          <span className="text-sm font-semibold">Ganas</span>
-          <span className={cn('tabular-nums text-sm font-semibold', amountToneClass('receive', story.queda))}>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td className="py-4 font-semibold">Ganas</td>
+          <td
+            colSpan={2}
+            className={cn('py-4 text-right tabular-nums font-semibold', amountToneClass('receive', story.queda))}
+          >
             {money.format(story.queda)}
-          </span>
-        </div>
-      </div>
-    </div>
+          </td>
+        </tr>
+      </tfoot>
+    </table>
   );
 }
 
