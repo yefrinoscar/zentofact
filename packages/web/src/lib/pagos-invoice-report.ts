@@ -75,7 +75,11 @@ export function invoiceImportSummary(item: {
   documents?: Array<{ kind?: string | null; number?: string | null }> | null;
 } | null | undefined) {
   if (item?.reused) return 'Esta factura ya está cargada.';
-  const names = (item?.documents || []).map((document) => invoiceNumberLabel(document)).filter(Boolean);
+  const names = (item?.documents || [])
+    .slice()
+    .sort((left, right) => Number(left?.kind !== 'factura') - Number(right?.kind !== 'factura'))
+    .map((document) => invoiceNumberLabel(document))
+    .filter(Boolean);
   const lines = Number(item?.lineCount || 0);
   const lineNote = lines === 1 ? '1 línea' : `${lines} líneas`;
   if (names.length) return `${names.join(' · ')} · ${lineNote}`;

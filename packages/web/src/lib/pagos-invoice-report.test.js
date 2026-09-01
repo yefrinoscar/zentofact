@@ -46,7 +46,7 @@ test('nombra factura, nota y conceptos como en el Excel', () => {
   assert.equal(invoiceImportSummary({ reused: true }), 'Esta factura ya está cargada.');
   assert.equal(
     invoiceImportSummary({
-      documents: [{ kind: 'factura', number: '249302' }, { kind: 'nota_credito', number: '74527' }],
+      documents: [{ kind: 'nota_credito', number: '74527' }, { kind: 'factura', number: '249302' }],
       lineCount: 235,
     }),
     'Factura 249302 · NC 74527 · 235 líneas',

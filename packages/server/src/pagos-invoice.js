@@ -563,7 +563,9 @@ export async function listInvoiceDocuments(filter = {}, db) {
           ${where.length ? `where ${where.join(' and ')}` : ''}
           order by d.document_number, d.document_kind, d.id desc
        ) latest
-      order by latest.imported_at desc, latest.id desc
+      order by latest.imported_at desc,
+               case when latest.document_kind = 'factura' then 0 else 1 end,
+               latest.id desc
       limit $${values.length - 1} offset $${values.length}`,
     values,
   );
