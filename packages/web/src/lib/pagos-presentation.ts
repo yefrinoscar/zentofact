@@ -170,6 +170,7 @@ function addSplits(
 export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>[0][] | null | undefined) {
   return (sales || []).reduce((totals, sale) => {
     const story = saleIgvStory(sale);
+    const returned = Boolean(sale?.returned);
     return {
       product: money2(totals.product + story.productSplit.net),
       envio: money2(totals.envio + story.envioSplit.net),
@@ -178,8 +179,20 @@ export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>
       logistics: money2(totals.logistics + story.logisticsSplit.net),
       total: money2(totals.total + story.factura.net),
       ganas: money2(totals.ganas + story.queda),
+      returnLoss: money2(totals.returnLoss + (returned ? story.queda : 0)),
+      returnCount: totals.returnCount + (returned ? 1 : 0),
     };
-  }, { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 } as {
+  }, {
+    product: 0,
+    envio: 0,
+    boleta: 0,
+    commission: 0,
+    logistics: 0,
+    total: 0,
+    ganas: 0,
+    returnLoss: 0,
+    returnCount: 0,
+  } as {
     product: number;
     envio: number;
     boleta: number;
@@ -187,6 +200,8 @@ export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>
     logistics: number;
     total: number;
     ganas: number;
+    returnLoss: number;
+    returnCount: number;
   });
 }
 
