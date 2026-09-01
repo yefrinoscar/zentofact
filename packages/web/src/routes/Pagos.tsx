@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, CheckCircle2, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, FileText, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
@@ -49,6 +49,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type SettlementProduct = {
   sku?: string;
@@ -814,7 +820,8 @@ export default function Pagos() {
     number: string;
     kind: string;
   }>;
-  const primaryInvoice = invoices.find((item) => item.kind === 'factura') || invoices[0];
+  const facturaDocument = invoices.find((item) => item.kind === 'factura');
+  const creditNoteDocument = invoices.find((item) => item.kind === 'nota_credito');
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
@@ -1124,29 +1131,49 @@ export default function Pagos() {
             uploadInvoice.mutate({ file, replace: false });
           }}
         />
-        <Button
-          type="button"
-          variant="outline"
-          disabled={invoiceBusy || uploadInvoice.isPending}
-          onClick={() => {
-            const input = invoiceFileInput.current;
-            if (!input || invoiceBusy || uploadInvoice.isPending) return;
-            input.value = '';
-            input.click();
-          }}
-        >
-          {invoiceBusy ? <WorkLoaderMark data-icon="inline-start" /> : <FileSpreadsheet data-icon="inline-start" />}
-          {invoiceBusy ? 'Leyendo factura' : 'Subir facturas'}
-        </Button>
-        {primaryInvoice ? (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => openInvoice(primaryInvoice.id)}
-          >
-            {invoiceNumberLabel(primaryInvoice)}
-          </Button>
-        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" disabled={invoiceBusy || uploadInvoice.isPending}>
+              {invoiceBusy ? <WorkLoaderMark data-icon="inline-start" /> : <FileSpreadsheet data-icon="inline-start" />}
+              {invoiceBusy ? 'Leyendo factura' : 'Facturas'}
+              {invoiceBusy ? null : <ChevronDown data-icon="inline-end" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-48">
+            <DropdownMenuItem
+              disabled={invoiceBusy || uploadInvoice.isPending}
+              onClick={() => {
+                const input = invoiceFileInput.current;
+                if (!input || invoiceBusy || uploadInvoice.isPending) return;
+                input.value = '';
+                input.click();
+              }}
+            >
+              <Upload />
+              Subir
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!facturaDocument}
+              onClick={() => {
+                if (!facturaDocument) return;
+                openInvoice(facturaDocument.id);
+              }}
+            >
+              <FileSpreadsheet />
+              Ver factura
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!creditNoteDocument}
+              onClick={() => {
+                if (!creditNoteDocument) return;
+                openInvoice(creditNoteDocument.id);
+              }}
+            >
+              <FileText />
+              Ver nota de crédito
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {notice ? (
         <SettlementAlert

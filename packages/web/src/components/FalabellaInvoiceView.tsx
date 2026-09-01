@@ -1,8 +1,11 @@
 import { money } from '../lib/pagos-presentation';
 import {
+  invoiceAmountInWords,
   invoiceChargeAmount,
   invoiceConceptLabel,
+  invoiceElectronicTitle,
   invoiceKindLabel,
+  invoiceLongDate,
   invoiceNumberLabel,
   invoicePeriodLabel,
 } from '../lib/pagos-invoice-report';
@@ -29,6 +32,7 @@ export type FalabellaInvoiceDocument = {
   sellerId?: string;
   periodFrom?: string | null;
   periodTo?: string | null;
+  issuedOn?: string | null;
   net?: number;
   igv?: number;
   gross?: number;
@@ -39,25 +43,34 @@ export type FalabellaInvoiceDocument = {
   lines?: FalabellaInvoiceLine[];
 };
 
-function AmountCell({
-  signed,
-  kind,
-  className,
-}: {
-  signed: number;
-  kind: string;
-  className?: string;
-}) {
-  const shown = invoiceChargeAmount(kind, signed);
+function soles(signed: number, kind: string) {
+  return money.format(invoiceChargeAmount(kind, signed).amount);
+}
+
+function FalabellaMark() {
   return (
-    <span className={cn(
-      'tabular-nums',
-      (kind === 'nota_credito' || shown.credit) && 'text-emerald-700 dark:text-emerald-400',
-      className,
-    )}
+    <div
+      className="grid size-11 shrink-0 place-items-center rounded-lg bg-zinc-900 text-white"
+      aria-hidden="true"
     >
-      {money.format(shown.amount)}
-    </span>
+      <svg viewBox="0 0 24 24" className="size-6" fill="none">
+        <path
+          d="M5 16c3.2-1.2 5.4-4.4 7-8 1.6 3.6 3.8 6.8 7 8"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function MetaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium tracking-wide text-zinc-400">{label}</p>
+      <p className="mt-1 text-sm font-medium text-zinc-900">{value || '—'}</p>
+    </div>
   );
 }
 
@@ -70,86 +83,125 @@ export function FalabellaInvoiceView({
 }) {
   const kind = document.kind || 'factura';
   const period = invoicePeriodLabel(document.periodFrom, document.periodTo);
+  const issued = invoiceLongDate(document.issuedOn || document.periodTo)
+    || invoicePeriodLabel(document.issuedOn || document.periodTo, document.issuedOn || document.periodTo);
   const orderId = String(highlightOrder || '').trim();
+  const concepts = document.concepts || [];
+  const gross = invoiceChargeAmount(kind, Number(document.gross || 0)).amount;
   const orderLines = orderId
     ? (document.lines || []).filter((line) => String(line.orderNumber || '').trim() === orderId)
     : [];
-  const orderGross = orderLines.reduce((sum, line) => sum + Number(line.gross || 0), 0);
+  const lineCount = document.lineCount || document.lines?.length || 0;
 
   return (
-    <div className="bg-background text-foreground">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Falabella</p>
-          <h2 className="text-xl font-semibold leading-tight">{invoiceKindLabel(kind)} {document.number}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {kind === 'nota_credito'
-              ? 'Te devuelven comisión u otro cobro.'
-              : 'Comisión, logística y otros cobros de este período.'}
-          </p>
-        </div>
-        <div className="text-right text-sm">
-          <p className="font-mono text-xs text-muted-foreground">{document.sellerId || '—'}</p>
-          <p className="text-muted-foreground">{document.currency || 'PEN'}{period ? ` · ${period}` : ''}</p>
+    <div className="bg-white px-10 py-10 text-zinc-900 sm:px-12 sm:py-12">
+      <div className="flex items-start justify-between gap-6">
+        <FalabellaMark />
+        <div className="text-right">
+          <p className="text-2xl font-semibold tracking-tight">{invoiceKindLabel(kind)}</p>
+          <p className="mt-1 text-sm text-zinc-500">Nº {document.number}</p>
         </div>
       </div>
 
-      <table className="w-full text-sm">
+      <div className="mt-10 grid grid-cols-3 gap-6">
+        <MetaCell label="Fecha de emisión" value={issued} />
+        <MetaCell label="Periodo" value={period} />
+        <MetaCell label="IGV" value="18%" />
+      </div>
+
+      <div className="mt-10 grid grid-cols-2 gap-10">
+        <div>
+          <p className="text-[11px] font-medium tracking-wide text-zinc-400">Emitida por</p>
+          <p className="mt-1.5 text-base font-semibold">Falabella</p>
+          <p className="mt-1 text-sm leading-5 text-zinc-500">
+            Falabella Seller Center
+            <br />
+            Perú
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] font-medium tracking-wide text-zinc-400">Dirigida a</p>
+          <p className="mt-1.5 text-base font-semibold">Seller {document.sellerId || '—'}</p>
+          <p className="mt-1 text-sm leading-5 text-zinc-500">
+            {document.sellerId || '—'}
+            <br />
+            {document.currency || 'PEN'}
+          </p>
+        </div>
+      </div>
+
+      <table className="mt-10 w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border text-muted-foreground">
-            <th className="px-5 py-2 text-left font-medium">Concepto</th>
-            <th className="px-5 py-2 text-right font-medium">Gravado</th>
-            <th className="w-24 px-5 py-2 text-right font-medium">IGV</th>
-            <th className="px-5 py-2 text-right font-medium">Total</th>
+          <tr className="bg-zinc-100 text-[11px] font-semibold tracking-wide text-zinc-700">
+            <th className="rounded-l-lg py-2.5 pl-4 pr-3 text-left">Ítem</th>
+            <th className="px-3 py-2.5 text-right">Cant.</th>
+            <th className="px-3 py-2.5 text-right">Valor</th>
+            <th className="rounded-r-lg py-2.5 pl-3 pr-4 text-right">Importe</th>
           </tr>
         </thead>
         <tbody>
-          {(document.concepts || []).map((row) => (
-            <tr key={row.key} className="border-b border-border">
-              <td className="px-5 py-2">
-                {invoiceConceptLabel(row.key)}
-                <span className="ml-1 text-xs text-muted-foreground">{row.count}</span>
-              </td>
-              <td className="px-5 py-2 text-right"><AmountCell signed={row.net} kind={kind} /></td>
-              <td className="px-5 py-2 text-right"><AmountCell signed={row.igv} kind={kind} /></td>
-              <td className="px-5 py-2 text-right font-medium"><AmountCell signed={row.gross} kind={kind} /></td>
-            </tr>
-          ))}
+          {concepts.map((row) => {
+            const net = invoiceChargeAmount(kind, row.net).amount;
+            const qty = Math.max(1, Number(row.count || 0));
+            const unit = Math.round((net / qty) * 100) / 100;
+            return (
+              <tr key={row.key} className="border-b border-zinc-100 last:border-0">
+                <td className="py-4 pl-4 pr-3 font-medium">{invoiceConceptLabel(row.key)}</td>
+                <td className="px-3 py-4 text-right tabular-nums text-zinc-600">
+                  {qty}
+                  <span className="ml-1 text-zinc-400">líneas</span>
+                </td>
+                <td className="px-3 py-4 text-right tabular-nums text-zinc-600">{money.format(unit)}</td>
+                <td className="py-4 pl-3 pr-4 text-right tabular-nums font-medium">{money.format(net)}</td>
+              </tr>
+            );
+          })}
         </tbody>
-        <tfoot>
-          <tr className="border-b border-border">
-            <td className="px-5 py-2 text-muted-foreground">Gravado</td>
-            <td className="px-5 py-2 text-right" colSpan={3}><AmountCell signed={Number(document.net || 0)} kind={kind} /></td>
-          </tr>
-          <tr className="border-b border-border">
-            <td className="px-5 py-2 text-muted-foreground">IGV 18%</td>
-            <td className="px-5 py-2 text-right" colSpan={3}><AmountCell signed={Number(document.igv || 0)} kind={kind} /></td>
-          </tr>
-          <tr>
-            <td className="px-5 py-3 font-medium">Total</td>
-            <td className="px-5 py-3 text-right text-base font-semibold" colSpan={3}>
-              <AmountCell signed={Number(document.gross || 0)} kind={kind} />
-            </td>
-          </tr>
-        </tfoot>
       </table>
 
+      <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-[1fr_20rem] sm:items-start">
+        <div className="space-y-5 text-sm">
+          <div>
+            <p className="text-[11px] font-medium tracking-wide text-zinc-400">Documento</p>
+            <p className="mt-1 font-medium">{invoiceElectronicTitle(kind)}</p>
+            <p className="text-zinc-500">{document.currency || 'PEN'} · {lineCount} {lineCount === 1 ? 'línea' : 'líneas'}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium tracking-wide text-zinc-400">Notas</p>
+            <p className="mt-1 text-[13px] leading-5 text-zinc-600">{invoiceAmountInWords(gross)}</p>
+            <p className="mt-2 text-[12px] leading-5 text-zinc-400">
+              Representación visual del InvoiceReport. No es el XML de SUNAT.
+            </p>
+          </div>
+        </div>
+        <div className="rounded-2xl bg-zinc-100 px-5 py-4 text-sm">
+          <div className="flex items-center justify-between gap-4 py-1.5 text-zinc-600">
+            <span>Subtotal</span>
+            <span className="tabular-nums">{soles(Number(document.net || 0), kind)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-1.5 text-zinc-600">
+            <span>IGV (18%)</span>
+            <span className="tabular-nums">{soles(Number(document.igv || 0), kind)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-4 border-t border-zinc-200 pt-3 font-semibold text-zinc-900">
+            <span>Total</span>
+            <span className="tabular-nums">{soles(Number(document.gross || 0), kind)}</span>
+          </div>
+        </div>
+      </div>
+
       {orderLines.length ? (
-        <div className="border-t border-border px-5 py-4">
-          <p className="text-sm font-medium">Este pedido {orderId}</p>
-          <p className="text-xs text-muted-foreground">
-            {kind === 'nota_credito' ? 'Te devuelven' : 'Falabella cobra'}{' '}
-            <AmountCell signed={orderGross} kind={kind} />
-          </p>
+        <div className="mt-10 border-t border-zinc-100 pt-6">
+          <p className="text-[11px] font-medium tracking-wide text-zinc-400">Este pedido {orderId}</p>
           <table className="mt-2 w-full text-sm">
             <tbody>
               {orderLines.map((line, index) => (
-                <tr key={line.id || `${line.concept}-${index}`} className="border-b border-border last:border-0">
-                  <td className="py-2 pr-3">
-                    <p>{invoiceConceptLabel(line.concept)}</p>
-                    <p className="text-xs text-muted-foreground">{line.productName || line.description}</p>
+                <tr key={line.id || `${line.concept}-${index}`} className="border-b border-zinc-100 last:border-0">
+                  <td className="py-2.5 pr-3">
+                    <p className="font-medium">{invoiceConceptLabel(line.concept)}</p>
+                    <p className="text-xs text-zinc-500">{line.productName || line.description}</p>
                   </td>
-                  <td className="py-2 text-right"><AmountCell signed={Number(line.gross || 0)} kind={kind} /></td>
+                  <td className="py-2.5 text-right tabular-nums">{soles(Number(line.gross || 0), kind)}</td>
                 </tr>
               ))}
             </tbody>
@@ -157,20 +209,20 @@ export function FalabellaInvoiceView({
         </div>
       ) : null}
 
-      <div className="border-t border-border px-5 py-4">
-        <p className="text-sm font-medium">Detalle</p>
-        <p className="text-xs text-muted-foreground">
-          {document.lineCount || document.lines?.length || 0} líneas
+      <div className="mt-10 border-t border-zinc-100 pt-6">
+        <p className="text-[11px] font-medium tracking-wide text-zinc-400">Detalle de pedidos</p>
+        <p className="mt-1 text-xs text-zinc-500">
+          {lineCount} {lineCount === 1 ? 'línea' : 'líneas'}
           {document.statements?.length ? ` · ${document.statements.length} estados de cuenta` : ''}
         </p>
-        <div className="mt-2 max-h-72 overflow-y-auto">
+        <div className="mt-3 max-h-64 overflow-y-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-background text-muted-foreground">
-              <tr className="border-b border-border">
-                <th className="py-2 pr-3 text-left font-medium">Pedido</th>
-                <th className="py-2 pr-3 text-left font-medium">Producto</th>
-                <th className="py-2 pr-3 text-left font-medium">Concepto</th>
-                <th className="py-2 text-right font-medium">Total</th>
+            <thead className="sticky top-0 bg-white text-[11px] font-medium tracking-wide text-zinc-400">
+              <tr className="border-b border-zinc-100">
+                <th className="py-2 pr-3 text-left">Pedido</th>
+                <th className="py-2 pr-3 text-left">Descripción</th>
+                <th className="py-2 pr-3 text-left">Concepto</th>
+                <th className="py-2 text-right">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -179,15 +231,15 @@ export function FalabellaInvoiceView({
                 return (
                   <tr
                     key={line.id || `${line.orderNumber}-${index}`}
-                    className={cn('border-b border-border', highlighted && 'bg-muted/50')}
+                    className={cn('border-b border-zinc-50', highlighted && 'bg-zinc-50')}
                   >
-                    <td className="py-2 pr-3 font-mono text-xs">{line.orderNumber || '—'}</td>
+                    <td className="py-2 pr-3 font-mono text-xs text-zinc-600">{line.orderNumber || '—'}</td>
                     <td className="py-2 pr-3">
                       <p className="line-clamp-2 leading-5">{line.productName || line.description || '—'}</p>
-                      {line.sellerSku ? <p className="font-mono text-[11px] text-muted-foreground">{line.sellerSku}</p> : null}
+                      {line.sellerSku ? <p className="font-mono text-[11px] text-zinc-400">{line.sellerSku}</p> : null}
                     </td>
-                    <td className="py-2 pr-3">{invoiceConceptLabel(line.concept)}</td>
-                    <td className="py-2 text-right"><AmountCell signed={Number(line.gross || 0)} kind={kind} /></td>
+                    <td className="py-2 pr-3 text-zinc-600">{invoiceConceptLabel(line.concept)}</td>
+                    <td className="py-2 text-right tabular-nums">{soles(Number(line.gross || 0), kind)}</td>
                   </tr>
                 );
               })}
@@ -218,15 +270,17 @@ export function FalabellaInvoiceDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl"
         aria-describedby={undefined}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{document ? invoiceNumberLabel(document) : 'Factura Falabella'}</DialogTitle>
-          <DialogDescription>Detalle visual de lo que Falabella factura al seller.</DialogDescription>
+          <DialogDescription>
+            {document ? invoiceElectronicTitle(document.kind) : 'Factura electrónica de Falabella'}
+          </DialogDescription>
         </DialogHeader>
         {siblings.length > 1 ? (
-          <div className="flex flex-wrap gap-1 border-b border-border px-5 py-2">
+          <div className="flex flex-wrap gap-1 border-b border-border bg-muted/40 px-4 py-2">
             {siblings.map((item) => (
               <button
                 key={item.id}
@@ -234,7 +288,7 @@ export function FalabellaInvoiceDialog({
                 onClick={() => onSelect?.(item.id)}
                 className={cn(
                   'rounded-md px-2 py-1 text-xs',
-                  document?.id === item.id ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/60',
+                  document?.id === item.id ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:bg-background/70',
                 )}
               >
                 {invoiceNumberLabel(item)}
@@ -242,9 +296,11 @@ export function FalabellaInvoiceDialog({
             ))}
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-100 p-4 sm:p-6">
           {document ? (
-            <FalabellaInvoiceView document={document} highlightOrder={highlightOrder} />
+            <div className="mx-auto overflow-hidden rounded-2xl bg-white shadow-[0_12px_40px_rgba(24,24,27,0.08)]">
+              <FalabellaInvoiceView document={document} highlightOrder={highlightOrder} />
+            </div>
           ) : (
             <p className="px-5 py-10 text-center text-sm text-muted-foreground">Cargando factura…</p>
           )}

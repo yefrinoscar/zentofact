@@ -5,8 +5,11 @@ import {
   headerLooksLikeInvoiceReport,
   invoiceChargeAmount,
   invoiceConceptLabel,
+  invoiceAmountInWords,
+  invoiceElectronicTitle,
   invoiceImportSummary,
   invoiceKindLabel,
+  invoiceLongDate,
   invoiceNumberLabel,
   invoicePeriodLabel,
   isInvoiceReportFilename,
@@ -43,6 +46,9 @@ test('nombra factura, nota y conceptos como en el Excel', () => {
   assert.equal(invoiceConceptLabel('buyer_shipping'), 'Envío del comprador');
   assert.equal(invoiceConceptLabel('ads'), 'Publicidad');
   assert.equal(invoicePeriodLabel('2026-08-01', '2026-08-07'), '1 ago. – 7 ago.');
+  assert.equal(invoiceLongDate('2026-08-07'), '7 de agosto de 2026');
+  assert.equal(invoiceElectronicTitle('factura'), 'FACTURA ELECTRÓNICA');
+  assert.equal(invoiceElectronicTitle('nota_credito'), 'NOTA DE CRÉDITO ELECTRÓNICA');
   assert.equal(invoiceImportSummary({ reused: true }), 'Esta factura ya está cargada.');
   assert.equal(
     invoiceImportSummary({
@@ -51,6 +57,12 @@ test('nombra factura, nota y conceptos como en el Excel', () => {
     }),
     'Factura 249302 · NC 74527 · 235 líneas',
   );
+});
+
+test('el monto en letras sigue el formato de la boleta', () => {
+  assert.equal(invoiceAmountInWords(4561.09), 'SON: CUATRO MIL QUINIENTOS SESENTA Y UN CON 09/100 SOLES');
+  assert.equal(invoiceAmountInWords(91.8), 'SON: NOVENTA Y UN CON 80/100 SOLES');
+  assert.equal(invoiceAmountInWords(0), 'SON: CERO CON 00/100 SOLES');
 });
 
 test('la vista de factura muestra el cobro en positivo', () => {

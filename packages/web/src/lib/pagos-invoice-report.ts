@@ -101,12 +101,70 @@ export function invoicePeriodLabel(from?: string | null, to?: string | null) {
   return left || right || '';
 }
 
+export function invoiceLongDate(day?: string | null) {
+  const value = String(day || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${value}T12:00:00`));
+}
+
 /** InvoiceReport signs charges as negative. The paper view shows what Falabella bills. */
 export function invoiceChargeAmount(kind: string | null | undefined, signed: number | null | undefined) {
   const value = Math.round((Number(signed) || 0) * 100) / 100;
   const amount = Math.abs(value);
   if (kind === 'nota_credito') return { amount, credit: value >= 0 };
   return { amount, credit: value > 0 };
+}
+
+export function invoiceElectronicTitle(kind: string | null | undefined) {
+  if (kind === 'nota_credito') return 'NOTA DE CRÉDITO ELECTRÓNICA';
+  return 'FACTURA ELECTRÓNICA';
+}
+
+const UNIDADES = ['', 'un', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+const DECENAS = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+const ESPECIALES = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve'];
+const CENTENAS = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+
+function groupToWords(n: number) {
+  if (n === 100) return 'cien';
+  if (n === 0) return '';
+  let text = '';
+  const hundreds = Math.floor(n / 100);
+  const tens = Math.floor((n % 100) / 10);
+  const ones = n % 10;
+  if (hundreds > 0) text += `${CENTENAS[hundreds]} `;
+  if (tens === 1) return `${text}${ESPECIALES[ones]}`.trim();
+  if (tens > 1) text += `${DECENAS[tens]}${ones > 0 ? ' y ' : ' '}`;
+  if (ones > 0) text += UNIDADES[ones];
+  return text.trim();
+}
+
+export function invoiceAmountInWords(amount: number | null | undefined) {
+  const value = Math.abs(Math.round((Number(amount) || 0) * 100) / 100);
+  const whole = Math.floor(value);
+  const cents = Math.round((value - whole) * 100);
+  if (whole === 0) {
+    return `SON: CERO CON ${String(cents).padStart(2, '0')}/100 SOLES`;
+  }
+  const parts: string[] = [];
+  let rest = whole;
+  let index = 0;
+  while (rest > 0) {
+    const group = rest % 1000;
+    if (group > 0) {
+      let text = groupToWords(group);
+      if (index === 1) text += ' mil';
+      if (index === 2) text += group === 1 ? ' millón' : ' millones';
+      parts.unshift(text);
+    }
+    rest = Math.floor(rest / 1000);
+    index += 1;
+  }
+  return `SON: ${parts.join(' ').toUpperCase()} CON ${String(cents).padStart(2, '0')}/100 SOLES`;
 }
 
 export function decodeInvoiceSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
