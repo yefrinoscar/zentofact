@@ -117,17 +117,21 @@ export function settlementStatementTotals(sales: Array<{
   return (sales || []).reduce((totals, sale) => {
     const story = saleIgvStory(sale);
     return {
-      boleta: money2(totals.boleta + story.boleta.gross),
+      product: money2(totals.product + story.product),
       envio: money2(totals.envio + story.envio),
+      boleta: money2(totals.boleta + story.boleta.gross),
       commission: money2(totals.commission + story.commission),
       logistics: money2(totals.logistics + story.logistics),
+      total: money2(totals.total + story.factura.gross),
       ganas: money2(totals.ganas + story.queda),
     };
-  }, { boleta: 0, envio: 0, commission: 0, logistics: 0, ganas: 0 } as {
-    boleta: number;
+  }, { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 } as {
+    product: number;
     envio: number;
+    boleta: number;
     commission: number;
     logistics: number;
+    total: number;
     ganas: number;
   });
 }
@@ -470,10 +474,12 @@ export const PAGOS_SALES_PAGE = 2000;
 
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
-  boleta: { label: 'Boleta', hint: 'Producto + envío' },
+  precio: { label: 'Precio', hint: 'Producto' },
   envio: { label: 'Envío', hint: 'De la orden' },
-  comision: { label: 'Comisión', hint: 'IGV 18%' },
-  logistica: { label: 'Logística', hint: 'IGV 18%' },
+  boleta: { label: 'Boleta', hint: 'Suma + IGV' },
+  comision: { label: 'Comisión', hint: 'Falabella' },
+  logistica: { label: 'Logística', hint: 'Falabella' },
+  total: { label: 'Total', hint: 'Suma + IGV' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
 } as const;
 
