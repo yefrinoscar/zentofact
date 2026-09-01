@@ -814,6 +814,7 @@ export default function Pagos() {
     number: string;
     kind: string;
   }>;
+  const primaryInvoice = invoices.find((item) => item.kind === 'factura') || invoices[0];
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
@@ -1137,13 +1138,13 @@ export default function Pagos() {
           {invoiceBusy ? <WorkLoaderMark data-icon="inline-start" /> : <FileSpreadsheet data-icon="inline-start" />}
           {invoiceBusy ? 'Leyendo factura' : 'Subir facturas'}
         </Button>
-        {invoices[0] ? (
+        {primaryInvoice ? (
           <Button
             type="button"
             variant="ghost"
-            onClick={() => openInvoice(invoices[0].id)}
+            onClick={() => openInvoice(primaryInvoice.id)}
           >
-            {invoiceNumberLabel(invoices[0])}
+            {invoiceNumberLabel(primaryInvoice)}
           </Button>
         ) : null}
       </div>
