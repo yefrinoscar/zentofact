@@ -325,7 +325,15 @@ export async function listSettlementSales(filter = {}, db) {
   const target = await resolvePool(db);
   const importId = optionalPositiveInt(filter.importId);
   const paid = String(filter.paid || '').trim().toLowerCase();
-  if (paid && !['pagado', 'no-pagado', 'no_pagado'].includes(paid)) {
+  if (paid && ![
+    'pagado',
+    'no-pagado',
+    'no_pagado',
+    'devolucion-pagado',
+    'devolucion_pagado',
+    'devolucion-no-pagado',
+    'devolucion_no_pagado',
+  ].includes(paid)) {
     throw httpError('Estado de pago inválido.');
   }
   const search = String(filter.search || '').trim().toLowerCase();

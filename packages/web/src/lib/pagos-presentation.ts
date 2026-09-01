@@ -48,6 +48,22 @@ export function paymentStatusLabel(status: string | null | undefined, returned?:
   return String(status || '').trim() || '—';
 }
 
+export const PAYMENT_FILTERS = [
+  { value: 'all', label: 'Todos', trigger: 'Pago' },
+  { value: 'pagado', label: 'Pagados', trigger: 'Pagados' },
+  { value: 'no-pagado', label: 'No pagados', trigger: 'No pagados' },
+  { value: 'devolucion-pagado', label: 'Devolución pagada', trigger: 'Dev. pagada' },
+  { value: 'devolucion-no-pagado', label: 'Devolución no pagada', trigger: 'Dev. no pagada' },
+] as const;
+
+export type PaymentFilterValue = (typeof PAYMENT_FILTERS)[number]['value'];
+
+export function paymentFilterLabel(value: string | null | undefined, kind: 'label' | 'trigger' = 'label') {
+  const match = PAYMENT_FILTERS.find((item) => item.value === value);
+  if (!match) return kind === 'trigger' ? 'Pago' : 'Todos';
+  return match[kind];
+}
+
 export function teLlegaHint(sale: {
   returned?: boolean | null;
   neto?: number | null;

@@ -526,8 +526,14 @@ export function filterAggregatedSales(sales, filter = {}) {
   const paidMonth = String(filter.paidMonth || '').trim();
   const companyId = Number(filter.companyId || 0);
   let next = sales || [];
-  if (paid === 'pagado') next = next.filter((sale) => sale.paid);
-  if (paid === 'no-pagado' || paid === 'no_pagado') next = next.filter((sale) => !sale.paid);
+  if (paid === 'pagado') next = next.filter((sale) => sale.paid && !sale.returned);
+  if (paid === 'no-pagado' || paid === 'no_pagado') next = next.filter((sale) => !sale.paid && !sale.returned);
+  if (paid === 'devolucion-pagado' || paid === 'devolucion_pagado') {
+    next = next.filter((sale) => sale.returned && sale.paid);
+  }
+  if (paid === 'devolucion-no-pagado' || paid === 'devolucion_no_pagado') {
+    next = next.filter((sale) => sale.returned && !sale.paid);
+  }
   if (companyId) next = next.filter((sale) => Number(sale.companyId) === companyId);
   if (search) {
     next = next.filter((sale) => (
