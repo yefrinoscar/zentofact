@@ -7,7 +7,6 @@ import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
   PAGOS_SALES_PAGE,
-  chargeKindLabel,
   csvReadError,
   documentLabel,
   holdAtLeast,
@@ -24,9 +23,10 @@ import {
   monthLabel,
   saleDateLabel,
   saleDatesHint,
+  saleIgvStory,
   salesPageNote,
-  settlementFooterTotals,
   settlementPair,
+  settlementStatementTotals,
   shortProductName,
   skuLabel,
   teLlegaHint,
@@ -103,6 +103,7 @@ type SettlementSale = {
   buyerShipping?: number;
   buyerShippingPaid?: number;
   buyerShippingReversed?: number;
+  orderShipping?: number | null;
   neto: number;
   take: number;
   commissionRate: number | null;
@@ -123,8 +124,6 @@ const cobroColEnd = `${cobroCol} border-r border-border`;
 const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
 const llegaText = 'text-emerald-700 dark:text-emerald-400';
 const takeText = 'text-red-600 dark:text-red-400';
-const cobroHead = `${cobroCol} text-muted-foreground`;
-const cobroCell = `${cobroCol} group-hover:bg-muted/55`;
 const cobroHeadStart = `${cobroColStart} text-muted-foreground`;
 const cobroCellStart = `${cobroColStart} group-hover:bg-muted/55`;
 const cobroHeadEnd = `${cobroColEnd} text-muted-foreground`;
@@ -325,7 +324,7 @@ function TwoLineHead({ label, hint }: { label: string; hint?: string }) {
   return (
     <span className="flex flex-col leading-tight">
       <span className="whitespace-nowrap">{label}</span>
-      {hint ? <span className="whitespace-nowrap text-[10px] font-normal">{hint}</span> : null}
+      {hint ? <span className="whitespace-nowrap text-[11px] font-normal">{hint}</span> : null}
     </span>
   );
 }
@@ -442,9 +441,101 @@ function ChargeRow({
   );
 }
 
-function receiveRate(bruto: number | null | undefined, neto: number | null | undefined) {
-  if (!bruto) return null;
-  return Number(neto || 0) / Number(bruto);
+function statementAmount(amount: number, minus?: boolean) {
+  return minus ? `− ${money.format(amount)}` : money.format(amount);
+}
+
+function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
+  const story = saleIgvStory(sale);
+  const documents = [
+    {
+      key: 'boleta',
+      label: 'Boleta',
+      amount: story.boleta.gross,
+      igv: story.boleta.igv,
+      minus: false,
+      note: story.envio > 0
+        ? `Producto ${money.format(story.product)} · Envío ${money.format(story.envio)}`
+        : undefined,
+    },
+    {
+      key: 'commission',
+      label: 'Comisión',
+      amount: story.commission,
+      igv: story.commissionSplit.igv,
+      minus: true,
+    },
+    {
+      key: 'logistics',
+      label: 'Logística',
+      amount: story.logistics,
+      igv: story.logisticsSplit.igv,
+      minus: true,
+    },
+  ];
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-border bg-muted/40 text-muted-foreground">
+          <th className="py-3 text-left font-medium">Concepto</th>
+          <th className="py-3 text-right font-medium">Importe</th>
+          <th className="w-24 py-3 text-right font-medium">IGV</th>
+        </tr>
+      </thead>
+      <tbody>
+        {documents.map((row) => (
+          <tr key={row.key} className="border-b border-border">
+            <td className="py-3 align-top">
+              <p>{row.label}</p>
+              {row.note ? <p className="mt-0.5 text-xs text-muted-foreground">{row.note}</p> : null}
+            </td>
+            <td className={cn('py-3 text-right align-top tabular-nums', row.minus && takeText)}>
+              {statementAmount(row.amount, row.minus)}
+            </td>
+            <td className={cn(
+              'py-3 text-right align-top tabular-nums',
+              row.minus ? takeText : 'text-muted-foreground',
+            )}
+            >
+              {statementAmount(row.igv, row.minus)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td className="py-4 font-semibold">Ganas</td>
+          <td
+            colSpan={2}
+            className={cn('py-4 text-right tabular-nums font-semibold', amountToneClass('receive', story.queda))}
+          >
+            {money.format(story.queda)}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+function StatementAmount({
+  gross,
+  igv,
+  tone,
+}: {
+  gross: number;
+  igv?: number;
+  tone?: 'take' | 'receive';
+}) {
+  return (
+    <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
+      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-semibold')}>{money.format(gross)}</p>
+      {igv != null ? (
+        <p className={cn('text-[11px] tabular-nums', tone ? 'opacity-75' : 'text-muted-foreground')}>
+          IGV {money.format(igv)}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function saleTitle(sale: SettlementSale) {
@@ -484,14 +575,6 @@ function hasBuyerShipping(sale: SettlementSale) {
     || Number(sale.buyerShippingReversed || 0)
     || Number(sale.buyerShipping || 0),
   );
-}
-
-function chargeTimes(group: SettlementChargeGroup) {
-  if (group.count > 1 && group.unitAmount != null) {
-    return `${group.count} × ${money.format(Math.abs(group.unitAmount))}`;
-  }
-  if (group.count > 1) return `${group.count} movimientos`;
-  return '';
 }
 
 export default function Pagos() {
@@ -611,7 +694,7 @@ export default function Pagos() {
     .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
   const selectedCompany = companies.find((company) => String(company.id) === companyId);
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
-  const footerTotals = settlementFooterTotals(summary);
+  const footerTotals = settlementStatementTotals(sales);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -626,7 +709,7 @@ export default function Pagos() {
       id: 'product',
       accessorFn: (sale) => saleTitle(sale),
       header: 'Producto',
-      size: 168,
+      size: 132,
       cell: ({ row }) => (
         <p className="line-clamp-1 text-[13px] font-medium leading-4" title={row.original.productName || undefined}>
           {saleTitle(row.original)}
@@ -637,7 +720,7 @@ export default function Pagos() {
       id: 'sku',
       accessorFn: (sale) => skuLabel(sale.skus),
       header: 'SKU',
-      size: 118,
+      size: 100,
       cell: ({ row }) => {
         const units = unitsLabel(row.original.itemCount);
         return (
@@ -652,7 +735,7 @@ export default function Pagos() {
       id: 'paid',
       accessorKey: 'paid',
       header: 'Pago',
-      size: 120,
+      size: 104,
       meta: { cellClassName: 'min-w-0 overflow-hidden' },
       cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} returned={row.original.returned} />,
     },
@@ -664,85 +747,96 @@ export default function Pagos() {
       cell: ({ row }) => <SaleDates sale={row.original} />,
     },
     {
-      id: 'precio',
-      accessorKey: 'bruto',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
-      size: 108,
+      id: 'boleta',
+      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
+      size: 120,
       meta: { align: 'end' },
       cell: ({ row }) => {
-        const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+          return (
+            <AmountRate
+              amount={pair.amount || row.original.bruto || 0}
+              reversal={pair.reversal}
+              hideRate
+            />
+          );
+        }
+        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
+      },
+    },
+    {
+      id: 'envio',
+      accessorFn: (sale) => saleIgvStory(sale).envio,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
+      size: 96,
+      meta: { align: 'end' },
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        if (row.original.returned || (story.envio <= 0 && row.original.orderShipping == null)) {
+          return <p className="text-right text-[13px] text-muted-foreground">—</p>;
+        }
         return (
-          <AmountRate
-            amount={pair.amount || row.original.bruto || 0}
-            reversal={pair.reversal}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
+          <p className="text-right tabular-nums text-[13px]">{money.format(story.envio)}</p>
         );
       },
     },
     {
-      id: 'commission',
-      accessorKey: 'commission',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.commission} />,
-      size: 96,
+      id: 'comision',
+      accessorFn: (sale) => saleIgvStory(sale).commission,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
+      size: 118,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
       cell: ({ row }) => {
-        const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
-        return (
-          <AmountRate
-            amount={pair.amount || row.original.commission || 0}
-            reversal={pair.reversal}
-            rate={row.original.commissionRate}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
-        );
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
+          return (
+            <AmountRate
+              amount={pair.amount || row.original.commission || 0}
+              reversal={pair.reversal}
+              tone="take"
+              hideRate
+            />
+          );
+        }
+        return <StatementAmount gross={story.commission} igv={story.commissionSplit.igv} tone="take" />;
       },
     },
     {
-      id: 'shipping',
-      accessorKey: 'shipping',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.shipping} />,
-      size: 124,
-      meta: { align: 'end', headerClassName: cobroHead, cellClassName: cobroCell },
-      cell: ({ row }) => {
-        const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
-        return (
-          <AmountRate
-            amount={pair.amount || row.original.shipping || 0}
-            reversal={pair.reversal}
-            rate={row.original.shippingRate}
-            hideRate={Boolean(row.original.returned || pair.reversal)}
-          />
-        );
-      },
-    },
-    {
-      id: 'take',
-      accessorKey: 'take',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.take} />,
-      size: 124,
+      id: 'logistica',
+      accessorFn: (sale) => saleIgvStory(sale).logistics,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
+      size: 118,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
-      cell: ({ row }) => (
-        <AmountRate
-          amount={row.original.take || 0}
-          rate={row.original.takeRate}
-          tone="take"
-          hideRate={Boolean(row.original.returned)}
-        />
-      ),
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
+          return (
+            <AmountRate
+              amount={pair.amount || row.original.shipping || 0}
+              reversal={pair.reversal}
+              tone="take"
+              hideRate
+            />
+          );
+        }
+        return <StatementAmount gross={story.logistics} igv={story.logisticsSplit.igv} tone="take" />;
+      },
     },
     {
-      id: 'neto',
-      accessorKey: 'neto',
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.neto} />,
+      id: 'ganas',
+      accessorFn: (sale) => saleIgvStory(sale).queda,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => (
-        <AmountRate
-          amount={row.original.neto || 0}
-          rate={receiveRate(row.original.bruto, row.original.neto)}
+        <StatementAmount
+          gross={saleIgvStory(row.original).queda}
           tone="receive"
-          hideRate={Boolean(row.original.returned)}
         />
       ),
     },
@@ -860,7 +954,7 @@ export default function Pagos() {
       <OrdersVirtualTable
         table={table}
         compact
-        rowHeight={48}
+        rowHeight={52}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
@@ -869,7 +963,7 @@ export default function Pagos() {
         aria-label="Cobros de Falabella por venta"
         empty={(
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            Sube un CSV o Excel de Falabella para ver comisión, logística y lo que te llega.
+            Sube un Excel de Falabella para ver lo que ganas.
           </div>
         )}
         footer={summary?.saleCount ? (
@@ -879,13 +973,15 @@ export default function Pagos() {
               {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
             </p>
             <p className="tabular-nums">
-              Precio {money.format(footerTotals.precio)}
+              Boleta {money.format(footerTotals.boleta)}
               <span className="text-muted-foreground"> · </span>
-              Logística <span className={takeText}>{money.format(footerTotals.logistica)}</span>
+              Envío {money.format(footerTotals.envio)}
               <span className="text-muted-foreground"> · </span>
-              Se queda <span className={takeText}>{money.format(footerTotals.seQueda)}</span>
+              Comisión <span className={takeText}>{money.format(footerTotals.commission)}</span>
               <span className="text-muted-foreground"> · </span>
-              Te llega <span className={cn('font-medium', amountToneClass('receive', footerTotals.teLlega))}>{money.format(footerTotals.teLlega)}</span>
+              Logística <span className={takeText}>{money.format(footerTotals.logistics)}</span>
+              <span className="text-muted-foreground"> · </span>
+              Ganas <span className={cn('font-medium', amountToneClass('receive', footerTotals.ganas))}>{money.format(footerTotals.ganas)}</span>
             </p>
           </div>
         ) : undefined}
@@ -908,61 +1004,53 @@ export default function Pagos() {
                   </div>
                 </div>
               </SheetHeader>
-              <div className="px-5 py-4">
-                <ChargeRow
-                  label="Precio"
-                  amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
-                  reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
-                  hint={selected.returned ? 'Se descuenta el producto.' : 'Lo que pagó el cliente.'}
-                />
-                {hasBuyerShipping(selected) ? (
-                  <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
-                ) : null}
-                <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
-                  <p className="pt-2 text-xs font-medium">{selected.returned ? 'Falabella ajusta' : 'Falabella cobra'}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {selected.returned ? 'Te devuelven la comisión. La logística suele quedarse.' : 'Comisión + logística'}
-                  </p>
-                  <ChargeRow
-                    label="Comisión"
-                    amount={selected.returned
-                      ? (settlementPair(selected.commissionCharged, selected.commissionReversed).amount || 0)
-                      : -(selected.commission || 0)}
-                    reversal={selected.returned
-                      ? settlementPair(selected.commissionCharged, selected.commissionReversed).reversal
-                      : undefined}
-                    rate={selected.returned ? undefined : selected.commissionRate}
-                  />
-                  <ChargeRow
-                    label="Logística"
-                    amount={selected.returned
-                      ? (settlementPair(selected.shippingCharged, selected.shippingReversed).amount || selected.shipping || 0)
-                      : -(selected.shipping || 0)}
-                    reversal={selected.returned
-                      ? settlementPair(selected.shippingCharged, selected.shippingReversed).reversal
-                      : undefined}
-                    hint={shippingHint(selected)}
-                    rate={selected.returned ? undefined : selected.shippingRate}
-                  />
-                  <ChargeRow
-                    label="Se queda"
-                    amount={selected.take || 0}
-                    hint={selected.returned ? 'La logística que no se revirtió.' : 'Suma de los dos.'}
-                    rate={selected.returned ? undefined : selected.takeRate}
-                    tone="take"
-                    strong
-                  />
-                </div>
-                <ChargeRow
-                  label="Te llega"
-                  amount={selected.neto || 0}
-                  hint={teLlegaHint(selected)}
-                  rate={selected.returned ? undefined : receiveRate(selected.bruto, selected.neto)}
-                  tone="receive"
-                  strong
-                />
+              <div className={selected.returned ? 'px-5 py-4' : 'px-5 py-5'}>
+                {selected.returned ? (
+                  <>
+                    <ChargeRow
+                      label="Precio"
+                      amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
+                      reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
+                      hint="Se descuenta el producto."
+                    />
+                    {hasBuyerShipping(selected) ? (
+                      <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
+                    ) : null}
+                    <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
+                      <p className="pt-2 text-xs font-medium">Falabella ajusta</p>
+                      <p className="text-[11px] text-muted-foreground">Te devuelven la comisión. La logística suele quedarse.</p>
+                      <ChargeRow
+                        label="Comisión"
+                        amount={settlementPair(selected.commissionCharged, selected.commissionReversed).amount || 0}
+                        reversal={settlementPair(selected.commissionCharged, selected.commissionReversed).reversal}
+                      />
+                      <ChargeRow
+                        label="Logística"
+                        amount={settlementPair(selected.shippingCharged, selected.shippingReversed).amount || selected.shipping || 0}
+                        reversal={settlementPair(selected.shippingCharged, selected.shippingReversed).reversal}
+                        hint={shippingHint(selected)}
+                      />
+                      <ChargeRow
+                        label="Se queda"
+                        amount={selected.take || 0}
+                        hint="La logística que no se revirtió."
+                        strong
+                        tone="take"
+                      />
+                    </div>
+                    <ChargeRow
+                      label="Te llega"
+                      amount={selected.neto || 0}
+                      hint={teLlegaHint(selected)}
+                      tone="receive"
+                      strong
+                    />
+                  </>
+                ) : (
+                  <SaleIgvBreakdown sale={selected} />
+                )}
               </div>
-              {(selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1 ? (
+              {selected.returned && ((selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1) ? (
                 <div className="border-t border-border px-5 py-4">
                   <p className="text-sm font-medium">Por producto</p>
                   <div className="mt-2 divide-y divide-border">
@@ -982,24 +1070,6 @@ export default function Pagos() {
                           <span className="tabular-nums text-muted-foreground">Se queda {percentLabel(product.takeRate)}</span>
                           <span className={cn('tabular-nums font-medium', amountToneClass('receive', product.unitNeto))}>Te llega {money.format(product.unitNeto)} c/u</span>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              {!selected.returned && selected.chargeGroups?.some((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping') ? (
-                <div className="border-t border-border px-5 py-4">
-                  <p className="text-sm font-medium">Cobros Falabella</p>
-                  <div className="mt-2 divide-y divide-border">
-                    {selected.chargeGroups.filter((group) => group.kind !== 'sale' && group.kind !== 'buyer_shipping').map((group) => (
-                      <div key={`${group.kind}-${group.type}`} className="flex items-baseline justify-between gap-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-sm leading-5">{chargeKindLabel(group.kind)}</p>
-                          {chargeTimes(group) ? (
-                            <p className="text-xs text-muted-foreground">{chargeTimes(group)}</p>
-                          ) : null}
-                        </div>
-                        <p className="shrink-0 tabular-nums text-sm">{money.format(group.amount || 0)}</p>
                       </div>
                     ))}
                   </div>

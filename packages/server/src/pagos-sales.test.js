@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -525,4 +525,19 @@ test('el pedido muestra boleta o factura si ya se emitió', () => {
   );
   assert.equal(sale.document.kind, 'boleta');
   assert.equal(sale.document.number, 'B001-12');
+});
+
+test('el envío de Pagos sale de la orden cruzada', () => {
+  const [fromColumn] = attachOrderShippingToSales(
+    [{ orderId: '3248910865', buyerShippingPaid: 0 }],
+    [{ orderId: '3248910865', shippingAmount: 34.9 }],
+  );
+  assert.equal(fromColumn.orderShipping, 34.9);
+  const [fromItems] = attachOrderShippingToSales(
+    [{ orderId: '3248953203' }],
+    [{ orderNumber: '3248953203', itemRaws: [{ ShippingAmount: '4.95' }, { ShippingFee: '4.95' }] }],
+  );
+  assert.equal(fromItems.orderShipping, 9.9);
+  const [unmatched] = attachOrderShippingToSales([{ orderId: 'no-existe' }], []);
+  assert.equal(unmatched.orderShipping, null);
 });

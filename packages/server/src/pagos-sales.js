@@ -1,3 +1,4 @@
+import { falabellaItemShippingAmount, falabellaOrderShippingAmount } from './order-adapters/falabella.js';
 import {
   classifyChargeKind,
   collectMonthKeys,
@@ -545,6 +546,42 @@ export function settlementMonthOptions(sales) {
     orderMonths: collectMonthKeys((sales || []).map((sale) => sale.date)),
     paidMonths: collectMonthKeys((sales || []).map((sale) => sale.paidDate)),
   };
+}
+
+export function orderShippingFromMatch(match) {
+  if (match?.shippingAmount != null && match.shippingAmount !== '') {
+    const parsed = Number(match.shippingAmount);
+    if (Number.isFinite(parsed)) return round2(parsed);
+  }
+  const items = match?.itemRaws || match?.items || [];
+  let found = false;
+  let total = 0;
+  for (const item of items) {
+    const amount = falabellaItemShippingAmount(item);
+    if (amount == null) continue;
+    found = true;
+    total += amount;
+  }
+  if (found) return round2(total);
+  const fromRaw = falabellaOrderShippingAmount(match?.raw || match?.falabellaRaw || {});
+  return fromRaw;
+}
+
+export function attachOrderShippingToSales(sales, matches) {
+  const byRef = new Map();
+  for (const match of matches || []) {
+    const shipping = orderShippingFromMatch(match);
+    if (shipping == null) continue;
+    for (const key of [match.orderId, match.orderNumber, match.externalOrderId, match.externalOrderNumber]) {
+      const id = String(key || '').trim();
+      if (id && !byRef.has(id)) byRef.set(id, shipping);
+    }
+  }
+  return (sales || []).map((sale) => {
+    const refs = [sale.orderId, ...(sale.orderNumbers || [])].map((value) => String(value || '').trim()).filter(Boolean);
+    const orderShipping = refs.map((ref) => byRef.get(ref)).find((value) => value != null);
+    return { ...sale, orderShipping: orderShipping ?? null };
+  });
 }
 
 export function attachDocumentsToSales(sales, documents) {

@@ -60,6 +60,78 @@ export function teLlegaHint(sale: {
   return 'Lo que te depositan.';
 }
 
+export const IGV_RATE = 0.18;
+
+function money2(value: number | null | undefined) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+export function igvSplit(gross: number | null | undefined) {
+  const amount = money2(gross || 0);
+  const net = money2(amount / (1 + IGV_RATE));
+  return { gross: amount, net, igv: money2(amount - net) };
+}
+
+export function saleIgvStory(sale: {
+  bruto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  buyerShippingPaid?: number | null;
+  orderShipping?: number | null;
+} | null | undefined) {
+  const product = money2(sale?.bruto);
+  const envio = sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+    ? Math.max(0, money2(sale.orderShipping))
+    : Math.max(0, money2(sale?.buyerShippingPaid));
+  const commission = money2(sale?.commission);
+  const logistics = money2(sale?.shipping);
+  const boleta = igvSplit(product + envio);
+  const commissionSplit = igvSplit(commission);
+  const logisticsSplit = igvSplit(logistics);
+  const factura = igvSplit(commission + logistics);
+  const productNet = igvSplit(product).net;
+  const queda = money2(boleta.net - factura.net);
+  return {
+    product,
+    envio,
+    boleta,
+    commission,
+    commissionSplit,
+    logistics,
+    logisticsSplit,
+    factura,
+    productNet,
+    commissionNet: commissionSplit.net,
+    shippingAdjust: money2(queda - (productNet - commissionSplit.net)),
+    queda,
+  };
+}
+
+export function settlementStatementTotals(sales: Array<{
+  bruto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  buyerShippingPaid?: number | null;
+  orderShipping?: number | null;
+}> | null | undefined) {
+  return (sales || []).reduce((totals, sale) => {
+    const story = saleIgvStory(sale);
+    return {
+      boleta: money2(totals.boleta + story.boleta.gross),
+      envio: money2(totals.envio + story.envio),
+      commission: money2(totals.commission + story.commission),
+      logistics: money2(totals.logistics + story.logistics),
+      ganas: money2(totals.ganas + story.queda),
+    };
+  }, { boleta: 0, envio: 0, commission: 0, logistics: 0, ganas: 0 } as {
+    boleta: number;
+    envio: number;
+    commission: number;
+    logistics: number;
+    ganas: number;
+  });
+}
+
 export function settlementPair(charged?: number | null, reversed?: number | null) {
   const up = Math.round(Number(charged || 0) * 100) / 100;
   const down = Math.round(Number(reversed || 0) * 100) / 100;
@@ -398,11 +470,11 @@ export const PAGOS_SALES_PAGE = 2000;
 
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
-  precio: { label: 'Precio', hint: 'Pagó el cliente' },
-  commission: { label: 'Comisión', hint: '% del precio' },
-  shipping: { label: 'Logística', hint: 'Cofinanciamiento' },
-  take: { label: 'Se queda', hint: 'Comisión + logística' },
-  neto: { label: 'Te llega', hint: 'Te depositan' },
+  boleta: { label: 'Boleta', hint: 'Producto + envío' },
+  envio: { label: 'Envío', hint: 'De la orden' },
+  comision: { label: 'Comisión', hint: 'IGV 18%' },
+  logistica: { label: 'Logística', hint: 'IGV 18%' },
+  ganas: { label: 'Ganas', hint: 'Lo que te queda' },
 } as const;
 
 export function salesPageNote(shown: number, total: number) {
@@ -411,20 +483,6 @@ export function salesPageNote(shown: number, total: number) {
   if (!count) return '';
   if (visible >= count) return count === 1 ? '1 venta' : `${count} ventas`;
   return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
-}
-
-export function settlementFooterTotals(summary: {
-  bruto?: number | null;
-  shipping?: number | null;
-  take?: number | null;
-  neto?: number | null;
-} | null | undefined) {
-  return {
-    precio: Number(summary?.bruto || 0),
-    logistica: Number(summary?.shipping || 0),
-    seQueda: Number(summary?.take || 0),
-    teLlega: Number(summary?.neto || 0),
-  };
 }
 
 export function settlementCash(summary: {
