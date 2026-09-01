@@ -320,10 +320,12 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     assert.equal(column.hint.split(/\s+/).length <= 4, true, column.hint);
     assert.equal(column.hint.includes('\n'), false);
   }
-  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Producto + envío');
+  assert.equal(PAGOS_COLUMN_COPY.precio.hint, 'Producto');
   assert.equal(PAGOS_COLUMN_COPY.envio.hint, 'De la orden');
-  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'IGV 18%');
-  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'IGV 18%');
+  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Suma + IGV');
+  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'Falabella');
+  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Falabella');
+  assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Suma + IGV');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
@@ -332,9 +334,12 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { boleta: 150, envio: 50, commission: 20, logistics: 50, ganas: 67.8 },
+    { product: 100, envio: 50, boleta: 150, commission: 20, logistics: 50, total: 70, ganas: 67.8 },
   );
-  assert.deepEqual(settlementStatementTotals(null), { boleta: 0, envio: 0, commission: 0, logistics: 0, ganas: 0 });
+  assert.deepEqual(
+    settlementStatementTotals(null),
+    { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 },
+  );
 });
 
 test('el cruce se nombra como en la mesa', () => {
