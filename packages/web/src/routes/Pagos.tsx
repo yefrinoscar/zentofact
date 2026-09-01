@@ -31,6 +31,7 @@ import {
   teLlegaHint,
   unitsLabel,
 } from '../lib/pagos-presentation';
+import { sellerShortName } from '../lib/seller-name';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoaderMark } from '@/components/WorkLoader';
@@ -69,10 +70,19 @@ type SettlementChargeGroup = {
   unitAmount: number | null;
 };
 
+type CompanyOption = {
+  id: number;
+  nombre?: string | null;
+  nombreComercial?: string | null;
+  razonSocial?: string | null;
+  activo?: boolean | null;
+};
+
 type SettlementSale = {
   orderId: string;
   date?: string | null;
   paidDate?: string | null;
+  companyId?: number | null;
   paid: boolean;
   returned?: boolean;
   paymentStatus?: string;
@@ -295,6 +305,10 @@ function SaleOrderHover({ sale }: { sale: SettlementSale }) {
   );
 }
 
+function companyLabel(company: CompanyOption) {
+  return sellerShortName(company.nombreComercial || company.nombre || company.razonSocial || `Empresa ${company.id}`);
+}
+
 function SaleDates({ sale }: { sale: SettlementSale }) {
   const order = saleDateLabel(sale.date);
   const paid = saleDateLabel(sale.paidDate);
@@ -485,6 +499,7 @@ export default function Pagos() {
   const [search, setSearch] = useState('');
   const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
   const [orderMonth, setOrderMonth] = useState('all');
+  const [companyId, setCompanyId] = useState('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
@@ -513,12 +528,19 @@ export default function Pagos() {
     }, SUCCESS_NOTICE_MS);
   }
 
+  const companiesQuery = useQuery({
+    queryKey: ['companies'],
+    queryFn: () => api.listCompanies(),
+    staleTime: 5 * 60_000,
+  });
+
   const salesQuery = useQuery({
-    queryKey: ['pagos-sales', search, paid, orderMonth],
+    queryKey: ['pagos-sales', search, paid, orderMonth, companyId],
     queryFn: () => api.listSettlementSales({
       search: search.trim() || undefined,
       paid: paid === 'all' ? undefined : paid,
       orderMonth: orderMonth === 'all' ? undefined : orderMonth,
+      companyId: companyId === 'all' ? undefined : Number(companyId),
       limit: PAGOS_SALES_PAGE,
     }),
     placeholderData: keepPreviousData,
@@ -582,6 +604,11 @@ export default function Pagos() {
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
+  const companies = ((companiesQuery.data || []) as CompanyOption[])
+    .filter((company) => (company as { activo?: boolean | null }).activo !== false)
+    .slice()
+    .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
+  const selectedCompany = companies.find((company) => String(company.id) === companyId);
   const totalCount = Number(salesQuery.data?.totalCount || sales.length);
   const loadError = salesQuery.error as Error | undefined;
 
@@ -740,6 +767,19 @@ export default function Pagos() {
             className="pl-8"
           />
         </div>
+        <Select value={companyId} onValueChange={setCompanyId}>
+          <SelectTrigger className="w-[8.75rem]" aria-label="Compañía">
+            <SelectValue>
+              {companyId === 'all' ? 'Todos' : (selectedCompany ? companyLabel(selectedCompany) : 'Todos')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            {companies.map((company) => (
+              <SelectItem key={company.id} value={String(company.id)}>{companyLabel(company)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={orderMonth} onValueChange={setOrderMonth}>
           <SelectTrigger className="w-[8.25rem]" aria-label="Mes de la orden">
             <SelectValue>
