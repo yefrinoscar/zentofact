@@ -202,7 +202,7 @@ const apiHttp = {
   listFalabellaInvoices: (filter: { limit?: number; offset?: number } = {}) =>
     req(`/pagos/invoices${qs(filter)}`),
   getFalabellaInvoice: (id: number) => req(`/pagos/invoices/${id}`),
-  importFalabellaInvoice: (data: { filename: string; csv: string; replace?: boolean }) =>
+  importFalabellaInvoice: (data: { filename: string; csv: string; xlsxBase64?: string; replace?: boolean }) =>
     req('/pagos/invoices', { method: 'POST', body: JSON.stringify(data) }),
 
   // Bandeja consolidada de pedidos

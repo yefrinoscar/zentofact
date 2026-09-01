@@ -1,10 +1,13 @@
 import { read as readWorkbook, utils as xlsxUtils } from 'xlsx';
+import { repairSpreadsheetZip } from './xlsx-zip.ts';
 
 function normalizeHeader(text: string) {
   return String(text || '')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 function csvEscape(value: string) {
@@ -71,11 +74,16 @@ export function isInvoiceReportFilename(name: string | null | undefined) {
 
 export function headerLooksLikeInvoiceReport(text: string) {
   const normalized = normalizeHeader(text);
-  return normalized.includes('numero de documento')
+  const hasDocument = normalized.includes('numero de documento')
+    || normalized.includes('n de documento')
+    || normalized.includes('document number');
+  return hasDocument
     && (
       normalized.includes('descripcion factura')
       || normalized.includes('tipo de documento')
+      || normalized.includes('document type')
       || normalized.includes('monto con iva')
+      || normalized.includes('amount with vat')
     );
 }
 
@@ -209,7 +217,7 @@ export function invoiceAmountInWords(amount: number | null | undefined) {
 }
 
 export function decodeInvoiceSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
-  const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+  const bytes = repairSpreadsheetZip(buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer);
   const workbook = readWorkbook(bytes, { type: 'array', cellDates: true, raw: false });
   const names = workbook.SheetNames || [];
   if (!names.length) throw new Error('El Excel no tiene hojas.');
@@ -232,12 +240,40 @@ export function decodeInvoiceSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
   if (!headerLooksLikeInvoiceReport(header)) {
     throw new Error('No reconocimos el reporte de facturas de Falabella.');
   }
-  const csv = rowsToCsv(headerIndex >= 0 ? rows.slice(headerIndex) : rows);
+  const table = headerIndex >= 0 ? rows.slice(headerIndex) : rows;
+  const csv = rowsToCsv(table);
   if (!String(csv || '').trim()) throw new Error('El Excel está vacío.');
+  const documentIndex = (headerRow || []).findIndex((cell) => {
+    const name = normalizeHeader(cell);
+    return name.includes('numero de documento')
+      || name === 'n de documento'
+      || name === 'document number';
+  });
+  const dataRows = table.slice(1).filter((row) => String(row[documentIndex < 0 ? 0 : documentIndex] || '').trim());
+  if (!dataRows.length) throw new Error('El reporte de facturas no trae líneas.');
   return csv;
 }
 
+export function bytesToBase64(buffer: ArrayBuffer | Uint8Array) {
+  const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
 export async function readInvoiceReportUpload(file: {
+  name?: string;
+  type?: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}) {
+  const payload = await readInvoiceReportPayload(file);
+  return payload.csv;
+}
+
+export async function readInvoiceReportPayload(file: {
   name?: string;
   type?: string;
   arrayBuffer: () => Promise<ArrayBuffer>;
@@ -247,7 +283,13 @@ export async function readInvoiceReportUpload(file: {
   const isSpreadsheet = /\.(xlsx|xls|xlsm)$/i.test(name)
     || String(file.type || '').includes('spreadsheetml')
     || (String(file.type || '').includes('excel') && !String(file.type || '').includes('csv'));
-  if (isSpreadsheet) return decodeInvoiceSpreadsheet(buffer);
+  if (isSpreadsheet) {
+    return {
+      filename: name,
+      csv: decodeInvoiceSpreadsheet(buffer),
+      xlsxBase64: bytesToBase64(buffer),
+    };
+  }
   const csv = new TextDecoder('utf-8').decode(buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer);
   if (headerLooksLikeSettlementFile(csv)) {
     throw new Error('Este es el estado de cuenta. Usa Subir archivo.');
@@ -255,5 +297,5 @@ export async function readInvoiceReportUpload(file: {
   if (!headerLooksLikeInvoiceReport(csv) && !isInvoiceReportFilename(name)) {
     throw new Error('No reconocimos el reporte de facturas de Falabella.');
   }
-  return csv;
+  return { filename: name, csv, xlsxBase64: '' };
 }

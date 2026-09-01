@@ -322,7 +322,12 @@ app.get('/pagos/invoices/:id', async (c) => {
 });
 app.post('/pagos/invoices', async (c) => {
   try {
-    const body = await c.req.json().catch(() => ({}));
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      const error = new Error('No se pudo leer el archivo.');
+      error.status = 400;
+      throw error;
+    }
     const result = await invoiceReports.importInvoiceReportCsv({
       ...body,
       importedBy: c.get('user')?.id || null,

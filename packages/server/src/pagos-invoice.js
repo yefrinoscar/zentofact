@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { read as readWorkbook, utils as xlsxUtils } from 'xlsx';
 import {
   normalizeHeader,
   parseCsvRows,
@@ -6,6 +7,7 @@ import {
   parseMoney,
   repairSettlementText,
 } from './pagos-csv.js';
+import { repairSpreadsheetZip } from './xlsx-zip.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 const CONCEPT_ORDER = ['commission', 'logistics', 'buyer_shipping', 'ads', 'other'];
@@ -49,11 +51,16 @@ export function isInvoiceReportFilename(name) {
 
 export function headerLooksLikeInvoiceReport(text) {
   const normalized = normalizeHeader(text);
-  return normalized.includes('numero de documento')
+  const hasDocument = normalized.includes('numero de documento')
+    || normalized.includes('n de documento')
+    || normalized.includes('document number');
+  return hasDocument
     && (
       normalized.includes('descripcion factura')
       || normalized.includes('tipo de documento')
+      || normalized.includes('document type')
       || normalized.includes('monto con iva')
+      || normalized.includes('amount with vat')
     );
 }
 
@@ -92,7 +99,7 @@ export function classifyInvoiceConcept(description, transactionType = '') {
 }
 
 const COLUMN_MATCHERS = {
-  documentNumber: (n) => n.includes('numero de documento') || n === 'n de documento',
+  documentNumber: (n) => n.includes('numero de documento') || n === 'n de documento' || n === 'document number',
   documentKind: (n) => n === 'tipo de documento' || n.includes('tipo de documento'),
   transactedAt: (n) => n.includes('fecha de transacci'),
   description: (n) => n.includes('descripcion factura'),
@@ -161,6 +168,99 @@ export function periodFromFilename(name) {
   const match = String(name || '').match(/(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})/);
   if (!match) return { from: null, to: null };
   return { from: match[1], to: match[2] };
+}
+
+function cellText(cell) {
+  if (cell == null) return '';
+  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
+  const value = cell.v;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const iso = value.toISOString();
+    return iso.includes('T00:00:00') ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
+  }
+  return String(value ?? '');
+}
+
+function expandSheetRange(sheet) {
+  const keys = Object.keys(sheet).filter((key) => /^[A-Z]+[0-9]+$/.test(key));
+  if (!keys.length) return;
+  const range = sheet['!ref']
+    ? xlsxUtils.decode_range(sheet['!ref'])
+    : { s: { r: Number.POSITIVE_INFINITY, c: Number.POSITIVE_INFINITY }, e: { r: 0, c: 0 } };
+  for (const key of keys) {
+    const cell = xlsxUtils.decode_cell(key);
+    if (cell.r < range.s.r) range.s.r = cell.r;
+    if (cell.c < range.s.c) range.s.c = cell.c;
+    if (cell.r > range.e.r) range.e.r = cell.r;
+    if (cell.c > range.e.c) range.e.c = cell.c;
+  }
+  if (!Number.isFinite(range.s.r) || !Number.isFinite(range.s.c)) return;
+  sheet['!ref'] = xlsxUtils.encode_range(range);
+}
+
+function sheetToRows(sheet) {
+  expandSheetRange(sheet);
+  const ref = sheet['!ref'];
+  if (!ref) return [];
+  const range = xlsxUtils.decode_range(ref);
+  const rows = [];
+  for (let r = range.s.r; r <= range.e.r; r += 1) {
+    const cells = [];
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      cells.push(cellText(sheet[xlsxUtils.encode_cell({ r, c })]));
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  if (!/[",\n\r]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function rowsToCsv(rows) {
+  return rows.map((row) => row.map((value) => csvEscape(String(value ?? ''))).join(',')).join('\n');
+}
+
+export function decodeInvoiceSpreadsheet(buffer) {
+  const bytes = repairSpreadsheetZip(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer));
+  const workbook = readWorkbook(bytes, { type: 'array', cellDates: true, raw: false });
+  const names = workbook.SheetNames || [];
+  if (!names.length) throw httpError('El Excel no tiene hojas.');
+  let rows = [];
+  for (const name of names) {
+    const next = sheetToRows(workbook.Sheets[name]);
+    const headerIndex = next.findIndex((row) => headerLooksLikeInvoiceReport(joinedHeaders(row)));
+    if (headerIndex >= 0 || /settlement invoice/i.test(name)) {
+      rows = headerIndex >= 0 ? next.slice(headerIndex) : next;
+      break;
+    }
+    if (!rows.length) rows = next;
+  }
+  const csv = rowsToCsv(rows);
+  if (!String(csv || '').trim()) throw httpError('El Excel está vacío.');
+  return csv;
+}
+
+function csvFromInvoiceUpload(input) {
+  const xlsxBase64 = String(input.xlsxBase64 || '').trim();
+  if (xlsxBase64) {
+    const buffer = Buffer.from(xlsxBase64, 'base64');
+    if (!buffer.length) throw httpError('El Excel está vacío.');
+    if (buffer.length > MAX_CSV_BYTES) throw httpError('El archivo supera el tamaño máximo de 8 MB.');
+    return { csv: decodeInvoiceSpreadsheet(buffer), fileHash: sha256(buffer) };
+  }
+  const csv = String(input.csv || input.csvText || '');
+  if (!csv.trim()) throw httpError('El Excel está vacío.');
+  if (csv.charCodeAt(0) === 0x50 && csv.charCodeAt(1) === 0x4b) {
+    throw httpError('El Excel no se leyó como tabla. Súbelo otra vez.');
+  }
+  if (Buffer.byteLength(csv, 'utf8') > MAX_CSV_BYTES) {
+    throw httpError('El archivo supera el tamaño máximo de 8 MB.');
+  }
+  return { csv, fileHash: sha256(csv) };
 }
 
 export function parseInvoiceReportCsv(csv) {
@@ -410,18 +510,13 @@ function mapLine(row) {
 }
 
 export async function importInvoiceReportCsv(input = {}, db) {
-  const csv = String(input.csv || input.csvText || '');
-  if (!csv.trim()) throw httpError('El Excel está vacío.');
-  if (Buffer.byteLength(csv, 'utf8') > MAX_CSV_BYTES) {
-    throw httpError('El archivo supera el tamaño máximo de 8 MB.');
-  }
   const filename = text(input.filename || 'InvoiceReport.xlsx', 'Archivo', 180);
+  const { csv, fileHash } = csvFromInvoiceUpload(input);
   if (!csvIsInvoiceReport(csv) && !isInvoiceReportFilename(filename)) {
     throw httpError('Este es el estado de cuenta. Usa Subir archivo.');
   }
   const importedBy = input.importedBy ? String(input.importedBy) : null;
   const replace = Boolean(input.replace);
-  const fileHash = sha256(csv);
   const parsed = parseInvoiceReportCsv(csv);
   const filePeriod = periodFromFilename(filename);
   const sellerId = parsed.documents.find((document) => document.sellerId)?.sellerId || '';

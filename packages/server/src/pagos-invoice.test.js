@@ -6,6 +6,7 @@ import {
   classifyInvoiceKind,
   cobroFromSigned,
   csvIsInvoiceReport,
+  decodeInvoiceSpreadsheet,
   foldInvoiceCharges,
   groupInvoiceDocuments,
   headerLooksLikeInvoiceReport,
@@ -138,4 +139,19 @@ test('el cruce de pagos rechaza el InvoiceReport', async () => {
     () => importSettlementCsv({ filename: 'InvoiceReport_FAPE-SCDE75A.xlsx', csv: CSV }, { query: async () => ({ rows: [] }) }),
     /Subir facturas/,
   );
+});
+
+test('lee el Excel InvoiceReport y arma las líneas', async () => {
+  const { utils, write } = await import('xlsx');
+  const sheet = utils.aoa_to_sheet([
+    HEADER.split(','),
+    ['249302', 'Factura', '2026-08-07 09:08:49', 'Comisiones', 'Cobro por comisión por venta', 'Mochila Táctica', 'df65dr6', '144957725', '-12.19', '-2.19', '-14.38', 'PEN', 'FAPE-SCDE75A-20260807-PEN', '3247518451', '352554518', 'id-1', 'SCDE75A'],
+  ]);
+  const book = utils.book_new();
+  utils.book_append_sheet(book, sheet, 'settlement invoice');
+  const csv = decodeInvoiceSpreadsheet(write(book, { type: 'array', bookType: 'xlsx' }));
+  const parsed = parseInvoiceReportCsv(csv);
+  assert.equal(parsed.lines.length, 1);
+  assert.equal(parsed.lines[0].documentNumber, '249302');
+  assert.equal(parsed.lines[0].orderNumber, '3247518451');
 });
