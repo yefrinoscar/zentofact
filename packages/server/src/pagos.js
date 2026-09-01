@@ -191,7 +191,63 @@ function mapLine(row) {
     saleOrderNumber: row.sale_order_number || null,
     productName: row.product_name || '',
     raw: row.raw || {},
+    companyId: optionalId(row.match_company_id || row.import_company_id || row.company_id),
   };
+}
+
+function optionalId(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function sellerIdFromRaw(raw) {
+  return rawValueByHeader(raw, (header) => header === 'seller id' || header === 'sellerid');
+}
+
+async function attachCompaniesToLines(lines, db) {
+  const needSku = new Set();
+  const needSeller = new Set();
+  for (const line of lines || []) {
+    if (line.companyId) continue;
+    const sku = String(line.sku || '').trim().toLowerCase();
+    if (sku) needSku.add(sku);
+    const seller = sellerIdFromRaw(line.raw).toLowerCase();
+    if (seller) needSeller.add(seller);
+  }
+  const skuMap = new Map();
+  const sellerMap = new Map();
+  if (needSku.size) {
+    const query = await db.query(
+      `select lower(trim(seller_sku)) as sku, min(company_id)::int as company_id
+         from product_listings
+        where channel_code = 'falabella'
+          and lower(trim(seller_sku)) = any($1::text[])
+        group by 1
+       having count(distinct company_id) = 1`,
+      [[...needSku]],
+    );
+    for (const row of query.rows) skuMap.set(row.sku, Number(row.company_id));
+  }
+  if (needSeller.size) {
+    const query = await db.query(
+      `select id, lower(trim(falabella_api_user_id)) as seller
+         from companies
+        where activo is not false
+          and nullif(trim(falabella_api_user_id), '') is not null
+          and lower(trim(falabella_api_user_id)) = any($1::text[])`,
+      [[...needSeller]],
+    );
+    for (const row of query.rows) sellerMap.set(row.seller, Number(row.id));
+  }
+  return (lines || []).map((line) => {
+    if (line.companyId) return line;
+    const sku = String(line.sku || '').trim().toLowerCase();
+    const seller = sellerIdFromRaw(line.raw).toLowerCase();
+    return {
+      ...line,
+      companyId: skuMap.get(sku) || sellerMap.get(seller) || null,
+    };
+  });
 }
 
 export async function listSettlementImports(filter = {}, db) {
@@ -274,6 +330,7 @@ export async function listSettlementSales(filter = {}, db) {
   const search = String(filter.search || '').trim().toLowerCase();
   const orderMonth = monthFilter(filter.orderMonth);
   const paidMonth = monthFilter(filter.paidMonth);
+  const companyId = optionalPositiveInt(filter.companyId);
   const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
   const values = [];
@@ -287,18 +344,24 @@ export async function listSettlementSales(filter = {}, db) {
             sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
             sl.payment_status, sl.item_id,
             sl.bruto, sl.commission, sl.other_fees, sl.neto, sl.raw,
-            fo.order_number as sale_order_number
+            fo.order_number as sale_order_number,
+            fo.company_id as match_company_id,
+            si.company_id as import_company_id
        from settlement_lines sl
        left join falabella_orders fo
          on sl.sale_source = 'falabella_order' and sl.sale_id = fo.id
+       left join settlement_imports si
+         on si.id = sl.import_id
       ${where.length ? `where ${where.join(' and ')}` : ''}
       order by sl.import_id desc, sl.row_number asc
       limit 10000`,
     values,
   );
-  let sales = aggregateSettlementSales(query.rows.map(mapLine));
+  let sales = aggregateSettlementSales(
+    await attachCompaniesToLines(query.rows.map(mapLine), target),
+  );
   const months = settlementMonthOptions(sales);
-  sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth });
+  sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth, companyId });
   const summary = summarizeSettlementSales(sales);
   const page = sales.slice(offset, offset + limit);
   const items = await attachSaleDocuments(page, target);

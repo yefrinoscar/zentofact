@@ -468,6 +468,23 @@ test('guarda la fecha de la orden y la del pago, y filtra por mes', () => {
   );
 });
 
+test('filtra por compañía y deja todas si no hay filtro', () => {
+  const csv = [
+    HEADER,
+    row({ 'N° del orden': '3243001001', 'SKU vendedor': 'LIMBO-1', 'Monto con IVA': '10.00' }),
+    row({ 'N° del orden': '3243001002', 'SKU vendedor': 'MANTA-1', 'Monto con IVA': '20.00' }),
+  ].join('\n');
+  const [first, second] = parseSettlementCsv(csv).lines;
+  const sales = aggregateSettlementSales([
+    { ...first, companyId: 1 },
+    { ...second, companyId: 2 },
+  ]);
+  assert.equal(sales.find((sale) => sale.orderId === '3243001001')?.companyId, 1);
+  assert.equal(sales.find((sale) => sale.orderId === '3243001002')?.companyId, 2);
+  assert.deepEqual(filterAggregatedSales(sales, { companyId: 1 }).map((sale) => sale.orderId), ['3243001001']);
+  assert.equal(filterAggregatedSales(sales, {}).length, 2);
+});
+
 test('la reversa de otra semana no cambia la fecha del pago original', () => {
   const header = [
     '"Fecha creación de la orden"',

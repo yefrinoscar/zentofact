@@ -70,6 +70,7 @@ function emptySale(orderId, line) {
     orderId,
     date: line.date || null,
     paidDate: null,
+    companyId: line.companyId ? Number(line.companyId) : null,
     paid: false,
     paymentStatus: '',
     matched: false,
@@ -450,6 +451,7 @@ export function aggregateSettlementSales(lines) {
       itemId: line.itemId || '',
     });
     if (line.date && (!current.date || String(line.date) < String(current.date))) current.date = line.date;
+    if (line.companyId && !current.companyId) current.companyId = Number(line.companyId);
     applyPaidDate(current, line);
     if (line.paid === true || normalizeHeader(line.paymentStatus) === 'pagado') {
       current.paid = true;
@@ -497,6 +499,7 @@ export function aggregateSettlementSales(lines) {
       orderId: sale.orderId,
       date: sale.date,
       paidDate: sale.paidDate || null,
+      companyId: sale.companyId || null,
       paid: sale.paid,
       returned,
       paymentStatus: sale.paymentStatus || (sale.paid ? 'Pagado' : 'No Pagado'),
@@ -520,9 +523,11 @@ export function filterAggregatedSales(sales, filter = {}) {
   const search = String(filter.search || '').trim().toLowerCase();
   const orderMonth = String(filter.orderMonth || '').trim();
   const paidMonth = String(filter.paidMonth || '').trim();
+  const companyId = Number(filter.companyId || 0);
   let next = sales || [];
   if (paid === 'pagado') next = next.filter((sale) => sale.paid);
   if (paid === 'no-pagado' || paid === 'no_pagado') next = next.filter((sale) => !sale.paid);
+  if (companyId) next = next.filter((sale) => Number(sale.companyId) === companyId);
   if (search) {
     next = next.filter((sale) => (
       String(sale.orderId || '').toLowerCase().includes(search)

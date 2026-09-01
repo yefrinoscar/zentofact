@@ -191,6 +191,7 @@ const apiHttp = {
     paid?: 'pagado' | 'no-pagado' | '';
     orderMonth?: string;
     paidMonth?: string;
+    companyId?: number;
     importId?: number;
     limit?: number;
     offset?: number;
