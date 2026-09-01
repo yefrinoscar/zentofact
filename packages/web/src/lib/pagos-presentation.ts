@@ -54,8 +54,8 @@ export function teLlegaHint(sale: {
   shipping?: number | null;
 } | null | undefined) {
   if (sale?.returned) {
-    if (Number(sale.shipping || 0) > 0) return 'En la devolución suele quedarse la logística.';
-    return 'Descontaron el producto y te devolvieron la comisión.';
+    if (Number(sale.shipping || 0) > 0) return 'No ganas. La logística suele quedarse.';
+    return 'Producto y comisión se anulan. No te queda venta.';
   }
   if (Number(sale?.neto || 0) < 0) return 'Falabella cobró más que el precio.';
   return 'Lo que te depositan.';
@@ -79,6 +79,7 @@ export function saleIgvStory(sale: {
   shipping?: number | null;
   buyerShippingPaid?: number | null;
   orderShipping?: number | null;
+  returned?: boolean | null;
   invoiceCharges?: {
     commission?: { net?: number; igv?: number; gross?: number } | null;
     logistics?: { net?: number; igv?: number; gross?: number } | null;
@@ -86,16 +87,19 @@ export function saleIgvStory(sale: {
     ads?: { net?: number; igv?: number; gross?: number } | null;
   } | null;
 } | null | undefined) {
-  const product = money2(sale?.bruto);
-  const envio = sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
-    ? Math.max(0, money2(sale.orderShipping))
-    : Math.max(0, money2(sale?.buyerShippingPaid));
+  const returned = Boolean(sale?.returned);
+  const product = returned ? 0 : money2(sale?.bruto);
+  const envio = returned
+    ? 0
+    : sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+      ? Math.max(0, money2(sale.orderShipping))
+      : Math.max(0, money2(sale?.buyerShippingPaid));
   const settlementCommission = money2(sale?.commission);
   const settlementLogistics = money2(sale?.shipping);
   const productSplit = igvSplit(product);
   const envioSplit = igvSplit(envio);
   const boleta = igvSplit(product + envio);
-  const invoice = sale?.invoiceCharges || null;
+  const invoice = returned ? null : sale?.invoiceCharges || null;
   const commissionSplit = invoiceSplit(invoice?.commission) || igvSplit(settlementCommission);
   const logisticsSplit = addSplits(
     invoiceSplit(invoice?.logistics) || igvSplit(settlementLogistics),
@@ -176,6 +180,17 @@ export function settlementPair(charged?: number | null, reversed?: number | null
   if (up && down) return { amount: up, reversal: down };
   if (down && !up) return { amount: down, reversal: null as number | null };
   return { amount: up, reversal: null as number | null };
+}
+
+export function returnProductPair(
+  charged?: number | null,
+  reversed?: number | null,
+  fallback = 0,
+) {
+  const pair = settlementPair(charged, reversed);
+  const amount = pair.amount || money2(fallback);
+  if (amount > 0 && pair.reversal == null) return { amount, reversal: money2(-amount) };
+  return pair;
 }
 
 export function importSummary(item: {
