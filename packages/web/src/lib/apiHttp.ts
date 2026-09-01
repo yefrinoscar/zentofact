@@ -199,6 +199,11 @@ const apiHttp = {
     req(`/pagos/sales${qs(filter)}`),
   importSettlementCsv: (data: { filename: string; csv: string; companyId?: number; replace?: boolean }) =>
     req('/pagos/imports', { method: 'POST', body: JSON.stringify(data) }),
+  listFalabellaInvoices: (filter: { limit?: number; offset?: number } = {}) =>
+    req(`/pagos/invoices${qs(filter)}`),
+  getFalabellaInvoice: (id: number) => req(`/pagos/invoices/${id}`),
+  importFalabellaInvoice: (data: { filename: string; csv: string; replace?: boolean }) =>
+    req('/pagos/invoices', { method: 'POST', body: JSON.stringify(data) }),
 
   // Bandeja consolidada de pedidos
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>

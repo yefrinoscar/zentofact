@@ -93,6 +93,21 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
     shipping: 50,
   });
   assert.equal(orderWins.envio, 50);
+  const invoiced = saleIgvStory({
+    bruto: 100,
+    buyerShippingPaid: 50,
+    commission: 20,
+    shipping: 50,
+    invoiceCharges: {
+      commission: { net: 12.19, igv: 2.19, gross: 14.38 },
+      logistics: { net: 6.69, igv: 1.21, gross: 7.9 },
+      buyer_shipping: { net: 5, igv: 0.9, gross: 5.9 },
+    },
+  });
+  assert.equal(invoiced.commissionSplit.net, 12.19);
+  assert.equal(invoiced.logisticsSplit.gross, 13.8);
+  assert.equal(invoiced.factura.net, 23.88);
+  assert.equal(invoiced.queda, 103.24);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });
@@ -201,12 +216,19 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
   );
   assert.equal(charts[0].items[0].value, 1739.2);
+  assert.equal(charts[0].items[0].withoutIgv, igvSplit(1739.2).net);
   assert.equal(charts[0].items[1].value, 1218.35);
+  assert.equal(charts[0].items[1].withoutIgv, igvSplit(1218.35).net);
   assert.equal(charts[1].hero.label, 'Se queda');
   assert.equal(charts[1].hero.value, 520.85);
+  assert.equal(charts[1].hero.withoutIgv, igvSplit(520.85).net);
   assert.equal(charts[1].items[0].value, 148.2);
+  assert.equal(charts[1].items[0].withoutIgv, igvSplit(148.2).net);
+  assert.equal(charts[1].items[1].withoutIgv, igvSplit(372.65).net);
   assert.equal(charts[1].items[1].value, 372.65);
   assert.equal(charts[2].items[0].value, 381.96);
+  assert.equal(charts[2].items[0].withoutIgv, igvSplit(381.96).net);
+  assert.equal(charts[2].items[1].withoutIgv, undefined);
   assert.equal(charts[2].items[1].value, 836.39);
   assert.equal(charts[0].hint, '27 ventas');
   assert.equal(charts[1].hint, '29.9% del facturado');
@@ -292,6 +314,10 @@ test('pasa un Excel de liquidación a CSV y reconoce la extensión', async () =>
     shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.xlsx'),
     'FAPE-SCDE75A-20260820-PEN.xlsx',
   );
+  assert.equal(
+    shortImportFilename('InvoiceReport_FAPE-SCDE75A-2026-08-01-2026-08-07_2026-09-01T18_36_14.890554330.xlsx'),
+    'FAPE-SCDE75A-2026-08-01-2026-08-07.xlsx',
+  );
 });
 
 test('lee el NewReportTransaction xlsx de Falabella con preámbulo y dimensión corta', async () => {
@@ -322,11 +348,13 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   }
   assert.equal(PAGOS_COLUMN_COPY.precio.hint, 'Producto');
   assert.equal(PAGOS_COLUMN_COPY.envio.hint, 'De la orden');
-  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Suma + IGV');
-  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'Falabella');
-  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Falabella');
-  assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Suma + IGV');
+  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Sin IGV');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
+  assert.equal(PAGOS_COLUMN_COPY.factura.label, 'Factura');
+  assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Falabella');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
   assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');
@@ -334,7 +362,7 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { product: 100, envio: 50, boleta: 150, commission: 20, logistics: 50, total: 70, ganas: 67.8 },
+    { product: 84.75, envio: 42.37, boleta: 127.12, commission: 16.95, logistics: 42.37, total: 59.32, ganas: 67.8 },
   );
   assert.deepEqual(
     settlementStatementTotals(null),

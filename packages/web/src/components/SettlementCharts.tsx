@@ -27,7 +27,7 @@ const LINE_COLOR = {
 } as const;
 
 type Tone = 'neutral' | 'receive' | 'take' | 'wait';
-type ChartItem = { key: string; label: string; value: number; tone?: Tone };
+type ChartItem = { key: string; label: string; value: number; withoutIgv?: number; tone?: Tone };
 
 function seriesColor(key: string) {
   return LINE_COLOR[key as keyof typeof LINE_COLOR] || LINE_COLOR.take;
@@ -44,6 +44,39 @@ function MetricDot({ itemKey }: { itemKey: string }) {
       className="size-2 shrink-0 rounded-[2px]"
       style={{ background: seriesColor(itemKey) }}
     />
+  );
+}
+
+function MetricAmounts({
+  value,
+  withoutIgv,
+  color,
+  size,
+}: {
+  value: number;
+  withoutIgv?: number;
+  color?: string;
+  size: 'hero' | 'inline';
+}) {
+  const main = withoutIgv ?? value;
+  const other = withoutIgv != null ? value : null;
+  return (
+    <span className="block">
+      <span
+        className={cn(
+          'block font-semibold tabular-nums tracking-[-0.01em] leading-tight',
+          size === 'hero' ? 'text-[17px]' : 'text-[12px] font-medium',
+        )}
+        style={color ? { color } : undefined}
+      >
+        {money.format(main)}
+      </span>
+      {other != null ? (
+        <span className="mt-0.5 block text-[11px] font-normal tabular-nums text-muted-foreground">
+          {money.format(other)}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -67,25 +100,30 @@ function MetricHeader({
               <MetricDot itemKey={item.key} />
               {item.label}
             </p>
-            <p
-              className="text-[17px] font-semibold tabular-nums tracking-[-0.01em] leading-tight"
-              style={{ color: seriesColor(item.key) }}
-            >
-              {money.format(item.value)}
-            </p>
+            <MetricAmounts
+              value={item.value}
+              withoutIgv={item.withoutIgv}
+              color={seriesColor(item.key)}
+              size="hero"
+            />
           </div>
         ))}
       </div>
       {extras.length ? (
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
+        <div className="mt-1.5 flex flex-wrap items-start gap-x-4 gap-y-1">
           {extras.map((item) => (
-            <p key={item.key} className="flex items-baseline gap-1.5 text-[12px]">
-              <MetricDot itemKey={item.key} />
-              <span className="text-muted-foreground">{item.label}</span>
-              <span className="font-medium tabular-nums" style={{ color: seriesColor(item.key) }}>
-                {money.format(item.value)}
+            <div key={item.key} className="flex items-start gap-1.5 text-[12px]">
+              <span className="mt-[3px]">
+                <MetricDot itemKey={item.key} />
               </span>
-            </p>
+              <span className="pt-px text-muted-foreground">{item.label}</span>
+              <MetricAmounts
+                value={item.value}
+                withoutIgv={item.withoutIgv}
+                color={seriesColor(item.key)}
+                size="inline"
+              />
+            </div>
           ))}
         </div>
       ) : null}
@@ -289,7 +327,10 @@ export function SettlementKpiStrip({ summary, sales }: {
       {charts.map((chart) => {
         const caption = [
           chart.hero ? `${chart.hero.label} ${money.format(chart.hero.value)}` : '',
-          ...chart.items.map((item) => `${item.label} ${money.format(item.value)}`),
+          ...chart.items.map((item) => {
+            const net = item.withoutIgv != null ? ` ${money.format(item.withoutIgv)}` : '';
+            return `${item.label} ${money.format(item.value)}${net}`;
+          }),
         ].filter(Boolean).join(', ');
         return (
           <div key={chart.id} aria-label={caption} className="min-w-0">
