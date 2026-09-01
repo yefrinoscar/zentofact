@@ -66,6 +66,47 @@ test('applyOptimisticSale agrega la venta y sube hoy/mes', () => {
   );
   assert.equal(next.orders?.[0]?.externalOrderNumber, 'NEW');
   assert.equal(next.today?.orders, 2);
+  assert.equal(next.ordersTotal, 2);
+});
+
+test('applyOptimisticSale sube la barra del día, el conteo y respeta el tamaño de página', () => {
+  const next = applyOptimisticSale(
+    {
+      today: { orders: 1, total: 100, commission: 10 },
+      month: { orders: 1, total: 100, commission: 10 },
+      daily: [
+        { date: '2026-08-24', orders: 0, total: 0, commission: 0 },
+        { date: '2026-08-25', orders: 1, total: 100, commission: 10 },
+      ],
+      orders: [{ externalOrderNumber: 'A', total: 100 }, { externalOrderNumber: 'B', total: 100 }],
+      ordersTotal: 12,
+      limit: 2,
+      commissionPercent: 10,
+    },
+    { externalOrderNumber: 'NEW', total: 50, orderedAt: '2026-08-25T20:00:00Z' },
+  );
+  assert.deepEqual(next.daily?.[1], { date: '2026-08-25', orders: 2, total: 150, commission: 15 });
+  assert.deepEqual(next.daily?.[0], { date: '2026-08-24', orders: 0, total: 0, commission: 0 });
+  assert.equal(next.ordersTotal, 13);
+  assert.deepEqual(next.orders?.map((row) => row.externalOrderNumber), ['NEW', 'A']);
+});
+
+test('applyOptimisticSale sin prepend solo actualiza indicadores', () => {
+  const next = applyOptimisticSale(
+    {
+      today: { orders: 0, total: 0, commission: 0 },
+      month: { orders: 3, total: 300, commission: 30 },
+      orders: [{ externalOrderNumber: 'A', total: 100 }],
+      ordersTotal: 3,
+      commissionPercent: 10,
+    },
+    { externalOrderNumber: 'NEW', total: 50 },
+    10,
+    { prepend: false },
+  );
+  assert.deepEqual(next.orders?.map((row) => row.externalOrderNumber), ['A']);
+  assert.equal(next.month?.orders, 4);
+  assert.equal(next.ordersTotal, 4);
 });
 
 test('registeredFromMisVentasState acepta string legacy y objeto', () => {

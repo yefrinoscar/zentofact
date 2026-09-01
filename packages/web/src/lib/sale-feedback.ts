@@ -22,10 +22,15 @@ export type OptimisticSale = {
   createdAt?: string | null;
 };
 
+type OptimisticPeriod = { orders: number; total: number; commission: number };
+
 export type OptimisticHome = {
-  today?: { orders: number; total: number; commission: number };
-  month?: { orders: number; total: number; commission: number };
+  today?: OptimisticPeriod;
+  month?: OptimisticPeriod;
+  daily?: Array<OptimisticPeriod & { date: string }>;
   orders?: OptimisticSale[];
+  ordersTotal?: number;
+  limit?: number;
   commissionPercent?: number;
 };
 
@@ -136,7 +141,7 @@ export function buildOptimisticSale(input: {
 }
 
 function bumpPeriod(
-  period: { orders: number; total: number; commission: number } | undefined,
+  period: OptimisticPeriod | undefined,
   total: number,
   commissionPercent: number,
 ) {
@@ -146,22 +151,44 @@ function bumpPeriod(
   return { orders, total: nextTotal, commission };
 }
 
-/** Prepend a sale and bump hoy/mes totals. Pure — safe for React Query setQueryData. */
+function limaDateKey(value: string | undefined, fallback: Date) {
+  const date = value ? new Date(value) : fallback;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' })
+    .format(Number.isNaN(date.getTime()) ? fallback : date);
+}
+
+/**
+ * Prepend a sale and bump hoy/mes, the daily bar for its date and the row count.
+ * Pure — safe for React Query setQueryData. `prepend: false` keeps pages that
+ * would not show the newest row first (other pages, other sort) numerically right
+ * without inserting a row that does not belong there.
+ */
 export function applyOptimisticSale(
   home: OptimisticHome | null | undefined,
   sale: OptimisticSale,
   commissionPercent = Number(home?.commissionPercent) || 0,
+  options: { prepend?: boolean; now?: Date } = {},
 ): OptimisticHome {
+  const prepend = options.prepend !== false;
   const total = Number(sale.total) || 0;
   const existing = Array.isArray(home?.orders) ? home.orders : [];
   const number = String(sale.externalOrderNumber || '').trim();
   const withoutDup = number
     ? existing.filter((row) => String(row.externalOrderNumber || '').trim() !== number)
     : existing;
+  const saleDate = limaDateKey(sale.orderedAt || sale.createdAt || undefined, options.now || new Date());
+  const daily = Array.isArray(home?.daily)
+    ? home.daily.map((day) => (day.date === saleDate ? { ...day, ...bumpPeriod(day, total, commissionPercent) } : day))
+    : home?.daily;
+  const limit = Number(home?.limit) || 0;
+  const orders = prepend ? [sale, ...withoutDup] : existing;
   return {
+    ...home,
     today: bumpPeriod(home?.today, total, commissionPercent),
     month: bumpPeriod(home?.month, total, commissionPercent),
-    orders: [sale, ...withoutDup],
+    daily,
+    orders: limit > 0 && orders.length > limit ? orders.slice(0, limit) : orders,
+    ordersTotal: (Number(home?.ordersTotal) || withoutDup.length) + 1,
     commissionPercent,
   };
 }

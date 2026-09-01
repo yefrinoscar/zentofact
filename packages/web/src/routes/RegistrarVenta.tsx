@@ -32,6 +32,13 @@ import {
   humanizeSaleError,
   type OptimisticHome,
 } from '../lib/sale-feedback';
+import {
+  DEFAULT_MIS_VENTAS_QUERY,
+  MIS_VENTAS_QUERY_KEY,
+  misVentasHomeKey,
+  showsNewestSaleFirst,
+  type MisVentasQuery,
+} from '../lib/mis-ventas-presentation';
 import { isSellerPricedShipping, type ShippingCarrier } from '../lib/shipping-carrier';
 import type { MapPlace } from '../components/PlacePicker';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
@@ -304,10 +311,24 @@ export default function RegistrarVenta() {
       paymentMethod,
       orderedAt: payload.orderedAt,
     });
-    const previousHome = queryClient.getQueryData<OptimisticHome>(['salesperson-home']);
-    queryClient.setQueryData<OptimisticHome>(['salesperson-home'], (current) => (
-      applyOptimisticSale(current ?? previousHome, optimisticSale, Number(previousHome?.commissionPercent) || 0)
-    ));
+    // Every cached Mis ventas page gets the new numbers; only pages that list newest-first get the row.
+    const previousHomes = queryClient.getQueriesData<OptimisticHome>({ queryKey: [MIS_VENTAS_QUERY_KEY] });
+    const knownHome = previousHomes.find(([, data]) => data)?.[1];
+    const commissionPercent = Number(knownHome?.commissionPercent) || 0;
+    const firstPageKey = misVentasHomeKey(DEFAULT_MIS_VENTAS_QUERY);
+    const cachedKeys = new Set(previousHomes.map(([key]) => JSON.stringify(key)));
+    if (!cachedKeys.has(JSON.stringify(firstPageKey))) {
+      previousHomes.push([firstPageKey, undefined]);
+    }
+    for (const [key, data] of previousHomes) {
+      const pageQuery = key[1] as Partial<MisVentasQuery> | undefined;
+      queryClient.setQueryData<OptimisticHome>(key, applyOptimisticSale(
+        data ?? { ...knownHome, orders: [], ordersTotal: 0, limit: pageQuery?.limit },
+        optimisticSale,
+        commissionPercent,
+        { prepend: showsNewestSaleFirst(pageQuery) },
+      ));
+    }
 
     // Optimistic: show the list with the new sale right away, then confirm in the background.
     setCreating(true);
@@ -316,12 +337,15 @@ export default function RegistrarVenta() {
     try {
       await api.createManagedOrder(payload);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['salesperson-home'] }),
+        queryClient.invalidateQueries({ queryKey: [MIS_VENTAS_QUERY_KEY] }),
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
         queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] }),
       ]);
     } catch (error: any) {
-      queryClient.setQueryData(['salesperson-home'], previousHome);
+      for (const [key, data] of previousHomes) {
+        if (data) queryClient.setQueryData(key, data);
+        else queryClient.removeQueries({ queryKey: key, exact: true });
+      }
       navigate(afterSavePath, { replace: true, state: { saveFailed: true, saveError: error?.message } });
     } finally {
       setCreating(false);

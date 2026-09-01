@@ -879,6 +879,19 @@ export async function ingestOrder(input, db) {
   }
 }
 
+const ORDER_LIST_SORT_COLUMNS = {
+  orderedAt: 'coalesce(o.ordered_at, o.created_at)',
+  total: 'o.total',
+};
+
+function orderListSort(sortBy, sortDir) {
+  const column = ORDER_LIST_SORT_COLUMNS[String(sortBy || '').trim()];
+  if (!column) return 'o.ordered_at desc nulls last, o.id desc';
+  const direction = String(sortDir || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const nulls = direction === 'asc' ? 'nulls first' : 'nulls last';
+  return `${column} ${direction} ${nulls}, o.id ${direction}`;
+}
+
 export async function listOrders(filters = {}, db) {
   const target = db || (await loadCore()).pool;
   const values = [];
@@ -947,6 +960,7 @@ export async function listOrders(filters = {}, db) {
   }
   const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 500);
   const offset = Math.max(Number(filters.offset || 0), 0);
+  const orderBy = orderListSort(filters.sortBy, filters.sortDir);
   values.push(limit, offset);
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
@@ -957,7 +971,7 @@ export async function listOrders(filters = {}, db) {
      join order_channels ch on ch.id=a.channel_id
      left join companies c on c.id=o.company_id
      ${where.length ? `where ${where.join(' and ')}` : ''}
-     order by o.ordered_at desc nulls last, o.id desc
+     order by ${orderBy}
      limit $${values.length - 1} offset $${values.length}`,
     values,
   );
@@ -1158,6 +1172,26 @@ export function estimatedCommission(total, percent) {
   return Math.round(amount * rate) / 100;
 }
 
+function calendarDays(from, to) {
+  const days = [];
+  for (let day = from; day <= to && days.length < 400; day = addCalendarDays(day, 1)) days.push(day);
+  return days;
+}
+
+/** One entry per calendar day in [from, to], zero-filled so charts keep a continuous axis. */
+export function fillDailySales(rows, from, to, commissionPercent) {
+  const byDate = new Map();
+  for (const row of rows || []) {
+    const date = String(row.lima_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    byDate.set(date, periodStats(row.orders_count, row.sales_total, commissionPercent));
+  }
+  return calendarDays(from, to).map((date) => ({
+    date,
+    ...(byDate.get(date) || { orders: 0, total: 0, commission: 0 }),
+  }));
+}
+
 export async function getSalespersonHome(filters = {}, db) {
   const target = db || (await loadCore()).pool;
   const userId = requiredText(filters.userId, 'userId', 300);
@@ -1168,33 +1202,79 @@ export async function getSalespersonHome(filters = {}, db) {
   const to = String(filters.to || '').trim() || today;
   if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('from inválido.');
   if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('to inválido.');
+  if (from > to) throw new Error('El rango de fechas es inválido.');
 
-  const kpi = await target.query(
-    `select
-       count(*) filter (where d.lima_date = $2::date)::int as today_orders,
-       coalesce(sum(o.total) filter (where d.lima_date = $2::date), 0)::numeric as today_total,
-       count(*) filter (where d.lima_date >= $3::date)::int as month_orders,
-       coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total
-     from orders o
-     cross join lateral (
-       select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
-     ) d
-     where o.created_by=$1
-       and ${SALES_EXCLUSIONS}`,
-    [userId, today, monthStart],
-  );
-  const listed = await listOrders({
-    createdBy: userId,
-    from,
-    to,
-    limit: filters.limit || 50,
-    salesOnly: true,
-  }, target);
+  const [kpi, daily, payments, listed] = await Promise.all([
+    target.query(
+      `select
+         count(*) filter (where d.lima_date = $2::date)::int as today_orders,
+         coalesce(sum(o.total) filter (where d.lima_date = $2::date), 0)::numeric as today_total,
+         count(*) filter (where d.lima_date >= $3::date)::int as month_orders,
+         coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and ${SALES_EXCLUSIONS}`,
+      [userId, today, monthStart],
+    ),
+    target.query(
+      `select to_char(d.lima_date, 'YYYY-MM-DD') as lima_date,
+         count(*)::int as orders_count,
+         coalesce(sum(o.total), 0)::numeric as sales_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and d.lima_date between $2::date and $3::date
+         and ${SALES_EXCLUSIONS}
+       group by d.lima_date
+       order by d.lima_date`,
+      [userId, from, to],
+    ),
+    target.query(
+      `select coalesce(nullif(trim(o.metadata->>'paymentMethod'), ''), 'sin_dato') as payment_method,
+         count(*)::int as orders_count,
+         coalesce(sum(o.total), 0)::numeric as sales_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and d.lima_date between $2::date and $3::date
+         and ${SALES_EXCLUSIONS}
+       group by 1
+       order by sales_total desc`,
+      [userId, from, to],
+    ),
+    listOrders({
+      createdBy: userId,
+      from,
+      to,
+      limit: filters.limit || 50,
+      offset: filters.offset || 0,
+      sortBy: filters.sortBy,
+      sortDir: filters.sortDir,
+      salesOnly: true,
+    }, target),
+  ]);
   const row = kpi.rows[0] || {};
   return {
     today: periodStats(row.today_orders, row.today_total, commissionPercent),
     month: periodStats(row.month_orders, row.month_total, commissionPercent),
+    range: { from, to },
+    daily: fillDailySales(daily.rows, from, to, commissionPercent),
+    paymentMix: payments.rows.map((mix) => ({
+      method: String(mix.payment_method || 'sin_dato'),
+      orders: Number(mix.orders_count) || 0,
+      total: Number(mix.sales_total) || 0,
+    })),
     orders: listed.orders,
+    ordersTotal: listed.totalCount,
+    limit: listed.limit,
+    offset: listed.offset,
     commissionPercent,
   };
 }
