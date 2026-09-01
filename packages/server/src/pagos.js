@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceRefsForOrders } from './pagos-invoice.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -365,7 +366,14 @@ export async function listSettlementSales(filter = {}, db) {
   const summary = summarizeSettlementSales(sales);
   const page = sales.slice(offset, offset + limit);
   const withDocuments = await attachSaleDocuments(page, target);
-  const items = await attachSaleOrderShipping(withDocuments, target);
+  const withShipping = await attachSaleOrderShipping(withDocuments, target);
+  const items = attachInvoicesToSales(
+    withShipping,
+    await loadInvoiceRefsForOrders(
+      withShipping.flatMap((sale) => [sale.orderId, ...(sale.orderNumbers || [])]),
+      target,
+    ),
+  );
   return {
     items,
     summary,
@@ -451,6 +459,9 @@ export async function importSettlementCsv(input = {}, db) {
     throw httpError('El CSV supera el tamaño máximo de 8 MB.');
   }
   const filename = text(input.filename || 'estado-de-cuenta.csv', 'Archivo', 180);
+  if (csvIsInvoiceReport(csv) || isInvoiceReportFilename(filename)) {
+    throw httpError('Este es un reporte de facturas. Usa Subir facturas.');
+  }
   const companyId = optionalPositiveInt(input.companyId);
   const importedBy = input.importedBy ? String(input.importedBy) : null;
   const replace = Boolean(input.replace);

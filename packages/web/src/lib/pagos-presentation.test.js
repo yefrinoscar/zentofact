@@ -292,6 +292,10 @@ test('pasa un Excel de liquidación a CSV y reconoce la extensión', async () =>
     shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.xlsx'),
     'FAPE-SCDE75A-20260820-PEN.xlsx',
   );
+  assert.equal(
+    shortImportFilename('InvoiceReport_FAPE-SCDE75A-2026-08-01-2026-08-07_2026-09-01T18_36_14.890554330.xlsx'),
+    'FAPE-SCDE75A-2026-08-01-2026-08-07.xlsx',
+  );
 });
 
 test('lee el NewReportTransaction xlsx de Falabella con preámbulo y dimensión corta', async () => {
@@ -327,6 +331,8 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Falabella');
   assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Suma + IGV');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
+  assert.equal(PAGOS_COLUMN_COPY.factura.label, 'Factura');
+  assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Falabella');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
   assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');

@@ -1,4 +1,5 @@
 import { read as readWorkbook, utils as xlsxUtils } from 'xlsx';
+import { headerLooksLikeInvoiceReport, isInvoiceReportFilename } from './pagos-invoice-report.ts';
 
 export const money = new Intl.NumberFormat('es-PE', {
   style: 'currency',
@@ -171,7 +172,7 @@ export function importSummary(item: {
 
 export function shortImportFilename(name: string | null | undefined) {
   const raw = String(name || '').trim();
-  const stripped = raw.replace(/^NewReportTransaction_/i, '');
+  const stripped = raw.replace(/^(NewReportTransaction_|InvoiceReport_)/i, '');
   return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.(csv|xlsx|xls|xlsm)$|$)/i, '') || stripped || raw;
 }
 
@@ -180,6 +181,8 @@ export const SUCCESS_NOTICE_MS = 5000;
 export function csvReadError(message: string | null | undefined) {
   const title = String(message || 'No se pudo leer el archivo.').trim() || 'No se pudo leer el archivo.';
   if (/vacío/i.test(title)) return { title, detail: 'Elige un archivo de Falabella.' };
+  if (/reporte de facturas/i.test(title)) return { title, detail: '' };
+  if (/estado de cuenta\. Usa Subir archivo/i.test(title)) return { title, detail: '' };
   if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
   if (/cabecer|columna|hoja/i.test(title)) return { title, detail: '' };
   if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
@@ -391,6 +394,9 @@ export function decodeSettlementSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
   for (const name of names) {
     const next = settlementRowsFromSheet(workbook.Sheets[name] as { '!ref'?: string } & Record<string, unknown>);
     const header = (next[0] || []).map((cell) => String(cell ?? '')).join(',');
+    if (headerLooksLikeInvoiceReport(header)) {
+      throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+    }
     if (lineLooksLikeSettlementHeader(header)) {
       rows = next;
       break;
@@ -411,11 +417,18 @@ export async function readSettlementUpload(file: {
   type?: string;
   arrayBuffer: () => Promise<ArrayBuffer>;
 }) {
+  if (isInvoiceReportFilename(file.name)) {
+    throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+  }
   const buffer = await file.arrayBuffer();
   if (isSettlementSpreadsheet(file.name || '', file.type || '')) {
     return decodeSettlementSpreadsheet(buffer);
   }
-  return decodeSettlementCsv(buffer);
+  const csv = decodeSettlementCsv(buffer);
+  if (headerLooksLikeInvoiceReport(csv)) {
+    throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+  }
+  return csv;
 }
 
 export function repairProductText(value: string | null | undefined) {
@@ -481,6 +494,7 @@ export const PAGOS_COLUMN_COPY = {
   logistica: { label: 'Logística', hint: 'Falabella' },
   total: { label: 'Total', hint: 'Suma + IGV' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
+  factura: { label: 'Factura', hint: 'Falabella' },
 } as const;
 
 export function salesPageNote(shown: number, total: number) {
