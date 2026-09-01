@@ -60,6 +60,45 @@ export function teLlegaHint(sale: {
   return 'Lo que te depositan.';
 }
 
+export const IGV_RATE = 0.18;
+
+function money2(value: number | null | undefined) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+export function igvSplit(gross: number | null | undefined) {
+  const amount = money2(gross || 0);
+  const net = money2(amount / (1 + IGV_RATE));
+  return { gross: amount, net, igv: money2(amount - net) };
+}
+
+export function saleIgvStory(sale: {
+  bruto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  buyerShippingPaid?: number | null;
+} | null | undefined) {
+  const product = money2(sale?.bruto);
+  const envio = Math.max(0, money2(sale?.buyerShippingPaid));
+  const commission = money2(sale?.commission);
+  const logistics = money2(sale?.shipping);
+  const boleta = igvSplit(product + envio);
+  const factura = igvSplit(commission + logistics);
+  const productNet = igvSplit(product).net;
+  const commissionNet = igvSplit(commission).net;
+  return {
+    product,
+    envio,
+    boleta,
+    commission,
+    logistics,
+    factura,
+    productNet,
+    commissionNet,
+    queda: money2(boleta.net - factura.net),
+  };
+}
+
 export function settlementPair(charged?: number | null, reversed?: number | null) {
   const up = Math.round(Number(charged || 0) * 100) / 100;
   const down = Math.round(Number(reversed || 0) * 100) / 100;

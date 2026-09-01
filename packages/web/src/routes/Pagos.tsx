@@ -24,6 +24,7 @@ import {
   monthLabel,
   saleDateLabel,
   saleDatesHint,
+  saleIgvStory,
   salesPageNote,
   settlementFooterTotals,
   settlementPair,
@@ -439,6 +440,70 @@ function ChargeRow({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function IgvLine({ net, igv }: { net: number; igv: number }) {
+  return (
+    <p className="pb-2 text-xs tabular-nums text-muted-foreground">
+      Sin IGV {money.format(net)} · IGV {money.format(igv)}
+    </p>
+  );
+}
+
+function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
+  const story = saleIgvStory(sale);
+  return (
+    <>
+      <p className="text-xs font-medium">Boleta</p>
+      <p className="text-[11px] text-muted-foreground">Falabella pide este total.</p>
+      <ChargeRow label="Producto" amount={story.product} hint="Lo que pagó el cliente." />
+      {story.envio > 0 ? (
+        <ChargeRow label="Envío" amount={story.envio} hint="Lo pagó el cliente." />
+      ) : null}
+      <ChargeRow label="Total" amount={story.boleta.gross} strong />
+      <IgvLine net={story.boleta.net} igv={story.boleta.igv} />
+      <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
+        <p className="pt-2 text-xs font-medium">Factura</p>
+        <p className="text-[11px] text-muted-foreground">Comisión y logística.</p>
+        <ChargeRow
+          label="Comisión"
+          amount={-(story.commission || 0)}
+          rate={sale.commissionRate}
+        />
+        <ChargeRow
+          label="Logística"
+          amount={-(story.logistics || 0)}
+          hint={shippingHint(sale)}
+          rate={sale.shippingRate}
+        />
+        <ChargeRow
+          label="Se queda"
+          amount={sale.take || 0}
+          hint="Suma de los dos."
+          rate={sale.takeRate}
+          tone="take"
+          strong
+        />
+        <IgvLine net={story.factura.net} igv={story.factura.igv} />
+      </div>
+      <ChargeRow
+        label="Sin IGV"
+        amount={story.queda}
+        hint={Math.abs(story.productNet - story.commissionNet - story.queda) < 0.05
+          ? `Producto ${money.format(story.productNet)} − comisión ${money.format(story.commissionNet)}`
+          : 'Boleta menos factura.'}
+        strong
+      />
+      <ChargeRow
+        label="Te llega"
+        amount={sale.neto || 0}
+        hint={teLlegaHint(sale)}
+        rate={receiveRate(sale.bruto, sale.neto)}
+        tone="receive"
+        strong
+      />
+    </>
   );
 }
 
@@ -909,58 +974,50 @@ export default function Pagos() {
                 </div>
               </SheetHeader>
               <div className="px-5 py-4">
-                <ChargeRow
-                  label="Precio"
-                  amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
-                  reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
-                  hint={selected.returned ? 'Se descuenta el producto.' : 'Lo que pagó el cliente.'}
-                />
-                {hasBuyerShipping(selected) ? (
-                  <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
-                ) : null}
-                <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
-                  <p className="pt-2 text-xs font-medium">{selected.returned ? 'Falabella ajusta' : 'Falabella cobra'}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {selected.returned ? 'Te devuelven la comisión. La logística suele quedarse.' : 'Comisión + logística'}
-                  </p>
-                  <ChargeRow
-                    label="Comisión"
-                    amount={selected.returned
-                      ? (settlementPair(selected.commissionCharged, selected.commissionReversed).amount || 0)
-                      : -(selected.commission || 0)}
-                    reversal={selected.returned
-                      ? settlementPair(selected.commissionCharged, selected.commissionReversed).reversal
-                      : undefined}
-                    rate={selected.returned ? undefined : selected.commissionRate}
-                  />
-                  <ChargeRow
-                    label="Logística"
-                    amount={selected.returned
-                      ? (settlementPair(selected.shippingCharged, selected.shippingReversed).amount || selected.shipping || 0)
-                      : -(selected.shipping || 0)}
-                    reversal={selected.returned
-                      ? settlementPair(selected.shippingCharged, selected.shippingReversed).reversal
-                      : undefined}
-                    hint={shippingHint(selected)}
-                    rate={selected.returned ? undefined : selected.shippingRate}
-                  />
-                  <ChargeRow
-                    label="Se queda"
-                    amount={selected.take || 0}
-                    hint={selected.returned ? 'La logística que no se revirtió.' : 'Suma de los dos.'}
-                    rate={selected.returned ? undefined : selected.takeRate}
-                    tone="take"
-                    strong
-                  />
-                </div>
-                <ChargeRow
-                  label="Te llega"
-                  amount={selected.neto || 0}
-                  hint={teLlegaHint(selected)}
-                  rate={selected.returned ? undefined : receiveRate(selected.bruto, selected.neto)}
-                  tone="receive"
-                  strong
-                />
+                {selected.returned ? (
+                  <>
+                    <ChargeRow
+                      label="Precio"
+                      amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
+                      reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
+                      hint="Se descuenta el producto."
+                    />
+                    {hasBuyerShipping(selected) ? (
+                      <p className="pb-2 text-xs text-muted-foreground">El envío lo pagó el cliente.</p>
+                    ) : null}
+                    <div className="-mx-5 border-y border-border bg-muted/40 px-5 py-1">
+                      <p className="pt-2 text-xs font-medium">Falabella ajusta</p>
+                      <p className="text-[11px] text-muted-foreground">Te devuelven la comisión. La logística suele quedarse.</p>
+                      <ChargeRow
+                        label="Comisión"
+                        amount={settlementPair(selected.commissionCharged, selected.commissionReversed).amount || 0}
+                        reversal={settlementPair(selected.commissionCharged, selected.commissionReversed).reversal}
+                      />
+                      <ChargeRow
+                        label="Logística"
+                        amount={settlementPair(selected.shippingCharged, selected.shippingReversed).amount || selected.shipping || 0}
+                        reversal={settlementPair(selected.shippingCharged, selected.shippingReversed).reversal}
+                        hint={shippingHint(selected)}
+                      />
+                      <ChargeRow
+                        label="Se queda"
+                        amount={selected.take || 0}
+                        hint="La logística que no se revirtió."
+                        strong
+                        tone="take"
+                      />
+                    </div>
+                    <ChargeRow
+                      label="Te llega"
+                      amount={selected.neto || 0}
+                      hint={teLlegaHint(selected)}
+                      tone="receive"
+                      strong
+                    />
+                  </>
+                ) : (
+                  <SaleIgvBreakdown sale={selected} />
+                )}
               </div>
               {(selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1 ? (
                 <div className="border-t border-border px-5 py-4">
