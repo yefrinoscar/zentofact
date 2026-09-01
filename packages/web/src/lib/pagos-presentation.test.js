@@ -294,7 +294,7 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   }
   assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Producto + envío');
   assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Comisión + logística');
-  assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
   assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');

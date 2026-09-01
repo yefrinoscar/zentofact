@@ -455,7 +455,7 @@ export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
   boleta: { label: 'Boleta', hint: 'Producto + envío' },
   factura: { label: 'Factura', hint: 'Comisión + logística' },
-  ganas: { label: 'Ganas', hint: 'Sin IGV' },
+  ganas: { label: 'Ganas', hint: 'Lo que te queda' },
 } as const;
 
 export function salesPageNote(shown: number, total: number) {

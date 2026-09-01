@@ -511,7 +511,7 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
         {story.envio > 0 ? <LedgerLine label="Envío" amount={story.envio} /> : null}
         <LedgerTotal amount={story.boleta.gross} label="Total" />
         <div className="mt-1">
-          <LedgerLine label="Sin IGV" amount={story.boleta.net} dim indent />
+          <LedgerLine label="Base" amount={story.boleta.net} dim indent />
           <LedgerLine label="IGV 18%" amount={story.boleta.igv} dim indent />
         </div>
       </LedgerBlock>
@@ -520,13 +520,13 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
         <LedgerLine label="Logística" amount={story.logistics} minus />
         <LedgerTotal amount={story.factura.gross} tone="take" label="Total" minus />
         <div className="mt-1">
-          <LedgerLine label="Sin IGV" amount={story.factura.net} dim indent minus />
+          <LedgerLine label="Base" amount={story.factura.net} dim indent minus />
           <LedgerLine label="IGV 18%" amount={story.factura.igv} dim indent minus />
         </div>
       </LedgerBlock>
       <section className="border-t border-border pt-4">
-        <LedgerLine label="Sin IGV boleta" amount={story.boleta.net} />
-        <LedgerLine label="Sin IGV factura" amount={story.factura.net} minus />
+        <LedgerLine label="Base boleta" amount={story.boleta.net} />
+        <LedgerLine label="Base factura" amount={story.factura.net} minus />
         <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-border pt-2">
           <span className="text-base font-semibold">Ganas</span>
           <span className={cn('tabular-nums text-lg font-semibold', amountToneClass('receive', story.queda))}>
@@ -540,19 +540,19 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
 
 function StatementAmount({
   gross,
-  net,
+  igv,
   tone,
 }: {
   gross: number;
-  net?: number;
+  igv?: number;
   tone?: 'take' | 'receive';
 }) {
   return (
     <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
       <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-semibold')}>{money.format(gross)}</p>
-      {net != null ? (
+      {igv != null ? (
         <p className={cn('text-[11px] tabular-nums', tone ? 'opacity-75' : 'text-muted-foreground')}>
-          sin IGV {money.format(net)}
+          IGV {money.format(igv)}
         </p>
       ) : null}
     </div>
@@ -785,7 +785,7 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount gross={story.boleta.gross} net={story.boleta.net} />;
+        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
       },
     },
     {
@@ -805,7 +805,7 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount gross={story.factura.gross} net={story.factura.net} tone="take" />;
+        return <StatementAmount gross={story.factura.gross} igv={story.factura.igv} tone="take" />;
       },
     },
     {
