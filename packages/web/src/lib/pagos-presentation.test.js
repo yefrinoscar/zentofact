@@ -64,7 +64,15 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(story.queda, 67.8);
   assert.equal(story.productNet, 84.75);
   assert.equal(story.commissionNet, 16.95);
+  assert.equal(story.shippingAdjust, 0);
   assert.equal(Math.round((story.productNet - story.commissionNet) * 100) / 100, 67.8);
+  const mismatch = saleIgvStory({ bruto: 98.89, buyerShippingPaid: 34.9, commission: 14.85, shipping: 42.9 });
+  assert.equal(mismatch.queda, 64.44);
+  assert.equal(
+    Math.round((mismatch.productNet - mismatch.commissionNet + mismatch.shippingAdjust) * 100) / 100,
+    mismatch.queda,
+  );
+  assert.ok(mismatch.shippingAdjust < 0);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });

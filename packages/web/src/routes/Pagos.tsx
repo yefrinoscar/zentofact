@@ -525,8 +525,21 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
         </div>
       </LedgerBlock>
       <section className="border-t border-border pt-4">
-        <LedgerLine label="Base boleta" amount={story.boleta.net} />
-        <LedgerLine label="Base factura" amount={story.factura.net} minus />
+        <LedgerLine label="Producto" amount={story.productNet} />
+        <LedgerLine label="Comisión" amount={story.commissionNet} minus />
+        {Math.abs(story.shippingAdjust) >= 0.01 ? (
+          <LedgerLine
+            label={
+              story.envio <= 0 && story.shippingAdjust < 0
+                ? 'Logística'
+                : story.shippingAdjust < 0
+                  ? 'Logística extra'
+                  : 'Envío extra'
+            }
+            amount={Math.abs(story.shippingAdjust)}
+            minus={story.shippingAdjust < 0}
+          />
+        ) : null}
         <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-border pt-2">
           <span className="text-base font-semibold">Ganas</span>
           <span className={cn('tabular-nums text-lg font-semibold', amountToneClass('receive', story.queda))}>

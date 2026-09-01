@@ -86,6 +86,7 @@ export function saleIgvStory(sale: {
   const factura = igvSplit(commission + logistics);
   const productNet = igvSplit(product).net;
   const commissionNet = igvSplit(commission).net;
+  const queda = money2(boleta.net - factura.net);
   return {
     product,
     envio,
@@ -95,7 +96,8 @@ export function saleIgvStory(sale: {
     factura,
     productNet,
     commissionNet,
-    queda: money2(boleta.net - factura.net),
+    shippingAdjust: money2(queda - (productNet - commissionNet)),
+    queda,
   };
 }
 
