@@ -57,6 +57,7 @@ function MetricHeader({
   hint: string;
 }) {
   const lead = hero ? [hero] : items.slice(0, 2);
+  const extras = hero ? items : [];
   return (
     <>
       <div className={cn('flex items-start gap-4', hero && 'flex-col gap-0')}>
@@ -75,6 +76,19 @@ function MetricHeader({
           </div>
         ))}
       </div>
+      {extras.length ? (
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
+          {extras.map((item) => (
+            <p key={item.key} className="flex items-baseline gap-1.5 text-[12px]">
+              <MetricDot itemKey={item.key} />
+              <span className="text-muted-foreground">{item.label}</span>
+              <span className="font-medium tabular-nums" style={{ color: seriesColor(item.key) }}>
+                {money.format(item.value)}
+              </span>
+            </p>
+          ))}
+        </div>
+      ) : null}
       {hint ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
     </>
   );
@@ -145,9 +159,9 @@ function WaffleHundred({
 }) {
   const waffle = waffleOutOf100({ sold, commission, shipping });
   const legend = [
-    { key: 'commission', label: 'Comisión', count: waffle.counts.commission },
-    { key: 'shipping', label: 'Logística', count: waffle.counts.shipping },
-    { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives },
+    { key: 'commission', label: 'Comisión', count: waffle.counts.commission, amount: commission },
+    { key: 'shipping', label: 'Logística', count: waffle.counts.shipping, amount: shipping },
+    { key: 'arrives', label: 'Te llega', count: waffle.counts.arrives, amount: Math.max(0, sold - commission - shipping) },
   ];
   return (
     <div className="mt-2 flex w-max items-start gap-3">
@@ -169,7 +183,7 @@ function WaffleHundred({
           <p key={item.key} className="flex items-center gap-1.5">
             <span className="size-2 rounded-[2px]" style={{ background: seriesColor(item.key) }} />
             {item.label}
-            <span className="tabular-nums text-foreground/80">{item.count}%</span>
+            <span className="tabular-nums text-foreground/80">{money.format(item.amount)} · {item.count}%</span>
           </p>
         ))}
       </div>
