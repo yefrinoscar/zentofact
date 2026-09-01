@@ -167,6 +167,7 @@ export default function MisVentas() {
     },
     {
       id: 'orderedAt',
+      accessorFn: (row) => row.date,
       header: ({ column }) => <DataTableColumnHeader column={column} title="Fecha" />,
       cell: ({ row }) => <span className="whitespace-nowrap text-muted-foreground">{row.original.date || '—'}</span>,
     },
@@ -178,11 +179,13 @@ export default function MisVentas() {
     },
     {
       id: 'total',
+      accessorFn: (row) => row.total,
       header: ({ column }) => <DataTableColumnHeader column={column} title="Total" className="-mr-2 ml-0" />,
       cell: ({ row }) => <span className="font-semibold tabular-nums">{formatSaleMoney(row.original.total)}</span>,
     },
     {
       id: 'commission',
+      accessorFn: (row) => row.commission,
       header: ({ column }) => <DataTableColumnHeader column={column} title="Comisión" className="-mr-2 ml-0" />,
       cell: ({ row }) => <span className="tabular-nums text-primary">{formatSaleMoney(row.original.commission)}</span>,
     },

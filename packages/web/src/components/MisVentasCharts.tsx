@@ -196,11 +196,15 @@ function PaymentDonut({ slices }: { slices: ReturnType<typeof paymentMixSlices> 
       </ChartContainer>
       <ul className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs">
         {data.map((slice) => (
-          <li key={slice.key} className="flex items-center gap-2">
-            <span className="size-2 shrink-0 rounded-[2px]" style={{ background: slice.fill }} />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">{slice.label}</span>
-            <span className="tabular-nums text-foreground/80">{percentLabel(slice.share)}</span>
-            <span className="hidden w-20 text-right font-medium tabular-nums sm:inline">{formatSaleMoney(slice.total)}</span>
+          <li key={slice.key} className="flex items-start gap-2">
+            <span className="mt-1 size-2 shrink-0 rounded-[2px]" style={{ background: slice.fill }} />
+            <div className="min-w-0 flex-1">
+              <p className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-muted-foreground">{slice.label}</span>
+                <span className="shrink-0 tabular-nums text-foreground/80">{percentLabel(slice.share)}</span>
+              </p>
+              <p className="text-[11px] font-medium tabular-nums leading-tight">{formatSaleMoney(slice.total)}</p>
+            </div>
           </li>
         ))}
       </ul>
