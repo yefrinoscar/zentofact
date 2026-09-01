@@ -1126,12 +1126,12 @@ export default function Pagos() {
           </SelectContent>
         </Select>
         <Select value={paid} onValueChange={(value) => setPaid(value as PaymentFilterValue)}>
-          <SelectTrigger className="w-[10.5rem]" aria-label="Estado de pago">
+          <SelectTrigger className="w-[11.25rem]" aria-label="Estado de pago">
             <SelectValue>
               {paymentFilterLabel(paid, 'trigger')}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="w-max min-w-[14.5rem]">
             {PAYMENT_FILTERS.map((item) => (
               <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
             ))}
