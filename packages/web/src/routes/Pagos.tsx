@@ -120,14 +120,23 @@ type SettlementSale = {
 
 const cobroCol = 'bg-muted/40';
 const cobroColStart = `${cobroCol} border-l border-border`;
+const cobroColMid = cobroCol;
 const cobroColEnd = `${cobroCol} border-r border-border`;
+const ventaColStart = 'border-l border-border';
+const ventaColEnd = 'border-r border-border';
 const llegaCol = 'border-l border-emerald-600/15 bg-emerald-500/[0.08]';
 const llegaText = 'text-emerald-700 dark:text-emerald-400';
 const takeText = 'text-red-600 dark:text-red-400';
 const cobroHeadStart = `${cobroColStart} text-muted-foreground`;
 const cobroCellStart = `${cobroColStart} group-hover:bg-muted/55`;
+const cobroHeadMid = `${cobroColMid} text-muted-foreground`;
+const cobroCellMid = `${cobroColMid} group-hover:bg-muted/55`;
 const cobroHeadEnd = `${cobroColEnd} text-muted-foreground`;
 const cobroCellEnd = `${cobroColEnd} group-hover:bg-muted/55`;
+const ventaHeadStart = `${ventaColStart} text-muted-foreground`;
+const ventaCellStart = ventaColStart;
+const ventaHeadEnd = `${ventaColEnd} text-muted-foreground`;
+const ventaCellEnd = ventaColEnd;
 const llegaHead = `${llegaCol} ${llegaText}`;
 const llegaCell = `${llegaCol} group-hover:bg-emerald-500/[0.12]`;
 
@@ -447,29 +456,29 @@ function statementAmount(amount: number, minus?: boolean) {
 
 function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
   const story = saleIgvStory(sale);
-  const documents = [
+  const documents: Array<{
+    key: string;
+    label: string;
+    amount: number;
+    igv?: number;
+    minus?: boolean;
+    empty?: boolean;
+  }> = [
+    { key: 'product', label: 'Producto', amount: story.product },
     {
-      key: 'boleta',
-      label: 'Boleta',
-      amount: story.boleta.gross,
-      igv: story.boleta.igv,
-      minus: false,
-      note: story.envio > 0
-        ? `Producto ${money.format(story.product)} · Envío ${money.format(story.envio)}`
-        : undefined,
+      key: 'envio',
+      label: 'Envío',
+      amount: story.envio,
+      empty: story.envio <= 0 && sale.orderShipping == null,
     },
+    { key: 'boleta', label: 'Boleta', amount: story.boleta.gross, igv: story.boleta.igv },
+    { key: 'commission', label: 'Comisión', amount: story.commission, minus: true },
+    { key: 'logistics', label: 'Logística', amount: story.logistics, minus: true },
     {
-      key: 'commission',
-      label: 'Comisión',
-      amount: story.commission,
-      igv: story.commissionSplit.igv,
-      minus: true,
-    },
-    {
-      key: 'logistics',
-      label: 'Logística',
-      amount: story.logistics,
-      igv: story.logisticsSplit.igv,
+      key: 'total',
+      label: 'Total',
+      amount: story.factura.gross,
+      igv: story.factura.igv,
       minus: true,
     },
   ];
@@ -487,17 +496,16 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
           <tr key={row.key} className="border-b border-border">
             <td className="py-3 align-top">
               <p>{row.label}</p>
-              {row.note ? <p className="mt-0.5 text-xs text-muted-foreground">{row.note}</p> : null}
             </td>
             <td className={cn('py-3 text-right align-top tabular-nums', row.minus && takeText)}>
-              {statementAmount(row.amount, row.minus)}
+              {row.empty ? '—' : statementAmount(row.amount, row.minus)}
             </td>
             <td className={cn(
               'py-3 text-right align-top tabular-nums',
               row.minus ? takeText : 'text-muted-foreground',
             )}
             >
-              {statementAmount(row.igv, row.minus)}
+              {row.igv != null ? statementAmount(row.igv, row.minus) : ''}
             </td>
           </tr>
         ))}
@@ -747,11 +755,11 @@ export default function Pagos() {
       cell: ({ row }) => <SaleDates sale={row.original} />,
     },
     {
-      id: 'boleta',
-      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
-      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
-      size: 120,
-      meta: { align: 'end' },
+      id: 'precio',
+      accessorFn: (sale) => saleIgvStory(sale).product,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
+      size: 92,
+      meta: { align: 'end', headerClassName: ventaHeadStart, cellClassName: ventaCellStart },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
         if (row.original.returned) {
@@ -764,14 +772,14 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
+        return <p className="text-right tabular-nums text-[13px]">{money.format(story.product)}</p>;
       },
     },
     {
       id: 'envio',
       accessorFn: (sale) => saleIgvStory(sale).envio,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
-      size: 96,
+      size: 84,
       meta: { align: 'end' },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
@@ -784,10 +792,24 @@ export default function Pagos() {
       },
     },
     {
+      id: 'boleta',
+      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
+      size: 108,
+      meta: { align: 'end', headerClassName: ventaHeadEnd, cellClassName: ventaCellEnd },
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          return <p className="text-right text-[13px] text-muted-foreground">—</p>;
+        }
+        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
+      },
+    },
+    {
       id: 'comision',
       accessorFn: (sale) => saleIgvStory(sale).commission,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
-      size: 118,
+      size: 92,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
@@ -802,15 +824,17 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount gross={story.commission} igv={story.commissionSplit.igv} tone="take" />;
+        return (
+          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.commission)}</p>
+        );
       },
     },
     {
       id: 'logistica',
       accessorFn: (sale) => saleIgvStory(sale).logistics,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
-      size: 118,
-      meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
+      size: 92,
+      meta: { align: 'end', headerClassName: cobroHeadMid, cellClassName: cobroCellMid },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
         if (row.original.returned) {
@@ -824,7 +848,23 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount gross={story.logistics} igv={story.logisticsSplit.igv} tone="take" />;
+        return (
+          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.logistics)}</p>
+        );
+      },
+    },
+    {
+      id: 'total',
+      accessorFn: (sale) => saleIgvStory(sale).factura.gross,
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.total} />,
+      size: 108,
+      meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        if (row.original.returned) {
+          return <p className="text-right text-[13px] text-muted-foreground">—</p>;
+        }
+        return <StatementAmount gross={story.factura.gross} igv={story.factura.igv} tone="take" />;
       },
     },
     {
@@ -973,13 +1013,17 @@ export default function Pagos() {
               {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
             </p>
             <p className="tabular-nums">
-              Boleta {money.format(footerTotals.boleta)}
+              Precio {money.format(footerTotals.product)}
               <span className="text-muted-foreground"> · </span>
               Envío {money.format(footerTotals.envio)}
+              <span className="text-muted-foreground"> · </span>
+              Boleta {money.format(footerTotals.boleta)}
               <span className="text-muted-foreground"> · </span>
               Comisión <span className={takeText}>{money.format(footerTotals.commission)}</span>
               <span className="text-muted-foreground"> · </span>
               Logística <span className={takeText}>{money.format(footerTotals.logistics)}</span>
+              <span className="text-muted-foreground"> · </span>
+              Total <span className={takeText}>{money.format(footerTotals.total)}</span>
               <span className="text-muted-foreground"> · </span>
               Ganas <span className={cn('font-medium', amountToneClass('receive', footerTotals.ganas))}>{money.format(footerTotals.ganas)}</span>
             </p>
