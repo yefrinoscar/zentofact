@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -324,7 +324,7 @@ function TwoLineHead({ label, hint }: { label: string; hint?: string }) {
   return (
     <span className="flex flex-col leading-tight">
       <span className="whitespace-nowrap">{label}</span>
-      {hint ? <span className="whitespace-nowrap text-[10px] font-normal">{hint}</span> : null}
+      {hint ? <span className="whitespace-nowrap text-[11px] font-normal">{hint}</span> : null}
     </span>
   );
 }
@@ -446,14 +446,16 @@ function LedgerLine({
   amount,
   dim = false,
   minus = false,
+  indent = false,
 }: {
   label: string;
   amount: number;
   dim?: boolean;
   minus?: boolean;
+  indent?: boolean;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 py-0.5">
+    <div className={cn('flex items-baseline justify-between gap-4 py-[3px]', indent && 'pl-3')}>
       <span className={cn('text-sm', dim && 'text-muted-foreground')}>{label}</span>
       <span className={cn('tabular-nums text-sm', dim && 'text-muted-foreground', minus && takeText)}>
         {minus ? `− ${money.format(amount)}` : money.format(amount)}
@@ -466,47 +468,72 @@ function LedgerTotal({
   amount,
   tone,
   label,
+  minus = false,
 }: {
   amount: number;
   tone?: 'take' | 'receive';
   label?: string;
+  minus?: boolean;
 }) {
   return (
     <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-border pt-1.5">
       <span className="text-sm font-medium">{label || '\u00a0'}</span>
       <span className={cn('tabular-nums text-sm font-medium', amountToneClass(tone, amount))}>
-        {money.format(amount)}
+        {minus ? `− ${money.format(amount)}` : money.format(amount)}
       </span>
     </div>
+  );
+}
+
+function LedgerBlock({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <p className="text-sm font-medium leading-none">{title}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
+      <div className="mt-2">{children}</div>
+    </section>
   );
 }
 
 function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
   const story = saleIgvStory(sale);
   return (
-    <div className="text-[13px]">
-      <section>
+    <div className="space-y-5">
+      <LedgerBlock title={PAGOS_COLUMN_COPY.boleta.label} hint={PAGOS_COLUMN_COPY.boleta.hint}>
         <LedgerLine label="Producto" amount={story.product} />
         {story.envio > 0 ? <LedgerLine label="Envío" amount={story.envio} /> : null}
-        <LedgerTotal amount={story.boleta.gross} label="Boleta" />
+        <LedgerTotal amount={story.boleta.gross} label="Total" />
         <div className="mt-1">
-          <LedgerLine label="Sin IGV" amount={story.boleta.net} dim />
-          <LedgerLine label="IGV 18%" amount={story.boleta.igv} dim />
+          <LedgerLine label="Sin IGV" amount={story.boleta.net} dim indent />
+          <LedgerLine label="IGV 18%" amount={story.boleta.igv} dim indent />
         </div>
-      </section>
-      <section className="mt-5">
-        <LedgerLine label="Comisión" amount={story.commission} />
-        <LedgerLine label="Logística" amount={story.logistics} />
-        <LedgerTotal amount={story.factura.gross} tone="take" label="Factura" />
+      </LedgerBlock>
+      <LedgerBlock title={PAGOS_COLUMN_COPY.factura.label} hint={PAGOS_COLUMN_COPY.factura.hint}>
+        <LedgerLine label="Comisión" amount={story.commission} minus />
+        <LedgerLine label="Logística" amount={story.logistics} minus />
+        <LedgerTotal amount={story.factura.gross} tone="take" label="Total" minus />
         <div className="mt-1">
-          <LedgerLine label="Sin IGV" amount={story.factura.net} dim />
-          <LedgerLine label="IGV 18%" amount={story.factura.igv} dim />
+          <LedgerLine label="Sin IGV" amount={story.factura.net} dim indent minus />
+          <LedgerLine label="IGV 18%" amount={story.factura.igv} dim indent minus />
         </div>
-      </section>
-      <section className="mt-5">
+      </LedgerBlock>
+      <section className="border-t border-border pt-4">
         <LedgerLine label="Sin IGV boleta" amount={story.boleta.net} />
         <LedgerLine label="Sin IGV factura" amount={story.factura.net} minus />
-        <LedgerTotal amount={story.queda} tone="receive" label="Ganas" />
+        <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-border pt-2">
+          <span className="text-base font-semibold">Ganas</span>
+          <span className={cn('tabular-nums text-lg font-semibold', amountToneClass('receive', story.queda))}>
+            {money.format(story.queda)}
+          </span>
+        </div>
       </section>
     </div>
   );
@@ -523,9 +550,9 @@ function StatementAmount({
 }) {
   return (
     <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
-      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-medium')}>{money.format(gross)}</p>
+      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-semibold')}>{money.format(gross)}</p>
       {net != null ? (
-        <p className={cn('text-[10px] tabular-nums', tone ? 'opacity-80' : 'text-muted-foreground')}>
+        <p className={cn('text-[11px] tabular-nums', tone ? 'opacity-75' : 'text-muted-foreground')}>
           sin IGV {money.format(net)}
         </p>
       ) : null}
@@ -712,7 +739,7 @@ export default function Pagos() {
       id: 'product',
       accessorFn: (sale) => saleTitle(sale),
       header: 'Producto',
-      size: 168,
+      size: 148,
       cell: ({ row }) => (
         <p className="line-clamp-1 text-[13px] font-medium leading-4" title={row.original.productName || undefined}>
           {saleTitle(row.original)}
@@ -753,7 +780,7 @@ export default function Pagos() {
       id: 'boleta',
       accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
-      size: 118,
+      size: 132,
       meta: { align: 'end' },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
@@ -774,7 +801,7 @@ export default function Pagos() {
       id: 'factura',
       accessorFn: (sale) => saleIgvStory(sale).factura.gross,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.factura} />,
-      size: 124,
+      size: 132,
       meta: { align: 'end', headerClassName: `${cobroHeadStart} ${cobroHeadEnd}`, cellClassName: `${cobroCellStart} ${cobroCellEnd}` },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
@@ -794,7 +821,7 @@ export default function Pagos() {
       id: 'ganas',
       accessorFn: (sale) => saleIgvStory(sale).queda,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
-      size: 108,
+      size: 116,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => (
         <StatementAmount
@@ -917,7 +944,7 @@ export default function Pagos() {
       <OrdersVirtualTable
         table={table}
         compact
-        rowHeight={48}
+        rowHeight={52}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
