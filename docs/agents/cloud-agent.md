@@ -68,7 +68,7 @@ Unified sample orders on LIMBO:
 |---|---|---|---|
 | PV-10001 | Falabella | `pending` | `#/bandeja` tab Pendientes |
 | QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · printable label |
-| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes |
+| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · three unit lines shown as one product `x3` |
 | PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
 | PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
 
