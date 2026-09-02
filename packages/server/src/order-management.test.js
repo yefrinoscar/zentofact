@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   estimatedCommission,
+  fillDailySales,
   getSalesPulse,
   getSalespersonHome,
   ingestOrder,
@@ -711,6 +712,41 @@ test('lista pedidos filtrando por createdBy', async () => {
   assert.equal(result.totalCount, 0);
 });
 
+test('lista pedidos ordenando por total o fecha con una lista blanca', async () => {
+  const seen = [];
+  const db = {
+    async query(sql) {
+      seen.push(sql.replace(/\s+/g, ' '));
+      return { rows: [] };
+    },
+  };
+  await listOrders({ sortBy: 'total', sortDir: 'asc' }, db);
+  await listOrders({ sortBy: 'orderedAt', sortDir: 'desc' }, db);
+  await listOrders({ sortBy: 'customer; drop table orders', sortDir: 'asc' }, db);
+  assert.match(seen[0], /order by o\.total asc nulls first, o\.id asc/);
+  assert.match(seen[1], /order by coalesce\(o\.ordered_at, o\.created_at\) desc nulls last, o\.id desc/);
+  assert.match(seen[2], /order by o\.ordered_at desc nulls last, o\.id desc/);
+  assert.doesNotMatch(seen[2], /drop table/);
+});
+
+test('la serie diaria rellena con cero los días sin venta y estima comisión', () => {
+  const daily = fillDailySales(
+    [
+      { lima_date: '2026-08-24', orders_count: 2, sales_total: '200.00' },
+      { lima_date: '2026-08-26', orders_count: 1, sales_total: '50.00' },
+    ],
+    '2026-08-23',
+    '2026-08-26',
+    10,
+  );
+  assert.deepEqual(daily, [
+    { date: '2026-08-23', orders: 0, total: 0, commission: 0 },
+    { date: '2026-08-24', orders: 2, total: 200, commission: 20 },
+    { date: '2026-08-25', orders: 0, total: 0, commission: 0 },
+    { date: '2026-08-26', orders: 1, total: 50, commission: 5 },
+  ]);
+});
+
 test('la comisión estimada es el porcentaje sobre el total', () => {
   assert.equal(estimatedCommission(200, 10), 20);
   assert.equal(estimatedCommission(99.99, 0), 0);
@@ -725,6 +761,15 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
       queries.push({ sql: compact, params });
       if (compact.includes('today_orders')) {
         return { rows: [{ today_orders: 2, today_total: '200.00', month_orders: 5, month_total: '800.00' }] };
+      }
+      if (compact.includes('group by d.lima_date')) {
+        return { rows: [{ lima_date: params[2], orders_count: 2, sales_total: '200.00' }] };
+      }
+      if (compact.includes("metadata->>'paymentMethod'")) {
+        return { rows: [
+          { payment_method: 'efectivo', orders_count: 3, sales_total: '500.00' },
+          { payment_method: 'yape_plin', orders_count: 2, sales_total: '300.00' },
+        ] };
       }
       return { rows: [{
         id: 91,
@@ -766,13 +811,40 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
   const result = await getSalespersonHome({
     userId: 'seller-9',
     commissionPercent: 10,
+    from: '2026-08-20',
+    to: '2026-08-26',
+    limit: 10,
+    offset: 10,
+    sortBy: 'total',
+    sortDir: 'asc',
   }, db);
   assert.deepEqual(result.today, { orders: 2, total: 200, commission: 20 });
   assert.deepEqual(result.month, { orders: 5, total: 800, commission: 80 });
+  assert.deepEqual(result.range, { from: '2026-08-20', to: '2026-08-26' });
+  assert.equal(result.daily.length, 7);
+  assert.deepEqual(result.daily[6], { date: '2026-08-26', orders: 2, total: 200, commission: 20 });
+  assert.deepEqual(result.daily[0], { date: '2026-08-20', orders: 0, total: 0, commission: 0 });
+  assert.deepEqual(result.paymentMix, [
+    { method: 'efectivo', orders: 3, total: 500 },
+    { method: 'yape_plin', orders: 2, total: 300 },
+  ]);
   assert.equal(result.orders[0].createdBy, 'seller-9');
-  assert.equal(queries[0].params[0], 'seller-9');
-  assert.match(queries[0].sql, /created_by=\$1/);
-  assert.match(queries[0].sql, /cancelled/);
-  assert.match(queries[1].sql, /created_by=/);
-  assert.match(queries[1].sql, /cancelled/);
+  assert.equal(result.ordersTotal, 1);
+  assert.equal(result.limit, 10);
+  assert.equal(result.offset, 10);
+  for (const query of queries) {
+    assert.equal(query.params[0], 'seller-9');
+    assert.match(query.sql, /created_by=\$1/);
+    assert.match(query.sql, /cancelled/);
+  }
+  const list = queries.find((query) => query.sql.includes('total_count'));
+  assert.match(list.sql, /order by o\.total asc/);
+  assert.deepEqual(list.params.slice(-2), [10, 10]);
+});
+
+test('el home del vendedor rechaza un rango invertido', async () => {
+  await assert.rejects(
+    getSalespersonHome({ userId: 'seller-9', from: '2026-08-26', to: '2026-08-20' }, { async query() { return { rows: [] }; } }),
+    /rango de fechas/,
+  );
 });

@@ -1777,6 +1777,67 @@ const DDL = `
     ORDER BY order_id, id
   ) e
   WHERE o.id = e.order_id AND o.created_by IS NULL;
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_imports (
+    id BIGSERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    file_sha256 TEXT NOT NULL UNIQUE,
+    seller_id TEXT NOT NULL DEFAULT '',
+    period_from DATE,
+    period_to DATE,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    imported_by TEXT,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_imports_imported
+    ON falabella_invoice_imports(imported_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_documents (
+    id BIGSERIAL PRIMARY KEY,
+    import_id BIGINT NOT NULL REFERENCES falabella_invoice_imports(id) ON DELETE CASCADE,
+    document_number TEXT NOT NULL,
+    document_kind TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'PEN',
+    seller_id TEXT NOT NULL DEFAULT '',
+    issued_on DATE,
+    period_from DATE,
+    period_to DATE,
+    net NUMERIC(14,2) NOT NULL DEFAULT 0,
+    igv NUMERIC(14,2) NOT NULL DEFAULT 0,
+    gross NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (import_id, document_number, document_kind),
+    CHECK (document_kind IN ('factura', 'nota_credito'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_documents_number
+    ON falabella_invoice_documents(document_number, document_kind, id DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_lines (
+    id BIGSERIAL PRIMARY KEY,
+    document_id BIGINT NOT NULL REFERENCES falabella_invoice_documents(id) ON DELETE CASCADE,
+    import_id BIGINT NOT NULL REFERENCES falabella_invoice_imports(id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    order_number TEXT NOT NULL DEFAULT '',
+    product_name TEXT NOT NULL DEFAULT '',
+    seller_sku TEXT NOT NULL DEFAULT '',
+    falabella_sku TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    transaction_type TEXT NOT NULL DEFAULT '',
+    concept TEXT NOT NULL DEFAULT 'other',
+    net NUMERIC(14,2) NOT NULL DEFAULT 0,
+    igv NUMERIC(14,2) NOT NULL DEFAULT 0,
+    gross NUMERIC(14,2) NOT NULL DEFAULT 0,
+    statement_number TEXT NOT NULL DEFAULT '',
+    paid_reference TEXT NOT NULL DEFAULT '',
+    transacted_at TIMESTAMPTZ,
+    CHECK (concept IN ('commission', 'logistics', 'buyer_shipping', 'ads', 'other'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_lines_order
+    ON falabella_invoice_lines(order_number)
+    WHERE order_number <> '';
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_lines_document
+    ON falabella_invoice_lines(document_id, row_number);
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

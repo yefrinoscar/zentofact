@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, PAYMENT_FILTERS, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentFilterLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -52,8 +52,21 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(paymentStatusTone('No Pagado'), 'unpaid');
   assert.equal(paymentStatusLabel('Pagado', true), 'Devolución');
   assert.equal(paymentStatusTone('Pagado', true), 'returned');
-  assert.equal(teLlegaHint({ returned: true, shipping: 80.82, neto: -80.82 }), 'En la devolución suele quedarse la logística.');
-  assert.equal(teLlegaHint({ returned: true, shipping: 0, neto: -69.92 }), 'Descontaron el producto y te devolvieron la comisión.');
+  assert.equal(paymentFilterLabel('all', 'trigger'), 'Pago');
+  assert.equal(paymentFilterLabel('pagado'), 'Pagados');
+  assert.equal(paymentFilterLabel('no-pagado'), 'No pagados');
+  assert.equal(paymentFilterLabel('devolucion-pagado'), 'Devolución pagada');
+  assert.equal(paymentFilterLabel('devolucion-no-pagado'), 'Devolución no pagada');
+  assert.equal(paymentFilterLabel('devolucion-pagado', 'trigger'), 'Dev. pagada');
+  assert.deepEqual(PAYMENT_FILTERS.map((item) => item.value), [
+    'all',
+    'pagado',
+    'no-pagado',
+    'devolucion-pagado',
+    'devolucion-no-pagado',
+  ]);
+  assert.equal(teLlegaHint({ returned: true, shipping: 80.82, neto: -80.82 }), 'No ganas. La logística suele quedarse.');
+  assert.equal(teLlegaHint({ returned: true, shipping: 0, neto: -69.92 }), 'Producto y comisión se anulan. No te queda venta.');
   assert.deepEqual(igvSplit(150), { gross: 150, net: 127.12, igv: 22.88 });
   assert.deepEqual(igvSplit(70), { gross: 70, net: 59.32, igv: 10.68 });
   assert.deepEqual(igvSplit(100), { gross: 100, net: 84.75, igv: 15.25 });
@@ -93,6 +106,21 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
     shipping: 50,
   });
   assert.equal(orderWins.envio, 50);
+  const invoiced = saleIgvStory({
+    bruto: 100,
+    buyerShippingPaid: 50,
+    commission: 20,
+    shipping: 50,
+    invoiceCharges: {
+      commission: { net: 12.19, igv: 2.19, gross: 14.38 },
+      logistics: { net: 6.69, igv: 1.21, gross: 7.9 },
+      buyer_shipping: { net: 5, igv: 0.9, gross: 5.9 },
+    },
+  });
+  assert.equal(invoiced.commissionSplit.net, 12.19);
+  assert.equal(invoiced.logisticsSplit.gross, 13.8);
+  assert.equal(invoiced.factura.net, 23.88);
+  assert.equal(invoiced.queda, 103.24);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });
@@ -201,13 +229,15 @@ test('los charts de Pagos usan facturado, neto, cobros y depósito', () => {
     ['Facturado', 'Neto', 'Comisión', 'Logística', 'Pagado', 'Pendiente'],
   );
   assert.equal(charts[0].items[0].value, 1739.2);
+  assert.equal(charts[0].items[0].withoutIgv, igvSplit(1739.2).net);
   assert.equal(charts[0].items[1].value, 1218.35);
   assert.equal(charts[0].items[1].withoutIgv, igvSplit(1218.35).net);
   assert.equal(charts[1].hero.label, 'Se queda');
   assert.equal(charts[1].hero.value, 520.85);
+  assert.equal(charts[1].hero.withoutIgv, igvSplit(520.85).net);
   assert.equal(charts[1].items[0].value, 148.2);
   assert.equal(charts[1].items[0].withoutIgv, igvSplit(148.2).net);
-  assert.equal(charts[1].items[1].withoutIgv, undefined);
+  assert.equal(charts[1].items[1].withoutIgv, igvSplit(372.65).net);
   assert.equal(charts[1].items[1].value, 372.65);
   assert.equal(charts[2].items[0].value, 381.96);
   assert.equal(charts[2].items[0].withoutIgv, igvSplit(381.96).net);
@@ -297,6 +327,10 @@ test('pasa un Excel de liquidación a CSV y reconoce la extensión', async () =>
     shortImportFilename('NewReportTransaction_FAPE-SCDE75A-20260820-PEN_2026-08-27T11_53_11.4043969.xlsx'),
     'FAPE-SCDE75A-20260820-PEN.xlsx',
   );
+  assert.equal(
+    shortImportFilename('InvoiceReport_FAPE-SCDE75A-2026-08-01-2026-08-07_2026-09-01T18_36_14.890554330.xlsx'),
+    'FAPE-SCDE75A-2026-08-01-2026-08-07.xlsx',
+  );
 });
 
 test('lee el NewReportTransaction xlsx de Falabella con preámbulo y dimensión corta', async () => {
@@ -327,11 +361,13 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   }
   assert.equal(PAGOS_COLUMN_COPY.precio.hint, 'Producto');
   assert.equal(PAGOS_COLUMN_COPY.envio.hint, 'De la orden');
-  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Suma + IGV');
-  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'Falabella');
-  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Falabella');
-  assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Suma + IGV');
+  assert.equal(PAGOS_COLUMN_COPY.boleta.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.comision.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.logistica.hint, 'Sin IGV');
+  assert.equal(PAGOS_COLUMN_COPY.total.hint, 'Sin IGV');
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
+  assert.equal(PAGOS_COLUMN_COPY.factura.label, 'Factura');
+  assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Falabella');
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
   assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');
@@ -339,11 +375,58 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
     ]),
-    { product: 100, envio: 50, boleta: 150, commission: 20, logistics: 50, total: 70, ganas: 67.8 },
+    { product: 84.75, envio: 42.37, boleta: 127.12, commission: 16.95, logistics: 42.37, total: 59.32, ganas: 67.8, returnLoss: 0, returnCount: 0 },
   );
   assert.deepEqual(
     settlementStatementTotals(null),
-    { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 },
+    { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0, returnLoss: 0, returnCount: 0 },
+  );
+  const withReturn = settlementStatementTotals([
+    { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },
+    { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+  ]);
+  assert.equal(withReturn.envio, 42.37);
+  assert.equal(withReturn.returnCount, 1);
+  assert.equal(withReturn.returnLoss, -igvSplit(21.8).net);
+  assert.equal(withReturn.ganas, Math.round((67.8 + withReturn.returnLoss) * 100) / 100);
+  const withCredit = settlementStatementTotals([
+    { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+    { returned: true, bruto: 0, commission: -20, shipping: 0 },
+  ]);
+  const logisticsLoss = -igvSplit(21.8).net;
+  const commissionCredit = -igvSplit(-20).net;
+  assert.equal(withCredit.returnCount, 2);
+  assert.equal(withCredit.returnLoss, logisticsLoss);
+  assert.equal(withCredit.ganas, Math.round((logisticsLoss + commissionCredit) * 100) / 100);
+  assert.ok(commissionCredit > 0);
+  assert.ok(withCredit.ganas > withCredit.returnLoss);
+});
+
+test('en una devolución el producto se anula y Ganas es la logística que se queda', () => {
+  assert.deepEqual(returnProductPair(67.98, 0, 67.98), { amount: 67.98, reversal: -67.98 });
+  assert.deepEqual(returnProductPair(99.9, -99.9), { amount: 99.9, reversal: -99.9 });
+  const incomplete = saleIgvStory({
+    returned: true,
+    bruto: 67.98,
+    commission: 0,
+    shipping: 21.8,
+  });
+  assert.equal(incomplete.product, 0);
+  assert.equal(incomplete.boleta.net, 0);
+  assert.equal(incomplete.logisticsSplit.net, igvSplit(21.8).net);
+  assert.equal(incomplete.queda, -igvSplit(21.8).net);
+  const complete = saleIgvStory({
+    returned: true,
+    bruto: 0,
+    commission: 0,
+    shipping: 80.82,
+  });
+  assert.equal(complete.queda, -igvSplit(80.82).net);
+  assert.equal(
+    settlementStatementTotals([
+      { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+    ]).ganas,
+    -igvSplit(21.8).net,
   );
 });
 

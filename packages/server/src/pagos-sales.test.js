@@ -466,6 +466,50 @@ test('guarda la fecha de la orden y la del pago, y filtra por mes', () => {
     filterAggregatedSales(sales, { paidMonth: '2026-08' }).map((sale) => sale.orderId),
     ['3243000099'],
   );
+  assert.deepEqual(
+    filterAggregatedSales(sales, { paid: 'pagado' }).map((sale) => sale.orderId).sort(),
+    ['3243000099', '3243000100'],
+  );
+  assert.deepEqual(
+    filterAggregatedSales(sales, { paid: 'no-pagado' }).map((sale) => sale.orderId).sort(),
+    ['3243000101', '3243000102'],
+  );
+});
+
+test('el filtro separa devoluciones pagadas y no pagadas', () => {
+  const paidReturn = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row({ 'N° del orden': '3244809389', 'Estado de pago': 'Pagado', 'Monto con IVA': '67.98' }),
+    row({ 'N° del orden': '3244809389', 'Estado de pago': 'Pagado', 'Monto con IVA': '-67.98' }),
+    row({ 'N° del orden': '3244809389', 'Tipo de transacción': 'Cobro por comisión por venta', 'Estado de pago': 'Pagado', 'Monto con IVA': '-12.24' }),
+    row({ 'N° del orden': '3244809389', 'Tipo de transacción': 'Cobro por comisión por venta', 'Estado de pago': 'Pagado', 'Monto con IVA': '12.24' }),
+    row({ 'N° del orden': '3244809389', 'Tipo de transacción': 'Cobro por cofinanciamiento logístico', 'Estado de pago': 'Pagado', 'Monto con IVA': '-21.80' }),
+  ].join('\n')).lines);
+  const unpaidReturn = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row({ 'N° del orden': '3245527317', 'Estado de pago': 'No Pagado', 'Monto con IVA': '99.90' }),
+    row({ 'N° del orden': '3245527317', 'Estado de pago': 'No Pagado', 'Monto con IVA': '-99.90' }),
+    row({ 'N° del orden': '3245527317', 'Tipo de transacción': 'Cobro por comisión por venta', 'Estado de pago': 'No Pagado', 'Monto con IVA': '-14.99' }),
+    row({ 'N° del orden': '3245527317', 'Tipo de transacción': 'Cobro por comisión por venta', 'Estado de pago': 'No Pagado', 'Monto con IVA': '14.99' }),
+    row({ 'N° del orden': '3245527317', 'Tipo de transacción': 'Cobro por cofinanciamiento logístico', 'Estado de pago': 'No Pagado', 'Monto con IVA': '-15.60' }),
+  ].join('\n')).lines);
+  const paidSale = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row({ 'N° del orden': '3243000099', 'Estado de pago': 'Pagado', 'Monto con IVA': '8.99' }),
+  ].join('\n')).lines);
+  const unpaidSale = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row({ 'N° del orden': '3243000101', 'Estado de pago': 'No Pagado', 'Monto con IVA': '8.99' }),
+  ].join('\n')).lines);
+  const sales = [...paidReturn, ...unpaidReturn, ...paidSale, ...unpaidSale];
+  assert.equal(paidReturn[0].returned, true);
+  assert.equal(paidReturn[0].paid, true);
+  assert.equal(unpaidReturn[0].returned, true);
+  assert.equal(unpaidReturn[0].paid, false);
+  assert.deepEqual(filterAggregatedSales(sales, { paid: 'pagado' }).map((sale) => sale.orderId), ['3243000099']);
+  assert.deepEqual(filterAggregatedSales(sales, { paid: 'no-pagado' }).map((sale) => sale.orderId), ['3243000101']);
+  assert.deepEqual(filterAggregatedSales(sales, { paid: 'devolucion-pagado' }).map((sale) => sale.orderId), ['3244809389']);
+  assert.deepEqual(filterAggregatedSales(sales, { paid: 'devolucion-no-pagado' }).map((sale) => sale.orderId), ['3245527317']);
 });
 
 test('filtra por compañía y deja todas si no hay filtro', () => {

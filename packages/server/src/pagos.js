@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceChargesForOrders, loadInvoiceRefsForOrders } from './pagos-invoice.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -324,7 +325,15 @@ export async function listSettlementSales(filter = {}, db) {
   const target = await resolvePool(db);
   const importId = optionalPositiveInt(filter.importId);
   const paid = String(filter.paid || '').trim().toLowerCase();
-  if (paid && !['pagado', 'no-pagado', 'no_pagado'].includes(paid)) {
+  if (paid && ![
+    'pagado',
+    'no-pagado',
+    'no_pagado',
+    'devolucion-pagado',
+    'devolucion_pagado',
+    'devolucion-no-pagado',
+    'devolucion_no_pagado',
+  ].includes(paid)) {
     throw httpError('Estado de pago inválido.');
   }
   const search = String(filter.search || '').trim().toLowerCase();
@@ -365,7 +374,13 @@ export async function listSettlementSales(filter = {}, db) {
   const summary = summarizeSettlementSales(sales);
   const page = sales.slice(offset, offset + limit);
   const withDocuments = await attachSaleDocuments(page, target);
-  const items = await attachSaleOrderShipping(withDocuments, target);
+  const withShipping = await attachSaleOrderShipping(withDocuments, target);
+  const orderIds = withShipping.flatMap((sale) => [sale.orderId, ...(sale.orderNumbers || [])]);
+  const [refs, charges] = await Promise.all([
+    loadInvoiceRefsForOrders(orderIds, target),
+    loadInvoiceChargesForOrders(orderIds, target),
+  ]);
+  const items = attachInvoicesToSales(withShipping, refs, charges);
   return {
     items,
     summary,
@@ -451,6 +466,9 @@ export async function importSettlementCsv(input = {}, db) {
     throw httpError('El CSV supera el tamaño máximo de 8 MB.');
   }
   const filename = text(input.filename || 'estado-de-cuenta.csv', 'Archivo', 180);
+  if (csvIsInvoiceReport(csv) || isInvoiceReportFilename(filename)) {
+    throw httpError('Este es un reporte de facturas. Usa Subir facturas.');
+  }
   const companyId = optionalPositiveInt(input.companyId);
   const importedBy = input.importedBy ? String(input.importedBy) : null;
   const replace = Boolean(input.replace);

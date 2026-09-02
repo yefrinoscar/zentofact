@@ -188,7 +188,7 @@ const apiHttp = {
     req(`/pagos/lines${qs(filter)}`),
   listSettlementSales: (filter: {
     search?: string;
-    paid?: 'pagado' | 'no-pagado' | '';
+    paid?: 'pagado' | 'no-pagado' | 'devolucion-pagado' | 'devolucion-no-pagado' | '';
     orderMonth?: string;
     paidMonth?: string;
     companyId?: number;
@@ -199,6 +199,11 @@ const apiHttp = {
     req(`/pagos/sales${qs(filter)}`),
   importSettlementCsv: (data: { filename: string; csv: string; companyId?: number; replace?: boolean }) =>
     req('/pagos/imports', { method: 'POST', body: JSON.stringify(data) }),
+  listFalabellaInvoices: (filter: { limit?: number; offset?: number } = {}) =>
+    req(`/pagos/invoices${qs(filter)}`),
+  getFalabellaInvoice: (id: number) => req(`/pagos/invoices/${id}`),
+  importFalabellaInvoice: (data: { filename: string; csv: string; xlsxBase64?: string; replace?: boolean }) =>
+    req('/pagos/invoices', { method: 'POST', body: JSON.stringify(data) }),
 
   // Bandeja consolidada de pedidos
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>
@@ -250,7 +255,14 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
-  getSalespersonHome: (filter: { from?: string; to?: string; limit?: number } = {}) =>
+  getSalespersonHome: (filter: {
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: 'orderedAt' | 'total';
+    sortDir?: 'asc' | 'desc';
+  } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),

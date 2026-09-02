@@ -2,12 +2,15 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, CheckCircle2, Copy, Info, Search, Upload, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, FileText, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
   PAGOS_SALES_PAGE,
+  PAYMENT_FILTERS,
+  type PaymentFilterValue,
   csvReadError,
+  paymentFilterLabel,
   documentLabel,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
@@ -25,6 +28,7 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
+  returnProductPair,
   settlementPair,
   settlementStatementTotals,
   shortProductName,
@@ -32,6 +36,13 @@ import {
   teLlegaHint,
   unitsLabel,
 } from '../lib/pagos-presentation';
+import {
+  invoiceImportSummary,
+  invoiceNumberLabel,
+  isInvoiceReportFilename,
+  readInvoiceReportPayload,
+} from '../lib/pagos-invoice-report';
+import { FalabellaInvoiceDialog } from '@/components/FalabellaInvoiceView';
 import { sellerShortName } from '../lib/seller-name';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
@@ -43,6 +54,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type SettlementProduct = {
   sku?: string;
@@ -115,6 +132,22 @@ type SettlementSale = {
     kind?: string | null;
     number?: string | null;
     status?: string | null;
+  } | null;
+  falabellaInvoice?: {
+    id: number;
+    number: string;
+    kind: string;
+  } | null;
+  falabellaInvoices?: Array<{
+    id: number;
+    number: string;
+    kind: string;
+  }>;
+  invoiceCharges?: {
+    commission?: { net?: number; igv?: number; gross?: number } | null;
+    logistics?: { net?: number; igv?: number; gross?: number } | null;
+    buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
+    ads?: { net?: number; igv?: number; gross?: number } | null;
   } | null;
 };
 
@@ -401,6 +434,7 @@ type PagosNotice = {
   title: string;
   detail?: string;
   canReplace?: boolean;
+  replaceInvoice?: boolean;
 };
 
 function ChargeRow({
@@ -454,7 +488,13 @@ function statementAmount(amount: number, minus?: boolean) {
   return minus ? `− ${money.format(amount)}` : money.format(amount);
 }
 
-function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
+function SaleIgvBreakdown({
+  sale,
+  onOpenInvoice,
+}: {
+  sale: SettlementSale;
+  onOpenInvoice?: (id: number, orderId: string) => void;
+}) {
   const story = saleIgvStory(sale);
   const documents: Array<{
     key: string;
@@ -464,25 +504,30 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
     minus?: boolean;
     empty?: boolean;
   }> = [
-    { key: 'product', label: 'Producto', amount: story.product },
+    { key: 'product', label: 'Producto', amount: story.productSplit.net, igv: story.productSplit.igv },
     {
       key: 'envio',
       label: 'Envío',
-      amount: story.envio,
+      amount: story.envioSplit.net,
+      igv: story.envio > 0 ? story.envioSplit.igv : undefined,
       empty: story.envio <= 0 && sale.orderShipping == null,
     },
-    { key: 'boleta', label: 'Boleta', amount: story.boleta.gross, igv: story.boleta.igv },
-    { key: 'commission', label: 'Comisión', amount: story.commission, minus: true },
-    { key: 'logistics', label: 'Logística', amount: story.logistics, minus: true },
+    { key: 'boleta', label: 'Boleta', amount: story.boleta.net, igv: story.boleta.igv },
+    { key: 'commission', label: 'Comisión', amount: story.commissionSplit.net, igv: story.commissionSplit.igv, minus: true },
+    { key: 'logistics', label: 'Logística', amount: story.logisticsSplit.net, igv: story.logisticsSplit.igv, minus: true },
+    ...(story.adsSplit?.gross
+      ? [{ key: 'ads', label: 'Publicidad', amount: story.adsSplit.net, igv: story.adsSplit.igv, minus: true }]
+      : []),
     {
       key: 'total',
       label: 'Total',
-      amount: story.factura.gross,
+      amount: story.factura.net,
       igv: story.factura.igv,
       minus: true,
     },
   ];
   return (
+    <>
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-border bg-muted/40 text-muted-foreground">
@@ -522,25 +567,34 @@ function SaleIgvBreakdown({ sale }: { sale: SettlementSale }) {
         </tr>
       </tfoot>
     </table>
+    {sale.falabellaInvoice ? (
+      <button
+        type="button"
+        onClick={() => onOpenInvoice?.(sale.falabellaInvoice!.id, sale.orderId)}
+        className="mt-4 text-sm underline decoration-border underline-offset-4 hover:decoration-foreground"
+      >
+        {invoiceNumberLabel(sale.falabellaInvoice)}
+      </button>
+    ) : null}
+    </>
   );
 }
 
 function StatementAmount({
+  net,
   gross,
-  igv,
-  tone,
+  className,
 }: {
-  gross: number;
-  igv?: number;
-  tone?: 'take' | 'receive';
+  net: number;
+  gross?: number;
+  className?: string;
 }) {
+  const showGross = gross != null && Math.round(gross * 100) !== Math.round(net * 100);
   return (
-    <div className={cn('text-right leading-tight', amountToneClass(tone, gross))}>
-      <p className={cn('tabular-nums text-[13px]', tone === 'receive' && 'font-semibold')}>{money.format(gross)}</p>
-      {igv != null ? (
-        <p className={cn('text-[11px] tabular-nums', tone ? 'opacity-75' : 'text-muted-foreground')}>
-          IGV {money.format(igv)}
-        </p>
+    <div className={cn('text-right leading-tight', className)}>
+      <p className="tabular-nums text-[13px]">{money.format(net)}</p>
+      {showGross ? (
+        <p className="text-[11px] tabular-nums text-muted-foreground">{money.format(gross)}</p>
       ) : null}
     </div>
   );
@@ -588,16 +642,28 @@ function hasBuyerShipping(sale: SettlementSale) {
 export default function Pagos() {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
+  const invoiceFileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
-  const [paid, setPaid] = useState<'all' | 'pagado' | 'no-pagado'>('all');
+  const [paid, setPaid] = useState<PaymentFilterValue>('all');
   const [orderMonth, setOrderMonth] = useState('all');
   const [companyId, setCompanyId] = useState('all');
   const [selected, setSelected] = useState<SettlementSale | null>(null);
+  const [invoiceId, setInvoiceId] = useState<number | null>(null);
+  const [invoiceOrder, setInvoiceOrder] = useState<string | null>(null);
   const [notice, setNotice] = useState<PagosNotice | null>(null);
   const [readingName, setReadingName] = useState('');
+  const [readingInvoice, setReadingInvoice] = useState('');
   const lastCsvRef = useRef<{ filename: string; csv: string } | null>(null);
+  const lastInvoiceRef = useRef<{ filename: string; csv: string; xlsxBase64?: string } | null>(null);
+  const lastUploadFileRef = useRef<File | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reading = Boolean(readingName);
+  const invoiceBusy = Boolean(readingInvoice);
+
+  function openInvoice(id: number, orderId?: string | null) {
+    setInvoiceId(id);
+    setInvoiceOrder(orderId || null);
+  }
 
   function clearNoticeTimer() {
     if (noticeTimer.current == null) return;
@@ -624,6 +690,18 @@ export default function Pagos() {
     queryKey: ['companies'],
     queryFn: () => api.listCompanies(),
     staleTime: 5 * 60_000,
+  });
+
+  const invoicesQuery = useQuery({
+    queryKey: ['pagos-invoices'],
+    queryFn: () => api.listFalabellaInvoices({ limit: 50 }),
+    staleTime: 60_000,
+  });
+
+  const invoiceQuery = useQuery({
+    queryKey: ['pagos-invoice', invoiceId],
+    queryFn: () => api.getFalabellaInvoice(Number(invoiceId)),
+    enabled: Number.isInteger(invoiceId) && Number(invoiceId) > 0,
   });
 
   const salesQuery = useQuery({
@@ -685,7 +763,15 @@ export default function Pagos() {
       });
     },
     onError: (nextError) => {
-      const copy = csvReadError((nextError as Error).message);
+      const message = (nextError as Error).message || '';
+      const file = lastUploadFileRef.current;
+      if (file && /Subir facturas/i.test(message)) {
+        setReadingName('');
+        setReadingInvoice(file.name);
+        uploadInvoice.mutate({ file, replace: false });
+        return;
+      }
+      const copy = csvReadError(message);
       showNotice({ tone: 'error', title: copy.title, detail: copy.detail });
     },
     onSettled: () => {
@@ -693,7 +779,76 @@ export default function Pagos() {
     },
   });
 
+  const uploadInvoice = useMutation({
+    mutationFn: async ({ file, replace }: { file?: File; replace?: boolean }) => {
+      const started = Date.now();
+      try {
+        let filename = file?.name || lastInvoiceRef.current?.filename || '';
+        let csv = lastInvoiceRef.current?.csv || '';
+        let xlsxBase64 = lastInvoiceRef.current?.xlsxBase64 || '';
+        if (file) {
+          const payload = await readInvoiceReportPayload(file);
+          csv = payload.csv;
+          filename = file.name || payload.filename;
+          xlsxBase64 = payload.xlsxBase64;
+          lastInvoiceRef.current = { filename, csv, xlsxBase64 };
+        }
+        if ((!csv && !xlsxBase64) || !filename) throw new Error('No hay archivo para subir.');
+        const result = await api.importFalabellaInvoice({
+          filename,
+          csv,
+          xlsxBase64: xlsxBase64 || undefined,
+          replace: Boolean(replace),
+        });
+        if (!result.reused) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['pagos-invoices'] }),
+            queryClient.invalidateQueries({ queryKey: ['pagos-sales'] }),
+          ]);
+        }
+        return result;
+      } finally {
+        if (!replace) await holdAtLeast(started, CSV_UPLOAD_MIN_MS);
+      }
+    },
+    onSuccess: (result) => {
+      if (result.reused) {
+        showNotice({
+          tone: 'warn',
+          title: 'Esta factura ya está cargada.',
+          detail: invoiceImportSummary({ ...result, reused: false }) || String(result.filename || ''),
+          canReplace: true,
+          replaceInvoice: true,
+        });
+        const first = result.documents?.[0];
+        if (first?.id) openInvoice(Number(first.id));
+        return;
+      }
+      showNotice({
+        tone: 'ok',
+        title: result.replaced ? 'Se volvió a cargar' : 'Facturas cargadas',
+        detail: invoiceImportSummary({ ...result, reused: false }),
+      });
+      const first = result.documents?.[0];
+      if (first?.id) openInvoice(Number(first.id));
+    },
+    onError: (nextError) => {
+      const copy = csvReadError((nextError as Error).message);
+      showNotice({ tone: 'error', title: copy.title, detail: copy.detail });
+    },
+    onSettled: () => {
+      setReadingInvoice('');
+    },
+  });
+
   const sales = (salesQuery.data?.items || []) as SettlementSale[];
+  const invoices = (invoicesQuery.data?.items || []) as Array<{
+    id: number;
+    number: string;
+    kind: string;
+  }>;
+  const facturaDocument = invoices.find((item) => item.kind === 'factura');
+  const creditNoteDocument = invoices.find((item) => item.kind === 'nota_credito');
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
@@ -748,6 +903,29 @@ export default function Pagos() {
       cell: ({ row }) => <PaymentStatusBadge status={row.original.paymentStatus} returned={row.original.returned} />,
     },
     {
+      id: 'factura',
+      accessorFn: (sale) => sale.falabellaInvoice?.number || '',
+      header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.factura} />,
+      size: 96,
+      cell: ({ row }) => {
+        const invoice = row.original.falabellaInvoice;
+        if (!invoice) return <p className="text-[13px] text-muted-foreground">—</p>;
+        return (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setInvoiceId(invoice.id);
+              setInvoiceOrder(row.original.orderId);
+            }}
+            className="font-mono text-[12px] text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+          >
+            {invoice.number}
+          </button>
+        );
+      },
+    },
+    {
       id: 'dates',
       accessorKey: 'date',
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.dates} />,
@@ -756,28 +934,32 @@ export default function Pagos() {
     },
     {
       id: 'precio',
-      accessorFn: (sale) => saleIgvStory(sale).product,
+      accessorFn: (sale) => saleIgvStory(sale).productSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
       size: 92,
       meta: { align: 'end', headerClassName: ventaHeadStart, cellClassName: ventaCellStart },
       cell: ({ row }) => {
         const story = saleIgvStory(row.original);
         if (row.original.returned) {
-          const pair = settlementPair(row.original.brutoCharged, row.original.brutoReversed);
+          const pair = returnProductPair(
+            row.original.brutoCharged,
+            row.original.brutoReversed,
+            row.original.bruto,
+          );
           return (
             <AmountRate
-              amount={pair.amount || row.original.bruto || 0}
+              amount={pair.amount}
               reversal={pair.reversal}
               hideRate
             />
           );
         }
-        return <p className="text-right tabular-nums text-[13px]">{money.format(story.product)}</p>;
+        return <StatementAmount net={story.productSplit.net} gross={story.product} />;
       },
     },
     {
       id: 'envio',
-      accessorFn: (sale) => saleIgvStory(sale).envio,
+      accessorFn: (sale) => saleIgvStory(sale).envioSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
       size: 84,
       meta: { align: 'end' },
@@ -787,13 +969,13 @@ export default function Pagos() {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
-          <p className="text-right tabular-nums text-[13px]">{money.format(story.envio)}</p>
+          <StatementAmount net={story.envioSplit.net} gross={story.envio} />
         );
       },
     },
     {
       id: 'boleta',
-      accessorFn: (sale) => saleIgvStory(sale).boleta.gross,
+      accessorFn: (sale) => saleIgvStory(sale).boleta.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
       size: 108,
       meta: { align: 'end', headerClassName: ventaHeadEnd, cellClassName: ventaCellEnd },
@@ -802,12 +984,12 @@ export default function Pagos() {
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount gross={story.boleta.gross} igv={story.boleta.igv} />;
+        return <StatementAmount net={story.boleta.net} gross={story.boleta.gross} />;
       },
     },
     {
       id: 'comision',
-      accessorFn: (sale) => saleIgvStory(sale).commission,
+      accessorFn: (sale) => saleIgvStory(sale).commissionSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
@@ -825,13 +1007,17 @@ export default function Pagos() {
           );
         }
         return (
-          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.commission)}</p>
+          <StatementAmount
+            net={story.commissionSplit.net}
+            gross={story.commissionSplit.gross}
+            className={takeText}
+          />
         );
       },
     },
     {
       id: 'logistica',
-      accessorFn: (sale) => saleIgvStory(sale).logistics,
+      accessorFn: (sale) => saleIgvStory(sale).logisticsSplit.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadMid, cellClassName: cobroCellMid },
@@ -849,13 +1035,17 @@ export default function Pagos() {
           );
         }
         return (
-          <p className={cn('text-right tabular-nums text-[13px]', takeText)}>{money.format(story.logistics)}</p>
+          <StatementAmount
+            net={story.logisticsSplit.net}
+            gross={story.logisticsSplit.gross}
+            className={takeText}
+          />
         );
       },
     },
     {
       id: 'total',
-      accessorFn: (sale) => saleIgvStory(sale).factura.gross,
+      accessorFn: (sale) => saleIgvStory(sale).factura.net,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.total} />,
       size: 108,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
@@ -864,7 +1054,13 @@ export default function Pagos() {
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount gross={story.factura.gross} igv={story.factura.igv} tone="take" />;
+        return (
+          <StatementAmount
+            net={story.factura.net}
+            gross={story.factura.gross}
+            className={takeText}
+          />
+        );
       },
     },
     {
@@ -873,12 +1069,16 @@ export default function Pagos() {
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
-      cell: ({ row }) => (
-        <StatementAmount
-          gross={saleIgvStory(row.original).queda}
-          tone="receive"
-        />
-      ),
+      cell: ({ row }) => {
+        const story = saleIgvStory(row.original);
+        return (
+          <StatementAmount
+            net={story.queda}
+            gross={row.original.returned ? -story.factura.gross : undefined}
+            className={cn('font-semibold', amountToneClass('receive', story.queda))}
+          />
+        );
+      },
     },
   ], []);
 
@@ -929,14 +1129,16 @@ export default function Pagos() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={paid} onValueChange={(value) => setPaid(value as 'all' | 'pagado' | 'no-pagado')}>
-          <SelectTrigger className="w-32" aria-label="Estado de pago">
-            <SelectValue />
+        <Select value={paid} onValueChange={(value) => setPaid(value as PaymentFilterValue)}>
+          <SelectTrigger className="w-[11.25rem]" aria-label="Estado de pago">
+            <SelectValue>
+              {paymentFilterLabel(paid, 'trigger')}
+            </SelectValue>
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todas</SelectItem>
-            <SelectItem value="pagado">Pagadas</SelectItem>
-            <SelectItem value="no-pagado">No pagadas</SelectItem>
+          <SelectContent className="w-max min-w-[14.5rem]">
+            {PAYMENT_FILTERS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <input
@@ -949,6 +1151,12 @@ export default function Pagos() {
             event.target.value = '';
             if (!file) return;
             dismissNotice();
+            lastUploadFileRef.current = file;
+            if (isInvoiceReportFilename(file.name)) {
+              setReadingInvoice(file.name);
+              uploadInvoice.mutate({ file, replace: false });
+              return;
+            }
             setReadingName(file.name);
             upload.mutate({ file, replace: false });
           }}
@@ -966,6 +1174,63 @@ export default function Pagos() {
           {reading ? <WorkLoaderMark data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
           {reading ? 'Leyendo archivo' : 'Subir archivo'}
         </Button>
+        <input
+          ref={invoiceFileInput}
+          type="file"
+          accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (!file) return;
+            dismissNotice();
+            setReadingInvoice(file.name);
+            uploadInvoice.mutate({ file, replace: false });
+          }}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" disabled={invoiceBusy || uploadInvoice.isPending}>
+              {invoiceBusy ? <WorkLoaderMark data-icon="inline-start" /> : <FileSpreadsheet data-icon="inline-start" />}
+              {invoiceBusy ? 'Leyendo factura' : 'Facturas'}
+              {invoiceBusy ? null : <ChevronDown data-icon="inline-end" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-48">
+            <DropdownMenuItem
+              disabled={invoiceBusy || uploadInvoice.isPending}
+              onClick={() => {
+                const input = invoiceFileInput.current;
+                if (!input || invoiceBusy || uploadInvoice.isPending) return;
+                input.value = '';
+                input.click();
+              }}
+            >
+              <Upload />
+              Subir
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!facturaDocument}
+              onClick={() => {
+                if (!facturaDocument) return;
+                openInvoice(facturaDocument.id);
+              }}
+            >
+              <FileSpreadsheet />
+              Ver factura
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!creditNoteDocument}
+              onClick={() => {
+                if (!creditNoteDocument) return;
+                openInvoice(creditNoteDocument.id);
+              }}
+            >
+              <FileText />
+              Ver nota de crédito
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {notice ? (
         <SettlementAlert
@@ -975,8 +1240,13 @@ export default function Pagos() {
           onDismiss={dismissNotice}
           action={notice.canReplace ? {
             label: 'Reemplazar',
-            busy: upload.isPending,
+            busy: notice.replaceInvoice ? uploadInvoice.isPending : upload.isPending,
             onClick: () => {
+              if (notice.replaceInvoice) {
+                if (!lastInvoiceRef.current || uploadInvoice.isPending) return;
+                uploadInvoice.mutate({ replace: true });
+                return;
+              }
               if (!lastCsvRef.current || upload.isPending) return;
               upload.mutate({ replace: true });
             },
@@ -1010,22 +1280,14 @@ export default function Pagos() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
             <p className="text-muted-foreground">
               {salesPageNote(sales.length, totalCount)}
-              {summary.paidCount ? ` · ${summary.paidCount} pagadas` : ''}
+              {footerTotals.returnCount
+                ? ` · ${footerTotals.returnCount === 1 ? '1 devolución' : `${footerTotals.returnCount} devoluciones`}`
+                : ''}
             </p>
             <p className="tabular-nums">
-              Precio {money.format(footerTotals.product)}
+              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))} title="Suma de Ganas en rojo de las devoluciones">{money.format(footerTotals.returnLoss)}</span>
               <span className="text-muted-foreground"> · </span>
               Envío {money.format(footerTotals.envio)}
-              <span className="text-muted-foreground"> · </span>
-              Boleta {money.format(footerTotals.boleta)}
-              <span className="text-muted-foreground"> · </span>
-              Comisión <span className={takeText}>{money.format(footerTotals.commission)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Logística <span className={takeText}>{money.format(footerTotals.logistics)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Total <span className={takeText}>{money.format(footerTotals.total)}</span>
-              <span className="text-muted-foreground"> · </span>
-              Ganas <span className={cn('font-medium', amountToneClass('receive', footerTotals.ganas))}>{money.format(footerTotals.ganas)}</span>
             </p>
           </div>
         ) : undefined}
@@ -1053,8 +1315,8 @@ export default function Pagos() {
                   <>
                     <ChargeRow
                       label="Precio"
-                      amount={settlementPair(selected.brutoCharged, selected.brutoReversed).amount || selected.bruto || 0}
-                      reversal={settlementPair(selected.brutoCharged, selected.brutoReversed).reversal}
+                      amount={returnProductPair(selected.brutoCharged, selected.brutoReversed, selected.bruto).amount}
+                      reversal={returnProductPair(selected.brutoCharged, selected.brutoReversed, selected.bruto).reversal}
                       hint="Se descuenta el producto."
                     />
                     {hasBuyerShipping(selected) ? (
@@ -1084,14 +1346,14 @@ export default function Pagos() {
                     </div>
                     <ChargeRow
                       label="Te llega"
-                      amount={selected.neto || 0}
+                      amount={saleIgvStory(selected).queda}
                       hint={teLlegaHint(selected)}
                       tone="receive"
                       strong
                     />
                   </>
                 ) : (
-                  <SaleIgvBreakdown sale={selected} />
+                  <SaleIgvBreakdown sale={selected} onOpenInvoice={openInvoice} />
                 )}
               </div>
               {selected.returned && ((selected.products?.length || 0) > 1 || (selected.products?.[0]?.quantity || 0) > 1) ? (
@@ -1123,6 +1385,19 @@ export default function Pagos() {
           ) : null}
         </SheetContent>
       </Sheet>
+      <FalabellaInvoiceDialog
+        open={invoiceId != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInvoiceId(null);
+            setInvoiceOrder(null);
+          }
+        }}
+        document={invoiceQuery.data || null}
+        highlightOrder={invoiceOrder}
+        documents={invoices}
+        onSelect={(id) => openInvoice(id, invoiceOrder)}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { read as readWorkbook, utils as xlsxUtils } from 'xlsx';
+import { headerLooksLikeInvoiceReport, isInvoiceReportFilename } from './pagos-invoice-report.ts';
 
 export const money = new Intl.NumberFormat('es-PE', {
   style: 'currency',
@@ -47,14 +48,30 @@ export function paymentStatusLabel(status: string | null | undefined, returned?:
   return String(status || '').trim() || '—';
 }
 
+export const PAYMENT_FILTERS = [
+  { value: 'all', label: 'Todos', trigger: 'Pago' },
+  { value: 'pagado', label: 'Pagados', trigger: 'Pagados' },
+  { value: 'no-pagado', label: 'No pagados', trigger: 'No pagados' },
+  { value: 'devolucion-pagado', label: 'Devolución pagada', trigger: 'Dev. pagada' },
+  { value: 'devolucion-no-pagado', label: 'Devolución no pagada', trigger: 'Dev. no pagada' },
+] as const;
+
+export type PaymentFilterValue = (typeof PAYMENT_FILTERS)[number]['value'];
+
+export function paymentFilterLabel(value: string | null | undefined, kind: 'label' | 'trigger' = 'label') {
+  const match = PAYMENT_FILTERS.find((item) => item.value === value);
+  if (!match) return kind === 'trigger' ? 'Pago' : 'Todos';
+  return match[kind];
+}
+
 export function teLlegaHint(sale: {
   returned?: boolean | null;
   neto?: number | null;
   shipping?: number | null;
 } | null | undefined) {
   if (sale?.returned) {
-    if (Number(sale.shipping || 0) > 0) return 'En la devolución suele quedarse la logística.';
-    return 'Descontaron el producto y te devolvieron la comisión.';
+    if (Number(sale.shipping || 0) > 0) return 'No ganas. La logística suele quedarse.';
+    return 'Producto y comisión se anulan. No te queda venta.';
   }
   if (Number(sale?.neto || 0) < 0) return 'Falabella cobró más que el precio.';
   return 'Lo que te depositan.';
@@ -78,54 +95,104 @@ export function saleIgvStory(sale: {
   shipping?: number | null;
   buyerShippingPaid?: number | null;
   orderShipping?: number | null;
+  returned?: boolean | null;
+  invoiceCharges?: {
+    commission?: { net?: number; igv?: number; gross?: number } | null;
+    logistics?: { net?: number; igv?: number; gross?: number } | null;
+    buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
+    ads?: { net?: number; igv?: number; gross?: number } | null;
+  } | null;
 } | null | undefined) {
-  const product = money2(sale?.bruto);
-  const envio = sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
-    ? Math.max(0, money2(sale.orderShipping))
-    : Math.max(0, money2(sale?.buyerShippingPaid));
-  const commission = money2(sale?.commission);
-  const logistics = money2(sale?.shipping);
+  const returned = Boolean(sale?.returned);
+  const product = returned ? 0 : money2(sale?.bruto);
+  const envio = returned
+    ? 0
+    : sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+      ? Math.max(0, money2(sale.orderShipping))
+      : Math.max(0, money2(sale?.buyerShippingPaid));
+  const settlementCommission = money2(sale?.commission);
+  const settlementLogistics = money2(sale?.shipping);
+  const productSplit = igvSplit(product);
+  const envioSplit = igvSplit(envio);
   const boleta = igvSplit(product + envio);
-  const commissionSplit = igvSplit(commission);
-  const logisticsSplit = igvSplit(logistics);
-  const factura = igvSplit(commission + logistics);
-  const productNet = igvSplit(product).net;
+  const invoice = returned ? null : sale?.invoiceCharges || null;
+  const commissionSplit = invoiceSplit(invoice?.commission) || igvSplit(settlementCommission);
+  const logisticsSplit = addSplits(
+    invoiceSplit(invoice?.logistics) || igvSplit(settlementLogistics),
+    invoiceSplit(invoice?.buyer_shipping),
+  ) || igvSplit(settlementLogistics);
+  const adsSplit = invoiceSplit(invoice?.ads);
+  const factura = invoice
+    ? addSplits(addSplits(commissionSplit, logisticsSplit), adsSplit) || commissionSplit
+    : igvSplit(settlementCommission + settlementLogistics);
   const queda = money2(boleta.net - factura.net);
   return {
     product,
+    productSplit,
     envio,
+    envioSplit,
     boleta,
-    commission,
+    commission: commissionSplit.gross,
     commissionSplit,
-    logistics,
+    logistics: logisticsSplit.gross,
     logisticsSplit,
+    adsSplit,
     factura,
-    productNet,
+    productNet: productSplit.net,
     commissionNet: commissionSplit.net,
-    shippingAdjust: money2(queda - (productNet - commissionSplit.net)),
+    shippingAdjust: money2(queda - (productSplit.net - commissionSplit.net)),
     queda,
   };
 }
 
-export function settlementStatementTotals(sales: Array<{
-  bruto?: number | null;
-  commission?: number | null;
-  shipping?: number | null;
-  buyerShippingPaid?: number | null;
-  orderShipping?: number | null;
-}> | null | undefined) {
+function invoiceSplit(row: { net?: number; igv?: number; gross?: number } | null | undefined) {
+  if (!row) return null;
+  const gross = money2(row.gross);
+  const net = money2(row.net);
+  const igv = money2(row.igv);
+  if (!gross && !net && !igv) return null;
+  return { gross, net, igv };
+}
+
+function addSplits(
+  left: { gross: number; net: number; igv: number } | null | undefined,
+  right: { gross: number; net: number; igv: number } | null | undefined,
+) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return {
+    gross: money2(left.gross + right.gross),
+    net: money2(left.net + right.net),
+    igv: money2(left.igv + right.igv),
+  };
+}
+
+export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>[0][] | null | undefined) {
   return (sales || []).reduce((totals, sale) => {
     const story = saleIgvStory(sale);
+    const returned = Boolean(sale?.returned);
     return {
-      product: money2(totals.product + story.product),
-      envio: money2(totals.envio + story.envio),
-      boleta: money2(totals.boleta + story.boleta.gross),
-      commission: money2(totals.commission + story.commission),
-      logistics: money2(totals.logistics + story.logistics),
-      total: money2(totals.total + story.factura.gross),
+      product: money2(totals.product + story.productSplit.net),
+      envio: money2(totals.envio + story.envioSplit.net),
+      boleta: money2(totals.boleta + story.boleta.net),
+      commission: money2(totals.commission + story.commissionSplit.net),
+      logistics: money2(totals.logistics + story.logisticsSplit.net),
+      total: money2(totals.total + story.factura.net),
       ganas: money2(totals.ganas + story.queda),
+      returnLoss: money2(totals.returnLoss + (returned && story.queda < 0 ? story.queda : 0)),
+      returnCount: totals.returnCount + (returned ? 1 : 0),
     };
-  }, { product: 0, envio: 0, boleta: 0, commission: 0, logistics: 0, total: 0, ganas: 0 } as {
+  }, {
+    product: 0,
+    envio: 0,
+    boleta: 0,
+    commission: 0,
+    logistics: 0,
+    total: 0,
+    ganas: 0,
+    returnLoss: 0,
+    returnCount: 0,
+  } as {
     product: number;
     envio: number;
     boleta: number;
@@ -133,6 +200,8 @@ export function settlementStatementTotals(sales: Array<{
     logistics: number;
     total: number;
     ganas: number;
+    returnLoss: number;
+    returnCount: number;
   });
 }
 
@@ -142,6 +211,17 @@ export function settlementPair(charged?: number | null, reversed?: number | null
   if (up && down) return { amount: up, reversal: down };
   if (down && !up) return { amount: down, reversal: null as number | null };
   return { amount: up, reversal: null as number | null };
+}
+
+export function returnProductPair(
+  charged?: number | null,
+  reversed?: number | null,
+  fallback = 0,
+) {
+  const pair = settlementPair(charged, reversed);
+  const amount = pair.amount || money2(fallback);
+  if (amount > 0 && pair.reversal == null) return { amount, reversal: money2(-amount) };
+  return pair;
 }
 
 export function importSummary(item: {
@@ -171,7 +251,7 @@ export function importSummary(item: {
 
 export function shortImportFilename(name: string | null | undefined) {
   const raw = String(name || '').trim();
-  const stripped = raw.replace(/^NewReportTransaction_/i, '');
+  const stripped = raw.replace(/^(NewReportTransaction_|InvoiceReport_)/i, '');
   return stripped.replace(/_\d{4}-\d{2}-\d{2}T.*?(?=\.(csv|xlsx|xls|xlsm)$|$)/i, '') || stripped || raw;
 }
 
@@ -180,8 +260,11 @@ export const SUCCESS_NOTICE_MS = 5000;
 export function csvReadError(message: string | null | undefined) {
   const title = String(message || 'No se pudo leer el archivo.').trim() || 'No se pudo leer el archivo.';
   if (/vacío/i.test(title)) return { title, detail: 'Elige un archivo de Falabella.' };
+  if (/reporte de facturas/i.test(title)) return { title, detail: '' };
+  if (/estado de cuenta\. Usa Subir archivo/i.test(title)) return { title, detail: '' };
   if (/8 MB|tamaño máximo/i.test(title)) return { title, detail: 'Parte el reporte o súbelo más liviano.' };
   if (/cabecer|columna|hoja/i.test(title)) return { title, detail: '' };
+  if (/reporte de facturas no trae/i.test(title)) return { title, detail: 'Revisa el Excel InvoiceReport.' };
   if (/líneas/i.test(title)) return { title, detail: 'El archivo no trae ventas.' };
   return { title, detail: 'Revisa el archivo y vuelve a subir.' };
 }
@@ -391,6 +474,9 @@ export function decodeSettlementSpreadsheet(buffer: ArrayBuffer | Uint8Array) {
   for (const name of names) {
     const next = settlementRowsFromSheet(workbook.Sheets[name] as { '!ref'?: string } & Record<string, unknown>);
     const header = (next[0] || []).map((cell) => String(cell ?? '')).join(',');
+    if (headerLooksLikeInvoiceReport(header)) {
+      throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+    }
     if (lineLooksLikeSettlementHeader(header)) {
       rows = next;
       break;
@@ -411,11 +497,18 @@ export async function readSettlementUpload(file: {
   type?: string;
   arrayBuffer: () => Promise<ArrayBuffer>;
 }) {
+  if (isInvoiceReportFilename(file.name)) {
+    throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+  }
   const buffer = await file.arrayBuffer();
   if (isSettlementSpreadsheet(file.name || '', file.type || '')) {
     return decodeSettlementSpreadsheet(buffer);
   }
-  return decodeSettlementCsv(buffer);
+  const csv = decodeSettlementCsv(buffer);
+  if (headerLooksLikeInvoiceReport(csv)) {
+    throw new Error('Este es un reporte de facturas. Usa Subir facturas.');
+  }
+  return csv;
 }
 
 export function repairProductText(value: string | null | undefined) {
@@ -476,11 +569,12 @@ export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
   precio: { label: 'Precio', hint: 'Producto' },
   envio: { label: 'Envío', hint: 'De la orden' },
-  boleta: { label: 'Boleta', hint: 'Suma + IGV' },
-  comision: { label: 'Comisión', hint: 'Falabella' },
-  logistica: { label: 'Logística', hint: 'Falabella' },
-  total: { label: 'Total', hint: 'Suma + IGV' },
+  boleta: { label: 'Boleta', hint: 'Sin IGV' },
+  comision: { label: 'Comisión', hint: 'Sin IGV' },
+  logistica: { label: 'Logística', hint: 'Sin IGV' },
+  total: { label: 'Total', hint: 'Sin IGV' },
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
+  factura: { label: 'Factura', hint: 'Falabella' },
 } as const;
 
 export function salesPageNote(shown: number, total: number) {
@@ -738,7 +832,7 @@ export function settlementCharts(summary: {
       hint: soldHint,
       hero: undefined,
       items: [
-        { key: 'facturado', label: 'Facturado', value: cash.sold, tone: 'neutral' as const },
+        { key: 'facturado', label: 'Facturado', value: cash.sold, withoutIgv: igvSplit(cash.sold).net, tone: 'neutral' as const },
         { key: 'neto', label: 'Neto', value: cash.arrives, withoutIgv: igvSplit(cash.arrives).net, tone: 'receive' as const },
       ],
     },
@@ -747,10 +841,10 @@ export function settlementCharts(summary: {
       kind: 'waffle' as const,
       hint: takeHint,
       total: cash.kept,
-      hero: { key: 'take', label: 'Se queda', value: cash.kept, tone: 'neutral' as const },
+      hero: { key: 'take', label: 'Se queda', value: cash.kept, withoutIgv: igvSplit(cash.kept).net, tone: 'neutral' as const },
       items: [
         { key: 'commission', label: 'Comisión', value: commission, withoutIgv: igvSplit(commission).net, tone: 'take' as const },
-        { key: 'shipping', label: 'Logística', value: shipping, tone: 'wait' as const },
+        { key: 'shipping', label: 'Logística', value: shipping, withoutIgv: igvSplit(shipping).net, tone: 'wait' as const },
       ],
     },
     {
