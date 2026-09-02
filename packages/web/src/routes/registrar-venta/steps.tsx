@@ -358,7 +358,7 @@ export function EntregaStep({ view }: { view: SaleFormView }) {
                       <button
                         type="button"
                         className="cursor-pointer underline underline-offset-2"
-                        onClick={() => view.navigate('/orders/envio')}
+                        onClick={() => view.navigate('/envio-propio')}
                       >
                         Ver distritos
                       </button>

@@ -64,13 +64,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
-      {
-        to: '/orders/envio',
-        icon: Truck,
-        label: 'Envío propio',
-        adminOnly: true,
-        description: 'Distritos y precios de movilidad propia.',
-      },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
@@ -93,6 +86,13 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
       { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
+      {
+        to: '/envio-propio',
+        icon: Truck,
+        label: 'Envío propio',
+        adminOnly: true,
+        description: 'Almacén, zonas y cobertura del reparto Express.',
+      },
       { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
       {
         to: '/system-config',

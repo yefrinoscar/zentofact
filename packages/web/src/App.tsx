@@ -67,6 +67,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Nueva venta',
     subtitle: 'Registra una venta con productos del catálogo.',
   },
+  '/envio-propio': {
+    title: 'Envío propio',
+    subtitle: 'Almacén, zonas y cobertura del reparto Express.',
+  },
   '/orders/envio': {
     title: 'Envío propio',
     subtitle: 'Almacén, zonas y cobertura del reparto Express.',
@@ -279,8 +283,8 @@ function AppLayout() {
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
-              <Route path="/orders/envio" element={ownFleetRoute} />
-              <Route path="/envio-propio" element={<Navigate to="/orders/envio" replace />} />
+              <Route path="/envio-propio" element={ownFleetRoute} />
+              <Route path="/orders/envio" element={<Navigate to="/envio-propio" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />

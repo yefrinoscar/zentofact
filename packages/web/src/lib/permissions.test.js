@@ -11,6 +11,12 @@ import {
   userHasPermission,
 } from './permissions.ts';
 
+test('envío propio no es un permiso de Pedidos', () => {
+  assert.equal(pathPermission('/envio-propio'), null);
+  assert.equal(pathPermission('/orders/envio'), null);
+  assert.equal(pathPermission('/orders'), 'order_management');
+});
+
 test('insumos pertenece a Pedidos junto a preparación y escaneo', () => {
   const insumos = PERMISSIONS.find(({ key }) => key === 'insumos');
   const scannerIndex = PERMISSIONS.findIndex(({ key }) => key === 'orders_scanner');
