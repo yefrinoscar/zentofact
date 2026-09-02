@@ -79,13 +79,28 @@ test('agrupa el InvoiceReport en factura y nota de crédito', () => {
   assert.equal(factura.sellerId, 'SCDE75A');
   assert.equal(factura.lineCount, 3);
   assert.equal(factura.net, -2228.28);
-  assert.equal(factura.igv, -401.09);
-  assert.equal(factura.gross, -2629.37);
+  assert.equal(factura.igv, -401.08);
+  assert.equal(factura.gross, -2629.36);
   assert.deepEqual(factura.concepts.map((row) => row.key), ['commission', 'logistics', 'ads']);
   assert.equal(factura.concepts.find((row) => row.key === 'ads').gross, -2607.09);
   assert.equal(credit.number, '74527');
   assert.equal(credit.gross, 9);
   assert.equal(credit.lineCount, 1);
+});
+
+test('la factura redondea cada ítem como SUNAT', () => {
+  const [document] = groupInvoiceDocuments([
+    { documentNumber: '259810', documentKind: 'factura', concept: 'commission', net: -342.355, currency: 'PEN', sellerId: 'SCDE75A' },
+    { documentNumber: '259810', documentKind: 'factura', concept: 'commission', net: -342.355, currency: 'PEN', sellerId: 'SCDE75A' },
+    { documentNumber: '259810', documentKind: 'factura', concept: 'buyer_shipping', net: -184.16, currency: 'PEN', sellerId: 'SCDE75A' },
+    { documentNumber: '259810', documentKind: 'factura', concept: 'logistics', net: -546.27, currency: 'PEN', sellerId: 'SCDE75A' },
+  ]);
+  assert.equal(document.concepts.find((row) => row.key === 'commission').net, -684.71);
+  assert.equal(document.concepts.find((row) => row.key === 'commission').igv, -123.25);
+  assert.equal(document.concepts.find((row) => row.key === 'commission').gross, -807.96);
+  assert.equal(document.net, -1415.14);
+  assert.equal(document.igv, -254.73);
+  assert.equal(document.gross, -1669.87);
 });
 
 test('el pedido apunta a la factura de Falabella y también a la nota', () => {

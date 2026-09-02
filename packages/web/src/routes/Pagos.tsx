@@ -847,9 +847,9 @@ export default function Pagos() {
     id: number;
     number: string;
     kind: string;
+    issuedOn?: string | null;
+    gross?: number | null;
   }>;
-  const facturaDocument = invoices.find((item) => item.kind === 'factura');
-  const creditNoteDocument = invoices.find((item) => item.kind === 'nota_credito');
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
@@ -1210,26 +1210,20 @@ export default function Pagos() {
               <Upload />
               Subir
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!facturaDocument}
-              onClick={() => {
-                if (!facturaDocument) return;
-                openInvoice(facturaDocument.id);
-              }}
-            >
-              <FileSpreadsheet />
-              Ver factura
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!creditNoteDocument}
-              onClick={() => {
-                if (!creditNoteDocument) return;
-                openInvoice(creditNoteDocument.id);
-              }}
-            >
-              <FileText />
-              Ver nota de crédito
-            </DropdownMenuItem>
+            {invoices.length ? invoices.map((item) => (
+              <DropdownMenuItem
+                key={item.id}
+                onClick={() => openInvoice(item.id)}
+              >
+                {item.kind === 'nota_credito' ? <FileText /> : <FileSpreadsheet />}
+                {invoiceNumberLabel(item)}
+              </DropdownMenuItem>
+            )) : (
+              <DropdownMenuItem disabled>
+                <FileSpreadsheet />
+                No hay facturas
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -1397,7 +1391,7 @@ export default function Pagos() {
         document={invoiceQuery.data || null}
         highlightOrder={invoiceOrder}
         documents={invoices}
-        onSelect={(id) => openInvoice(id, invoiceOrder)}
+        onSelect={(id) => openInvoice(id)}
       />
     </div>
   );
