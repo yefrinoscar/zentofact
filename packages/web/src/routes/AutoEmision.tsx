@@ -31,7 +31,8 @@ type Config = {
 type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; kind?: string | null; attempts: number; result: string | null;
-  last_error: string | null; boleta_numero: string | null; current_step?: string | null; updated_at: string;
+  last_error: string | null; boleta_numero: string | null; current_step?: string | null;
+  alerted_at?: string | null; updated_at: string;
 };
 type OrderPreview = {
   error?: string;
@@ -576,7 +577,7 @@ export default function AutoEmision() {
   };
 
   const retryJob = async (id: number) => {
-    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, status: 'pending', last_error: null } : j)));
+    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, status: 'pending', last_error: null, alerted_at: null, attempts: 0 } : j)));
     try { await api.autoEmitRetryJob(id); } catch { /* noop */ }
     await Promise.all([loadLogs(), loadConfig()]);
   };
@@ -800,6 +801,7 @@ export default function AutoEmision() {
                             {j.last_error || j.result || (j.current_step ? `Etapa: ${j.current_step}` : <span className="opacity-50">—</span>)}
                           </span>
                           {j.attempts > 1 && <span className="ml-1 text-muted-foreground opacity-60">(intento {j.attempts})</span>}
+                          {j.alerted_at && <span className="ml-1 text-amber-700">Aviso enviado</span>}
                           {(failed || j.status === 'skipped') && (
                             <button onClick={() => retryJob(j.id)} title="Volver a intentar" className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground">
                               <RotateCcw className="h-3 w-3" /> Reintentar
