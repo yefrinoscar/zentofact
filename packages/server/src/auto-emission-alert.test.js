@@ -4,6 +4,7 @@ import {
   FAILED_EMISSION_ALERT_AFTER_ATTEMPTS,
   buildFailedEmissionAlertEmail,
   notifyFailedEmissionIfNeeded,
+  parseAlertEmailInput,
   parseAlertEmails,
   resolveFailedEmissionAlertRecipients,
   shouldSendFailedEmissionAlert,
@@ -64,14 +65,32 @@ test('parsea la lista de correos de alerta', () => {
   );
 });
 
-test('avisa a facturación y al buzón extra; el operador no recibe', () => {
+test('rechaza direcciones inválidas al guardar', () => {
+  assert.deepEqual(parseAlertEmailInput('ops@zentofact.local\nfacturacion@zentofact.local'), [
+    'ops@zentofact.local',
+    'facturacion@zentofact.local',
+  ]);
+  assert.throws(() => parseAlertEmailInput('ops@zentofact.local, hola'), /inválidas/);
+});
+
+test('los correos configurados son los únicos destinatarios', () => {
+  assert.deepEqual(
+    resolveFailedEmissionAlertRecipients({
+      users: [operator, billing, admin],
+      configuredEmails: 'ops@zentofact.local',
+      fallbackEmail: 'fallback@zentofact.local',
+    }),
+    ['ops@zentofact.local'],
+  );
+});
+
+test('sin lista configurada avisa a quien emite boletas', () => {
   assert.deepEqual(
     resolveFailedEmissionAlertRecipients({
       users: [operator, billing, admin, { ...billing, active: false, email: 'old@zentofact.local' }],
-      extraEmails: 'ops@zentofact.local',
       fallbackEmail: 'fallback@zentofact.local',
     }),
-    ['ops@zentofact.local', 'billing@preview.zentofact.local', 'admin@zentofact.local'],
+    ['billing@preview.zentofact.local', 'admin@zentofact.local'],
   );
 });
 
@@ -128,7 +147,7 @@ test('envía una sola vez y marca el job como avisado', async () => {
   const marked = [];
   const result = await notifyFailedEmissionIfNeeded(invoiceJob, {
     listUsers: async () => [billing],
-    extraEmails: '',
+    configuredEmails: '',
     fallbackEmail: 'admin@zentofact.local',
     sendEmail: async (payload) => {
       sent.push(payload);

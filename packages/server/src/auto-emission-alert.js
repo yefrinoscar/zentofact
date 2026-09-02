@@ -14,6 +14,16 @@ export function parseAlertEmails(value) {
   return [...new Set(emails)];
 }
 
+export function parseAlertEmailInput(value) {
+  const tokens = String(Array.isArray(value) ? value.join('\n') : value || '')
+    .split(/[,;\n\s]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const invalid = tokens.filter((entry) => !entry.includes('@'));
+  if (invalid.length) throw new Error('Hay direcciones inválidas');
+  return parseAlertEmails(tokens);
+}
+
 function jobKindOf(job) {
   return job?.kind === JOB_KIND_CREDIT_NOTE ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE;
 }
@@ -27,17 +37,18 @@ export function shouldSendFailedEmissionAlert(job) {
 
 export function resolveFailedEmissionAlertRecipients({
   users = [],
+  configuredEmails = [],
   extraEmails = [],
   fallbackEmail = '',
 } = {}) {
-  const extra = parseAlertEmails(extraEmails);
+  const configured = parseAlertEmails(configuredEmails.length ? configuredEmails : extraEmails);
+  if (configured.length) return configured;
   const fromUsers = (users || [])
     .filter((user) => userHasPermission(user, 'boletas'))
     .map((user) => String(user.email || '').trim().toLowerCase())
     .filter((email) => email.includes('@'));
-  const fallback = parseAlertEmails(fallbackEmail);
-  const ordered = extra.concat(fromUsers.length ? fromUsers : fallback);
-  return [...new Set(ordered)];
+  if (fromUsers.length) return fromUsers;
+  return parseAlertEmails(fallbackEmail);
 }
 
 export function buildFailedEmissionAlertEmail({
@@ -76,14 +87,16 @@ export function buildFailedEmissionAlertEmail({
 export async function notifyFailedEmissionIfNeeded(job, {
   sendEmail,
   listUsers,
+  configuredEmails,
   extraEmails,
   fallbackEmail,
   markAlerted,
   log = () => {},
 } = {}) {
   if (!shouldSendFailedEmissionAlert(job)) return { notified: false, skipped: true };
-  const users = typeof listUsers === 'function' ? await listUsers() : [];
-  const to = resolveFailedEmissionAlertRecipients({ users, extraEmails, fallbackEmail });
+  const configured = parseAlertEmails(configuredEmails ?? extraEmails);
+  const users = configured.length || typeof listUsers !== 'function' ? [] : await listUsers();
+  const to = resolveFailedEmissionAlertRecipients({ users, configuredEmails: configured, fallbackEmail });
   if (!to.length) {
     log('aviso de emisión: no hay destinatarios');
     return { notified: false, reason: 'no-recipients' };

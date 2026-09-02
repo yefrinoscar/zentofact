@@ -539,6 +539,7 @@ const apiHttp = {
   autoEmitRun: (limit = 5) => req(`/auto-emit/run${qs({ limit })}`, { method: 'POST' }),
   autoEmitSetPaused: (paused: boolean) => req('/auto-emit/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
   autoEmitSetCron: (cfg: { enabled?: boolean; intervalMinutes?: number; windowDays?: number }) => req('/auto-emit/cron', { method: 'POST', body: JSON.stringify(cfg) }),
+  autoEmitSetAlertEmails: (emails: string | string[]) => req('/auto-emit/alert-emails', { method: 'POST', body: JSON.stringify({ emails }) }),
   autoEmitSetDryRun: (dryRun: boolean) => req('/auto-emit/dry-run', { method: 'POST', body: JSON.stringify({ dryRun }) }),
   autoEmitRetryJob: (id: number) => req(`/auto-emit/jobs/${id}/retry`, { method: 'POST' }),
   autoEmitOrderPreview: (id: number) => req(`/auto-emit/jobs/${id}/order-preview`),

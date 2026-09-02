@@ -32,7 +32,7 @@ import {
   jobKindForStatus,
   normStatus,
 } from './auto-emission-policy.js';
-import { notifyFailedEmissionIfNeeded } from './auto-emission-alert.js';
+import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
 import { sendEmail } from './mailer.js';
 import { listUsers } from './users.js';
 
@@ -372,6 +372,7 @@ export async function ensureTables() {
     alter table auto_emission_state add column if not exists cron_interval_minutes integer not null default 60;
     alter table auto_emission_state add column if not exists cron_window_days integer not null default 3;
     alter table auto_emission_state add column if not exists dry_run boolean not null default true;
+    alter table auto_emission_state add column if not exists alert_emails text;
   `);
   // Semilla por ambiente: al crear el estado por primera vez, usa la env AUTO_EMIT_DRY_RUN de ESE ambiente.
   await pool.query(
@@ -421,6 +422,22 @@ export async function setCron({ enabled, intervalMinutes, windowDays }) {
   return next;
 }
 
+export async function getAlertEmails() {
+  const r = await pool.query('select alert_emails from auto_emission_state where id=1');
+  return parseAlertEmails(r.rows[0]?.alert_emails);
+}
+
+export async function setAlertEmails(value) {
+  const emails = parseAlertEmailInput(value);
+  await pool.query(
+    `insert into auto_emission_state (id, alert_emails, updated_at) values (1, $1, now())
+     on conflict (id) do update set alert_emails=excluded.alert_emails, updated_at=now()`,
+    [emails.join(', ')],
+  );
+  log(`avisos: ${emails.length ? emails.join(', ') : 'sin lista; se usa quien emite boletas'}`);
+  return { alertEmails: emails };
+}
+
 // ── Pausa global de la cola (runtime, sin reiniciar) ──
 export async function getPaused() {
   const r = await pool.query('select paused from auto_emission_state where id=1');
@@ -454,6 +471,7 @@ export async function getConfig() {
   const paused = await getPaused();
   const cron = await getCron();
   const dryRun = await getDryRun();
+  const alertEmails = await getAlertEmails();
   // A qué SUNAT emite realmente (lo decide el ambiente).
   const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
   const sunatEnv = forced.startsWith('prod')
@@ -473,6 +491,7 @@ export async function getConfig() {
     reconcileEnabled: RECONCILE_ENABLED,
     paused,
     cron,
+    alertEmails,
     stats,
     // Base sin secret ni companyId; la URL real se arma por empresa en el servidor.
     webhookBase: `${publicApiBaseUrl()}/webhooks/falabella`,
@@ -998,6 +1017,7 @@ async function processCreditNoteJob(job, { order, orderNumber, orderDate, setSte
 async function alertFailedEmission(job, { lastError, status } = {}) {
   try {
     const company = job.company || (await getCompany(job.company_id).catch(() => null))?.nombre || null;
+    const stored = await getAlertEmails();
     await notifyFailedEmissionIfNeeded({
       ...job,
       companyName: company,
@@ -1006,7 +1026,7 @@ async function alertFailedEmission(job, { lastError, status } = {}) {
     }, {
       sendEmail,
       listUsers,
-      extraEmails: process.env.AUTO_EMIT_ALERT_EMAIL,
+      configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
       fallbackEmail: process.env.ADMIN_EMAIL,
       markAlerted: async (item) => {
         await pool.query('update emission_jobs set alerted_at=now() where id=$1', [item.id]);
