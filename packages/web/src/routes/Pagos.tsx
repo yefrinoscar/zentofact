@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, FileText, Info, Search, Upload, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
@@ -847,9 +847,9 @@ export default function Pagos() {
     id: number;
     number: string;
     kind: string;
+    issuedOn?: string | null;
+    gross?: number | null;
   }>;
-  const facturaDocument = invoices.find((item) => item.kind === 'factura');
-  const creditNoteDocument = invoices.find((item) => item.kind === 'nota_credito');
   const summary = salesQuery.data?.summary;
   const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
@@ -1211,24 +1211,15 @@ export default function Pagos() {
               Subir
             </DropdownMenuItem>
             <DropdownMenuItem
-              disabled={!facturaDocument}
+              disabled={!invoices.length}
               onClick={() => {
-                if (!facturaDocument) return;
-                openInvoice(facturaDocument.id);
+                const first = invoices[0];
+                if (!first) return;
+                openInvoice(first.id);
               }}
             >
               <FileSpreadsheet />
-              Ver factura
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!creditNoteDocument}
-              onClick={() => {
-                if (!creditNoteDocument) return;
-                openInvoice(creditNoteDocument.id);
-              }}
-            >
-              <FileText />
-              Ver nota de crédito
+              Ver facturas
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1397,7 +1388,7 @@ export default function Pagos() {
         document={invoiceQuery.data || null}
         highlightOrder={invoiceOrder}
         documents={invoices}
-        onSelect={(id) => openInvoice(id, invoiceOrder)}
+        onSelect={(id) => openInvoice(id)}
       />
     </div>
   );

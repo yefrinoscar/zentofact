@@ -17,12 +17,13 @@ function csvEscape(value: string) {
 
 function cellText(cell: { w?: string; v?: unknown } | undefined) {
   if (cell == null) return '';
-  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
   const value = cell.v;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     const iso = value.toISOString();
     return iso.includes('T00:00:00') ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
   }
+  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
   return String(value ?? '');
 }
 
@@ -166,6 +167,42 @@ export function invoiceChargeAmount(kind: string | null | undefined, signed: num
   const amount = Math.abs(value);
   if (kind === 'nota_credito') return { amount, credit: value >= 0 };
   return { amount, credit: value > 0 };
+}
+
+const INVOICE_IGV_RATE = 0.18;
+
+function money2(value: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const sign = n < 0 ? -1 : 1;
+  return sign * Math.round(Number(`${Math.abs(n)}e2`)) / 100;
+}
+
+/** Same paper as SUNAT: IGV 18% of the item net, then net + IGV. */
+export function invoiceConceptAmounts(
+  kind: string | null | undefined,
+  row: { net?: number | null; count?: number | null } | null | undefined,
+) {
+  const net = invoiceChargeAmount(kind, row?.net).amount;
+  const igv = money2(net * INVOICE_IGV_RATE);
+  return { net, igv, gross: money2(net + igv), count: Math.max(0, Number(row?.count || 0)) };
+}
+
+export function invoiceDocumentAmounts(
+  kind: string | null | undefined,
+  concepts: Array<{ net?: number | null }> | null | undefined,
+) {
+  return (concepts || []).reduce<{ net: number; igv: number; gross: number }>(
+    (totals, row) => {
+      const next = invoiceConceptAmounts(kind, row);
+      return {
+        net: money2(totals.net + next.net),
+        igv: money2(totals.igv + next.igv),
+        gross: money2(totals.gross + next.gross),
+      };
+    },
+    { net: 0, igv: 0, gross: 0 },
+  );
 }
 
 export function invoiceLinesForItem<T extends { concept?: string | null }>(
