@@ -168,6 +168,15 @@ export function invoiceChargeAmount(kind: string | null | undefined, signed: num
   return { amount, credit: value > 0 };
 }
 
+export function invoiceLinesForItem<T extends { concept?: string | null }>(
+  lines: T[] | null | undefined,
+  concept?: string | null,
+) {
+  const key = String(concept || '').trim();
+  if (!key) return lines || [];
+  return (lines || []).filter((line) => String(line.concept || '') === key);
+}
+
 export function invoiceElectronicTitle(kind: string | null | undefined) {
   if (kind === 'nota_credito') return 'NOTA DE CRÉDITO ELECTRÓNICA';
   return 'FACTURA ELECTRÓNICA';
