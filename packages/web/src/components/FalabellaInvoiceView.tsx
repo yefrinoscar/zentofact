@@ -10,7 +10,6 @@ import {
   invoiceKindLabel,
   invoiceLinesForItem,
   invoiceLongDate,
-  invoiceNumberLabel,
   invoicePeriodLabel,
 } from '../lib/pagos-invoice-report';
 import { cn } from '@/lib/utils';
@@ -307,48 +306,64 @@ export function FalabellaInvoiceSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        className="gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        className="gap-0 overflow-hidden p-0 sm:max-w-4xl"
         aria-describedby={undefined}
       >
-        <SheetHeader className="border-b border-border px-4 py-3 pr-12">
-          <SheetTitle>Facturas</SheetTitle>
-          <SheetDescription className="sr-only">
-            {document ? invoiceElectronicTitle(document.kind) : 'Facturas de Falabella'}
-          </SheetDescription>
-          {siblings.length ? (
-            <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto">
-              {siblings.map((item) => {
-                const issued = invoicePeriodLabel(item.issuedOn, item.issuedOn);
-                const total = item.gross != null
-                  ? money.format(invoiceChargeAmount(item.kind, item.gross).amount)
-                  : '';
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect?.(item.id)}
-                      className={cn(
-                        'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm',
-                        document?.id === item.id ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60',
-                      )}
-                    >
-                      <span>{invoiceNumberLabel(item)}</span>
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {[issued, total].filter(Boolean).join(' · ')}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-        </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {document ? (
-            <FalabellaInvoiceView key={document.id} document={document} highlightOrder={highlightOrder} />
-          ) : (
-            <p className="px-5 py-10 text-center text-sm text-muted-foreground">Cargando factura…</p>
-          )}
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          <nav
+            aria-label="Facturas"
+            className="flex max-h-52 shrink-0 flex-col border-b border-border bg-muted/30 sm:max-h-none sm:w-60 sm:border-b-0 sm:border-r"
+          >
+            <SheetHeader className="h-12 justify-center px-4 pr-12 sm:pr-4">
+              <SheetTitle>Facturas</SheetTitle>
+              <SheetDescription className="sr-only">
+                {document ? invoiceElectronicTitle(document.kind) : 'Facturas de Falabella'}
+              </SheetDescription>
+            </SheetHeader>
+            {siblings.length ? (
+              <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+                {siblings.map((item) => {
+                  const selected = document?.id === item.id;
+                  const issued = invoicePeriodLabel(item.issuedOn, item.issuedOn);
+                  const charged = item.gross != null ? invoiceChargeAmount(item.kind, item.gross) : null;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => onSelect?.(item.id)}
+                        aria-current={selected ? 'page' : undefined}
+                        className={cn(
+                          'w-full rounded-md px-2.5 py-2 text-left',
+                          selected ? 'bg-background text-foreground shadow-sm ring-1 ring-border' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                        )}
+                      >
+                        <p className="font-mono text-[13px] font-medium text-foreground">{item.number}</p>
+                        <p className="mt-0.5 text-[11px] leading-4">
+                          {invoiceKindLabel(item.kind)}
+                          {issued ? ` · ${issued}` : ''}
+                        </p>
+                        {charged ? (
+                          <p className={cn('mt-0.5 text-[12px] tabular-nums', charged.credit && 'text-emerald-700')}>
+                            {charged.credit ? '−' : ''}
+                            {money.format(charged.amount)}
+                          </p>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="px-4 py-3 text-sm text-muted-foreground">Sube el InvoiceReport.</p>
+            )}
+          </nav>
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            {document ? (
+              <FalabellaInvoiceView key={document.id} document={document} highlightOrder={highlightOrder} />
+            ) : (
+              <p className="px-5 py-10 text-center text-sm text-muted-foreground">Cargando factura…</p>
+            )}
+          </div>
         </div>
       </SheetContent>
     </Sheet>

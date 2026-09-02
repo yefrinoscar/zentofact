@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, FileText, Info, Search, Upload, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
@@ -1210,20 +1210,17 @@ export default function Pagos() {
               <Upload />
               Subir
             </DropdownMenuItem>
-            {invoices.length ? invoices.map((item) => (
-              <DropdownMenuItem
-                key={item.id}
-                onClick={() => openInvoice(item.id)}
-              >
-                {item.kind === 'nota_credito' ? <FileText /> : <FileSpreadsheet />}
-                {invoiceNumberLabel(item)}
-              </DropdownMenuItem>
-            )) : (
-              <DropdownMenuItem disabled>
-                <FileSpreadsheet />
-                No hay facturas
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem
+              disabled={!invoices.length}
+              onClick={() => {
+                const first = invoices[0];
+                if (!first) return;
+                openInvoice(first.id);
+              }}
+            >
+              <FileSpreadsheet />
+              Ver facturas
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
