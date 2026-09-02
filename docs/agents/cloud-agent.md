@@ -28,7 +28,7 @@ Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login <e
 |---|---|---|
 | `admin@zentofact.local` | superadmin | catalog, users, companies, dashboard, anything |
 | `admin@preview.zentofact.local` | admin | same modules without the superadmin seat |
-| `operator@preview.zentofact.local` | operator | `#/pedidos`, `#/scanner`, `#/salidas`, `#/insumos`, `#/orders` |
+| `operator@preview.zentofact.local` | operator | `#/pedidos`, `#/scanner`, `#/insumos`, `#/orders` |
 | `vendedor@preview.zentofact.local` | vendedor | `#/mis-ventas` |
 | `billing@preview.zentofact.local` | billing | `#/boletas`, `#/facturas`, `#/credit-notes` |
 
@@ -50,7 +50,7 @@ Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockO
 
 Do not POST inventory adjust or click publication switches unless the task explicitly enables marketplace mutation.
 
-## Inbox and salidas
+## Inbox and outbound seed
 
 Inbox reads `falabella_orders`, not the unified `orders` table.
 
@@ -58,9 +58,9 @@ Inbox reads `falabella_orders`, not the unified `orders` table.
 |---|---|---|
 | PV-10001 | `pending` | `#/pedidos` tab Pendientes |
 | PV-10003 | `ready_to_ship` | `#/pedidos` tab Listos para enviar |
-| PV-10002 | `shipped` | not the pending tab; promised shipping today feeds `#/salidas` with AG301 |
+| PV-10002 | `shipped` | not the pending tab; promised shipping today is noon America/Lima so `GET /catalog/sales/today` lists AG301 |
 
-Proof: as operator or admin, `GET /orders-inbox?view=open` includes PV-10001. Inbox `order_id` matches the unified `orders.external_order_id`. Promised shipping is noon America/Lima today, so `#/salidas` and `GET /catalog/sales/today` list AG301. Do not click **Marcar listo para enviar**. Do not `POST /orders-inbox/sync`.
+Proof: as operator or admin, `GET /orders-inbox?view=open` includes PV-10001. Inbox `order_id` matches the unified `orders.external_order_id`. Promised shipping is noon America/Lima today, so `GET /catalog/sales/today` lists AG301. `#/salidas` redirects to `#/orders`. Do not click **Marcar listo para enviar**. Do not `POST /orders-inbox/sync`.
 
 Unified sample orders PV-10001, PV-10002, and PV-10003 exist on LIMBO's Falabella channel account for `#/orders`.
 

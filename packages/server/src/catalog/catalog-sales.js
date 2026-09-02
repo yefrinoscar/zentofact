@@ -404,8 +404,8 @@ async function hydrateMissingRecentOrders(target, companies, kind, dependencies 
 }
 
 /**
- * Recupera líneas recientes solo cuando el operador abre Ventas, Devoluciones
- * o actualiza Salidas de hoy. Falabella se consulta como máximo 2 días; el
+ * Recupera líneas recientes solo cuando el operador abre Ventas o Devoluciones
+ * de un producto. Falabella se consulta como máximo 2 días; el
  * histórico se lee de orders/order_items. Las líneas se marcan skipped_policy
  * para no backfillear stock.
  */
