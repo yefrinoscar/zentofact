@@ -69,6 +69,7 @@ const SEED_LOGISTICS_ORDERS = [
     },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
+    promisedOffsetDays: 1,
     shipping: {
       type: 'envio',
       carrier: 'nosotros',
@@ -90,6 +91,7 @@ const SEED_LOGISTICS_ORDERS = [
     },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
+    promisedOffsetDays: 3,
     shipping: { type: 'envio' },
     stockState: 'none',
     stockApplied: 0,
@@ -580,7 +582,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
         JSON.stringify(spec.customer),
         JSON.stringify(spec.shipping || {}),
         JSON.stringify({ origin: SEED_MARKER }),
-        promisedAt,
+        new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
         'preview-seed',
       ],
     );

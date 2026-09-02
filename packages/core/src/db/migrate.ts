@@ -657,6 +657,14 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_falabella_label_prints_company_last
     ON falabella_label_prints(company_id, last_printed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS logistics_label_prints (
+    order_id BIGINT PRIMARY KEY,
+    print_count INTEGER NOT NULL DEFAULT 1 CHECK (print_count > 0),
+    first_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_printed_by TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS falabella_manifests (
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     manifest_id TEXT NOT NULL,

@@ -7,6 +7,7 @@ import {
   parsePrintSelection,
   listLogisticsInbox,
   printLogisticsPack,
+  urgencyForDeadline,
 } from './logistics-inbox.js';
 
 test('agrupa el estado de entrega en etapas de bandeja', () => {
@@ -105,9 +106,12 @@ async function stubLabelPdf(text = 'FALABELLA') {
 class PrintDb {
   constructor(rows) {
     this.rows = rows;
+    this.queries = [];
   }
 
-  async query() {
+  async query(sql, params = []) {
+    this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+    if (sql.includes('logistics_label_prints')) return { rows: [] };
     return { rows: this.rows };
   }
 }
@@ -143,9 +147,10 @@ function printRow(overrides = {}) {
 }
 
 test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
+  const db = new PrintDb([printRow()]);
   const result = await printLogisticsPack(
-    { orderIds: [10] },
-    { db: new PrintDb([printRow()]) },
+    { orderIds: [10], printedBy: 'operator@zentofact.local' },
+    { db },
   );
   assert.equal(result.ok, true);
   assert.equal(result.mimeType, 'application/pdf');
@@ -154,6 +159,29 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
   assert.equal(result.skipped.length, 0);
   const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
   assert.ok(pdf.getPageCount() >= 2);
+  const record = db.queries.find((query) => query.sql.includes('insert into logistics_label_prints'));
+  assert.ok(record, 'registra la impresión');
+  assert.deepEqual(record.params[0], [10]);
+  assert.equal(record.params[1], 'operator@zentofact.local');
+});
+
+test('clasifica la urgencia de entrega en hora de Lima', () => {
+  const now = new Date('2026-09-02T15:00:00.000Z');
+  assert.equal(urgencyForDeadline(null, now), 'later');
+  assert.equal(urgencyForDeadline('2026-09-02T14:00:00.000Z', now), 'overdue');
+  assert.equal(urgencyForDeadline('2026-09-02T22:00:00.000Z', now), 'today');
+  assert.equal(urgencyForDeadline('2026-09-03T17:00:00.000Z', now), 'tomorrow');
+  assert.equal(urgencyForDeadline('2026-09-05T17:00:00.000Z', now), 'later');
+});
+
+test('filtra por urgencia y expone conteos de prioridad', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db);
+  assert.match(db.queries[1].sql, /America\/Lima/);
+  assert.deepEqual(result.counts.urgency, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
+  assert.equal(result.orders[0].urgency, 'later');
+  assert.equal(result.orders[0].labelPrint, null);
+  assert.throws(() => parseLogisticsInboxFilters({ urgency: 'ayer' }), /Prioridad/);
 });
 
 test('compone Falabella y omite Ripley sin etiqueta', async () => {

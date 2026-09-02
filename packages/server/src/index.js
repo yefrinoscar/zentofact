@@ -367,7 +367,14 @@ app.get('/logistics-inbox', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 app.post('/logistics-inbox/print', async (c) => {
-  try { return ok(c, await logisticsInbox.printLogisticsPackWithDefaults(await c.req.json())); }
+  try {
+    const body = await c.req.json();
+    const user = c.get('user');
+    return ok(c, await logisticsInbox.printLogisticsPackWithDefaults({
+      ...body,
+      printedBy: user?.email || user?.name || null,
+    }));
+  }
   catch (e) { return fail(c, e, 400); }
 });
 

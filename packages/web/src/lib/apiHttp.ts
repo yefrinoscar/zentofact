@@ -243,6 +243,7 @@ const apiHttp = {
     companyId?: number;
     channelCode?: string;
     stage?: 'pending' | 'ready' | 'shipped';
+    urgency?: 'overdue' | 'today' | 'tomorrow' | 'later';
     search?: string;
     limit?: number;
     offset?: number;

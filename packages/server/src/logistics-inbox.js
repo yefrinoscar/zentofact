@@ -4,6 +4,8 @@ import { buildManualLabelSheet } from './manual-shipping-label.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
+const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
+const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);
 const MAX_PRINT = 80;
 
@@ -41,10 +43,14 @@ export function parseLogisticsInboxFilters(input = {}) {
   const channelCode = String(input.channelCode || '').trim().toLowerCase();
   if (channelCode && !CHANNELS.has(channelCode)) throw new Error('Canal inválido.');
 
+  const urgency = String(input.urgency || '').trim().toLowerCase();
+  if (urgency && !URGENCIES.has(urgency)) throw new Error('Prioridad inválida.');
+
   return {
     companyId,
     stage,
     channelCode: channelCode || null,
+    urgency: urgency || null,
     search: String(input.search || '').trim().slice(0, 120),
     limit: positiveInt(input.limit, 80, 300),
     offset: Math.max(Number.isInteger(Number(input.offset)) ? Number(input.offset) : 0, 0),
@@ -61,7 +67,8 @@ function itemImage(row) {
   const raw = row.raw_data || {};
   const meta = row.metadata || {};
   return String(
-    raw.Image || raw.ImageUrl || raw.ImageURL || raw.ProductImage || raw.MainImage
+    row.image_url
+    || raw.Image || raw.ImageUrl || raw.ImageURL || raw.ProductImage || raw.MainImage
     || meta.imageUrl || '',
   ).trim();
 }
@@ -71,10 +78,44 @@ function normalizeItem(row) {
     id: Number(row.id),
     sku: row.sku || row.provider_sku || null,
     providerSku: row.provider_sku || null,
-    description: row.description || 'Producto',
+    shopSku: row.shop_sku || null,
+    description: row.description || row.product_name || 'Producto',
     quantity: Number(row.quantity) || 1,
     imageUrl: itemImage(row),
   };
+}
+
+// Registro de impresión: la bandeja propia manda; las etiquetas Falabella
+// impresas desde /pedidos cuentan como respaldo.
+function normalizeLabelPrint(row) {
+  if (row.label_print && typeof row.label_print === 'object' && row.label_print.print_count != null) {
+    return {
+      printCount: Number(row.label_print.print_count) || 0,
+      lastPrintedAt: row.label_print.last_printed_at || null,
+    };
+  }
+  const prints = Array.isArray(row.label_prints) ? row.label_prints : [];
+  if (!prints.length) return null;
+  return {
+    printCount: prints.reduce((total, print) => total + (Number(print.printCount) || 0), 0),
+    lastPrintedAt: prints
+      .map((print) => print.lastPrintedAt)
+      .filter(Boolean)
+      .sort()
+      .pop() || null,
+  };
+}
+
+export function urgencyForDeadline(value, now = new Date()) {
+  if (!value) return 'later';
+  const deadline = new Date(value);
+  if (Number.isNaN(deadline.getTime())) return 'later';
+  if (deadline.getTime() < now.getTime()) return 'overdue';
+  const dayOf = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: LIMA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  const deadlineDay = dayOf(deadline);
+  if (deadlineDay === dayOf(now)) return 'today';
+  if (deadlineDay === dayOf(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return 'tomorrow';
+  return 'later';
 }
 
 function normalizeInboxOrder(row) {
@@ -91,6 +132,7 @@ function normalizeInboxOrder(row) {
     orderStatus: row.order_status,
     fulfillmentStatus: row.fulfillment_status,
     stage: logisticsStage(row.fulfillment_status),
+    urgency: urgencyForDeadline(row.promised_shipping_at),
     providerStatus: row.provider_status,
     currency: row.currency || 'PEN',
     total: row.total == null ? null : Number(row.total),
@@ -104,8 +146,20 @@ function normalizeInboxOrder(row) {
     itemsCount: items.reduce((total, item) => total + item.quantity, 0),
     items,
     labelPrints: Array.isArray(row.label_prints) ? row.label_prints : [],
+    labelPrint: normalizeLabelPrint(row),
   };
 }
+
+const URGENCY_SQL = {
+  overdue: `o.promised_shipping_at is not null and o.promised_shipping_at < now()`,
+  today: `o.promised_shipping_at >= now()
+    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date`,
+  tomorrow: `o.promised_shipping_at >= now()
+    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date + 1`,
+  later: `(o.promised_shipping_at is null
+    or (o.promised_shipping_at >= now()
+      and (o.promised_shipping_at at time zone '${LIMA}')::date > (now() at time zone '${LIMA}')::date + 1))`,
+};
 
 function whereClause(filters, values, { forStage } = {}) {
   const where = [
@@ -142,10 +196,53 @@ function whereClause(filters, values, { forStage } = {}) {
     where.push(`o.fulfillment_status = any($${values.length}::text[])`);
     if (forStage === 'shipped') {
       where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
+    } else if (filters.urgency) {
+      where.push(`(${URGENCY_SQL[filters.urgency]})`);
     }
   }
   return where;
 }
+
+const ITEMS_SQL = `coalesce((
+  select jsonb_agg(jsonb_build_object(
+    'id', oi.id,
+    'sku', oi.sku,
+    'provider_sku', oi.provider_sku,
+    'shop_sku', coalesce(
+      nullif(trim(listing.shop_sku), ''),
+      nullif(trim(oi.raw_data->>'ShopSku'), ''),
+      nullif(trim(oi.raw_data->>'ShopSKU'), '')
+    ),
+    'description', oi.description,
+    'product_name', p.name,
+    'quantity', oi.quantity,
+    'image_url', coalesce(
+      nullif(p.image_url, ''),
+      nullif(psku.image_url, ''),
+      nullif(listing.metadata->'images'->>0, ''),
+      nullif(listing.metadata->'images'->0->>'Url', ''),
+      nullif(listing.metadata->'images'->0->>'url', ''),
+      nullif(listing.metadata->>'imageUrl', '')
+    ),
+    'raw_data', oi.raw_data,
+    'metadata', oi.metadata
+  ) order by oi.id)
+  from order_items oi
+  left join products p on p.id=oi.product_id
+  left join products psku
+    on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+  left join product_listings listing on listing.id = oi.listing_id
+  where oi.order_id=o.id
+), '[]'::jsonb) as items`;
+
+const LABEL_PRINT_SQL = `(
+  select jsonb_build_object(
+    'print_count', lp.print_count,
+    'last_printed_at', lp.last_printed_at
+  )
+  from logistics_label_prints lp
+  where lp.order_id=o.id
+) as label_print`;
 
 export async function listLogisticsInbox(filtersInput = {}, db) {
   const filters = parseLogisticsInboxFilters(filtersInput);
@@ -160,7 +257,11 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
-       )::int as shipped_count
+       )::int as shipped_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.overdue})::int as overdue_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.today})::int as today_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.later})::int as later_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
@@ -180,18 +281,7 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
-       coalesce((
-         select jsonb_agg(jsonb_build_object(
-           'id', oi.id,
-           'sku', oi.sku,
-           'provider_sku', oi.provider_sku,
-           'description', oi.description,
-           'quantity', oi.quantity,
-           'raw_data', oi.raw_data,
-           'metadata', oi.metadata
-         ) order by oi.id)
-         from order_items oi where oi.order_id=o.id
-       ), '[]'::jsonb) as items,
+       ${ITEMS_SQL},
        coalesce((
          select jsonb_agg(jsonb_build_object(
            'labelIndex', prints.label_index,
@@ -201,6 +291,7 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
          from falabella_label_prints prints
          where prints.company_id=o.company_id and prints.order_id=o.external_order_id
        ), '[]'::jsonb) as label_prints,
+       ${LABEL_PRINT_SQL},
        count(*) over()::int as total_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
@@ -221,6 +312,12 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
       pending: Number(counts.pending_count || 0),
       ready: Number(counts.ready_count || 0),
       shipped: Number(counts.shipped_count || 0),
+      urgency: {
+        overdue: Number(counts.overdue_count || 0),
+        today: Number(counts.today_count || 0),
+        tomorrow: Number(counts.tomorrow_count || 0),
+        later: Number(counts.later_count || 0),
+      },
     },
     totalCount: Number(listResult.rows[0]?.total_count || 0),
     limit: filters.limit,
@@ -291,18 +388,7 @@ async function loadPrintOrders(orderIds, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
-       coalesce((
-         select jsonb_agg(jsonb_build_object(
-           'id', oi.id,
-           'sku', oi.sku,
-           'provider_sku', oi.provider_sku,
-           'description', oi.description,
-           'quantity', oi.quantity,
-           'raw_data', oi.raw_data,
-           'metadata', oi.metadata
-         ) order by oi.id)
-         from order_items oi where oi.order_id=o.id
-       ), '[]'::jsonb) as items
+       ${ITEMS_SQL}
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
@@ -316,6 +402,18 @@ async function loadPrintOrders(orderIds, db) {
     throw new Error('Uno o más pedidos ya no están disponibles.');
   }
   return found;
+}
+
+async function recordLabelPrints(db, orderIds, printedBy) {
+  await db.query(
+    `insert into logistics_label_prints (order_id, print_count, first_printed_at, last_printed_at, last_printed_by)
+     select id, 1, now(), now(), $2 from unnest($1::bigint[]) as ids(id)
+     on conflict (order_id) do update set
+       print_count = logistics_label_prints.print_count + 1,
+       last_printed_at = now(),
+       last_printed_by = excluded.last_printed_by`,
+    [orderIds, printedBy ? String(printedBy).slice(0, 120) : null],
+  );
 }
 
 function svcLabelId(label) {
@@ -429,6 +527,9 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   if (!pdfParts.length) throw new Error('No hay nada para imprimir en esta selección.');
 
   const bytes = await mergePdfBuffers(pdfParts);
+  if (printable.length && dependencies.recordPrints !== false) {
+    await recordLabelPrints(db, printable.map((order) => order.id), input.printedBy);
+  }
   const date = new Date().toISOString().slice(0, 10);
   return {
     ok: true,
