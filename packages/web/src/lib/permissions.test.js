@@ -11,6 +11,16 @@ import {
   userHasPermission,
 } from './permissions.ts';
 
+test('insumos pertenece a Pedidos junto a preparación y escaneo', () => {
+  const insumos = PERMISSIONS.find(({ key }) => key === 'insumos');
+  const scannerIndex = PERMISSIONS.findIndex(({ key }) => key === 'orders_scanner');
+  const insumosIndex = PERMISSIONS.findIndex(({ key }) => key === 'insumos');
+  assert.equal(insumos?.section, 'orders');
+  assert.equal(insumos?.path, '/insumos');
+  assert.ok(scannerIndex >= 0 && scannerIndex < insumosIndex);
+  assert.equal(pathPermission('/insumos'), 'insumos');
+});
+
 test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () => {
   const salespersonIndex = PERMISSIONS.findIndex(({ key }) => key === 'salesperson');
   const ordersIndex = PERMISSIONS.findIndex(({ key }) => key === 'order_management');
