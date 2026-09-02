@@ -5,11 +5,12 @@ import { useState, type ReactNode } from 'react';
 import { CheckCircle2, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
+import falabellaLogo from '../../assets/falabella.png';
+import ripleyLogo from '../../assets/logo-blanco.svg';
 import {
   canPrintLogisticsLabel,
   labelPrintTooltip,
   labelWasPrinted,
-  logisticsChannelDotClass,
   logisticsNextStep,
   logisticsQuantityLabel,
   logisticsUrgency,
@@ -22,6 +23,7 @@ import {
 } from '../../lib/logistics-inbox';
 import type { InboxNotice } from '../../lib/inbox-notice';
 import { Button } from '../../components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 
 export type LogisticsItem = {
@@ -169,6 +171,25 @@ export function ActionButton({
   );
 }
 
+export function ChannelMark({ code, className }: { code?: string | null; className?: string }) {
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') {
+    return <img src={falabellaLogo} alt="Falabella" title="Falabella" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
+  }
+  if (value === 'ripley') {
+    return (
+      <span className={cn('grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', className)} title="Ripley" aria-label="Ripley">
+        <img src={ripleyLogo} alt="" className="h-4 w-auto" />
+      </span>
+    );
+  }
+  return (
+    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">
+      M
+    </span>
+  );
+}
+
 export function EmptyState({ view, children }: { view: BandejaView; children?: ReactNode }) {
   if (view.loading) {
     return (
@@ -189,28 +210,17 @@ export function printableOrders(orders: LogisticsOrder[]) {
 
 export function StageTabs({ view }: { view: BandejaView }) {
   return (
-    <div className="flex items-end justify-between gap-3 border-b border-border">
-      <div role="tablist" aria-label="Flujo de pedidos" className="-mb-px flex gap-5">
-        {LOGISTICS_STAGES.map((tab) => {
-          const active = view.stage === tab.value;
-          return (
-            <button
-              key={tab.value}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => view.setStage(tab.value)}
-              className={cn(
-                'border-b-2 pb-2 text-sm',
-                active ? 'border-foreground font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
-            >
+    <div className="flex items-center justify-between gap-3">
+      <Tabs value={view.stage} onValueChange={(value) => view.setStage(value as LogisticsStage)}>
+        <TabsList aria-label="Flujo de pedidos">
+          {LOGISTICS_STAGES.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label} {view.counts[tab.value]}
-            </button>
-          );
-        })}
-      </div>
-      <Button size="icon-sm" variant="ghost" className="mb-1" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
         <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
       </Button>
     </div>
@@ -276,7 +286,7 @@ export function BoardOrder({ order, view }: { order: LogisticsOrder; view: Bande
   return (
     <li>
       <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-2 py-1.5 text-left hover:bg-muted/40">
-        <span className={cn('size-1.5 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} />
+        <ChannelMark code={order.channelCode} />
         <span className="w-[6.5rem] shrink-0 truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
         {item && <ProductThumb item={item} className="size-7 rounded" />}
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">

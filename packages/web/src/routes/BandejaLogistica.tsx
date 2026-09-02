@@ -19,8 +19,6 @@ import {
   labelPrintTooltip,
   labelWasPrinted,
   logisticsBulkReadySummary,
-  logisticsChannelClass,
-  logisticsChannelLabel,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsElapsedLabel,
@@ -58,7 +56,7 @@ import {
   type LogisticsItem,
   type LogisticsOrder,
 } from './bandeja-prototype';
-import { ProductThumb, QuantityTag } from './bandeja-prototype/shared';
+import { ChannelMark, ProductThumb, QuantityTag } from './bandeja-prototype/shared';
 
 type InboxResponse = {
   orders: LogisticsOrder[];
@@ -405,9 +403,9 @@ export default function BandejaLogistica() {
               <>
                 <DialogHeader>
                   <div className="flex flex-wrap items-center gap-2 pr-8">
+                    <ChannelMark code={detail.channelCode} />
                     <DialogTitle className="font-mono">{detail.externalOrderNumber || detail.externalOrderId}</DialogTitle>
                     <Badge variant="outline" className={cn('rounded-md', stageBadge(detail).className)}>{stageBadge(detail).label}</Badge>
-                    <Badge variant="outline" className={cn('rounded-md', logisticsChannelClass(detail.channelCode))}>{logisticsChannelLabel(detail.channelCode)}</Badge>
                   </div>
                   <DialogDescription>{sellerShortName(detail.companyName)} · {logisticsDeliveryLabel(detail)}</DialogDescription>
                 </DialogHeader>

@@ -3,7 +3,6 @@
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
 import {
-  logisticsChannelDotClass,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsUrgencyMeta,
@@ -11,6 +10,7 @@ import {
 } from '../../lib/logistics-inbox';
 import {
   ActionButton,
+  ChannelMark,
   EmptyState,
   PrintGroupButton,
   ProductThumb,
@@ -41,7 +41,7 @@ function BoardCard({
   return (
     <li className="rounded-lg border border-white/80 bg-white p-2.5 shadow-sm">
       <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-1.5 text-left">
-        <span className={cn('size-2 rounded-full', logisticsChannelDotClass(order.channelCode))} />
+        <ChannelMark code={order.channelCode} />
         <span className="truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
       </button>
       <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
