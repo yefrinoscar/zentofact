@@ -38,7 +38,7 @@ const SEED_ORDERS = [
     orderNumber: 'PV-10003',
     customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912' },
     orderStatus: 'confirmed',
-    fulfillmentStatus: 'pending',
+    fulfillmentStatus: 'ready_to_ship',
     falabellaStatus: 'ready_to_ship',
     stockState: 'none',
     stockApplied: 0,
@@ -52,6 +52,47 @@ const SEED_ORDERS = [
     falabellaStatus: 'shipped',
     stockState: 'applied',
     stockApplied: 1,
+  },
+];
+
+const SEED_LOGISTICS_ORDERS = [
+  {
+    key: 'manual-pending',
+    orderNumber: 'QNC-10010',
+    channel: 'manual',
+    customer: {
+      name: 'Rosa Preview',
+      firstName: 'Rosa',
+      lastName: 'Preview',
+      phone: '999111222',
+      documentNumber: '11223344',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    shipping: {
+      type: 'envio',
+      carrier: 'nosotros',
+      address: 'Jr. Demo 220, San Miguel',
+      district: 'San Miguel',
+    },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'ripley-pending',
+    orderNumber: 'RP-10020',
+    channel: 'ripley',
+    customer: {
+      name: 'Marco Preview',
+      firstName: 'Marco',
+      lastName: 'Preview',
+      documentNumber: '55667788',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
   },
 ];
 
@@ -333,29 +374,34 @@ async function ensureCompany(data) {
   return { ...created, created: true };
 }
 
-async function ensureFalabellaChannelAccount(company) {
-  const displayName = company.nombreComercial || company.nombre || company.razonSocial || 'Falabella';
+async function ensureChannelAccount(company, channelCode) {
+  const label = company.nombreComercial || company.nombre || company.razonSocial || channelCode;
+  const displayName = channelCode === 'manual' ? `Ventas manuales · ${label}` : label;
   await pool.query(
     `INSERT INTO order_channel_accounts (
        company_id, channel_id, external_account_id, display_name,
        auto_create_orders, document_requirement, document_type_policy, settings
      )
-     SELECT c.id, ch.id, 'default', $2, TRUE, 'optional', 'automatic', '{"origin":"preview_seed"}'::jsonb
+     SELECT c.id, ch.id, 'default', $2, $4, 'optional', 'automatic', '{"origin":"preview_seed"}'::jsonb
      FROM companies c
-     JOIN order_channels ch ON ch.code = 'falabella'
+     JOIN order_channels ch ON ch.code = $3
      WHERE c.id = $1
      ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING`,
-    [company.id, displayName],
+    [company.id, displayName, channelCode, channelCode !== 'manual'],
   );
   const account = await pool.query(
     `SELECT a.id, a.company_id, ch.code AS channel_code
      FROM order_channel_accounts a
      JOIN order_channels ch ON ch.id = a.channel_id
-     WHERE a.company_id = $1 AND ch.code = 'falabella' AND a.external_account_id = 'default'
+     WHERE a.company_id = $1 AND ch.code = $2 AND a.external_account_id = 'default'
      LIMIT 1`,
-    [company.id],
+    [company.id, channelCode],
   );
   return account.rows[0] ? { id: Number(account.rows[0].id), companyId: Number(account.rows[0].company_id) } : null;
+}
+
+async function ensureFalabellaChannelAccount(company) {
+  return ensureChannelAccount(company, 'falabella');
 }
 
 async function ensureProduct(spec, actorUserId, companiesByRuc) {
@@ -491,7 +537,16 @@ async function ensureSampleOrders(companiesByRuc, products) {
 
   await replacePreviewOrders(limbo.id);
   const promisedAt = limaNoonToday();
-  for (const spec of SEED_ORDERS) {
+  const specs = [
+    ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
+    ...SEED_LOGISTICS_ORDERS,
+  ];
+  let inserted = 0;
+  for (const spec of specs) {
+    const channelAccount = spec.channel === 'falabella'
+      ? account
+      : await ensureChannelAccount(limbo, spec.channel);
+    if (!channelAccount) continue;
     const externalOrderId = previewOrderId(spec.key);
     const orderResult = await pool.query(
       `INSERT INTO orders (
@@ -504,24 +559,26 @@ async function ensureSampleOrders(companiesByRuc, products) {
          $1,$2,$3,$4,
          $5,'paid',$6,'not_requested',$6,
          'optional','automatic','PEN',$7,$7,
-         $8::jsonb,'{}'::jsonb,$9::jsonb,$10,$10,$10,'complete',$11
+         $8::jsonb,$9::jsonb,$10::jsonb,$11,$11,$11,'complete',$12
        )
        ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
          order_status = EXCLUDED.order_status,
          fulfillment_status = EXCLUDED.fulfillment_status,
+         shipping = EXCLUDED.shipping,
          promised_shipping_at = EXCLUDED.promised_shipping_at,
          last_seen_at = NOW(),
          updated_at = NOW()
        RETURNING id`,
       [
         limbo.id,
-        account.id,
+        channelAccount.id,
         externalOrderId,
         spec.orderNumber,
         spec.orderStatus,
         spec.fulfillmentStatus,
         product.referencePrice || 100,
         JSON.stringify(spec.customer),
+        JSON.stringify(spec.shipping || {}),
         JSON.stringify({ origin: SEED_MARKER }),
         promisedAt,
         'preview-seed',
@@ -546,8 +603,9 @@ async function ensureSampleOrders(companiesByRuc, products) {
         JSON.stringify({ origin: SEED_MARKER }),
       ],
     );
+    inserted += 1;
   }
-  return { orders: SEED_ORDERS.length };
+  return { orders: inserted };
 }
 
 async function ensureFalabellaInboxOrders(limbo, product) {

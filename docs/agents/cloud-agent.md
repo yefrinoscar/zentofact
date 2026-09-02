@@ -62,7 +62,17 @@ Inbox reads `falabella_orders`, not the unified `orders` table.
 
 Proof: as operator or admin, `GET /orders-inbox?view=open` includes PV-10001. Inbox `order_id` matches the unified `orders.external_order_id`. Promised shipping is noon America/Lima today, so `#/salidas` and `GET /catalog/sales/today` list AG301. Do not click **Marcar listo para enviar**. Do not `POST /orders-inbox/sync`.
 
-Unified sample orders PV-10001, PV-10002, and PV-10003 exist on LIMBO's Falabella channel account for `#/orders`.
+Unified sample orders on LIMBO:
+
+| Order | Channel | Fulfillment | Screen |
+|---|---|---|---|
+| PV-10001 | Falabella | `pending` | `#/bandeja` tab Pendientes |
+| QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · printable label |
+| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes |
+| PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
+| PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
+
+Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, and RP-10020. Print only QNC-10010 in preview; Falabella and Ripley labels need live seller APIs.
 
 ## Flags
 
