@@ -1,5 +1,7 @@
 // Ten variantes de la Bandeja, switchable via ?variant=, en /#/bandeja.
 // Pregunta: ¿qué estructura le sirve al operador para preparar e imprimir?
+// Restricción del operador: la lista es lo principal. El detalle no puede
+// comerse la pantalla (A/E/F pecan de eso). Arranca en D.
 export { VariantA } from './VariantA';
 export { VariantB } from './VariantB';
 export { VariantC } from './VariantC';

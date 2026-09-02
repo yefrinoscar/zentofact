@@ -153,7 +153,7 @@ function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
 export default function BandejaLogistica() {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
-  const variant = (params.get('variant') || 'A').toUpperCase();
+  const variant = (params.get('variant') || 'D').toUpperCase();
   const { role, can, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && role !== 'viewer';
   const canSync = !permissionsLoading && can('order_management');
