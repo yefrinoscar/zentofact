@@ -11,9 +11,12 @@ import {
   canPrintLogisticsLabel,
   labelPrintTooltip,
   labelWasPrinted,
+  logisticsDeadlineLabel,
+  logisticsDeliveryLabel,
   logisticsNextStep,
   logisticsQuantityLabel,
   logisticsUrgency,
+  logisticsUrgencyMeta,
   productImageSrc,
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
@@ -250,6 +253,42 @@ export function UrgencyTabs({ view }: { view: BandejaView }) {
         );
       })}
     </div>
+  );
+}
+
+export function BoardCard({
+  order,
+  view,
+  showRowAction,
+}: {
+  order: LogisticsOrder;
+  view: BandejaView;
+  showRowAction: boolean;
+}) {
+  const meta = logisticsUrgencyMeta(order.urgency);
+  return (
+    <li className="rounded-lg border border-white/80 bg-white p-2.5 shadow-sm">
+      <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-1.5 text-left">
+        <ChannelMark code={order.channelCode} />
+        <span className="truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
+      </button>
+      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+        {sellerShortName(order.companyName)} · {logisticsDeliveryLabel(order)}
+      </p>
+      <ul className="mt-2 space-y-1">
+        {order.items.slice(0, 2).map((item) => (
+          <li key={item.id} className="flex items-center gap-2">
+            <ProductThumb item={item} className="size-8 rounded" />
+            <span className="min-w-0 flex-1 truncate text-xs">{item.description}</span>
+            <QuantityTag item={item} />
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className={cn('text-[11px] font-medium', meta.textClass)}>{logisticsDeadlineLabel(order, view.now)}</span>
+        {showRowAction && <ActionButton order={order} view={view} />}
+      </div>
+    </li>
   );
 }
 

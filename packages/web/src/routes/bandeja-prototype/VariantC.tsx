@@ -1,7 +1,7 @@
-// C — El tablero B, más limpio: imprime el grupo, sin botón en cada tarjeta.
-import { Board } from './Board';
+// C — Plazo arriba (vencidos / hoy / mañana). Listos va al lado, compacto.
+import { DeadlineAbove } from './DeadlineBoard';
 import type { BandejaView } from './shared';
 
 export function VariantC({ view }: { view: BandejaView }) {
-  return <Board view={view} emphasizePrint showRowAction={false} />;
+  return <DeadlineAbove view={view} />;
 }
