@@ -11,6 +11,13 @@ import {
   userHasPermission,
 } from './permissions.ts';
 
+test('envío propio es una opción de Ajustes', () => {
+  assert.equal(pathPermission('/envio-propio'), 'settings');
+  assert.equal(pathPermission('/orders/envio'), 'settings');
+  assert.equal(pathPermission('/settings'), 'settings');
+  assert.equal(pathPermission('/orders'), 'order_management');
+});
+
 test('insumos pertenece a Pedidos junto a preparación y escaneo', () => {
   const insumos = PERMISSIONS.find(({ key }) => key === 'insumos');
   const scannerIndex = PERMISSIONS.findIndex(({ key }) => key === 'orders_scanner');

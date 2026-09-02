@@ -1,6 +1,6 @@
 export const OWN_FLEET_CARRIER = 'nosotros';
 
-/** Almacén de salida. El admin lo mueve desde Envío propio; las distancias se recalculan solas. */
+/** Almacén de salida. El admin lo mueve desde Ajustes; las distancias se recalculan solas. */
 export const OWN_FLEET_ORIGIN = {
   lat: -12.154351,
   lng: -76.97931,

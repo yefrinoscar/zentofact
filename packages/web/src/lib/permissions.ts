@@ -62,7 +62,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'credit_notes_bulk', label: 'Anulación masiva', description: 'Anular boletas en lote con notas de crédito', path: '/credit-notes/bulk', section: 'documents' },
   { key: 'companies', label: 'Empresas', description: 'Administrar empresas, credenciales y certificados', path: '/companies', section: 'config' },
   { key: 'users', label: 'Usuarios', description: 'Administrar usuarios, roles y permisos', path: '/users', section: 'config' },
-  { key: 'settings', label: 'Ajustes', description: 'Cambiar preferencias y apariencia', path: '/settings', section: 'config' },
+  { key: 'settings', label: 'Ajustes', description: 'Cambiar preferencias, apariencia y envío propio', path: '/settings', section: 'config' },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
@@ -233,6 +233,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
+  if (pathname.startsWith('/envio-propio') || pathname.startsWith('/orders/envio')) return 'settings';
   if (pathname.startsWith('/orders')) return 'order_management';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';
