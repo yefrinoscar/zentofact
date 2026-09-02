@@ -662,7 +662,8 @@ async function ensurePreviewFixtures() {
     await syncCredentialPassword(spec.email, password);
   }
   const limbo = await pool.query(
-    `SELECT id FROM companies WHERE ruc = '20990001001' LIMIT 1`,
+    `SELECT id, ruc, nombre, nombre_comercial, razon_social
+       FROM companies WHERE ruc = '20990001001' LIMIT 1`,
   );
   const product = await pool.query(
     `SELECT id, main_sku, name, reference_price
@@ -671,7 +672,13 @@ async function ensurePreviewFixtures() {
       LIMIT 1`,
   );
   if (limbo.rows[0] && product.rows[0]) {
-    const company = { id: Number(limbo.rows[0].id), ruc: '20990001001' };
+    const company = {
+      id: Number(limbo.rows[0].id),
+      ruc: limbo.rows[0].ruc,
+      nombre: limbo.rows[0].nombre,
+      nombreComercial: limbo.rows[0].nombre_comercial,
+      razonSocial: limbo.rows[0].razon_social,
+    };
     const spec = {
       productId: Number(product.rows[0].id),
       mainSku: product.rows[0].main_sku,
