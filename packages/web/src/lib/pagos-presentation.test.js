@@ -389,6 +389,17 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   assert.equal(withReturn.returnCount, 1);
   assert.equal(withReturn.returnLoss, -igvSplit(21.8).net);
   assert.equal(withReturn.ganas, Math.round((67.8 + withReturn.returnLoss) * 100) / 100);
+  const withCredit = settlementStatementTotals([
+    { returned: true, bruto: 67.98, commission: 0, shipping: 21.8 },
+    { returned: true, bruto: 0, commission: -20, shipping: 0 },
+  ]);
+  const logisticsLoss = -igvSplit(21.8).net;
+  const commissionCredit = -igvSplit(-20).net;
+  assert.equal(withCredit.returnCount, 2);
+  assert.equal(withCredit.returnLoss, logisticsLoss);
+  assert.equal(withCredit.ganas, Math.round((logisticsLoss + commissionCredit) * 100) / 100);
+  assert.ok(commissionCredit > 0);
+  assert.ok(withCredit.ganas > withCredit.returnLoss);
 });
 
 test('en una devolución el producto se anula y Ganas es la logística que se queda', () => {

@@ -179,7 +179,7 @@ export function settlementStatementTotals(sales: Parameters<typeof saleIgvStory>
       logistics: money2(totals.logistics + story.logisticsSplit.net),
       total: money2(totals.total + story.factura.net),
       ganas: money2(totals.ganas + story.queda),
-      returnLoss: money2(totals.returnLoss + (returned ? story.queda : 0)),
+      returnLoss: money2(totals.returnLoss + (returned && story.queda < 0 ? story.queda : 0)),
       returnCount: totals.returnCount + (returned ? 1 : 0),
     };
   }, {

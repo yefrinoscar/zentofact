@@ -1285,7 +1285,7 @@ export default function Pagos() {
                 : ''}
             </p>
             <p className="tabular-nums">
-              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))}>{money.format(footerTotals.returnLoss)}</span>
+              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))} title="Suma de Ganas en rojo de las devoluciones">{money.format(footerTotals.returnLoss)}</span>
               <span className="text-muted-foreground"> · </span>
               Envío {money.format(footerTotals.envio)}
             </p>
