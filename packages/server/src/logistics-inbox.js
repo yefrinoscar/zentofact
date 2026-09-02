@@ -118,8 +118,27 @@ export function urgencyForDeadline(value, now = new Date()) {
   return 'later';
 }
 
+// Los marketplaces mandan una línea por unidad; el operador quiere ver
+// "Bastón x6", no seis filas iguales.
+export function groupLogisticsItems(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = String(item.sku || item.description || item.id).trim().toLowerCase();
+    const existing = groups.get(key);
+    if (existing) {
+      existing.quantity += item.quantity;
+      existing.lineCount += 1;
+      if (!existing.imageUrl && item.imageUrl) existing.imageUrl = item.imageUrl;
+      if (!existing.shopSku && item.shopSku) existing.shopSku = item.shopSku;
+      continue;
+    }
+    groups.set(key, { ...item, lineCount: 1 });
+  }
+  return [...groups.values()];
+}
+
 function normalizeInboxOrder(row) {
-  const items = Array.isArray(row.items) ? row.items.map(normalizeItem) : [];
+  const items = groupLogisticsItems(Array.isArray(row.items) ? row.items.map(normalizeItem) : []);
   return {
     id: Number(row.id),
     companyId: row.company_id == null ? null : Number(row.company_id),

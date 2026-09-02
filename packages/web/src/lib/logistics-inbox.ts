@@ -24,25 +24,25 @@ export const LOGISTICS_STAGES: Array<{
   value: LogisticsStage;
   label: string;
   description: string;
-  activeClass: string;
   badgeClass: string;
 }> = [
-  { value: 'pending', label: 'Pendientes', description: 'Por preparar', activeClass: 'bg-amber-50 text-amber-900 shadow-sm', badgeClass: 'bg-amber-100 text-amber-800' },
-  { value: 'ready', label: 'Listos para enviar', description: 'Etiqueta disponible', activeClass: 'bg-sky-50 text-sky-900 shadow-sm', badgeClass: 'bg-sky-100 text-sky-800' },
-  { value: 'shipped', label: 'Enviados', description: 'Últimos 7 días', activeClass: 'bg-emerald-50 text-emerald-900 shadow-sm', badgeClass: 'bg-emerald-100 text-emerald-800' },
+  { value: 'pending', label: 'Pendientes', description: 'Por preparar', badgeClass: 'bg-orange-100 text-orange-800' },
+  { value: 'ready', label: 'Listos para enviar', description: 'Etiqueta disponible', badgeClass: 'bg-indigo-100 text-indigo-800' },
+  { value: 'shipped', label: 'Enviados', description: 'Últimos 7 días', badgeClass: 'bg-emerald-100 text-emerald-800' },
 ];
 
 export const LOGISTICS_URGENCIES: Array<{
   value: LogisticsUrgency;
   label: string;
   description: string;
-  className: string;
+  dotClass: string;
+  activeClass: string;
   pillClass: string;
 }> = [
-  { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', className: 'border-rose-100 bg-rose-50 text-rose-900', pillClass: 'bg-rose-100 text-rose-700' },
-  { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', className: 'border-amber-100 bg-amber-50 text-amber-900', pillClass: 'bg-amber-100 text-amber-700' },
-  { value: 'tomorrow', label: 'Vencen mañana', description: 'Preparar con anticipación', className: 'border-sky-100 bg-sky-50 text-sky-900', pillClass: 'bg-sky-100 text-sky-700' },
-  { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', className: 'border-slate-200 bg-slate-100 text-slate-900', pillClass: 'bg-slate-100 text-slate-700' },
+  { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', dotClass: 'bg-rose-500', activeClass: 'bg-rose-50 text-rose-900 ring-rose-200', pillClass: 'bg-rose-600 text-white' },
+  { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', dotClass: 'bg-orange-400', activeClass: 'bg-orange-50 text-orange-900 ring-orange-200', pillClass: 'bg-orange-100 text-orange-800' },
+  { value: 'tomorrow', label: 'Vencen mañana', description: 'Preparar con anticipación', dotClass: 'bg-indigo-400', activeClass: 'bg-indigo-50 text-indigo-900 ring-indigo-200', pillClass: 'bg-indigo-50 text-indigo-700' },
+  { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', activeClass: 'bg-slate-100 text-slate-900 ring-slate-300', pillClass: 'bg-slate-100 text-slate-600' },
 ];
 
 const LIMA = 'America/Lima';
@@ -66,10 +66,23 @@ export function logisticsChannelLabel(code?: string | null) {
 
 export function logisticsChannelClass(code?: string | null) {
   const value = String(code || '').trim().toLowerCase();
-  if (value === 'falabella') return 'border-lime-300 bg-lime-100 text-lime-950';
-  if (value === 'ripley') return 'border-fuchsia-300 bg-fuchsia-100 text-fuchsia-950';
-  if (value === 'manual') return 'border-teal-300 bg-teal-100 text-teal-950';
-  return 'border-slate-200 bg-slate-100 text-slate-800';
+  if (value === 'falabella') return 'border-lime-200 bg-lime-50 text-lime-800';
+  if (value === 'ripley') return 'border-violet-200 bg-violet-50 text-violet-800';
+  if (value === 'manual') return 'border-teal-200 bg-teal-50 text-teal-800';
+  return 'border-slate-200 bg-slate-100 text-slate-700';
+}
+
+export function logisticsChannelDotClass(code?: string | null) {
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') return 'bg-lime-500';
+  if (value === 'ripley') return 'bg-violet-500';
+  if (value === 'manual') return 'bg-teal-500';
+  return 'bg-slate-400';
+}
+
+export function logisticsQuantityLabel(item: { quantity?: number | null }) {
+  const quantity = Math.max(1, Number(item.quantity) || 1);
+  return `x${quantity}`;
 }
 
 export function logisticsDeliveryLabel(order: LogisticsOrderLike) {

@@ -14,6 +14,7 @@ import {
   logisticsFlowSteps,
   logisticsNextStep,
   logisticsPrintSuccessCopy,
+  logisticsQuantityLabel,
   logisticsSkippedNotice,
   logisticsUrgency,
   LOGISTICS_STAGES,
@@ -24,8 +25,10 @@ import {
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
   assert.equal(logisticsChannelLabel('manual'), 'Manual');
-  assert.match(logisticsChannelClass('ripley'), /fuchsia/);
+  assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
+  assert.equal(logisticsQuantityLabel({ quantity: 6 }), 'x6');
+  assert.equal(logisticsQuantityLabel({ quantity: 0 }), 'x1');
 });
 
 test('la entrega propia usa Express, no nosotros', () => {

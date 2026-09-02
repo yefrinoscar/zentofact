@@ -92,6 +92,7 @@ const SEED_LOGISTICS_ORDERS = [
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     promisedOffsetDays: 3,
+    itemLines: 3,
     shipping: { type: 'envio' },
     stockState: 'none',
     stockApplied: 0,
@@ -587,24 +588,27 @@ async function ensureSampleOrders(companiesByRuc, products) {
       ],
     );
     const orderId = Number(orderResult.rows[0].id);
-    await pool.query(
-      `INSERT INTO order_items (
-         order_id, external_item_id, sku, provider_sku, description, quantity,
-         unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
-       ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,$7,$8,$9::jsonb)
-       ON CONFLICT (order_id, external_item_id) DO NOTHING`,
-      [
-        orderId,
-        `${externalOrderId}-item-1`,
-        product.mainSku,
-        product.name,
-        product.referencePrice || 100,
-        product.productId,
-        spec.stockState,
-        spec.stockApplied,
-        JSON.stringify({ origin: SEED_MARKER }),
-      ],
-    );
+    // Los marketplaces mandan una línea por unidad; la bandeja debe agruparlas.
+    for (let line = 1; line <= (spec.itemLines || 1); line += 1) {
+      await pool.query(
+        `INSERT INTO order_items (
+           order_id, external_item_id, sku, provider_sku, description, quantity,
+           unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
+         ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,$7,$8,$9::jsonb)
+         ON CONFLICT (order_id, external_item_id) DO NOTHING`,
+        [
+          orderId,
+          `${externalOrderId}-item-${line}`,
+          product.mainSku,
+          product.name,
+          product.referencePrice || 100,
+          product.productId,
+          spec.stockState,
+          spec.stockApplied,
+          JSON.stringify({ origin: SEED_MARKER }),
+        ],
+      );
+    }
     inserted += 1;
   }
   return { orders: inserted };

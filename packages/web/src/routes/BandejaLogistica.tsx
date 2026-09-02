@@ -2,7 +2,6 @@ import { useDeferredValue, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -12,7 +11,6 @@ import {
   Printer,
   RefreshCw,
   Search,
-  Store,
 } from 'lucide-react';
 import api from '../lib/api';
 import { logIdFromUnknown } from '../lib/api-error';
@@ -26,6 +24,7 @@ import {
   labelWasPrinted,
   logisticsBulkReadySummary,
   logisticsChannelClass,
+  logisticsChannelDotClass,
   logisticsChannelLabel,
   logisticsCountLabel,
   logisticsDeadlineLabel,
@@ -36,6 +35,7 @@ import {
   logisticsFlowSteps,
   logisticsNextStep,
   logisticsPrintSuccessCopy,
+  logisticsQuantityLabel,
   logisticsSkippedNotice,
   logisticsUrgency,
   logisticsUrgencyMeta,
@@ -56,13 +56,6 @@ import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { Input } from '../components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -76,19 +69,13 @@ import {
   TooltipTrigger,
 } from '../components/ui/tooltip';
 
-type Company = {
-  id: number;
-  nombre?: string | null;
-  nombreComercial?: string | null;
-  razonSocial?: string | null;
-};
-
 type LogisticsItem = {
   id: number;
   sku?: string | null;
   shopSku?: string | null;
   description: string;
   quantity: number;
+  lineCount?: number;
   imageUrl?: string | null;
 };
 
@@ -141,10 +128,6 @@ type PrintResult = {
 const PAGE_SIZE = 50;
 const EMPTY_URGENCY: Record<LogisticsUrgency, number> = { overdue: 0, today: 0, tomorrow: 0, later: 0 };
 
-function companyLabel(company: Company) {
-  return sellerShortName(company.nombreComercial || company.nombre || company.razonSocial);
-}
-
 function formatMoney(value: number | null, currency = 'PEN') {
   try {
     return new Intl.NumberFormat('es-PE', { style: 'currency', currency }).format(value || 0);
@@ -155,19 +138,31 @@ function formatMoney(value: number | null, currency = 'PEN') {
 
 function stageBadge(order: LogisticsOrder) {
   if (order.stage === 'shipped') return { label: 'Enviado', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
-  if (order.stage === 'ready') return { label: 'Listo para enviar', className: 'border-sky-200 bg-sky-50 text-sky-700' };
-  return { label: 'Pendiente', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+  if (order.stage === 'ready') return { label: 'Listo para enviar', className: 'border-indigo-200 bg-indigo-50 text-indigo-700' };
+  return { label: 'Pendiente', className: 'border-orange-200 bg-orange-50 text-orange-700' };
 }
 
-function ProductThumb({ item }: { item: LogisticsItem }) {
+function ProductThumb({ item, size = 'size-9' }: { item: LogisticsItem; size?: string }) {
   const [failed, setFailed] = useState(false);
   const src = productImageSrc(item.imageUrl, item.shopSku);
   return (
-    <span className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-white">
-      <ImageIcon className="size-4 text-muted-foreground/40" />
+    <span className={cn('relative grid shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-white', size)}>
+      <ImageIcon className="size-3.5 text-muted-foreground/40" />
       {src && !failed && (
         <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain p-0.5" onError={() => setFailed(true)} />
       )}
+    </span>
+  );
+}
+
+function QuantityTag({ item }: { item: LogisticsItem }) {
+  const many = item.quantity > 1;
+  return (
+    <span className={cn(
+      'shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums',
+      many ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+    )}>
+      {logisticsQuantityLabel(item)}
     </span>
   );
 }
@@ -177,19 +172,18 @@ function OrderProducts({ items, compact = false }: { items: LogisticsItem[]; com
   const visible = compact ? items.slice(0, 2) : items;
   const hidden = items.length - visible.length;
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {visible.map((item) => (
-        <div key={item.id} className="flex min-w-0 items-center gap-2.5">
-          <ProductThumb item={item} />
-          <div className="min-w-0">
-            <p className="line-clamp-2 text-xs font-medium leading-snug text-foreground">{item.description}</p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {item.quantity > 1 ? `${item.quantity} unidades` : '1 unidad'}{item.sku ? ` · ${item.sku}` : ''}
-            </p>
+        <div key={item.id} className="flex min-w-0 items-center gap-2">
+          <ProductThumb item={item} size={compact ? 'size-9' : 'size-11'} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-foreground" title={item.description}>{item.description}</p>
+            {item.sku && <p className="truncate text-[10px] text-muted-foreground">{item.sku}</p>}
           </div>
+          <QuantityTag item={item} />
         </div>
       ))}
-      {hidden > 0 && <p className="text-[11px] text-muted-foreground">+{hidden} producto{hidden === 1 ? '' : 's'} más</p>}
+      {hidden > 0 && <p className="pl-11 text-[11px] text-muted-foreground">+{hidden} producto{hidden === 1 ? '' : 's'} más</p>}
     </div>
   );
 }
@@ -198,11 +192,11 @@ function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
   const toneClass = notice.tone === 'error'
     ? 'border-destructive/30 bg-destructive/5 text-destructive'
     : notice.tone === 'warning'
-      ? 'border-amber-200 bg-amber-50 text-amber-950'
+      ? 'border-orange-200 bg-orange-50 text-orange-950'
       : 'border-emerald-200 bg-emerald-50 text-emerald-700';
   const Icon = notice.tone === 'success' ? CheckCircle2 : AlertCircle;
   return (
-    <div className={`flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm ${toneClass}`} role="status">
+    <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${toneClass}`} role="status">
       <Icon className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <p>{notice.message}</p>
@@ -243,41 +237,38 @@ function NextStepButton({
   if (step.kind === 'print') {
     const printed = labelWasPrinted(order);
     return (
-      <div className={cn('inline-flex flex-col items-start gap-0.5', full && 'w-full')}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size="sm"
-              variant={printed ? 'outline' : 'default'}
-              className={cn(width, printed && 'opacity-60 hover:opacity-85')}
-              onClick={onPrint}
-              disabled={busy}
-            >
-              {busy ? <Loader2 className="animate-spin" /> : <Printer />}
-              {step.label}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
-        </Tooltip>
-        {printed && <span className="text-[10px] font-medium text-emerald-700">Impresa</span>}
-      </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="sm"
+            variant={printed ? 'outline' : 'default'}
+            className={cn(width, printed && 'text-emerald-700 hover:text-emerald-800')}
+            onClick={onPrint}
+            disabled={busy}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : printed ? <CheckCircle2 /> : <Printer />}
+            {step.label}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{labelPrintTooltip(order)}</TooltipContent>
+      </Tooltip>
     );
   }
   if (step.kind === 'ready') {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button size="sm" className={width} onClick={canDispatch ? onReady : onOpen} disabled={busy}>
+          <Button size="sm" variant="secondary" className={cn(width, 'border border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100')} onClick={canDispatch ? onReady : onOpen} disabled={busy}>
             {busy ? <Loader2 className="animate-spin" /> : <PackageCheck />}
             {canDispatch ? 'Marcar listo' : 'Solo lectura'}
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{canDispatch ? 'Confirmar que el pedido está empacado y habilitar la etiqueta de Falabella.' : 'Tu perfil es de solo lectura.'}</TooltipContent>
+        <TooltipContent>{canDispatch ? 'Confirmar que está empacado y habilitar la etiqueta de Falabella.' : 'Tu perfil es de solo lectura.'}</TooltipContent>
       </Tooltip>
     );
   }
   return (
-    <Button size="sm" variant="outline" className={width} onClick={onOpen}>
+    <Button size="sm" variant="ghost" className={cn(width, 'text-muted-foreground')} onClick={onOpen}>
       {step.kind === 'wait' ? step.label : 'Ver detalle'}
     </Button>
   );
@@ -292,7 +283,6 @@ export default function BandejaLogistica() {
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
   const [urgency, setUrgency] = useState<LogisticsUrgency | null>(null);
-  const [companyId, setCompanyId] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
   const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
@@ -303,23 +293,17 @@ export default function BandejaLogistica() {
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
 
-  const filterKey = [stage, channelCode, urgency || '', companyId, search].join('|');
+  const filterKey = [stage, channelCode, urgency || '', search].join('|');
   const offset = page.key === filterKey ? page.offset : 0;
   const filters = {
     stage,
     channelCode: channelCode === 'all' ? undefined : channelCode,
     urgency: stage === 'shipped' || !urgency ? undefined : urgency,
-    companyId: companyId === 'all' ? undefined : Number(companyId),
     search: search || undefined,
     limit: PAGE_SIZE,
     offset,
   };
 
-  const companiesQuery = useQuery({
-    queryKey: ['order-companies'],
-    queryFn: () => api.listCompanies(),
-    staleTime: 5 * 60_000,
-  });
   const inboxQuery = useQuery({
     queryKey: ['logistics-inbox', filters],
     queryFn: () => api.listLogisticsInbox(filters) as Promise<InboxResponse>,
@@ -329,25 +313,17 @@ export default function BandejaLogistica() {
   });
 
   const now = new Date();
-  const companies = (Array.isArray(companiesQuery.data) ? companiesQuery.data : []) as Company[];
   const orders = inboxQuery.data?.orders || [];
   const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY };
   const urgencyCounts = counts.urgency || EMPTY_URGENCY;
   const openCount = urgencyCounts.overdue + urgencyCounts.today + urgencyCounts.tomorrow + urgencyCounts.later;
   const totalCount = inboxQuery.data?.totalCount || 0;
   const loading = inboxQuery.isPending && !inboxQuery.data;
-  const activeStage = LOGISTICS_STAGES.find((tab) => tab.value === stage) || LOGISTICS_STAGES[0];
   const printableVisible = orders.filter(canPrintLogisticsLabel);
   const readyCandidates = orders.filter(canMarkFalabellaReady);
   const selectedOrders = labelSelection ? printableVisible.filter((order) => labelSelection.has(order.id)) : [];
   const unprintedVisible = printableVisible.filter((order) => !labelWasPrinted(order));
   const allSelected = printableVisible.length > 0 && selectedOrders.length === printableVisible.length;
-  const sellerCounts = Object.values(orders.reduce<Record<string, { name: string; count: number }>>((acc, order) => {
-    const key = String(order.companyId ?? order.companyName);
-    acc[key] ||= { name: sellerShortName(order.companyName), count: 0 };
-    acc[key].count += 1;
-    return acc;
-  }, {})).sort((left, right) => right.count - left.count);
   const updatedAt = inboxQuery.dataUpdatedAt ? new Date(inboxQuery.dataUpdatedAt) : null;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
@@ -479,54 +455,12 @@ export default function BandejaLogistica() {
   const pageStart = totalCount ? offset + 1 : 0;
   const pageEnd = Math.min(offset + orders.length, totalCount);
   const emptyCopy = logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency);
+  const refreshing = syncMutation.isPending || inboxQuery.isFetching;
 
   return (
-    <div className="space-y-4">
-      <section aria-label="Filtros de pedidos">
-        <div className="grid gap-2 md:grid-cols-[220px_minmax(0,1fr)_160px]">
-          <Select value={companyId} onValueChange={setCompanyId}>
-            <SelectTrigger aria-label="Tienda" className="!h-12 w-full rounded-lg border-border bg-card px-3 py-0 shadow-none md:!h-10">
-              <Store className="size-4 text-muted-foreground" />
-              <SelectValue placeholder="Todas las tiendas" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas las tiendas</SelectItem>
-              {companies.map((company) => (
-                <SelectItem key={company.id} value={String(company.id)}>{companyLabel(company)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Buscar pedido, cliente o SKU"
-              aria-label="Buscar pedidos"
-              className="h-12 rounded-lg border-border bg-card py-0 pl-10 pr-4 shadow-none md:h-10"
-            />
-          </div>
-          <Button size="lg" className="h-12 w-full rounded-lg px-4 font-semibold md:h-10" onClick={refresh} disabled={syncMutation.isPending || inboxQuery.isFetching}>
-            {syncMutation.isPending || inboxQuery.isFetching ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {syncMutation.isPending ? 'Sincronizando…' : canSync ? 'Sincronizar' : 'Actualizar'}
-          </Button>
-        </div>
-      </section>
-
-      <section aria-label="Prioridad de entrega">
-        <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold text-foreground">Prioridad de entrega</h2>
-              <span className="text-xs text-muted-foreground">{openCount} sin enviar</span>
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">Pendientes y listos de Falabella, Ripley y ventas manuales. Toca una tarjeta para filtrar.</p>
-          </div>
-          <span className="text-[11px] text-muted-foreground/80">
-            {updatedAt ? `Actualizado ${formatLogisticsDateTime(updatedAt.toISOString())}` : 'Cargando…'}
-          </span>
-        </div>
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+    <div className="space-y-3">
+      <section aria-label="Prioridad de entrega" className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1" role="group" aria-label="Prioridad de entrega">
           {LOGISTICS_URGENCIES.map((item) => {
             const active = urgency === item.value && stage !== 'shipped';
             const count = urgencyCounts[item.value];
@@ -536,44 +470,71 @@ export default function BandejaLogistica() {
                 type="button"
                 aria-pressed={active}
                 aria-label={`${item.label}: ${count}`}
+                title={active ? 'Quitar filtro' : item.description}
                 disabled={stage === 'shipped'}
                 onClick={() => setUrgency((current) => current === item.value ? null : item.value)}
                 className={cn(
-                  'rounded-xl border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60',
-                  item.className,
-                  active ? 'ring-2 ring-foreground/70 ring-offset-1' : 'hover:brightness-[0.98]',
+                  'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-50',
+                  active ? cn('ring-1', item.activeClass) : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-sm font-medium">{item.label}</span>
-                  <span className="text-xl font-semibold tabular-nums">{count}</span>
-                </div>
-                <p className="mt-1 text-xs opacity-75">{active ? 'Filtro activo · toca para quitar' : item.description}</p>
+                <span className={cn('size-2 rounded-full', item.dotClass)} aria-hidden="true" />
+                <span className="font-medium">{item.label}</span>
+                <span className={cn('font-semibold tabular-nums', count === 0 && !active && 'opacity-50')}>{count}</span>
               </button>
             );
           })}
+          <span className="hidden px-2 text-xs text-muted-foreground xl:inline">{openCount} sin enviar</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 lg:justify-end">
+          <span className="text-[11px] text-muted-foreground">
+            {updatedAt ? `Actualizado ${formatLogisticsDateTime(updatedAt.toISOString())}` : 'Cargando…'}
+          </span>
+          <Button size="sm" variant="outline" onClick={refresh} disabled={refreshing}>
+            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {syncMutation.isPending ? 'Sincronizando…' : canSync ? 'Sincronizar' : 'Actualizar'}
+          </Button>
         </div>
       </section>
 
+      <div role="tablist" aria-label="Flujo de pedidos" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+        {LOGISTICS_STAGES.map((tab) => {
+          const active = stage === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => changeStage(tab.value)}
+              className={cn(
+                'flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition',
+                active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <span className="truncate">{tab.label}</span>
+              <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums', active ? tab.badgeClass : 'bg-background text-muted-foreground')}>
+                {counts[tab.value]}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {selectionMode && (
-        <div className="flex flex-col gap-3 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <Checkbox checked={allSelected} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas disponibles" className="mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold">{selectedOrders.length} de {printableVisible.length} etiquetas seleccionadas</p>
-              <p className="text-xs text-sky-800">
-                {unprintedVisible.length
-                  ? `${unprintedVisible.length} sin imprimir marcadas por defecto. Las impresas quedan sin marcar.`
-                  : 'Todas ya fueron impresas. Marca únicamente las que quieras reimprimir.'}
-              </p>
-            </div>
+        <div className="flex flex-col gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-950 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Checkbox checked={allSelected} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas disponibles" />
+            <p className="text-sm">
+              <span className="font-semibold">{selectedOrders.length} de {printableVisible.length}</span> etiquetas seleccionadas
+              <span className="ml-2 text-xs text-indigo-800">
+                {unprintedVisible.length ? `· ${unprintedVisible.length} sin imprimir` : '· todas ya impresas'}
+              </span>
+            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setLabelSelection(new Set(unprintedVisible.map((order) => order.id)))} disabled={printMutation.isPending || !unprintedVisible.length}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setLabelSelection(new Set(unprintedVisible.map((order) => order.id)))} disabled={printMutation.isPending || !unprintedVisible.length}>
               Solo no impresas
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={toggleAllLabels} disabled={printMutation.isPending}>
-              {allSelected ? 'Quitar todas' : 'Seleccionar todas'}
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setLabelSelection(null)} disabled={printMutation.isPending}>
               Cancelar
@@ -588,80 +549,14 @@ export default function BandejaLogistica() {
 
       {notice && <InboxStatusNotice notice={notice} />}
 
-      <section aria-label="Estado del pedido">
-        <div className="mb-2">
-          <h2 className="text-sm font-semibold text-foreground">Estado del pedido</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Selecciona la etapa operativa que quieres revisar.</p>
-        </div>
-        <div className="rounded-xl bg-muted p-1">
-          <div role="tablist" aria-label="Flujo de pedidos" className="grid grid-cols-3 gap-1">
-            {LOGISTICS_STAGES.map((tab) => {
-              const active = stage === tab.value;
-              return (
-                <button
-                  key={tab.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => changeStage(tab.value)}
-                  className={cn(
-                    'rounded-lg px-3 py-2.5 text-left text-sm transition',
-                    active ? tab.activeClass : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{tab.label}</p>
-                      <p className="mt-0.5 truncate text-xs opacity-80">{tab.description}</p>
-                    </div>
-                    <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold', active ? tab.badgeClass : 'bg-background text-muted-foreground')}>
-                      {counts[tab.value]}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-card py-20 text-sm text-muted-foreground">
+        <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-card py-20 text-sm text-muted-foreground">
           <Loader2 className="size-5 animate-spin" /> Cargando pedidos…
         </div>
       ) : (
-        <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Bandeja de pedidos" aria-busy={inboxQuery.isFetching}>
-          <div className="border-b border-border bg-muted/30 px-4 py-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">{activeStage.label}</p>
-                <p className="text-xs text-muted-foreground">{activeStage.description}</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">
-                  Mostrando {logisticsCountLabel(stage, orders.length)}
-                </span>
-                {stage !== 'shipped' && printableVisible.length > 0 && !selectionMode && (
-                  <Button size="sm" onClick={startLabelSelection} disabled={printMutation.isPending}>
-                    <Printer /> Imprimir etiquetas
-                  </Button>
-                )}
-                {stage === 'pending' && canDispatch && readyCandidates.length > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="sm" variant="outline" onClick={() => setBulkReady(readyCandidates)}>
-                        <PackageCheck /> Marcar todos ({readyCandidates.length})
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Marcar listos para enviar todos los pedidos Falabella visibles.</TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="border-b border-border bg-background px-4 py-2.5">
-            <div role="group" aria-label="Canal" className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1">
+        <section className="overflow-hidden rounded-lg border border-border bg-card" aria-label="Bandeja de pedidos" aria-busy={inboxQuery.isFetching}>
+          <div className="flex flex-col gap-2 border-b border-border px-3 py-2 md:flex-row md:items-center md:justify-between">
+            <div role="group" aria-label="Canal" className="flex max-w-full gap-1 overflow-x-auto">
               {LOGISTICS_CHANNELS.map((channel) => {
                 const active = channelCode === channel.value;
                 return (
@@ -671,32 +566,45 @@ export default function BandejaLogistica() {
                     aria-pressed={active}
                     onClick={() => { setChannelCode(channel.value); setLabelSelection(null); }}
                     className={cn(
-                      'inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition',
-                      active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition',
+                      active
+                        ? channel.value === 'all' ? 'border-foreground bg-foreground text-background' : logisticsChannelClass(channel.value)
+                        : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
                     )}
                   >
-                    {channel.value !== 'all' && (
-                      <span className={cn('size-2 rounded-full border', logisticsChannelClass(channel.value))} aria-hidden="true" />
-                    )}
+                    {channel.value !== 'all' && <span className={cn('size-1.5 rounded-full', logisticsChannelDotClass(channel.value))} aria-hidden="true" />}
                     {channel.label}
                   </button>
                 );
               })}
             </div>
-            {sellerCounts.length > 0 && (
-              <div className="mt-2 flex min-w-0 gap-1 overflow-x-auto pb-0.5" aria-label="Pedidos por tienda">
-                {sellerCounts.map((seller) => (
-                  <span
-                    key={seller.name}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5 text-[10px] leading-4"
-                    title={`${seller.name}: ${seller.count} pedido${seller.count === 1 ? '' : 's'}`}
-                  >
-                    <span className="max-w-28 truncate text-muted-foreground">{seller.name}</span>
-                    <span className="font-semibold tabular-nums text-foreground/70">{seller.count}</span>
-                  </span>
-                ))}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  placeholder="Buscar pedido"
+                  aria-label="Buscar pedidos"
+                  className="h-8 w-44 rounded-md border-border bg-background pl-8 text-xs shadow-none"
+                />
               </div>
-            )}
+              {stage !== 'shipped' && printableVisible.length > 0 && !selectionMode && (
+                <Button size="sm" variant="outline" onClick={startLabelSelection} disabled={printMutation.isPending}>
+                  <Printer /> Imprimir etiquetas
+                </Button>
+              )}
+              {stage === 'pending' && canDispatch && readyCandidates.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="sm" variant="outline" onClick={() => setBulkReady(readyCandidates)}>
+                      <PackageCheck /> Marcar todos ({readyCandidates.length})
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Marcar listos para enviar todos los pedidos Falabella visibles.</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
 
           <div className="divide-y divide-border/70 md:hidden">
@@ -706,44 +614,27 @@ export default function BandejaLogistica() {
               const printable = canPrintLogisticsLabel(order);
               const selected = Boolean(labelSelection?.has(order.id));
               return (
-                <article key={order.id} className={cn('px-3 py-3 transition-colors', selected ? 'bg-primary/5' : 'hover:bg-muted/30')}>
-                  <div className="flex items-center justify-between gap-3">
+                <article key={order.id} className={cn('px-3 py-2.5', selected && 'bg-indigo-50/60')}>
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       {selectionMode && printable && (
                         <Checkbox checked={selected} onCheckedChange={() => toggleLabel(order)} aria-label={`Seleccionar etiqueta del pedido ${order.externalOrderNumber}`} />
                       )}
-                      <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
-                        {orderUrgency === 'overdue' && stage !== 'shipped' && <AlertCircle className="size-3.5 shrink-0 text-rose-600" />}
-                        <span className="truncate">{stage === 'shipped' ? formatLogisticsDateTime(order.updatedAt) : logisticsDeadlineLabel(order, now)}</span>
-                      </p>
-                    </div>
-                    <Badge variant="outline" className={cn('rounded-md', logisticsChannelClass(order.channelCode))}>{logisticsChannelLabel(order.channelCode)}</Badge>
-                  </div>
-                  <div className="mt-2 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <button type="button" onClick={() => openOrder(order)} className="font-mono text-sm font-semibold text-foreground hover:underline">
+                      <button type="button" onClick={() => openOrder(order)} className="truncate font-mono text-sm font-semibold text-foreground hover:underline">
                         {order.externalOrderNumber || order.externalOrderId}
                       </button>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customer?.name || 'Sin cliente'} · {sellerShortName(order.companyName)}</p>
+                      <span className={cn('size-2 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} title={logisticsChannelLabel(order.channelCode)} />
                     </div>
-                    <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{formatMoney(order.total, order.currency)}</p>
+                    {stage === 'shipped'
+                      ? <span className="text-xs text-muted-foreground">{formatLogisticsDateTime(order.updatedAt)}</span>
+                      : <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', meta.pillClass)}>{logisticsDeadlineLabel(order, now)}</span>}
                   </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {order.customer?.name || 'Sin cliente'} · {sellerShortName(order.companyName)} · {logisticsDeliveryLabel(order)}
+                  </p>
                   <div className="mt-2"><OrderProducts items={order.items} compact /></div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted-foreground">
-                    <span>{logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'Sin fecha de ingreso'}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{logisticsDeliveryLabel(order)}</span>
-                    {stage !== 'shipped' && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className={cn('rounded-full px-1.5 py-0.5 font-medium', meta.pillClass)}>{meta.label}</span>
-                      </>
-                    )}
-                  </div>
-                  <div className="mt-2.5 flex items-center justify-between gap-3">
-                    <button type="button" onClick={() => openOrder(order)} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-                      Ver detalles <ArrowRight className="size-3" />
-                    </button>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">{logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'Sin fecha de ingreso'}</span>
                     <NextStepButton
                       order={order}
                       busy={busyOrderId === order.id && (printMutation.isPending || readyMutation.isPending)}
@@ -762,16 +653,15 @@ export default function BandejaLogistica() {
           <div className="hidden md:block">
             <table className="w-full table-fixed text-sm">
               <colgroup>
-                <col className="w-[18%]" />
-                <col className="w-[30%]" />
-                <col className="w-[11%]" />
-                <col className="w-[15%]" />
+                <col className="w-[19%]" />
+                <col className="w-[37%]" />
+                <col className="w-[17%]" />
+                <col className="w-[13%]" />
                 <col className="w-[14%]" />
-                <col className="w-[12%]" />
               </colgroup>
-              <thead className="bg-background">
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="p-3 font-medium">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <th className="px-3 py-2 font-medium">
                     <span className="inline-flex items-center gap-2">
                       {selectionMode && printableVisible.length > 0 && (
                         <Checkbox
@@ -780,65 +670,61 @@ export default function BandejaLogistica() {
                           aria-label="Seleccionar todas las etiquetas"
                         />
                       )}
-                      Orden de venta
+                      Pedido
                     </span>
                   </th>
-                  <th className="p-3 font-medium">Productos</th>
-                  <th className="p-3 font-medium">Ingresó</th>
-                  <th className="p-3 font-medium">{stage === 'shipped' ? 'Enviado' : 'Entrega'}</th>
-                  <th className="p-3 font-medium">Tienda</th>
-                  <th className="p-3 font-medium">Siguiente paso</th>
+                  <th className="px-3 py-2 font-medium">Productos</th>
+                  <th className="px-3 py-2 font-medium">{stage === 'shipped' ? 'Enviado' : 'Entrega'}</th>
+                  <th className="px-3 py-2 font-medium">Tienda</th>
+                  <th className="px-3 py-2 text-right font-medium">Acción</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border/70">
                 {orders.map((order) => {
                   const orderUrgency = logisticsUrgency(order, now);
                   const meta = logisticsUrgencyMeta(orderUrgency);
                   const printable = canPrintLogisticsLabel(order);
                   const selected = Boolean(labelSelection?.has(order.id));
                   return (
-                    <tr key={order.id} className={cn('border-t border-border/70 transition-colors', selected ? 'bg-primary/5' : 'hover:bg-muted/30')}>
-                      <td className="p-3 align-top">
-                        <div className="flex items-start gap-2">
+                    <tr key={order.id} className={cn('transition-colors', selected ? 'bg-indigo-50/60' : 'hover:bg-muted/30')}>
+                      <td className="px-3 py-2 align-middle">
+                        <div className="flex items-center gap-2">
                           {selectionMode && printable && (
                             <Checkbox
                               checked={selected}
                               onCheckedChange={() => toggleLabel(order)}
                               aria-label={`Seleccionar etiqueta del pedido ${order.externalOrderNumber}`}
-                              className="mt-0.5"
                             />
                           )}
                           <div className="min-w-0">
-                            <button type="button" onClick={() => openOrder(order)} className="block max-w-full truncate font-mono text-xs font-semibold text-foreground underline-offset-2 hover:underline">
-                              {order.externalOrderNumber || order.externalOrderId}
-                            </button>
-                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{order.customer?.name || 'Sin cliente'}</p>
-                            <Badge variant="outline" className={cn('mt-1.5 rounded-md text-[10px]', logisticsChannelClass(order.channelCode))}>
-                              {logisticsChannelLabel(order.channelCode)}
-                            </Badge>
+                            <div className="flex items-center gap-1.5">
+                              <button type="button" onClick={() => openOrder(order)} className="truncate font-mono text-xs font-semibold text-foreground underline-offset-2 hover:underline">
+                                {order.externalOrderNumber || order.externalOrderId}
+                              </button>
+                              <span className={cn('size-2 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} title={logisticsChannelLabel(order.channelCode)} aria-label={logisticsChannelLabel(order.channelCode)} />
+                            </div>
+                            <p className="truncate text-[11px] text-muted-foreground">{order.customer?.name || 'Sin cliente'}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="p-3 align-top"><OrderProducts items={order.items} compact /></td>
-                      <td className="p-3 align-top text-xs">
-                        <span className="font-medium text-foreground">{logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'Sin fecha'}</span>
-                        <span className="mt-0.5 block text-[11px] text-muted-foreground">{formatLogisticsDateTime(order.createdAt || order.orderedAt)}</span>
-                      </td>
-                      <td className="p-3 align-top text-xs">
+                      <td className="px-3 py-2 align-middle"><OrderProducts items={order.items} compact /></td>
+                      <td className="px-3 py-2 align-middle text-xs">
                         {stage === 'shipped' ? (
-                          <span className="text-muted-foreground">{formatLogisticsDateTime(order.updatedAt)}</span>
+                          <span className="text-foreground">{formatLogisticsDateTime(order.updatedAt)}</span>
                         ) : (
-                          <span className={cn('inline-flex max-w-full truncate rounded-full px-2.5 py-1 text-xs font-medium', meta.pillClass)}>
+                          <span className={cn('inline-flex max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium', meta.pillClass)}>
                             {logisticsDeadlineLabel(order, now)}
                           </span>
                         )}
-                        <span className="mt-1 block text-[11px] text-muted-foreground">{logisticsDeliveryLabel(order)}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground" title={formatLogisticsDateTime(order.createdAt || order.orderedAt)}>
+                          Ingresó {logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'sin fecha'}
+                        </span>
                       </td>
-                      <td className="p-3 align-top text-xs">
+                      <td className="px-3 py-2 align-middle text-xs">
                         <p className="truncate font-medium text-foreground" title={order.companyName}>{sellerShortName(order.companyName)}</p>
-                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{formatMoney(order.total, order.currency)}</p>
+                        <p className="truncate text-[11px] text-muted-foreground">{logisticsDeliveryLabel(order)}</p>
                       </td>
-                      <td className="p-3 align-top">
+                      <td className="px-3 py-2 text-right align-middle">
                         <NextStepButton
                           order={order}
                           busy={busyOrderId === order.id && (printMutation.isPending || readyMutation.isPending)}
@@ -852,21 +738,21 @@ export default function BandejaLogistica() {
                   );
                 })}
                 {orders.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-14 text-center text-sm text-muted-foreground">{emptyCopy}</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-14 text-center text-sm text-muted-foreground">{emptyCopy}</td></tr>
                 )}
               </tbody>
             </table>
           </div>
 
           {totalCount > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
               <span>{pageStart}–{pageEnd} de {logisticsCountLabel(stage, totalCount)}</span>
               {totalCount > PAGE_SIZE && (
                 <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" disabled={offset === 0 || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: Math.max(0, offset - PAGE_SIZE) }); setLabelSelection(null); }}>
+                  <Button size="sm" variant="ghost" disabled={offset === 0 || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: Math.max(0, offset - PAGE_SIZE) }); setLabelSelection(null); }}>
                     <ChevronLeft /> Anterior
                   </Button>
-                  <Button size="sm" variant="outline" disabled={pageEnd >= totalCount || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: offset + PAGE_SIZE }); setLabelSelection(null); }}>
+                  <Button size="sm" variant="ghost" disabled={pageEnd >= totalCount || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: offset + PAGE_SIZE }); setLabelSelection(null); }}>
                     Siguiente <ChevronRight />
                   </Button>
                 </div>
@@ -884,7 +770,7 @@ export default function BandejaLogistica() {
               {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} Falabella visible${bulkReady.length === 1 ? '' : 's'} en Pendientes.` : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <div className="rounded-md bg-orange-50 px-3 py-2.5 text-sm text-orange-900">
             Confirma que todos estos pedidos ya están empacados. Falabella habilitará sus etiquetas de envío.
           </div>
           <DialogFooter>
@@ -906,11 +792,11 @@ export default function BandejaLogistica() {
                   <DialogTitle>Confirmar pedido listo para envío</DialogTitle>
                   <DialogDescription>Pedido {detail.externalOrderNumber} · {sellerShortName(detail.companyName)}</DialogDescription>
                 </DialogHeader>
-                <div className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                <div className="flex gap-3 rounded-md border border-orange-200 bg-orange-50 p-4 text-orange-900">
                   <PackageCheck className="mt-0.5 size-5 shrink-0" />
                   <div>
                     <p className="font-semibold">Confirma que todo el pedido está empacado</p>
-                    <p className="mt-1 text-sm text-amber-800">
+                    <p className="mt-1 text-sm text-orange-800">
                       Falabella cambiará a listo para envío todos los productos de esta orden y descontará el stock. No lo hagas si falta algún producto por empacar.
                     </p>
                   </div>
@@ -945,7 +831,7 @@ export default function BandejaLogistica() {
               <>
                 <DialogHeader>
                   <div className="flex flex-wrap items-center gap-2 pr-8">
-                    <DialogTitle className="font-mono">Pedido {detail.externalOrderNumber || detail.externalOrderId}</DialogTitle>
+                    <DialogTitle className="font-mono">{detail.externalOrderNumber || detail.externalOrderId}</DialogTitle>
                     <Badge variant="outline" className={cn('rounded-md', stageBadge(detail).className)}>{stageBadge(detail).label}</Badge>
                     <Badge variant="outline" className={cn('rounded-md', logisticsChannelClass(detail.channelCode))}>{logisticsChannelLabel(detail.channelCode)}</Badge>
                   </div>
@@ -953,19 +839,19 @@ export default function BandejaLogistica() {
                 </DialogHeader>
 
                 <div className={cn(
-                  'rounded-md border p-4',
-                  detailShipped ? 'border-emerald-200 bg-emerald-50' : detailUrgency === 'overdue' ? 'border-rose-200 bg-rose-50' : detailUrgency === 'today' ? 'border-amber-200 bg-amber-50' : 'border-border bg-muted/30',
+                  'rounded-md border p-3',
+                  detailShipped ? 'border-emerald-200 bg-emerald-50' : detailUrgency === 'overdue' ? 'border-rose-200 bg-rose-50' : detailUrgency === 'today' ? 'border-orange-200 bg-orange-50' : 'border-border bg-muted/30',
                 )}>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {detailShipped ? 'Estado de entrega' : 'Límite para entregar al operador logístico'}
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {detailShipped ? 'Estado de entrega' : 'Límite de entrega'}
                   </p>
                   <p className={cn(
-                    'mt-1 text-xl font-semibold',
-                    detailShipped ? 'text-emerald-700' : detailUrgency === 'overdue' ? 'text-rose-700' : detailUrgency === 'today' ? 'text-amber-700' : 'text-foreground',
+                    'mt-0.5 text-lg font-semibold',
+                    detailShipped ? 'text-emerald-700' : detailUrgency === 'overdue' ? 'text-rose-700' : detailUrgency === 'today' ? 'text-orange-700' : 'text-foreground',
                   )}>
                     {detailShipped ? 'Enviado' : logisticsDeadlineLabel(detail, now)}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {detailShipped
                       ? `Última actualización: ${formatLogisticsDateTime(detail.updatedAt)}`
                       : detail.promisedShippingAt
@@ -974,24 +860,21 @@ export default function BandejaLogistica() {
                   </p>
                 </div>
 
-                <section className="rounded-md border border-border p-4">
+                <section className="rounded-md border border-border p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground">Flujo de despacho</h3>
-                      <p className="mt-0.5 text-xs text-muted-foreground">Completa los pasos en orden.</p>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">Flujo de despacho</h3>
                     <span className="text-xs font-medium text-muted-foreground">
                       {logisticsFlowSteps(detail).filter((step) => step.state === 'done').length} de 3
                     </span>
                   </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
                     {logisticsFlowSteps(detail).map((step, index) => (
                       <div
                         key={step.label}
                         className={cn(
-                          'rounded-md border px-2 py-2',
+                          'rounded-md border px-2 py-1.5',
                           step.state === 'done' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                            : step.state === 'current' ? 'border-amber-200 bg-amber-50 text-amber-700'
+                            : step.state === 'current' ? 'border-orange-200 bg-orange-50 text-orange-700'
                               : 'border-border bg-muted/30 text-muted-foreground',
                         )}
                       >
@@ -1000,36 +883,36 @@ export default function BandejaLogistica() {
                       </div>
                     ))}
                   </div>
-                  <p className="mt-3 text-sm text-muted-foreground">{logisticsFlowCopy(detail)}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{logisticsFlowCopy(detail)}</p>
                 </section>
 
-                <dl className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-md border border-border p-4 text-sm">
+                <dl className="grid grid-cols-2 gap-x-5 gap-y-3 rounded-md border border-border p-3 text-sm">
                   <div>
                     <dt className="text-xs text-muted-foreground">Ingresó</dt>
-                    <dd className="mt-1 font-medium text-foreground">{formatLogisticsDateTime(detail.createdAt || detail.orderedAt)}</dd>
+                    <dd className="mt-0.5 font-medium text-foreground">{formatLogisticsDateTime(detail.createdAt || detail.orderedAt)}</dd>
                     <dd className="text-xs text-muted-foreground">{logisticsElapsedLabel(detail.createdAt || detail.orderedAt, now)}</dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Total</dt>
-                    <dd className="mt-1 font-semibold tabular-nums text-foreground">{formatMoney(detail.total, detail.currency)}</dd>
+                    <dd className="mt-0.5 font-semibold tabular-nums text-foreground">{formatMoney(detail.total, detail.currency)}</dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Cliente</dt>
-                    <dd className="mt-1 font-medium text-foreground">{detail.customer?.name || 'No informado'}</dd>
+                    <dd className="mt-0.5 font-medium text-foreground">{detail.customer?.name || 'No informado'}</dd>
                     {detail.customer?.phone && <dd className="text-xs text-muted-foreground">Tel. {detail.customer.phone}</dd>}
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Entrega</dt>
-                    <dd className="mt-1 font-medium text-foreground">{logisticsDeliveryLabel(detail)}</dd>
+                    <dd className="mt-0.5 font-medium text-foreground">{logisticsDeliveryLabel(detail)}</dd>
                     {(detail.shipping?.address || detail.shipping?.district) && (
                       <dd className="text-xs text-muted-foreground">{[detail.shipping?.address, detail.shipping?.district].filter(Boolean).join(', ')}</dd>
                     )}
                   </div>
                 </dl>
 
-                <section className="rounded-md border border-border p-4">
+                <section className="rounded-md border border-border p-3">
                   <h3 className="text-sm font-semibold text-foreground">Contenido · {detail.itemsCount} unidad{detail.itemsCount === 1 ? '' : 'es'}</h3>
-                  <div className="mt-3"><OrderProducts items={detail.items} /></div>
+                  <div className="mt-2"><OrderProducts items={detail.items} /></div>
                 </section>
 
                 {labelWasPrinted(detail) && (

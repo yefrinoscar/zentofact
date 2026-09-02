@@ -8,6 +8,7 @@ import {
   listLogisticsInbox,
   printLogisticsPack,
   urgencyForDeadline,
+  groupLogisticsItems,
 } from './logistics-inbox.js';
 
 test('agrupa el estado de entrega en etapas de bandeja', () => {
@@ -163,6 +164,20 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
   assert.ok(record, 'registra la impresión');
   assert.deepEqual(record.params[0], [10]);
   assert.equal(record.params[1], 'operator@zentofact.local');
+});
+
+test('agrupa líneas repetidas del mismo producto como una sola con cantidad', () => {
+  const grouped = groupLogisticsItems([
+    { id: 1, sku: 'BT-1', description: 'Bastón', quantity: 1, imageUrl: '' },
+    { id: 2, sku: 'BT-1', description: 'Bastón', quantity: 1, imageUrl: 'https://img/bt.jpg' },
+    { id: 3, sku: 'MC-2', description: 'Mochila', quantity: 2, imageUrl: '' },
+  ]);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0].quantity, 2);
+  assert.equal(grouped[0].lineCount, 2);
+  assert.equal(grouped[0].imageUrl, 'https://img/bt.jpg');
+  assert.equal(grouped[1].quantity, 2);
+  assert.equal(grouped[1].lineCount, 1);
 });
 
 test('clasifica la urgencia de entrega en hora de Lima', () => {
