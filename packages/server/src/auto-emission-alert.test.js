@@ -95,6 +95,19 @@ test('el correo nombra el pedido, los intentos y el error', () => {
   assert.match(email.text, /Sigue en cola/);
 });
 
+test('un job de Postgres (order_number) nombra el pedido en el correo', () => {
+  const email = buildFailedEmissionAlertEmail({
+    kind: 'invoice',
+    attempts: 3,
+    order_number: 'PV-ALERT-25',
+    company: 'LIMBO',
+    last_error: 'SUNAT timeout',
+    status: 'pending',
+  });
+  assert.equal(email.subject, 'Comprobante no emitido · pedido PV-ALERT-25');
+  assert.match(email.text, /PV-ALERT-25/);
+});
+
 test('el error del correo no incluye HTML crudo', () => {
   const email = buildFailedEmissionAlertEmail({
     ...invoiceJob,

@@ -44,12 +44,13 @@ export function buildFailedEmissionAlertEmail({
   companyName,
   company,
   orderNumber,
+  order_number,
   attempts,
   lastError,
   last_error,
   status,
 } = {}) {
-  const order = String(orderNumber || '').trim() || 'sin número';
+  const order = String(orderNumber || order_number || '').trim() || 'sin número';
   const companyLabel = String(companyName || company || '').trim() || 'empresa';
   const count = Number(attempts || 0);
   const error = String(lastError || last_error || 'sin detalle').trim() || 'sin detalle';
