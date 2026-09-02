@@ -20,6 +20,7 @@ import {
   canMarkFalabellaReady,
   canPrintLogisticsLabel,
   formatLogisticsDateTime,
+  groupLogisticsByUrgency,
   labelPrintTooltip,
   labelWasPrinted,
   logisticsBulkReadySummary,
@@ -43,7 +44,6 @@ import {
   productImageSrc,
   LOGISTICS_CHANNELS,
   LOGISTICS_STAGES,
-  LOGISTICS_URGENCIES,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -457,309 +457,218 @@ export default function BandejaLogistica() {
   const emptyCopy = logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency);
   const refreshing = syncMutation.isPending || inboxQuery.isFetching;
 
+  const groups = stage === 'shipped'
+    ? [{ urgency: 'later' as LogisticsUrgency, orders }]
+    : groupLogisticsByUrgency(orders, now);
+
+  const renderRow = (order: LogisticsOrder, urgencyKey: LogisticsUrgency) => {
+    const meta = logisticsUrgencyMeta(urgencyKey);
+    const printable = canPrintLogisticsLabel(order);
+    const selected = Boolean(labelSelection?.has(order.id));
+    const shipped = stage === 'shipped';
+    return (
+      <li
+        key={order.id}
+        className={cn(
+          'grid gap-x-4 gap-y-2 border-l-[3px] py-3 pl-3 pr-1 transition-colors',
+          'grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_minmax(0,0.9fr)_8rem] md:items-center',
+          shipped ? 'border-l-transparent' : meta.railClass,
+          selected ? 'bg-primary/5' : 'hover:bg-muted/40',
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {selectionMode && printable && (
+            <Checkbox checked={selected} onCheckedChange={() => toggleLabel(order)} aria-label={`Seleccionar etiqueta del pedido ${order.externalOrderNumber}`} />
+          )}
+          <div className="min-w-0">
+            <button type="button" onClick={() => openOrder(order)} className="flex max-w-full items-center gap-1.5 font-mono text-sm font-semibold underline-offset-2 hover:underline">
+              <span className={cn('size-2 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} title={logisticsChannelLabel(order.channelCode)} aria-label={logisticsChannelLabel(order.channelCode)} />
+              <span className="truncate">{order.externalOrderNumber || order.externalOrderId}</span>
+            </button>
+            <p className="truncate text-xs text-muted-foreground">
+              {order.customer?.name || 'Sin cliente'} · {sellerShortName(order.companyName)} · {logisticsDeliveryLabel(order)}
+            </p>
+          </div>
+        </div>
+        <div className="col-span-2 min-w-0 md:col-span-1"><OrderProducts items={order.items} compact /></div>
+        <div className="min-w-0 text-xs md:text-right">
+          {shipped
+            ? <p className="font-medium text-foreground">{formatLogisticsDateTime(order.updatedAt)}</p>
+            : <p className={cn('font-semibold', urgencyKey === 'later' ? 'text-foreground' : meta.textClass)}>{logisticsDeadlineLabel(order, now)}</p>}
+          <p className="text-muted-foreground">Ingresó {logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'sin fecha'}</p>
+        </div>
+        <div className="col-start-2 row-start-1 text-right md:col-start-auto md:row-start-auto">
+          <NextStepButton
+            order={order}
+            busy={busyOrderId === order.id && (printMutation.isPending || readyMutation.isPending)}
+            canDispatch={canDispatch}
+            onPrint={() => printOrders([order])}
+            onReady={() => { openOrder(order); setConfirmReady(true); }}
+            onOpen={() => openOrder(order)}
+          />
+        </div>
+      </li>
+    );
+  };
+
   return (
-    <div className="space-y-3">
-      <section aria-label="Prioridad de entrega" className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1" role="group" aria-label="Prioridad de entrega">
-          {LOGISTICS_URGENCIES.map((item) => {
-            const active = urgency === item.value && stage !== 'shipped';
-            const count = urgencyCounts[item.value];
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border">
+        <div role="tablist" aria-label="Flujo de pedidos" className="-mb-px flex gap-1">
+          {LOGISTICS_STAGES.map((tab) => {
+            const active = stage === tab.value;
             return (
               <button
-                key={item.value}
+                key={tab.value}
                 type="button"
-                aria-pressed={active}
-                aria-label={`${item.label}: ${count}`}
-                title={active ? 'Quitar filtro' : item.description}
-                disabled={stage === 'shipped'}
-                onClick={() => setUrgency((current) => current === item.value ? null : item.value)}
+                role="tab"
+                aria-selected={active}
+                onClick={() => changeStage(tab.value)}
                 className={cn(
-                  'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-50',
-                  active ? cn('ring-1', item.activeClass) : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  'flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition',
+                  active ? 'border-foreground font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
                 )}
               >
-                <span className={cn('size-2 rounded-full', item.dotClass)} aria-hidden="true" />
-                <span className="font-medium">{item.label}</span>
-                <span className={cn('font-semibold tabular-nums', count === 0 && !active && 'opacity-50')}>{count}</span>
+                {tab.label}
+                <span className={cn('rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums', active ? tab.badgeClass : 'bg-muted text-muted-foreground')}>
+                  {counts[tab.value]}
+                </span>
               </button>
             );
           })}
-          <span className="hidden px-2 text-xs text-muted-foreground xl:inline">{openCount} sin enviar</span>
         </div>
-        <div className="flex items-center justify-between gap-3 lg:justify-end">
-          <span className="text-[11px] text-muted-foreground">
-            {updatedAt ? `Actualizado ${formatLogisticsDateTime(updatedAt.toISOString())}` : 'Cargando…'}
-          </span>
-          <Button size="sm" variant="outline" onClick={refresh} disabled={refreshing}>
-            {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            {syncMutation.isPending ? 'Sincronizando…' : canSync ? 'Sincronizar' : 'Actualizar'}
-          </Button>
+        <div className="flex flex-wrap items-center gap-1.5 pb-2">
+          <div role="group" aria-label="Canal" className="flex items-center gap-1">
+            {LOGISTICS_CHANNELS.map((channel) => {
+              const active = channelCode === channel.value;
+              return (
+                <button
+                  key={channel.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => { setChannelCode(channel.value); setLabelSelection(null); }}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition',
+                    active ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  {channel.value !== 'all' && <span className={cn('size-1.5 rounded-full', logisticsChannelDotClass(channel.value))} aria-hidden="true" />}
+                  {channel.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="relative ml-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Buscar"
+              aria-label="Buscar pedidos"
+              className="h-8 w-36 rounded-md border-border bg-background pl-7 text-xs shadow-none"
+            />
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="icon-sm" variant="ghost" onClick={refresh} disabled={refreshing} aria-label={canSync ? 'Sincronizar' : 'Actualizar'}>
+                {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{canSync ? 'Sincronizar con los marketplaces' : 'Actualizar'}</TooltipContent>
+          </Tooltip>
         </div>
-      </section>
-
-      <div role="tablist" aria-label="Flujo de pedidos" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
-        {LOGISTICS_STAGES.map((tab) => {
-          const active = stage === tab.value;
-          return (
-            <button
-              key={tab.value}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => changeStage(tab.value)}
-              className={cn(
-                'flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition',
-                active ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <span className="truncate">{tab.label}</span>
-              <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums', active ? tab.badgeClass : 'bg-background text-muted-foreground')}>
-                {counts[tab.value]}
-              </span>
-            </button>
-          );
-        })}
       </div>
 
-      {selectionMode && (
-        <div className="flex flex-col gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-indigo-950 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <Checkbox checked={allSelected} onCheckedChange={toggleAllLabels} aria-label="Seleccionar todas las etiquetas disponibles" />
-            <p className="text-sm">
-              <span className="font-semibold">{selectedOrders.length} de {printableVisible.length}</span> etiquetas seleccionadas
-              <span className="ml-2 text-xs text-indigo-800">
-                {unprintedVisible.length ? `· ${unprintedVisible.length} sin imprimir` : '· todas ya impresas'}
-              </span>
-            </p>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {logisticsCountLabel(stage, totalCount)}
+          {stage !== 'shipped' && openCount > 0 && ` · ${openCount} sin enviar`}
+          {updatedAt && ` · actualizado ${formatLogisticsDateTime(updatedAt.toISOString())}`}
+        </span>
+        {stage !== 'shipped' && (printableVisible.length > 0 || readyCandidates.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setLabelSelection(new Set(unprintedVisible.map((order) => order.id)))} disabled={printMutation.isPending || !unprintedVisible.length}>
-              Solo no impresas
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setLabelSelection(null)} disabled={printMutation.isPending}>
-              Cancelar
-            </Button>
-            <Button type="button" size="sm" onClick={() => printOrders(selectedOrders)} disabled={!selectedOrders.length || printMutation.isPending}>
-              {printMutation.isPending ? <Loader2 className="animate-spin" /> : <Printer />}
-              {printMutation.isPending ? 'Preparando PDF…' : selectedOrders.length ? `Imprimir ${selectedOrders.length} en A4` : 'Imprimir en A4'}
-            </Button>
+            {selectionMode ? (
+              <>
+                <Checkbox
+                  checked={allSelected ? true : selectedOrders.length > 0 ? 'indeterminate' : false}
+                  onCheckedChange={toggleAllLabels}
+                  aria-label="Seleccionar todas las etiquetas"
+                />
+                <span className="text-foreground">{selectedOrders.length} de {printableVisible.length} etiquetas</span>
+                {unprintedVisible.length > 0 && unprintedVisible.length < printableVisible.length && (
+                  <Button size="sm" variant="ghost" onClick={() => setLabelSelection(new Set(unprintedVisible.map((order) => order.id)))} disabled={printMutation.isPending}>
+                    Solo no impresas
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setLabelSelection(null)} disabled={printMutation.isPending}>Cancelar</Button>
+                <Button size="sm" onClick={() => printOrders(selectedOrders)} disabled={!selectedOrders.length || printMutation.isPending}>
+                  {printMutation.isPending ? <Loader2 className="animate-spin" /> : <Printer />}
+                  {printMutation.isPending ? 'Preparando PDF…' : `Imprimir ${selectedOrders.length || ''} en A4`}
+                </Button>
+              </>
+            ) : (
+              <>
+                {printableVisible.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={startLabelSelection} disabled={printMutation.isPending}>
+                    <Printer /> Imprimir etiquetas
+                  </Button>
+                )}
+                {stage === 'pending' && canDispatch && readyCandidates.length > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" variant="outline" onClick={() => setBulkReady(readyCandidates)}>
+                        <PackageCheck /> Marcar todos ({readyCandidates.length})
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Marcar listos para enviar todos los pedidos Falabella visibles.</TooltipContent>
+                  </Tooltip>
+                )}
+              </>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {notice && <InboxStatusNotice notice={notice} />}
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-card py-20 text-sm text-muted-foreground">
+        <div className="flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground">
           <Loader2 className="size-5 animate-spin" /> Cargando pedidos…
         </div>
+      ) : orders.length === 0 ? (
+        <p className="py-20 text-center text-sm text-muted-foreground">{emptyCopy}</p>
       ) : (
-        <section className="overflow-hidden rounded-lg border border-border bg-card" aria-label="Bandeja de pedidos" aria-busy={inboxQuery.isFetching}>
-          <div className="flex flex-col gap-2 border-b border-border px-3 py-2 md:flex-row md:items-center md:justify-between">
-            <div role="group" aria-label="Canal" className="flex max-w-full gap-1 overflow-x-auto">
-              {LOGISTICS_CHANNELS.map((channel) => {
-                const active = channelCode === channel.value;
-                return (
-                  <button
-                    key={channel.value}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => { setChannelCode(channel.value); setLabelSelection(null); }}
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition',
-                      active
-                        ? channel.value === 'all' ? 'border-foreground bg-foreground text-background' : logisticsChannelClass(channel.value)
-                        : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
-                    )}
-                  >
-                    {channel.value !== 'all' && <span className={cn('size-1.5 rounded-full', logisticsChannelDotClass(channel.value))} aria-hidden="true" />}
-                    {channel.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={searchInput}
-                  onChange={(event) => setSearchInput(event.target.value)}
-                  placeholder="Buscar pedido"
-                  aria-label="Buscar pedidos"
-                  className="h-8 w-44 rounded-md border-border bg-background pl-8 text-xs shadow-none"
-                />
-              </div>
-              {stage !== 'shipped' && printableVisible.length > 0 && !selectionMode && (
-                <Button size="sm" variant="outline" onClick={startLabelSelection} disabled={printMutation.isPending}>
-                  <Printer /> Imprimir etiquetas
-                </Button>
-              )}
-              {stage === 'pending' && canDispatch && readyCandidates.length > 0 && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button size="sm" variant="outline" onClick={() => setBulkReady(readyCandidates)}>
-                      <PackageCheck /> Marcar todos ({readyCandidates.length})
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Marcar listos para enviar todos los pedidos Falabella visibles.</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          </div>
-
-          <div className="divide-y divide-border/70 md:hidden">
-            {orders.map((order) => {
-              const orderUrgency = logisticsUrgency(order, now);
-              const meta = logisticsUrgencyMeta(orderUrgency);
-              const printable = canPrintLogisticsLabel(order);
-              const selected = Boolean(labelSelection?.has(order.id));
-              return (
-                <article key={order.id} className={cn('px-3 py-2.5', selected && 'bg-indigo-50/60')}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {selectionMode && printable && (
-                        <Checkbox checked={selected} onCheckedChange={() => toggleLabel(order)} aria-label={`Seleccionar etiqueta del pedido ${order.externalOrderNumber}`} />
-                      )}
-                      <button type="button" onClick={() => openOrder(order)} className="truncate font-mono text-sm font-semibold text-foreground hover:underline">
-                        {order.externalOrderNumber || order.externalOrderId}
-                      </button>
-                      <span className={cn('size-2 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} title={logisticsChannelLabel(order.channelCode)} />
-                    </div>
-                    {stage === 'shipped'
-                      ? <span className="text-xs text-muted-foreground">{formatLogisticsDateTime(order.updatedAt)}</span>
-                      : <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', meta.pillClass)}>{logisticsDeadlineLabel(order, now)}</span>}
-                  </div>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {order.customer?.name || 'Sin cliente'} · {sellerShortName(order.companyName)} · {logisticsDeliveryLabel(order)}
-                  </p>
-                  <div className="mt-2"><OrderProducts items={order.items} compact /></div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-muted-foreground">{logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'Sin fecha de ingreso'}</span>
-                    <NextStepButton
-                      order={order}
-                      busy={busyOrderId === order.id && (printMutation.isPending || readyMutation.isPending)}
-                      canDispatch={canDispatch}
-                      onPrint={() => printOrders([order])}
-                      onReady={() => { openOrder(order); setConfirmReady(true); }}
-                      onOpen={() => openOrder(order)}
-                    />
-                  </div>
-                </article>
-              );
-            })}
-            {orders.length === 0 && <p className="px-4 py-14 text-center text-sm text-muted-foreground">{emptyCopy}</p>}
-          </div>
-
-          <div className="hidden md:block">
-            <table className="w-full table-fixed text-sm">
-              <colgroup>
-                <col className="w-[19%]" />
-                <col className="w-[37%]" />
-                <col className="w-[17%]" />
-                <col className="w-[13%]" />
-                <col className="w-[14%]" />
-              </colgroup>
-              <thead>
-                <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">
-                    <span className="inline-flex items-center gap-2">
-                      {selectionMode && printableVisible.length > 0 && (
-                        <Checkbox
-                          checked={allSelected ? true : selectedOrders.length > 0 ? 'indeterminate' : false}
-                          onCheckedChange={toggleAllLabels}
-                          aria-label="Seleccionar todas las etiquetas"
-                        />
-                      )}
-                      Pedido
-                    </span>
-                  </th>
-                  <th className="px-3 py-2 font-medium">Productos</th>
-                  <th className="px-3 py-2 font-medium">{stage === 'shipped' ? 'Enviado' : 'Entrega'}</th>
-                  <th className="px-3 py-2 font-medium">Tienda</th>
-                  <th className="px-3 py-2 text-right font-medium">Acción</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/70">
-                {orders.map((order) => {
-                  const orderUrgency = logisticsUrgency(order, now);
-                  const meta = logisticsUrgencyMeta(orderUrgency);
-                  const printable = canPrintLogisticsLabel(order);
-                  const selected = Boolean(labelSelection?.has(order.id));
-                  return (
-                    <tr key={order.id} className={cn('transition-colors', selected ? 'bg-indigo-50/60' : 'hover:bg-muted/30')}>
-                      <td className="px-3 py-2 align-middle">
-                        <div className="flex items-center gap-2">
-                          {selectionMode && printable && (
-                            <Checkbox
-                              checked={selected}
-                              onCheckedChange={() => toggleLabel(order)}
-                              aria-label={`Seleccionar etiqueta del pedido ${order.externalOrderNumber}`}
-                            />
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <button type="button" onClick={() => openOrder(order)} className="truncate font-mono text-xs font-semibold text-foreground underline-offset-2 hover:underline">
-                                {order.externalOrderNumber || order.externalOrderId}
-                              </button>
-                              <span className={cn('size-2 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} title={logisticsChannelLabel(order.channelCode)} aria-label={logisticsChannelLabel(order.channelCode)} />
-                            </div>
-                            <p className="truncate text-[11px] text-muted-foreground">{order.customer?.name || 'Sin cliente'}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 align-middle"><OrderProducts items={order.items} compact /></td>
-                      <td className="px-3 py-2 align-middle text-xs">
-                        {stage === 'shipped' ? (
-                          <span className="text-foreground">{formatLogisticsDateTime(order.updatedAt)}</span>
-                        ) : (
-                          <span className={cn('inline-flex max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium', meta.pillClass)}>
-                            {logisticsDeadlineLabel(order, now)}
-                          </span>
-                        )}
-                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground" title={formatLogisticsDateTime(order.createdAt || order.orderedAt)}>
-                          Ingresó {logisticsElapsedLabel(order.createdAt || order.orderedAt, now) || 'sin fecha'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 align-middle text-xs">
-                        <p className="truncate font-medium text-foreground" title={order.companyName}>{sellerShortName(order.companyName)}</p>
-                        <p className="truncate text-[11px] text-muted-foreground">{logisticsDeliveryLabel(order)}</p>
-                      </td>
-                      <td className="px-3 py-2 text-right align-middle">
-                        <NextStepButton
-                          order={order}
-                          busy={busyOrderId === order.id && (printMutation.isPending || readyMutation.isPending)}
-                          canDispatch={canDispatch}
-                          onPrint={() => printOrders([order])}
-                          onReady={() => { openOrder(order); setConfirmReady(true); }}
-                          onOpen={() => openOrder(order)}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-                {orders.length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-14 text-center text-sm text-muted-foreground">{emptyCopy}</td></tr>
+        <div className="space-y-5" aria-label="Bandeja de pedidos" aria-busy={inboxQuery.isFetching}>
+          {groups.map((group) => {
+            const meta = logisticsUrgencyMeta(group.urgency);
+            return (
+              <section key={group.urgency} aria-label={stage === 'shipped' ? 'Enviados' : meta.label}>
+                {stage !== 'shipped' && (
+                  <h2 className={cn('mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide', meta.textClass)}>
+                    {meta.label}
+                    <span className="font-mono text-[11px] font-medium opacity-70">{group.orders.length}</span>
+                  </h2>
                 )}
-              </tbody>
-            </table>
-          </div>
-
-          {totalCount > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+                <ul className="divide-y divide-border">
+                  {group.orders.map((order) => renderRow(order, group.urgency))}
+                </ul>
+              </section>
+            );
+          })}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
               <span>{pageStart}–{pageEnd} de {logisticsCountLabel(stage, totalCount)}</span>
-              {totalCount > PAGE_SIZE && (
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="ghost" disabled={offset === 0 || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: Math.max(0, offset - PAGE_SIZE) }); setLabelSelection(null); }}>
-                    <ChevronLeft /> Anterior
-                  </Button>
-                  <Button size="sm" variant="ghost" disabled={pageEnd >= totalCount || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: offset + PAGE_SIZE }); setLabelSelection(null); }}>
-                    Siguiente <ChevronRight />
-                  </Button>
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="ghost" disabled={offset === 0 || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: Math.max(0, offset - PAGE_SIZE) }); setLabelSelection(null); }}>
+                  <ChevronLeft /> Anterior
+                </Button>
+                <Button size="sm" variant="ghost" disabled={pageEnd >= totalCount || inboxQuery.isFetching} onClick={() => { setPage({ key: filterKey, offset: offset + PAGE_SIZE }); setLabelSelection(null); }}>
+                  Siguiente <ChevronRight />
+                </Button>
+              </div>
             </div>
           )}
-        </section>
+        </div>
       )}
 
       <Dialog open={Boolean(bulkReady)} onOpenChange={(open) => !open && !bulkReadyMutation.isPending && setBulkReady(null)}>

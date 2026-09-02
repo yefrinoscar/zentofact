@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canMarkFalabellaReady,
   canPrintLogisticsLabel,
+  groupLogisticsByUrgency,
   labelWasPrinted,
   logisticsBulkReadySummary,
   logisticsChannelClass,
@@ -61,6 +62,12 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-03T17:00:00.000Z' }, now), /^Mañana · /);
   assert.equal(logisticsDeadlineLabel({ promisedShippingAt: null }, now), 'Sin plazo informado');
   assert.deepEqual(LOGISTICS_URGENCIES.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana', 'Próximos']);
+  const groups = groupLogisticsByUrgency([
+    { id: 1, promisedShippingAt: '2026-09-05T17:00:00.000Z' },
+    { id: 2, promisedShippingAt: '2026-09-02T14:00:00.000Z' },
+    { id: 3, promisedShippingAt: '2026-09-02T13:00:00.000Z' },
+  ], now);
+  assert.deepEqual(groups.map((group) => [group.urgency, group.orders.length]), [['overdue', 2], ['later', 1]]);
   assert.deepEqual(LOGISTICS_STAGES.map((item) => item.label), ['Pendientes', 'Listos para enviar', 'Enviados']);
 });
 

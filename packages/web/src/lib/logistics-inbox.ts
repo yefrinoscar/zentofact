@@ -36,14 +36,24 @@ export const LOGISTICS_URGENCIES: Array<{
   label: string;
   description: string;
   dotClass: string;
-  activeClass: string;
+  railClass: string;
+  textClass: string;
   pillClass: string;
 }> = [
-  { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', dotClass: 'bg-rose-500', activeClass: 'bg-rose-50 text-rose-900 ring-rose-200', pillClass: 'bg-rose-600 text-white' },
-  { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', dotClass: 'bg-orange-400', activeClass: 'bg-orange-50 text-orange-900 ring-orange-200', pillClass: 'bg-orange-100 text-orange-800' },
-  { value: 'tomorrow', label: 'Vencen mañana', description: 'Preparar con anticipación', dotClass: 'bg-indigo-400', activeClass: 'bg-indigo-50 text-indigo-900 ring-indigo-200', pillClass: 'bg-indigo-50 text-indigo-700' },
-  { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', activeClass: 'bg-slate-100 text-slate-900 ring-slate-300', pillClass: 'bg-slate-100 text-slate-600' },
+  { value: 'overdue', label: 'Vencidos', description: 'Fuera de plazo', dotClass: 'bg-rose-500', railClass: 'border-l-rose-500', textClass: 'text-rose-700', pillClass: 'bg-rose-600 text-white' },
+  { value: 'today', label: 'Vencen hoy', description: 'Prioridad inmediata', dotClass: 'bg-orange-400', railClass: 'border-l-orange-400', textClass: 'text-orange-700', pillClass: 'bg-orange-100 text-orange-800' },
+  { value: 'tomorrow', label: 'Vencen mañana', description: 'Preparar con anticipación', dotClass: 'bg-indigo-400', railClass: 'border-l-indigo-400', textClass: 'text-indigo-700', pillClass: 'bg-indigo-50 text-indigo-700' },
+  { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', railClass: 'border-l-slate-300', textClass: 'text-slate-600', pillClass: 'bg-slate-100 text-slate-600' },
 ];
+
+// Agrupa la página visible por urgencia en el orden operativo (vencidos primero).
+export function groupLogisticsByUrgency<T extends LogisticsOrderLike>(orders: T[], now: Date) {
+  const buckets = new Map<LogisticsUrgency, T[]>(LOGISTICS_URGENCIES.map((item) => [item.value, []]));
+  for (const order of orders) buckets.get(logisticsUrgency(order, now))!.push(order);
+  return LOGISTICS_URGENCIES
+    .map((item) => ({ urgency: item.value, orders: buckets.get(item.value)! }))
+    .filter((group) => group.orders.length > 0);
+}
 
 const LIMA = 'America/Lima';
 
