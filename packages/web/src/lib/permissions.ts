@@ -55,7 +55,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
   { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'operation' },
-  { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
+  { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/bandeja', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
   { key: 'boletas', label: 'Boletas', description: 'Ver, emitir y reenviar boletas electrónicas', path: '/boletas', section: 'documents' },
   { key: 'facturas', label: 'Facturas', description: 'Ver, emitir y reenviar facturas electrónicas', path: '/facturas', section: 'documents' },
@@ -234,6 +234,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
+  if (pathname.startsWith('/bandeja')) return 'orders_inbox';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';
   if (pathname.startsWith('/boletas')) return 'boletas';

@@ -54,7 +54,9 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
 
 test('pathPermission separa el listado de notas de la anulación masiva', () => {
   assert.equal(pathPermission('/orders'), 'order_management');
+  assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/pedidos'), 'orders_inbox');
+  assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/scanner'), 'orders_scanner');
   assert.equal(pathPermission('/boletas'), 'boletas');
   assert.equal(pathPermission('/boletas/new'), 'boletas');

@@ -2,6 +2,7 @@ export const PROTECTED_PATHS = [
   '/dashboard',
   '/pagos',
   '/orders-inbox',
+  '/logistics-inbox',
   '/order-management',
   '/products',
   '/product-listings',

@@ -239,6 +239,16 @@ const apiHttp = {
     settings: { autoEmitDocuments: boolean };
     active: boolean;
   }) => req('/order-management/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  listLogisticsInbox: (filter: {
+    companyId?: number;
+    channelCode?: string;
+    stage?: 'pending' | 'ready' | 'shipped';
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/logistics-inbox${qs(filter)}`),
+  printLogisticsPack: (data: { orderIds: number[]; includePacking?: boolean }) =>
+    req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;

@@ -18,6 +18,7 @@ import AutoEmision from './routes/AutoEmision';
 import DescuentosCola from './routes/DescuentosCola';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
+import BandejaLogistica from './routes/BandejaLogistica';
 import PedidosMulticanal from './routes/PedidosMulticanal';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
@@ -51,6 +52,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/menu': {
     title: 'Menú',
     subtitle: 'Selecciona el módulo que necesitas usar.',
+  },
+  '/bandeja': {
+    title: 'Bandeja',
+    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley y manuales.',
   },
   '/pedidos': {
     title: 'Bandeja Falabella',
@@ -281,6 +286,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Pagos /></Suspense></RequirePermission>} />
+              <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
