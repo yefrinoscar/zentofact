@@ -25,6 +25,8 @@ import {
 import { buildDocumentStatsFromRows, hasCompleteDocumentStats, type DocumentStats } from '../lib/documentStats';
 import { documentDateRangeLabel, parseDocumentDateRange, type DocumentDateRange } from '../lib/documentDateRange';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
+import { CreditNoteIssueDateField } from '../components/CreditNoteIssueDateField';
+import { creditNoteIssueDatePolicy } from '../lib/creditNoteIssueDate';
 
 const DocumentOverview = lazy(() => import('../components/DocumentOverview'));
 
@@ -124,6 +126,9 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   const [retryMsg, setRetryMsg] = useState('');
   const [loadError, setLoadError] = useState('');
   const [creditNoteTarget, setCreditNoteTarget] = useState<Doc | null>(null);
+  const [creditNoteIssueDate, setCreditNoteIssueDate] = useState(
+    () => creditNoteIssueDatePolicy().defaultDate,
+  );
   const [issuingCreditNoteId, setIssuingCreditNoteId] = useState<number | null>(null);
   const [creditNoteError, setCreditNoteError] = useState('');
   const loadRequestRef = useRef(0);
@@ -299,15 +304,15 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
   };
 
   const issueCreditNote = async () => {
-    if (!creditNoteTarget) return;
+    if (!creditNoteTarget || !creditNoteIssueDate) return;
     const target = creditNoteTarget;
     setIssuingCreditNoteId(target.id);
     setRetryMsg('');
     setCreditNoteError('');
     try {
       const result = kind === 'facturas'
-        ? await api.createAndSendCreditNoteFromFactura(target.id)
-        : await api.createAndSendCreditNote(target.id);
+        ? await api.createAndSendCreditNoteFromFactura(target.id, { fechaEmision: creditNoteIssueDate })
+        : await api.createAndSendCreditNote(target.id, { fechaEmision: creditNoteIssueDate });
       if (result?.success === false) {
         throw new Error(result?.error?.message || result?.error || 'SUNAT rechazó la nota de crédito.');
       }
@@ -509,7 +514,13 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
                               )}
                               {hasAcceptedActions && canIssueCreditNote && <DropdownMenuSeparator />}
                               {hasAcceptedActions && canIssueCreditNote && !d.creditNoteId && (
-                                <DropdownMenuItem onClick={() => { setCreditNoteError(''); setCreditNoteTarget(d); }}>
+                                <DropdownMenuItem onClick={() => {
+                                  setCreditNoteError('');
+                                  setCreditNoteIssueDate(creditNoteIssueDatePolicy({
+                                    affectedDocumentDates: [d.fechaEmision],
+                                  }).defaultDate);
+                                  setCreditNoteTarget(d);
+                                }}>
                                   <FileMinus2 /> Emitir nota de crédito
                                 </DropdownMenuItem>
                               )}
@@ -605,6 +616,12 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
               Se emitirá una nota de crédito que anula la {meta.singular} {creditNoteTarget?.numeroCompleto}. ¿Continuar?
             </DialogDescription>
           </DialogHeader>
+          <CreditNoteIssueDateField
+            value={creditNoteIssueDate}
+            onChange={setCreditNoteIssueDate}
+            disabled={Boolean(issuingCreditNoteId)}
+            affectedDocumentDates={[creditNoteTarget?.fechaEmision]}
+          />
           {creditNoteError && (
             <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               <AlertCircle className="mt-0.5 size-4 shrink-0" /> {creditNoteError}
@@ -612,7 +629,7 @@ export default function Documentos({ kind }: { kind: DocumentKind }) {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreditNoteTarget(null)} disabled={Boolean(issuingCreditNoteId)}>Cancelar</Button>
-            <Button onClick={issueCreditNote} disabled={Boolean(issuingCreditNoteId)}>
+            <Button onClick={issueCreditNote} disabled={Boolean(issuingCreditNoteId) || !creditNoteIssueDate}>
               {issuingCreditNoteId ? <Loader2 className="animate-spin" /> : <FileMinus2 />} Emitir NC
             </Button>
           </DialogFooter>
