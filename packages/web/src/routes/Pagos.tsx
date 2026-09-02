@@ -42,7 +42,7 @@ import {
   isInvoiceReportFilename,
   readInvoiceReportPayload,
 } from '../lib/pagos-invoice-report';
-import { FalabellaInvoiceDialog } from '@/components/FalabellaInvoiceView';
+import { FalabellaInvoiceSheet } from '@/components/FalabellaInvoiceView';
 import { sellerShortName } from '../lib/seller-name';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
@@ -661,6 +661,7 @@ export default function Pagos() {
   const invoiceBusy = Boolean(readingInvoice);
 
   function openInvoice(id: number, orderId?: string | null) {
+    setSelected(null);
     setInvoiceId(id);
     setInvoiceOrder(orderId || null);
   }
@@ -1385,7 +1386,7 @@ export default function Pagos() {
           ) : null}
         </SheetContent>
       </Sheet>
-      <FalabellaInvoiceDialog
+      <FalabellaInvoiceSheet
         open={invoiceId != null}
         onOpenChange={(open) => {
           if (!open) {

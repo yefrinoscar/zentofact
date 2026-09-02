@@ -5,6 +5,7 @@ import {
   headerLooksLikeInvoiceReport,
   invoiceChargeAmount,
   invoiceConceptLabel,
+  invoiceLinesForItem,
   invoiceAmountInWords,
   invoiceElectronicTitle,
   invoiceImportSummary,
@@ -71,6 +72,18 @@ test('la vista de factura muestra el cobro en positivo', () => {
   assert.deepEqual(invoiceChargeAmount('factura', -14.38), { amount: 14.38, credit: false });
   assert.deepEqual(invoiceChargeAmount('factura', -4561.09), { amount: 4561.09, credit: false });
   assert.deepEqual(invoiceChargeAmount('nota_credito', 9), { amount: 9, credit: true });
+});
+
+test('el ítem de la factura deja solo esas líneas', () => {
+  const lines = [
+    { concept: 'commission', orderNumber: '1' },
+    { concept: 'logistics', orderNumber: '1' },
+    { concept: 'commission', orderNumber: '2' },
+  ];
+  assert.equal(invoiceLinesForItem(lines, 'commission').length, 2);
+  assert.equal(invoiceLinesForItem(lines, 'logistics').length, 1);
+  assert.equal(invoiceLinesForItem(lines, '').length, 3);
+  assert.deepEqual(invoiceLinesForItem(null, 'commission'), []);
 });
 
 test('lee el InvoiceReport xlsx y rechaza el estado de cuenta', async () => {
