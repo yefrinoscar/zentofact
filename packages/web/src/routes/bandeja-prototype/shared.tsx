@@ -98,7 +98,7 @@ export function groupByUrgency(orders: LogisticsOrder[], now: Date) {
 
 export function ProductThumb({ item, className = 'size-10' }: { item: LogisticsItem; className?: string }) {
   const [failed, setFailed] = useState(false);
-  const src = productImageSrc(item.imageUrl, item.shopSku);
+  const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
   return (
     <span className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted', className)}>
       <ImageIcon className="size-3.5 text-muted-foreground/40" />

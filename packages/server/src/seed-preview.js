@@ -576,11 +576,12 @@ async function ensureClients(companies) {
 
 function limaNoonToday(now = new Date()) {
   const lima = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  // 23:59 Lima del día en curso, para que “vencen hoy” no se vuelva vencido a la tarde.
   return new Date(Date.UTC(
     lima.getUTCFullYear(),
     lima.getUTCMonth(),
-    lima.getUTCDate(),
-    17, 0, 0,
+    lima.getUTCDate() + 1,
+    4, 59, 0,
   ));
 }
 
