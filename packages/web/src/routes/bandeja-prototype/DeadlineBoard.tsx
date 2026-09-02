@@ -3,11 +3,7 @@
 import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import {
-  logisticsUrgency,
-  parseLogisticsDate,
-  type LogisticsStage,
-} from '../../lib/logistics-inbox';
+import { type LogisticsStage } from '../../lib/logistics-inbox';
 import { Button } from '../../components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import {
@@ -15,45 +11,10 @@ import {
   EmptyState,
   PrintGroupButton,
   StageTabs,
+  buildDeadlineColumns,
   type BandejaView,
   type LogisticsOrder,
 } from './shared';
-
-const LIMA = 'America/Lima';
-
-function limaDateKey(date: Date) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: LIMA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
-}
-
-function datePillLabel(key: string, now: Date) {
-  const [year, month, day] = key.split('-').map(Number);
-  if (!year || !month || !day) return key;
-  return new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'UTC',
-    day: 'numeric',
-    month: 'long',
-    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
-  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
-}
-
-function orderDeadlineKey(order: LogisticsOrder, now: Date) {
-  const deadline = parseLogisticsDate(order.promisedShippingAt);
-  if (!deadline) return 'no-date';
-  const urgency = logisticsUrgency(order, now);
-  if (urgency === 'overdue') return 'overdue';
-  if (urgency === 'today') return 'today';
-  if (urgency === 'tomorrow') return 'tomorrow';
-  return limaDateKey(deadline);
-}
-
-function deadlineTabLabel(key: string, now: Date) {
-  if (key === 'all') return 'Todos';
-  if (key === 'overdue') return 'Vencidos';
-  if (key === 'today') return 'Vencen hoy';
-  if (key === 'tomorrow') return 'Vencen mañana';
-  if (key === 'no-date') return 'Sin fecha';
-  return datePillLabel(key, now);
-}
 
 function badgeClass(key: string, active: boolean) {
   if (!active) return 'bg-background text-muted-foreground';
@@ -65,28 +26,18 @@ function badgeClass(key: string, active: boolean) {
 type DeadlineTab = { value: string; label: string; orders: LogisticsOrder[] };
 
 function buildDeadlineTabs(orders: LogisticsOrder[], now: Date): DeadlineTab[] {
-  const groups = new Map<string, LogisticsOrder[]>();
-  for (const order of orders) {
-    const key = orderDeadlineKey(order, now);
-    const list = groups.get(key) || [];
-    list.push(order);
-    groups.set(key, list);
-  }
-  const later = [...groups.keys()]
-    .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'tomorrow' && key !== 'no-date')
-    .sort((left, right) => left.localeCompare(right));
-  const keys = ['overdue', 'today', 'tomorrow', ...later, 'no-date'].filter((key) => (groups.get(key) || []).length);
-  return [
-    { value: 'all', label: 'Todos', orders },
-    ...keys.map((key) => ({ value: key, label: deadlineTabLabel(key, now), orders: groups.get(key) || [] })),
-  ].filter((tab) => tab.orders.length);
+  return buildDeadlineColumns(orders, now).map((column) => ({
+    value: column.key,
+    label: column.label,
+    orders: column.orders,
+  }));
 }
 
 function defaultTab(tabs: DeadlineTab[]) {
   return tabs.find((tab) => tab.value === 'overdue')?.value
     || tabs.find((tab) => tab.value === 'today')?.value
     || tabs[0]?.value
-    || 'all';
+    || 'overdue';
 }
 
 function DeadlinePills({

@@ -1,4 +1,4 @@
-// B — El tablero B, con Imprimir n bien visible en cada plazo.
+// B — Tablero por plazo real, Imprimir n en cada columna.
 import { Board } from './Board';
 import type { BandejaView } from './shared';
 

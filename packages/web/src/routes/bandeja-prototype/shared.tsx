@@ -17,6 +17,7 @@ import {
   logisticsQuantityLabel,
   logisticsUrgency,
   logisticsUrgencyMeta,
+  parseLogisticsDate,
   productImageSrc,
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
@@ -104,6 +105,61 @@ export function groupByUrgency(orders: LogisticsOrder[], now: Date) {
   for (const key of URGENCY_ORDER) groups.set(key, []);
   for (const order of orders) groups.get(logisticsUrgency(order, now))!.push(order);
   return URGENCY_ORDER.map((key) => ({ key, orders: groups.get(key)! })).filter((group) => group.orders.length);
+}
+
+const LIMA = 'America/Lima';
+
+export function limaDateKey(date: Date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: LIMA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+export function orderDeadlineKey(order: LogisticsOrder, now: Date) {
+  const deadline = parseLogisticsDate(order.promisedShippingAt);
+  if (!deadline) return 'no-date';
+  const urgency = logisticsUrgency(order, now);
+  if (urgency === 'overdue' || urgency === 'today' || urgency === 'tomorrow') return urgency;
+  return limaDateKey(deadline);
+}
+
+export function deadlineColumnLabel(key: string, now: Date) {
+  if (key === 'overdue') return 'Vencidos';
+  if (key === 'today') return 'Vencen hoy';
+  if (key === 'tomorrow') return 'Vencen mañana';
+  if (key === 'no-date') return 'Sin fecha';
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return key;
+  const label = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+  return label.replace('septiembre', 'setiembre');
+}
+
+export function deadlineColumnTone(key: string): LogisticsUrgency {
+  if (key === 'overdue' || key === 'today' || key === 'tomorrow') return key;
+  return 'later';
+}
+
+export function buildDeadlineColumns(orders: LogisticsOrder[], now: Date) {
+  const groups = new Map<string, LogisticsOrder[]>();
+  for (const order of orders) {
+    const key = orderDeadlineKey(order, now);
+    const list = groups.get(key) || [];
+    list.push(order);
+    groups.set(key, list);
+  }
+  const later = [...groups.keys()]
+    .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'tomorrow' && key !== 'no-date')
+    .sort((left, right) => left.localeCompare(right));
+  const keys = ['overdue', 'today', 'tomorrow', ...later, 'no-date'].filter((key) => (groups.get(key) || []).length);
+  return keys.map((key) => ({
+    key,
+    label: deadlineColumnLabel(key, now),
+    tone: deadlineColumnTone(key),
+    orders: groups.get(key) || [],
+  }));
 }
 
 export function ProductThumb({ item, className = 'size-10' }: { item: LogisticsItem; className?: string }) {
