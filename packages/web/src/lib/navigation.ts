@@ -16,7 +16,6 @@ import {
   ShoppingBag,
   Shuffle,
   TrendingDown,
-  Truck,
   Users,
   Wallet,
   Zap,
@@ -86,13 +85,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
       { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
-      {
-        to: '/envio-propio',
-        icon: Truck,
-        label: 'Envío propio',
-        adminOnly: true,
-        description: 'Almacén, zonas y cobertura del reparto Express.',
-      },
       { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
       {
         to: '/system-config',

@@ -11,9 +11,10 @@ import {
   userHasPermission,
 } from './permissions.ts';
 
-test('envío propio no es un permiso de Pedidos', () => {
-  assert.equal(pathPermission('/envio-propio'), null);
-  assert.equal(pathPermission('/orders/envio'), null);
+test('envío propio es una opción de Ajustes', () => {
+  assert.equal(pathPermission('/envio-propio'), 'settings');
+  assert.equal(pathPermission('/orders/envio'), 'settings');
+  assert.equal(pathPermission('/settings'), 'settings');
   assert.equal(pathPermission('/orders'), 'order_management');
 });
 

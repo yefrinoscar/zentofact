@@ -73,7 +73,7 @@ Entrega con movilidad de la bodega. Se muestra como el repartidor Express y se g
 _Avoid_: Movilidad propia as stored id, Nosotros as label
 
 **Zona de envío**:
-Grupo de distritos de Lima Metropolitana con un solo precio. El admin la nombra, le pone precio y le asigna distritos en Configuración → Envío propio. Por defecto son tres, repartidas por distancia a la bodega: Cerca, Media y Lejos.
+Grupo de distritos de Lima Metropolitana con un solo precio. El admin la nombra, le pone precio y le asigna distritos en Ajustes. Por defecto son tres, repartidas por distancia a la bodega: Cerca, Media y Lejos.
 _Avoid_: tarifa zonal, tramo, rango de km
 
 **Precio de envío**:
@@ -81,7 +81,7 @@ Monto que cobra un Envío propio: el precio de la Zona de envío del destino, co
 _Avoid_: recargo, precio por distrito, suma de distrito más distancia
 
 **Almacén**:
-Punto del que sale el reparto y al que el cliente va cuando elige Recojo. Guarda dirección, pin y horario de recojo, y se edita en Configuración → Envío propio. Mover el pin regenera la distancia de todos los distritos.
+Punto del que sale el reparto y al que el cliente va cuando elige Recojo. Guarda dirección, pin y horario de recojo, y se edita en Ajustes. Mover el pin regenera la distancia de todos los distritos.
 _Avoid_: bodega, origen, depósito
 
 **Distancia al almacén**:

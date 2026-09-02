@@ -15,15 +15,12 @@ test('mobileNavPathname no reescribe Nueva venta si también gestiona pedidos', 
   assert.equal(isNavItemActive('/orders/nueva', '/orders'), true);
 });
 
-test('Envío propio solo aparece para admin, fuera de Pedidos', () => {
-  const item = { to: '/envio-propio', adminOnly: true };
+test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   const can = () => true;
-  assert.equal(isNavItemVisible(item, can, false, { isAdmin: true }), true);
-  assert.equal(isNavItemVisible(item, can, false, { isAdmin: false }), false);
-  assert.equal(isNavItemVisible(item, can, false, { isSuperadmin: true }), true);
-  assert.equal(isNavItemVisible(item, can, false, {}), false);
-  assert.equal(isNavItemActive('/envio-propio', '/orders'), false);
-  assert.equal(isNavItemActive('/envio-propio', '/envio-propio'), true);
+  const settings = { to: '/settings', permission: 'settings' };
+  assert.equal(isNavItemVisible(settings, can, false), true);
+  assert.equal(isNavItemActive('/settings', '/settings'), true);
   assert.equal(isNavItemActive('/orders', '/orders'), true);
   assert.equal(isNavItemActive('/orders/envio', '/orders'), false);
+  assert.equal(isNavItemActive('/envio-propio', '/orders'), false);
 });
