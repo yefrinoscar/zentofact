@@ -267,7 +267,7 @@ export function printableOrders(orders: LogisticsOrder[]) {
   return orders.filter(canPrintLogisticsLabel);
 }
 
-export function StageTabs({ view }: { view: BandejaView }) {
+export function StageTabs({ view, tools }: { view: BandejaView; tools?: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <Tabs value={view.stage} onValueChange={(value) => view.setStage(value as LogisticsStage)}>
@@ -279,9 +279,12 @@ export function StageTabs({ view }: { view: BandejaView }) {
           ))}
         </TabsList>
       </Tabs>
-      <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
-        <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
-      </Button>
+      <div className="flex items-center gap-1">
+        {tools}
+        <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
+          <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
+        </Button>
+      </div>
     </div>
   );
 }

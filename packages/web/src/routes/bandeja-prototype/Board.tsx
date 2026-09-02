@@ -1,6 +1,6 @@
 // Tablero B: una columna por plazo real. Sin Próximos ni Todos.
-// El recorre es con flechas a los lados, no con la barra nativa encima de las tarjetas.
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+// Se recorre con flechas junto al refresh, sin barra nativa encima de las tarjetas.
+import { useLayoutEffect, useRef, useState, type WheelEvent } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { logisticsUrgencyMeta } from '../../lib/logistics-inbox';
@@ -21,70 +21,43 @@ const COLUMN: Record<string, string> = {
   later: 'bg-zinc-50',
 };
 
-const COLUMN_STEP = 332;
-
-function ColumnRail({ children, itemCount }: { children: ReactNode; itemCount: number }) {
-  const scroller = useRef<HTMLDivElement>(null);
+function useColumnScroll(itemCount: number) {
+  const ref = useRef<HTMLDivElement>(null);
   const [canPrev, setCanPrev] = useState(false);
   const [canNext, setCanNext] = useState(false);
 
   const update = () => {
-    const el = scroller.current;
+    const el = ref.current;
     if (!el) return;
-    setCanPrev(el.scrollLeft > 4);
-    setCanNext(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    setCanPrev(el.scrollLeft > 8);
+    setCanNext(el.scrollLeft + el.clientWidth < el.scrollWidth - 8);
   };
 
   useLayoutEffect(() => {
     update();
-    const el = scroller.current;
-    if (!el) return;
     const onResize = () => update();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [itemCount]);
 
   const move = (direction: -1 | 1) => {
-    scroller.current?.scrollBy({ left: direction * COLUMN_STEP, behavior: 'smooth' });
+    const el = ref.current;
+    if (!el) return;
+    const step = Math.max(280, Math.round(el.clientWidth * 0.7));
+    el.scrollTo({ left: el.scrollLeft + direction * step, behavior: 'smooth' });
   };
 
-  const showArrows = canPrev || canNext;
+  const onWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (!delta) return;
+    event.preventDefault();
+    el.scrollLeft += delta;
+    update();
+  };
 
-  return (
-    <div className="flex items-start gap-2">
-      {showArrows && (
-        <Button
-          size="icon-sm"
-          variant="outline"
-          className="mt-1 shrink-0"
-          onClick={() => move(-1)}
-          disabled={!canPrev}
-          aria-label="Ver plazos anteriores"
-        >
-          <ChevronLeft />
-        </Button>
-      )}
-      <div
-        ref={scroller}
-        onScroll={update}
-        className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {children}
-      </div>
-      {showArrows && (
-        <Button
-          size="icon-sm"
-          variant="outline"
-          className="mt-1 shrink-0"
-          onClick={() => move(1)}
-          disabled={!canNext}
-          aria-label="Ver plazos siguientes"
-        >
-          <ChevronRight />
-        </Button>
-      )}
-    </div>
-  );
+  return { ref, canPrev, canNext, move, update, onWheel };
 }
 
 export function Board({
@@ -99,13 +72,32 @@ export function Board({
   const columns = view.stage === 'shipped'
     ? [{ key: 'shipped', label: 'Enviados', tone: 'later' as const, orders: view.orders }]
     : buildDeadlineColumns(view.orders, view.now);
+  const scroll = useColumnScroll(columns.length);
+  const showArrows = view.stage !== 'shipped' && (scroll.canPrev || scroll.canNext);
 
   return (
     <div className="space-y-3 pb-16">
-      <StageTabs view={view} />
+      <StageTabs
+        view={view}
+        tools={showArrows ? (
+          <>
+            <Button size="icon-sm" variant="ghost" onClick={() => scroll.move(-1)} disabled={!scroll.canPrev} aria-label="Ver plazos anteriores">
+              <ChevronLeft />
+            </Button>
+            <Button size="icon-sm" variant="ghost" onClick={() => scroll.move(1)} disabled={!scroll.canNext} aria-label="Ver plazos siguientes">
+              <ChevronRight />
+            </Button>
+          </>
+        ) : null}
+      />
       <EmptyState view={view}>
-        <ColumnRail itemCount={columns.length}>
-          <div className="flex gap-3">
+        <div
+          ref={scroll.ref}
+          onScroll={scroll.update}
+          onWheel={scroll.onWheel}
+          className="overflow-x-hidden"
+        >
+          <div className="flex w-max gap-3">
             {columns.map((column) => {
               const meta = logisticsUrgencyMeta(column.tone);
               const named = column.key === 'overdue' || column.key === 'today' || column.key === 'tomorrow' || column.key === 'shipped';
@@ -132,7 +124,7 @@ export function Board({
               );
             })}
           </div>
-        </ColumnRail>
+        </div>
       </EmptyState>
     </div>
   );
