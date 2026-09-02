@@ -62,7 +62,7 @@ Reglas:
 - Los filtros compactos conservan su ancho natural; nunca deben estirarse en columnas iguales solo para llenar el espacio disponible.
 - Los controles segmentados usan contenedor `rounded-xl` y selección `rounded-lg`, manteniendo altura `h-9`.
 - No mostrar un botón “Actualizar” cuando los cambios de contexto y filtros ya recargan los datos automáticamente.
-- No mostrar selectores de cantidad por página salvo que exista una necesidad demostrable. La cantidad predeterminada de tablas administrativas es 10; las tablas operativas de catálogo y salidas usan 20.
+- No mostrar selectores de cantidad por página salvo que exista una necesidad demostrable. La cantidad predeterminada de tablas administrativas es 10; las tablas operativas de catálogo usan 20.
 - No mostrar chips como “2 resultados” en la barra. El conteo pertenece a la cabecera o pie del panel.
 - En pantallas de un solo día, el selector de fecha va **encima** de la búsqueda y ocupa todo el ancho disponible. Usar `DayStrip`: días horizontales como botones, flechas para el día anterior/siguiente y un calendario para saltos largos. No usar `<input type="date">` nativo.
 - La franja de días no se recentra al elegir un día ya visible. Si la fecha sale de la ventana, el carril se desliza hacia atrás o adelante; no remountar los días ni usar `scrollIntoView`.
@@ -142,7 +142,7 @@ Usar:
 - React Table (`useReactTable`) para columnas, paginación y orden.
 - React Query para fetch, caché e invalidación. Nunca cargar un catálogo ilimitado en estado del navegador.
 
-La pantalla **Salidas de hoy** es la referencia de una tabla operativa bien hecha.
+La pantalla **Catálogo de productos** es la referencia de una tabla operativa bien hecha.
 
 ### Panel
 
@@ -187,7 +187,7 @@ No debe repetir el título y descripción de la página.
 ### Paginación
 
 - Las tablas administrativas muestran 10 filas por defecto.
-- El catálogo y las salidas muestran 20 filas por página.
+- El catálogo muestra 20 filas por página.
 - El pie usa `DataTablePagination`: “Mostrando X a Y de Z” y números de página, no solo Anterior/Siguiente.
 - No renderizar paginación cuando todos los resultados caben en una página.
 
@@ -288,7 +288,7 @@ Estado vacío estándar:
 - [ ] `TablePanel` con radio moderado y sin tarjeta extra alrededor.
 - [ ] Cabecera de columnas con fondo muted.
 - [ ] Columnas ordenables con `DataTableColumnHeader` y sort en servidor si hay paginación.
-- [ ] 10 filas (admin) o 20 (catálogo/salidas), nunca un listado ilimitado.
+- [ ] 10 filas (admin) o 20 (catálogo), nunca un listado ilimitado.
 - [ ] Estados con texto y color semántico.
 - [ ] Conteo en cabecera o pie, no como chip suelto.
 - [ ] Estado vacío compacto.

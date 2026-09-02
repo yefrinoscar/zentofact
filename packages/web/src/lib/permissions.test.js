@@ -21,6 +21,16 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.equal(pathPermission('/pagos'), 'pagos');
 });
 
+test('el operador ya no tiene el módulo de salidas', () => {
+  assert.equal(PERMISSIONS.some(({ key }) => key === 'salidas'), false);
+  assert.equal(pathPermission('/salidas'), null);
+  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'insumos']);
+  assert.deepEqual(
+    parsePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'], 'operator'),
+    ROLE_PRESETS.operator.permissions,
+  );
+});
+
 test('el vendedor tiene preset fijo y permisos bloqueados', () => {
   assert.ok(SELECTABLE_ROLES.includes('vendedor'));
   assert.deepEqual(ROLE_PRESETS.vendedor.permissions, ['salesperson']);

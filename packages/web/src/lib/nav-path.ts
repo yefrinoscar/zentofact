@@ -39,6 +39,5 @@ export function isNavItemVisible(
   if (item.adminOnly) return options.isAdmin === true || options.isSuperadmin === true;
   if (item.superadminOnly) return options.isSuperadmin === true;
   if (!item.permission) return false;
-  if (item.to === '/salidas') return can('salidas') || can('productos');
   return can(item.permission);
 }

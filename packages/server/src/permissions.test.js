@@ -41,10 +41,8 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
   assert.equal(keys.has('facturas'), true);
   assert.equal(keys.has('credit_notes_manage'), true);
   assert.equal(keys.has('credit_notes_bulk'), true);
-  assert.equal(keys.has('salidas'), true);
   assert.equal(keys.has('insumos'), true);
   assert.equal(keys.has('pagos'), true);
-  assert.equal(PERMISSIONS.find(({ key }) => key === 'salidas')?.section, 'operation');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'insumos')?.section, 'operation');
   assert.notEqual(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'productos')?.hiddenInProduction, true);
@@ -63,7 +61,6 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/15'), 'credit_notes_manage');
   assert.equal(pathPermission('/credit-notes/bulk'), 'credit_notes_bulk');
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
-  assert.equal(pathPermission('/salidas'), 'salidas');
   assert.equal(pathPermission('/insumos'), 'insumos');
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/productos'), 'productos');
@@ -82,7 +79,7 @@ test('los permisos antiguos se expanden al catálogo nuevo', () => {
 
 test('los perfiles representan áreas reales de trabajo', () => {
   assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing', 'vendedor']);
-  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos']);
+  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'insumos']);
   assert.deepEqual(ROLE_PRESETS.vendedor.permissions, ['salesperson']);
   assert.equal(ROLE_PRESETS.vendedor.label, 'Vendedor');
   assert.deepEqual(ROLE_PRESETS.billing.permissions, [
@@ -102,6 +99,14 @@ test('un operador anterior sin insumos recupera el preset actual', () => {
   );
 });
 
+test('un operador anterior con salidas pierde ese módulo y conserva el preset actual', () => {
+  assert.equal(PERMISSIONS.some(({ key }) => key === 'salidas'), false);
+  assert.deepEqual(
+    normalizePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'], 'operator'),
+    ROLE_PRESETS.operator.permissions,
+  );
+});
+
 test('un perfil básico con permisos vacíos recupera su preset', () => {
   assert.deepEqual(normalizePermissions([], 'operator'), ROLE_PRESETS.operator.permissions);
   assert.deepEqual(normalizePermissions('[]', 'billing'), ROLE_PRESETS.billing.permissions);
@@ -112,7 +117,6 @@ test('la matriz final de perfiles permite y rechaza los módulos correctos', () 
   assert.equal(userHasPermission(operator, 'order_management'), true);
   assert.equal(userHasPermission(operator, 'orders_inbox'), true);
   assert.equal(userHasPermission(operator, 'orders_scanner'), true);
-  assert.equal(userHasPermission(operator, 'salidas'), true);
   assert.equal(userHasPermission(operator, 'insumos'), true);
   assert.equal(userHasPermission(operator, 'falabella_sellers'), false);
   assert.equal(userHasPermission(operator, 'boletas'), false);

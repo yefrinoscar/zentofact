@@ -180,8 +180,8 @@ fuente y una cobertura explícita (`orderHeaders`, `orderDetails`,
 empresas que tienen listings activos del producto, consulta hasta ocho pedidos
 en paralelo y omite pedidos que ya tienen líneas cacheadas.
 
-La base local es la fuente de lectura para el histórico y para el módulo
-`/salidas`. Falabella solo se consulta como ventana corta de 2 días: cabeceras
+La base local es la fuente de lectura para el histórico de ventas del
+producto. Falabella solo se consulta como ventana corta de 2 días: cabeceras
 incrementales con `UpdatedAfter = cursor_updated_at - 10 minutos` y, si el
 seller aún no tiene cursor, un bootstrap de esos mismos 2 días. No se vuelve a
 pedir el periodo 30/90/365. Después solo se solicita `GetOrderItems` para las
@@ -193,23 +193,19 @@ tomó. Solo afirma que no existen ventas o devoluciones cuando la consulta live
 de la ventana corta terminó para todos los sellers y `coverage.complete` es
 verdadero; de lo contrario muestra que la consulta está incompleta.
 
-### Salidas de hoy
+### Agregación por plazo de envío
 
-`/salidas` agrega desde `orders` y `order_items` los productos que salen el
-día de Lima. La fecha operativa es `PromisedShippingTime` (o
-`promised_shipping_at`), no la fecha de compra. Muestra la cantidad de cada
-producto y el saldo de almacén cuando el SKU ya está en el catálogo. La
-lectura inicial no llama a Falabella.
+`GET /catalog/sales/today` agrega desde `orders` y `order_items` los productos
+cuyo `PromisedShippingTime` (o `promised_shipping_at`) cae en el día de Lima,
+no la fecha de compra. No hay pantalla de “Salidas de hoy”: esa ruta redirige
+a Todos los pedidos. Quienes tienen `productos` o `order_management` pueden
+consultar la API. El POST refresca solo los últimos 2 días de cabeceras e
+hidrata las líneas faltantes.
 
 ```http
 GET /catalog/sales/today?date=2026-08-12
 POST /catalog/sales/today/refresh
 ```
-
-El POST refresca solo los últimos 2 días de cabeceras e hidrata las líneas
-faltantes; luego vuelve a agregar desde la base local. Incluye líneas todavía
-no asociadas a un producto maestro. El permiso `salidas` abre el módulo;
-quienes ya tienen `productos` también pueden consultar la API.
 
 Los títulos de Falabella cambian por seller. La agregación no agrupa por ese
 nombre: usa la relación `order_items.listing_id → product_listings.product_id`,

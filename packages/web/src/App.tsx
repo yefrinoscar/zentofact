@@ -11,7 +11,6 @@ import EnvioPropio from './routes/EnvioPropio';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
-import ProductosHoy from './routes/ProductosHoy';
 import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
@@ -99,10 +98,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/descuentos-stock': {
     title: 'Cola de descuentos',
     subtitle: 'Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.',
-  },
-  '/salidas': {
-    title: 'Salidas de hoy',
-    subtitle: 'Productos que salen hoy según PromisedShippingTime.',
   },
   '/insumos': {
     title: 'Insumos',
@@ -297,7 +292,7 @@ function AppLayout() {
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
-              <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
+              <Route path="/salidas" element={<Navigate to="/orders" replace />} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />

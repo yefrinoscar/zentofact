@@ -167,8 +167,8 @@ const catalogGuard = (c, next) => {
     || path === '/catalog/image'
   ) {
     const keys = path === '/catalog/image'
-      ? ['productos', 'salidas', 'salesperson']
-      : ['productos', 'salidas'];
+      ? ['productos', 'order_management', 'salesperson']
+      : ['productos', 'order_management'];
     return requireAnyPermission(keys)(c, next);
   }
   if (c.req.method === 'GET' && path === '/products') {
