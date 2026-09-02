@@ -1060,7 +1060,7 @@ export async function processQueue(limit = 3) {
   return jobs.length;
 }
 
-async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
+export async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
   const rows = (await pool.query(
     `select distinct fo.order_number, fo.order_id
      from falabella_orders fo
@@ -1121,27 +1121,23 @@ export async function reconcile() {
   const rawAfter = new Date(Math.max(Date.now() - cron.windowDays * 24 * 3600 * 1000, MIN_ORDER_DATE.getTime()));
   const createdAfter = rawAfter.toISOString().slice(0, 10) + 'T00:00:00+00:00';
   for (const company of companies) {
-    try {
-      // Dedup en memoria: 3 queries por empresa.
-      //  - órdenes que ya tienen boleta
-      //  - órdenes que ya tienen factura
-      //  - órdenes activas en la cola; los skipped sin documento sí deben poder recuperarse
-      const [withBoleta, withFactura, invoiceQueue, creditNoteQueue] = await Promise.all([
-        pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query("select order_number from emission_jobs where company_id=$1 and coalesce(kind, 'invoice')='invoice' and status in ('pending','processing','done')", [company.id]),
-        pool.query("select order_number from emission_jobs where company_id=$1 and kind='credit_note' and status in ('pending','processing','done')", [company.id]),
-      ]);
-      const invoiceKnown = new Set([
-        ...withBoleta.rows.map((r) => String(r.order_number)),
-        ...withFactura.rows.map((r) => String(r.order_number)),
-        ...invoiceQueue.rows.map((r) => String(r.order_number)),
-      ]);
-      const creditNoteKnown = new Set(creditNoteQueue.rows.map((r) => String(r.order_number)));
+    const [withBoleta, withFactura, invoiceQueue, creditNoteQueue] = await Promise.all([
+      pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+      pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+      pool.query("select order_number from emission_jobs where company_id=$1 and coalesce(kind, 'invoice')='invoice' and status in ('pending','processing','done')", [company.id]),
+      pool.query("select order_number from emission_jobs where company_id=$1 and kind='credit_note' and status in ('pending','processing','done')", [company.id]),
+    ]);
+    const invoiceKnown = new Set([
+      ...withBoleta.rows.map((r) => String(r.order_number)),
+      ...withFactura.rows.map((r) => String(r.order_number)),
+      ...invoiceQueue.rows.map((r) => String(r.order_number)),
+    ]);
+    const creditNoteKnown = new Set(creditNoteQueue.rows.map((r) => String(r.order_number)));
+    let enqueued = 0;
+    let creditNotesEnqueued = 0;
 
+    try {
       const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
-      let enqueued = 0;
-      let creditNotesEnqueued = 0;
       for (let offset = 0; offset < cron.windowDays * 300 + 100; offset += 100) {
         const resp = await client.getOrdersV2({ createdAfter, limit: 100, offset });
         const orders = normalizeGetOrdersResult(resp.data).orders || [];
@@ -1188,13 +1184,15 @@ export async function reconcile() {
           if (orders.length < 100) break;
         }
       }
-      const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
-      creditNotesEnqueued += localCreditNotes;
-      if (enqueued || creditNotesEnqueued) {
-        log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);
-      }
     } catch (e) {
       log(`cron ${company.nombre} error:`, e.message);
+    }
+
+    // Pedidos cancelados/devueltos ya guardados en local, aunque Falabella no responda.
+    const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
+    creditNotesEnqueued += localCreditNotes;
+    if (enqueued || creditNotesEnqueued) {
+      log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);
     }
   }
 }
