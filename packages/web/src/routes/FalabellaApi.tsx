@@ -23,6 +23,8 @@ import {
 import { useAppStore } from '../stores/app';
 import { usePermissions } from '../hooks/usePermissions';
 import api from '../lib/api';
+import { CreditNoteIssueDateField } from '../components/CreditNoteIssueDateField';
+import { creditNoteIssueDatePolicy } from '../lib/creditNoteIssueDate';
 import {
   matchesInvoiceFlowFilter,
   needsSalesDocumentReview,
@@ -993,6 +995,9 @@ export default function FalabellaApi() {
     error: '',
     result: null,
   });
+  const [creditNoteIssueDate, setCreditNoteIssueDate] = useState(
+    () => creditNoteIssueDatePolicy().defaultDate,
+  );
   const falabellaSunatEnv = String((import.meta as any).env?.VITE_SUNAT_ENV || '').trim().toLowerCase();
   const falabellaProductionMode = falabellaSunatEnv
     ? falabellaSunatEnv.startsWith('prod')
@@ -1478,6 +1483,9 @@ export default function FalabellaApi() {
 
   const openCreditNoteModal = (row: InvoiceFlowRow) => {
     setCreditNoteAction(null);
+    setCreditNoteIssueDate(creditNoteIssueDatePolicy({
+      affectedDocumentDates: [row.documentDate],
+    }).defaultDate);
     setCreditNoteModal({
       open: true,
       row,
@@ -1506,6 +1514,7 @@ export default function FalabellaApi() {
       const result = await api.createAndSendCreditNote(row.affectedBoletaId, {
         codMotivo: '01',
         desMotivo: 'ANULACION DE LA OPERACION',
+        fechaEmision: creditNoteIssueDate,
       });
       setCreditNoteAction(null);
       setCreditNoteModal((current) => ({
@@ -3229,6 +3238,13 @@ export default function FalabellaApi() {
                 <dd className="text-foreground">{creditNoteModal.row.statusLabel || creditNoteModal.row.status || '-'}</dd>
               </dl>
 
+              <CreditNoteIssueDateField
+                value={creditNoteIssueDate}
+                onChange={setCreditNoteIssueDate}
+                disabled={creditNoteModal.submitting}
+                affectedDocumentDates={[creditNoteModal.row.documentDate]}
+              />
+
               {creditNoteModal.error && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {creditNoteModal.error}
@@ -3278,7 +3294,7 @@ export default function FalabellaApi() {
                 <button
                   type="button"
                   onClick={() => creditNoteModal.row && void createCreditNoteForRow(creditNoteModal.row)}
-                  disabled={creditNoteModal.submitting || !creditNoteModal.row.affectedBoletaId}
+                  disabled={creditNoteModal.submitting || !creditNoteModal.row.affectedBoletaId || !creditNoteIssueDate}
                   className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {creditNoteModal.submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}

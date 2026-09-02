@@ -19,7 +19,9 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/app';
 import { Loading } from '../components/Loading';
+import { CreditNoteIssueDateField } from '../components/CreditNoteIssueDateField';
 import api from '../lib/api';
+import { constrainCreditNoteIssueDate, creditNoteIssueDatePolicy } from '../lib/creditNoteIssueDate';
 
 type PickMode = 'cantidad' | 'monto';
 type InfoTab = 'anuladas' | 'fuera_mes' | 'resumen';
@@ -245,6 +247,9 @@ export default function CreditNotes() {
   const [progressOpen, setProgressOpen] = useState(false);
   const [progressRows, setProgressRows] = useState<CreditNoteProgressRow[]>([]);
   const [progressMessage, setProgressMessage] = useState('');
+  const [creditNoteIssueDate, setCreditNoteIssueDate] = useState(
+    () => creditNoteIssueDatePolicy().defaultDate,
+  );
   const [falabellaMonth, setFalabellaMonth] = useState<any | null>(null);
   const [falabellaLoading, setFalabellaLoading] = useState(false);
   const [falabellaError, setFalabellaError] = useState('');
@@ -412,6 +417,16 @@ export default function CreditNotes() {
     () => selectedBoletas.reduce((s, b) => s + amountOf(b), 0),
     [selectedBoletas],
   );
+  const selectedCreditNoteDatePolicy = useMemo(
+    () => creditNoteIssueDatePolicy({
+      affectedDocumentDates: selectedBoletas.map((boleta) => boleta.fechaEmision),
+    }),
+    [selectedBoletas],
+  );
+  const selectedCreditNoteIssueDate = constrainCreditNoteIssueDate(
+    creditNoteIssueDate,
+    selectedCreditNoteDatePolicy,
+  );
 
   useEffect(() => {
     api.listCompanies().then((cs: any[]) => setCompanies(Array.isArray(cs) ? cs : [])).catch(() => {});
@@ -541,7 +556,7 @@ export default function CreditNotes() {
     }, 0);
     const confirmed = window.confirm(
       `Se emitirán y enviarán a SUNAT ${selectedForRun.length} nota(s) de crédito por un total de ${money(total)}, ` +
-        `anulando esas boletas. Esta acción es irreversible. ¿Continuar?`,
+        `con fecha ${selectedCreditNoteIssueDate}, anulando esas boletas. Esta acción es irreversible. ¿Continuar?`,
     );
     if (!confirmed) return;
 
@@ -571,7 +586,7 @@ export default function CreditNotes() {
         setProgressMessage(`Anulando ${b.numeroCompleto} (${index + 1}/${selectedForRun.length})...`);
         markRow(b.id, { status: 'processing', message: 'Creando y enviando nota de crédito...' });
         try {
-          const outcome = await api.createAndSendCreditNote(b.id);
+          const outcome = await api.createAndSendCreditNote(b.id, { fechaEmision: selectedCreditNoteIssueDate });
           outcomes.push(outcome);
           if (outcome?.success) {
             markRow(b.id, {
@@ -1295,7 +1310,13 @@ export default function CreditNotes() {
                   {selectedBoletas.length} boleta(s) · {money(selectedSum)}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-end gap-3">
+                <CreditNoteIssueDateField
+                  value={selectedCreditNoteIssueDate}
+                  onChange={setCreditNoteIssueDate}
+                  disabled={processing}
+                  affectedDocumentDates={selectedBoletas.map((boleta) => boleta.fechaEmision)}
+                />
                 {selectedBoletas.length > 0 && (
                   <button
                     type="button"
