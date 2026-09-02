@@ -97,6 +97,91 @@ const SEED_LOGISTICS_ORDERS = [
     stockState: 'none',
     stockApplied: 0,
   },
+  {
+    key: 'manual-overdue',
+    orderNumber: 'QNC-10011',
+    channel: 'manual',
+    sku: 'HOG025',
+    customer: { name: 'Elena Preview', firstName: 'Elena', lastName: 'Preview', documentNumber: '22334455' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: -1,
+    itemLines: 2,
+    shipping: { type: 'envio', carrier: 'shaloom', address: 'Av. Primavera 410', district: 'Surco' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-manta-today',
+    orderNumber: 'PV-10011',
+    channel: 'falabella',
+    companyRuc: '20990001002',
+    sku: 'AG301',
+    customer: { name: 'Diego Preview', firstName: 'Diego', lastName: 'Preview', documentNumber: '33445566' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 0,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'ripley-manta-today',
+    orderNumber: 'RP-10021',
+    channel: 'ripley',
+    companyRuc: '20990001002',
+    sku: 'HOG025',
+    customer: { name: 'Pilar Preview', firstName: 'Pilar', lastName: 'Preview', documentNumber: '44556677' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 0,
+    itemLines: 2,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'manual-yak-tomorrow',
+    orderNumber: 'QNC-10012',
+    channel: 'manual',
+    companyRuc: '20990001003',
+    sku: 'BB110',
+    customer: { name: 'Hugo Preview', firstName: 'Hugo', lastName: 'Preview', phone: '988776655', documentNumber: '66778899' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 1,
+    shipping: { type: 'recojo' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-yak-later',
+    orderNumber: 'PV-10012',
+    channel: 'falabella',
+    companyRuc: '20990001003',
+    sku: 'BB110',
+    customer: { name: 'Inés Preview', firstName: 'Inés', lastName: 'Preview', documentNumber: '77889900' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 4,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'ripley-ready-today',
+    orderNumber: 'RP-10022',
+    channel: 'ripley',
+    sku: 'BB220',
+    customer: { name: 'Nora Preview', firstName: 'Nora', lastName: 'Preview', documentNumber: '88990011' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'ready_to_ship',
+    promisedOffsetDays: 0,
+    itemLines: 2,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
 ];
 
 const SEED_USERS = [
@@ -515,28 +600,31 @@ async function replacePreviewOrders(companyId) {
     [companyId],
   );
   await pool.query(
+    `DELETE FROM logistics_label_prints
+      WHERE order_id IN (
+        SELECT id FROM orders
+         WHERE external_order_id LIKE $1
+      )`,
+    [`${SEED_MARKER}-%`],
+  );
+  await pool.query(
     `DELETE FROM order_items
       WHERE order_id IN (
         SELECT id FROM orders
-         WHERE company_id = $1 AND external_order_id LIKE 'preview-seed-%'
+         WHERE external_order_id LIKE $1
       )`,
-    [companyId],
+    [`${SEED_MARKER}-%`],
   );
   await pool.query(
-    `DELETE FROM orders
-      WHERE company_id = $1 AND external_order_id LIKE 'preview-seed-%'`,
-    [companyId],
+    `DELETE FROM orders WHERE external_order_id LIKE $1`,
+    [`${SEED_MARKER}-%`],
   );
 }
 
 async function ensureSampleOrders(companiesByRuc, products) {
   await ensureOrdersItemsColumns();
   const limbo = companiesByRuc.get('20990001001');
-  const product = products[0];
-  if (!limbo || !product) return { orders: 0 };
-
-  const account = await ensureFalabellaChannelAccount(limbo);
-  if (!account) return { orders: 0 };
+  if (!limbo || !products[0]) return { orders: 0 };
 
   await replacePreviewOrders(limbo.id);
   const promisedAt = limaNoonToday();
@@ -546,9 +634,10 @@ async function ensureSampleOrders(companiesByRuc, products) {
   ];
   let inserted = 0;
   for (const spec of specs) {
-    const channelAccount = spec.channel === 'falabella'
-      ? account
-      : await ensureChannelAccount(limbo, spec.channel);
+    const company = companiesByRuc.get(spec.companyRuc || '20990001001');
+    const product = products.find((row) => row.mainSku === spec.sku) || products[0];
+    if (!company || !product) continue;
+    const channelAccount = await ensureChannelAccount(company, spec.channel || 'falabella');
     if (!channelAccount) continue;
     const externalOrderId = previewOrderId(spec.key);
     const orderResult = await pool.query(
@@ -573,7 +662,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
          updated_at = NOW()
        RETURNING id`,
       [
-        limbo.id,
+        company.id,
         channelAccount.id,
         externalOrderId,
         spec.orderNumber,
@@ -667,32 +756,32 @@ async function ensurePreviewFixtures() {
     await ensureRoleUser(spec, password, admin.id);
     await syncCredentialPassword(spec.email, password);
   }
-  const limbo = await pool.query(
+  const companiesRes = await pool.query(
     `SELECT id, ruc, nombre, nombre_comercial, razon_social
-       FROM companies WHERE ruc = '20990001001' LIMIT 1`,
+       FROM companies WHERE ruc IN ('20990001001', '20990001002', '20990001003')`,
   );
-  const product = await pool.query(
+  const companiesByRuc = new Map(companiesRes.rows.map((row) => [row.ruc, {
+    id: Number(row.id),
+    ruc: row.ruc,
+    nombre: row.nombre,
+    nombreComercial: row.nombre_comercial,
+    razonSocial: row.razon_social,
+  }]));
+  const productsRes = await pool.query(
     `SELECT id, main_sku, name, reference_price
-       FROM products
-      WHERE main_sku = 'AG301'
-      LIMIT 1`,
+       FROM products WHERE main_sku = ANY($1::text[])`,
+    [SEED_PRODUCTS.map((spec) => spec.mainSku)],
   );
-  if (limbo.rows[0] && product.rows[0]) {
-    const company = {
-      id: Number(limbo.rows[0].id),
-      ruc: limbo.rows[0].ruc,
-      nombre: limbo.rows[0].nombre,
-      nombreComercial: limbo.rows[0].nombre_comercial,
-      razonSocial: limbo.rows[0].razon_social,
-    };
-    const spec = {
-      productId: Number(product.rows[0].id),
-      mainSku: product.rows[0].main_sku,
-      name: product.rows[0].name,
-      referencePrice: Number(product.rows[0].reference_price || 100),
-    };
-    await ensureSampleOrders(new Map([['20990001001', company]]), [spec]);
-    await ensureFalabellaInboxOrders(company, spec);
+  const products = productsRes.rows.map((row) => ({
+    productId: Number(row.id),
+    mainSku: row.main_sku,
+    name: row.name,
+    referencePrice: Number(row.reference_price || 100),
+  }));
+  const limbo = companiesByRuc.get('20990001001');
+  if (limbo && products[0]) {
+    await ensureSampleOrders(companiesByRuc, products);
+    await ensureFalabellaInboxOrders(limbo, products[0]);
   }
   return admin;
 }

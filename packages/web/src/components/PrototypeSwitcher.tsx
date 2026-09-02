@@ -46,7 +46,7 @@ export function PrototypeSwitcher({
         <button type="button" className="grid size-8 place-items-center rounded-full hover:bg-white/10" onClick={() => cycle(-1)} aria-label="Variante anterior">
           <ChevronLeft className="size-4" />
         </button>
-        <p className="min-w-56 px-2 text-center text-xs font-medium tracking-wide">
+        <p className="min-w-64 px-2 text-center text-xs font-medium tracking-wide">
           {active.key} — {active.name}
         </p>
         <button type="button" className="grid size-8 place-items-center rounded-full hover:bg-white/10" onClick={() => cycle(1)} aria-label="Siguiente variante">
