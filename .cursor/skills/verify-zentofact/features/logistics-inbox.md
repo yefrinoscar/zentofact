@@ -21,13 +21,15 @@ Preconditions:
 - Baseline launch, doctor, and login have succeeded.
 - The signed-in user can open `orders_inbox`.
 
-- **Open the screen.** Navigate to `http://127.0.0.1:3011/#/bandeja`. The header `h1` reads `Bandeja`. A tablist named `Flujo de pedidos` contains `Pendientes`, `Listos`, and `Enviados`. A search box is named `Buscar pedidos`. Channel filters include `Falabella`, `Ripley`, and `Manual`.
-- **Read pending.** Leave `Pendientes` selected. Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /logistics-inbox?stage=pending .cursor/skills/verify-zentofact/artifacts/<run>/bandeja.json`. HTTP 200. The visible count on `Pendientes` matches `counts.pending` in that payload (or both are zero). Preview rows include Falabella `PV-10001`, manual `QNC-10010`, and Ripley `RP-10020`.
-- **Print manual.** Filter to `Manual` and print `QNC-10010`. That path builds a local PDF (label + packing sheet) and does not call a seller API. Do **not** click `Listo` on a Falabella row. Do **not** print Falabella or Ripley rows in this recipe; those calls hit live seller APIs.
+- **Open the screen.** Navigate to `http://127.0.0.1:3011/#/bandeja`. The header `h1` reads `Bandeja`. The layout mirrors `Bandeja Falabella`: a toolbar (store select, search `Buscar pedidos`, `Sincronizar`), a `Prioridad de entrega` section with cards `Vencidos`, `Vencen hoy`, `Vencen mañana`, `Próximos`, an `Estado del pedido` tablist named `Flujo de pedidos` with `Pendientes`, `Listos para enviar`, `Enviados`, and a table panel with channel pills `Todos`, `Falabella`, `Ripley`, `Manual`. Table columns: `Orden de venta`, `Productos`, `Ingresó`, `Entrega`, `Tienda`, `Siguiente paso`.
+- **Read pending.** Leave `Pendientes` selected. Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /logistics-inbox?stage=pending .cursor/skills/verify-zentofact/artifacts/<run>/bandeja.json`. HTTP 200. The `Pendientes` badge matches `counts.pending`; the four priority cards match `counts.urgency`. Preview rows include Falabella `PV-10001` (overdue, `Marcar listo`), manual `QNC-10010` (tomorrow, `Imprimir`), and Ripley `RP-10020` (later, `Imprimir`).
+- **Filter by priority.** Click a priority card: it reads `Filtro activo` and the table narrows to that urgency (`GET /logistics-inbox?stage=pending&urgency=tomorrow` returns the same rows). Click again to clear.
+- **Print manual.** Click `Imprimir etiquetas`, keep only `QNC-10010` checked, and click `Imprimir 1 en A4` (or use the row button). That path builds a local PDF (label + `GUÍA DE ARMADO`) and does not call a seller API. Afterwards the row reads `Reimprimir` with `Impresa`, and the detail dialog shows `Etiqueta impresa el …`. Do **not** click `Marcar listo` or `Marcar todos` on Falabella rows. Do **not** print Falabella or Ripley rows in this recipe; those calls hit live seller APIs.
 - **Proof.** Keep `bandeja.json` and a screenshot where the `h1` and the selected tab label are readable.
 
 ## Gotchas
 
 - `Bandeja Falabella` at `/#/pedidos` stays. This screen does not replace it.
-- `Imprimir` builds Falabella, Ripley, and manual labels plus a packing sheet. Treat it as a mutation of print counts for Falabella.
+- `Imprimir` builds Falabella, Ripley, and manual labels plus a packing sheet and records the print in `logistics_label_prints`. Treat it as a mutation.
+- `Sincronizar` calls `POST /order-management/sync` (live marketplaces). Preview keys are fake; leave it alone unless the recipe is a sync check.
 - Hash route: `/#/bandeja`, not `/bandeja`.
