@@ -54,13 +54,6 @@ import {
   VariantA,
   VariantB,
   VariantC,
-  VariantD,
-  VariantE,
-  VariantF,
-  VariantG,
-  VariantH,
-  VariantI,
-  VariantJ,
   type BandejaView,
   type LogisticsItem,
   type LogisticsOrder,
@@ -153,7 +146,7 @@ function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
 export default function BandejaLogistica() {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
-  const variant = (params.get('variant') || 'D').toUpperCase();
+  const variant = (params.get('variant') || 'B').toUpperCase();
   const { role, can, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && role !== 'viewer';
   const canSync = !permissionsLoading && can('order_management');
@@ -346,16 +339,9 @@ export default function BandejaLogistica() {
     emptyCopy: logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency),
   };
 
-  const body = variant === 'B' ? <VariantB view={view} />
+  const body = variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
-      : variant === 'D' ? <VariantD view={view} />
-        : variant === 'E' ? <VariantE view={view} />
-          : variant === 'F' ? <VariantF view={view} />
-            : variant === 'G' ? <VariantG view={view} />
-              : variant === 'H' ? <VariantH view={view} />
-                : variant === 'I' ? <VariantI view={view} />
-                  : variant === 'J' ? <VariantJ view={view} />
-                    : <VariantA view={view} />;
+      : <VariantB view={view} />;
 
   const detailUrgency = detail ? logisticsUrgency(detail, now) : null;
   const detailShipped = detail?.stage === 'shipped';

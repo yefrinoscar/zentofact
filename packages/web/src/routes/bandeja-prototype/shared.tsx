@@ -2,15 +2,20 @@
 // Pregunta: ¿qué estructura le sirve al operador para preparar e imprimir?
 // Descartable: el ganador se reescribe en BandejaLogistica.tsx.
 import { useState, type ReactNode } from 'react';
-import { CheckCircle2, ImageIcon, Loader2, PackageCheck, Printer } from 'lucide-react';
+import { CheckCircle2, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/cn';
+import { sellerShortName } from '../../lib/seller-name';
 import {
+  canPrintLogisticsLabel,
   labelPrintTooltip,
   labelWasPrinted,
+  logisticsChannelDotClass,
   logisticsNextStep,
   logisticsQuantityLabel,
   logisticsUrgency,
   productImageSrc,
+  LOGISTICS_STAGES,
+  LOGISTICS_URGENCIES,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -176,4 +181,111 @@ export function EmptyState({ view, children }: { view: BandejaView; children?: R
     return <p className="py-16 text-center text-sm text-muted-foreground">{view.emptyCopy}</p>;
   }
   return <>{children}</>;
+}
+
+export function printableOrders(orders: LogisticsOrder[]) {
+  return orders.filter(canPrintLogisticsLabel);
+}
+
+export function StageTabs({ view }: { view: BandejaView }) {
+  return (
+    <div className="flex items-end justify-between gap-3 border-b border-border">
+      <div role="tablist" aria-label="Flujo de pedidos" className="-mb-px flex gap-5">
+        {LOGISTICS_STAGES.map((tab) => {
+          const active = view.stage === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => view.setStage(tab.value)}
+              className={cn(
+                'border-b-2 pb-2 text-sm',
+                active ? 'border-foreground font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {tab.label} {view.counts[tab.value]}
+            </button>
+          );
+        })}
+      </div>
+      <Button size="icon-sm" variant="ghost" className="mb-1" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
+        <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
+      </Button>
+    </div>
+  );
+}
+
+export function UrgencyTabs({ view }: { view: BandejaView }) {
+  if (view.stage === 'shipped') return null;
+  return (
+    <div role="tablist" aria-label="Plazo de entrega" className="flex flex-wrap gap-5 border-b border-border">
+      {LOGISTICS_URGENCIES.map((tab) => {
+        const active = view.urgency === tab.value;
+        return (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => view.setUrgency(active ? null : tab.value)}
+            className={cn(
+              '-mb-px border-b-2 pb-2 text-sm',
+              active ? 'border-foreground font-semibold text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {tab.label} {view.counts.urgency[tab.value]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function PrintGroupButton({
+  orders,
+  view,
+  label,
+  emphasize = false,
+}: {
+  orders: LogisticsOrder[];
+  view: BandejaView;
+  label: string;
+  emphasize?: boolean;
+}) {
+  const targets = printableOrders(orders);
+  if (!targets.length || view.stage === 'shipped') return null;
+  return (
+    <Button
+      size="sm"
+      variant={emphasize ? 'default' : 'ghost'}
+      onClick={() => view.printOrders(targets)}
+      disabled={view.printing}
+      aria-label={`Imprimir etiquetas de ${label}`}
+    >
+      {view.printing ? <Loader2 className="animate-spin" /> : <Printer />}
+      Imprimir {targets.length}
+    </Button>
+  );
+}
+
+export function BoardOrder({ order, view }: { order: LogisticsOrder; view: BandejaView }) {
+  const item = order.items[0];
+  const extra = order.items.length > 1 ? ` +${order.items.length - 1}` : '';
+  return (
+    <li>
+      <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-2 py-1.5 text-left hover:bg-muted/40">
+        <span className={cn('size-1.5 shrink-0 rounded-full', logisticsChannelDotClass(order.channelCode))} />
+        <span className="w-[6.5rem] shrink-0 truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
+        {item && <ProductThumb item={item} className="size-7 rounded" />}
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {item?.description || 'Sin productos'}
+          {extra}
+        </span>
+        {item && <QuantityTag item={item} />}
+        <span className="hidden w-20 truncate text-[11px] text-muted-foreground sm:block">{sellerShortName(order.companyName)}</span>
+      </button>
+    </li>
+  );
 }
