@@ -7,6 +7,8 @@ import {
   classifyTransactionType,
   lineFingerprint,
   parseMoney,
+  parseMoneyPrecise,
+  roundCents,
   parseDateKey,
   parseScheduledPaymentDate,
   isPaidSettlementStatus,
@@ -96,6 +98,10 @@ test('lee montos con coma decimal y signo negativo', () => {
   assert.equal(parseMoney('-12,30'), -12.3);
   assert.equal(parseMoney('S/ 189.90'), 189.9);
   assert.equal(parseMoney('(15.00)'), -15);
+  assert.equal(parseMoneyPrecise('-342.355'), -342.355);
+  assert.equal(parseMoney(-342.355), -342.36);
+  assert.equal(roundCents(-342.355), -342.36);
+  assert.equal(roundCents(684.71 * 0.18), 123.25);
 });
 
 test('lee fechas de corte latinoamericanas', () => {

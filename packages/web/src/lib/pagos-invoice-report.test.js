@@ -4,7 +4,9 @@ import {
   decodeInvoiceSpreadsheet,
   headerLooksLikeInvoiceReport,
   invoiceChargeAmount,
+  invoiceConceptAmounts,
   invoiceConceptLabel,
+  invoiceDocumentAmounts,
   invoiceLinesForItem,
   invoiceAmountInWords,
   invoiceElectronicTitle,
@@ -72,6 +74,19 @@ test('la vista de factura muestra el cobro en positivo', () => {
   assert.deepEqual(invoiceChargeAmount('factura', -14.38), { amount: 14.38, credit: false });
   assert.deepEqual(invoiceChargeAmount('factura', -4561.09), { amount: 4561.09, credit: false });
   assert.deepEqual(invoiceChargeAmount('nota_credito', 9), { amount: 9, credit: true });
+});
+
+test('el papel de la factura cobra IGV 18% por ítem como SUNAT', () => {
+  assert.deepEqual(invoiceConceptAmounts('factura', { net: -684.71 }), {
+    net: 684.71,
+    igv: 123.25,
+    gross: 807.96,
+    count: 0,
+  });
+  assert.deepEqual(
+    invoiceDocumentAmounts('factura', [{ net: -684.71 }, { net: -184.16 }, { net: -546.27 }]),
+    { net: 1415.14, igv: 254.73, gross: 1669.87 },
+  );
 });
 
 test('el ítem de la factura deja solo esas líneas', () => {

@@ -1,6 +1,6 @@
 ---
 name: verify-zentofact
-description: Drive the ZentoFact web app and API the way an operator does — login as each fixture role, catalog, Falabella inbox, and today's outbound products. Use when proving a UI or API change, checking inventory after listo-para-enviar, or verifying local app behavior.
+description: Drive the ZentoFact web app and API the way an operator does — login as each fixture role, catalog, and Falabella inbox. Use when proving a UI or API change, checking inventory after listo-para-enviar, or verifying local app behavior.
 ---
 
 # Verify ZentoFact
@@ -60,7 +60,7 @@ Harness: `control-zentofact` for session and HTTP. Browser for screens the opera
 .cursor/skills/verify-zentofact/scripts/control-zentofact login operator@preview.zentofact.local
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /products?search=AG301&limit=5 .cursor/skills/verify-zentofact/artifacts/<run>/products.json
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /orders-inbox?view=open&limit=20 .cursor/skills/verify-zentofact/artifacts/<run>/inbox.json
-.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /catalog/sales/today .cursor/skills/verify-zentofact/artifacts/<run>/salidas.json
+.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /catalog/sales/today .cursor/skills/verify-zentofact/artifacts/<run>/sales-today.json
 ```
 
 `login [email]` POSTs to `http://127.0.0.1:3011/api/auth/sign-in/email` with that email (or `ADMIN_EMAIL` / `AUTH_SUPERADMIN_EMAIL`) plus `ADMIN_PASSWORD` from `.env`, and stores cookies in `.run/cookies.txt`. All later `api` calls go through the web origin so Vite's proxy and Better Auth cookies stay on the same site. Seeded catalog/inbox rows are in `docs/agents/cloud-agent.md`. If those rows are missing, run `control-zentofact seed`.
@@ -72,7 +72,6 @@ Browser (T3 preview tools, Playwright, or any CDP session) — stable handles fr
 | Login | `http://127.0.0.1:3011/` | heading `Bienvenido de vuelta`; textbox labeled `Correo`; textbox labeled `Contraseña`; button `Ingresar` |
 | Catalog | `http://127.0.0.1:3011/#/productos` | header `h1` `Catálogo de productos`; sidebar link `Productos`; search `role=textbox[name='Buscar por producto, SKU o marca']`; table `aria-label='Catálogo de productos'` |
 | Inbox | `http://127.0.0.1:3011/#/pedidos` | header `h1` `Bandeja Falabella`; tablist `Flujo de pedidos`; tabs `Pendientes`, `Listos para enviar`; search `Buscar pedidos`; **do not** click `Marcar listo para enviar` |
-| Outbound | `http://127.0.0.1:3011/#/salidas` | header `h1` `Salidas de hoy`; region `Productos con salida en esta fecha`; search `Buscar SKU, producto o seller` |
 | Dashboard | `http://127.0.0.1:3011/#/dashboard` | header `h1` `Dashboard` |
 
 Prefer ARIA role + accessible name. The router is HashRouter; `preview_navigate` to `/#/productos`, not `/productos`.

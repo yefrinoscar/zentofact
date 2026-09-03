@@ -2,11 +2,11 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Building2,
   ChartNoAxesCombined,
+  CircleDollarSign,
   FileMinus2,
   FileText,
   Inbox,
   ListOrdered,
-  PackageMinus,
   PackageOpen,
   PackageSearch,
   ReceiptText,
@@ -16,10 +16,8 @@ import {
   ShoppingBag,
   Shuffle,
   TrendingDown,
-  Truck,
   Users,
   Wallet,
-  WalletCards,
   Zap,
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
@@ -53,12 +51,10 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
-      { to: '/pagos', icon: WalletCards, label: 'Pagos', permission: 'pagos' },
+      { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
       { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },
-      { to: '/salidas', icon: PackageMinus, label: 'Salidas de hoy', permission: 'salidas' },
-      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
   },
   {
@@ -68,15 +64,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
-      {
-        to: '/orders/envio',
-        icon: Truck,
-        label: 'Envío propio',
-        adminOnly: true,
-        description: 'Distritos y precios de movilidad propia.',
-      },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
+      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
   },
   {
