@@ -33,7 +33,7 @@ export function repairSettlementText(value) {
     .replace(/Ã±/g, 'ñ');
 }
 
-export function parseMoney(value) {
+export function parseMoneyPrecise(value) {
   const raw = String(value ?? '').trim();
   if (!raw || raw === '-' || raw === '—') return null;
   const cleaned = raw
@@ -56,8 +56,20 @@ export function parseMoney(value) {
   }
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed)) return null;
-  const amount = Math.round((negative ? -Math.abs(parsed) : parsed) * 100) / 100;
-  return amount;
+  return negative ? -Math.abs(parsed) : parsed;
+}
+
+export function roundCents(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const sign = n < 0 ? -1 : 1;
+  return sign * Math.round(Number(`${Math.abs(n)}e2`)) / 100;
+}
+
+export function parseMoney(value) {
+  const parsed = parseMoneyPrecise(value);
+  if (parsed == null) return null;
+  return roundCents(parsed);
 }
 
 export function parseDateKey(value) {

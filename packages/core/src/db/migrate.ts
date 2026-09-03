@@ -1833,9 +1833,9 @@ const DDL = `
     description TEXT NOT NULL DEFAULT '',
     transaction_type TEXT NOT NULL DEFAULT '',
     concept TEXT NOT NULL DEFAULT 'other',
-    net NUMERIC(14,2) NOT NULL DEFAULT 0,
-    igv NUMERIC(14,2) NOT NULL DEFAULT 0,
-    gross NUMERIC(14,2) NOT NULL DEFAULT 0,
+    net NUMERIC(14,6) NOT NULL DEFAULT 0,
+    igv NUMERIC(14,6) NOT NULL DEFAULT 0,
+    gross NUMERIC(14,6) NOT NULL DEFAULT 0,
     statement_number TEXT NOT NULL DEFAULT '',
     paid_reference TEXT NOT NULL DEFAULT '',
     transacted_at TIMESTAMPTZ,
@@ -1850,6 +1850,12 @@ const DDL = `
 
 export async function runMigrations(pool: Pool): Promise<void> {
   await pool.query(DDL);
+  await pool.query(`
+    ALTER TABLE falabella_invoice_lines
+      ALTER COLUMN net TYPE NUMERIC(14,6),
+      ALTER COLUMN igv TYPE NUMERIC(14,6),
+      ALTER COLUMN gross TYPE NUMERIC(14,6)
+  `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
 }

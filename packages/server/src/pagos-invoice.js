@@ -4,13 +4,15 @@ import {
   normalizeHeader,
   parseCsvRows,
   parseDateKey,
-  parseMoney,
+  parseMoneyPrecise,
   repairSettlementText,
+  roundCents,
 } from './pagos-csv.js';
 import { repairSpreadsheetZip } from './xlsx-zip.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 const CONCEPT_ORDER = ['commission', 'logistics', 'buyer_shipping', 'ads', 'other'];
+const IGV_RATE = 0.18;
 
 let defaultPoolPromise;
 
@@ -31,8 +33,7 @@ function sha256(value) {
 }
 
 function money(value) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
+  return roundCents(value);
 }
 
 function text(value, field, max = 180) {
@@ -172,12 +173,13 @@ export function periodFromFilename(name) {
 
 function cellText(cell) {
   if (cell == null) return '';
-  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
   const value = cell.v;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     const iso = value.toISOString();
     return iso.includes('T00:00:00') ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
   }
+  if (cell.w != null && String(cell.w) !== '') return String(cell.w);
   return String(value ?? '');
 }
 
@@ -274,9 +276,9 @@ export function parseInvoiceReportCsv(csv) {
   rows.slice(headerIndex + 1).forEach((row, index) => {
     const documentNumber = cell(row, columns.documentNumber);
     if (!documentNumber) return;
-    const net = parseMoney(cell(row, columns.net));
-    const igv = parseMoney(cell(row, columns.igv));
-    const gross = parseMoney(cell(row, columns.gross));
+    const net = parseMoneyPrecise(cell(row, columns.net));
+    const igv = parseMoneyPrecise(cell(row, columns.igv));
+    const gross = parseMoneyPrecise(cell(row, columns.gross));
     const transactedAt = cell(row, columns.transactedAt);
     const description = repairSettlementText(cell(row, columns.description));
     const transactionType = repairSettlementText(cell(row, columns.transactionType));
@@ -291,9 +293,9 @@ export function parseInvoiceReportCsv(csv) {
       productName: repairSettlementText(cell(row, columns.productName)),
       sellerSku: cell(row, columns.sellerSku),
       falabellaSku: cell(row, columns.falabellaSku),
-      net: money(net),
-      igv: money(igv),
-      gross: money(gross ?? ((net || 0) + (igv || 0))),
+      net: net ?? 0,
+      igv: igv ?? 0,
+      gross: gross ?? ((net || 0) + (igv || 0)),
       currency: cell(row, columns.currency) || 'PEN',
       statementNumber: cell(row, columns.statementNumber),
       orderNumber: cell(row, columns.orderNumber),
@@ -320,18 +322,28 @@ export function summarizeInvoiceConcepts(lines) {
       key,
       count: 0,
       net: 0,
-      igv: 0,
-      gross: 0,
     };
     current.count += 1;
-    current.net = money(current.net + Number(line.net || 0));
-    current.igv = money(current.igv + Number(line.igv || 0));
-    current.gross = money(current.gross + Number(line.gross || 0));
+    current.net += Number(line.net || 0);
     buckets.set(key, current);
   }
   return CONCEPT_ORDER
     .map((key) => buckets.get(key))
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((row) => {
+      const net = money(row.net);
+      const charged = money(Math.abs(net));
+      const igv = money(charged * IGV_RATE);
+      const gross = money(charged + igv);
+      const sign = net < 0 ? -1 : 1;
+      return {
+        key: row.key,
+        count: row.count,
+        net,
+        igv: money(sign * igv),
+        gross: money(sign * gross),
+      };
+    });
 }
 
 export function groupInvoiceDocuments(lines) {
@@ -353,9 +365,9 @@ export function groupInvoiceDocuments(lines) {
   return [...groups.values()].map((document) => {
     const period = collectDates(document.lines);
     const concepts = summarizeInvoiceConcepts(document.lines);
-    const net = money(document.lines.reduce((sum, line) => sum + Number(line.net || 0), 0));
-    const igv = money(document.lines.reduce((sum, line) => sum + Number(line.igv || 0), 0));
-    const gross = money(document.lines.reduce((sum, line) => sum + Number(line.gross || 0), 0));
+    const net = money(concepts.reduce((sum, row) => sum + Number(row.net || 0), 0));
+    const igv = money(concepts.reduce((sum, row) => sum + Number(row.igv || 0), 0));
+    const gross = money(concepts.reduce((sum, row) => sum + Number(row.gross || 0), 0));
     const statements = [...new Set(document.lines.map((line) => line.statementNumber).filter(Boolean))];
     const paymentRefs = [...new Set(document.lines.map((line) => line.paidReference).filter(Boolean))];
     return {
@@ -500,9 +512,9 @@ function mapLine(row) {
     description: row.description || '',
     transactionType: row.transaction_type || '',
     concept: row.concept || 'other',
-    net: money(row.net),
-    igv: money(row.igv),
-    gross: money(row.gross),
+    net: Number(row.net || 0),
+    igv: Number(row.igv || 0),
+    gross: Number(row.gross || 0),
     statementNumber: row.statement_number || '',
     paidReference: row.paid_reference || '',
     transactedAt: row.transacted_at || null,
@@ -736,11 +748,18 @@ export async function getInvoiceDocument(id, db) {
   const lines = linesQuery.rows.map(mapLine);
   const statements = [...new Set(lines.map((line) => line.statementNumber).filter(Boolean))];
   const paymentRefs = [...new Set(lines.map((line) => line.paidReference).filter(Boolean))];
+  const concepts = summarizeInvoiceConcepts(lines);
+  const net = money(concepts.reduce((sum, row) => sum + Number(row.net || 0), 0));
+  const igv = money(concepts.reduce((sum, row) => sum + Number(row.igv || 0), 0));
+  const gross = money(concepts.reduce((sum, row) => sum + Number(row.gross || 0), 0));
   return {
     ...mapDocument({ ...row, seller_id: row.seller_id || row.import_seller_id }),
+    net,
+    igv,
+    gross,
     statements,
     paymentRefs,
-    concepts: summarizeInvoiceConcepts(lines),
+    concepts,
     lines,
   };
 }

@@ -7,11 +7,9 @@ import Companies from './routes/Companies';
 import CreditNotes from './routes/CreditNotes';
 import CreditNotesList from './routes/CreditNotesList';
 import Settings from './routes/Settings';
-import EnvioPropio from './routes/EnvioPropio';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
-import ProductosHoy from './routes/ProductosHoy';
 import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
@@ -73,10 +71,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Nueva venta',
     subtitle: 'Registra una venta con productos del catálogo.',
   },
-  '/orders/envio': {
-    title: 'Envío propio',
-    subtitle: 'Almacén, zonas y cobertura del reparto Express.',
-  },
   '/scanner': {
     title: 'Preparación y escaneo',
     subtitle: 'Escanea una etiqueta y revisa el contenido exacto de cada bulto.',
@@ -104,10 +98,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/descuentos-stock': {
     title: 'Cola de descuentos',
     subtitle: 'Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.',
-  },
-  '/salidas': {
-    title: 'Salidas de hoy',
-    subtitle: 'Productos que salen hoy según PromisedShippingTime.',
   },
   '/insumos': {
     title: 'Insumos',
@@ -139,7 +129,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/settings': {
     title: 'Ajustes',
-    subtitle: 'Configura empresas y el tema visual de la aplicación.',
+    subtitle: 'Tema visual y cobertura del envío propio.',
   },
   '/system-config': {
     title: 'Configuración del sistema',
@@ -219,7 +209,7 @@ function AppLayout() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const { user, loading, can, isAdmin, isSuperadmin } = usePermissions();
+  const { user, loading, can, isSuperadmin } = usePermissions();
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -240,11 +230,6 @@ function AppLayout() {
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
-  const ownFleetRoute = loading
-    ? <div className="h-80 animate-pulse rounded-2xl bg-muted" />
-    : isAdmin
-      ? <EnvioPropio />
-      : <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />;
   const systemConfigRoute = (
     isSuperadmin
       ? <Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><SystemConfig /></Suspense>
@@ -290,8 +275,8 @@ function AppLayout() {
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
-              <Route path="/orders/envio" element={ownFleetRoute} />
-              <Route path="/envio-propio" element={<Navigate to="/orders/envio" replace />} />
+              <Route path="/envio-propio" element={<Navigate to="/settings" replace />} />
+              <Route path="/orders/envio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
@@ -303,7 +288,7 @@ function AppLayout() {
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
-              <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
+              <Route path="/salidas" element={<Navigate to="/orders" replace />} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
