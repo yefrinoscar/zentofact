@@ -1,6 +1,16 @@
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueueStockJob, ensureStockJobTables, getConfig, getPaused, processStockQueue, setPaused } from './stock-jobs.js';
+import {
+  enqueueStockJob,
+  enqueueStockJobsSinceListenFrom,
+  ensureStockJobTables,
+  getConfig,
+  getPaused,
+  processStockQueue,
+  reopenReservedStockJobsForCommit,
+  setPaused,
+} from './stock-jobs.js';
+import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { invalidateSystemConfigCache } from '../system-config.js';
 
 class JobDb {
@@ -219,7 +229,7 @@ test('la cola muestra el mismo descuento que Configuración del sistema', async 
   db.settings = { catalog_inventory: true };
   const on = await getConfig(db);
   assert.equal(on.inventoryEnabled, true);
-  assert.equal(on.inventoryLabel, 'Descuento de inventario al listo para enviar');
+  assert.equal(on.inventoryLabel, 'Descuento de inventario desde pendiente');
   assert.equal(on.inventorySourceLabel, 'Base de datos');
   assert.equal(on.inventoryKillSwitch, false);
 
@@ -238,4 +248,38 @@ test('con el descuento apagado el worker no procesa la cola', async () => {
   assert.equal(stats.inventoryDisabled, true);
   assert.equal(stats.claimed, 0);
   assert.equal([...db.jobs.values()][0].status, 'pending');
+});
+
+test('la escucha encola pendientes desde las 12:00 Lima del corte', async () => {
+  let sql = '';
+  let params = [];
+  const preview = await enqueueStockJobsSinceListenFrom({
+    dryRun: true,
+    source: 'listen',
+  }, {
+    async query(text, values = []) {
+      sql = String(text);
+      params = values;
+      return { rows: [{ order_id: 1 }] };
+    },
+  });
+  assert.equal(preview.orders, 1);
+  assert.equal(preview.enqueued, 0);
+  assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
+  assert.match(sql, /fulfillment_status in \('pending','preparing'\)/i);
+  assert.match(sql, /coalesce\(o\.ordered_at, o\.created_at\) >= \$1::timestamptz/i);
+});
+
+test('reabre un job done cuando la reserva debe confirmarse', async () => {
+  let sql = '';
+  const result = await reopenReservedStockJobsForCommit({
+    async query(text) {
+      sql = String(text);
+      return { rows: [{ id: 9 }] };
+    },
+  });
+  assert.equal(result.reopened, 1);
+  assert.match(sql, /stock_state='pending'/i);
+  assert.match(sql, /ready_to_ship/i);
+  assert.match(sql, /job\.status='done'/i);
 });

@@ -47,10 +47,14 @@ class IngestDb {
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
     if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
       const onHand = this.inventory.get(Number(params[0])) ?? 100;
-      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: 0 }] };
+      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: this.reserved || 0 }] };
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.inventory.set(Number(params[1]), Number(params[0]));
+      return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_reserved')) {
+      this.reserved = Number(params[0]);
       return { rows: [] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {

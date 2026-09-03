@@ -97,7 +97,7 @@ function SourceBadge({ source }: { source: string }) {
           ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
           : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
-      title={fromWebhook ? 'Encolado al pasar a listo para enviar' : 'Encolado por otro flujo'}
+      title={fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo'}
     >
       {label}
     </span>
@@ -130,6 +130,8 @@ function formatJobDetail(job: Job) {
   const skipped = Number(result.skipped);
   if (job.last_error) return job.last_error;
   if (Number.isFinite(applied) && applied > 0) return `${applied} línea${applied === 1 ? '' : 's'} descontada${applied === 1 ? '' : 's'}`;
+  const reserved = Number(result.reserved);
+  if (Number.isFinite(reserved) && reserved > 0) return `${reserved} línea${reserved === 1 ? '' : 's'} reservada${reserved === 1 ? '' : 's'}`;
   if (Number.isFinite(skipped) && skipped > 0) return `${skipped} línea${skipped === 1 ? '' : 's'} omitida${skipped === 1 ? '' : 's'}`;
   if (result.supersededByOrderId) return 'Reemplazado por job canónico';
   if (typeof result.missing === 'boolean' && result.missing) return 'Esperando pedido canónico';
@@ -401,7 +403,7 @@ export default function DescuentosCola() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Descuentos de stock</h2>
-            <p className="text-xs text-muted-foreground">Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.</p>
+            <p className="text-xs text-muted-foreground">Desde pendiente. El stock queda reservado hasta listo para enviar.</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 3 s. No indica si el descuento está encendido.">

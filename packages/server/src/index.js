@@ -522,7 +522,7 @@ app.post('/order-management/orders/manual', async (c) => {
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
     });
-    if (result?.order?.companyId && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
+    if (result?.order?.companyId && ['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
       try {
         await stockJobs.enqueueStockJob({
           orderId: result.order.id,

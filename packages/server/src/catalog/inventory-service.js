@@ -136,6 +136,51 @@ export async function applyInventoryMovement(db, input) {
   return { applied: true, quantityOnHand: projected, movement: mapMovement(inserted.rows[0]) };
 }
 
+export async function applyInventoryReservation(db, input) {
+  if (!db?.query) throw new Error('applyInventoryReservation requiere una transacción abierta.');
+  const productId = positiveInt(input.productId, 'productId');
+  const quantityDelta = finiteNumber(input.quantityDelta, 'quantityDelta');
+  if (quantityDelta === 0) throw httpError('quantityDelta no puede ser cero.');
+
+  await db.query(
+    `insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+     values ($1,0,0) on conflict (product_id) do nothing`,
+    [productId],
+  );
+  const inventoryResult = await db.query(
+    `select quantity_on_hand, quantity_reserved from product_inventory
+     where product_id=$1 for update`,
+    [productId],
+  );
+  if (!inventoryResult.rows.length) throw httpError('Producto no encontrado.', 404);
+  const onHand = Number(inventoryResult.rows[0].quantity_on_hand);
+  const reserved = Number(inventoryResult.rows[0].quantity_reserved);
+  const projectedReserved = reserved + quantityDelta;
+  if (projectedReserved < 0) {
+    throw httpError(`Reserva inválida para el producto ${productId}.`);
+  }
+  const available = onHand - reserved;
+  const projectedAvailable = onHand - projectedReserved;
+  if (quantityDelta > 0 && projectedAvailable < 0 && input.allowNegative !== true) {
+    throw new InsufficientStockError({
+      productId,
+      onHand: available,
+      quantityDelta: -quantityDelta,
+      projected: projectedAvailable,
+    });
+  }
+  await db.query(
+    'update product_inventory set quantity_reserved=$1, updated_at=now() where product_id=$2',
+    [projectedReserved, productId],
+  );
+  return {
+    applied: true,
+    quantityOnHand: onHand,
+    quantityReserved: projectedReserved,
+    available: projectedAvailable,
+  };
+}
+
 export async function getInventory(productIdInput, db) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
