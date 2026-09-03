@@ -4,12 +4,18 @@ import {
   canMarkFalabellaReady,
   canPrintLogisticsLabel,
   groupLogisticsByUrgency,
+  joinLogisticsFacts,
   labelWasPrinted,
   logisticsBulkReadySummary,
   logisticsChannelClass,
   logisticsChannelLabel,
+  logisticsChannelMixLabel,
   logisticsCountLabel,
+  logisticsUpdatedClock,
   isActiveLogisticsDeadline,
+  pendingActionHelper,
+  pendingDeadlineHelper,
+  readyPrintHelper,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
@@ -115,6 +121,28 @@ test('copy operativa de bandeja', () => {
   assert.equal(logisticsPrintSuccessCopy({ labelCount: 3, packingPageCount: 0 }), 'Listo. 3 etiquetas.');
   assert.equal(logisticsBulkReadySummary(3, 0), '3 pedidos marcados listos para enviar.');
   assert.equal(logisticsBulkReadySummary(3, 1), '2 marcados; 1 no pudo actualizarse.');
+});
+
+test('el filtro de etapa resume plazo, acción y canales', () => {
+  const now = new Date('2026-09-02T15:00:00.000Z');
+  const pending = [
+    { channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'F-1', promisedShippingAt: '2026-09-02T22:00:00.000Z' },
+    { channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'F-2', promisedShippingAt: '2026-09-02T23:00:00.000Z' },
+    { channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, promisedShippingAt: '2026-09-03T17:00:00.000Z' },
+    { channelCode: 'manual', fulfillmentStatus: 'pending', promisedShippingAt: '2026-09-05T17:00:00.000Z' },
+    { channelCode: 'manual', fulfillmentStatus: 'pending', promisedShippingAt: '2026-09-02T14:00:00.000Z' },
+  ];
+  const ready = [
+    { channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 },
+    { channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 1 } },
+  ];
+  assert.equal(pendingDeadlineHelper(pending, now), '2 hoy · 1 mañana');
+  assert.equal(pendingActionHelper(pending), '2 por marcar');
+  assert.equal(readyPrintHelper(ready), '1 por imprimir');
+  assert.equal(readyPrintHelper([{ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }]), 'Ya impresa');
+  assert.equal(logisticsChannelMixLabel(pending), 'Falabella 2 · Ripley 1 · Manual 2');
+  assert.equal(joinLogisticsFacts(['2 hoy', '', '10:32']), '2 hoy · 10:32');
+  assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
 });
 
 test('las imágenes de Falabella pasan por el proxy del catálogo', () => {

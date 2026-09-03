@@ -268,6 +268,59 @@ export function logisticsCountLabel(stage: LogisticsStage, count: number) {
   return `${count} etiqueta${count === 1 ? '' : 's'}`;
 }
 
+export function joinLogisticsFacts(parts: Array<string | null | undefined>) {
+  return parts.map((part) => String(part || '').trim()).filter(Boolean).join(' · ');
+}
+
+export function pendingDeadlineHelper(orders: LogisticsOrderLike[], now: Date) {
+  let today = 0;
+  let tomorrow = 0;
+  let later = 0;
+  for (const order of orders) {
+    if (!isActiveLogisticsDeadline(order, now)) continue;
+    const urgency = logisticsUrgency(order, now);
+    if (urgency === 'today') today += 1;
+    else if (urgency === 'tomorrow') tomorrow += 1;
+    else later += 1;
+  }
+  const parts: string[] = [];
+  if (today) parts.push(`${today} hoy`);
+  if (tomorrow) parts.push(`${tomorrow} mañana`);
+  if (!parts.length && later) parts.push(`${later} próximo${later === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'Nada por preparar';
+}
+
+export function pendingActionHelper(orders: LogisticsOrderLike[]) {
+  const count = orders.filter(canMarkFalabellaReady).length;
+  return count ? `${count} por marcar` : '';
+}
+
+export function readyPrintHelper(orders: LogisticsOrderLike[]) {
+  const toPrint = orders.filter((order) => canPrintLogisticsLabel(order) && !labelWasPrinted(order)).length;
+  const printed = orders.filter(labelWasPrinted).length;
+  if (toPrint) return `${toPrint} por imprimir`;
+  if (printed) return printed === 1 ? 'Ya impresa' : 'Ya impresas';
+  return 'Nada por enviar';
+}
+
+export function logisticsChannelMixLabel(orders: LogisticsOrderLike[]) {
+  const codes: LogisticsChannel[] = ['falabella', 'ripley', 'manual'];
+  const counts = { falabella: 0, ripley: 0, manual: 0 };
+  for (const order of orders) {
+    const code = String(order.channelCode || '').trim().toLowerCase();
+    if (code === 'falabella' || code === 'ripley' || code === 'manual') counts[code] += 1;
+  }
+  return codes
+    .filter((code) => counts[code] > 0)
+    .map((code) => `${logisticsChannelLabel(code)} ${counts[code]}`)
+    .join(' · ');
+}
+
+export function logisticsUpdatedClock(updatedAt?: Date | null) {
+  if (!updatedAt) return '';
+  return new Intl.DateTimeFormat('es-PE', { timeZone: LIMA, hour: 'numeric', minute: '2-digit' }).format(updatedAt);
+}
+
 export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null) {
   if (urgency && stage !== 'shipped') {
     const meta = logisticsUrgencyMeta(urgency);

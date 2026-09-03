@@ -22,7 +22,7 @@ import {
 } from '../lib/logistics-inbox';
 import { noticeFromError, type InboxNotice } from '../lib/inbox-notice';
 import { CopyableLogId } from '../components/CopyableLogId';
-import { PrototypeSwitcher } from '../components/PrototypeSwitcher';
+import { PrototypeSwitcherGroup } from '../components/PrototypeSwitcher';
 import { usePermissions } from '../hooks/usePermissions';
 import { Button } from '../components/ui/button';
 import {
@@ -35,6 +35,7 @@ import {
 } from '../components/ui/dialog';
 import {
   BANDEJA_PROTOTYPE_VARIANTS,
+  BANDEJA_STAGE_FILTERS,
   VariantA,
   VariantB,
   VariantC,
@@ -97,6 +98,7 @@ export default function BandejaLogistica() {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const variant = (params.get('variant') || 'B').toUpperCase();
+  const filtro = params.get('filtro') === '2' || params.get('filtro') === '3' ? params.get('filtro')! : '1';
   const { role, can, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && role !== 'viewer';
   const canSync = !permissionsLoading && can('order_management');
@@ -290,7 +292,12 @@ export default function BandejaLogistica() {
       {notice && <InboxStatusNotice notice={notice} />}
       {body}
       {import.meta.env.DEV && (
-        <PrototypeSwitcher variants={[...BANDEJA_PROTOTYPE_VARIANTS]} current={variant} />
+        <PrototypeSwitcherGroup
+          groups={[
+            { param: 'variant', current: variant, variants: [...BANDEJA_PROTOTYPE_VARIANTS], listenKeys: false, prefix: 'Tablero' },
+            { param: 'filtro', current: filtro, variants: [...BANDEJA_STAGE_FILTERS], listenKeys: true, prefix: 'Filtro' },
+          ]}
+        />
       )}
 
       <Dialog open={Boolean(bulkReady)} onOpenChange={(open) => !open && !bulkReadyMutation.isPending && setBulkReady(null)}>
