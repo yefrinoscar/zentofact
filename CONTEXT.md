@@ -73,7 +73,7 @@ Entrega con movilidad de la bodega. Se muestra como el repartidor Express y se g
 _Avoid_: Movilidad propia as stored id, Nosotros as label
 
 **Zona de envío**:
-Grupo de distritos de Lima Metropolitana con un solo precio. El admin la nombra, le pone precio y le asigna distritos en Ajustes. Por defecto son tres, repartidas por distancia a la bodega: Cerca, Media y Lejos.
+Grupo de distritos de Lima Metropolitana con un solo precio. El admin la nombra, le pone precio y le agrega distritos en Ajustes. Un distrito no puede estar en dos zonas. Por defecto son tres, repartidas por distancia a la bodega: Cerca, Media y Lejos.
 _Avoid_: tarifa zonal, tramo, rango de km
 
 **Precio de envío**:

@@ -5,8 +5,10 @@ import {
   METRO_POINTS,
   OWN_FLEET_ORIGIN,
   PROVINCE_DEPARTMENT_AMOUNT,
+  assignDistrictToZone,
   countryFromComponents,
   defaultOwnFleetConfig,
+  districtsCoveredByZone,
   haversineKm,
   isInPeru,
   mergeOwnFleetConfig,
@@ -15,6 +17,8 @@ import {
   resolveShippingZone,
   saleTotals,
   serializeOwnFleetConfig,
+  unassignDistrict,
+  uncoveredDistricts,
 } from './own-fleet-shipping.ts';
 
 function zoneOf(config, districtKey) {
@@ -45,6 +49,27 @@ test('las zonas por defecto agrupan los distritos por distancia a la bodega', ()
   assert.equal(zoneOf(config, 'ate').name, 'Media');
   assert.equal(zoneOf(config, 'lurigancho').name, 'Lejos');
   assert.equal(zoneOf(config, 'pucusana').name, 'Lejos');
+});
+
+test('un distrito cubierto no se ofrece a otra zona; al asignarlo sale de la anterior', () => {
+  const config = defaultOwnFleetConfig();
+  const free = uncoveredDistricts(config.districts);
+  assert.ok(free.every((district) => district.enabled === false));
+  assert.ok(free.some((district) => district.key === 'pucusana'));
+  assert.equal(free.some((district) => district.key === 'santiago de surco'), false);
+  assert.ok(districtsCoveredByZone(config.districts, 'cerca').some((district) => district.key === 'santiago de surco'));
+
+  const moved = assignDistrictToZone(config.districts, 'santiago de surco', 'lejos');
+  assert.equal(districtsCoveredByZone(moved, 'cerca').some((district) => district.key === 'santiago de surco'), false);
+  assert.ok(districtsCoveredByZone(moved, 'lejos').some((district) => district.key === 'santiago de surco'));
+
+  const added = assignDistrictToZone(config.districts, 'pucusana', 'cerca');
+  assert.ok(districtsCoveredByZone(added, 'cerca').some((district) => district.key === 'pucusana'));
+  assert.equal(uncoveredDistricts(added).some((district) => district.key === 'pucusana'), false);
+
+  const removed = unassignDistrict(added, 'pucusana');
+  assert.ok(uncoveredDistricts(removed).some((district) => district.key === 'pucusana'));
+  assert.equal(districtsCoveredByZone(removed, 'cerca').some((district) => district.key === 'pucusana'), false);
 });
 
 test('cada distrito guarda su distancia a la bodega como referencia', () => {
