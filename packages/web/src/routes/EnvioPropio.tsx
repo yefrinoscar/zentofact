@@ -17,6 +17,9 @@ import {
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
+const GROUP_LABEL = 'mb-3 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
+const FIELD_LABEL = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
+const BARE_INPUT = 'h-8 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0';
 
 export default function EnvioPropio() {
   const queryClient = useQueryClient();
@@ -104,13 +107,11 @@ export default function EnvioPropio() {
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
       {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
 
-      {/* Almacén */}
-      <div className="space-y-4">
+      <div>
+        <p className={GROUP_LABEL}>Almacén</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <label htmlFor="own-fleet-address" className="mb-1.5 block text-sm font-medium text-foreground">
-              Dirección
-            </label>
+            <label htmlFor="own-fleet-address" className={FIELD_LABEL}>Dirección</label>
             <Input
               id="own-fleet-address"
               value={origin.address}
@@ -119,9 +120,7 @@ export default function EnvioPropio() {
             />
           </div>
           <div>
-            <label htmlFor="own-fleet-lat" className="mb-1.5 block text-sm font-medium text-foreground">
-              Latitud
-            </label>
+            <label htmlFor="own-fleet-lat" className={FIELD_LABEL}>Latitud</label>
             <Input
               id="own-fleet-lat"
               value={origin.lat}
@@ -131,9 +130,7 @@ export default function EnvioPropio() {
             />
           </div>
           <div>
-            <label htmlFor="own-fleet-lng" className="mb-1.5 block text-sm font-medium text-foreground">
-              Longitud
-            </label>
+            <label htmlFor="own-fleet-lng" className={FIELD_LABEL}>Longitud</label>
             <Input
               id="own-fleet-lng"
               value={origin.lng}
@@ -143,9 +140,7 @@ export default function EnvioPropio() {
             />
           </div>
           <div>
-            <label htmlFor="own-fleet-pickup-from" className="mb-1.5 block text-sm font-medium text-foreground">
-              Recojo desde
-            </label>
+            <label htmlFor="own-fleet-pickup-from" className={FIELD_LABEL}>Recojo desde</label>
             <Input
               id="own-fleet-pickup-from"
               type="time"
@@ -154,9 +149,7 @@ export default function EnvioPropio() {
             />
           </div>
           <div>
-            <label htmlFor="own-fleet-pickup-to" className="mb-1.5 block text-sm font-medium text-foreground">
-              Recojo hasta
-            </label>
+            <label htmlFor="own-fleet-pickup-to" className={FIELD_LABEL}>Recojo hasta</label>
             <Input
               id="own-fleet-pickup-to"
               type="time"
@@ -167,20 +160,20 @@ export default function EnvioPropio() {
         </div>
       </div>
 
-      {/* Zonas */}
-      <div className="space-y-0 border-t border-border pt-6">
+      <div className="border-t border-border pt-6">
+        <p className={GROUP_LABEL}>Zonas</p>
         {zones.map((zone) => {
           const members = districtsCoveredByZone(districts, zone.key);
           return (
-            <div key={zone.key} className="border-b border-border py-5 first:pt-0" aria-label={`Zona ${zone.name}`}>
-              <div className="mb-3 flex items-center gap-3">
+            <div key={zone.key} className="border-b border-border py-4 first:pt-0" aria-label={`Zona ${zone.name}`}>
+              <div className="mb-2 flex items-baseline gap-2">
                 <Input
                   value={zone.name}
                   onChange={(e) => patchZone(zone.key, { name: e.target.value })}
                   aria-label={`Nombre de la zona ${zone.name}`}
-                  className="max-w-48 font-medium"
+                  className={`${BARE_INPUT} max-w-48 text-base font-semibold`}
                 />
-                <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                <span className="flex items-baseline gap-1 text-sm text-muted-foreground">
                   <span>S/</span>
                   <Input
                     type="number"
@@ -194,14 +187,14 @@ export default function EnvioPropio() {
                       patchZone(zone.key, { amount: Math.min(9999, amount) });
                     }}
                     aria-label={`Precio de la zona ${zone.name}`}
-                    className={`w-20 ${NUMBER_INPUT}`}
+                    className={`${BARE_INPUT} ${NUMBER_INPUT} w-14 text-sm text-muted-foreground`}
                   />
                 </span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="ml-auto cursor-pointer text-muted-foreground"
+                  className="ml-auto self-center cursor-pointer text-muted-foreground"
                   disabled={zones.length === 1}
                   title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
                   aria-label={`Borrar la zona ${zone.name}`}
@@ -223,11 +216,11 @@ export default function EnvioPropio() {
                 <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={`Distritos de ${zone.name}`}>
                   {members.map((district) => (
                     <li key={district.key}>
-                      <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-foreground">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 py-0.5 pl-2.5 pr-1 text-xs text-muted-foreground">
                         {district.name}
                         <button
                           type="button"
-                          className="inline-flex size-4 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                          className="inline-flex size-4 cursor-pointer items-center justify-center rounded-full hover:bg-muted hover:text-foreground"
                           aria-label={`Quitar ${district.name} de ${zone.name}`}
                           onClick={() => removeDistrict(district.key)}
                         >
@@ -242,7 +235,7 @@ export default function EnvioPropio() {
           );
         })}
 
-        <div className="pt-4">
+        <div className="pt-3">
           <Button type="button" variant="ghost" size="sm" className="cursor-pointer text-muted-foreground" onClick={addZone}>
             <Plus className="size-4" /> Agregar zona
           </Button>
