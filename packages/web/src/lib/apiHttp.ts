@@ -64,6 +64,9 @@ export type ProductAssociationCandidate = {
   metadata: Record<string, unknown>;
   imageUrl: string | null;
   candidateSource: 'catalog' | 'remote';
+  association:
+    | { kind: 'available' }
+    | { kind: 'linked_elsewhere'; productId: number; mainSku: string | null; productName: string | null };
 };
 
 export type ProductAssociationCandidatesResponse = {

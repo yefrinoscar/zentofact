@@ -148,3 +148,56 @@ test('informa coincidencias ocultas por el filtro de disponibilidad', async () =
   assert.equal(result.totalCount, 0);
   assert.equal(result.hiddenByAvailabilityCount, 1);
 });
+
+test('una búsqueda explícita muestra publicaciones vinculadas a otro master para poder reasociarlas', async () => {
+  const dependencies = {
+    db: {
+      async query() {
+        return {
+          rows: [{
+            id: 8997,
+            product_id: 78,
+            channel_code: 'ripley',
+            company_id: 1,
+            seller_sku: 'S119231',
+            status: 'active',
+            linked_product_sku: 'H36',
+            linked_product_name: 'Escritorio Gamer Moderno para PC y Consola Ergonómico',
+          }],
+        };
+      },
+    },
+    async listCompanies() {
+      return [{ id: 1, activo: true, nombreComercial: 'LIMBO', ripleyApiKey: 'configured' }];
+    },
+    async falabellaGetProducts() { throw new Error('Falabella no debía consultarse.'); },
+    async falabellaGetStock() { throw new Error('Falabella no debía consultarse.'); },
+    async listRipleyProducts() {
+      return {
+        offers: [{
+          sellerSku: 'S119231',
+          productSku: 'PMP20000723350-1',
+          productTitle: 'ESCRITORIO GAMER MODERNO PARA PC Y CONSOLA ERGONÓMICO',
+          active: true,
+          quantity: 96,
+        }],
+      };
+    },
+    cache: new Map(),
+  };
+
+  const result = await listLiveAssociationCandidates({
+    productId: 9,
+    channelCode: 'ripley',
+    search: 'escritorio',
+    availability: 'recommended',
+  }, dependencies);
+
+  assert.equal(result.totalCount, 1);
+  assert.deepEqual(result.candidates[0].association, {
+    kind: 'linked_elsewhere',
+    productId: 78,
+    mainSku: 'H36',
+    productName: 'Escritorio Gamer Moderno para PC y Consola Ergonómico',
+  });
+});
