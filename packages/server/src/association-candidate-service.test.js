@@ -161,8 +161,8 @@ test('una búsqueda explícita muestra publicaciones vinculadas a otro master pa
             company_id: 1,
             seller_sku: 'S119231',
             status: 'active',
-            linked_product_sku: 'H36',
-            linked_product_name: 'Escritorio Gamer Moderno para PC y Consola Ergonómico',
+            linked_product_sku: 'MASTER-ANTERIOR',
+            linked_product_name: 'Producto asociado previamente',
           }],
         };
       },
@@ -197,7 +197,7 @@ test('una búsqueda explícita muestra publicaciones vinculadas a otro master pa
   assert.deepEqual(result.candidates[0].association, {
     kind: 'linked_elsewhere',
     productId: 78,
-    mainSku: 'H36',
-    productName: 'Escritorio Gamer Moderno para PC y Consola Ergonómico',
+    mainSku: 'MASTER-ANTERIOR',
+    productName: 'Producto asociado previamente',
   });
 });
