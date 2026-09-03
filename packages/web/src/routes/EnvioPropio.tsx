@@ -17,9 +17,8 @@ import {
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
-const GROUP_LABEL = 'mb-3 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
 const FIELD_LABEL = 'mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted-foreground';
-const BARE_INPUT = 'h-8 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0';
+const BARE_INPUT = 'h-7 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0';
 
 export default function EnvioPropio() {
   const queryClient = useQueryClient();
@@ -108,7 +107,7 @@ export default function EnvioPropio() {
       {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
 
       <div>
-        <p className={GROUP_LABEL}>Almacén</p>
+        <h3 className="mb-4 text-base font-semibold text-foreground">Almacén</h3>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label htmlFor="own-fleet-address" className={FIELD_LABEL}>Dirección</label>
@@ -161,17 +160,17 @@ export default function EnvioPropio() {
       </div>
 
       <div className="border-t border-border pt-6">
-        <p className={GROUP_LABEL}>Zonas</p>
+        <h3 className="mb-4 text-base font-semibold text-foreground">Zonas</h3>
         {zones.map((zone) => {
           const members = districtsCoveredByZone(districts, zone.key);
           return (
-            <div key={zone.key} className="border-b border-border py-4 first:pt-0" aria-label={`Zona ${zone.name}`}>
+            <div key={zone.key} className="border-b border-border py-4" aria-label={`Zona ${zone.name}`}>
               <div className="mb-2 flex items-baseline gap-2">
                 <Input
                   value={zone.name}
                   onChange={(e) => patchZone(zone.key, { name: e.target.value })}
                   aria-label={`Nombre de la zona ${zone.name}`}
-                  className={`${BARE_INPUT} max-w-48 text-base font-semibold`}
+                  className={`${BARE_INPUT} max-w-48 text-sm font-medium text-muted-foreground`}
                 />
                 <span className="flex items-baseline gap-1 text-sm text-muted-foreground">
                   <span>S/</span>
@@ -273,36 +272,38 @@ function DistrictCombobox({
 
   return (
     <div className="relative">
-      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && matches[0]) { e.preventDefault(); pick(matches[0].key); }
-          if (e.key === 'Escape') setOpen(false);
-        }}
-        placeholder="Agregar distrito"
-        aria-label={`Agregar distrito a ${zoneName}`}
-        aria-autocomplete="list"
-        aria-expanded={open}
-        role="combobox"
-        className="pl-9"
-      />
-      {open && options.length === 0 ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">Todos los distritos ya tienen zona.</p>
-      ) : null}
-      {open && query && matches.length === 0 && options.length > 0 ? (
-        <p className="mt-1.5 text-xs text-muted-foreground">Ningún distrito coincide.</p>
-      ) : null}
-      {open && matches.length > 0 ? (
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && matches[0]) { e.preventDefault(); pick(matches[0].key); }
+            if (e.key === 'Escape') setOpen(false);
+          }}
+          placeholder="Agregar distrito"
+          aria-label={`Agregar distrito a ${zoneName}`}
+          aria-autocomplete="list"
+          aria-expanded={open}
+          role="combobox"
+          className="bg-background pl-9"
+        />
+      </div>
+      {open ? (
         <ul
           role="listbox"
           aria-label={`Distritos para ${zoneName}`}
-          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-sm shadow-md"
+          className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-auto rounded-md border border-border bg-popover py-1 text-sm shadow-md"
         >
-          {matches.map((d) => (
+          {matches.length === 0 ? (
+            <li className="px-3 py-2 text-xs text-muted-foreground">
+              {options.length === 0 ? 'Todos los distritos ya tienen zona.' : 'Ningún distrito coincide.'}
+            </li>
+          ) : matches.map((d) => (
             <li key={d.key}>
               <button
                 type="button"
