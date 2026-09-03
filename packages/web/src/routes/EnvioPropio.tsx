@@ -153,7 +153,7 @@ export default function EnvioPropio() {
       {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
       {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
 
-      <div className="rounded-xl border border-border bg-card p-4">
+      <div className="space-y-4">
         <div>
           <FieldLabel htmlFor="own-fleet-address">Dirección</FieldLabel>
           <Input
@@ -164,7 +164,7 @@ export default function EnvioPropio() {
           />
         </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <FieldLabel htmlFor="own-fleet-lat">Latitud</FieldLabel>
             <Input
@@ -207,10 +207,14 @@ export default function EnvioPropio() {
       </div>
 
       <div className="space-y-4 pt-2">
-        {zones.map((zone) => {
+        {zones.map((zone, index) => {
           const members = districtsCoveredByZone(districts, zone.key);
           return (
-            <div key={zone.key} className="rounded-xl border border-border bg-card p-4" aria-label={`Zona ${zone.name}`}>
+            <div
+              key={zone.key}
+              className={index === 0 ? undefined : 'border-t border-border pt-4'}
+              aria-label={`Zona ${zone.name}`}
+            >
               <div className="flex items-start justify-between gap-4">
                 <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-[1fr_8rem]">
                   <div>
@@ -248,7 +252,7 @@ export default function EnvioPropio() {
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  className="mt-6 cursor-pointer"
+                  className="self-start mt-1 cursor-pointer"
                   disabled={zones.length === 1}
                   title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
                   aria-label={`Borrar la zona ${zone.name}`}
