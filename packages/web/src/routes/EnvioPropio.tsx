@@ -1,14 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import api from '../lib/api';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import {
-  TablePanel,
-  TablePanelHeader,
-} from '../components/ui/table';
 import type { OwnFleetDistrictSetting, OwnFleetOrigin, OwnFleetZone } from '../lib/own-fleet-shipping';
 import {
   OWN_FLEET_ORIGIN,
@@ -21,6 +17,38 @@ import {
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
+
+function SettingsSection({
+  title,
+  description,
+  bordered,
+  children,
+}: {
+  title: string;
+  description: string;
+  bordered?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className={bordered ? 'mt-8 border-t border-border pt-8' : undefined}>
+      <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        <div className="space-y-5 pt-1">{children}</div>
+      </div>
+    </section>
+  );
+}
+
+function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: ReactNode }) {
+  return (
+    <label htmlFor={htmlFor} className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </label>
+  );
+}
 
 export default function EnvioPropio() {
   const queryClient = useQueryClient();
@@ -110,158 +138,175 @@ export default function EnvioPropio() {
     });
   };
 
+  const saveButton = (
+    <div className="flex justify-end">
+      <Button type="button" onClick={submit} disabled={!dirty || nameless || save.isPending || configQuery.isPending}>
+        {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+        Guardar
+      </Button>
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button type="button" onClick={submit} disabled={!dirty || nameless || save.isPending || configQuery.isPending}>
-          {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
-          Guardar
-        </Button>
-      </div>
+    <>
+      <SettingsSection
+        title="Almacén"
+        description="De aquí sale el reparto. La distancia a cada distrito se calcula desde esta dirección."
+      >
+        {saveButton}
+        {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
 
-      {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
-      {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
+        <div>
+          <FieldLabel htmlFor="own-fleet-address">Dirección</FieldLabel>
+          <Input
+            id="own-fleet-address"
+            value={origin.address}
+            onChange={(event) => patchOrigin({ address: event.target.value })}
+            placeholder="C. las Almendras Mz.Z1 - Lt.5"
+          />
+        </div>
 
-      <TablePanel aria-label="Almacén de salida">
-        <TablePanelHeader>
-          <p className="text-sm font-medium">Almacén</p>
-          <p className="text-sm text-muted-foreground">
-            De aquí sale el reparto. Mover el pin recalcula la distancia de todos los distritos.
-          </p>
-        </TablePanelHeader>
-        <div className="grid gap-4 px-4 py-4 sm:grid-cols-2 sm:px-5">
-          <label className="grid gap-1.5 sm:col-span-2">
-            <span className="text-xs font-medium text-muted-foreground">Dirección</span>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <FieldLabel htmlFor="own-fleet-lat">Latitud</FieldLabel>
             <Input
-              value={origin.address}
-              onChange={(event) => patchOrigin({ address: event.target.value })}
-              placeholder="C. las Almendras Mz.Z1 - Lt.5"
-            />
-          </label>
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Latitud</span>
-            <Input
+              id="own-fleet-lat"
               value={origin.lat}
               inputMode="decimal"
               onChange={(event) => patchOrigin({ lat: Number(event.target.value) })}
               className={NUMBER_INPUT}
             />
-          </label>
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Longitud</span>
+          </div>
+          <div>
+            <FieldLabel htmlFor="own-fleet-lng">Longitud</FieldLabel>
             <Input
+              id="own-fleet-lng"
               value={origin.lng}
               inputMode="decimal"
               onChange={(event) => patchOrigin({ lng: Number(event.target.value) })}
               className={NUMBER_INPUT}
             />
-          </label>
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Recojo desde</span>
+          </div>
+          <div>
+            <FieldLabel htmlFor="own-fleet-pickup-from">Recojo desde</FieldLabel>
             <Input
+              id="own-fleet-pickup-from"
               type="time"
               value={origin.pickupFrom}
               onChange={(event) => patchOrigin({ pickupFrom: event.target.value })}
             />
-          </label>
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Recojo hasta</span>
+          </div>
+          <div>
+            <FieldLabel htmlFor="own-fleet-pickup-to">Recojo hasta</FieldLabel>
             <Input
+              id="own-fleet-pickup-to"
               type="time"
               value={origin.pickupTo}
               onChange={(event) => patchOrigin({ pickupTo: event.target.value })}
             />
-          </label>
+          </div>
         </div>
-      </TablePanel>
+      </SettingsSection>
 
-      <div className="space-y-4">
-        {zones.map((zone) => {
-          const members = districtsCoveredByZone(districts, zone.key);
-          return (
-            <TablePanel key={zone.key} aria-label={`Zona ${zone.name}`}>
-              <TablePanelHeader className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
-                  <label className="grid min-w-40 flex-1 gap-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">Zona</span>
-                    <Input
-                      value={zone.name}
-                      onChange={(event) => patchZone(zone.key, { name: event.target.value })}
-                      aria-label={`Nombre de la zona ${zone.name}`}
-                    />
-                  </label>
-                  <label className="grid w-32 gap-1.5">
-                    <span className="text-xs font-medium text-muted-foreground">Precio</span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="text-xs text-muted-foreground">S/</span>
+      <SettingsSection
+        bordered
+        title="Zonas"
+        description="Precio por zona. Agrega distritos; cada uno solo puede estar en una."
+      >
+        {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
+
+        <div className="space-y-4">
+          {zones.map((zone) => {
+            const members = districtsCoveredByZone(districts, zone.key);
+            return (
+              <div key={zone.key} className="rounded-xl border border-border p-4" aria-label={`Zona ${zone.name}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-[1fr_8rem]">
+                    <div>
+                      <FieldLabel htmlFor={`zone-name-${zone.key}`}>Zona</FieldLabel>
                       <Input
-                        type="number"
-                        min={0}
-                        max={9999}
-                        step={1}
-                        value={Number.isFinite(zone.amount) ? zone.amount : 0}
-                        onChange={(event) => {
-                          const amount = Number(event.target.value);
-                          if (!Number.isFinite(amount) || amount < 0) return;
-                          patchZone(zone.key, { amount: Math.min(9999, amount) });
-                        }}
-                        aria-label={`Precio de la zona ${zone.name}`}
-                        className={NUMBER_INPUT}
+                        id={`zone-name-${zone.key}`}
+                        value={zone.name}
+                        onChange={(event) => patchZone(zone.key, { name: event.target.value })}
+                        aria-label={`Nombre de la zona ${zone.name}`}
                       />
-                    </span>
-                  </label>
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor={`zone-price-${zone.key}`}>Precio</FieldLabel>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">S/</span>
+                        <Input
+                          id={`zone-price-${zone.key}`}
+                          type="number"
+                          min={0}
+                          max={9999}
+                          step={1}
+                          value={Number.isFinite(zone.amount) ? zone.amount : 0}
+                          onChange={(event) => {
+                            const amount = Number(event.target.value);
+                            if (!Number.isFinite(amount) || amount < 0) return;
+                            patchZone(zone.key, { amount: Math.min(9999, amount) });
+                          }}
+                          aria-label={`Precio de la zona ${zone.name}`}
+                          className={NUMBER_INPUT}
+                        />
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="mt-6 cursor-pointer"
+                    disabled={zones.length === 1}
+                    title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
+                    aria-label={`Borrar la zona ${zone.name}`}
+                    onClick={() => removeZone(zone.key)}
+                  >
+                    <Trash2 />
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="mt-5 cursor-pointer"
-                  disabled={zones.length === 1}
-                  title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
-                  aria-label={`Borrar la zona ${zone.name}`}
-                  onClick={() => removeZone(zone.key)}
-                >
-                  <Trash2 />
-                </Button>
-              </TablePanelHeader>
-              <div className="space-y-3 px-4 py-4 sm:px-5">
-                <DistrictCombobox
-                  zoneName={zone.name}
-                  options={freeDistricts}
-                  onPick={(key) => addDistrict(zone.key, key)}
-                />
-                {configQuery.isPending && members.length === 0 && !districtDraft ? (
-                  <p className="text-sm text-muted-foreground">Cargando distritos…</p>
-                ) : members.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Ningún distrito en esta zona.</p>
-                ) : (
-                  <ul className="flex flex-wrap gap-2" aria-label={`Distritos de ${zone.name}`}>
-                    {members.map((district) => (
-                      <li key={district.key}>
-                        <span className="inline-flex items-center gap-1 rounded-2xl border border-border bg-muted/40 py-0.5 pl-2 pr-0.5 text-xs font-medium text-foreground">
-                          {district.name}
-                          <button
-                            type="button"
-                            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                            aria-label={`Quitar ${district.name} de ${zone.name}`}
-                            onClick={() => removeDistrict(district.key)}
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+
+                <div className="mt-4 space-y-3">
+                  <DistrictCombobox
+                    zoneName={zone.name}
+                    options={freeDistricts}
+                    onPick={(key) => addDistrict(zone.key, key)}
+                  />
+                  {configQuery.isPending && members.length === 0 && !districtDraft ? (
+                    <p className="text-sm text-muted-foreground">Cargando distritos…</p>
+                  ) : members.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Ningún distrito en esta zona.</p>
+                  ) : (
+                    <ul className="flex flex-wrap gap-2" aria-label={`Distritos de ${zone.name}`}>
+                      {members.map((district) => (
+                        <li key={district.key}>
+                          <span className="inline-flex items-center gap-1 rounded-2xl border border-border bg-muted/40 py-0.5 pl-2 pr-0.5 text-xs font-medium text-foreground">
+                            {district.name}
+                            <button
+                              type="button"
+                              className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label={`Quitar ${district.name} de ${zone.name}`}
+                              onClick={() => removeDistrict(district.key)}
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
-            </TablePanel>
-          );
-        })}
+            );
+          })}
+        </div>
+
         <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={addZone}>
           <Plus /> Agregar zona
         </Button>
-      </div>
-    </div>
+      </SettingsSection>
+    </>
   );
 }
 

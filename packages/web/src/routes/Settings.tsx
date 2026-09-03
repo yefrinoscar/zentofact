@@ -32,17 +32,7 @@ export default function Settings() {
 
   return (
     <div className="text-foreground">
-      {canEditOwnFleet ? (
-        <section>
-          <h2 className="text-lg font-semibold text-foreground">Envío propio</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Almacén, zonas y cobertura de Express.
-          </p>
-          <div className="mt-6">
-            <EnvioPropio />
-          </div>
-        </section>
-      ) : null}
+      {canEditOwnFleet ? <EnvioPropio /> : null}
 
       <section className={canEditOwnFleet ? 'mt-8 border-t border-border pt-8' : undefined}>
         <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
