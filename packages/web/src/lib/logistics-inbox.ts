@@ -172,6 +172,13 @@ export function logisticsUrgency(order: LogisticsOrderLike, now: Date): Logistic
   return 'later';
 }
 
+// Por ahora la bandeja no muestra vencidos ni pedidos sin plazo.
+export function isActiveLogisticsDeadline(order: LogisticsOrderLike, now: Date) {
+  const deadline = parseLogisticsDate(order.promisedShippingAt);
+  if (!deadline) return false;
+  return logisticsUrgency(order, now) !== 'overdue';
+}
+
 export function logisticsElapsedLabel(value: string | null | undefined, now: Date) {
   const date = parseLogisticsDate(value);
   if (!date) return '';
@@ -259,6 +266,42 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
 export function logisticsCountLabel(stage: LogisticsStage, count: number) {
   if (stage === 'pending') return `${count} pedido${count === 1 ? '' : 's'}`;
   return `${count} etiqueta${count === 1 ? '' : 's'}`;
+}
+
+export function pendingDeadlineHelper(orders: LogisticsOrderLike[], now: Date) {
+  let today = 0;
+  let tomorrow = 0;
+  let later = 0;
+  for (const order of orders) {
+    if (!isActiveLogisticsDeadline(order, now)) continue;
+    const urgency = logisticsUrgency(order, now);
+    if (urgency === 'today') today += 1;
+    else if (urgency === 'tomorrow') tomorrow += 1;
+    else later += 1;
+  }
+  const parts: string[] = [];
+  if (today) parts.push(`${today} hoy`);
+  if (tomorrow) parts.push(`${tomorrow} mañana`);
+  if (!parts.length && later) parts.push(`${later} próximo${later === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'Nada por preparar';
+}
+
+export function readyPrintHelper(orders: LogisticsOrderLike[]) {
+  const toPrint = orders.filter((order) => canPrintLogisticsLabel(order) && !labelWasPrinted(order)).length;
+  const printed = orders.filter(labelWasPrinted).length;
+  if (toPrint) return `${toPrint} por imprimir`;
+  if (printed) return printed === 1 ? 'Ya impresa' : 'Ya impresas';
+  return 'Nada por enviar';
+}
+
+export function logisticsUpdatedClock(updatedAt?: Date | null) {
+  if (!updatedAt) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: LIMA,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(updatedAt);
 }
 
 export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null) {

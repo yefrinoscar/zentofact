@@ -1,8 +1,8 @@
-// Tres estructuras para decidir dónde vive el plazo y dónde Listos.
-// Pregunta: ¿filtros de plazo arriba, o se queda el tablero con Pendientes / Listos?
+// Tres tableros y tres filtros de etapa. El ganador se reescribe en BandejaLogistica.
 export { VariantA } from './VariantA';
 export { VariantB } from './VariantB';
 export { VariantC } from './VariantC';
+export { BANDEJA_STAGE_FILTERS } from './shared';
 export type { BandejaView, LogisticsItem, LogisticsOrder } from './shared';
 
 export const BANDEJA_PROTOTYPE_VARIANTS = [

@@ -1,11 +1,7 @@
 // PROTOTYPE — ¿el plazo va arriba o Listos se queda como ahora?
 // A: plazo abajo (barra Falabella). C: plazo arriba, Listos al lado.
 import { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/cn';
-import { type LogisticsStage } from '../../lib/logistics-inbox';
-import { Button } from '../../components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import {
   BoardCard,
   EmptyState,
@@ -34,10 +30,9 @@ function buildDeadlineTabs(orders: LogisticsOrder[], now: Date): DeadlineTab[] {
 }
 
 function defaultTab(tabs: DeadlineTab[]) {
-  return tabs.find((tab) => tab.value === 'overdue')?.value
-    || tabs.find((tab) => tab.value === 'today')?.value
+  return tabs.find((tab) => tab.value === 'today')?.value
     || tabs[0]?.value
-    || 'overdue';
+    || 'today';
 }
 
 function DeadlinePills({
@@ -73,18 +68,6 @@ function DeadlinePills({
         );
       })}
     </div>
-  );
-}
-
-function CompactStage({ view }: { view: BandejaView }) {
-  return (
-    <Tabs value={view.stage} onValueChange={(value) => view.setStage(value as LogisticsStage)}>
-      <TabsList aria-label="Flujo de pedidos">
-        <TabsTrigger value="pending">Pendientes {view.counts.pending}</TabsTrigger>
-        <TabsTrigger value="ready">Listos {view.counts.ready}</TabsTrigger>
-        <TabsTrigger value="shipped">Enviados {view.counts.shipped}</TabsTrigger>
-      </TabsList>
-    </Tabs>
   );
 }
 
@@ -141,15 +124,10 @@ export function DeadlineAbove({ view }: { view: BandejaView }) {
   return (
     <div className="space-y-3 pb-16">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {view.stage === 'shipped' ? <CompactStage view={view} /> : (
+        {view.stage !== 'shipped' && (
           <DeadlinePills tabs={tabs} selected={selected} onSelect={setTab} />
         )}
-        <div className="flex items-center gap-2">
-          {view.stage !== 'shipped' && <CompactStage view={view} />}
-          <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
-            <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
-          </Button>
-        </div>
+        <StageTabs view={view} density="compact" />
       </div>
       <div className="flex justify-end">
         <PrintGroupButton orders={visible} view={view} label={label} emphasize />

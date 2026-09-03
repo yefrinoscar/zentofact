@@ -96,6 +96,8 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(result.stage, 'pending');
   assert.equal(db.queries.length, 2);
   assert.match(db.queries[1].sql, /fulfillment_status = any/);
+  assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[0].sql, /promised_shipping_at >= now\(\)/);
 });
 
 async function stubLabelPdf(text = 'FALABELLA') {
