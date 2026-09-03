@@ -1,47 +1,33 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Search, Trash2, Wand2 } from 'lucide-react';
+import { Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import api from '../lib/api';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Switch } from '../components/ui/switch';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
   TablePanel,
   TablePanelHeader,
-  TableRow,
 } from '../components/ui/table';
 import type { OwnFleetDistrictSetting, OwnFleetOrigin, OwnFleetZone } from '../lib/own-fleet-shipping';
-import { OWN_FLEET_ORIGIN, defaultZoneFor, foldName } from '../lib/own-fleet-shipping';
+import {
+  OWN_FLEET_ORIGIN,
+  assignDistrictToZone,
+  districtsCoveredByZone,
+  foldName,
+  unassignDistrict,
+  uncoveredDistricts,
+} from '../lib/own-fleet-shipping';
 
 const QUERY_KEY = ['own-fleet-config'] as const;
 const NUMBER_INPUT = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
 
-type DistrictEdit = { zone?: string; enabled?: boolean };
-
-function formatKm(value: number) {
-  return `${Number(value || 0).toFixed(1).replace('.', ',')} km`;
-}
-
 export default function EnvioPropio() {
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
-  const [search, setSearch] = useState('');
   const [zoneDraft, setZoneDraft] = useState<OwnFleetZone[] | null>(null);
   const [originDraft, setOriginDraft] = useState<OwnFleetOrigin | null>(null);
-  const [districtEdits, setDistrictEdits] = useState<Record<string, DistrictEdit>>({});
+  const [districtDraft, setDistrictDraft] = useState<OwnFleetDistrictSetting[] | null>(null);
 
   const configQuery = useQuery({
     queryKey: QUERY_KEY,
@@ -55,7 +41,7 @@ export default function EnvioPropio() {
       queryClient.setQueryData(QUERY_KEY, data);
       setZoneDraft(null);
       setOriginDraft(null);
-      setDistrictEdits({});
+      setDistrictDraft(null);
       showSnackbar({ message: 'Almacén, zonas y cobertura guardados.', tone: 'success' });
     },
     onError: (error: Error) => {
@@ -65,53 +51,14 @@ export default function EnvioPropio() {
 
   const zones = zoneDraft ?? configQuery.data?.zones ?? [];
   const origin = originDraft ?? configQuery.data?.origin ?? OWN_FLEET_ORIGIN;
+  const districts = districtDraft ?? configQuery.data?.districts ?? [];
+  const freeDistricts = useMemo(() => uncoveredDistricts(districts), [districts]);
 
   const patchOrigin = (patch: Partial<OwnFleetOrigin>) => {
     setOriginDraft({ ...origin, ...patch });
   };
 
-  const districts = useMemo(() => (
-    (configQuery.data?.districts || []).map((district) => ({
-      ...district,
-      ...districtEdits[district.key],
-    }))
-  ), [configQuery.data, districtEdits]);
-
-  const districtsPerZone = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const district of districts) {
-      counts.set(district.zone, (counts.get(district.zone) || 0) + 1);
-    }
-    return counts;
-  }, [districts]);
-
-  const visible = useMemo(() => {
-    const needle = foldName(search);
-    if (!needle) return districts;
-    return districts.filter((district) => foldName(`${district.name} ${district.department}`).includes(needle));
-  }, [districts, search]);
-
-  // Un distrito queda desalineado cuando su zona ya no corresponde a su distancia actual.
-  const bandFor = (district: OwnFleetDistrictSetting) => {
-    const band = defaultZoneFor(district.distanceKm);
-    return zones.some((zone) => zone.key === band.key) ? band.key : null;
-  };
-  const mismatched = districts.filter((district) => {
-    const band = bandFor(district);
-    return band !== null && band !== district.zone;
-  });
-
-  const regroupByDistance = () => {
-    setDistrictEdits((current) => {
-      const next = { ...current };
-      for (const district of mismatched) {
-        next[district.key] = { ...next[district.key], zone: bandFor(district)! };
-      }
-      return next;
-    });
-  };
-
-  const dirty = zoneDraft !== null || originDraft !== null || Object.keys(districtEdits).length > 0;
+  const dirty = zoneDraft !== null || originDraft !== null || districtDraft !== null;
   const loadError = configQuery.error instanceof Error
     ? configQuery.error.message
     : configQuery.error
@@ -131,7 +78,23 @@ export default function EnvioPropio() {
   };
 
   const removeZone = (key: string) => {
+    if (zones.length === 1) return;
+    const remaining = districtsCoveredByZone(districts, key);
+    if (remaining.length) {
+      setDistrictDraft(remaining.reduce(
+        (next, district) => unassignDistrict(next, district.key),
+        districts,
+      ));
+    }
     setZoneDraft(zones.filter((zone) => zone.key !== key));
+  };
+
+  const addDistrict = (zoneKey: string, districtKey: string) => {
+    setDistrictDraft(assignDistrictToZone(districts, districtKey, zoneKey));
+  };
+
+  const removeDistrict = (districtKey: string) => {
+    setDistrictDraft(unassignDistrict(districts, districtKey));
   };
 
   const submit = () => {
@@ -149,17 +112,7 @@ export default function EnvioPropio() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-48 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar distrito"
-            aria-label="Buscar distrito"
-            className="pl-9"
-          />
-        </div>
+      <div className="flex justify-end">
         <Button type="button" onClick={submit} disabled={!dirty || nameless || save.isPending || configQuery.isPending}>
           {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
           Guardar
@@ -222,37 +175,24 @@ export default function EnvioPropio() {
         </div>
       </TablePanel>
 
-      <TablePanel aria-label="Zonas de envío propio">
-        <TablePanelHeader>
-          <p className="text-sm font-medium">Zonas</p>
-          <p className="text-sm text-muted-foreground">
-            Cada zona agrupa distritos por distancia y cobra un precio. El pedido paga solo el de su zona.
-          </p>
-        </TablePanelHeader>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Zona</TableHead>
-              <TableHead className="w-32">Precio</TableHead>
-              <TableHead className="w-28 text-right">Distritos</TableHead>
-              <TableHead className="w-16" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {zones.map((zone) => {
-              const count = districtsPerZone.get(zone.key) || 0;
-              return (
-                <TableRow key={zone.key}>
-                  <TableCell>
+      <div className="space-y-4">
+        {zones.map((zone) => {
+          const members = districtsCoveredByZone(districts, zone.key);
+          return (
+            <TablePanel key={zone.key} aria-label={`Zona ${zone.name}`}>
+              <TablePanelHeader className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
+                  <label className="grid min-w-40 flex-1 gap-1.5">
+                    <span className="text-xs font-medium text-muted-foreground">Zona</span>
                     <Input
                       value={zone.name}
                       onChange={(event) => patchZone(zone.key, { name: event.target.value })}
                       aria-label={`Nombre de la zona ${zone.name}`}
-                      className="h-8 max-w-56"
                     />
-                  </TableCell>
-                  <TableCell>
-                    <label className="flex items-center gap-1.5">
+                  </label>
+                  <label className="grid w-32 gap-1.5">
+                    <span className="text-xs font-medium text-muted-foreground">Precio</span>
+                    <span className="flex items-center gap-1.5">
                       <span className="text-xs text-muted-foreground">S/</span>
                       <Input
                         type="number"
@@ -266,138 +206,146 @@ export default function EnvioPropio() {
                           patchZone(zone.key, { amount: Math.min(9999, amount) });
                         }}
                         aria-label={`Precio de la zona ${zone.name}`}
-                        className={`h-8 w-24 ${NUMBER_INPUT}`}
+                        className={NUMBER_INPUT}
                       />
-                    </label>
-                  </TableCell>
-                  <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{count}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="cursor-pointer"
-                      disabled={count > 0}
-                      title={count > 0 ? 'Mueve sus distritos a otra zona para poder borrarla.' : undefined}
-                      aria-label={`Borrar la zona ${zone.name}`}
-                      onClick={() => removeZone(zone.key)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            <TableRow>
-              <TableCell colSpan={4}>
-                <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={addZone}>
-                  <Plus /> Agregar zona
+                    </span>
+                  </label>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="mt-5 cursor-pointer"
+                  disabled={zones.length === 1}
+                  title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
+                  aria-label={`Borrar la zona ${zone.name}`}
+                  onClick={() => removeZone(zone.key)}
+                >
+                  <Trash2 />
                 </Button>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </TablePanel>
-
-      <TablePanel aria-label="Distritos de envío propio" aria-busy={configQuery.isPending}>
-        <TablePanelHeader className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Distritos</p>
-            <p className="text-sm text-muted-foreground">
-              {mismatched.length
-                ? `${mismatched.length} ${mismatched.length === 1 ? 'distrito no coincide' : 'distritos no coinciden'} con su distancia al almacén.`
-                : 'La distancia es desde el almacén. Sirve para agrupar; no se cobra.'}
-            </p>
-          </div>
-          {mismatched.length ? (
-            <Button type="button" variant="outline" size="sm" className="shrink-0 cursor-pointer" onClick={regroupByDistance}>
-              <Wand2 /> Reagrupar por distancia
-            </Button>
-          ) : null}
-        </TablePanelHeader>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Distrito</TableHead>
-              <TableHead className="w-28 text-right">Distancia</TableHead>
-              <TableHead className="w-44">Zona</TableHead>
-              <TableHead className="w-28 text-right">Llegamos</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {configQuery.isPending && districts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground">Cargando distritos…</TableCell>
-              </TableRow>
-            ) : visible.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground">Ningún distrito coincide.</TableCell>
-              </TableRow>
-            ) : visible.map((district) => (
-              <DistrictRow
-                key={district.key}
-                district={district}
-                zones={zones}
-                onZone={(zone) => setDistrictEdits((current) => ({
-                  ...current,
-                  [district.key]: { ...current[district.key], zone },
-                }))}
-                onEnabled={(enabled) => setDistrictEdits((current) => ({
-                  ...current,
-                  [district.key]: { ...current[district.key], enabled },
-                }))}
-              />
-            ))}
-          </TableBody>
-        </Table>
-      </TablePanel>
+              </TablePanelHeader>
+              <div className="space-y-3 px-4 py-4 sm:px-5">
+                <DistrictCombobox
+                  zoneName={zone.name}
+                  options={freeDistricts}
+                  onPick={(key) => addDistrict(zone.key, key)}
+                />
+                {configQuery.isPending && members.length === 0 && !districtDraft ? (
+                  <p className="text-sm text-muted-foreground">Cargando distritos…</p>
+                ) : members.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ningún distrito en esta zona.</p>
+                ) : (
+                  <ul className="flex flex-wrap gap-2" aria-label={`Distritos de ${zone.name}`}>
+                    {members.map((district) => (
+                      <li key={district.key}>
+                        <span className="inline-flex items-center gap-1 rounded-2xl border border-border bg-muted/40 py-0.5 pl-2 pr-0.5 text-xs font-medium text-foreground">
+                          {district.name}
+                          <button
+                            type="button"
+                            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                            aria-label={`Quitar ${district.name} de ${zone.name}`}
+                            onClick={() => removeDistrict(district.key)}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </TablePanel>
+          );
+        })}
+        <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={addZone}>
+          <Plus /> Agregar zona
+        </Button>
+      </div>
     </div>
   );
 }
 
-function DistrictRow({
-  district,
-  zones,
-  onZone,
-  onEnabled,
+function DistrictCombobox({
+  zoneName,
+  options,
+  onPick,
 }: {
-  district: OwnFleetDistrictSetting;
-  zones: OwnFleetZone[];
-  onZone: (zone: string) => void;
-  onEnabled: (enabled: boolean) => void;
+  zoneName: string;
+  options: OwnFleetDistrictSetting[];
+  onPick: (key: string) => void;
 }) {
-  const zone = zones.find((candidate) => candidate.key === district.zone);
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const matches = useMemo(() => {
+    const needle = foldName(query);
+    const pool = needle
+      ? options.filter((district) => foldName(`${district.name} ${district.department}`).includes(needle))
+      : options;
+    return pool.slice(0, 8);
+  }, [options, query]);
+
+  const pick = (key: string) => {
+    onPick(key);
+    setQuery('');
+    setOpen(false);
+  };
+
   return (
-    <TableRow>
-      <TableCell className="whitespace-normal">
-        <span className="block text-sm font-medium text-foreground">{district.name}</span>
-        <span className="mt-0.5 block text-xs text-muted-foreground">{district.department}</span>
-      </TableCell>
-      <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
-        {formatKm(district.distanceKm)}
-      </TableCell>
-      <TableCell>
-        <Select value={zone ? district.zone : ''} onValueChange={onZone}>
-          <SelectTrigger className="h-8 w-full" aria-label={`Zona de ${district.name}`}>
-            <SelectValue placeholder="Elegir zona" />
-          </SelectTrigger>
-          <SelectContent>
-            {zones.map((option) => (
-              <SelectItem key={option.key} value={option.key}>
-                {option.name} · S/ {option.amount}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </TableCell>
-      <TableCell className="text-right">
-        <Switch
-          size="sm"
-          checked={district.enabled}
-          onCheckedChange={onEnabled}
-          aria-label={`Llegamos a ${district.name}`}
-        />
-      </TableCell>
-    </TableRow>
+    <div className="relative">
+      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 120);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && matches[0]) {
+            event.preventDefault();
+            pick(matches[0].key);
+          }
+          if (event.key === 'Escape') setOpen(false);
+        }}
+        placeholder="Agregar distrito"
+        aria-label={`Agregar distrito a ${zoneName}`}
+        aria-autocomplete="list"
+        aria-expanded={open}
+        role="combobox"
+        className="pl-9"
+      />
+      {open && options.length === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">Todos los distritos ya tienen zona.</p>
+      ) : null}
+      {open && query && matches.length === 0 && options.length > 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">Ningún distrito coincide.</p>
+      ) : null}
+      {open && matches.length > 0 ? (
+        <ul
+          role="listbox"
+          aria-label={`Distritos para ${zoneName}`}
+          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-popover py-1 text-sm shadow-md"
+        >
+          {matches.map((district) => (
+            <li key={district.key}>
+              <button
+                type="button"
+                role="option"
+                className="flex w-full cursor-pointer flex-col px-3 py-1.5 text-left hover:bg-muted"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => pick(district.key)}
+              >
+                <span className="font-medium text-foreground">{district.name}</span>
+                <span className="text-xs text-muted-foreground">{district.department}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
