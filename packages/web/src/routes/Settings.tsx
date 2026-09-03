@@ -71,7 +71,7 @@ export default function Settings() {
               </Tabs>
             </div>
 
-            <div className="flex items-start justify-between gap-6 rounded-xl border border-border p-4">
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
               <div>
                 <label htmlFor="collapse-sidebar" className="text-sm font-medium text-foreground">
                   Colapsar menú lateral
@@ -101,7 +101,7 @@ export default function Settings() {
               </p>
             </div>
 
-            <div className="flex items-start justify-between gap-6 rounded-xl border border-border p-4">
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
               <div>
                 <label htmlFor="simulate-loading" className="text-sm font-medium text-foreground">
                   Simular carga lenta
