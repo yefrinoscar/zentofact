@@ -148,14 +148,12 @@ export default function EnvioPropio() {
   );
 
   return (
-    <>
-      <SettingsSection
-        title="Almacén"
-        description="De aquí sale el reparto. La distancia a cada distrito se calcula desde esta dirección."
-      >
-        {saveButton}
-        {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
+    <div className="space-y-6">
+      {saveButton}
+      {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
+      {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
 
+      <div className="rounded-xl border border-border bg-card p-4">
         <div>
           <FieldLabel htmlFor="own-fleet-address">Dirección</FieldLabel>
           <Input
@@ -166,7 +164,7 @@ export default function EnvioPropio() {
           />
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
             <FieldLabel htmlFor="own-fleet-lat">Latitud</FieldLabel>
             <Input
@@ -206,107 +204,99 @@ export default function EnvioPropio() {
             />
           </div>
         </div>
-      </SettingsSection>
+      </div>
 
-      <SettingsSection
-        bordered
-        title="Zonas"
-        description="Precio por zona. Agrega distritos; cada uno solo puede estar en una."
-      >
-        {nameless ? <p className="text-sm text-destructive">Ponle nombre a cada zona antes de guardar.</p> : null}
-
-        <div className="space-y-4">
-          {zones.map((zone) => {
-            const members = districtsCoveredByZone(districts, zone.key);
-            return (
-              <div key={zone.key} className="rounded-xl border border-border p-4" aria-label={`Zona ${zone.name}`}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-[1fr_8rem]">
-                    <div>
-                      <FieldLabel htmlFor={`zone-name-${zone.key}`}>Zona</FieldLabel>
-                      <Input
-                        id={`zone-name-${zone.key}`}
-                        value={zone.name}
-                        onChange={(event) => patchZone(zone.key, { name: event.target.value })}
-                        aria-label={`Nombre de la zona ${zone.name}`}
-                      />
-                    </div>
-                    <div>
-                      <FieldLabel htmlFor={`zone-price-${zone.key}`}>Precio</FieldLabel>
-                      <span className="flex items-center gap-1.5">
-                        <span className="text-xs text-muted-foreground">S/</span>
-                        <Input
-                          id={`zone-price-${zone.key}`}
-                          type="number"
-                          min={0}
-                          max={9999}
-                          step={1}
-                          value={Number.isFinite(zone.amount) ? zone.amount : 0}
-                          onChange={(event) => {
-                            const amount = Number(event.target.value);
-                            if (!Number.isFinite(amount) || amount < 0) return;
-                            patchZone(zone.key, { amount: Math.min(9999, amount) });
-                          }}
-                          aria-label={`Precio de la zona ${zone.name}`}
-                          className={NUMBER_INPUT}
-                        />
-                      </span>
-                    </div>
+      <div className="space-y-4 pt-2">
+        {zones.map((zone) => {
+          const members = districtsCoveredByZone(districts, zone.key);
+          return (
+            <div key={zone.key} className="rounded-xl border border-border bg-card p-4" aria-label={`Zona ${zone.name}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-[1fr_8rem]">
+                  <div>
+                    <FieldLabel htmlFor={`zone-name-${zone.key}`}>Zona</FieldLabel>
+                    <Input
+                      id={`zone-name-${zone.key}`}
+                      value={zone.name}
+                      onChange={(event) => patchZone(zone.key, { name: event.target.value })}
+                      aria-label={`Nombre de la zona ${zone.name}`}
+                    />
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="mt-6 cursor-pointer"
-                    disabled={zones.length === 1}
-                    title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
-                    aria-label={`Borrar la zona ${zone.name}`}
-                    onClick={() => removeZone(zone.key)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  <div>
+                    <FieldLabel htmlFor={`zone-price-${zone.key}`}>Precio</FieldLabel>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">S/</span>
+                      <Input
+                        id={`zone-price-${zone.key}`}
+                        type="number"
+                        min={0}
+                        max={9999}
+                        step={1}
+                        value={Number.isFinite(zone.amount) ? zone.amount : 0}
+                        onChange={(event) => {
+                          const amount = Number(event.target.value);
+                          if (!Number.isFinite(amount) || amount < 0) return;
+                          patchZone(zone.key, { amount: Math.min(9999, amount) });
+                        }}
+                        aria-label={`Precio de la zona ${zone.name}`}
+                        className={NUMBER_INPUT}
+                      />
+                    </span>
+                  </div>
                 </div>
-
-                <div className="mt-4 space-y-3">
-                  <DistrictCombobox
-                    zoneName={zone.name}
-                    options={freeDistricts}
-                    onPick={(key) => addDistrict(zone.key, key)}
-                  />
-                  {configQuery.isPending && members.length === 0 && !districtDraft ? (
-                    <p className="text-sm text-muted-foreground">Cargando distritos…</p>
-                  ) : members.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Ningún distrito en esta zona.</p>
-                  ) : (
-                    <ul className="flex flex-wrap gap-2" aria-label={`Distritos de ${zone.name}`}>
-                      {members.map((district) => (
-                        <li key={district.key}>
-                          <span className="inline-flex items-center gap-1 rounded-2xl border border-border bg-muted/40 py-0.5 pl-2 pr-0.5 text-xs font-medium text-foreground">
-                            {district.name}
-                            <button
-                              type="button"
-                              className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                              aria-label={`Quitar ${district.name} de ${zone.name}`}
-                              onClick={() => removeDistrict(district.key)}
-                            >
-                              <X className="size-3" />
-                            </button>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="mt-6 cursor-pointer"
+                  disabled={zones.length === 1}
+                  title={zones.length === 1 ? 'Deja al menos una zona.' : undefined}
+                  aria-label={`Borrar la zona ${zone.name}`}
+                  onClick={() => removeZone(zone.key)}
+                >
+                  <Trash2 />
+                </Button>
               </div>
-            );
-          })}
-        </div>
+
+              <div className="mt-4 space-y-3">
+                <DistrictCombobox
+                  zoneName={zone.name}
+                  options={freeDistricts}
+                  onPick={(key) => addDistrict(zone.key, key)}
+                />
+                {configQuery.isPending && members.length === 0 && !districtDraft ? (
+                  <p className="text-sm text-muted-foreground">Cargando distritos…</p>
+                ) : members.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ningún distrito en esta zona.</p>
+                ) : (
+                  <ul className="flex flex-wrap gap-2" aria-label={`Distritos de ${zone.name}`}>
+                    {members.map((district) => (
+                      <li key={district.key}>
+                        <span className="inline-flex items-center gap-1 rounded-2xl border border-border bg-muted/40 py-0.5 pl-2 pr-0.5 text-xs font-medium text-foreground">
+                          {district.name}
+                          <button
+                            type="button"
+                            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                            aria-label={`Quitar ${district.name} de ${zone.name}`}
+                            onClick={() => removeDistrict(district.key)}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          );
+        })}
 
         <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={addZone}>
           <Plus /> Agregar zona
         </Button>
-      </SettingsSection>
-    </>
+      </div>
+    </div>
   );
 }
 
