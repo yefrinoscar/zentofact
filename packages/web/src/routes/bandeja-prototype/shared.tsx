@@ -181,7 +181,7 @@ export function ProductThumb({
 }) {
   const [failed, setFailed] = useState(false);
   const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
-  const canOpen = Boolean(src && !failed && onOpen);
+  const canOpen = Boolean(onOpen);
   const body = (
     <>
       <ImageIcon className="size-4 text-muted-foreground/40" />
@@ -194,7 +194,7 @@ export function ProductThumb({
     return (
       <button
         type="button"
-        onClick={() => onOpen?.({ src: src as string, name: item.description })}
+        onClick={() => onOpen?.({ src: src && !failed ? src : '', name: item.description })}
         aria-label={`Ver foto de ${item.description}`}
         className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted hover:ring-2 hover:ring-foreground/20', className)}
       >
@@ -230,7 +230,14 @@ export function ProductImageLightbox({
             </DialogHeader>
             <figure className="min-h-0">
               <div className="flex min-h-64 items-center justify-center overflow-hidden p-4 sm:min-h-[28rem] sm:p-8">
-                <img src={preview.src} alt={preview.name} className="max-h-[calc(94vh-6rem)] max-w-full object-contain" />
+                {preview.src ? (
+                  <img src={preview.src} alt={preview.name} className="max-h-[calc(94vh-6rem)] max-w-full object-contain" />
+                ) : (
+                  <div className="grid place-items-center gap-3 text-white/50">
+                    <ImageIcon className="size-16" />
+                    <p className="text-sm">Este pedido no trae foto</p>
+                  </div>
+                )}
               </div>
               <figcaption className="border-t border-white/10 bg-black/30 px-5 py-3 pr-16">
                 <p className="line-clamp-2 text-sm font-medium text-white">{preview.name}</p>
