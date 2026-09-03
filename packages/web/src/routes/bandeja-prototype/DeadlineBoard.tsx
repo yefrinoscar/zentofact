@@ -82,7 +82,6 @@ function CompactStage({ view }: { view: BandejaView }) {
       <TabsList aria-label="Flujo de pedidos">
         <TabsTrigger value="pending">Pendientes {view.counts.pending}</TabsTrigger>
         <TabsTrigger value="ready">Listos {view.counts.ready}</TabsTrigger>
-        <TabsTrigger value="shipped">Enviados {view.counts.shipped}</TabsTrigger>
       </TabsList>
     </Tabs>
   );

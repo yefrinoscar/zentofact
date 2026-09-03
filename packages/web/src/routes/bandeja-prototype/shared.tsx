@@ -2,17 +2,24 @@
 // Pregunta: ¿qué estructura le sirve al operador para preparar e imprimir?
 // Descartable: el ganador se reescribe en BandejaLogistica.tsx.
 import { useState, type ReactNode } from 'react';
-import { CheckCircle2, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
+import { Check, CheckCircle2, Copy, ImageIcon, Loader2, PackageCheck, Printer, RefreshCw } from 'lucide-react';
+import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
 import falabellaLogo from '../../assets/falabella.png';
 import ripleyLogo from '../../assets/logo-blanco.svg';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
+import {
   canPrintLogisticsLabel,
   labelPrintTooltip,
   labelWasPrinted,
   logisticsDeadlineLabel,
-  logisticsDeliveryLabel,
   logisticsNextStep,
   logisticsQuantityLabel,
   logisticsUrgency,
@@ -89,7 +96,6 @@ export type BandejaView = {
   printing: boolean;
   busyOrderId: number | null;
   printOrders: (orders: LogisticsOrder[]) => void;
-  openOrder: (order: LogisticsOrder) => void;
   requestReady: (order: LogisticsOrder) => void;
   requestBulkReady: (orders: LogisticsOrder[]) => void;
   labelSelection: Set<number> | null;
@@ -162,16 +168,99 @@ export function buildDeadlineColumns(orders: LogisticsOrder[], now: Date) {
   }));
 }
 
-export function ProductThumb({ item, className = 'size-10' }: { item: LogisticsItem; className?: string }) {
+type ProductPreview = { src: string; name: string };
+
+export function ProductThumb({
+  item,
+  className = 'size-12',
+  onOpen,
+}: {
+  item: LogisticsItem;
+  className?: string;
+  onOpen?: (preview: ProductPreview) => void;
+}) {
   const [failed, setFailed] = useState(false);
   const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
-  return (
-    <span className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted', className)}>
-      <ImageIcon className="size-3.5 text-muted-foreground/40" />
+  const canOpen = Boolean(src && !failed && onOpen);
+  const body = (
+    <>
+      <ImageIcon className="size-4 text-muted-foreground/40" />
       {src && !failed && (
         <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain" onError={() => setFailed(true)} />
       )}
+    </>
+  );
+  if (canOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen?.({ src: src as string, name: item.description })}
+        aria-label={`Ver foto de ${item.description}`}
+        className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted hover:ring-2 hover:ring-foreground/20', className)}
+      >
+        {body}
+      </button>
+    );
+  }
+  return (
+    <span className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted', className)}>
+      {body}
     </span>
+  );
+}
+
+export function ProductImageLightbox({
+  preview,
+  onClose,
+}: {
+  preview: ProductPreview | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={preview != null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        overlayClassName="z-[90] bg-black/70"
+        className="z-[90] max-h-[94vh] gap-0 overflow-hidden bg-zinc-950 p-0 text-white sm:max-w-3xl [&_[data-slot=dialog-close]]:bg-white/10 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-white/20"
+      >
+        {preview ? (
+          <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>Foto de {preview.name}</DialogTitle>
+              <DialogDescription>Vista ampliada del producto.</DialogDescription>
+            </DialogHeader>
+            <figure className="min-h-0">
+              <div className="flex min-h-64 items-center justify-center overflow-hidden p-4 sm:min-h-[28rem] sm:p-8">
+                <img src={preview.src} alt={preview.name} className="max-h-[calc(94vh-6rem)] max-w-full object-contain" />
+              </div>
+              <figcaption className="border-t border-white/10 bg-black/30 px-5 py-3 pr-16">
+                <p className="line-clamp-2 text-sm font-medium text-white">{preview.name}</p>
+              </figcaption>
+            </figure>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function CopyableOrderNumber({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={copied ? 'Número copiado' : 'Copiar número de pedido'}
+      aria-label={`Copiar pedido ${value}`}
+      onClick={async () => {
+        const ok = await copyText(value);
+        if (!ok) return;
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1400);
+      }}
+      className="inline-flex min-w-0 items-center gap-1 font-mono text-sm font-semibold hover:text-foreground"
+    >
+      <span className="truncate">{value}</span>
+      {copied ? <Check className="size-3.5 shrink-0 text-emerald-600" /> : <Copy className="size-3.5 shrink-0 text-muted-foreground" />}
+    </button>
   );
 }
 
@@ -217,17 +306,19 @@ export function ActionButton({
   }
   if (step.kind === 'ready') {
     return (
-      <Button size={size} variant="outline" className={cn(width, 'border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100')} onClick={() => (view.canDispatch ? view.requestReady(order) : view.openOrder(order))}>
+      <Button
+        size={size}
+        variant="outline"
+        className={cn(width, 'border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100')}
+        onClick={() => view.requestReady(order)}
+        disabled={!view.canDispatch}
+      >
         <PackageCheck />
         {view.canDispatch ? 'Marcar listo' : 'Solo lectura'}
       </Button>
     );
   }
-  return (
-    <Button size={size} variant="ghost" className={cn(width, 'text-muted-foreground')} onClick={() => view.openOrder(order)}>
-      {step.kind === 'wait' ? step.label : 'Ver'}
-    </Button>
-  );
+  return null;
 }
 
 export function ChannelMark({ code, className }: { code?: string | null; className?: string }) {
@@ -272,7 +363,7 @@ export function StageTabs({ view, tools }: { view: BandejaView; tools?: ReactNod
     <div className="flex items-center justify-between gap-3">
       <Tabs value={view.stage} onValueChange={(value) => view.setStage(value as LogisticsStage)}>
         <TabsList aria-label="Flujo de pedidos">
-          {LOGISTICS_STAGES.map((tab) => (
+          {LOGISTICS_STAGES.filter((tab) => tab.value !== 'shipped').map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label} {view.counts[tab.value]}
             </TabsTrigger>
@@ -325,19 +416,20 @@ export function BoardCard({
   showRowAction: boolean;
 }) {
   const meta = logisticsUrgencyMeta(order.urgency);
+  const [preview, setPreview] = useState<ProductPreview | null>(null);
   return (
     <li className="rounded-lg border border-white/80 bg-white p-2.5 shadow-sm">
-      <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-1.5 text-left">
+      <div className="flex items-center gap-1.5">
         <ChannelMark code={order.channelCode} />
-        <span className="truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
-      </button>
+        <CopyableOrderNumber value={order.externalOrderNumber} />
+      </div>
       <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {sellerShortName(order.companyName)} · {logisticsDeliveryLabel(order)}
+        {sellerShortName(order.companyName)}
       </p>
-      <ul className="mt-2 space-y-1">
+      <ul className="mt-2 space-y-1.5">
         {order.items.slice(0, 2).map((item) => (
           <li key={item.id} className="flex items-center gap-2">
-            <ProductThumb item={item} className="size-8 rounded" />
+            <ProductThumb item={item} className="size-12 rounded" onOpen={setPreview} />
             <span className="min-w-0 flex-1 truncate text-xs">{item.description}</span>
             <QuantityTag item={item} />
           </li>
@@ -347,6 +439,7 @@ export function BoardCard({
         <span className={cn('text-[11px] font-medium', meta.textClass)}>{logisticsDeadlineLabel(order, view.now)}</span>
         {showRowAction && <ActionButton order={order} view={view} />}
       </div>
+      <ProductImageLightbox preview={preview} onClose={() => setPreview(null)} />
     </li>
   );
 }
@@ -378,22 +471,22 @@ export function PrintGroupButton({
   );
 }
 
-export function BoardOrder({ order, view }: { order: LogisticsOrder; view: BandejaView }) {
+export function BoardOrder({ order }: { order: LogisticsOrder }) {
   const item = order.items[0];
   const extra = order.items.length > 1 ? ` +${order.items.length - 1}` : '';
+  const [preview, setPreview] = useState<ProductPreview | null>(null);
   return (
-    <li>
-      <button type="button" onClick={() => view.openOrder(order)} className="flex w-full items-center gap-2 py-1.5 text-left hover:bg-muted/40">
-        <ChannelMark code={order.channelCode} />
-        <span className="w-[6.5rem] shrink-0 truncate font-mono text-sm font-semibold">{order.externalOrderNumber}</span>
-        {item && <ProductThumb item={item} className="size-7 rounded" />}
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {item?.description || 'Sin productos'}
-          {extra}
-        </span>
-        {item && <QuantityTag item={item} />}
-        <span className="hidden w-20 truncate text-[11px] text-muted-foreground sm:block">{sellerShortName(order.companyName)}</span>
-      </button>
+    <li className="flex items-center gap-2 py-1.5">
+      <ChannelMark code={order.channelCode} />
+      <CopyableOrderNumber value={order.externalOrderNumber} />
+      {item && <ProductThumb item={item} className="size-10 rounded" onOpen={setPreview} />}
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        {item?.description || 'Sin productos'}
+        {extra}
+      </span>
+      {item && <QuantityTag item={item} />}
+      <span className="hidden w-20 truncate text-[11px] text-muted-foreground sm:block">{sellerShortName(order.companyName)}</span>
+      <ProductImageLightbox preview={preview} onClose={() => setPreview(null)} />
     </li>
   );
 }
