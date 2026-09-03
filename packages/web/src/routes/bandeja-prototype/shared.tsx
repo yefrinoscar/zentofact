@@ -18,11 +18,9 @@ import {
 } from '../../components/ui/dialog';
 import {
   canPrintLogisticsLabel,
-  joinLogisticsFacts,
   labelPrintTooltip,
   labelWasPrinted,
   isActiveLogisticsDeadline,
-  logisticsChannelMixLabel,
   logisticsDeadlineLabel,
   logisticsElapsedLabel,
   logisticsNextStep,
@@ -31,7 +29,6 @@ import {
   logisticsUrgency,
   logisticsUrgencyMeta,
   parseLogisticsDate,
-  pendingActionHelper,
   pendingDeadlineHelper,
   productImageSrc,
   readyPrintHelper,
@@ -396,40 +393,17 @@ type StageFilterModel = {
   pendingHelper: string;
   readyHelper: string;
   clock: string;
-  pulse: string;
-  queueFacts: string;
 };
 
 function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): StageFilterModel {
   const loadingPending = view.loading && view.stage === 'pending';
   const loadingReady = view.loading && view.stage === 'ready';
-  const clock = logisticsUpdatedClock(view.updatedAt);
   return {
     pendingLabel: 'Pendientes',
     readyLabel: density === 'compact' ? 'Listos' : 'Listos para enviar',
     pendingHelper: loadingPending ? 'Cargando…' : view.stage === 'pending' ? pendingDeadlineHelper(view.orders, view.now) : 'Por preparar',
     readyHelper: loadingReady ? 'Cargando…' : view.stage === 'ready' ? readyPrintHelper(view.orders) : 'Listos para imprimir',
-    clock,
-    pulse: view.stage === 'ready'
-      ? joinLogisticsFacts([readyPrintHelper(view.orders), logisticsChannelMixLabel(view.orders), clock])
-      : joinLogisticsFacts([
-          pendingDeadlineHelper(view.orders, view.now),
-          pendingActionHelper(view.orders),
-          logisticsChannelMixLabel(view.orders),
-          clock,
-        ]),
-    queueFacts: view.stage === 'ready'
-      ? joinLogisticsFacts([
-          readyPrintHelper(view.orders),
-          view.counts.pending ? `${view.counts.pending} pendiente${view.counts.pending === 1 ? '' : 's'}` : '',
-          logisticsChannelMixLabel(view.orders),
-        ])
-      : joinLogisticsFacts([
-          pendingDeadlineHelper(view.orders, view.now),
-          pendingActionHelper(view.orders),
-          view.counts.ready ? `${view.counts.ready} listo${view.counts.ready === 1 ? '' : 's'}` : '',
-          logisticsChannelMixLabel(view.orders),
-        ]),
+    clock: logisticsUpdatedClock(view.updatedAt),
   };
 }
 
@@ -555,12 +529,10 @@ function StageFilterLine({
   view,
   model,
   actions,
-  density,
 }: {
   view: BandejaView;
   model: StageFilterModel;
   actions: ReactNode;
-  density: 'full' | 'compact';
 }) {
   return (
     <div className="space-y-1.5">
@@ -586,13 +558,10 @@ function StageFilterLine({
           />
         </div>
         <div className="flex items-center gap-2">
-          {density === 'compact' && <UpdatedClock view={view} clock={model.clock} />}
+          <UpdatedClock view={view} clock={model.clock} />
           {actions}
         </div>
       </div>
-      {density === 'full' && model.pulse && (
-        <p className="text-xs text-muted-foreground" aria-live="polite">{model.pulse}</p>
-      )}
     </div>
   );
 }
@@ -628,11 +597,6 @@ function StageFilterQueue({
           onSelect={view.setStage}
         />
       </div>
-      {model.queueFacts && (
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" aria-live="polite">
-          {model.queueFacts}
-        </p>
-      )}
       {density === 'full' && (
         <div role="group" aria-label="Canal" className="flex items-center gap-0.5 text-xs">
           {LOGISTICS_CHANNELS.map((channel) => {
@@ -682,7 +646,7 @@ export function StageTabs({
   const filtro = useBandejaStageFilter();
   const model = stageFilterModel(view, density);
   const actions = <StageTools view={view} tools={tools} />;
-  if (filtro === '2') return <StageFilterLine view={view} model={model} actions={actions} density={density} />;
+  if (filtro === '2') return <StageFilterLine view={view} model={model} actions={actions} />;
   if (filtro === '3') return <StageFilterQueue view={view} model={model} actions={actions} density={density} />;
   return <StageFilterSegments view={view} model={model} actions={actions} />;
 }

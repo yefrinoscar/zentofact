@@ -4,16 +4,13 @@ import {
   canMarkFalabellaReady,
   canPrintLogisticsLabel,
   groupLogisticsByUrgency,
-  joinLogisticsFacts,
   labelWasPrinted,
   logisticsBulkReadySummary,
   logisticsChannelClass,
   logisticsChannelLabel,
-  logisticsChannelMixLabel,
   logisticsCountLabel,
   logisticsUpdatedClock,
   isActiveLogisticsDeadline,
-  pendingActionHelper,
   pendingDeadlineHelper,
   readyPrintHelper,
   logisticsDeadlineLabel,
@@ -123,7 +120,7 @@ test('copy operativa de bandeja', () => {
   assert.equal(logisticsBulkReadySummary(3, 1), '2 marcados; 1 no pudo actualizarse.');
 });
 
-test('el filtro de etapa resume plazo, acción y canales', () => {
+test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
   const now = new Date('2026-09-02T15:00:00.000Z');
   const pending = [
     { channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'F-1', promisedShippingAt: '2026-09-02T22:00:00.000Z' },
@@ -137,11 +134,8 @@ test('el filtro de etapa resume plazo, acción y canales', () => {
     { channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 1 } },
   ];
   assert.equal(pendingDeadlineHelper(pending, now), '2 hoy · 1 mañana');
-  assert.equal(pendingActionHelper(pending), '2 por marcar');
   assert.equal(readyPrintHelper(ready), '1 por imprimir');
   assert.equal(readyPrintHelper([{ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }]), 'Ya impresa');
-  assert.equal(logisticsChannelMixLabel(pending), 'Falabella 2 · Ripley 1 · Manual 2');
-  assert.equal(joinLogisticsFacts(['2 hoy', '', '10:32']), '2 hoy · 10:32');
   assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
 });
 
