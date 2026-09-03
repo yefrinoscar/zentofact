@@ -34,10 +34,9 @@ function buildDeadlineTabs(orders: LogisticsOrder[], now: Date): DeadlineTab[] {
 }
 
 function defaultTab(tabs: DeadlineTab[]) {
-  return tabs.find((tab) => tab.value === 'overdue')?.value
-    || tabs.find((tab) => tab.value === 'today')?.value
+  return tabs.find((tab) => tab.value === 'today')?.value
     || tabs[0]?.value
-    || 'overdue';
+    || 'today';
 }
 
 function DeadlinePills({

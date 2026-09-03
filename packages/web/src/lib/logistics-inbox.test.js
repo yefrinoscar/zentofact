@@ -9,6 +9,7 @@ import {
   logisticsChannelClass,
   logisticsChannelLabel,
   logisticsCountLabel,
+  isActiveLogisticsDeadline,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
@@ -61,6 +62,9 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), /^Hoy · /);
   assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-03T17:00:00.000Z' }, now), /^Mañana · /);
   assert.equal(logisticsDeadlineLabel({ promisedShippingAt: null }, now), 'Sin plazo informado');
+  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: null }, now), false);
+  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), false);
+  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), true);
   assert.deepEqual(LOGISTICS_URGENCIES.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana', 'Próximos']);
   const groups = groupLogisticsByUrgency([
     { id: 1, promisedShippingAt: '2026-09-05T17:00:00.000Z' },

@@ -172,6 +172,13 @@ export function logisticsUrgency(order: LogisticsOrderLike, now: Date): Logistic
   return 'later';
 }
 
+// Por ahora la bandeja no muestra vencidos ni pedidos sin plazo.
+export function isActiveLogisticsDeadline(order: LogisticsOrderLike, now: Date) {
+  const deadline = parseLogisticsDate(order.promisedShippingAt);
+  if (!deadline) return false;
+  return logisticsUrgency(order, now) !== 'overdue';
+}
+
 export function logisticsElapsedLabel(value: string | null | undefined, now: Date) {
   const date = parseLogisticsDate(value);
   if (!date) return '';

@@ -19,6 +19,7 @@ import {
   canPrintLogisticsLabel,
   labelPrintTooltip,
   labelWasPrinted,
+  isActiveLogisticsDeadline,
   logisticsDeadlineLabel,
   logisticsNextStep,
   logisticsQuantityLabel,
@@ -151,15 +152,16 @@ export function deadlineColumnTone(key: string): LogisticsUrgency {
 export function buildDeadlineColumns(orders: LogisticsOrder[], now: Date) {
   const groups = new Map<string, LogisticsOrder[]>();
   for (const order of orders) {
+    if (!isActiveLogisticsDeadline(order, now)) continue;
     const key = orderDeadlineKey(order, now);
     const list = groups.get(key) || [];
     list.push(order);
     groups.set(key, list);
   }
   const later = [...groups.keys()]
-    .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'tomorrow' && key !== 'no-date')
+    .filter((key) => key !== 'today' && key !== 'tomorrow')
     .sort((left, right) => left.localeCompare(right));
-  const keys = ['overdue', 'today', 'tomorrow', ...later, 'no-date'].filter((key) => (groups.get(key) || []).length);
+  const keys = ['today', 'tomorrow', ...later].filter((key) => (groups.get(key) || []).length);
   return keys.map((key) => ({
     key,
     label: deadlineColumnLabel(key, now),
@@ -391,7 +393,7 @@ export function UrgencyTabs({ view }: { view: BandejaView }) {
   if (view.stage === 'shipped') return null;
   return (
     <div role="tablist" aria-label="Plazo de entrega" className="flex flex-wrap gap-5 border-b border-border">
-      {LOGISTICS_URGENCIES.map((tab) => {
+      {LOGISTICS_URGENCIES.filter((tab) => tab.value !== 'overdue').map((tab) => {
         const active = view.urgency === tab.value;
         return (
           <button
