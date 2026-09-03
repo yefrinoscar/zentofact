@@ -421,13 +421,13 @@ function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): Stage
     queueFacts: view.stage === 'ready'
       ? joinLogisticsFacts([
           readyPrintHelper(view.orders),
-          view.counts.pending ? `${view.counts.pending} pendientes` : '',
+          view.counts.pending ? `${view.counts.pending} pendiente${view.counts.pending === 1 ? '' : 's'}` : '',
           logisticsChannelMixLabel(view.orders),
         ])
       : joinLogisticsFacts([
           pendingDeadlineHelper(view.orders, view.now),
           pendingActionHelper(view.orders),
-          view.counts.ready ? `${view.counts.ready} listos` : '',
+          view.counts.ready ? `${view.counts.ready} listo${view.counts.ready === 1 ? '' : 's'}` : '',
           logisticsChannelMixLabel(view.orders),
         ]),
   };

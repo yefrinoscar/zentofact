@@ -318,7 +318,12 @@ export function logisticsChannelMixLabel(orders: LogisticsOrderLike[]) {
 
 export function logisticsUpdatedClock(updatedAt?: Date | null) {
   if (!updatedAt) return '';
-  return new Intl.DateTimeFormat('es-PE', { timeZone: LIMA, hour: 'numeric', minute: '2-digit' }).format(updatedAt);
+  return new Intl.DateTimeFormat('es-PE', {
+    timeZone: LIMA,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(updatedAt);
 }
 
 export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null) {
