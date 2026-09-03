@@ -6,28 +6,15 @@ import {
   CheckCircle2,
   Loader2,
   PackageCheck,
-  Printer,
 } from 'lucide-react';
 import api from '../lib/api';
 import { logIdFromUnknown } from '../lib/api-error';
-import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  canMarkFalabellaReady,
-  canPrintLogisticsLabel,
-  formatLogisticsDateTime,
-  labelPrintTooltip,
-  labelWasPrinted,
   logisticsBulkReadySummary,
-  logisticsDeadlineLabel,
-  logisticsDeliveryLabel,
-  logisticsElapsedLabel,
   logisticsEmptyCopy,
-  logisticsFlowCopy,
-  logisticsFlowSteps,
   logisticsPrintSuccessCopy,
   logisticsSkippedNotice,
-  logisticsUrgency,
   openPdfFromBase64,
   type LogisticsChannel,
   type LogisticsStage,
@@ -37,7 +24,6 @@ import { noticeFromError, type InboxNotice } from '../lib/inbox-notice';
 import { CopyableLogId } from '../components/CopyableLogId';
 import { PrototypeSwitcher } from '../components/PrototypeSwitcher';
 import { usePermissions } from '../hooks/usePermissions';
-import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import {
   Dialog,
@@ -53,10 +39,8 @@ import {
   VariantB,
   VariantC,
   type BandejaView,
-  type LogisticsItem,
   type LogisticsOrder,
 } from './bandeja-prototype';
-import { ChannelMark, ProductThumb, QuantityTag } from './bandeja-prototype/shared';
 
 type InboxResponse = {
   orders: LogisticsOrder[];
@@ -81,38 +65,6 @@ type PrintResult = {
 
 const PAGE_SIZE = 50;
 const EMPTY_URGENCY: Record<LogisticsUrgency, number> = { overdue: 0, today: 0, tomorrow: 0, later: 0 };
-
-function formatMoney(value: number | null, currency = 'PEN') {
-  try {
-    return new Intl.NumberFormat('es-PE', { style: 'currency', currency }).format(value || 0);
-  } catch {
-    return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(value || 0);
-  }
-}
-
-function stageBadge(order: LogisticsOrder) {
-  if (order.stage === 'shipped') return { label: 'Enviado', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
-  if (order.stage === 'ready') return { label: 'Listo para enviar', className: 'border-indigo-200 bg-indigo-50 text-indigo-700' };
-  return { label: 'Pendiente', className: 'border-orange-200 bg-orange-50 text-orange-700' };
-}
-
-function OrderProducts({ items }: { items: LogisticsItem[] }) {
-  if (!items.length) return <span className="text-xs text-muted-foreground">Sin productos informados</span>;
-  return (
-    <div className="space-y-1">
-      {items.map((item) => (
-        <div key={item.id} className="flex min-w-0 items-center gap-2">
-          <ProductThumb item={item} className="size-11 rounded-md border border-border" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium text-foreground" title={item.description}>{item.description}</p>
-            {item.sku && <p className="truncate text-[10px] text-muted-foreground">{item.sku}</p>}
-          </div>
-          <QuantityTag item={item} />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
   const toneClass = notice.tone === 'error'
@@ -156,8 +108,7 @@ export default function BandejaLogistica() {
   const search = useDeferredValue(searchInput.trim());
   const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
   const [labelSelection, setLabelSelection] = useState<Set<number> | null>(null);
-  const [detail, setDetail] = useState<LogisticsOrder | null>(null);
-  const [confirmReady, setConfirmReady] = useState(false);
+  const [readyOrder, setReadyOrder] = useState<LogisticsOrder | null>(null);
   const [bulkReady, setBulkReady] = useState<LogisticsOrder[] | null>(null);
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
@@ -222,8 +173,7 @@ export default function BandejaLogistica() {
   const readyMutation = useMutation({
     mutationFn: (order: LogisticsOrder) => api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId),
     onSuccess: (_result, order) => {
-      setConfirmReady(false);
-      setDetail((current) => current && current.id === order.id ? { ...current, fulfillmentStatus: 'ready_to_ship', stage: 'ready' } : current);
+      setReadyOrder(null);
       setNotice({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
       void invalidate();
     },
@@ -294,14 +244,9 @@ export default function BandejaLogistica() {
     });
   };
 
-  const openOrder = (order: LogisticsOrder) => {
-    setConfirmReady(false);
-    setDetail(order);
-  };
-  const closeOrder = () => {
+  const closeReady = () => {
     if (readyMutation.isPending) return;
-    setDetail(null);
-    setConfirmReady(false);
+    setReadyOrder(null);
   };
 
   const view: BandejaView = {
@@ -328,8 +273,7 @@ export default function BandejaLogistica() {
     printing: printMutation.isPending,
     busyOrderId,
     printOrders,
-    openOrder,
-    requestReady: (order) => { openOrder(order); setConfirmReady(true); },
+    requestReady: (order) => setReadyOrder(order),
     requestBulkReady: (targets) => setBulkReady(targets),
     labelSelection,
     setLabelSelection,
@@ -340,9 +284,6 @@ export default function BandejaLogistica() {
   const body = variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : <VariantB view={view} />;
-
-  const detailUrgency = detail ? logisticsUrgency(detail, now) : null;
-  const detailShipped = detail?.stage === 'shipped';
 
   return (
     <div>
@@ -373,87 +314,31 @@ export default function BandejaLogistica() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && closeOrder()}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!readyMutation.isPending}>
-          {detail && detailUrgency && (
-            confirmReady ? (
-              <>
-                <DialogHeader>
-                  <DialogTitle>Confirmar pedido listo para envío</DialogTitle>
-                  <DialogDescription>Pedido {detail.externalOrderNumber} · {sellerShortName(detail.companyName)}</DialogDescription>
-                </DialogHeader>
-                <div className="flex gap-3 rounded-md border border-orange-200 bg-orange-50 p-4 text-orange-900">
-                  <PackageCheck className="mt-0.5 size-5 shrink-0" />
-                  <div>
-                    <p className="font-semibold">Confirma que todo el pedido está empacado</p>
-                    <p className="mt-1 text-sm text-orange-800">
-                      Falabella cambiará a listo para envío todos los productos de esta orden y descontará el stock. No lo hagas si falta algún producto por empacar.
-                    </p>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setConfirmReady(false)} disabled={readyMutation.isPending}>Volver</Button>
-                  <Button onClick={() => markReady(detail)} disabled={readyMutation.isPending}>
-                    {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-                    Confirmar y marcar listo
-                  </Button>
-                </DialogFooter>
-              </>
-            ) : (
-              <>
-                <DialogHeader>
-                  <div className="flex flex-wrap items-center gap-2 pr-8">
-                    <ChannelMark code={detail.channelCode} />
-                    <DialogTitle className="font-mono">{detail.externalOrderNumber || detail.externalOrderId}</DialogTitle>
-                    <Badge variant="outline" className={cn('rounded-md', stageBadge(detail).className)}>{stageBadge(detail).label}</Badge>
-                  </div>
-                  <DialogDescription>{sellerShortName(detail.companyName)} · {logisticsDeliveryLabel(detail)}</DialogDescription>
-                </DialogHeader>
-                <div className={cn(
-                  'rounded-md border p-3',
-                  detailShipped ? 'border-emerald-200 bg-emerald-50' : detailUrgency === 'overdue' ? 'border-rose-200 bg-rose-50' : detailUrgency === 'today' ? 'border-orange-200 bg-orange-50' : 'border-border bg-muted/30',
-                )}>
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {detailShipped ? 'Estado de entrega' : 'Límite de entrega'}
-                  </p>
-                  <p className={cn(
-                    'mt-0.5 text-lg font-semibold',
-                    detailShipped ? 'text-emerald-700' : detailUrgency === 'overdue' ? 'text-rose-700' : detailUrgency === 'today' ? 'text-orange-700' : 'text-foreground',
-                  )}>
-                    {detailShipped ? 'Enviado' : logisticsDeadlineLabel(detail, now)}
-                  </p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {detailShipped
-                      ? `Última actualización: ${formatLogisticsDateTime(detail.updatedAt)}`
-                      : detail.promisedShippingAt
-                        ? `Fecha prometida: ${formatLogisticsDateTime(detail.promisedShippingAt)}`
-                        : 'El canal no informó una fecha de entrega.'}
+      <Dialog open={Boolean(readyOrder)} onOpenChange={(open) => !open && closeReady()}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!readyMutation.isPending}>
+          {readyOrder && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Confirmar pedido listo para envío</DialogTitle>
+                <DialogDescription>Pedido {readyOrder.externalOrderNumber} · {sellerShortName(readyOrder.companyName)}</DialogDescription>
+              </DialogHeader>
+              <div className="flex gap-3 rounded-md border border-orange-200 bg-orange-50 p-4 text-orange-900">
+                <PackageCheck className="mt-0.5 size-5 shrink-0" />
+                <div>
+                  <p className="font-semibold">Confirma que todo el pedido está empacado</p>
+                  <p className="mt-1 text-sm text-orange-800">
+                    Falabella cambiará a listo para envío todos los productos de esta orden y descontará el stock. No lo hagas si falta algún producto por empacar.
                   </p>
                 </div>
-                <p className="text-xs text-muted-foreground">{logisticsFlowCopy(detail)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {logisticsFlowSteps(detail).filter((step) => step.state === 'done').length} de 3 · ingresó {logisticsElapsedLabel(detail.createdAt || detail.orderedAt, now) || 'sin fecha'}
-                </p>
-                <section className="rounded-md border border-border p-3">
-                  <h3 className="text-sm font-semibold text-foreground">Contenido · {detail.itemsCount} unidad{detail.itemsCount === 1 ? '' : 'es'}</h3>
-                  <div className="mt-2"><OrderProducts items={detail.items} /></div>
-                </section>
-                <DialogFooter>
-                  <Button variant="outline" onClick={closeOrder}>Cerrar</Button>
-                  {canPrintLogisticsLabel(detail) && (
-                    <Button variant={labelWasPrinted(detail) ? 'outline' : 'default'} onClick={() => printOrders([detail])} disabled={printMutation.isPending}>
-                      {printMutation.isPending && busyOrderId === detail.id ? <Loader2 className="animate-spin" /> : <Printer />}
-                      {labelWasPrinted(detail) ? 'Reimprimir etiqueta y guía' : 'Imprimir etiqueta y guía'}
-                    </Button>
-                  )}
-                  {canMarkFalabellaReady(detail) && canDispatch && (
-                    <Button onClick={() => setConfirmReady(true)}>
-                      <PackageCheck /> Marcar listo para envío
-                    </Button>
-                  )}
-                </DialogFooter>
-              </>
-            )
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeReady} disabled={readyMutation.isPending}>Cancelar</Button>
+                <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
+                  {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
+                  Confirmar y marcar listo
+                </Button>
+              </DialogFooter>
+            </>
           )}
         </DialogContent>
       </Dialog>
