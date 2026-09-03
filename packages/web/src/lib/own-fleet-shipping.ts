@@ -359,6 +359,40 @@ export function mergeOwnFleetConfig(saved?: OwnFleetConfigInput | OwnFleetConfig
   };
 }
 
+/** Distritos a los que Express sí llega: están en esa zona y encendidos. */
+export function districtsCoveredByZone(districts: OwnFleetDistrictSetting[], zoneKey: string) {
+  return districts.filter((district) => district.enabled && district.zone === zoneKey);
+}
+
+/** Distritos sin zona: no están cubiertos y el autocomplete los puede agregar. */
+export function uncoveredDistricts(districts: OwnFleetDistrictSetting[]) {
+  return districts.filter((district) => !district.enabled);
+}
+
+/** Pasa el distrito a esa zona. Si estaba en otra, sale de ahí. */
+export function assignDistrictToZone(
+  districts: OwnFleetDistrictSetting[],
+  key: string,
+  zoneKey: string,
+): OwnFleetDistrictSetting[] {
+  const folded = foldName(key);
+  return districts.map((district) => (
+    district.key === folded
+      ? { ...district, zone: zoneKey, enabled: true }
+      : district
+  ));
+}
+
+/** Saca el distrito de su zona. Queda libre para agregarlo a otra. */
+export function unassignDistrict(
+  districts: OwnFleetDistrictSetting[],
+  key: string,
+): OwnFleetDistrictSetting[] {
+  return districts.map((district) => (
+    district.key === key ? { ...district, enabled: false } : district
+  ));
+}
+
 export function serializeOwnFleetConfig(
   saved?: OwnFleetConfigInput | OwnFleetConfig | null,
 ): OwnFleetConfigInput {
