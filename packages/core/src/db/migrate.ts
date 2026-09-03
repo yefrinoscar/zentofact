@@ -1391,6 +1391,9 @@ const DDL = `
     finished_at TIMESTAMPTZ,
     CHECK (status IN ('running', 'success', 'error', 'partial'))
   );
+  ALTER TABLE order_sync_runs ADD COLUMN IF NOT EXISTS pages_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE order_sync_runs ADD COLUMN IF NOT EXISTS failed_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE order_sync_runs ADD COLUMN IF NOT EXISTS log_id TEXT;
   CREATE INDEX IF NOT EXISTS idx_order_sync_runs_account_started
     ON order_sync_runs(channel_account_id, started_at DESC);
 

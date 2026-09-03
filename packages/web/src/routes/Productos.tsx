@@ -89,9 +89,15 @@ type Listing = {
   marketplaceQuantity?: number | null;
   marketplaceSyncedAt?: string | null;
   metadata?: Record<string, unknown>;
-  candidateKey?: string;
-  candidateSource?: 'catalog' | 'remote';
   imageUrl?: string | null;
+};
+
+type AssociationCandidate = Listing & {
+  candidateKey: string;
+  candidateSource: 'catalog' | 'remote';
+  association:
+    | { kind: 'available' }
+    | { kind: 'linked_elsewhere'; productId: number; mainSku: string | null; productName: string | null };
 };
 
 type AssociationAvailability = 'recommended' | 'all';
@@ -631,7 +637,7 @@ export default function Productos() {
   const movements = (movementsQuery.data?.movements || []) as Movement[];
   const sales = salesQuery.data as SalesSummary | undefined;
   const returns = returnsQuery.data as ReturnsSummary | undefined;
-  const unlinkedListings: Listing[] = (unlinkedListingsQuery.data?.candidates || []).map((listing) => ({
+  const unlinkedListings: AssociationCandidate[] = (unlinkedListingsQuery.data?.candidates || []).map((listing) => ({
     ...listing,
     candidateKey: listing.candidateSource === 'catalog'
       ? `listing:${listing.id}`
@@ -813,6 +819,14 @@ export default function Productos() {
     event.preventDefault();
     if (!associationProduct || associationListingIds.length === 0) return;
     const selectedListings = unlinkedListings.filter((listing) => listing.candidateKey && associationListingIds.includes(listing.candidateKey));
+    const reassignedListings = selectedListings.filter((listing) => listing.association.kind === 'linked_elsewhere');
+    if (reassignedListings.length > 0) {
+      const currentMasters = [...new Set(reassignedListings.map((listing) => (
+        listing.association.kind === 'linked_elsewhere' ? listing.association.mainSku || 'otro master' : ''
+      )))].join(', ');
+      const confirmed = window.confirm(`Esta acción moverá ${reassignedListings.length} ${reassignedListings.length === 1 ? 'publicación' : 'publicaciones'} de ${currentMasters} a ${associationProduct.mainSku}. ¿Continuar?`);
+      if (!confirmed) return;
+    }
     const linked = await runAction(
       () => api.associateProductListings({
         productId: associationProduct.id,
@@ -826,7 +840,10 @@ export default function Productos() {
               marketplaceQuantity: listing.marketplaceQuantity,
               metadata: { ...listing.metadata, imageUrl: listing.imageUrl },
             }
-          : { listingId: listing.id }),
+          : {
+              listingId: listing.id,
+              ...(listing.association.kind === 'linked_elsewhere' ? { allowReassign: true } : {}),
+            }),
       }),
       () => `${selectedListings.length} ${selectedListings.length === 1 ? 'producto asociado' : 'productos asociados'} a ${associationProduct.mainSku}.`,
     );
@@ -1283,7 +1300,7 @@ export default function Productos() {
                       return <label key={candidateKey} className={cn('flex cursor-pointer items-start gap-3 border-b border-border px-5 py-3 hover:bg-muted/50', selected && 'bg-primary/5')}>
                         <Checkbox checked={selected} onCheckedChange={toggle} aria-label={`Seleccionar ${listing.title || listing.sellerSku}`} className="mt-1" />
                         {candidateImage ? <img src={candidateImage} alt="" className="h-14 w-14 shrink-0 rounded-md bg-muted object-contain" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-md bg-muted"><Boxes className="h-5 w-5 text-muted-foreground" /></span>}
-                        <span className="min-w-0 flex-1"><strong className="block line-clamp-2 text-sm leading-5">{listing.title || listing.sellerSku}</strong><span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-mono">{listing.sellerSku}</span><span>{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span><ChannelBadge value={listing.channelCode} listing={listing} /><span>{formatNumber(listing.marketplaceQuantity)} u</span></span></span>
+                        <span className="min-w-0 flex-1"><strong className="block line-clamp-2 text-sm leading-5">{listing.title || listing.sellerSku}</strong><span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-mono">{listing.sellerSku}</span><span>{sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}</span><ChannelBadge value={listing.channelCode} listing={listing} /><span>{formatNumber(listing.marketplaceQuantity)} u</span>{listing.association.kind === 'linked_elsewhere' ? <span className="font-medium text-amber-700">Asociado a {listing.association.mainSku || 'otro master'}</span> : null}</span></span>
                       </label>;
                     })}
             </div>
