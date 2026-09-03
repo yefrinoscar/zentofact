@@ -24,11 +24,21 @@ const DDL = `
     seller_password TEXT,
     falabella_api_user_id TEXT,
     falabella_api_key TEXT,
+    ripley_api_key TEXT,
+    ripley_shop_id TEXT,
+    ripley_svc_username TEXT,
+    ripley_svc_password TEXT,
+    ripley_svc_base_url TEXT,
     logo_path TEXT,
     activo BOOLEAN DEFAULT TRUE,
     created_at BIGINT,
     updated_at BIGINT
   );
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_api_key TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_shop_id TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_username TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_password TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_base_url TEXT;
 
   CREATE TABLE IF NOT EXISTS branches (
     id SERIAL PRIMARY KEY,
@@ -647,6 +657,14 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_falabella_label_prints_company_last
     ON falabella_label_prints(company_id, last_printed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS logistics_label_prints (
+    order_id BIGINT PRIMARY KEY,
+    print_count INTEGER NOT NULL DEFAULT 1 CHECK (print_count > 0),
+    first_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_printed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_printed_by TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS falabella_manifests (
     company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     manifest_id TEXT NOT NULL,
@@ -837,6 +855,20 @@ const DDL = `
     sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS ripley_sync_state (
+    company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    last_attempt_at TIMESTAMPTZ,
+    last_started_at TIMESTAMPTZ,
+    last_finished_at TIMESTAMPTZ,
+    last_successful_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_orders_received INTEGER NOT NULL DEFAULT 0,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
   DO $$
   BEGIN
     IF EXISTS (
@@ -908,7 +940,7 @@ const DDL = `
   VALUES
     ('falabella', 'Falabella', TRUE, '{"ingestion":["polling","webhook"],"actions":["ready_to_ship","shipping_label"]}'::jsonb),
     ('mercado_libre', 'Mercado Libre', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
-    ('ripley', 'Ripley', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
+    ('ripley', 'Ripley', TRUE, '{"ingestion":["polling"],"actions":["shipping_label","manifest"]}'::jsonb),
     ('manual', 'Venta manual', FALSE, '{"ingestion":["manual"]}'::jsonb),
     ('external', 'Pedido externo', FALSE, '{"ingestion":["api","manual","file"]}'::jsonb)
   ON CONFLICT (code) DO UPDATE SET
@@ -955,6 +987,19 @@ const DDL = `
   ) OR EXISTS (
     SELECT 1 FROM falabella_orders fo WHERE fo.company_id = c.id
   )
+  ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
+
+  INSERT INTO order_channel_accounts (
+    company_id, channel_id, external_account_id, display_name,
+    auto_create_orders, document_requirement, document_type_policy, settings
+  )
+  SELECT
+    c.id, ch.id, coalesce(nullif(trim(c.ripley_shop_id), ''), 'default'),
+    coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Ripley'),
+    TRUE, 'required', 'automatic', '{"origin":"ripley_mirakl_or11"}'::jsonb
+  FROM companies c
+  JOIN order_channels ch ON ch.code = 'ripley'
+  WHERE nullif(trim(c.ripley_api_key), '') IS NOT NULL
   ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
 
   -- Toda empresa puede registrar ventas desde la interfaz sin depender de
@@ -1020,6 +1065,24 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
     ON orders(promised_shipping_at)
     WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_by TEXT;
+  CREATE INDEX IF NOT EXISTS idx_orders_created_by
+    ON orders(created_by)
+    WHERE created_by IS NOT NULL;
+  -- Completitud de ítems: pending hasta hidratar líneas; complete cuando ya
+  -- están; error si falló la consulta al marketplace. stockPhase no descuenta
+  -- mientras el pedido siga pending/error.
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_status TEXT NOT NULL DEFAULT 'pending';
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_error TEXT;
+  ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_items_status_check;
+  ALTER TABLE orders ADD CONSTRAINT orders_items_status_check
+    CHECK (items_status IN ('pending', 'complete', 'error'));
+  CREATE INDEX IF NOT EXISTS idx_orders_items_incomplete
+    ON orders(items_status, updated_at DESC)
+    WHERE items_status IN ('pending', 'error');
+  -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
+  -- para asociarlo más adelante.
+  ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
 
   CREATE TABLE IF NOT EXISTS order_items (
     id BIGSERIAL PRIMARY KEY,
@@ -1042,6 +1105,15 @@ const DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku);
+  -- Pedidos que ya tenían líneas hidratadas antes de items_status no deben
+  -- quedar bloqueados en pending (stockPhase no descuenta en ese estado).
+  -- Corre después de crear order_items para no fallar en DBs nuevas (PR preview).
+  UPDATE orders o
+     SET items_status = 'complete',
+         items_error = NULL,
+         updated_at = NOW()
+   WHERE o.items_status = 'pending'
+     AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id);
 
   -- Catálogo canónico multi-seller. El producto representa la unidad física y
   -- su inventario es compartido por todos los listings de la instancia.
@@ -1056,6 +1128,8 @@ const DDL = `
     barcode TEXT,
     image_url TEXT,
     reference_price NUMERIC(14,2),
+    commission_amount NUMERIC(14,2),
+    profit_owner TEXT,
     unit TEXT NOT NULL DEFAULT 'each',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1063,10 +1137,33 @@ const DDL = `
     updated_by TEXT,
     CHECK (char_length(trim(main_sku)) BETWEEN 1 AND 64),
     CHECK (status IN ('active', 'inactive', 'archived')),
-    CHECK (unit IN ('each'))
+    CHECK (unit IN ('each')),
+    CHECK (commission_amount IS NULL OR commission_amount >= 0),
+    CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80)
   );
   CREATE INDEX IF NOT EXISTS idx_products_status_updated
     ON products(status, updated_at DESC, id DESC);
+
+  -- Comisión y beneficiario en productos existentes.
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS profit_owner TEXT;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_commission_amount_nonnegative
+      CHECK (commission_amount IS NULL OR commission_amount >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_profit_owner_length
+      CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  CREATE INDEX IF NOT EXISTS idx_products_profit_owner
+    ON products(profit_owner)
+    WHERE profit_owner IS NOT NULL;
 
   -- Búsqueda operacional del catálogo. Trigram mantiene rápidas las búsquedas
   -- parciales por SKU/nombre cuando la tabla crece.
@@ -1161,6 +1258,7 @@ const DDL = `
     listing_id BIGINT REFERENCES product_listings(id) ON DELETE SET NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    effective_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (movement_type IN (
       'sale', 'sale_adjust', 'sale_reversal', 'adjustment_in', 'adjustment_out',
@@ -1168,12 +1266,43 @@ const DDL = `
     )),
     CHECK (quantity_delta <> 0)
   );
+  ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS effective_at TIMESTAMPTZ;
+  UPDATE inventory_movements SET effective_at=created_at WHERE effective_at IS NULL;
+  ALTER TABLE inventory_movements ALTER COLUMN effective_at SET DEFAULT NOW();
+  ALTER TABLE inventory_movements ALTER COLUMN effective_at SET NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_created
     ON inventory_movements(product_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_effective
+    ON inventory_movements(product_id, effective_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order
     ON inventory_movements(order_id) WHERE order_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
     ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
+
+  -- An applied reconciliation is immutable evidence. Current stock remains in
+  -- product_inventory and every delta remains in inventory_movements.
+  CREATE TABLE IF NOT EXISTS inventory_reconciliation_runs (
+    id BIGSERIAL PRIMARY KEY,
+    run_key TEXT NOT NULL UNIQUE,
+    plan_hash TEXT NOT NULL UNIQUE,
+    reconciliation_kind TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    cutoff_at TIMESTAMPTZ NOT NULL,
+    as_of TIMESTAMPTZ NOT NULL,
+    summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (as_of >= cutoff_at)
+  );
+  CREATE TABLE IF NOT EXISTS inventory_reconciliation_anchors (
+    run_id BIGINT NOT NULL REFERENCES inventory_reconciliation_runs(id),
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    cutoff_quantity NUMERIC(14,4) NOT NULL,
+    target_quantity NUMERIC(14,4) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (run_id, product_id),
+    CHECK (cutoff_quantity >= 0),
+    CHECK (target_quantity >= 0)
+  );
 
   CREATE TABLE IF NOT EXISTS order_events (
     id BIGSERIAL PRIMARY KEY,
@@ -1462,10 +1591,271 @@ const DDL = `
     SELECT 1 FROM order_documents od
     WHERE od.order_id = o.id AND od.document_kind IN ('boleta', 'factura')
   );
+
+  CREATE TABLE IF NOT EXISTS order_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    channel_account_id BIGINT NOT NULL REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    cursor_from TEXT,
+    cursor_to TEXT,
+    received_count INTEGER NOT NULL DEFAULT 0,
+    upserted_count INTEGER NOT NULL DEFAULT 0,
+    pages_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    log_id TEXT,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    CHECK (status IN ('running', 'success', 'error', 'partial'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_sync_runs_account_started
+    ON order_sync_runs(channel_account_id, started_at DESC);
+
+  CREATE TABLE IF NOT EXISTS order_sync_state (
+    channel_account_id BIGINT PRIMARY KEY REFERENCES order_channel_accounts(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    cursor_updated_at TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ,
+    last_started_at TIMESTAMPTZ,
+    last_finished_at TIMESTAMPTZ,
+    last_successful_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    last_log_id TEXT,
+    last_run_id BIGINT REFERENCES order_sync_runs(id) ON DELETE SET NULL,
+    last_pages_processed INTEGER NOT NULL DEFAULT 0,
+    last_orders_received INTEGER NOT NULL DEFAULT 0,
+    last_orders_upserted INTEGER NOT NULL DEFAULT 0,
+    last_orders_failed INTEGER NOT NULL DEFAULT 0,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 15,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (status IN ('pending', 'running', 'success', 'partial', 'error')),
+    CHECK (sync_interval_minutes > 0)
+  );
+
+  CREATE TABLE IF NOT EXISTS settlement_imports (
+    id BIGSERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    file_sha256 TEXT NOT NULL UNIQUE,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    imported_by TEXT,
+    headers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    matched_count INTEGER NOT NULL DEFAULT 0,
+    unmatched_count INTEGER NOT NULL DEFAULT 0,
+    paid_sales_count INTEGER NOT NULL DEFAULT 0,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_settlement_imports_imported
+    ON settlement_imports(imported_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS settlement_lines (
+    id BIGSERIAL PRIMARY KEY,
+    import_id BIGINT NOT NULL REFERENCES settlement_imports(id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL UNIQUE,
+    order_ref TEXT NOT NULL DEFAULT '',
+    sku TEXT NOT NULL DEFAULT '',
+    sale_date DATE,
+    transaction_type TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'unknown',
+    bruto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    commission NUMERIC(14,2) NOT NULL DEFAULT 0,
+    other_fees NUMERIC(14,2) NOT NULL DEFAULT 0,
+    neto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    amount NUMERIC(14,2),
+    raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+    match_status TEXT NOT NULL,
+    match_method TEXT,
+    match_reason TEXT,
+    sale_source TEXT,
+    sale_id BIGINT,
+    payment_status TEXT NOT NULL DEFAULT '',
+    item_id TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (match_status IN ('matched', 'unmatched')),
+    CHECK (kind IN ('sale', 'commission', 'other', 'refund', 'unknown'))
+  );
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT '';
+  ALTER TABLE settlement_lines ADD COLUMN IF NOT EXISTS item_id TEXT NOT NULL DEFAULT '';
+  CREATE INDEX IF NOT EXISTS idx_settlement_lines_import_status
+    ON settlement_lines(import_id, match_status, row_number);
+  CREATE INDEX IF NOT EXISTS idx_settlement_lines_sale
+    ON settlement_lines(sale_source, sale_id)
+    WHERE sale_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS sale_settlements (
+    sale_source TEXT NOT NULL,
+    sale_id BIGINT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    bruto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    commission NUMERIC(14,2) NOT NULL DEFAULT 0,
+    other_fees NUMERIC(14,2) NOT NULL DEFAULT 0,
+    neto NUMERIC(14,2) NOT NULL DEFAULT 0,
+    match_method TEXT,
+    import_id BIGINT REFERENCES settlement_imports(id) ON DELETE SET NULL,
+    paid_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (sale_source, sale_id),
+    CHECK (sale_source IN ('falabella_order', 'boleta', 'factura')),
+    CHECK (status IN ('pending', 'paid'))
+  );
+
+  INSERT INTO sale_settlements (
+    sale_source, sale_id, status, bruto, commission, other_fees, neto, match_method, import_id
+  )
+  SELECT
+    sl.sale_source,
+    sl.sale_id,
+    'pending',
+    COALESCE(SUM(sl.bruto), 0),
+    COALESCE(SUM(sl.commission), 0),
+    COALESCE(SUM(sl.other_fees), 0),
+    COALESCE(SUM(sl.neto), 0),
+    MIN(sl.match_method),
+    MAX(sl.import_id)
+  FROM settlement_lines sl
+  WHERE sl.match_status = 'matched'
+    AND sl.sale_id IS NOT NULL
+    AND sl.sale_source IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM settlement_lines paid
+      WHERE paid.sale_source = sl.sale_source
+        AND paid.sale_id = sl.sale_id
+        AND paid.match_status = 'matched'
+        AND lower(trim(paid.payment_status)) IN ('pagado', 'paid')
+    )
+  GROUP BY sl.sale_source, sl.sale_id
+  ON CONFLICT (sale_source, sale_id) DO NOTHING;
+
+  UPDATE settlement_lines
+     SET other_fees = 0
+   WHERE other_fees <> 0
+     AND lower(transaction_type) LIKE '%comprador%';
+
+  UPDATE sale_settlements ss
+     SET bruto = sub.bruto,
+         commission = sub.commission,
+         other_fees = sub.other_fees,
+         neto = sub.neto,
+         updated_at = now()
+    FROM (
+      SELECT sl.sale_source,
+             sl.sale_id,
+             COALESCE(SUM(sl.bruto), 0) AS bruto,
+             COALESCE(SUM(sl.commission), 0) AS commission,
+             COALESCE(SUM(sl.other_fees), 0) AS other_fees,
+             COALESCE(SUM(sl.neto), 0) AS neto
+        FROM settlement_lines sl
+        JOIN (
+          SELECT DISTINCT ON (order_ref)
+                 order_ref, import_id
+            FROM (
+              SELECT order_ref,
+                     import_id,
+                     COUNT(*) FILTER (WHERE kind = 'sale') AS sale_lines,
+                     COUNT(*) AS import_lines
+                FROM settlement_lines
+               WHERE match_status = 'matched'
+                 AND sale_id IS NOT NULL
+                 AND sale_source IS NOT NULL
+                 AND order_ref <> ''
+               GROUP BY order_ref, import_id
+            ) scored
+           ORDER BY order_ref, sale_lines DESC, import_lines DESC, import_id DESC
+        ) best
+          ON best.order_ref = sl.order_ref
+         AND best.import_id = sl.import_id
+       WHERE sl.match_status = 'matched'
+         AND sl.sale_id IS NOT NULL
+         AND sl.sale_source IS NOT NULL
+       GROUP BY sl.sale_source, sl.sale_id
+    ) sub
+   WHERE ss.sale_source = sub.sale_source
+     AND ss.sale_id = sub.sale_id;
+
+  UPDATE orders o
+  SET created_by = e.actor_user_id
+  FROM (
+    SELECT DISTINCT ON (order_id) order_id, actor_user_id
+    FROM order_events
+    WHERE event_type = 'order.created'
+      AND nullif(trim(actor_user_id), '') IS NOT NULL
+    ORDER BY order_id, id
+  ) e
+  WHERE o.id = e.order_id AND o.created_by IS NULL;
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_imports (
+    id BIGSERIAL PRIMARY KEY,
+    filename TEXT NOT NULL,
+    file_sha256 TEXT NOT NULL UNIQUE,
+    seller_id TEXT NOT NULL DEFAULT '',
+    period_from DATE,
+    period_to DATE,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    imported_by TEXT,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_imports_imported
+    ON falabella_invoice_imports(imported_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_documents (
+    id BIGSERIAL PRIMARY KEY,
+    import_id BIGINT NOT NULL REFERENCES falabella_invoice_imports(id) ON DELETE CASCADE,
+    document_number TEXT NOT NULL,
+    document_kind TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'PEN',
+    seller_id TEXT NOT NULL DEFAULT '',
+    issued_on DATE,
+    period_from DATE,
+    period_to DATE,
+    net NUMERIC(14,2) NOT NULL DEFAULT 0,
+    igv NUMERIC(14,2) NOT NULL DEFAULT 0,
+    gross NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (import_id, document_number, document_kind),
+    CHECK (document_kind IN ('factura', 'nota_credito'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_documents_number
+    ON falabella_invoice_documents(document_number, document_kind, id DESC);
+
+  CREATE TABLE IF NOT EXISTS falabella_invoice_lines (
+    id BIGSERIAL PRIMARY KEY,
+    document_id BIGINT NOT NULL REFERENCES falabella_invoice_documents(id) ON DELETE CASCADE,
+    import_id BIGINT NOT NULL REFERENCES falabella_invoice_imports(id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    order_number TEXT NOT NULL DEFAULT '',
+    product_name TEXT NOT NULL DEFAULT '',
+    seller_sku TEXT NOT NULL DEFAULT '',
+    falabella_sku TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    transaction_type TEXT NOT NULL DEFAULT '',
+    concept TEXT NOT NULL DEFAULT 'other',
+    net NUMERIC(14,6) NOT NULL DEFAULT 0,
+    igv NUMERIC(14,6) NOT NULL DEFAULT 0,
+    gross NUMERIC(14,6) NOT NULL DEFAULT 0,
+    statement_number TEXT NOT NULL DEFAULT '',
+    paid_reference TEXT NOT NULL DEFAULT '',
+    transacted_at TIMESTAMPTZ,
+    CHECK (concept IN ('commission', 'logistics', 'buyer_shipping', 'ads', 'other'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_lines_order
+    ON falabella_invoice_lines(order_number)
+    WHERE order_number <> '';
+  CREATE INDEX IF NOT EXISTS idx_falabella_invoice_lines_document
+    ON falabella_invoice_lines(document_id, row_number);
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {
   await pool.query(DDL);
+  await pool.query(`
+    ALTER TABLE falabella_invoice_lines
+      ALTER COLUMN net TYPE NUMERIC(14,6),
+      ALTER COLUMN igv TYPE NUMERIC(14,6),
+      ALTER COLUMN gross TYPE NUMERIC(14,6)
+  `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
 }

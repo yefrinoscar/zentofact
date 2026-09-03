@@ -166,20 +166,21 @@ const timeoutLabel = () => `${Math.round(JOB_TIMEOUT_MS / 60_000)} min`;
 const retryDelaySeconds = (attempts) => Math.min(15 * 60, 60 * (2 ** Math.max(0, Number(attempts || 1) - 1)));
 const jobKindOf = (job) => (job?.kind === JOB_KIND_CREDIT_NOTE ? JOB_KIND_CREDIT_NOTE : JOB_KIND_INVOICE);
 
-async function hasAcceptedSalesDocument(companyId, orderNumber) {
+export async function hasAcceptedSalesDocument(companyId, orderNumber, db = pool) {
   const number = String(orderNumber || '').trim();
   if (!number) return false;
-  const r = await pool.query(
-    `select 1
-     from (
-       select 1 from boletas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
-       union all
-       select 1 from facturas where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO' limit 1
-     ) docs
-     limit 1`,
+  const r = await db.query(
+    `select
+       exists (
+         select 1 from boletas
+         where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO'
+       ) or exists (
+         select 1 from facturas
+         where company_id=$1 and order_number=$2 and estado_sunat='ACEPTADO'
+       ) as accepted`,
     [companyId, number],
   );
-  return r.rows.length > 0;
+  return r.rows[0]?.accepted === true;
 }
 
 async function enqueueIfNeeded(companyId, orderNumber, source, orderId, kind) {
@@ -511,7 +512,31 @@ export async function setCompanyEnabled(companyId, enabled) {
 
 async function isCompanyEnabled(companyId) {
   const r = await pool.query('select enabled from auto_emission_config where company_id=$1', [companyId]);
-  return r.rows[0]?.enabled === true;
+  if (r.rows[0]?.enabled !== true) return false;
+  return (await falabellaDocumentPolicy(companyId)).enabled;
+}
+
+async function falabellaDocumentPolicy(companyId) {
+  const r = await pool.query(
+    `select account.document_requirement, account.document_type_policy
+     from order_channel_accounts account
+     join order_channels channel on channel.id=account.channel_id
+     where account.company_id=$1
+       and account.external_account_id='default'
+       and account.active=true
+       and channel.code='falabella'
+     limit 1`,
+    [companyId],
+  );
+  const row = r.rows[0];
+  if (!row) return { enabled: true, typePolicy: 'automatic' };
+  const typePolicy = ['automatic', 'boleta', 'factura'].includes(row.document_type_policy)
+    ? row.document_type_policy
+    : 'automatic';
+  return {
+    enabled: row.document_requirement !== 'disabled',
+    typePolicy,
+  };
 }
 
 // Últimos jobs y eventos (para el panel).
@@ -744,8 +769,8 @@ export async function handleWebhook(companyId, payload) {
     if (isReadyStatus(currentStatus)) {
       await enqueueReadyStockJob(companyId, resolvedOrderId, resolvedNumber, 'webhook');
     }
-    if (kind === JOB_KIND_INVOICE && !boletaEnabled) {
-      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; boleta omitida`);
+    if (!boletaEnabled) {
+      log(`webhook company=${companyId} orden=${resolvedNumber || resolvedOrderId} stock encolado; comprobante omitido`);
       return { ok: true, orderNumber: resolvedNumber, orderId: resolvedOrderId, kind };
     }
     if (resolvedNumber) {
@@ -772,8 +797,8 @@ export async function handleWebhook(companyId, payload) {
   if (isReadyStatus(payloadStatus)) {
     await enqueueReadyStockJob(companyId, orderId, orderNumber, 'webhook');
   }
-  if (payloadKind === JOB_KIND_INVOICE && !boletaEnabled) {
-    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; boleta omitida`);
+  if (!boletaEnabled) {
+    log(`webhook company=${companyId} orden=${orderNumber || orderId} stock encolado; comprobante omitido`);
     return { ok: true, orderNumber, orderId, kind: payloadKind };
   }
   if (orderNumber) {
@@ -833,7 +858,9 @@ async function processJob(job, setStep = async () => {}) {
   }
 
   // 2) Condiciones (mismas que el Gestor de Sellers).
-  const requiresInvoice = invoiceRequired(order);
+  const documentPolicy = await falabellaDocumentPolicy(job.company_id);
+  const requiresInvoice = documentPolicy.typePolicy === 'factura'
+    || (documentPolicy.typePolicy !== 'boleta' && invoiceRequired(order));
   const status = normStatus(statusOfOrder(order));
   const ready = isReadyStatus(status);
   if (!ready) {
@@ -1033,7 +1060,7 @@ export async function processQueue(limit = 3) {
   return jobs.length;
 }
 
-async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
+export async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
   const rows = (await pool.query(
     `select distinct fo.order_number, fo.order_id
      from falabella_orders fo
@@ -1073,41 +1100,44 @@ async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
 }
 
 // ── Reconciliación (red de seguridad): barre órdenes listas sin boleta y las encola ──
-// Solo empresas ACTIVAS en la config (auto_emission_config.enabled = true).
+// Solo empresas activas cuya configuración permite emitir comprobantes Falabella.
 export async function reconcile() {
   const cron = await getCron();
   if (!cron.enabled) return;
   const enabledRows = (await pool.query('select company_id from auto_emission_config where enabled=true')).rows;
   const enabledIds = new Set(enabledRows.map((r) => r.company_id));
-  const companies = (await listCompanies()).filter(
+  const configuredCompanies = (await listCompanies()).filter(
     (c) => enabledIds.has(c.id) && c.falabellaApiUserId?.trim() && c.falabellaApiKey?.trim(),
   );
+  const policyChecks = await Promise.all(configuredCompanies.map(async (company) => ({
+    company,
+    policy: await falabellaDocumentPolicy(company.id),
+  })));
+  const companies = policyChecks
+    .filter(({ policy }) => policy.enabled)
+    .map(({ company }) => company);
   if (!companies.length) return;
   const { normalizeGetOrdersResult } = await import('@zentofact/falabella-api');
   const rawAfter = new Date(Math.max(Date.now() - cron.windowDays * 24 * 3600 * 1000, MIN_ORDER_DATE.getTime()));
   const createdAfter = rawAfter.toISOString().slice(0, 10) + 'T00:00:00+00:00';
   for (const company of companies) {
-    try {
-      // Dedup en memoria: 3 queries por empresa.
-      //  - órdenes que ya tienen boleta
-      //  - órdenes que ya tienen factura
-      //  - órdenes activas en la cola; los skipped sin documento sí deben poder recuperarse
-      const [withBoleta, withFactura, invoiceQueue, creditNoteQueue] = await Promise.all([
-        pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
-        pool.query("select order_number from emission_jobs where company_id=$1 and coalesce(kind, 'invoice')='invoice' and status in ('pending','processing','done')", [company.id]),
-        pool.query("select order_number from emission_jobs where company_id=$1 and kind='credit_note' and status in ('pending','processing','done')", [company.id]),
-      ]);
-      const invoiceKnown = new Set([
-        ...withBoleta.rows.map((r) => String(r.order_number)),
-        ...withFactura.rows.map((r) => String(r.order_number)),
-        ...invoiceQueue.rows.map((r) => String(r.order_number)),
-      ]);
-      const creditNoteKnown = new Set(creditNoteQueue.rows.map((r) => String(r.order_number)));
+    const [withBoleta, withFactura, invoiceQueue, creditNoteQueue] = await Promise.all([
+      pool.query("select distinct order_number from boletas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+      pool.query("select distinct order_number from facturas where company_id=$1 and order_number is not null and order_number <> ''", [company.id]),
+      pool.query("select order_number from emission_jobs where company_id=$1 and coalesce(kind, 'invoice')='invoice' and status in ('pending','processing','done')", [company.id]),
+      pool.query("select order_number from emission_jobs where company_id=$1 and kind='credit_note' and status in ('pending','processing','done')", [company.id]),
+    ]);
+    const invoiceKnown = new Set([
+      ...withBoleta.rows.map((r) => String(r.order_number)),
+      ...withFactura.rows.map((r) => String(r.order_number)),
+      ...invoiceQueue.rows.map((r) => String(r.order_number)),
+    ]);
+    const creditNoteKnown = new Set(creditNoteQueue.rows.map((r) => String(r.order_number)));
+    let enqueued = 0;
+    let creditNotesEnqueued = 0;
 
+    try {
       const client = new FalabellaApiClient({ userId: company.falabellaApiUserId, apiKey: company.falabellaApiKey, version: '2.0', defaultFormat: 'JSON' });
-      let enqueued = 0;
-      let creditNotesEnqueued = 0;
       for (let offset = 0; offset < cron.windowDays * 300 + 100; offset += 100) {
         const resp = await client.getOrdersV2({ createdAfter, limit: 100, offset });
         const orders = normalizeGetOrdersResult(resp.data).orders || [];
@@ -1154,13 +1184,15 @@ export async function reconcile() {
           if (orders.length < 100) break;
         }
       }
-      const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
-      creditNotesEnqueued += localCreditNotes;
-      if (enqueued || creditNotesEnqueued) {
-        log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);
-      }
     } catch (e) {
       log(`cron ${company.nombre} error:`, e.message);
+    }
+
+    // Pedidos cancelados/devueltos ya guardados en local, aunque Falabella no responda.
+    const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
+    creditNotesEnqueued += localCreditNotes;
+    if (enqueued || creditNotesEnqueued) {
+      log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);
     }
   }
 }

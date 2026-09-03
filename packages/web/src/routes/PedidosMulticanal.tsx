@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
@@ -8,26 +8,38 @@ import {
   Check,
   CheckCircle2,
   CircleDashed,
+  CircleDollarSign,
+  ClipboardList,
   Clock3,
   Copy,
   Eye,
   FileText,
+  Hash,
   ImagePlus,
   Loader2,
   MoreHorizontal,
   Package,
   PackageSearch,
+  PanelTop,
   Plus,
   RefreshCw,
   Search,
   Store,
-  WandSparkles,
+  Tags,
+  Truck,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
+import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { shippingCarrierLabel } from '../lib/shipping-carrier';
+import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
+import {
+  generateDocumentLabel,
+  generateDocumentPath,
+  pendingDocumentKind,
+} from '../lib/order-document';
+import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
 import { todayInLima } from '../lib/documentDateRange';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
@@ -56,6 +68,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '../components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -70,6 +83,7 @@ type Company = {
   nombre?: string | null;
   nombreComercial?: string | null;
   razonSocial?: string | null;
+  hasRipleySvcCredentials?: boolean;
 };
 
 type Channel = {
@@ -110,7 +124,7 @@ type OrderEvent = {
 
 type ManagedOrder = {
   id: number;
-  companyId: number;
+  companyId: number | null;
   channelAccountId: number;
   channelCode: string;
   channelName: string;
@@ -132,17 +146,34 @@ type ManagedOrder = {
     needsCustomerChoice: boolean;
   };
   currency: string;
+  subtotal?: number | null;
+  shippingAmount?: number | null;
   total?: number | null;
-  customer?: { name?: string; documentNumber?: string; phone?: string };
+  customer?: {
+    name?: string;
+    documentNumber?: string;
+    documentType?: string;
+    phone?: string;
+    legalName?: string;
+    address?: string;
+  };
   shipping?: {
     type?: string;
     carrier?: string;
     trackingCode?: string;
     address?: string;
     district?: string;
+    province?: string;
+    department?: string;
     reference?: string;
     lat?: number;
     lng?: number;
+    districtAmount?: number;
+    distanceAmount?: number;
+    distanceKm?: number;
+    zoneKind?: string;
+    zoneLabel?: string;
+    priceZone?: string;
   };
   metadata?: {
     paymentMethod?: string;
@@ -150,12 +181,18 @@ type ManagedOrder = {
     delivery?: string;
     shippingCarrier?: string;
     receivedBy?: string;
+    ripleySvc?: {
+      orderId?: string;
+      statusManagement?: string;
+      orderState?: string;
+      packages?: number | null;
+      shippingDeadline?: string;
+      syncedAt?: string;
+    };
   };
   orderedAt?: string | null;
   promisedShippingAt?: string | null;
   providerUpdatedAt?: string | null;
-  demo?: boolean;
-  demoItems?: OrderItem[];
 };
 
 type OrderDetail = ManagedOrder & {
@@ -167,6 +204,17 @@ type OrderDetail = ManagedOrder & {
     number?: string | null;
     status?: string | null;
   }>;
+};
+
+type RipleyLogisticsOverview = {
+  labels: number | null;
+  manifests: number | null;
+  eligibleLabels: number | null;
+  labelId: string;
+  manifestId: string;
+  packages: number | null;
+  sandbox: boolean;
+  error: string;
 };
 
 type SalesPulseSeller = {
@@ -203,6 +251,12 @@ type SalesPulse = {
     ordersCount: number;
     salesTotal: number;
   }>;
+  ownFleetShipping?: {
+    total: number;
+    districtTotal: number;
+    distanceTotal: number;
+    deliveries: number;
+  };
 };
 
 const DAY_LIMIT = 500;
@@ -300,6 +354,11 @@ function companyName(company: Company) {
   return name ? titleCaseSeller(name) : `Empresa ${company.id}`;
 }
 
+function sellerCellLabel(order: { companyId: number | null }, companyById: Map<number, string>) {
+  if (order.companyId == null) return '';
+  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
+}
+
 function formatMoney(value: number | null | undefined, currency = 'PEN') {
   try {
     return new Intl.NumberFormat('es-PE', { style: 'currency', currency }).format(Number(value || 0));
@@ -333,172 +392,48 @@ function formatTime(value: string | null | undefined) {
   }).format(date);
 }
 
-function limaDate(value: string | null | undefined) {
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(date);
+function svcResultCount(value: unknown, collectionKey: string) {
+  const root = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const nested = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root;
+  const total = Number(nested.total ?? nested.total_count);
+  if (Number.isFinite(total)) return total;
+  return Array.isArray(nested[collectionKey]) ? nested[collectionKey].length : null;
+}
+
+function svcResultData(value: unknown) {
+  const root = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root;
+}
+
+function svcResultItems(value: unknown, collectionKey: string) {
+  const items = svcResultData(value)[collectionKey];
+  return Array.isArray(items) ? items as Array<Record<string, unknown>> : [];
+}
+
+function svcResultIsSandbox(value: unknown) {
+  return svcResultData(value).sandbox === true;
+}
+
+function downloadPdf(base64: unknown, filename: string) {
+  if (typeof base64 !== 'string' || !base64.trim()) throw new Error('Ripley no devolvió el PDF esperado.');
+  const link = document.createElement('a');
+  link.href = `data:application/pdf;base64,${base64}`;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function svcPdf(value: unknown, keys: string[]): string | null {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) if (typeof record[key] === 'string') return record[key];
+  return record.data === value ? null : svcPdf(record.data, keys);
 }
 
 function hoursAgo(hours: number) {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-}
-
-function documentDecision(type: 'boleta' | 'factura' | null = 'boleta') {
-  return { enabled: true, required: false, type, needsCustomerChoice: false };
-}
-
-function createDemoOrders(companyId: number): ManagedOrder[] {
-  return [
-    {
-      id: -101,
-      companyId,
-      channelAccountId: -11,
-      channelCode: 'mercado_libre',
-      channelName: 'Mercado Libre',
-      channelAccountName: 'Tienda principal',
-      externalOrderId: 'ML-200483',
-      externalOrderNumber: 'ML-200483',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'preparing',
-      documentStatus: 'pending',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      requestedDocumentType: 'factura',
-      documentDecision: documentDecision('factura'),
-      currency: 'PEN',
-      total: 219.8,
-      customer: { name: 'María Salazar', documentNumber: '20548796321' },
-      orderedAt: hoursAgo(1.2),
-      promisedShippingAt: hoursAgo(-22),
-      demo: true,
-      demoItems: [
-        { id: -1, sku: 'ZF-AUD-002', description: 'Audífonos Bluetooth Pro', quantity: 1, total: 89.9 },
-        { id: -2, sku: 'ZF-MOC-001', description: 'Mochila urbana impermeable', quantity: 1, total: 129.9 },
-      ],
-    },
-    {
-      id: -102,
-      companyId,
-      channelAccountId: -12,
-      channelCode: 'falabella',
-      channelName: 'Falabella',
-      channelAccountName: 'Seller principal',
-      externalOrderId: 'FAL-78432',
-      externalOrderNumber: 'FAL-78432',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'ready_to_ship',
-      documentStatus: 'accepted',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 159,
-      customer: { name: 'José Ramírez', documentNumber: '74261835' },
-      shipping: { trackingCode: 'FALPE983201' },
-      orderedAt: hoursAgo(3.5),
-      promisedShippingAt: hoursAgo(-18),
-      demo: true,
-      demoItems: [{ id: -3, sku: 'ZF-CAM-004', description: 'Cámara WiFi para hogar', quantity: 1, total: 159 }],
-    },
-    {
-      id: -103,
-      companyId,
-      channelAccountId: -13,
-      channelCode: 'ripley',
-      channelName: 'Ripley',
-      channelAccountName: 'Marketplace Ripley',
-      externalOrderId: 'RIP-99104',
-      externalOrderNumber: 'RIP-99104',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'pending',
-      documentStatus: 'not_requested',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision(null),
-      currency: 'PEN',
-      total: 72.5,
-      customer: { name: 'Lucía Torres', documentNumber: '46128730' },
-      orderedAt: hoursAgo(6),
-      promisedShippingAt: hoursAgo(-30),
-      demo: true,
-      demoItems: [{ id: -4, sku: 'ZF-ORG-005', description: 'Organizador modular 3 niveles', quantity: 1, total: 72.5 }],
-    },
-    {
-      id: -104,
-      companyId,
-      channelAccountId: -14,
-      channelCode: 'manual',
-      channelName: 'Venta manual',
-      channelAccountName: 'Tienda física',
-      externalOrderId: 'VTA-1042',
-      externalOrderNumber: 'VTA-1042',
-      orderStatus: 'completed',
-      paymentStatus: 'pending',
-      fulfillmentStatus: 'delivered',
-      documentStatus: 'accepted',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 109.8,
-      customer: { name: 'Carlos Vega', documentNumber: '41876532' },
-      shipping: { type: 'recojo', address: 'Av. La Marina 2055, San Miguel' },
-      metadata: { paymentMethod: 'despues', saleSource: 'whatsapp', delivery: 'recojo' },
-      orderedAt: hoursAgo(19),
-      demo: true,
-      demoItems: [{ id: -5, sku: 'ZF-BOT-003', description: 'Botella térmica 750 ml', quantity: 2, total: 109.8 }],
-    },
-    {
-      id: -105,
-      companyId,
-      channelAccountId: -11,
-      channelCode: 'mercado_libre',
-      channelName: 'Mercado Libre',
-      channelAccountName: 'Tienda principal',
-      externalOrderId: 'ML-200419',
-      externalOrderNumber: 'ML-200419',
-      orderStatus: 'confirmed',
-      paymentStatus: 'paid',
-      fulfillmentStatus: 'shipped',
-      documentStatus: 'issued',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 129.9,
-      customer: { name: 'Andrea Flores', documentNumber: '72519480' },
-      shipping: { trackingCode: 'MELI1028841' },
-      orderedAt: hoursAgo(28),
-      demo: true,
-      demoItems: [{ id: -6, sku: 'ZF-MOC-001', description: 'Mochila urbana impermeable', quantity: 1, total: 129.9 }],
-    },
-    {
-      id: -106,
-      companyId,
-      channelAccountId: -12,
-      channelCode: 'falabella',
-      channelName: 'Falabella',
-      channelAccountName: 'Seller principal',
-      externalOrderId: 'FAL-78398',
-      externalOrderNumber: 'FAL-78398',
-      orderStatus: 'cancelled',
-      paymentStatus: 'refunded',
-      fulfillmentStatus: 'cancelled',
-      documentStatus: 'cancelled',
-      documentRequirement: 'optional',
-      documentTypePolicy: 'automatic',
-      documentDecision: documentDecision('boleta'),
-      currency: 'PEN',
-      total: 89.9,
-      customer: { name: 'Pedro Campos', documentNumber: '47821096' },
-      orderedAt: hoursAgo(36),
-      demo: true,
-      demoItems: [{ id: -7, sku: 'ZF-AUD-002', description: 'Audífonos Bluetooth Pro', quantity: 1, total: 89.9 }],
-    },
-  ];
 }
 
 function fulfillmentBadge(status: string) {
@@ -563,15 +498,16 @@ function originLabel(order: ManagedOrder) {
   return order.channelName;
 }
 
-function deliveryLabel(order: ManagedOrder) {
-  const type = order.shipping?.type || order.metadata?.delivery || '';
-  if (type === 'recojo') return 'Recojo';
-  const carrier = shippingCarrierLabel(order.shipping?.carrier || order.metadata?.shippingCarrier);
-  if (carrier) return carrier;
-  if (type === 'envio') return 'Envío';
-  if (order.shipping?.trackingCode) return 'Envío';
-  if (order.channelCode !== 'manual') return 'Marketplace';
-  return '—';
+function deliveryBadge(order: ManagedOrder) {
+  const label = deliveryLabel(order);
+  if (!deliveryShowsAsTag(label)) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={label}>
+      {label}
+    </Badge>
+  );
 }
 
 function shippingAddress(shipping?: ManagedOrder['shipping']) {
@@ -637,10 +573,27 @@ function channelTone(code: string) {
   }[code] || 'border-border bg-muted text-muted-foreground';
 }
 
-function ChannelMark({ code, name, size = 'sm' }: { code: string; name: string; size?: 'sm' | 'md' }) {
+function ChannelMark({
+  code,
+  name,
+  size = 'sm',
+  ripleyMark = 'initials',
+}: {
+  code: string;
+  name: string;
+  size?: 'sm' | 'md';
+  ripleyMark?: 'initials' | 'official';
+}) {
   const box = size === 'sm' ? 'size-4' : 'size-8';
   if (code === 'falabella') {
     return <img src={falabellaLogo} alt="Falabella" className={cn('shrink-0 rounded-sm object-contain', box)} />;
+  }
+  if (code === 'ripley' && ripleyMark === 'official') {
+    return (
+      <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', box)} aria-hidden="true">
+        <img src={ripleyLogo} alt="" className={size === 'sm' ? 'h-3 w-auto' : 'h-6 w-auto'} />
+      </span>
+    );
   }
   return (
     <span className={cn('grid shrink-0 place-items-center rounded-sm border font-bold', channelTone(code), size === 'sm' ? 'size-4 text-[8px]' : 'size-8 text-xs')} aria-hidden="true">
@@ -683,42 +636,37 @@ function ordersHeading(count: number, date: string) {
   return `${pedidoCountLabel(count)} ${when}`;
 }
 
-function demoDetail(order: ManagedOrder): OrderDetail {
-  const createdAt = order.orderedAt || new Date().toISOString();
-  return {
-    ...order,
-    items: order.demoItems || [],
-    events: [
-      { id: order.id * 10, eventType: 'order.created', source: order.channelCode === 'manual' ? 'manual' : 'webhook', createdAt },
-      ...(['preparing', 'ready_to_ship', 'shipped', 'delivered'].includes(order.fulfillmentStatus)
-        ? [{ id: order.id * 10 - 1, eventType: 'order.updated', source: 'system', createdAt: hoursAgo(0.5) }]
-        : []),
-    ],
-    documents: ['issued', 'accepted'].includes(order.documentStatus)
-      ? [{ id: order.id * 100, kind: order.documentDecision.type || 'boleta', number: order.documentDecision.type === 'factura' ? 'F001-001284' : 'B001-004821', status: order.documentStatus }]
-      : [],
-  };
-}
-
 export default function PedidosMulticanal() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+
+  const goToGenerateDocument = useCallback((order: ManagedOrder) => {
+    const kind = pendingDocumentKind(order);
+    if (!kind) return;
+    navigate(generateDocumentPath(kind), {
+      state: { fromOrderId: order.id, fromOrder: order },
+    });
+  }, [navigate]);
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
   const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
-  const [hasRealOrders, setHasRealOrders] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [syncNote, setSyncNote] = useState('');
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [ripleyLogistics, setRipleyLogistics] = useState<RipleyLogisticsOverview | null>(null);
+  const [ripleyPackages, setRipleyPackages] = useState('1');
+  const [ripleyPickupDate, setRipleyPickupDate] = useState(() => hoursAgo(-24).slice(0, 10));
+  const [ripleyWarehouseAddress, setRipleyWarehouseAddress] = useState('Almacén principal');
+  const [ripleyAction, setRipleyAction] = useState('');
+  const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [productsOpen, setProductsOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
-  const [demoPaymentOverrides, setDemoPaymentOverrides] = useState<Record<number, { paymentStatus: string; paymentMethod: string }>>({});
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
 
@@ -801,36 +749,9 @@ export default function PedidosMulticanal() {
   const pulseLoading = pulseQuery.isPending && !pulseQuery.data;
   const pulseError = (pulseQuery.error as Error | undefined)?.message || '';
 
-  useEffect(() => {
-    if (totalCount > 0) setHasRealOrders(true);
-  }, [totalCount]);
-
   const channelCatalog = useMemo(() => FALLBACK_CHANNELS.map((fallback) => (
     channels.find((channel) => channel.code === fallback.code) || fallback
   )), [channels]);
-
-  const demoOrders = useMemo(
-    () => createDemoOrders(Number(companyId === 'all' ? companies[0]?.id || 1 : companyId)).map((order) => {
-      const override = demoPaymentOverrides[order.id];
-      return override ? { ...order, paymentStatus: override.paymentStatus, metadata: { ...order.metadata, paymentMethod: override.paymentMethod } } : order;
-    }),
-    [companies, companyId, demoPaymentOverrides],
-  );
-
-  const filteredDemoOrders = useMemo(() => {
-    const term = submittedSearch.toLowerCase();
-    return demoOrders.filter((order) => (
-      (channelCode === 'all' || order.channelCode === channelCode)
-      && (fulfillmentStatus === 'all' || order.fulfillmentStatus === fulfillmentStatus)
-      && limaDate(order.orderedAt) === date
-      && (!term || [order.externalOrderNumber, order.customer?.name, order.customer?.documentNumber, order.customer?.phone]
-        .some((value) => String(value || '').toLowerCase().includes(term)))
-    ));
-  }, [channelCode, date, demoOrders, fulfillmentStatus, submittedSearch]);
-
-  const demoMode = !loading && !loadError && !hasRealOrders;
-  const displayedOrders = demoMode ? filteredDemoOrders : orders;
-  const displayedTotal = demoMode ? filteredDemoOrders.length : totalCount;
 
   const companyById = useMemo(
     () => new Map(companies.map((company) => [company.id, companyName(company)])),
@@ -838,31 +759,175 @@ export default function PedidosMulticanal() {
   );
 
   useEffect(() => {
-    const registered = (location.state as { registered?: string } | null)?.registered;
+    const registered = registeredFromMisVentasState(location.state as { registered?: string } | null);
     if (!registered) return;
-    setSuccessMessage(`Venta ${registered} registrada.`);
-    setHasRealOrders(true);
+    setSuccessMessage(saleSavedSnackbarMessage(registered));
     void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
     void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, queryClient]);
 
+  const loadRipleyLogistics = async (order: ManagedOrder, sandbox: boolean) => {
+    if (order.companyId == null) {
+      const overview: RipleyLogisticsOverview = {
+        labels: null,
+        manifests: null,
+        eligibleLabels: null,
+        labelId: '',
+        manifestId: '',
+        packages: null,
+        sandbox,
+        error: 'Este pedido no tiene seller asociado.',
+      };
+      setRipleyLogistics(overview);
+      return overview;
+    }
+    try {
+      const [labelsResult, eligibleResult, manifestsResult] = await Promise.all([
+        api.listRipleyLogisticsLabels(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+        api.listRipleyManifestLabels(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+        api.listRipleyManifests(order.companyId, { orderId: order.externalOrderId, limit: 25, sandbox }),
+      ]);
+      const label = svcResultItems(labelsResult, 'labels')[0] || {};
+      const labelId = String(label._id || '');
+      const manifest = svcResultItems(manifestsResult, 'manifests').find((item) => {
+        const ids = Array.isArray(item.labels) ? item.labels.map(String) : [];
+        const embedded = Array.isArray(item._labels) ? item._labels as Array<Record<string, unknown>> : [];
+        return ids.includes(labelId) || embedded.some((entry) => String(entry._id || '') === labelId);
+      }) || {};
+      const overview = {
+        labels: svcResultCount(labelsResult, 'labels'),
+        manifests: svcResultCount(manifestsResult, 'manifests'),
+        eligibleLabels: svcResultCount(eligibleResult, 'labels'),
+        labelId,
+        manifestId: String(manifest._id || ''),
+        packages: Number.isFinite(Number(label.packages)) ? Number(label.packages) : null,
+        sandbox: svcResultIsSandbox(labelsResult) || svcResultIsSandbox(manifestsResult),
+        error: '',
+      } satisfies RipleyLogisticsOverview;
+      setRipleyLogistics(overview);
+      if (overview.packages) setRipleyPackages(String(overview.packages));
+      return overview;
+    } catch (error: unknown) {
+      const overview: RipleyLogisticsOverview = {
+        labels: null,
+        manifests: null,
+        eligibleLabels: null,
+        labelId: '',
+        manifestId: '',
+        packages: null,
+        sandbox,
+        error: error instanceof Error ? error.message : 'No se pudo consultar Seller Center.',
+      };
+      setRipleyLogistics(overview);
+      return overview;
+    }
+  };
+
   const openDetail = async (order: ManagedOrder) => {
     setDetailOpen(true);
     setDetail(null);
-    if (order.demo) {
-      setDetail(demoDetail(order));
-      setDetailLoading(false);
-      return;
-    }
+    setRipleyLogistics(null);
+    setRipleyActionNote('');
+    const useRipleySandbox = order.channelCode === 'ripley'
+      && companies.find((company) => company.id === order.companyId)?.hasRipleySvcCredentials !== true;
     setDetailLoading(true);
     try {
-      setDetail(await api.getManagedOrder(order.id));
+      const [loadedDetail, logistics] = await Promise.all([
+        api.getManagedOrder(order.id),
+        order.channelCode === 'ripley'
+          ? loadRipleyLogistics(order, useRipleySandbox)
+          : Promise.resolve(null),
+      ]);
+      setDetail(loadedDetail);
+      if (logistics) setRipleyLogistics(logistics);
     } catch (error: any) {
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const runRipleyAction = async (action: string, operation: () => Promise<string>) => {
+    setRipleyAction(action);
+    setRipleyActionNote('');
+    try {
+      setRipleyActionNote(await operation());
+    } catch (error: unknown) {
+      setRipleyActionNote(error instanceof Error ? error.message : 'No se pudo completar la operación logística.');
+    } finally {
+      setRipleyAction('');
+    }
+  };
+
+  const updateRipleyPackages = () => {
+    if (!detail || detail.companyId == null) return;
+    const { companyId } = detail;
+    void runRipleyAction('packages', async () => {
+      await api.editRipleyPackages(companyId, {
+        orderId: detail.externalOrderId,
+        svcOrderId: detail.metadata?.ripleySvc?.orderId || '',
+        packages: Number(ripleyPackages),
+        sandbox: ripleyLogistics?.sandbox,
+      });
+      await loadRipleyLogistics(detail, Boolean(ripleyLogistics?.sandbox));
+      return 'Bultos actualizados. La etiqueta quedó regenerada.';
+    });
+  };
+
+  const downloadRipleyLabels = () => {
+    if (!detail || detail.companyId == null || !ripleyLogistics?.labelId) return;
+    const { companyId } = detail;
+    void runRipleyAction('labels', async () => {
+      const result = await api.downloadRipleyLabels(companyId, {
+        orderId: detail.externalOrderId,
+        documentIds: [ripleyLogistics.labelId],
+        sandbox: ripleyLogistics.sandbox,
+      });
+      const data = svcResultData(result);
+      downloadPdf(svcPdf(result, ['labels_generated', 'pdf', 'document']), `etiquetas-ripley-${detail.externalOrderNumber}.pdf`);
+      const failures = Array.isArray(data.orders_without_labels) ? data.orders_without_labels.length : 0;
+      return failures ? `PDF descargado con ${failures} etiqueta(s) observada(s).` : 'PDF de etiquetas descargado.';
+    });
+  };
+
+  const createRipleyManifest = () => {
+    if (!detail || detail.companyId == null || !ripleyLogistics?.labelId) return;
+    const { companyId } = detail;
+    void runRipleyAction('manifest', async () => {
+      await api.scheduleRipleyManifest(companyId, {
+        orderId: detail.externalOrderId,
+        labelIds: [ripleyLogistics.labelId],
+        pickupDate: ripleyPickupDate,
+        warehouseAddress: ripleyWarehouseAddress,
+        sandbox: ripleyLogistics.sandbox,
+      });
+      await loadRipleyLogistics(detail, ripleyLogistics.sandbox);
+      return 'Recojo agendado y manifiesto creado.';
+    });
+  };
+
+  const downloadRipleyManifest = () => {
+    if (!detail || detail.companyId == null || !ripleyLogistics?.manifestId) return;
+    const { companyId } = detail;
+    void runRipleyAction('manifest-pdf', async () => {
+      const result = await api.downloadRipleyManifest(companyId, ripleyLogistics.manifestId, { sandbox: ripleyLogistics.sandbox });
+      downloadPdf(svcPdf(result, ['pdf', 'manifest', 'document']), `manifiesto-ripley-${detail.externalOrderNumber}.pdf`);
+      return 'PDF del manifiesto descargado.';
+    });
+  };
+
+  const detachRipleyLabel = () => {
+    if (!detail || detail.companyId == null || !ripleyLogistics?.manifestId || !ripleyLogistics.labelId) return;
+    const { companyId } = detail;
+    void runRipleyAction('detach', async () => {
+      await api.detachRipleyManifestLabels(companyId, ripleyLogistics.manifestId, {
+        labelIds: [ripleyLogistics.labelId],
+        sandbox: ripleyLogistics.sandbox,
+      });
+      await loadRipleyLogistics(detail, ripleyLogistics.sandbox);
+      return 'Etiqueta desvinculada; vuelve a estar disponible para agendar.';
+    });
   };
 
   const pulseSellers = useMemo(() => {
@@ -894,13 +959,15 @@ export default function PedidosMulticanal() {
   };
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncOrdersInbox({ date }),
+    mutationFn: () => api.syncManagedOrders(),
     onMutate: () => {
       setSyncNote('');
     },
     onSuccess: async (result) => {
-      const failed = Number(result?.failed || 0);
-      if (result?.status === 'already_running') markSyncNote('En curso');
+      const outcomes = result.results || [];
+      const failed = outcomes.filter((entry) => entry.status === 'error' || entry.status === 'partial').length;
+      const running = outcomes.some((entry) => entry.status === 'already_running');
+      if (running) markSyncNote('En curso');
       else markSyncNote(failed ? 'Incompleto' : 'Actualizado');
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['managed-orders'] }),
@@ -918,32 +985,21 @@ export default function PedidosMulticanal() {
       paymentMethod: string;
       receivedBy: string;
       paymentProof: { name: string; type: string; dataUrl: string } | null;
-    }) => {
-      if (input.order.demo) {
-        return { ...input.order, paymentStatus: 'paid', metadata: { ...input.order.metadata, paymentMethod: input.paymentMethod } };
-      }
-      return api.updateManagedOrderPayment(input.order.id, {
-        paymentMethod: input.paymentMethod,
-        receivedBy: input.receivedBy || undefined,
-        paymentProof: input.paymentProof,
-      });
-    },
+    }) => api.updateManagedOrderPayment(input.order.id, {
+      paymentMethod: input.paymentMethod,
+      receivedBy: input.receivedBy || undefined,
+      paymentProof: input.paymentProof,
+    }),
     onSuccess: (updated, input) => {
-      if (input.order.demo) {
-        setDemoPaymentOverrides((current) => ({
-          ...current,
-          [input.order.id]: { paymentStatus: 'paid', paymentMethod: input.paymentMethod },
-        }));
-      } else {
-        void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
-        void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
-      }
+      void queryClient.invalidateQueries({ queryKey: ['managed-orders'] });
+      void queryClient.invalidateQueries({ queryKey: ['managed-order-sales-pulse'] });
       setPaymentOrder(null);
       setSuccessMessage(`Pago de ${updated.externalOrderNumber || input.order.externalOrderNumber} registrado.`);
     },
   });
 
-  const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => [
+  const columns = useMemo<ColumnDef<ManagedOrder>[]>(() => {
+    const defs: ColumnDef<ManagedOrder>[] = [
     {
       id: 'order',
       header: 'Pedido',
@@ -954,12 +1010,15 @@ export default function PedidosMulticanal() {
       id: 'seller',
       header: 'Seller',
       size: 132,
-      cell: ({ row }) => (
-        <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
-          <span className="truncate">{companyById.get(row.original.companyId) || `Empresa ${row.original.companyId}`}</span>
-        </div>
-      ),
+      cell: ({ row }) => {
+        const seller = sellerCellLabel(row.original, companyById);
+        if (!seller) return null;
+        return (
+          <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={seller}>
+            {seller}
+          </Badge>
+        );
+      },
     },
     {
       id: 'customer',
@@ -975,20 +1034,12 @@ export default function PedidosMulticanal() {
       ),
     },
     {
-      id: 'phone',
-      header: 'Teléfono',
-      size: 116,
-      cell: ({ row }) => (
-        <span className="truncate font-mono text-[13px] tabular-nums text-muted-foreground">{row.original.customer?.phone || '—'}</span>
-      ),
-    },
-    {
       id: 'origin',
       header: 'Origen',
       size: 124,
       cell: ({ row }) => (
         <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} />
+          <ChannelMark code={row.original.channelCode} name={row.original.channelName} ripleyMark="official" />
           <span className="truncate">{originLabel(row.original)}</span>
         </div>
       ),
@@ -997,7 +1048,7 @@ export default function PedidosMulticanal() {
       id: 'delivery',
       header: 'Entrega',
       size: 108,
-      cell: ({ row }) => <span className="truncate">{deliveryLabel(row.original)}</span>,
+      cell: ({ row }) => deliveryBadge(row.original),
     },
     {
       id: 'address',
@@ -1074,6 +1125,14 @@ export default function PedidosMulticanal() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              {pendingDocumentKind(row.original) && (
+                <>
+                  <DropdownMenuItem onClick={() => goToGenerateDocument(row.original)}>
+                    <FileText /> {generateDocumentLabel(pendingDocumentKind(row.original)!)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => void openDetail(row.original)}>
                 <Eye /> Ver detalle
               </DropdownMenuItem>
@@ -1082,10 +1141,16 @@ export default function PedidosMulticanal() {
         </div>
       ),
     },
-  ], [companyById]);
+  ];
+    const columnIds = defs.map((column) => column.id);
+    if (columnIds.join() !== MANAGED_ORDER_TABLE_COLUMNS.join()) {
+      throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
+    }
+    return defs;
+  }, [companyById, goToGenerateDocument]);
 
   const table = useReactTable({
-    data: displayedOrders,
+    data: orders,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (order) => String(order.id),
@@ -1105,18 +1170,26 @@ export default function PedidosMulticanal() {
               <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
             ) : (
               <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
-                {ordersHeading(salesPulse ? salesPulse.ordersCount : displayedTotal, date)}
+                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date)}
               </h2>
             )}
-            {demoMode && <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300"><WandSparkles /> Demo</Badge>}
           </div>
+          {salesPulse?.ownFleetShipping && salesPulse.ownFleetShipping.total > 0 && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Envío propio {formatMoney(salesPulse.ownFleetShipping.total)}
+              {salesPulse.ownFleetShipping.deliveries
+                ? ` · ${salesPulse.ownFleetShipping.deliveries} ${salesPulse.ownFleetShipping.deliveries === 1 ? 'entrega' : 'entregas'}`
+                : ''}
+              {` · Distrito ${formatMoney(salesPulse.ownFleetShipping.districtTotal)} · Distancia ${formatMoney(salesPulse.ownFleetShipping.distanceTotal)}`}
+            </p>
+          )}
           {pulseError && (
             <Button type="button" variant="ghost" size="xs" onClick={() => void pulseQuery.refetch()} className="mt-1 h-7 cursor-pointer px-0 text-destructive">
               Reintentar
             </Button>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
           <Button
             type="button"
             variant="outline"
@@ -1124,7 +1197,7 @@ export default function PedidosMulticanal() {
             disabled={syncing}
             aria-live="polite"
             className={cn(
-              'h-9 min-w-36 cursor-pointer',
+              'h-11 min-w-0 cursor-pointer sm:h-9 sm:min-w-36',
               syncNote === 'Actualizado' && 'border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300',
               (syncNote === 'Error' || syncNote === 'Incompleto') && 'border-rose-200 text-rose-700 dark:border-rose-900 dark:text-rose-300',
             )}
@@ -1132,7 +1205,7 @@ export default function PedidosMulticanal() {
             {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
             {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
           </Button>
-          <Button onClick={() => navigate('/orders/nueva')} className="h-9 cursor-pointer">
+          <Button onClick={() => navigate('/orders/nueva')} className="h-11 min-w-0 cursor-pointer sm:h-9">
             <Plus /> Registrar venta
           </Button>
         </div>
@@ -1239,7 +1312,6 @@ export default function PedidosMulticanal() {
             {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
           </div>
         )}
-        {demoMode && <p className="text-xs text-muted-foreground">La muestra desaparece cuando registres o sincronices el primer pedido real.</p>}
       </div>
 
       <OrdersVirtualTable
@@ -1259,7 +1331,7 @@ export default function PedidosMulticanal() {
         footer={(
           <p className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             {fetching && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
-            {displayedTotal} {displayedTotal === 1 ? 'pedido' : 'pedidos'}
+            {totalCount} {totalCount === 1 ? 'pedido' : 'pedidos'}
           </p>
         )}
       />
@@ -1292,69 +1364,201 @@ export default function PedidosMulticanal() {
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">
-                      {detail.channelName} · {companyById.get(detail.companyId) || `Empresa ${detail.companyId}`}
+                      {detail.channelName}{detail.companyId == null ? '' : ` · ${sellerCellLabel(detail, companyById)}`}
                     </SheetDescription>
                   </div>
                 </div>
               </SheetHeader>
-              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <DetailStat label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
-                  <DetailStat label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-sm text-muted-foreground">Sin dato</span>} />
-                  <DetailStat label="Entrega" content={<span className="text-sm font-medium">{deliveryLabel(detail)}</span>} />
-                  <DetailStat label="Comprobante" content={documentBadge(detail)} />
-                  <DetailStat label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
-                </div>
+              <Tabs key={detail.id} defaultValue="summary" className="min-h-0 flex-1 gap-0 overflow-hidden">
+                <TabsList variant="line" aria-label="Secciones del pedido" className="h-11 w-full shrink-0 justify-start gap-0 border-b border-border px-4 py-0">
+                  <TabsTrigger value="summary" className="h-full flex-none rounded-none px-3">
+                    <PanelTop /> Resumen
+                  </TabsTrigger>
+                  <TabsTrigger value="products" className="h-full flex-none rounded-none px-3">
+                    <Package /> Productos <span className="tabular-nums text-muted-foreground">{detail.items.length}</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="activity" className="h-full flex-none rounded-none px-3">
+                    <Clock3 /> Actividad <span className="tabular-nums text-muted-foreground">{detail.events.length}</span>
+                  </TabsTrigger>
+                </TabsList>
 
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">Productos</h3>
-                  <div className="divide-y divide-border rounded-md border border-border">
-                    {detail.items.length ? detail.items.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted"><Package className="size-4 text-muted-foreground" /></span>
-                          <div className="min-w-0">
-                            <p className="truncate font-medium">{item.description || item.sku || 'Producto'}</p>
-                            <p className="text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
-                          </div>
+                <TabsContent value="summary" className="min-h-0 overflow-y-auto">
+                  <section className="px-5 py-5">
+                    <h3 className="mb-3 text-sm font-semibold">Pedido</h3>
+                    <div className="space-y-0.5">
+                      <DetailField icon={<Truck />} label="Despacho" content={fulfillmentBadge(detail.fulfillmentStatus)} />
+                      <DetailField icon={<Banknote />} label="Pago" content={paymentBadge(detail.paymentStatus) || <span className="text-muted-foreground">Sin dato</span>} />
+                      <DetailField icon={<Package />} label="Entrega" content={deliveryBadge(detail)} />
+                      <DetailField icon={<FileText />} label="Comprobante" content={documentBadge(detail)} />
+                      {pendingDocumentKind(detail) && (
+                        <div className="py-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="cursor-pointer"
+                            onClick={() => goToGenerateDocument(detail)}
+                          >
+                            <FileText /> {generateDocumentLabel(pendingDocumentKind(detail)!)}
+                          </Button>
                         </div>
-                        <span className="shrink-0 tabular-nums">{formatMoney(item.total, detail.currency)}</span>
-                      </div>
-                    )) : <p className="px-4 py-5 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
-                  </div>
-                </section>
-
-                {detail.documents.length > 0 && (
-                  <section>
-                    <h3 className="mb-3 text-sm font-medium">Comprobantes vinculados</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {detail.documents.map((document) => (
-                        <Badge key={document.id} variant="outline" className="h-auto rounded-md px-3 py-2">
-                          <FileText /> {document.number || document.kind} · {DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}
-                        </Badge>
-                      ))}
+                      )}
+                      <DetailField icon={<CircleDollarSign />} label="Total" content={<span className="font-semibold tabular-nums">{formatMoney(detail.total, detail.currency)}</span>} />
+                      {Number(detail.shippingAmount) > 0 && (
+                        // Un solo cobro, el de la zona. Los kilómetros son referencia.
+                        <DetailField
+                          icon={<Truck />}
+                          label="Envío"
+                          content={(
+                            <span>
+                              <span className="tabular-nums">{formatMoney(detail.shippingAmount, detail.currency)}</span>
+                              <span className="block text-xs text-muted-foreground tabular-nums">
+                                {detail.shipping?.priceZone ? `Zona ${detail.shipping.priceZone}` : 'Envío propio'}
+                                {detail.shipping?.zoneLabel ? ` · ${detail.shipping.zoneLabel}` : ''}
+                                {detail.shipping?.distanceKm != null ? ` · ${Number(detail.shipping.distanceKm).toFixed(1).replace('.', ',')} km` : ''}
+                              </span>
+                            </span>
+                          )}
+                        />
+                      )}
                     </div>
                   </section>
-                )}
 
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">Actividad</h3>
-                  <div className="space-y-3">
-                    {[...detail.events].reverse().map((event) => (
-                      <div key={event.id} className="flex gap-3">
-                        <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-muted">
-                          {event.eventType.includes('created') ? <CheckCircle2 className="size-4 text-emerald-600" /> : <Clock3 className="size-4 text-muted-foreground" />}
+                  {detail.channelCode === 'ripley' && (
+                    <section className="border-t border-border px-5 py-5">
+                      <div className="mb-3 flex items-center gap-2">
+                        <h3 className="text-sm font-semibold">Logística Ripley</h3>
+                        {ripleyLogistics?.sandbox && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Sandbox simulado</Badge>}
+                      </div>
+                      <div className="space-y-0.5">
+                        <DetailField icon={<Store />} label="Estado comercial" content={<span className="font-medium">{detail.providerStatus || 'Sin dato'}</span>} />
+                        <DetailField icon={<Truck />} label="Estado logístico" content={<span className="font-medium">{detail.metadata?.ripleySvc?.statusManagement || 'SVC no configurado o pendiente de sincronizar'}</span>} />
+                        <DetailField icon={<Package />} label="Bultos" content={<span className="font-medium tabular-nums">{detail.metadata?.ripleySvc?.packages ?? '—'}</span>} />
+                        <DetailField icon={<Hash />} label="Orden interna SVC" content={<span className="break-all font-mono text-xs">{detail.metadata?.ripleySvc?.orderId || '—'}</span>} />
+                        <DetailField icon={<Tags />} label="Etiquetas SVC" content={<span className="font-medium tabular-nums">{ripleyLogistics?.labels ?? '—'}</span>} />
+                        <DetailField icon={<ClipboardList />} label="Manifiestos SVC" content={<span className="font-medium tabular-nums">{ripleyLogistics?.manifests ?? '—'}</span>} />
+                      </div>
+
+                      {ripleyLogistics && !ripleyLogistics.error && (
+                        <div className="mt-5 space-y-3">
+                          <p className="text-xs font-medium text-muted-foreground">Acciones logísticas</p>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <div className="w-28 space-y-1">
+                              <Label htmlFor="ripley-packages" className="text-xs">Bultos</Label>
+                              <Input
+                                id="ripley-packages"
+                                type="number"
+                                min={1}
+                                value={ripleyPackages}
+                                onChange={(event) => setRipleyPackages(event.target.value)}
+                                disabled={Boolean(ripleyLogistics.manifestId)}
+                              />
+                            </div>
+                            <Button
+                              variant="outline"
+                              onClick={updateRipleyPackages}
+                              disabled={Boolean(ripleyAction) || Boolean(ripleyLogistics.manifestId) || Number(ripleyPackages) < 1}
+                            >
+                              {ripleyAction === 'packages' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Regenerar etiqueta
+                            </Button>
+                            <Button variant="outline" onClick={downloadRipleyLabels} disabled={Boolean(ripleyAction) || !ripleyLogistics.labelId}>
+                              {ripleyAction === 'labels' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Descargar etiquetas
+                            </Button>
+                          </div>
+
+                          {!ripleyLogistics.manifestId && Number(ripleyLogistics.eligibleLabels) > 0 && (
+                            <div className="grid gap-2 sm:grid-cols-[160px_minmax(0,1fr)_auto] sm:items-end">
+                              <div className="space-y-1">
+                                <Label htmlFor="ripley-pickup-date" className="text-xs">Fecha de recojo</Label>
+                                <Input id="ripley-pickup-date" type="date" value={ripleyPickupDate} onChange={(event) => setRipleyPickupDate(event.target.value)} />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor="ripley-warehouse" className="text-xs">Dirección de almacén</Label>
+                                <Input id="ripley-warehouse" value={ripleyWarehouseAddress} onChange={(event) => setRipleyWarehouseAddress(event.target.value)} />
+                              </div>
+                              <Button onClick={createRipleyManifest} disabled={Boolean(ripleyAction) || !ripleyPickupDate || !ripleyWarehouseAddress.trim()}>
+                                {ripleyAction === 'manifest' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Agendar y crear manifiesto
+                              </Button>
+                            </div>
+                          )}
+
+                          {ripleyLogistics.manifestId && (
+                            <div className="flex flex-wrap gap-2">
+                              <Button onClick={downloadRipleyManifest} disabled={Boolean(ripleyAction)}>
+                                {ripleyAction === 'manifest-pdf' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Descargar manifiesto
+                              </Button>
+                              <Button variant="outline" onClick={detachRipleyLabel} disabled={Boolean(ripleyAction)}>
+                                {ripleyAction === 'detach' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Excluir etiqueta
+                              </Button>
+                            </div>
+                          )}
+                          {ripleyActionNote && <p className="text-xs text-muted-foreground">{ripleyActionNote}</p>}
                         </div>
-                        <div className="min-w-0 border-b border-border pb-3">
+                      )}
+                      {ripleyLogistics?.error && <p className="mt-3 text-xs text-amber-700">{ripleyLogistics.error}</p>}
+                      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                        {ripleyLogistics?.sandbox
+                          ? 'Vista de prueba local: no consulta Seller Center ni modifica pedidos reales.'
+                          : 'Las etiquetas y manifiestos pertenecen a Seller Center; se sincronizan por polling separado de la orden comercial.'}
+                      </p>
+                    </section>
+                  )}
+
+                  {detail.documents.length > 0 && (
+                    <section className="border-t border-border px-5 py-5">
+                      <h3 className="mb-3 text-sm font-semibold">Comprobantes vinculados</h3>
+                      <div className="space-y-3">
+                        {detail.documents.map((document) => (
+                          <div key={document.id} className="flex items-center gap-3 text-sm">
+                            <FileText className="size-4 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0 flex-1 truncate font-medium">{document.number || document.kind}</span>
+                            <span className="shrink-0 text-muted-foreground">{DOCUMENT_LABELS[document.status || ''] || document.status || 'Sin estado'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="products" className="min-h-0 overflow-y-auto px-5 py-5">
+                  <h3 className="mb-3 text-sm font-semibold">Productos del pedido</h3>
+                  <div className="space-y-1">
+                    {detail.items.length ? detail.items.map((item) => (
+                      <div key={item.id} className="flex items-start justify-between gap-4 py-2.5">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <Package className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="font-medium leading-5">{item.description || item.sku || 'Producto'}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-mono">{item.sku || 'Sin SKU'}</span> · Cant. {item.quantity}</p>
+                          </div>
+                        </div>
+                        <span className="shrink-0 font-medium tabular-nums">{formatMoney(item.total, detail.currency)}</span>
+                      </div>
+                    )) : <p className="py-3 text-sm text-muted-foreground">El canal todavía no informó el detalle de productos.</p>}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="activity" className="min-h-0 overflow-y-auto px-5 py-5">
+                  <h3 className="mb-3 text-sm font-semibold">Actividad del pedido</h3>
+                  <div className="space-y-1">
+                    {[...detail.events].reverse().map((event) => (
+                      <div key={event.id} className="flex gap-3 py-2.5">
+                        {event.eventType.includes('created') ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0">
                           <p className="font-medium">{EVENT_LABELS[event.eventType] || event.eventType}</p>
-                          <p className="text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{SOURCE_LABELS[event.source] || event.source} · {formatDate(event.providerOccurredAt || event.createdAt)}</p>
                         </div>
                       </div>
                     ))}
                     {!detail.events.length && <p className="text-sm text-muted-foreground">Todavía no hay eventos registrados.</p>}
                   </div>
-                </section>
-              </div>
+                </TabsContent>
+              </Tabs>
             </>
           ) : null}
         </SheetContent>
@@ -1515,11 +1719,14 @@ function SellerList({
   );
 }
 
-function DetailStat({ label, content }: { label: string; content: React.ReactNode }) {
+function DetailField({ icon, label, content }: { icon: React.ReactNode; label: string; content: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
-      <p className="mb-2 text-xs text-muted-foreground">{label}</p>
-      {content}
+    <div className="grid min-h-10 grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-4 py-2">
+      <p className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground [&_svg]:size-4 [&_svg]:shrink-0">
+        {icon}
+        <span>{label}</span>
+      </p>
+      <div className="min-w-0 text-sm text-foreground">{content}</div>
     </div>
   );
 }

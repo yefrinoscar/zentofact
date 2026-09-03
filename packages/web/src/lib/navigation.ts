@@ -2,30 +2,40 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Building2,
   ChartNoAxesCombined,
+  CircleDollarSign,
   FileMinus2,
   FileText,
   Inbox,
   ListOrdered,
-  PackageMinus,
   PackageOpen,
   PackageSearch,
   ReceiptText,
   ScanLine,
   Settings,
+  ShieldCheck,
   ShoppingBag,
   Shuffle,
+  TrendingDown,
   Users,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import falabellaIcon from '../assets/falabella.png';
 import type { PermissionKey } from './permissions';
+import { isNavItemActive, isNavItemVisible, mobileNavPathname } from './nav-path';
+
+export { isNavItemActive, mobileNavPathname };
 
 export type NavItem = {
   to: string;
   icon: LucideIcon;
   img?: string;
   label: string;
-  permission: PermissionKey;
+  /** Los ítems solo para superadmin no dependen de un permiso del menú. */
+  permission?: PermissionKey;
+  description?: string;
+  adminOnly?: boolean;
+  superadminOnly?: boolean;
   hiddenInProduction?: boolean;
 };
 
@@ -41,19 +51,22 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Operación',
     items: [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
+      { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
-      { to: '/salidas', icon: PackageMinus, label: 'Salidas de hoy', permission: 'salidas' },
-      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
+      { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },
     ],
   },
   {
     id: 'orders',
     label: 'Pedidos',
     items: [
-      { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management', hiddenInProduction: true },
+      { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
+      { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
+      { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
+      { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
   },
   {
@@ -74,28 +87,26 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/companies', icon: Building2, label: 'Empresas', permission: 'companies' },
       { to: '/users', icon: Users, label: 'Usuarios', permission: 'users' },
       { to: '/settings', icon: Settings, label: 'Ajustes', permission: 'settings' },
+      {
+        to: '/system-config',
+        icon: ShieldCheck,
+        label: 'Sistema',
+        superadminOnly: true,
+        description: 'Flags operativos del ambiente. Visible solo para superadministradores.',
+      },
     ],
   },
 ];
 
-export function isNavItemActive(pathname: string, to: string) {
-  const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  if (to === '/credit-notes') return activePath === to;
-  return activePath === to || activePath.startsWith(`${to}/`);
-}
-
 export function visibleNavigation(
   can: (permission: PermissionKey) => boolean,
   isProd = import.meta.env.VITE_APP_ENV === 'production',
+  options: { isAdmin?: boolean; isSuperadmin?: boolean } = {},
 ) {
   return NAV_GROUPS
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => {
-        if (isProd && item.hiddenInProduction) return false;
-        if (item.to === '/salidas') return can('salidas') || can('productos');
-        return can(item.permission);
-      }),
+      items: group.items.filter((item) => isNavItemVisible(item, can, isProd, options)),
     }))
     .filter((group) => group.items.length > 0);
 }

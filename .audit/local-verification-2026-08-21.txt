@@ -1,0 +1,35 @@
+Local verification for the stock enqueue and Railway startup fixes
+Timestamp: 2026-08-21T17:43:25Z
+
+Focused PostgreSQL regressions
+Command: STOCK_JOBS_TEST_DATABASE_URL=<local postgres> AUTO_EMISSION_TEST_DATABASE_URL=<local postgres> node --test packages/server/src/catalog/stock-jobs.test.js packages/server/src/stock-jobs.integration.test.js packages/server/src/auto-emission.integration.test.js
+Result: 7 passed, 0 failed, 0 skipped.
+
+Server suite
+Command: STOCK_JOBS_TEST_DATABASE_URL=<local postgres> AUTO_EMISSION_TEST_DATABASE_URL=<local postgres> npm test -w @zentofact/server
+Result: 246 tests; 245 passed, 0 failed, 1 unrelated integration test skipped.
+
+Ripley package
+Command: npm test -w @zentofact/ripley-api
+Result: 11 passed, 0 failed.
+
+Railway build command
+Command: PUPPETEER_CACHE_DIR=.cache/puppeteer npx puppeteer browsers install chrome && npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core && npm run build -w @zentofact/ripley-api
+Result: exit 0; all three internal packages built.
+
+Local database reconciliation
+Command: run ensureStockJobTables twice, then query split identities and supersession metadata.
+Result: {"replaySafe":true,"active_split_identities":"0","duplicate_canonical_identities":"0","superseded":"33"}
+Current stock queue: {"status":"done","count":"318"}; no pending, processing, or failed legacy jobs.
+
+Real API runtime
+Command: PORT=3199 node packages/server/src/index.js; curl --fail http://127.0.0.1:3199/health
+Result: HTTP 200 with {"ok":true,"service":"zentofact-api"}.
+Runtime log: [auto-emit] cron RUNAPUMA E.I.R.L: 9 comprobantes y 0 notas de crédito encolados
+No Ripley module error, stock migration unique violation, or SQL UNION syntax error occurred.
+
+Independent final audit
+Result: no blocking findings. The reviewer independently ran 29 Falabella sync/restock/ready tests, both real PostgreSQL regressions, and git diff --check.
+
+Local runtime side effect
+The cron pass updated local emission queue state. At inspection time, rows updated in the last five minutes were 28 pending invoices, 1 pending credit note, and 12 skipped invoices. No deployment or remote mutation was performed.

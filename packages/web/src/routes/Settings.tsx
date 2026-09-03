@@ -8,8 +8,12 @@ import {
   setDevLoadingDelayEnabled,
 } from '../config/dev';
 import { useAppStore } from '../stores/app';
+import { usePermissions } from '../hooks/usePermissions';
+import EnvioPropio from './EnvioPropio';
 
 export default function Settings() {
+  const { isAdmin } = usePermissions();
+  const canEditOwnFleet = isAdmin;
   const [theme, setTheme] = useState<AppTheme>(() => getStoredTheme());
   const [simulateLoading, setSimulateLoading] = useState(() => isDevLoadingDelayEnabled());
   const sidebarCollapsed = useAppStore((state) => state.sidebarCollapsed);
@@ -27,8 +31,25 @@ export default function Settings() {
   };
 
   return (
-    <div className="max-w-5xl text-foreground">
-      <section>
+    <div className="text-foreground">
+      {canEditOwnFleet ? (
+        <section>
+          <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Envío propio</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Almacén, zonas y cobertura de Express.
+              </p>
+            </div>
+
+            <div className="pt-1">
+              <EnvioPropio />
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <section className={canEditOwnFleet ? 'mt-8 border-t border-border pt-8' : undefined}>
         <div className="grid gap-6 sm:grid-cols-[220px_1fr] sm:items-start">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Apariencia</h2>
@@ -50,7 +71,7 @@ export default function Settings() {
               </Tabs>
             </div>
 
-            <div className="flex items-start justify-between gap-6 rounded-xl border border-border p-4">
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
               <div>
                 <label htmlFor="collapse-sidebar" className="text-sm font-medium text-foreground">
                   Colapsar menú lateral
@@ -80,7 +101,7 @@ export default function Settings() {
               </p>
             </div>
 
-            <div className="flex items-start justify-between gap-6 rounded-xl border border-border p-4">
+            <div className="flex items-start justify-between gap-6 border-t border-border pt-4">
               <div>
                 <label htmlFor="simulate-loading" className="text-sm font-medium text-foreground">
                   Simular carga lenta

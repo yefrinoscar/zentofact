@@ -1,3 +1,5 @@
+import { loadOwnFleetConfig } from './own-fleet-config.js';
+import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
 
@@ -6,10 +8,11 @@ export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'custom
 export const ORDER_STATUSES = ['new', 'confirmed', 'completed', 'cancelled', 'failed'];
 export const PAYMENT_STATUSES = ['unknown', 'pending', 'paid', 'partially_refunded', 'refunded', 'failed'];
 export const FULFILLMENT_STATUSES = [
-  'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
+  'unmapped', 'pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered', 'cancelled', 'returned', 'failed',
 ];
+export const ORDER_ITEMS_STATUSES = ['pending', 'complete', 'error'];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
-export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides'];
+export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides', 'nosotros'];
 
 let corePromise;
 
@@ -62,7 +65,12 @@ function assertManualEnvioCarrier(shipping, source) {
   if (type !== 'envio') return;
   const carrier = String(shipping?.carrier || '').trim().toLowerCase();
   if (!MANUAL_SHIPPING_CARRIERS.includes(carrier)) {
-    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom o Dinsides.');
+    throw new Error('El envío requiere un repartidor: Marvisuar, Shaloom, Dinsides o Express.');
+  }
+  const lat = Number(shipping?.lat);
+  const lng = Number(shipping?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && !isInPeru(lat, lng)) {
+    throw new Error(OUT_OF_PERU_MESSAGE);
   }
 }
 
@@ -405,6 +413,8 @@ const TRACKED_ORDER_COLUMNS = {
   fulfillment_status: 'fulfillmentStatus',
   document_status: 'documentStatus',
   provider_status: 'providerStatus',
+  items_status: 'itemsStatus',
+  items_error: 'itemsError',
   requested_document_type: 'requestedDocumentType',
   currency: 'currency',
   subtotal: 'subtotal',
@@ -437,6 +447,10 @@ function changeSet(previous, current) {
   return { before, after };
 }
 
+function isManualWithoutSeller(input) {
+  return String(input.source || '').trim().toLowerCase() === 'manual' && input.companyId == null;
+}
+
 function normalizeOrderInput(input, account) {
   const requestedDocumentType = input.requestedDocumentType == null
     ? null
@@ -454,7 +468,7 @@ function normalizeOrderInput(input, account) {
     : suppliedDocumentStatus || (decision.required || requestedDocumentType ? 'pending' : 'not_requested');
 
   return {
-    companyId: positiveInt(input.companyId ?? account.companyId, 'companyId'),
+    companyId: isManualWithoutSeller(input) ? null : positiveInt(input.companyId ?? account.companyId, 'companyId'),
     channelAccountId: account.id,
     externalOrderId: requiredText(input.externalOrderId, 'externalOrderId', 300),
     externalOrderNumber: requiredText(
@@ -472,6 +486,12 @@ function normalizeOrderInput(input, account) {
     ),
     documentStatus,
     providerStatus: optionalText(input.providerStatus, 300),
+    itemsStatus: input.itemsComplete === true
+      ? 'complete'
+      : input.itemsError
+        ? 'error'
+        : 'pending',
+    itemsError: optionalText(input.itemsError, 2000),
     requestedDocumentType: account.documentRequirement === 'disabled' ? null : requestedDocumentType,
     currency: requiredText(input.currency || 'PEN', 'currency', 10).toUpperCase(),
     subtotal: nullableNumber(input.subtotal, 'subtotal'),
@@ -488,6 +508,8 @@ function normalizeOrderInput(input, account) {
 }
 
 function normalizeItem(item, index) {
+  const rawProductId = item?.productId ?? item?.metadata?.productId;
+  const productIdNumber = Number(rawProductId);
   return {
     externalItemId: requiredText(
       item?.externalItemId || item?.id || `line-${index + 1}`,
@@ -505,6 +527,7 @@ function normalizeItem(item, index) {
     providerStatus: optionalText(item?.providerStatus, 300),
     metadata: jsonObject(item?.metadata),
     rawData: jsonValue(item?.rawData, {}),
+    productId: Number.isInteger(productIdNumber) && productIdNumber > 0 ? productIdNumber : null,
   };
 }
 
@@ -512,7 +535,7 @@ function normalizeOrderRow(row) {
   if (!row) return null;
   const normalized = {
     id: Number(row.id),
-    companyId: Number(row.company_id),
+    companyId: row.company_id == null ? null : Number(row.company_id),
     channelAccountId: Number(row.channel_account_id),
     channelCode: row.channel_code,
     channelName: row.channel_name,
@@ -524,6 +547,8 @@ function normalizeOrderRow(row) {
     fulfillmentStatus: row.fulfillment_status,
     documentStatus: row.document_status,
     providerStatus: row.provider_status,
+    itemsStatus: row.items_status || 'pending',
+    itemsError: row.items_error || null,
     documentRequirement: row.document_requirement,
     documentTypePolicy: row.document_type_policy,
     requestedDocumentType: row.requested_document_type,
@@ -542,6 +567,7 @@ function normalizeOrderRow(row) {
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    createdBy: row.created_by || null,
   };
   normalized.documentDecision = resolveDocumentDecision(normalized);
   return normalized;
@@ -570,11 +596,12 @@ async function ingestOrderInTransaction(input, db) {
     documentRequirement: existing.document_requirement,
     documentTypePolicy: existing.document_type_policy,
   } : account;
-  const order = normalizeOrderInput({
+  const fleetConfig = await loadOwnFleetConfig(db);
+  const order = applyOwnFleetShipping(normalizeOrderInput({
     ...input,
     externalOrderId,
     requestedDocumentType: input.requestedDocumentType ?? existing?.requested_document_type,
-  }, policyAccount);
+  }, policyAccount), fleetConfig);
   assertManualEnvioCarrier(order.shipping, input.source);
   const requestKey = optionalText(input.eventId || input.idempotencyKey, 500);
   if (existing && requestKey) {
@@ -616,9 +643,10 @@ async function ingestOrderInTransaction(input, db) {
          order_status, payment_status, fulfillment_status, document_status, provider_status,
          document_requirement, document_type_policy, requested_document_type,
          currency, subtotal, shipping_amount, discount_amount, total,
-         customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at
+         customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
+         items_status, items_error, created_by
        ) values (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
        )
        on conflict (channel_account_id, external_order_id) do update set
          external_order_number=excluded.external_order_number,
@@ -631,6 +659,15 @@ async function ingestOrderInTransaction(input, db) {
            else excluded.document_status
          end,
          provider_status=excluded.provider_status,
+         items_status=case
+           when excluded.items_status='complete' then 'complete'
+           when orders.items_status='complete' then 'complete'
+           else excluded.items_status
+         end,
+         items_error=case
+           when excluded.items_status='complete' or orders.items_status='complete' then null
+           else excluded.items_error
+         end,
          requested_document_type=coalesce(excluded.requested_document_type, orders.requested_document_type),
          currency=excluded.currency,
          subtotal=coalesce(excluded.subtotal, orders.subtotal),
@@ -643,6 +680,7 @@ async function ingestOrderInTransaction(input, db) {
          ordered_at=coalesce(excluded.ordered_at, orders.ordered_at),
          promised_shipping_at=coalesce(excluded.promised_shipping_at, orders.promised_shipping_at),
          provider_updated_at=coalesce(excluded.provider_updated_at, orders.provider_updated_at),
+         created_by=coalesce(orders.created_by, excluded.created_by),
          last_seen_at=now(),
          updated_at=now()
        returning *`,
@@ -670,6 +708,9 @@ async function ingestOrderInTransaction(input, db) {
         order.orderedAt,
         order.promisedShippingAt,
         order.providerUpdatedAt,
+        order.itemsStatus,
+        order.itemsError,
+        optionalText(input.actorUserId, 300),
       ],
     );
     persisted = result.rows[0];
@@ -704,8 +745,9 @@ async function ingestOrderInTransaction(input, db) {
       const itemResult = await db.query(
         `insert into order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
-           unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           unit_price, discount_amount, tax_amount, total, provider_status, metadata, raw_data,
+           product_id
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          on conflict (order_id, external_item_id) do update set
            sku=excluded.sku,
            provider_sku=excluded.provider_sku,
@@ -718,6 +760,7 @@ async function ingestOrderInTransaction(input, db) {
            provider_status=excluded.provider_status,
            metadata=order_items.metadata || excluded.metadata,
            raw_data=excluded.raw_data,
+           product_id=coalesce(excluded.product_id, order_items.product_id),
            updated_at=now()
          returning id, external_item_id, sku, provider_sku, quantity, provider_status,
            product_id, listing_id, main_sku, stock_state,
@@ -736,6 +779,7 @@ async function ingestOrderInTransaction(input, db) {
           item.providerStatus,
           JSON.stringify(item.metadata),
           JSON.stringify(item.rawData),
+          item.productId,
         ],
       );
       if (itemResult.rows[0]) upsertedItems.push(itemResult.rows[0]);
@@ -835,12 +879,36 @@ export async function ingestOrder(input, db) {
   }
 }
 
+const ORDER_LIST_SORT_COLUMNS = {
+  orderedAt: 'coalesce(o.ordered_at, o.created_at)',
+  total: 'o.total',
+};
+
+function orderListSort(sortBy, sortDir) {
+  const column = ORDER_LIST_SORT_COLUMNS[String(sortBy || '').trim()];
+  if (!column) return 'o.ordered_at desc nulls last, o.id desc';
+  const direction = String(sortDir || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const nulls = direction === 'asc' ? 'nulls first' : 'nulls last';
+  return `${column} ${direction} ${nulls}, o.id ${direction}`;
+}
+
 export async function listOrders(filters = {}, db) {
   const target = db || (await loadCore()).pool;
   const values = [];
   const where = [];
   const companyId = optionalPositiveInt(filters.companyId, 'companyId');
   const channelAccountId = optionalPositiveInt(filters.channelAccountId, 'channelAccountId');
+  const connectedOnly = filters.connectedOnly === true
+    || String(filters.connectedOnly || '').toLowerCase() === 'true';
+  if (connectedOnly) {
+    where.push('c.activo=true');
+    where.push('a.active=true');
+    where.push(`case ch.code
+      when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
+        and nullif(trim(c.falabella_api_key), '') is not null
+      when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      else true end`);
+  }
   if (companyId) {
     values.push(companyId);
     where.push(`o.company_id=$${values.length}`);
@@ -874,6 +942,15 @@ export async function listOrders(filters = {}, db) {
       or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
     )`);
   }
+  if (filters.createdBy) {
+    values.push(requiredText(filters.createdBy, 'createdBy', 300));
+    where.push(`o.created_by=$${values.length}`);
+  }
+  if (filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true') {
+    where.push(`o.order_status not in ('cancelled', 'failed')`);
+    where.push(`o.payment_status not in ('refunded', 'failed')`);
+    where.push(`o.fulfillment_status not in ('cancelled', 'returned', 'failed')`);
+  }
   for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
     const value = String(filters[filterName] || '').trim();
     if (!value) continue;
@@ -883,6 +960,7 @@ export async function listOrders(filters = {}, db) {
   }
   const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 500);
   const offset = Math.max(Number(filters.offset || 0), 0);
+  const orderBy = orderListSort(filters.sortBy, filters.sortDir);
   values.push(limit, offset);
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
@@ -891,8 +969,9 @@ export async function listOrders(filters = {}, db) {
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
+     left join companies c on c.id=o.company_id
      ${where.length ? `where ${where.join(' and ')}` : ''}
-     order by o.ordered_at desc nulls last, o.id desc
+     order by ${orderBy}
      limit $${values.length - 1} offset $${values.length}`,
     values,
   );
@@ -909,7 +988,7 @@ export async function getSalesPulse(filters = {}, db) {
   const date = String(filters.date || '').trim();
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date inválida.');
 
-  const [sellerResult, productResult, channelResult] = await Promise.all([
+  const [sellerResult, productResult, channelResult, shippingResult] = await Promise.all([
     target.query(
     `select c.id as company_id, c.nombre_comercial, c.nombre, c.razon_social,
        count(o.id)::int as orders_count,
@@ -994,6 +1073,22 @@ export async function getSalesPulse(filters = {}, db) {
        order by orders_count desc, sales_total desc`,
       [date],
     ),
+    target.query(
+      `select
+         coalesce(sum(o.shipping_amount), 0)::numeric as shipping_total,
+         coalesce(sum(nullif(o.shipping->>'districtAmount', '')::numeric), 0)::numeric as district_total,
+         coalesce(sum(nullif(o.shipping->>'distanceAmount', '')::numeric), 0)::numeric as distance_total,
+         count(*) filter (where coalesce(o.shipping_amount, 0) > 0)::int as deliveries
+       from orders o
+       where o.order_status not in ('cancelled', 'failed')
+         and o.payment_status not in ('refunded', 'failed')
+         and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+         and lower(coalesce(o.shipping->>'carrier', '')) = 'nosotros'
+         and lower(coalesce(o.shipping->>'type', '')) = 'envio'
+         and (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date
+           = coalesce(nullif($1, '')::date, (now() at time zone 'America/Lima')::date)`,
+      [date],
+    ),
   ]);
 
   const sellers = sellerResult.rows.map((row) => ({
@@ -1023,6 +1118,14 @@ export async function getSalesPulse(filters = {}, db) {
     salesTotal: Number(row.sales_total || 0),
   }));
 
+  const shippingRow = shippingResult.rows[0] || {};
+  const ownFleetShipping = {
+    total: Number(shippingRow.shipping_total || 0),
+    districtTotal: Number(shippingRow.district_total || 0),
+    distanceTotal: Number(shippingRow.distance_total || 0),
+    deliveries: Number(shippingRow.deliveries || 0),
+  };
+
   return {
     date: date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date()),
     ordersCount: sellers.reduce((sum, seller) => sum + seller.ordersCount, 0),
@@ -1033,13 +1136,153 @@ export async function getSalesPulse(filters = {}, db) {
     sellers,
     topProducts,
     channels,
+    ownFleetShipping,
+  };
+}
+
+const SALES_EXCLUSIONS = `
+  o.order_status not in ('cancelled', 'failed')
+  and o.payment_status not in ('refunded', 'failed')
+  and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+`;
+
+function limaDateKey(value = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(value);
+}
+
+function addCalendarDays(dateKey, days) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + days));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+}
+
+function periodStats(orders, total, commissionPercent) {
+  const salesTotal = Number(total) || 0;
+  return {
+    orders: Number(orders) || 0,
+    total: salesTotal,
+    commission: estimatedCommission(salesTotal, commissionPercent),
+  };
+}
+
+export function estimatedCommission(total, percent) {
+  const amount = Number(total) || 0;
+  const rate = Number(percent) || 0;
+  if (amount <= 0 || rate <= 0) return 0;
+  return Math.round(amount * rate) / 100;
+}
+
+function calendarDays(from, to) {
+  const days = [];
+  for (let day = from; day <= to && days.length < 400; day = addCalendarDays(day, 1)) days.push(day);
+  return days;
+}
+
+/** One entry per calendar day in [from, to], zero-filled so charts keep a continuous axis. */
+export function fillDailySales(rows, from, to, commissionPercent) {
+  const byDate = new Map();
+  for (const row of rows || []) {
+    const date = String(row.lima_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    byDate.set(date, periodStats(row.orders_count, row.sales_total, commissionPercent));
+  }
+  return calendarDays(from, to).map((date) => ({
+    date,
+    ...(byDate.get(date) || { orders: 0, total: 0, commission: 0 }),
+  }));
+}
+
+export async function getSalespersonHome(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const userId = requiredText(filters.userId, 'userId', 300);
+  const commissionPercent = Number(filters.commissionPercent) || 0;
+  const today = limaDateKey();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const from = String(filters.from || '').trim() || addCalendarDays(today, -29);
+  const to = String(filters.to || '').trim() || today;
+  if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('from inválido.');
+  if (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error('to inválido.');
+  if (from > to) throw new Error('El rango de fechas es inválido.');
+
+  const [kpi, daily, payments, listed] = await Promise.all([
+    target.query(
+      `select
+         count(*) filter (where d.lima_date = $2::date)::int as today_orders,
+         coalesce(sum(o.total) filter (where d.lima_date = $2::date), 0)::numeric as today_total,
+         count(*) filter (where d.lima_date >= $3::date)::int as month_orders,
+         coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and ${SALES_EXCLUSIONS}`,
+      [userId, today, monthStart],
+    ),
+    target.query(
+      `select to_char(d.lima_date, 'YYYY-MM-DD') as lima_date,
+         count(*)::int as orders_count,
+         coalesce(sum(o.total), 0)::numeric as sales_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and d.lima_date between $2::date and $3::date
+         and ${SALES_EXCLUSIONS}
+       group by d.lima_date
+       order by d.lima_date`,
+      [userId, from, to],
+    ),
+    target.query(
+      `select coalesce(nullif(trim(o.metadata->>'paymentMethod'), ''), 'sin_dato') as payment_method,
+         count(*)::int as orders_count,
+         coalesce(sum(o.total), 0)::numeric as sales_total
+       from orders o
+       cross join lateral (
+         select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
+       ) d
+       where o.created_by=$1
+         and d.lima_date between $2::date and $3::date
+         and ${SALES_EXCLUSIONS}
+       group by 1
+       order by sales_total desc`,
+      [userId, from, to],
+    ),
+    listOrders({
+      createdBy: userId,
+      from,
+      to,
+      limit: filters.limit || 50,
+      offset: filters.offset || 0,
+      sortBy: filters.sortBy,
+      sortDir: filters.sortDir,
+      salesOnly: true,
+    }, target),
+  ]);
+  const row = kpi.rows[0] || {};
+  return {
+    today: periodStats(row.today_orders, row.today_total, commissionPercent),
+    month: periodStats(row.month_orders, row.month_total, commissionPercent),
+    range: { from, to },
+    daily: fillDailySales(daily.rows, from, to, commissionPercent),
+    paymentMix: payments.rows.map((mix) => ({
+      method: String(mix.payment_method || 'sin_dato'),
+      orders: Number(mix.orders_count) || 0,
+      total: Number(mix.sales_total) || 0,
+    })),
+    orders: listed.orders,
+    ordersTotal: listed.totalCount,
+    limit: listed.limit,
+    offset: listed.offset,
+    commissionPercent,
   };
 }
 
 export async function getOrder(orderId, db) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(orderId, 'orderId');
-  const [orderResult, itemsResult, eventsResult, documentsResult] = await Promise.all([
+  const [orderResult, itemsResult, eventsResult, documentsResult, snapshotsResult] = await Promise.all([
     target.query(
       `select o.*, ch.code as channel_code, ch.name as channel_name,
          a.display_name as channel_account_name
@@ -1073,6 +1316,11 @@ export async function getOrder(orderId, db) {
        left join facturas f on f.id=od.factura_id
        left join credit_notes cn on cn.id=od.credit_note_id
        where od.order_id=$1 order by od.created_at, od.id`,
+      [id],
+    ),
+    target.query(
+      `select id, payload_hash, raw_payload, provider_updated_at, correlation_id, observed_at
+       from order_snapshots where order_id=$1 order by observed_at desc, id desc`,
       [id],
     ),
   ]);
@@ -1126,6 +1374,14 @@ export async function getOrder(orderId, db) {
       number: row.document_number,
       status: row.document_status,
       createdAt: row.created_at,
+    })),
+    snapshots: snapshotsResult.rows.map((row) => ({
+      id: Number(row.id),
+      payloadHash: row.payload_hash,
+      rawPayload: row.raw_payload || {},
+      providerUpdatedAt: row.provider_updated_at,
+      correlationId: row.correlation_id,
+      observedAt: row.observed_at,
     })),
   };
 }

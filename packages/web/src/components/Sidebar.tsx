@@ -45,9 +45,9 @@ export default function Sidebar({ hideOnMobile = false }: { hideOnMobile?: boole
   const activePath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggle = useAppStore((s) => s.toggleSidebar);
-  const { can, loading } = usePermissions();
+  const { can, isAdmin, isSuperadmin, loading } = usePermissions();
 
-  const visibleGroups = visibleNavigation(can);
+  const visibleGroups = visibleNavigation(can, undefined, { isAdmin, isSuperadmin });
 
   return (
     <SidebarRoot collapsed={collapsed} className={hideOnMobile ? 'hidden md:flex' : undefined}>

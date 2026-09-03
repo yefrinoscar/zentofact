@@ -1,5 +1,5 @@
 // Tablas que Better Auth administra, definidas aquí para consultas Drizzle del servidor.
-import { bigserial, boolean, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { bigserial, boolean, jsonb, numeric, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 export const authUsers = pgTable('user', {
   id: text('id').primaryKey(),
@@ -10,15 +10,21 @@ export const authUsers = pgTable('user', {
   role: text('role'),
   permissions: text('permissions'),
   active: boolean('active'),
+  commissionPercent: numeric('commission_percent', { precision: 5, scale: 2 }),
   createdAt: timestamp('createdAt', { withTimezone: true }),
   updatedAt: timestamp('updatedAt', { withTimezone: true }),
 });
+
+/** Better Auth ≥1.7 scopes credential accounts by issuer (`local:credential`). */
+export const LOCAL_CREDENTIAL_ISSUER = 'local:credential';
 
 export const authAccounts = pgTable('account', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull(),
   providerId: text('providerId').notNull(),
   userId: text('userId').notNull(),
+  /** Required by Better Auth 1.7 account identity; credential logins use local:credential. */
+  issuer: text('issuer').notNull().default(LOCAL_CREDENTIAL_ISSUER),
   password: text('password'),
   accessToken: text('accessToken'),
   refreshToken: text('refreshToken'),

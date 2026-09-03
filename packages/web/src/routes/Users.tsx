@@ -13,6 +13,7 @@ import {
   type AppRole,
   type PermissionKey,
   isAdminRole,
+  isPermissionsLocked,
   parsePermissions,
 } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
@@ -70,6 +71,7 @@ type UserRow = {
   role: AppRole | string;
   permissions: PermissionKey[];
   active: boolean;
+  commissionPercent?: number;
 };
 
 type FormState = {
@@ -79,6 +81,7 @@ type FormState = {
   role: AppRole;
   permissions: PermissionKey[];
   active: boolean;
+  commissionPercent: string;
 };
 
 const emptyForm = (): FormState => ({
@@ -88,6 +91,7 @@ const emptyForm = (): FormState => ({
   role: 'operator',
   permissions: [...ROLE_PRESETS.operator.permissions],
   active: true,
+  commissionPercent: '0',
 });
 
 const USERS_PAGE_SIZE = 10;
@@ -106,6 +110,8 @@ function roleBadgeClass(role: string) {
       return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300';
     case 'billing':
       return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300';
+    case 'vendedor':
+      return 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-300';
     case 'falabella_manager':
       return 'border-lime-200 bg-lime-50 text-lime-700 dark:border-lime-900 dark:bg-lime-950/40 dark:text-lime-300';
     case 'viewer':
@@ -175,6 +181,7 @@ export default function UsersPage() {
       role: (ROLE_PRESETS[row.role as AppRole] ? row.role : 'operator') as AppRole,
       permissions: parsePermissions(row.permissions, row.role),
       active: row.active !== false,
+      commissionPercent: String(row.commissionPercent ?? 0),
     });
     setFormError('');
     setShowPassword(false);
@@ -198,7 +205,7 @@ export default function UsersPage() {
   };
 
   const togglePermission = (key: PermissionKey) => {
-    if (isAdminRole(form.role)) return;
+    if (isPermissionsLocked(form.role)) return;
     setForm((f) => {
       const has = f.permissions.includes(key);
       return {
@@ -209,7 +216,7 @@ export default function UsersPage() {
   };
 
   const togglePermissionSection = (keys: PermissionKey[]) => {
-    if (isAdminRole(form.role)) return;
+    if (isPermissionsLocked(form.role)) return;
     setForm((current) => {
       const allChecked = keys.every((key) => current.permissions.includes(key));
       return {
@@ -236,6 +243,7 @@ export default function UsersPage() {
           role: form.role,
           permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
           active: form.active,
+          commissionPercent: Number(form.commissionPercent || 0),
           ...(form.password ? { password: form.password } : {}),
         });
       } else {
@@ -246,6 +254,7 @@ export default function UsersPage() {
           role: form.role,
           permissions: isAdminRole(form.role) ? ALL_PERMISSION_KEYS : form.permissions,
           active: form.active,
+          commissionPercent: Number(form.commissionPercent || 0),
         });
       }
       closeEditor();
@@ -289,7 +298,7 @@ export default function UsersPage() {
     .filter((role) => isSuperadmin || !isAdminRole(role));
   const visiblePermissions = PERMISSIONS.filter((permission) => {
     if (import.meta.env.VITE_APP_ENV === 'production' && permission.hiddenInProduction) return false;
-    return isAdminRole(form.role) || !['dashboard', 'users'].includes(permission.key);
+    return isAdminRole(form.role) || !['dashboard', 'pagos', 'users', 'salesperson'].includes(permission.key);
   });
   const permissionGroups = PERMISSION_SECTIONS
     .map((section) => ({
@@ -582,13 +591,18 @@ export default function UsersPage() {
 
             <div className="grid gap-2">
               <Label>Accesos del menú</Label>
+              {form.role === 'vendedor' ? (
+                <p className="rounded-lg border border-border px-3 py-2.5 text-sm text-muted-foreground">
+                  El vendedor solo accede a Mis ventas
+                </p>
+              ) : (
               <div className="grid gap-3">
                 {permissionGroups.map((section) => (
                   <div key={section.key} className="overflow-hidden rounded-lg border border-border">
                     {(() => {
                       const keys = section.permissions.map((permission) => permission.key);
                       const checkedCount = keys.filter((key) => form.permissions.includes(key)).length;
-                      const locked = isAdminRole(form.role);
+                      const locked = isPermissionsLocked(form.role);
                       const sectionChecked = locked || checkedCount === keys.length
                         ? true
                         : checkedCount > 0 ? 'indeterminate' : false;
@@ -607,7 +621,7 @@ export default function UsersPage() {
                       );
                     })()}
                     {section.permissions.map((perm, index) => {
-                      const locked = isAdminRole(form.role);
+                      const locked = isPermissionsLocked(form.role);
                       const checked = locked || form.permissions.includes(perm.key);
                       return (
                         <div key={perm.key}>
@@ -635,10 +649,26 @@ export default function UsersPage() {
                   </div>
                 ))}
               </div>
+              )}
               {isAdminRole(form.role) && (
                 <p className="text-xs text-muted-foreground">El administrador siempre tiene todos los módulos.</p>
               )}
             </div>
+
+            {form.role === 'vendedor' && (
+              <div className="grid gap-2">
+                <Label htmlFor="user-commission">Comisión %</Label>
+                <Input
+                  id="user-commission"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={form.commissionPercent}
+                  onChange={(e) => setForm((f) => ({ ...f, commissionPercent: e.target.value }))}
+                />
+              </div>
+            )}
 
             <div className="flex items-center justify-between rounded-lg border border-border px-3 py-3">
               <div className="space-y-0.5">

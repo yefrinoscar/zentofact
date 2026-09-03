@@ -6,7 +6,8 @@ This directory is the maintained source for verifying operator-facing behavior. 
 
 - Launch with `.cursor/skills/verify-zentofact/scripts/control-zentofact launch`.
 - Doctor must report `api_health=ok` (`service=zentofact-api`) and `web_health=ok` at `http://127.0.0.1:3011`.
-- Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login` using `ADMIN_EMAIL` from `.env`.
+- Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login` or `login <email>` from `docs/agents/cloud-agent.md`.
+- Seeded catalog, inbox, and roles are required on this VM. If AG301 or PV-10001 is missing, run `control-zentofact seed`.
 - The PostgreSQL catalog is shared. Run one verification drive at a time. Default recipes are read-only.
 - Never drive Falabella seller mutations or inventory adjustments unless a later feature file says so.
 
@@ -39,4 +40,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Sign in](./sign-in.md) covers the login screen and the authenticated `/me` session.
 - [Catalog](./catalog.md) covers the product table, search, and stock visible on `/productos`.
 - [Falabella inbox](./falabella-inbox.md) covers pending vs listo-para-enviar tabs without mutating orders.
-- [Today outbound](./salidas.md) covers products leaving today by promised shipping date.
+- [Logistics inbox](./logistics-inbox.md) covers the all-channel warehouse tray at `/bandeja` without printing or marking ready.

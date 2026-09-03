@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isPermissionsLocked,
   normalizePermissions,
   pathPermission,
   PERMISSIONS,
@@ -23,10 +24,12 @@ test('un usuario desactivado no obtiene permisos', () => {
   assert.equal(userHasPermission({ role: 'admin', active: false, permissions: [] }, 'users'), false);
 });
 
-test('el dashboard queda reservado para administradores', () => {
+test('el dashboard y pagos quedan reservados para administradores', () => {
   assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'dashboard'), false);
   assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['dashboard'] }, 'dashboard'), false);
   assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, 'dashboard'), true);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['pagos'] }, 'pagos'), false);
+  assert.equal(userHasPermission({ role: 'admin', active: true, permissions: [] }, 'pagos'), true);
   assert.equal(userHasPermission({ role: 'viewer', active: true, permissions: ['dashboard'] }, 'companies'), false);
 });
 
@@ -38,11 +41,10 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
   assert.equal(keys.has('facturas'), true);
   assert.equal(keys.has('credit_notes_manage'), true);
   assert.equal(keys.has('credit_notes_bulk'), true);
-  assert.equal(keys.has('salidas'), true);
   assert.equal(keys.has('insumos'), true);
-  assert.equal(PERMISSIONS.find(({ key }) => key === 'salidas')?.section, 'operation');
-  assert.equal(PERMISSIONS.find(({ key }) => key === 'insumos')?.section, 'operation');
-  assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
+  assert.equal(keys.has('pagos'), true);
+  assert.equal(PERMISSIONS.find(({ key }) => key === 'insumos')?.section, 'orders');
+  assert.notEqual(PERMISSIONS.find(({ key }) => key === 'order_management')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'productos')?.hiddenInProduction, true);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'order_management')?.section, 'orders');
   assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.section, 'orders');
@@ -50,7 +52,9 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
 
 test('pathPermission separa el listado de notas de la anulación masiva', () => {
   assert.equal(pathPermission('/orders'), 'order_management');
+  assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/pedidos'), 'orders_inbox');
+  assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/scanner'), 'orders_scanner');
   assert.equal(pathPermission('/boletas'), 'boletas');
   assert.equal(pathPermission('/boletas/new'), 'boletas');
@@ -59,8 +63,8 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/15'), 'credit_notes_manage');
   assert.equal(pathPermission('/credit-notes/bulk'), 'credit_notes_bulk');
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
-  assert.equal(pathPermission('/salidas'), 'salidas');
   assert.equal(pathPermission('/insumos'), 'insumos');
+  assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/productos'), 'productos');
 });
 
@@ -76,8 +80,10 @@ test('los permisos antiguos se expanden al catálogo nuevo', () => {
 });
 
 test('los perfiles representan áreas reales de trabajo', () => {
-  assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing']);
-  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos']);
+  assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing', 'vendedor']);
+  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'insumos']);
+  assert.deepEqual(ROLE_PRESETS.vendedor.permissions, ['salesperson']);
+  assert.equal(ROLE_PRESETS.vendedor.label, 'Vendedor');
   assert.deepEqual(ROLE_PRESETS.billing.permissions, [
     'boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk',
   ]);
@@ -95,6 +101,14 @@ test('un operador anterior sin insumos recupera el preset actual', () => {
   );
 });
 
+test('un operador anterior con salidas pierde ese módulo y conserva el preset actual', () => {
+  assert.equal(PERMISSIONS.some(({ key }) => key === 'salidas'), false);
+  assert.deepEqual(
+    normalizePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'], 'operator'),
+    ROLE_PRESETS.operator.permissions,
+  );
+});
+
 test('un perfil básico con permisos vacíos recupera su preset', () => {
   assert.deepEqual(normalizePermissions([], 'operator'), ROLE_PRESETS.operator.permissions);
   assert.deepEqual(normalizePermissions('[]', 'billing'), ROLE_PRESETS.billing.permissions);
@@ -105,7 +119,6 @@ test('la matriz final de perfiles permite y rechaza los módulos correctos', () 
   assert.equal(userHasPermission(operator, 'order_management'), true);
   assert.equal(userHasPermission(operator, 'orders_inbox'), true);
   assert.equal(userHasPermission(operator, 'orders_scanner'), true);
-  assert.equal(userHasPermission(operator, 'salidas'), true);
   assert.equal(userHasPermission(operator, 'insumos'), true);
   assert.equal(userHasPermission(operator, 'falabella_sellers'), false);
   assert.equal(userHasPermission(operator, 'boletas'), false);
@@ -158,4 +171,24 @@ test('los presets generales anteriores migran a los nuevos perfiles acotados', (
     normalizePermissions(['boletas', 'facturas', 'credit_notes_manage'], 'billing'),
     ROLE_PRESETS.billing.permissions,
   );
+});
+
+test('el vendedor conserva el preset fijo y no admite permisos extra', () => {
+  const salespersonIndex = PERMISSIONS.findIndex(({ key }) => key === 'salesperson');
+  const ordersIndex = PERMISSIONS.findIndex(({ key }) => key === 'order_management');
+  assert.equal(PERMISSIONS[salespersonIndex].path, '/mis-ventas');
+  assert.equal(PERMISSIONS[salespersonIndex].section, 'orders');
+  assert.ok(salespersonIndex >= 0 && salespersonIndex < ordersIndex);
+  assert.equal(pathPermission('/mis-ventas'), 'salesperson');
+  assert.equal(isPermissionsLocked('vendedor'), true);
+  assert.equal(isPermissionsLocked('admin'), true);
+  assert.equal(isPermissionsLocked('operator'), false);
+  assert.deepEqual(normalizePermissions(['order_management', 'boletas'], 'vendedor'), ['salesperson']);
+  assert.deepEqual(normalizePermissions([], 'vendedor'), ['salesperson']);
+  assert.deepEqual(normalizePermissions('[]', 'vendedor'), ['salesperson']);
+  const vendedor = { role: 'vendedor', active: true, permissions: ['order_management', 'users'] };
+  assert.equal(userHasPermission(vendedor, 'salesperson'), true);
+  assert.equal(userHasPermission(vendedor, 'order_management'), false);
+  assert.equal(userHasPermission(vendedor, 'dashboard'), false);
+  assert.equal(userHasPermission({ role: 'operator', active: true, permissions: ['salesperson'] }, 'salesperson'), false);
 });

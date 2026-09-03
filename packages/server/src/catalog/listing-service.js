@@ -1,6 +1,4 @@
-import { finiteNumber, httpError, jsonObject, loadCore, mapListing, positiveInt, text } from './utils.js';
-import { syncProductInventoryFromListings } from './inventory-service.js';
-import { syncProductStatusesFromListings } from './product-service.js';
+import { finiteNumber, httpError, inTransaction, jsonObject, loadCore, mapListing, positiveInt, text } from './utils.js';
 
 const LISTING_STATUSES = ['active', 'inactive', 'unlinked'];
 
@@ -43,13 +41,14 @@ export async function listProductListings(productId, db) {
   const result = await target.query(
     `select l.*, coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name
      from product_listings l join companies c on c.id=l.company_id
-     where l.product_id=$1 order by l.status='active' desc, l.channel_code, company_name, l.id`,
+     where l.product_id=$1 and l.status <> 'unlinked'
+     order by l.status='active' desc, l.channel_code, company_name, l.id`,
     [positiveInt(productId, 'productId')],
   );
   return result.rows.map(mapListing);
 }
 
-export async function createListing(productIdInput, input, db, options = {}) {
+export async function createListing(productIdInput, input, db) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
   const companyId = positiveInt(input.companyId, 'companyId');
@@ -80,10 +79,6 @@ export async function createListing(productIdInput, input, db, options = {}) {
       ],
     );
     const listing = mapListing(result.rows[0]);
-    if (options.syncInventory !== false) {
-      await syncProductInventoryFromListings(target, [productId]);
-      await syncProductStatusesFromListings(target, [productId]);
-    }
     return listing;
   } catch (error) {
     if (error?.code === '23505') {
@@ -93,7 +88,7 @@ export async function createListing(productIdInput, input, db, options = {}) {
   }
 }
 
-export async function upsertListing(productIdInput, input, db, options = {}) {
+export async function upsertListing(productIdInput, input, db) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
   const companyId = positiveInt(input.companyId, 'companyId');
@@ -127,14 +122,10 @@ export async function upsertListing(productIdInput, input, db, options = {}) {
     ],
   );
   const listing = mapListing(result.rows[0]);
-  if (options.syncInventory !== false) {
-    await syncProductInventoryFromListings(target, [productId]);
-    await syncProductStatusesFromListings(target, [productId]);
-  }
   return listing;
 }
 
-export async function updateListing(idInput, input, db, options = {}) {
+export async function updateListing(idInput, input, db) {
   const target = db || (await loadCore()).pool;
   const id = positiveInt(idInput, 'listingId');
   const existing = (await target.query('select * from product_listings where id=$1', [id])).rows[0];
@@ -168,11 +159,6 @@ export async function updateListing(idInput, input, db, options = {}) {
     ],
   );
   const listing = mapListing(result.rows[0]);
-  if (options.syncInventory !== false) {
-    const affectedProductIds = [Number(existing.product_id), productId];
-    await syncProductInventoryFromListings(target, affectedProductIds);
-    await syncProductStatusesFromListings(target, affectedProductIds);
-  }
   return listing;
 }
 
@@ -181,6 +167,43 @@ export function unlinkListing(id, db) {
 }
 
 export async function linkListing(input, db) {
-  if (input.listingId) return updateListing(input.listingId, { productId: input.productId, status: 'active' }, db);
+  if (input.listingId) {
+    const listingId = positiveInt(input.listingId, 'listingId');
+    const productId = positiveInt(input.productId, 'productId');
+    return inTransaction(db, async (client) => {
+      const existing = (await client.query(
+        'select * from product_listings where id=$1 for update',
+        [listingId],
+      )).rows[0];
+      if (!existing) throw httpError('Listing no encontrado.', 404);
+      if (existing.status !== 'unlinked' && input.allowReassign !== true) {
+        throw httpError('Este producto ya está asociado a otro producto.', 409, 'listing_already_linked');
+      }
+      await validateRelations(client, productId, Number(existing.company_id), existing.channel_account_id);
+      const result = await client.query(
+        `update product_listings set product_id=$1, status='active', updated_at=now()
+         where id=$2
+         returning *`,
+        [productId, listingId],
+      );
+      if (!result.rows[0]) throw httpError('Publicación no encontrada.', 404);
+      return mapListing(result.rows[0]);
+    });
+  }
   return createListing(input.productId, input, db);
+}
+
+export async function linkListingsBatch(input, db) {
+  const productId = positiveInt(input.productId, 'productId');
+  if (!Array.isArray(input.listings) || input.listings.length === 0) {
+    throw httpError('Selecciona al menos una publicación.');
+  }
+  if (input.listings.length > 100) throw httpError('Puedes asociar hasta 100 publicaciones por operación.');
+  return inTransaction(db, async (client) => {
+    const listings = [];
+    for (const candidate of input.listings) {
+      listings.push(await linkListing({ ...candidate, productId }, client));
+    }
+    return { productId, associated: listings.length, listings };
+  });
 }

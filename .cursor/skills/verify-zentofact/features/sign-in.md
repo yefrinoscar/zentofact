@@ -23,8 +23,8 @@ Preconditions:
 
 - **See the gate.** Open `http://127.0.0.1:3011/`. The heading reads `Bienvenido de vuelta`. Fields `Correo` and `Contraseña` are visible. The submit button is named `Ingresar`.
 - **Submit in the browser.** Fill `Correo` with `ADMIN_EMAIL` and `Contraseña` with `ADMIN_PASSWORD`. Click `Ingresar`. The heading `Bienvenido de vuelta` disappears. A signed-in header `h1` appears (`Dashboard`, `Bandeja Falabella`, or another allowed module).
-- **Submit through the helper.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact login`. Stdout contains `login=ok email=` plus the admin email.
-- **Confirm session.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /me .cursor/skills/verify-zentofact/artifacts/<run>/me.json`. The JSON `user.email` matches `ADMIN_EMAIL`. Save doctor stdout after login as `doctor.txt`.
+- **Submit through the helper.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact login`. Stdout contains `login=ok email=` plus the admin email and `role=superadmin`. To prove another selectable role, pass that email: `login operator@preview.zentofact.local`.
+- **Confirm session.** Run `.cursor/skills/verify-zentofact/scripts/control-zentofact api GET /me .cursor/skills/verify-zentofact/artifacts/<run>/me.json`. The JSON `user.email` matches the email you passed. Save doctor stdout after login as `doctor.txt`.
 - **Proof.** Screenshot the signed-in header with the ZentoFact mark visible. Keep `me.json`.
 
 ## Gotchas

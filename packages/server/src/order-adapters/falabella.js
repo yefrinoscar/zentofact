@@ -45,7 +45,10 @@ export function mapFalabellaCanonicalStatus(status) {
   if (includesStatus(status, 'ready_to_ship')) {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' };
   }
-  return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
+  if (includesStatus(status, 'pending')) {
+    return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
+  }
+  return { orderStatus: 'confirmed', fulfillmentStatus: 'unmapped' };
 }
 
 function customerFrom(raw) {
@@ -98,6 +101,32 @@ function shippingFrom(raw) {
   };
 }
 
+export function falabellaItemShippingAmount(item) {
+  return number(
+    item?.ShippingAmount
+    ?? item?.shippingAmount
+    ?? item?.ShippingFee
+    ?? item?.shippingFee
+    ?? item?.rawData?.ShippingAmount
+    ?? item?.rawData?.shippingAmount
+    ?? item?.rawData?.ShippingFee
+    ?? item?.rawData?.shippingFee,
+  );
+}
+
+export function falabellaOrderShippingAmount(raw, items = mapFalabellaOrderItems(raw)) {
+  let found = false;
+  let total = 0;
+  for (const item of items) {
+    const amount = falabellaItemShippingAmount(item);
+    if (amount == null) continue;
+    found = true;
+    total += amount;
+  }
+  if (found) return Math.round(total * 100) / 100;
+  return number(raw?.ShippingAmount ?? raw?.ShippingFee ?? raw?.shippingAmount);
+}
+
 export function mapFalabellaOrderItems(raw) {
   const candidate = raw?.OrderItems?.OrderItem || raw?.OrderItems || raw?.Items?.Item || raw?.Items;
   const items = Array.isArray(candidate) ? candidate : candidate && typeof candidate === 'object' ? [candidate] : [];
@@ -109,6 +138,7 @@ export function mapFalabellaOrderItems(raw) {
     quantity: number(item?.Quantity, 1),
     unitPrice: number(item?.ItemPrice ?? item?.UnitPrice ?? item?.Price),
     total: number(item?.PaidPrice ?? item?.Total),
+    shippingAmount: falabellaItemShippingAmount(item),
     providerStatus: text(item?.Status),
     rawData: item,
   }));
@@ -133,6 +163,7 @@ export async function ingestFalabellaOrder(input, db) {
   const account = input.account || await ensureFalabellaOrderAccount(db, input.companyId, input.displayName);
   const statuses = mapFalabellaCanonicalStatus(normalized?.status);
   const items = mapFalabellaOrderItems(raw);
+  const shippingAmount = falabellaOrderShippingAmount(raw, items);
   return ingestOrder({
     companyId: input.companyId,
     channelAccountId: account.id,
@@ -145,6 +176,7 @@ export async function ingestFalabellaOrder(input, db) {
     requestedDocumentType: normalized?.invoiceRequired ? 'factura' : null,
     currency: normalized?.currency || 'PEN',
     total: normalized?.grandTotal,
+    shippingAmount,
     customer: customerFrom(raw),
     shipping: shippingFrom(raw),
     orderedAt: normalized?.falabellaCreatedAt,

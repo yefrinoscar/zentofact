@@ -2,10 +2,78 @@
 // las cookies bajo el mismo origen del navegador.
 import { apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
+import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
+
+export type OrderSyncAccountStatus = {
+  channelAccountId: number;
+  companyId: number;
+  channelCode: string;
+  displayName: string;
+  enabled: boolean;
+  status: string;
+  dataUpdatedThrough?: string | null;
+  lastAttemptAt?: string | null;
+  lastStartedAt?: string | null;
+  lastFinishedAt?: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  lastError?: string | null;
+  pagesProcessed?: number;
+  ordersReceived?: number;
+  ordersUpserted?: number;
+  syncIntervalMinutes?: number;
+  lastRunId?: number | null;
+  lastLogId?: string | null;
+};
+
+export type OrderSyncStatusResponse = {
+  accounts?: OrderSyncAccountStatus[];
+};
+
+export type OrderSyncResult = {
+  channelAccountId: number;
+  companyId: number;
+  channelCode: string;
+  status: string;
+  runId?: number | null;
+  logId?: string | null;
+  pages?: number;
+  received?: number;
+  upserted?: number;
+  failed?: number;
+};
+
+export type OrderSyncResponse = {
+  results?: OrderSyncResult[];
+};
+
+export type ProductAssociationCandidate = {
+  id: number;
+  productId: number;
+  companyId: number;
+  companyName: string;
+  channelCode: 'falabella' | 'ripley';
+  sellerSku: string;
+  shopSku: string | null;
+  title: string | null;
+  status: 'active' | 'inactive';
+  marketplaceQuantity: number | null;
+  metadata: Record<string, unknown>;
+  imageUrl: string | null;
+  candidateSource: 'catalog' | 'remote';
+};
+
+export type ProductAssociationCandidatesResponse = {
+  candidates: ProductAssociationCandidate[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  source: 'marketplaces_live';
+  hiddenByAvailabilityCount: number;
+};
 
 function rememberCsrfToken(data: any) {
   if (data?.csrfToken && typeof data.csrfToken === 'string') csrfToken = data.csrfToken;
@@ -39,7 +107,7 @@ async function ensureCsrfToken() {
   return csrfToken;
 }
 
-async function req(path: string, init?: RequestInit, attempt = 0) {
+async function req<T = any>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
   const method = String(init?.method || 'GET').toUpperCase();
   const csrfHeaders = UNSAFE_METHODS.has(method)
     ? { 'x-csrf-token': await ensureCsrfToken() }
@@ -73,7 +141,7 @@ async function req(path: string, init?: RequestInit, attempt = 0) {
     && String(data?.error || '').toLowerCase().includes('csrf')
   ) {
     clearCsrfToken();
-    return req(path, init, 1);
+    return req<T>(path, init, 1);
   }
   if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
@@ -99,10 +167,43 @@ const apiHttp = {
   deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
   usersCatalog: () => req('/users/meta/catalog'),
 
+  // Configuración del sistema (solo superadmin)
+  getSystemConfig: () => req('/system/config'),
+  updateSystemFlag: (
+    key: string,
+    data: { enabled: boolean; confirm?: string; force?: boolean; reason?: string },
+  ) => req(`/system/config/${key}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  getOwnFleetConfig: () => req<OwnFleetConfig>('/order-management/own-fleet'),
+  updateOwnFleetConfig: (data: OwnFleetConfigInput) =>
+    req<OwnFleetConfig>('/order-management/own-fleet', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Dashboard consolidado
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
     req(`/dashboard${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
+  listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
+    req(`/pagos/imports${qs(filter)}`),
+  listSettlementLines: (filter: { status?: 'matched' | 'unmatched'; importId?: number; limit?: number; offset?: number } = {}) =>
+    req(`/pagos/lines${qs(filter)}`),
+  listSettlementSales: (filter: {
+    search?: string;
+    paid?: 'pagado' | 'no-pagado' | 'devolucion-pagado' | 'devolucion-no-pagado' | '';
+    orderMonth?: string;
+    paidMonth?: string;
+    companyId?: number;
+    importId?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) =>
+    req(`/pagos/sales${qs(filter)}`),
+  importSettlementCsv: (data: { filename: string; csv: string; companyId?: number; replace?: boolean }) =>
+    req('/pagos/imports', { method: 'POST', body: JSON.stringify(data) }),
+  listFalabellaInvoices: (filter: { limit?: number; offset?: number } = {}) =>
+    req(`/pagos/invoices${qs(filter)}`),
+  getFalabellaInvoice: (id: number) => req(`/pagos/invoices/${id}`),
+  importFalabellaInvoice: (data: { filename: string; csv: string; xlsxBase64?: string; replace?: boolean }) =>
+    req('/pagos/invoices', { method: 'POST', body: JSON.stringify(data) }),
 
   // Bandeja consolidada de pedidos
   getOrdersInbox: (filter: { companyId?: number; stage?: string; view?: 'actionable' | 'open' | 'all'; days?: number; search?: string; limit?: number; offset?: number } = {}) =>
@@ -115,6 +216,40 @@ const apiHttp = {
   listOrderChannels: () => req('/order-management/channels'),
   listOrderChannelAccounts: (filter: { companyId?: number; channelCode?: string; active?: boolean } = {}) =>
     req(`/order-management/accounts${qs(filter)}`),
+  getManagedOrderSyncStatus: (filter: { companyId?: number; channelAccountId?: number } = {}) =>
+    req<OrderSyncStatusResponse>(`/order-management/sync-status${qs(filter)}`),
+  syncManagedOrders: (data: {
+    companyId?: number;
+    channelAccountId?: number;
+    mode?: 'incremental' | 'backfill';
+    from?: string;
+    to?: string;
+  } = {}) => req<OrderSyncResponse>('/order-management/sync', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  configureOrderChannelAccount: (data: {
+    companyId: number;
+    channelCode: 'falabella' | 'ripley';
+    externalAccountId: 'default';
+    displayName: string;
+    autoCreateOrders: boolean;
+    documentRequirement: 'disabled' | 'required';
+    documentTypePolicy: 'automatic';
+    settings: { autoEmitDocuments: boolean };
+    active: boolean;
+  }) => req('/order-management/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  listLogisticsInbox: (filter: {
+    companyId?: number;
+    channelCode?: string;
+    stage?: 'pending' | 'ready' | 'shipped';
+    urgency?: 'overdue' | 'today' | 'tomorrow' | 'later';
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/logistics-inbox${qs(filter)}`),
+  printLogisticsPack: (data: { orderIds: number[]; includePacking?: boolean }) =>
+    req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;
@@ -122,6 +257,7 @@ const apiHttp = {
     orderStatus?: string;
     fulfillmentStatus?: string;
     documentStatus?: string;
+    connectedOnly?: boolean;
     from?: string;
     to?: string;
     search?: string;
@@ -130,6 +266,33 @@ const apiHttp = {
   } = {}) => req(`/order-management/orders${qs(filter)}`),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
+  getSalespersonHome: (filter: {
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+    sortBy?: 'orderedAt' | 'total';
+    sortDir?: 'asc' | 'desc';
+  } = {}) =>
+    req(`/order-management/my-sales${qs(filter)}`),
+  listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
+  listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifest-labels${qs(filter)}`),
+  listRipleyManifests: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests${qs(filter)}`),
+  editRipleyPackages: (companyId: number, data: { orderId: string; svcOrderId: string; packages: number; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/packages`, { method: 'POST', body: JSON.stringify(data) }),
+  downloadRipleyLabels: (companyId: number, data: { orderId: string; documentIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/labels/download`, { method: 'POST', body: JSON.stringify(data) }),
+  scheduleRipleyManifest: (companyId: number, data: { orderId: string; labelIds: string[]; pickupDate: string; warehouseAddress: string; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests`, { method: 'POST', body: JSON.stringify(data) }),
+  getRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}${qs(filter)}`),
+  downloadRipleyManifest: (companyId: number, manifestId: string, filter: { sandbox?: boolean } = {}) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/download${qs(filter)}`),
+  detachRipleyManifestLabels: (companyId: number, manifestId: string, data: { labelIds: string[]; sandbox?: boolean }) =>
+    req(`/ripley/${companyId}/logistics/manifests/${encodeURIComponent(manifestId)}/labels`, { method: 'PATCH', body: JSON.stringify(data) }),
   getManagedOrder: (id: number) => req(`/order-management/orders/${id}`),
   updateManagedOrderPayment: (id: number, data: {
     paymentMethod: string;
@@ -153,6 +316,7 @@ const apiHttp = {
   listCatalogProducts: (filter: {
     search?: string; status?: string; channelCode?: string;
     companyId?: number; companyIds?: number[];
+    profitOwner?: string;
     sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
     inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
     publicationStatus?: 'all' | 'published' | 'unpublished';
@@ -163,12 +327,14 @@ const apiHttp = {
   getCatalogSummary: (filter: {
     search?: string; status?: string; channelCode?: string;
     companyId?: number; companyIds?: number[];
+    profitOwner?: string;
     sellerCoverage?: 'all' | 'none' | 'single' | 'multiple';
     inventoryStatus?: 'all' | 'inStock' | 'lowStock' | 'outOfStock';
     publicationStatus?: 'all' | 'published' | 'unpublished';
     special?: 'none' | 'outOfStock' | 'unpublished' | 'lowStock';
     includeArchived?: boolean;
   } = {}) => req(`/products/summary${qs(filter)}`),
+  listCatalogProfitOwners: () => req<{ items: string[] }>('/products/profit-owners'),
   getCatalogProduct: (id: number) => req(`/products/${id}`),
   getCatalogProductActivity: (id: number, filter: { range?: '30' | '90' | '365' | 'all'; kind: 'sales' | 'returns' }) => req(`/products/${id}/activity`, { method: 'POST', body: JSON.stringify(filter) }),
   listTodayProductSales: (filter: {
@@ -193,6 +359,10 @@ const apiHttp = {
   updateCatalogProduct: (id: number, data: any) => req(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   archiveCatalogProduct: (id: number) => req(`/products/${id}/archive`, { method: 'POST', body: '{}' }),
   listProductListings: (id: number) => req(`/products/${id}/listings`),
+  listProductAssociationCandidates: (filter: { productId: number; search?: string; companyId?: number; channelCode?: string; channelCodes?: string; availability?: 'recommended' | 'all'; limit?: number; offset?: number }) => req<ProductAssociationCandidatesResponse>(`/product-listings/association-candidates${qs(filter)}`),
+  associateProductListing: (data: { listingId: number; productId: number }) => req('/product-listings/link', { method: 'POST', body: JSON.stringify(data) }),
+  associateProductListings: (data: { productId: number; listings: Array<Record<string, unknown>> }) => req('/product-listings/link-batch', { method: 'POST', body: JSON.stringify(data) }),
+  listRipleyProducts: (companyId: number, filter: { max?: number; offset?: number } = {}) => req(`/ripley/${companyId}/products${qs(filter)}`),
   createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
   updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),
@@ -203,7 +373,10 @@ const apiHttp = {
   resolveCatalogSku: (data: any) => req('/inventory/resolve-sku', { method: 'POST', body: JSON.stringify(data) }),
   importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
+  syncRipleyCatalog: (data: { dryRun?: boolean } = {}) => req('/catalog/sync/ripley', { method: 'POST', body: JSON.stringify(data) }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
+  ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
+  ripleyApiGetOrders: (companyId: number, filters: { max?: number; offset?: number; orderStateCodes?: string; startUpdateDate?: string; endUpdateDate?: string } = {}) => req(`/ripley/${companyId}/orders${qs(filters)}`),
   listCatalogUnmappedSkus: (filter: { companyId?: number; channelCode?: string; limit?: number } = {}) => req(`/catalog/unmapped-skus${qs(filter)}`),
 
   listInsumos: (filter: {
@@ -385,6 +558,14 @@ const apiHttp = {
   autoEmitCreateWebhook: (companyId: number, events: string[]) => req(`/auto-emit/webhooks/${companyId}`, { method: 'POST', body: JSON.stringify({ events }) }),
   autoEmitRotateWebhookSecret: (companyId: number) => req(`/auto-emit/webhooks/${companyId}/rotate-secret`, { method: 'POST' }),
   autoEmitDeleteWebhook: (companyId: number, webhookId: string) => req(`/auto-emit/webhooks/${companyId}/${encodeURIComponent(webhookId)}`, { method: 'DELETE' }),
+
+  // Cola de descuentos de stock
+  stockJobsGetConfig: () => req('/catalog/stock-jobs/config'),
+  stockJobsList: (limit = 60) => req(`/catalog/stock-jobs/jobs${qs({ limit })}`),
+  stockJobsSetPaused: (paused: boolean) => req('/catalog/stock-jobs/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
+  stockJobsRetry: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/retry`, { method: 'POST' }),
+  stockJobsOrderPreview: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/order-preview`),
+  stockJobsRun: (limit = 8) => req(`/catalog/stock-jobs/run${qs({ limit })}`, { method: 'POST' }),
 
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },
 };

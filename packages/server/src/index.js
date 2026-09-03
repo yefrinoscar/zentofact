@@ -17,30 +17,61 @@ const { cors } = await import('hono/cors');
 const { stream } = await import('hono/streaming');
 const core = await import('@zentofact/core');
 await core.runMigrations(core.pool);
-const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, csrfTokenForSession } = await import('./auth.js');
+
+// PR previews de Railway nacen con Postgres vacío: auth + datos demo antes del resto.
+const { shouldSeedPreview, isRailwayPrPreview } = await import('./preview-env.js');
+const bootstrapEmailEarly = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim();
+const bootstrapPasswordEarly = String(process.env.ADMIN_PASSWORD || process.env.SEED_USER_PASSWORD || '').trim();
+// Solo si vamos a sembrar: permitir signup del admin bootstrap.
+if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
+  process.env.AUTH_ALLOW_SIGNUP = 'true';
+}
+
+const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
 const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
-const { PERMISSIONS, ROLE_PRESETS } = await import('./permissions.js');
-await users.ensureUserColumns();
+const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
+const insumos = await import('./insumos.js');
+await insumos.ensureTables();
+if (shouldSeedPreview()) {
+  const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
+  await bootstrapPreviewIfNeeded();
+} else if (isRailwayPrPreview()) {
+  // Skip explícito: no migrar auth, no admin, no datos demo.
+  console.log('[SEED] Preview seed omitido (SEED_PREVIEW=false o SKIP_PREVIEW_SEED=true); no se crea nada');
+} else {
+  await users.ensureUserColumns();
+  await users.ensureBootstrapAdmin();
+}
 const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
-const insumos = await import('./insumos.js');
-await insumos.ensureTables();
+const systemConfig = await import('./system-config.js');
+await systemConfig.ensureSystemConfigTable();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
+const logisticsInbox = await import('./logistics-inbox.js');
 const orderManagement = await import('./order-management.js');
+const ownFleetConfig = await import('./own-fleet-config.js');
+const orderSync = await import('./order-sync.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
+const associationCandidateService = await import('./catalog/association-candidate-service.js');
 const inventoryService = await import('./catalog/inventory-service.js');
 const skuResolver = await import('./catalog/sku-resolver.js');
 const catalogImport = await import('./catalog/catalog-import.js');
+const ripleyCatalogImport = await import('./catalog/ripley-catalog-import.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
+const ripleyCatalog = await import('./ripley-catalog.js');
+const ripleyOrders = await import('./ripley-orders.js');
+const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
+const pagos = await import('./pagos.js');
+const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
 const pickingScanner = await import('./picking-scanner.js');
 const readyToShipOperation = await import('./falabella-ready-to-ship-operation.js');
@@ -113,8 +144,8 @@ app.use('*', requireCsrf());
 // Permisos por módulo (menú). /me y /health no aplican.
 const moduleGuards = [
   ['/dashboard', 'dashboard'],
+  ['/pagos', 'pagos'],
   ['/orders-inbox', 'orders_inbox'],
-  ['/order-management', 'order_management'],
   ['/facturas', 'facturas'],
   ['/workflow', 'falabella_sellers'],
   ['/auto-emit', 'auto_emision'],
@@ -125,14 +156,27 @@ for (const [prefix, perm] of moduleGuards) {
   app.use(prefix, permissionGuard);
   app.use(`${prefix}/*`, permissionGuard);
 }
+const orderManagementGuard = requireAnyPermission(['order_management', 'salesperson']);
+app.use('/order-management', orderManagementGuard);
+app.use('/order-management/*', orderManagementGuard);
+const logisticsInboxGuard = requireAnyPermission(['orders_inbox', 'order_management']);
+app.use('/logistics-inbox', logisticsInboxGuard);
+app.use('/logistics-inbox/*', logisticsInboxGuard);
 
 const catalogGuard = (c, next) => {
+  const path = c.req.path;
   if (
-    c.req.path === '/catalog/sales/today'
-    || c.req.path === '/catalog/sales/today/refresh'
-    || c.req.path === '/catalog/image'
+    path === '/catalog/sales/today'
+    || path === '/catalog/sales/today/refresh'
+    || path === '/catalog/image'
   ) {
-    return requireAnyPermission(['productos', 'salidas'])(c, next);
+    const keys = path === '/catalog/image'
+      ? ['productos', 'order_management', 'salesperson']
+      : ['productos', 'order_management'];
+    return requireAnyPermission(keys)(c, next);
+  }
+  if (c.req.method === 'GET' && path === '/products') {
+    return requireAnyPermission(['productos', 'salesperson'])(c, next);
   }
   return requirePermission('productos')(c, next);
 };
@@ -188,6 +232,20 @@ const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
   context: { method: c.req.method, path: c.req.path, status },
 }), status);
 
+function salespersonOnlyUserId(c) {
+  const user = c.get('user');
+  if (!user?.id) return null;
+  if (userHasPermission(user, 'salesperson') && !userHasPermission(user, 'order_management')) {
+    return String(user.id);
+  }
+  return null;
+}
+
+function scopedOrderFilters(c, filters = {}) {
+  const createdBy = salespersonOnlyUserId(c);
+  return createdBy ? { ...filters, createdBy } : filters;
+}
+
 function publicFalabellaManifestJob(job) {
   if (!job) return null;
   const { fingerprint: _fingerprint, orders: _orders, ...publicJob } = job;
@@ -224,7 +282,7 @@ app.post('/me/logout', async (c) => {
 app.get('/dashboard', async (c) => {
   try {
     const data = await dashboard.getDashboard(c.req.query());
-    c.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=240');
+    c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
 });
@@ -233,6 +291,53 @@ app.post('/dashboard/refresh', async (c) => {
     const refresh = await dashboard.refreshDashboard();
     return ok(c, refresh);
   } catch (e) { return fail(c, e); }
+});
+
+app.get('/pagos/imports', async (c) => {
+  try { return ok(c, await pagos.listSettlementImports(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/lines', async (c) => {
+  try { return ok(c, await pagos.listSettlementLines(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/sales', async (c) => {
+  try { return ok(c, await pagos.listSettlementSales(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.post('/pagos/imports', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await pagos.importSettlementCsv({
+      ...body,
+      importedBy: c.get('user')?.id || null,
+    });
+    dashboard.clearDashboardResponseCache();
+    return ok(c, result, result.reused || result.replaced ? 200 : 201);
+  } catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/invoices', async (c) => {
+  try { return ok(c, await invoiceReports.listInvoiceDocuments(c.req.query())); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.get('/pagos/invoices/:id', async (c) => {
+  try { return ok(c, await invoiceReports.getInvoiceDocument(c.req.param('id'))); }
+  catch (e) { return fail(c, e, e.status || 400); }
+});
+app.post('/pagos/invoices', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      const error = new Error('No se pudo leer el archivo.');
+      error.status = 400;
+      throw error;
+    }
+    const result = await invoiceReports.importInvoiceReportCsv({
+      ...body,
+      importedBy: c.get('user')?.id || null,
+    });
+    return ok(c, result, result.reused || result.replaced ? 200 : 201);
+  } catch (e) { return fail(c, e, e.status || 400); }
 });
 
 // ── Bandeja general de pedidos ──
@@ -257,11 +362,37 @@ app.post('/orders-inbox/sync', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 
+app.get('/logistics-inbox', async (c) => {
+  try { return ok(c, await logisticsInbox.listLogisticsInbox(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/logistics-inbox/print', async (c) => {
+  try {
+    const body = await c.req.json();
+    const user = c.get('user');
+    return ok(c, await logisticsInbox.printLogisticsPackWithDefaults({
+      ...body,
+      printedBy: user?.email || user?.name || null,
+    }));
+  }
+  catch (e) { return fail(c, e, 400); }
+});
+
 app.get('/order-management/geo/maps-key', async (c) => {
   try {
     const key = String(process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
     return ok(c, { key });
   } catch (e) { return fail(c, e); }
+});
+app.get('/order-management/own-fleet', async (c) => {
+  try { return ok(c, await ownFleetConfig.loadOwnFleetConfig()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.put('/order-management/own-fleet', requireAdmin(), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await ownFleetConfig.saveOwnFleetConfig(null, body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, 400); }
 });
 
 // ── Pedidos multicanal (backend nuevo; no reemplaza la bandeja actual) ──
@@ -277,6 +408,10 @@ app.get('/order-management/accounts', async (c) => {
   try { return ok(c, await orderManagement.listOrderChannelAccounts(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/sync-status', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
 app.post('/order-management/accounts', requirePermission('companies'), async (c) => {
   try { return ok(c, await orderManagement.configureOrderChannelAccount(await c.req.json()), 201); }
   catch (e) { return fail(c, e, 400); }
@@ -290,14 +425,68 @@ app.patch('/order-management/accounts/:id', requirePermission('companies'), asyn
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/orders', async (c) => {
-  try { return ok(c, await orderManagement.listOrders(c.req.query())); }
+  try { return ok(c, await orderManagement.listOrders(scopedOrderFilters(c, c.req.query()))); }
   catch (e) { return fail(c, e, 400); }
 });
-app.get('/order-management/sales-pulse', async (c) => {
+app.get('/order-management/sales-pulse', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
-app.post('/order-management/orders/ingest', async (c) => {
+app.get('/order-management/my-sales', requirePermission('salesperson'), async (c) => {
+  try {
+    const sessionUser = c.get('user');
+    const full = sessionUser?.id ? await users.getUserById(sessionUser.id) : null;
+    const createdBy = salespersonOnlyUserId(c) || sessionUser?.id;
+    return ok(c, await orderManagement.getSalespersonHome({
+      ...c.req.query(),
+      userId: createdBy,
+      commissionPercent: full?.commissionPercent ?? 0,
+    }));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await orderSync.syncOrders(body));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcLabels(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifest-labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcEligibleLabels(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.listRipleySvcManifests(c.req.param('companyId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/packages', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.editRipleySvcPackages(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/labels/download', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.downloadRipleySvcLabels(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/ripley/:companyId/logistics/manifests', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.scheduleRipleySvcManifest(c.req.param('companyId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests/:manifestId', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.getRipleySvcManifest(c.req.param('companyId'), c.req.param('manifestId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.get('/ripley/:companyId/logistics/manifests/:manifestId/download', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.downloadRipleySvcManifest(c.req.param('companyId'), c.req.param('manifestId'), c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.patch('/ripley/:companyId/logistics/manifests/:manifestId/labels', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await ripleyLogistics.detachRipleySvcManifestLabels(c.req.param('companyId'), c.req.param('manifestId'), await c.req.json())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/orders/ingest', requirePermission('order_management'), async (c) => {
   try {
     const body = await c.req.json();
     const idempotencyKey = String(
@@ -325,24 +514,49 @@ app.post('/order-management/orders/manual', async (c) => {
     if (!idempotencyKey) {
       return c.json({ error: 'Idempotency-Key es obligatorio para registrar la venta.' }, 400);
     }
-    return ok(c, await orderManagement.ingestOrder({
+    const result = await orderManagement.ingestOrder({
       ...body,
       source: 'manual',
       automatic: false,
       actorUserId: c.get('user')?.id,
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
-    }), 201);
+    });
+    if (result?.order?.companyId && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
+      try {
+        await stockJobs.enqueueStockJob({
+          orderId: result.order.id,
+          companyId: result.order.companyId,
+          externalOrderId: result.order.externalOrderId,
+          orderNumber: result.order.externalOrderNumber,
+          source: 'manual',
+        });
+      } catch (queueError) {
+        console.error(JSON.stringify({
+          event: 'orders.manual.stock_job_enqueue_failed',
+          orderId: result.order.id,
+          error: queueError?.message,
+        }));
+      }
+    }
+    return ok(c, result, 201);
   } catch (e) { return fail(c, e, 400); }
 });
 app.get('/order-management/orders/:id', async (c) => {
   try {
     const order = await orderManagement.getOrder(Number(c.req.param('id')));
+    const ownerId = salespersonOnlyUserId(c);
+    if (ownerId && order?.createdBy !== ownerId) return c.json({ error: 'Pedido no encontrado.' }, 404);
     return order ? ok(c, order) : c.json({ error: 'Pedido no encontrado.' }, 404);
   } catch (e) { return fail(c, e, 400); }
 });
 app.patch('/order-management/orders/:id/payment', async (c) => {
   try {
+    const current = await orderManagement.getOrder(Number(c.req.param('id')));
+    const ownerId = salespersonOnlyUserId(c);
+    if (!current || (ownerId && current.createdBy !== ownerId)) {
+      return c.json({ error: 'Pedido no encontrado.' }, 404);
+    }
     const body = await c.req.json();
     const order = await orderManagement.updateOrderPayment(Number(c.req.param('id')), {
       ...body,
@@ -359,6 +573,10 @@ app.get('/products', async (c) => {
 });
 app.get('/products/summary', async (c) => {
   try { return ok(c, await productService.getCatalogSummary(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/products/profit-owners', async (c) => {
+  try { return ok(c, await productService.listProfitOwners()); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/products', async (c) => {
@@ -406,6 +624,10 @@ app.post('/products/:id/listings', async (c) => {
   try { return ok(c, await listingService.createListing(c.req.param('id'), await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.get('/product-listings/association-candidates', async (c) => {
+  try { return ok(c, await associationCandidateService.listLiveAssociationCandidates(c.req.query())); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.patch('/product-listings/:id', async (c) => {
   try { return ok(c, await listingService.updateListing(c.req.param('id'), await c.req.json())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
@@ -416,6 +638,10 @@ app.post('/product-listings/:id/unlink', async (c) => {
 });
 app.post('/product-listings/link', async (c) => {
   try { return ok(c, await listingService.linkListing(await c.req.json()), 201); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/product-listings/link-batch', async (c) => {
+  try { return ok(c, await listingService.linkListingsBatch(await c.req.json()), 201); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/product-listings/:id/apply-stock-to-open-orders', async (c) => {
@@ -470,10 +696,23 @@ app.post('/catalog/sync/falabella', async (c) => {
     return ok(c, await catalogImport.syncAllFalabellaCatalog(body, c.get('user')?.id));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.post('/catalog/sync/ripley', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await ripleyCatalogImport.syncRipleyCatalog(body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/catalog/refresh-listing-snapshots', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    return ok(c, await listingSnapshotService.refreshFalabellaListingSnapshots(body));
+    return ok(c, await listingSnapshotService.refreshMarketplaceListingSnapshots(body));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/ripley/:companyId/products', requirePermission('productos'), async (c) => {
+  try {
+    return ok(c, await ripleyCatalog.listRipleyProducts(c.req.param('companyId'), c.req.query(), {
+      getCompany: core.getCompany,
+    }));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/catalog/unmapped-skus', async (c) => {
@@ -530,6 +769,32 @@ app.post('/catalog/sales/today/refresh', async (c) => {
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
+// ── Cola de descuentos de stock (productos) ──
+app.get('/catalog/stock-jobs/config', async (c) => {
+  try { return ok(c, await stockJobs.getConfig()); } catch (e) { return fail(c, e); }
+});
+app.post('/catalog/stock-jobs/pause', async (c) => {
+  try {
+    const { paused } = await c.req.json();
+    return ok(c, await stockJobs.setPaused(paused));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.get('/catalog/stock-jobs/jobs', async (c) => {
+  try { return ok(c, await stockJobs.recentJobs(Number(c.req.query('limit') || 60))); } catch (e) { return fail(c, e); }
+});
+app.get('/catalog/stock-jobs/jobs/:id/order-preview', async (c) => {
+  try { return ok(c, await stockJobs.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); }
+});
+app.post('/catalog/stock-jobs/jobs/:id/retry', async (c) => {
+  try { return ok(c, await stockJobs.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); }
+});
+app.post('/catalog/stock-jobs/run', async (c) => {
+  try {
+    const stats = await stockJobs.processStockQueue({ limit: Number(c.req.query('limit') || 8) });
+    return ok(c, stats);
+  } catch (e) { return fail(c, e); }
+});
+
 // ── Usuarios (solo admin / permiso users) ──
 app.get('/users', requirePermission('users'), async (c) => {
   try { return ok(c, await users.listUsers()); } catch (e) { return fail(c, e); }
@@ -548,6 +813,32 @@ app.delete('/users/:id', requirePermission('users'), async (c) => {
 });
 app.get('/users/meta/catalog', requirePermission('users'), async (c) => {
   try { return ok(c, { permissions: PERMISSIONS, roles: ROLE_PRESETS }); } catch (e) { return fail(c, e); }
+});
+
+// ── Configuración del sistema (solo superadmin) ──
+app.get('/system/config', requireSuperadmin(), async (c) => {
+  try { return ok(c, await systemConfig.getSystemConfig()); } catch (e) { return fail(c, e); }
+});
+app.put('/system/config/:key', requireSuperadmin(), async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const flag = await systemConfig.setSystemFlag(
+      c.req.param('key'),
+      body,
+      c.get('user')?.id,
+    );
+    return ok(c, { flag });
+  } catch (e) {
+    const status = Number(e?.status || 400);
+    if (e?.readiness) {
+      return c.json({
+        error: String(e?.message || e),
+        code: e.code,
+        readiness: e.readiness,
+      }, status);
+    }
+    return fail(c, e, status);
+  }
 });
 
 app.get('/insumos', async (c) => {
@@ -1450,5 +1741,6 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(`[SUNAT] Ambiente de emisión: ${sunatEnv}  (SUNAT_FORCE_ENV=${process.env.SUNAT_FORCE_ENV || '(no seteado)'})`);
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
+  orderSync.startOrderSyncScheduler();
   stockJobs.startStockJobWorker();
 });

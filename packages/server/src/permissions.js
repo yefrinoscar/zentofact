@@ -3,13 +3,14 @@
 
 export const PERMISSIONS = [
   { key: 'dashboard', label: 'Dashboard', description: 'Ver ventas y métricas consolidadas', path: '/dashboard', section: 'operation' },
+  { key: 'pagos', label: 'Pagos', description: 'Ver lo que Falabella cobra por cada venta y cruzar liquidaciones', path: '/pagos', section: 'operation' },
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
-  { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders', hiddenInProduction: true },
+  { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
+  { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
-  { key: 'salidas', label: 'Salidas de hoy', description: 'Ver productos vendidos hoy y la cantidad que salió del almacén', path: '/salidas', section: 'operation' },
-  { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'operation' },
-  { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/pedidos', section: 'orders' },
+  { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/bandeja', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
+  { key: 'insumos', label: 'Insumos', description: 'Ver y actualizar la cantidad de materiales de empaque y oficina', path: '/insumos', section: 'orders' },
   { key: 'boletas', label: 'Boletas', description: 'Ver, emitir y reenviar boletas electrónicas', path: '/boletas', section: 'documents' },
   { key: 'facturas', label: 'Facturas', description: 'Ver, emitir y reenviar facturas electrónicas', path: '/facturas', section: 'documents' },
   { key: 'credit_notes_manage', label: 'Notas de crédito', description: 'Consultar y emitir notas de crédito individuales', path: '/credit-notes', section: 'documents' },
@@ -17,7 +18,7 @@ export const PERMISSIONS = [
   { key: 'credit_notes_bulk', label: 'Anulación masiva', description: 'Anular boletas en lote con notas de crédito', path: '/credit-notes/bulk', section: 'documents' },
   { key: 'companies', label: 'Empresas', description: 'Administrar empresas, credenciales y certificados', path: '/companies', section: 'config' },
   { key: 'users', label: 'Usuarios', description: 'Administrar usuarios, roles y permisos', path: '/users', section: 'config' },
-  { key: 'settings', label: 'Ajustes', description: 'Cambiar preferencias y apariencia', path: '/settings', section: 'config' },
+  { key: 'settings', label: 'Ajustes', description: 'Cambiar preferencias, apariencia y envío propio', path: '/settings', section: 'config' },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((permission) => permission.key);
@@ -41,12 +42,17 @@ export const ROLE_PRESETS = {
   operator: {
     label: 'Operador',
     description: 'Recibe pedidos y realiza la preparación y el escaneo',
-    permissions: ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'],
+    permissions: ['order_management', 'orders_inbox', 'orders_scanner', 'insumos'],
   },
   billing: {
     label: 'Facturación',
     description: 'Gestiona comprobantes, automatización y anulaciones',
     permissions: ['boletas', 'facturas', 'credit_notes_manage', 'auto_emision', 'credit_notes_bulk'],
+  },
+  vendedor: {
+    label: 'Vendedor',
+    description: 'Registra ventas y consulta su comisión',
+    permissions: ['salesperson'],
   },
   viewer: {
     label: 'Perfil anterior',
@@ -55,12 +61,13 @@ export const ROLE_PRESETS = {
   },
 };
 
-export const SELECTABLE_ROLES = ['superadmin', 'admin', 'operator', 'billing'];
+export const SELECTABLE_ROLES = ['superadmin', 'admin', 'operator', 'billing', 'vendedor'];
 
 export const ROLE_RANK = {
   viewer: 10,
   operator: 20,
   billing: 20,
+  vendedor: 20,
   falabella_manager: 20,
   admin: 80,
   superadmin: 100,
@@ -85,6 +92,7 @@ const RECENT_OPERATOR_PRESET = ['falabella_sellers', 'orders_inbox', 'orders_sca
 const PREVIOUS_OPERATOR_PRESET = ['orders_inbox', 'orders_scanner'];
 const OPERATOR_WITHOUT_SALIDAS = ['order_management', 'orders_inbox', 'orders_scanner'];
 const OPERATOR_WITHOUT_INSUMOS = ['order_management', 'orders_inbox', 'orders_scanner', 'salidas'];
+const OPERATOR_WITH_SALIDAS = ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'];
 const INTERIM_BILLING_PRESET = ['boletas', 'facturas', 'credit_notes_manage'];
 const INTERIM_VIEWER_PRESET = [
   'falabella_sellers', 'orders_inbox', 'boletas', 'facturas',
@@ -113,9 +121,15 @@ export function isSuperadminRole(role) {
   return normalizeRole(role) === 'superadmin';
 }
 
+export function isPermissionsLocked(role) {
+  const normalized = normalizeRole(role);
+  return isAdminRole(normalized) || normalized === 'vendedor';
+}
+
 export function normalizePermissions(input, role = 'operator') {
   const normalizedRole = normalizeRole(role);
   if (isAdminRole(normalizedRole)) return [...ALL_PERMISSION_KEYS];
+  if (normalizedRole === 'vendedor') return [...ROLE_PRESETS.vendedor.permissions];
   const list = Array.isArray(input)
     ? input
     : typeof input === 'string'
@@ -139,6 +153,7 @@ export function normalizePermissions(input, role = 'operator') {
     || samePermissionSet(list, PREVIOUS_OPERATOR_PRESET)
     || samePermissionSet(list, OPERATOR_WITHOUT_SALIDAS)
     || samePermissionSet(list, OPERATOR_WITHOUT_INSUMOS)
+    || samePermissionSet(list, OPERATOR_WITH_SALIDAS)
   )) return [...ROLE_PRESETS.operator.permissions];
   if (normalizedRole === 'billing' && samePermissionSet(list, INTERIM_BILLING_PRESET)) {
     return [...ROLE_PRESETS.billing.permissions];
@@ -151,7 +166,7 @@ export function normalizePermissions(input, role = 'operator') {
     const clean = String(key || '').trim();
     return LEGACY_PERMISSION_MAP[clean] || [clean];
   });
-  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'users'));
+  const allowed = new Set(ALL_PERMISSION_KEYS.filter((key) => key !== 'dashboard' && key !== 'pagos' && key !== 'users' && key !== 'salesperson'));
   return [...new Set(expanded.filter((key) => allowed.has(key)))];
 }
 
@@ -166,7 +181,7 @@ export function userHasPermission(user, key) {
   if (!user) return false;
   if (user.active === false || user.active === 'false') return false;
   const role = normalizeRole(user.role);
-  if (key === 'users' || key === 'dashboard') return isAdminRole(role);
+  if (key === 'users' || key === 'dashboard' || key === 'pagos') return isAdminRole(role);
   if (isAdminRole(role)) return true;
   return normalizePermissions(user.permissions, role).includes(key);
 }
@@ -174,7 +189,10 @@ export function userHasPermission(user, key) {
 export function pathPermission(pathname) {
   if (!pathname) return null;
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/pagos')) return 'pagos';
+  if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/orders')) return 'order_management';
+  if (pathname.startsWith('/bandeja')) return 'orders_inbox';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';
   if (pathname.startsWith('/boletas')) return 'boletas';
@@ -182,7 +200,6 @@ export function pathPermission(pathname) {
   if (pathname.startsWith('/documentos') || pathname.startsWith('/individual-invoice')) return 'boletas';
   if (pathname.startsWith('/falabella-api') || pathname.startsWith('/workflow')) return 'falabella_sellers';
   if (pathname.startsWith('/productos')) return 'productos';
-  if (pathname.startsWith('/salidas')) return 'salidas';
   if (pathname.startsWith('/insumos')) return 'insumos';
   if (pathname.startsWith('/auto-emision')) return 'auto_emision';
   if (pathname.startsWith('/credit-notes/bulk')) return 'credit_notes_bulk';

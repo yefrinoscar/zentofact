@@ -7,11 +7,19 @@ test('la bandeja de pedidos exige sesión para lectura y sincronización', () =>
   assert.equal(isProtectedPath('/orders-inbox/sync'), true);
   assert.equal(isProtectedPath('/order-management/orders'), true);
   assert.equal(isProtectedPath('/order-management/accounts'), true);
+  assert.equal(isProtectedPath('/logistics-inbox'), true);
+  assert.equal(isProtectedPath('/logistics-inbox/print'), true);
 });
 
 test('insumos exige sesión para lectura y ajustes', () => {
   assert.equal(isProtectedPath('/insumos'), true);
   assert.equal(isProtectedPath('/insumos/3/adjust'), true);
+});
+
+test('pagos exige sesión para historial y carga de CSV', () => {
+  assert.equal(isProtectedPath('/pagos'), true);
+  assert.equal(isProtectedPath('/pagos/imports'), true);
+  assert.equal(isProtectedPath('/pagos/invoices'), true);
 });
 
 test('el catálogo y el inventario cargan la sesión antes de validar permisos', () => {
@@ -21,6 +29,10 @@ test('el catálogo y el inventario cargan la sesión antes de validar permisos',
   assert.equal(isProtectedPath('/inventory/resolve-sku'), true);
   assert.equal(isProtectedPath('/catalog/import/falabella'), true);
   assert.equal(isProtectedPath('/catalog/unmapped-skus'), true);
+});
+
+test('Ripley carga la sesión antes de validar el permiso de pedidos', () => {
+  assert.equal(isProtectedPath('/ripley/1/orders'), true);
 });
 
 test('no protege rutas públicas con prefijos parecidos', () => {

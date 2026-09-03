@@ -4,7 +4,7 @@ import { ChevronsUpDown, LayoutGrid, LogOut, Settings } from 'lucide-react';
 import { authClient } from '../lib/authClient';
 import api from '../lib/api';
 import { broadcastForceReauth, clearClientStorageOnLogout } from '../lib/clearClientStorage';
-import { isNavItemActive, visibleNavigation } from '../lib/navigation';
+import { isNavItemActive, mobileNavPathname, visibleNavigation } from '../lib/navigation';
 import { ROLE_PRESETS, normalizeRole } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
 import { EnvBadge } from './ZentoFactBrand';
@@ -20,10 +20,12 @@ import {
 
 export function MobileTopNavigation({ title }: { title: string }) {
   const { pathname } = useLocation();
-  const { can } = usePermissions();
-  const groups = visibleNavigation(can);
-  const activeGroup = groups.find((group) => group.items.some((item) => isNavItemActive(pathname, item.to)));
+  const { can, isAdmin, isSuperadmin } = usePermissions();
+  const navPath = mobileNavPathname(pathname, can);
+  const groups = visibleNavigation(can, undefined, { isAdmin, isSuperadmin });
+  const activeGroup = groups.find((group) => group.items.some((item) => isNavItemActive(navPath, item.to)));
   const onMenu = pathname === '/menu';
+  const registeringSale = pathname === '/orders/nueva' || pathname.startsWith('/orders/nueva/');
 
   return (
     <header className="shrink-0 border-b border-border/80 bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
@@ -47,10 +49,12 @@ export function MobileTopNavigation({ title }: { title: string }) {
               {isDevApp() ? runtimeEnvironmentLabel() : 'Selecciona un módulo'}
             </p>
           </div>
+        ) : registeringSale && can('salesperson') && !can('order_management') ? (
+          <p className="min-w-0 flex-1 truncate px-2 text-sm font-semibold">{title}</p>
         ) : activeGroup ? (
           <nav className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label={`Navegación de ${activeGroup.label}`}>
             {activeGroup.items.map(({ to, label, icon: Icon, img }) => {
-              const active = isNavItemActive(pathname, to);
+              const active = isNavItemActive(navPath, to);
               return (
                 <Link
                   key={to}

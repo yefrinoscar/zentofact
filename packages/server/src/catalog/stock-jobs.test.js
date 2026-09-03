@@ -1,12 +1,15 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { enqueueStockJob, processStockQueue } from './stock-jobs.js';
+import { enqueueStockJob, ensureStockJobTables, getConfig, getPaused, processStockQueue, setPaused } from './stock-jobs.js';
+import { invalidateSystemConfigCache } from '../system-config.js';
 
 class JobDb {
   constructor() {
     this.jobs = new Map();
     this.nextId = 1;
     this.now = Date.now();
+    this.paused = false;
+    this.settings = { catalog_inventory: true };
   }
 
   key(companyId, externalOrderId) {
@@ -15,7 +18,36 @@ class JobDb {
 
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-    if (compact.startsWith('create table') || compact.startsWith('create index')) return { rows: [] };
+    if (compact.includes('pg_advisory_lock') || compact.includes('pg_advisory_xact_lock')) {
+      return { rows: [{ pg_advisory_lock: true }] };
+    }
+    if (compact.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+    if (compact.includes('select key, value from system_settings')) {
+      return {
+        rows: Object.entries(this.settings).map(([key, enabled]) => ({
+          key,
+          value: { enabled },
+        })),
+      };
+    }
+    if (compact.includes('from inventory_stock_jobs group by status')) {
+      const counts = new Map();
+      for (const job of this.jobs.values()) {
+        counts.set(job.status, (counts.get(job.status) || 0) + 1);
+      }
+      return { rows: [...counts.entries()].map(([status, n]) => ({ status, n })) };
+    }
+    if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
+      return { rows: [] };
+    }
+    if (compact.includes('select paused from inventory_stock_state')) {
+      return { rows: [{ paused: this.paused }] };
+    }
+    if (compact.includes('insert into inventory_stock_state')) {
+      this.paused = !!params[0];
+      return { rows: [] };
+    }
+    if (compact.startsWith('create table') || compact.startsWith('create index') || compact.startsWith('insert into inventory_stock_state')) return { rows: [] };
     if (compact.includes('where status=\'processing\'') && compact.includes('timeout')) {
       return { rows: [] };
     }
@@ -78,6 +110,10 @@ class JobDb {
   }
 }
 
+beforeEach(() => {
+  invalidateSystemConfigCache();
+});
+
 test('encolar el mismo pedido dos veces no duplica el job', async () => {
   const db = new JobDb();
   const first = await enqueueStockJob({
@@ -110,6 +146,22 @@ test('el worker descuenta en lote y marca el job como done', async () => {
   assert.equal([...db.jobs.values()].every((job) => job.status === 'done'), true);
 });
 
+test('un job explícito reintenta las líneas históricas que ya están listas para enviar', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1', source: 'catchup' }, db);
+  const inputs = [];
+
+  await processStockQueue({
+    apply: async (input) => {
+      inputs.push(input);
+      return { applied: 1, skipped: 0, orderId: 10 };
+    },
+  }, db);
+
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].includeSkippedPolicy, true);
+});
+
 test('un job done no se vuelve a procesar al reencolar', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
@@ -133,4 +185,57 @@ test('si el pedido aún no está, reintenta; al sexto intento falla', async () =
   const last = await processStockQueue({ apply: async () => ({ missing: true }) }, db);
   assert.equal(last.failed, 1);
   assert.equal([...db.jobs.values()][0].status, 'failed');
+});
+
+test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
+  let migrationSql = '';
+  await ensureStockJobTables({
+    async query(sql) {
+      migrationSql += sql;
+      return { rows: [] };
+    },
+  });
+
+  assert.match(migrationSql, /drop constraint if exists inventory_stock_jobs_company_id_external_order_id_key/i);
+  assert.match(migrationSql, /where order_id is null/i);
+  assert.match(migrationSql, /matched_orders[\s\S]*having count\(\*\)=1/i);
+  assert.match(migrationSql, /existing\.order_id=matched\.order_id/i);
+});
+
+test('pausar la cola detiene el procesamiento', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
+  await setPaused(true, db);
+  const stats = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(stats.paused, true);
+  assert.equal(stats.claimed, 0);
+  await setPaused(false, db);
+  const resumed = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(resumed.claimed, 1);
+});
+
+test('la cola muestra el mismo descuento que Configuración del sistema', async () => {
+  const db = new JobDb();
+  db.settings = { catalog_inventory: true };
+  const on = await getConfig(db);
+  assert.equal(on.inventoryEnabled, true);
+  assert.equal(on.inventoryLabel, 'Descuento de inventario al listo para enviar');
+  assert.equal(on.inventorySourceLabel, 'Base de datos');
+  assert.equal(on.inventoryKillSwitch, false);
+
+  invalidateSystemConfigCache();
+  db.settings = { catalog_inventory: false };
+  const off = await getConfig(db);
+  assert.equal(off.inventoryEnabled, false);
+  assert.equal(off.inventorySourceLabel, 'Base de datos');
+});
+
+test('con el descuento apagado el worker no procesa la cola', async () => {
+  const db = new JobDb();
+  db.settings = { catalog_inventory: false };
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1', source: 'webhook' }, db);
+  const stats = await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
+  assert.equal(stats.inventoryDisabled, true);
+  assert.equal(stats.claimed, 0);
+  assert.equal([...db.jobs.values()][0].status, 'pending');
 });

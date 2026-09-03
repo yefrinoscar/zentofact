@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../db';
 import { boletas, branches, clients, companies, creditNotes, facturas } from '../db/schema';
 import { getNextCorrelative } from './correlative.service';
@@ -8,6 +8,11 @@ import { saveCreditNoteCdr, saveCreditNoteXml } from './file.service';
 import { numeroALetras } from '../utils/number-to-words';
 import { generateBoletaPreviewHtml } from './pdf.service';
 import type { PdfFormat } from './pdf.service';
+import {
+  resolveCreditNoteBatchIssueDate,
+  resolveCreditNoteIssueDate,
+  validateCreditNoteIssueDateForSend,
+} from '../utils/credit-note-issue-date';
 
 export interface CreateCreditNoteFromBoletaOptions {
   codMotivo?: string;
@@ -61,6 +66,9 @@ async function createCreditNoteFromDocument(
   options: CreateCreditNoteFromBoletaOptions,
 ) {
   const sourceName = affectedType === '01' ? 'Factura' : 'Boleta';
+  const fechaEmision = resolveCreditNoteIssueDate(options.fechaEmision, {
+    affectedDocumentDates: [document.fechaEmision],
+  });
 
   const company = (await db.select().from(companies).where(eq(companies.id, document.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -72,7 +80,6 @@ async function createCreditNoteFromDocument(
   const serie = resolveCreditNoteSerie(branch.seriesNotaCredito, document.serie, affectedType === '01' ? 'F' : undefined);
   const correlativo = await getNextCorrelative(document.branchId, '07', serie);
   const numeroCompleto = `${serie}-${correlativo}`;
-  const fechaEmision = options.fechaEmision || formatLocalDate();
   const ts = Math.floor(Date.now() / 1000);
   const montoTotal = Number(document.mtoImpVenta || 0);
   const leyendas = [{ code: '1000', value: `${numeroALetras(montoTotal).toUpperCase()} SOLES.` }];
@@ -129,6 +136,13 @@ export async function sendCreditNoteToSunat(creditNoteId: number) {
   const note = (await db.select().from(creditNotes).where(eq(creditNotes.id, creditNoteId)).limit(1))[0];
   if (!note) throw new Error('Nota de crédito no encontrada');
   if (note.estadoSunat === 'ACEPTADO') throw new Error('La nota de crédito ya fue aceptada por SUNAT');
+  const affectedDocumentDate = await findAffectedDocumentDate(note);
+  if (!affectedDocumentDate) {
+    throw new Error('No se encontró el comprobante afectado para validar la fecha de la nota de crédito.');
+  }
+  validateCreditNoteIssueDateForSend(note.fechaEmision, {
+    affectedDocumentDates: [affectedDocumentDate],
+  });
 
   const company = (await db.select().from(companies).where(eq(companies.id, note.companyId)).limit(1))[0];
   if (!company) throw new Error('Empresa no encontrada');
@@ -298,10 +312,19 @@ export async function createAndSendCreditNotesFromBoletas(
 ): Promise<CreditNoteBatchResult> {
   const uniqueIds = Array.from(new Set(boletaIds));
   const results: CreditNoteSendOutcome[] = [];
+  const affectedDocuments = uniqueIds.length > 0
+    ? await db.select({ fechaEmision: boletas.fechaEmision })
+        .from(boletas)
+        .where(inArray(boletas.id, uniqueIds))
+    : [];
+  const fechaEmision = resolveCreditNoteBatchIssueDate(options.fechaEmision, {
+    affectedDocumentDates: affectedDocuments.map((document) => document.fechaEmision),
+  });
+  const batchOptions = { ...options, fechaEmision };
 
   for (const boletaId of uniqueIds) {
     try {
-      results.push(await createAndSendCreditNoteFromBoleta(boletaId, options));
+      results.push(await createAndSendCreditNoteFromBoleta(boletaId, batchOptions));
     } catch (error: any) {
       results.push({
         boletaId,
@@ -473,9 +496,30 @@ function normalizeSeries(rawSeries: unknown): string[] {
   return rawSeries.map(value => String(value || '').trim()).filter(Boolean);
 }
 
-function formatLocalDate(date: Date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+async function findAffectedDocumentDate(
+  note: typeof creditNotes.$inferSelect,
+): Promise<string | undefined> {
+  if (note.tipoDocAfectado === '01') {
+    const condition = note.affectedFacturaId
+      ? eq(facturas.id, note.affectedFacturaId)
+      : and(
+          eq(facturas.companyId, note.companyId),
+          eq(facturas.numeroCompleto, note.numDocAfectado),
+        );
+    return (await db.select({ fechaEmision: facturas.fechaEmision })
+      .from(facturas)
+      .where(condition)
+      .limit(1))[0]?.fechaEmision;
+  }
+
+  const condition = note.affectedBoletaId
+    ? eq(boletas.id, note.affectedBoletaId)
+    : and(
+        eq(boletas.companyId, note.companyId),
+        eq(boletas.numeroCompleto, note.numDocAfectado),
+      );
+  return (await db.select({ fechaEmision: boletas.fechaEmision })
+    .from(boletas)
+    .where(condition)
+    .limit(1))[0]?.fechaEmision;
 }

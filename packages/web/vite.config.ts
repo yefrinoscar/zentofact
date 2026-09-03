@@ -9,7 +9,9 @@ const apiPrefixes = [
   '/health',
   '/me',
   '/dashboard',
+  '/pagos',
   '/orders-inbox',
+  '/logistics-inbox',
   '/order-management',
   '/products',
   '/product-listings',
@@ -24,8 +26,10 @@ const apiPrefixes = [
   '/documentos',
   '/credit-notes',
   '/falabella',
+  '/ripley',
   '/workflow',
   '/auto-emit',
+  '/system',
   '/webhooks',
 ];
 const apiProxy = Object.fromEntries(
@@ -46,6 +50,7 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 3011,
+    strictPort: true,
     proxy: apiProxy,
   },
   preview: {

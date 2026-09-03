@@ -47,18 +47,62 @@ web usa las rutas internas del servidor, igual que los módulos existentes.
 
 ## Activación segura
 
+El flag operativo vive en la tabla `system_settings` y se controla desde el
+panel **Configuración del sistema** (`/#/system-config`), visible solo para
+superadministradores. **Cola de descuentos** (`/#/descuentos-stock`) muestra
+ese mismo interruptor: Encendido o Apagado. No hay un segundo switch. La
+variable de entorno `CATALOG_INVENTORY_ENABLED`
+ya no enciende la funcionalidad: actúa únicamente como **kill-switch** —
+si está explícitamente en `false` apaga el flag aunque la base de datos lo
+tenga prendido. El panel muestra un checklist con los pasos 2–4; el servidor
+rechaza encender mientras no exista al menos un listing activo.
+
 ```dotenv
 CATALOG_INVENTORY_ENABLED=false
 CATALOG_ALLOW_NEGATIVE_MARKETPLACE=false
 CATALOG_ALLOW_NEGATIVE_MANUAL=false
 ```
 
-1. Desplegar las migraciones y la UI con el hook apagado.
+1. Desplegar las migraciones y la UI con el flag apagado.
 2. Importar listings de cada seller.
 3. Registrar stock inicial mediante ajustes absolutos con motivo.
 4. Validar en staging un pedido nuevo, re-sync idéntico, cambios `2→1→2→1`,
    eliminación de línea, cancelación y devolución.
-5. Cambiar `CATALOG_INVENTORY_ENABLED=true` y reiniciar el servicio.
+5. Encender `Descuento de inventario` desde el panel superadmin (o dejar la
+   env en `true` como valor inicial del ambiente antes del primer arranque;
+   después manda la BD).
+
+### Preparar un ambiente de producción
+
+Sigue este orden cuando un ambiente ya tiene pedidos o publicaciones:
+
+1. Despliega la versión que separa `product_inventory.quantity_on_hand` de
+   `product_listings.marketplace_quantity`. Una sincronización de catálogo no
+   debe cambiar el stock físico.
+2. Abre **Configuración del sistema** y pulsa **Revisar catálogo Ripley**. La
+   vista previa muestra las publicaciones que se asociarán, los productos
+   maestros que se crearán y las publicaciones desasociadas que no se tocarán.
+3. Revisa la vista previa y pulsa **Aplicar cambios**. El proceso importa solo
+   ofertas activas. Compara título, SKU, marca, categoría, precio, color, talla
+   y la huella del archivo de imagen. Una coincidencia ambigua crea un producto
+   maestro separado.
+4. Fija el stock físico actual con un ajuste absoluto para cada producto que
+   aparezca en **Saldos auditables**. Usa un conteo del almacén, no la suma del
+   stock publicado por los sellers.
+5. Elige cómo cerrar las ventas anteriores al conteo físico:
+   - Si el conteo representa el stock actual, no vuelvas a descontar esas
+     ventas. El conteo ya incluye las unidades que salieron del almacén.
+   - Si el saldo corresponde a una fecha anterior a esas ventas, concilia las
+     ventas para aplicar sus movimientos en orden.
+
+No concilies ventas históricas sobre un saldo copiado del marketplace. Esa
+operación puede descontar dos veces una venta o conservar un saldo inflado.
+
+**Saldos auditables** no significa que el producto esté negativo. El aviso
+indica que `quantity_on_hand` cambió sin un registro equivalente en
+`inventory_movements`. Un ajuste absoluto establece un punto de partida
+auditable: registra el saldo contado, la diferencia aplicada, el motivo y el
+usuario que hizo el cambio.
 
 Desactivar el flag detiene el descuento en re-sync e hidratación histórica;
 no borra saldos ni movimientos. El paso a listo para enviar (webhook o
@@ -136,8 +180,8 @@ fuente y una cobertura explícita (`orderHeaders`, `orderDetails`,
 empresas que tienen listings activos del producto, consulta hasta ocho pedidos
 en paralelo y omite pedidos que ya tienen líneas cacheadas.
 
-La base local es la fuente de lectura para el histórico y para el módulo
-`/salidas`. Falabella solo se consulta como ventana corta de 2 días: cabeceras
+La base local es la fuente de lectura para el histórico de ventas del
+producto. Falabella solo se consulta como ventana corta de 2 días: cabeceras
 incrementales con `UpdatedAfter = cursor_updated_at - 10 minutos` y, si el
 seller aún no tiene cursor, un bootstrap de esos mismos 2 días. No se vuelve a
 pedir el periodo 30/90/365. Después solo se solicita `GetOrderItems` para las
@@ -149,23 +193,19 @@ tomó. Solo afirma que no existen ventas o devoluciones cuando la consulta live
 de la ventana corta terminó para todos los sellers y `coverage.complete` es
 verdadero; de lo contrario muestra que la consulta está incompleta.
 
-### Salidas de hoy
+### Agregación por plazo de envío
 
-`/salidas` agrega desde `orders` y `order_items` los productos que salen el
-día de Lima. La fecha operativa es `PromisedShippingTime` (o
-`promised_shipping_at`), no la fecha de compra. Muestra la cantidad de cada
-producto y el saldo de almacén cuando el SKU ya está en el catálogo. La
-lectura inicial no llama a Falabella.
+`GET /catalog/sales/today` agrega desde `orders` y `order_items` los productos
+cuyo `PromisedShippingTime` (o `promised_shipping_at`) cae en el día de Lima,
+no la fecha de compra. No hay pantalla de “Salidas de hoy”: esa ruta redirige
+a Todos los pedidos. Quienes tienen `productos` o `order_management` pueden
+consultar la API. El POST refresca solo los últimos 2 días de cabeceras e
+hidrata las líneas faltantes.
 
 ```http
 GET /catalog/sales/today?date=2026-08-12
 POST /catalog/sales/today/refresh
 ```
-
-El POST refresca solo los últimos 2 días de cabeceras e hidrata las líneas
-faltantes; luego vuelve a agregar desde la base local. Incluye líneas todavía
-no asociadas a un producto maestro. El permiso `salidas` abre el módulo;
-quienes ya tienen `productos` también pueden consultar la API.
 
 Los títulos de Falabella cambian por seller. La agregación no agrupa por ese
 nombre: usa la relación `order_items.listing_id → product_listings.product_id`,

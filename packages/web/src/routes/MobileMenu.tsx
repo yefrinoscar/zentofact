@@ -7,8 +7,8 @@ import { firstAllowedPath, PERMISSIONS } from '../lib/permissions';
 const descriptions = new Map(PERMISSIONS.map((permission) => [permission.key, permission.description]));
 
 export default function MobileMenu({ isMobile }: { isMobile: boolean }) {
-  const { user, can, loading } = usePermissions();
-  const groups = visibleNavigation(can);
+  const { user, can, isAdmin, isSuperadmin, loading } = usePermissions();
+  const groups = visibleNavigation(can, undefined, { isAdmin, isSuperadmin });
 
   if (!isMobile) return <Navigate to={firstAllowedPath(user)} replace />;
 
@@ -31,7 +31,7 @@ export default function MobileMenu({ isMobile }: { isMobile: boolean }) {
               <span className="h-px flex-1 bg-border" />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {group.items.map(({ to, label, icon: Icon, img, permission }) => (
+              {group.items.map(({ to, label, icon: Icon, img, permission, description }) => (
                 <Link
                   key={to}
                   to={to}
@@ -45,7 +45,7 @@ export default function MobileMenu({ isMobile }: { isMobile: boolean }) {
                   </div>
                   <div>
                     <h3 className="text-[15px] font-semibold leading-tight text-foreground">{label}</h3>
-                    <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-muted-foreground">{descriptions.get(permission)}</p>
+                    <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-muted-foreground">{description ?? (permission ? descriptions.get(permission) : undefined)}</p>
                   </div>
                 </Link>
               ))}

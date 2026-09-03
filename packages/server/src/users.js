@@ -14,7 +14,7 @@ import {
   roleRank,
   userHasPermission,
 } from './permissions.js';
-import { authAccounts, authSessions, authUsers, userAuditLog } from './db-schema.js';
+import { authAccounts, authSessions, authUsers, LOCAL_CREDENTIAL_ISSUER, userAuditLog } from './db-schema.js';
 
 const PASSWORD_MIN_LENGTH = 12;
 const USER_ADMIN_LOCK = 917204;
@@ -41,6 +41,7 @@ function serializeUser(row) {
     role,
     permissions: parsePermissions(row.permissions, role),
     active: isActive(row.active),
+    commissionPercent: Number(row.commissionPercent ?? 0) || 0,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -55,8 +56,18 @@ function normalizeRequestedRole(role, fallback = 'operator') {
 
 function normalizeRequestedPermissions(input, role, fallback) {
   if (isAdminRole(role)) return [...ALL_PERMISSION_KEYS];
+  if (normalizeRole(role) === 'vendedor') return permissionsForRole(role);
   return normalizePermissions(input != null ? input : fallback, role)
-    .filter((key) => key !== 'users' && key !== 'dashboard');
+    .filter((key) => key !== 'users' && key !== 'dashboard' && key !== 'pagos');
+}
+
+function normalizeCommissionPercent(value, fallback = 0) {
+  if (value == null || value === '') return Number(fallback) || 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+    throw new Error('La comisión debe estar entre 0 y 100');
+  }
+  return Math.round(amount * 100) / 100;
 }
 
 function validatePassword(password) {
@@ -141,12 +152,30 @@ async function assertAdminInvariants(tx, current, nextRole, nextActive) {
   }
 }
 
+export async function ensureAuthSchema() {
+  // Better Auth crea "user"/session/account; sin esto un Postgres vacío
+  // (p. ej. Railway PR preview) rompe el boot en ensureUserColumns.
+  const { getMigrations } = await import('better-auth/db/migration');
+  const { auth } = await import('./auth.js');
+  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
+  if (toBeCreated?.length || toBeAdded?.length) {
+    console.log(
+      '[auth] migrando schema:',
+      (toBeCreated || []).map((t) => t.table || t.name || Object.keys(t)[0]).join(', ') || '(sin tablas nuevas)',
+    );
+  }
+  await runMigrations();
+}
+
 export async function ensureUserColumns() {
   // DDL de compatibilidad para tablas de Better Auth; el CRUD usa Drizzle.
+  await ensureAuthSchema();
   await pool.query(`
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'operator';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS permissions TEXT DEFAULT '[]';
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
+    ALTER TABLE "user" ADD COLUMN IF NOT EXISTS commission_percent NUMERIC(5,2) DEFAULT 0;
+    UPDATE "user" SET commission_percent = 0 WHERE commission_percent IS NULL;
     CREATE TABLE IF NOT EXISTS user_audit_log (
       id BIGSERIAL PRIMARY KEY,
       actor_id TEXT,
@@ -166,6 +195,28 @@ export async function ensureUserColumns() {
     } catch (error) {
       console.error('[AUTH] No se pudo aplicar AUTH_SUPERADMIN_EMAIL:', error?.message || error);
     }
+  }
+}
+
+export async function ensureBootstrapAdmin() {
+  // Solo para Postgres vacíos (p. ej. Railway PR preview): crea el primer
+  // superadmin si ADMIN_EMAIL/ADMIN_PASSWORD están definidos y no hay usuarios.
+  const email = String(process.env.ADMIN_EMAIL || process.env.AUTH_SUPERADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.ADMIN_PASSWORD || '').trim();
+  if (!email || password.length < 12) return;
+  const existing = await pool.query('select count(*)::int as n from "user"');
+  if (Number(existing.rows[0]?.n || 0) > 0) return;
+  if (process.env.AUTH_ALLOW_SIGNUP !== 'true') {
+    console.warn('[auth] ADMIN_* definidos pero AUTH_ALLOW_SIGNUP!=true; no se crea el bootstrap admin.');
+    return;
+  }
+  try {
+    const { auth } = await import('./auth.js');
+    await auth.api.signUpEmail({ body: { email, password, name: 'Admin' } });
+    await promoteSuperadminByEmail(email, 'system.bootstrap');
+    console.log('[auth] bootstrap admin creado:', email);
+  } catch (error) {
+    console.error('[auth] No se pudo crear bootstrap admin:', error?.message || error);
   }
 }
 
@@ -204,7 +255,7 @@ export async function promoteSuperadminByEmail(email, actorId = null) {
   });
 }
 
-export async function createUser({ name, email, password, role = 'operator', permissions, active = true }, actorId) {
+export async function createUser({ name, email, password, role = 'operator', permissions, active = true, commissionPercent }, actorId) {
   const actor = await getUserById(actorId);
   const cleanEmail = validateEmail(email);
   const cleanName = String(name || '').trim() || cleanEmail.split('@')[0];
@@ -214,6 +265,7 @@ export async function createUser({ name, email, password, role = 'operator', per
   const roleKey = normalizeRequestedRole(role);
   assertCanAssignRole(actor, roleKey);
   const perms = normalizeRequestedPermissions(permissions, roleKey, permissionsForRole(roleKey));
+  const commission = normalizeCommissionPercent(commissionPercent, 0);
   const userId = newId();
   const accountId = newId();
   const now = new Date();
@@ -229,6 +281,7 @@ export async function createUser({ name, email, password, role = 'operator', per
       role: roleKey,
       permissions: JSON.stringify(perms),
       active: !!active,
+      commissionPercent: String(commission),
       createdAt: now,
       updatedAt: now,
     });
@@ -236,6 +289,7 @@ export async function createUser({ name, email, password, role = 'operator', per
       id: accountId,
       accountId: userId,
       providerId: 'credential',
+      issuer: LOCAL_CREDENTIAL_ISSUER,
       userId,
       password: hashed,
       createdAt: now,
@@ -263,13 +317,23 @@ export async function updateUser(id, patch = {}, actorId) {
       : current.permissions;
     const permissions = normalizeRequestedPermissions(patch.permissions, role, permissionFallback);
     const active = patch.active != null ? !!patch.active : current.active;
+    const commissionPercent = patch.commissionPercent != null
+      ? normalizeCommissionPercent(patch.commissionPercent)
+      : Number(current.commissionPercent || 0);
     const passwordChanged = patch.password != null && String(patch.password) !== '';
     if (passwordChanged) validatePassword(patch.password);
 
     await assertAdminInvariants(tx, current, role, active);
     await tx
       .update(authUsers)
-      .set({ name, role, permissions: JSON.stringify(permissions), active, updatedAt: new Date() })
+      .set({
+        name,
+        role,
+        permissions: JSON.stringify(permissions),
+        active,
+        commissionPercent: String(commissionPercent),
+        updatedAt: new Date(),
+      })
       .where(eq(authUsers.id, id));
 
     if (passwordChanged) {

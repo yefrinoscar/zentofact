@@ -4,10 +4,12 @@ import {
   inventoryConfig,
 } from './inventory-service.js';
 import { resolveListing } from './sku-resolver.js';
+import { isCatalogInventoryEnabled } from '../system-config.js';
 
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
+const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley']);
 
 export function isStockEligibleFulfillment(status) {
   return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());
@@ -38,7 +40,7 @@ function itemTerminalKind(status) {
   if (!value) return null;
   if (value.includes('cancel')) return 'cancelled';
   if (value.includes('failed')) return 'failed';
-  if (value.includes('returned') || value.includes('return_shipped')) return 'returned';
+  if (value.includes('returned') || value.includes('return_shipped') || value.includes('refund')) return 'returned';
   return null;
 }
 
@@ -176,13 +178,16 @@ export async function stockPhase(input) {
   const actorUserId = input.actorUserId || null;
   const orderId = Number(persisted.id);
   const channelCode = account.channelCode || account.channel_code;
-  const companyId = Number(persisted.company_id);
-  const isMarketplace = MARKETPLACE_SOURCES.has(source);
+  const companyId = persisted.company_id == null ? null : Number(persisted.company_id);
+  const isMarketplace = MARKETPLACE_SOURCES.has(source)
+    || MARKETPLACE_CHANNELS.has(String(channelCode || '').trim().toLowerCase());
   const currentFulfillment = persisted.fulfillment_status;
   const previousFulfillment = existing?.fulfillment_status;
   const becameEligible = isStockEligibleFulfillment(currentFulfillment)
     && (!existing || !isStockEligibleFulfillment(previousFulfillment));
-  const saleEnabled = input.enabled ?? (becameEligible ? true : inventoryConfig.enabled);
+  // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
+  const saleEnabled = input.enabled
+    ?? (becameEligible ? true : await isCatalogInventoryEnabled(db));
   const context = {
     orderId,
     orderNumber: orderNumberOf(persisted),
@@ -193,6 +198,7 @@ export async function stockPhase(input) {
   const stats = { enabled: Boolean(saleEnabled), applied: 0, skipped: 0, reversed: 0, becameEligible };
 
   await db.query('select id from orders where id=$1 for update', [orderId]);
+  if (persisted.items_status === 'pending' || persisted.items_status === 'error') return stats;
 
   // A. Revertir las líneas ausentes mientras sus FKs todavía existen.
   for (const row of doomedItems) {
@@ -275,6 +281,11 @@ export async function stockPhase(input) {
     }
 
     if (!item.product_id) {
+      if (companyId == null) {
+        await writeResolution(db, item, { stockState: 'skipped_unmapped' });
+        stats.skipped += 1;
+        continue;
+      }
       const resolved = await resolveListing(db, {
         channelCode,
         companyId,

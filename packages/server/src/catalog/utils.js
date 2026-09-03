@@ -51,6 +51,8 @@ export function mapProduct(row) {
     barcode: row.barcode,
     imageUrl: row.image_url,
     referencePrice: row.reference_price == null ? null : Number(row.reference_price),
+    commissionAmount: row.commission_amount == null ? null : Number(row.commission_amount),
+    profitOwner: row.profit_owner || null,
     unit: row.unit,
     quantityOnHand: row.quantity_on_hand == null ? 0 : Number(row.quantity_on_hand),
     quantityReserved: row.quantity_reserved == null ? 0 : Number(row.quantity_reserved),
@@ -96,6 +98,8 @@ export function mapListing(row) {
 const COMPACT_LISTING_METADATA_KEYS = [
   'effectivePrice', 'price', 'regularPrice', 'offerPrice', 'offerIsActive',
   'sellerWarehouseQuantity', 'fulfillmentQuantity', 'stockSource',
+  'reportedAvailableQuantity', 'publicAvailabilityStatus',
+  'publicAvailabilityCheckedAt', 'publicIsPublished', 'publicIsOutOfStock',
   'isSellable', 'sellabilityReason', 'contentScore',
   'isPublished', 'status', 'marketplaceStatus', 'qcStatus',
   'url',

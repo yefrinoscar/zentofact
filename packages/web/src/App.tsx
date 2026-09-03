@@ -10,14 +10,16 @@ import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
-import ProductosHoy from './routes/ProductosHoy';
 import Insumos from './routes/Insumos';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
+import DescuentosCola from './routes/DescuentosCola';
 import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
+import BandejaLogistica from './routes/BandejaLogistica';
 import PedidosMulticanal from './routes/PedidosMulticanal';
 import RegistrarVenta from './routes/RegistrarVenta';
+import MisVentas from './routes/MisVentas';
 import MobileMenu from './routes/MobileMenu';
 import { useAppStore } from './stores/app';
 import api from './lib/api';
@@ -28,7 +30,9 @@ import { PanelLeft } from 'lucide-react';
 import { documentDateRangeForLastDays } from './lib/documentDateRange';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
+const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
+const SystemConfig = lazy(() => import('./routes/SystemConfig'));
 
 const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/': {
@@ -39,9 +43,17 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Dashboard',
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
+  '/pagos': {
+    title: 'Pagos',
+    subtitle: 'Cuánto te cobra Falabella por cada venta.',
+  },
   '/menu': {
     title: 'Menú',
     subtitle: 'Selecciona el módulo que necesitas usar.',
+  },
+  '/bandeja': {
+    title: 'Bandeja',
+    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley y manuales.',
   },
   '/pedidos': {
     title: 'Bandeja Falabella',
@@ -50,6 +62,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/orders': {
     title: 'Pedidos',
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
+  },
+  '/mis-ventas': {
+    title: 'Mis ventas',
+    subtitle: 'Tus ventas de hoy y del mes, con la comisión estimada.',
   },
   '/orders/nueva': {
     title: 'Nueva venta',
@@ -79,9 +95,9 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Catálogo de productos',
     subtitle: 'Productos, stock y publicaciones de cada empresa.',
   },
-  '/salidas': {
-    title: 'Salidas de hoy',
-    subtitle: 'Productos que salen hoy según PromisedShippingTime.',
+  '/descuentos-stock': {
+    title: 'Cola de descuentos',
+    subtitle: 'Pedidos listos para enviar. El descuento se enciende en Configuración del sistema.',
   },
   '/insumos': {
     title: 'Insumos',
@@ -113,7 +129,11 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/settings': {
     title: 'Ajustes',
-    subtitle: 'Configura empresas y el tema visual de la aplicación.',
+    subtitle: 'Tema visual y cobertura del envío propio.',
+  },
+  '/system-config': {
+    title: 'Configuración del sistema',
+    subtitle: 'Flags operativos de este ambiente. Solo superadministradores.',
   },
 };
 
@@ -189,7 +209,7 @@ function AppLayout() {
   const setActiveCompanyId = useAppStore((s) => s.setActiveCompanyId);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const { user, loading, can } = usePermissions();
+  const { user, loading, can, isSuperadmin } = usePermissions();
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -210,6 +230,11 @@ function AppLayout() {
   const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
   const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
+  const systemConfigRoute = (
+    isSuperadmin
+      ? <Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><SystemConfig /></Suspense>
+      : <Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />
+  );
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -245,9 +270,15 @@ function AppLayout() {
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
+              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Pagos /></Suspense></RequirePermission>} />
+              <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
-              <Route path="/orders/nueva" element={<RequirePermission permission="order_management" {...permissionState}><RegistrarVenta /></RequirePermission>} />
+              <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
+              <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
+              <Route path="/envio-propio" element={<Navigate to="/settings" replace />} />
+              <Route path="/orders/envio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
+              <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
@@ -256,7 +287,8 @@ function AppLayout() {
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
               <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
-              <Route path="/salidas" element={<RequirePermission permissions={['salidas', 'productos']} {...permissionState}><ProductosHoy /></RequirePermission>} />
+              <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
+              <Route path="/salidas" element={<Navigate to="/orders" replace />} />
               <Route path="/insumos" element={<RequirePermission permission="insumos" {...permissionState}><Insumos /></RequirePermission>} />
               <Route path="/auto-emision" element={<RequirePermission permission="auto_emision" {...permissionState}><AutoEmision /></RequirePermission>} />
               <Route path="/boletas" element={<RequirePermission permission="boletas" {...permissionState}><Documentos kind="boletas" /></RequirePermission>} />
@@ -268,6 +300,7 @@ function AppLayout() {
               <Route path="/individual-invoice" element={<Navigate to="/boletas/new" replace />} />
               <Route path="/users" element={<RequirePermission permission="users" {...permissionState}><UsersPage /></RequirePermission>} />
               <Route path="/settings" element={<RequirePermission permission="settings" {...permissionState}><Settings /></RequirePermission>} />
+              <Route path="/system-config" element={systemConfigRoute} />
               <Route path="*" element={<Navigate to={isMobile ? '/menu' : firstAllowedPath(user)} replace />} />
             </Routes>
           </div>
