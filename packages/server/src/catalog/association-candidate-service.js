@@ -156,7 +156,7 @@ function candidateMatches(candidate, search) {
 }
 
 export async function listLiveAssociationCandidates(filters = {}, inputDependencies = {}) {
-  positiveInt(filters.productId, 'productId');
+  const productId = positiveInt(filters.productId, 'productId');
   const channels = selectedChannels(filters);
   const availability = String(filters.availability || 'all').trim().toLowerCase();
   if (!['recommended', 'all'].includes(availability)) throw httpError('availability inválido.');
@@ -191,8 +191,11 @@ export async function listLiveAssociationCandidates(filters = {}, inputDependenc
 
   const remoteCandidates = (await Promise.all(tasks)).flat();
   const listingResult = await dependencies.db.query(
-    `select id,product_id,channel_code,company_id,seller_sku,status
-     from product_listings where channel_code=any($1::text[])`,
+    `select l.id,l.product_id,l.channel_code,l.company_id,l.seller_sku,l.status,
+            p.main_sku as linked_product_sku,p.name as linked_product_name
+     from product_listings l
+     left join products p on p.id=l.product_id
+     where l.channel_code=any($1::text[])`,
     [[...channels]],
   );
   const listingByIdentity = new Map(listingResult.rows.map((listing) => [
@@ -203,7 +206,11 @@ export async function listLiveAssociationCandidates(filters = {}, inputDependenc
   for (const remote of remoteCandidates) {
     const identity = listingIdentity(remote.channelCode, remote.companyId, remote.sellerSku);
     const existing = listingByIdentity.get(identity);
-    if (existing && existing.status !== 'unlinked') continue;
+    const linkedElsewhere = existing
+      && existing.status !== 'unlinked'
+      && Number(existing.product_id) !== productId;
+    if (existing && existing.status !== 'unlinked' && !linkedElsewhere) continue;
+    if (linkedElsewhere && !search) continue;
     if (!candidateMatches(remote, search)) continue;
     uniqueCandidates.set(identity, {
       id: existing ? Number(existing.id) : 0,
@@ -219,6 +226,12 @@ export async function listLiveAssociationCandidates(filters = {}, inputDependenc
       metadata: remote.metadata,
       imageUrl: remote.imageUrl,
       candidateSource: existing ? 'catalog' : 'remote',
+      association: linkedElsewhere ? {
+        kind: 'linked_elsewhere',
+        productId: Number(existing.product_id),
+        mainSku: existing.linked_product_sku || null,
+        productName: existing.linked_product_name || null,
+      } : { kind: 'available' },
     });
   }
   const matchingCandidates = [...uniqueCandidates.values()];
