@@ -51,6 +51,7 @@ const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
+const logisticsInbox = await import('./logistics-inbox.js');
 const orderManagement = await import('./order-management.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
@@ -158,6 +159,9 @@ for (const [prefix, perm] of moduleGuards) {
 const orderManagementGuard = requireAnyPermission(['order_management', 'salesperson']);
 app.use('/order-management', orderManagementGuard);
 app.use('/order-management/*', orderManagementGuard);
+const logisticsInboxGuard = requireAnyPermission(['orders_inbox', 'order_management']);
+app.use('/logistics-inbox', logisticsInboxGuard);
+app.use('/logistics-inbox/*', logisticsInboxGuard);
 
 const catalogGuard = (c, next) => {
   const path = c.req.path;
@@ -354,6 +358,22 @@ app.post('/orders-inbox/sync', async (c) => {
     });
     dashboard.clearDashboardResponseCache();
     return ok(c, result);
+  }
+  catch (e) { return fail(c, e, 400); }
+});
+
+app.get('/logistics-inbox', async (c) => {
+  try { return ok(c, await logisticsInbox.listLogisticsInbox(c.req.query())); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/logistics-inbox/print', async (c) => {
+  try {
+    const body = await c.req.json();
+    const user = c.get('user');
+    return ok(c, await logisticsInbox.printLogisticsPackWithDefaults({
+      ...body,
+      printedBy: user?.email || user?.name || null,
+    }));
   }
   catch (e) { return fail(c, e, 400); }
 });

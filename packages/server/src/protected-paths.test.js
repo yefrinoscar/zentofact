@@ -7,6 +7,8 @@ test('la bandeja de pedidos exige sesión para lectura y sincronización', () =>
   assert.equal(isProtectedPath('/orders-inbox/sync'), true);
   assert.equal(isProtectedPath('/order-management/orders'), true);
   assert.equal(isProtectedPath('/order-management/accounts'), true);
+  assert.equal(isProtectedPath('/logistics-inbox'), true);
+  assert.equal(isProtectedPath('/logistics-inbox/print'), true);
 });
 
 test('insumos exige sesión para lectura y ajustes', () => {

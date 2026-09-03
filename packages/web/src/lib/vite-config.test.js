@@ -12,4 +12,5 @@ test('development uses the canonical port and proxies Ripley API routes', async 
   assert.equal(loaded.config.server?.port, 3011);
   assert.equal(loaded.config.server?.strictPort, true);
   assert.ok(loaded.config.server?.proxy?.['/ripley']);
+  assert.ok(loaded.config.server?.proxy?.['/logistics-inbox']);
 });

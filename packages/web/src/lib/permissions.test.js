@@ -36,6 +36,8 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.ok(salespersonIndex >= 0 && salespersonIndex < ordersIndex);
   assert.equal(pathPermission('/mis-ventas'), 'salesperson');
   assert.equal(pathPermission('/pagos'), 'pagos');
+  assert.equal(pathPermission('/bandeja'), 'orders_inbox');
+  assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.path, '/bandeja');
 });
 
 test('el operador ya no tiene el módulo de salidas', () => {

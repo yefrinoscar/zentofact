@@ -11,6 +11,7 @@ const apiPrefixes = [
   '/dashboard',
   '/pagos',
   '/orders-inbox',
+  '/logistics-inbox',
   '/order-management',
   '/products',
   '/product-listings',
