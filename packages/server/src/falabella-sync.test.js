@@ -296,6 +296,51 @@ test('una sincronización por día pide a Falabella los pedidos creados en esa f
   assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'day'), true);
 });
 
+test('cuando Falabella cancela un pedido, el ciclo de vida guarda canceled_at', async () => {
+  const db = new FakeDb();
+  const client = {
+    getOrdersV2: async () => response([{
+      OrderId: '3249111405',
+      OrderNumber: '3249111405',
+      CreatedAt: '2026-08-21T08:01:00Z',
+      UpdatedAt: '2026-08-21T15:40:00Z',
+      GrandTotal: 8.98,
+      Statuses: [{ Status: 'canceled' }],
+    }]),
+  };
+  const result = await syncFalabellaOrders(7, { mode: 'day', date: '2026-08-21' }, fakeDependencies(db, client));
+  assert.equal(result.status, 'success');
+  const lifecycle = db.queries.find((query) => query.sql.startsWith('insert into falabella_order_lifecycle'));
+  assert.equal(lifecycle.params[3], 'canceled');
+  assert.match(lifecycle.sql, /canceled_at/);
+  assert.match(lifecycle.sql, /excluded.current_status='canceled'/);
+  const ordersInsert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.match(ordersInsert.sql, /cancelled_at/);
+  assert.equal(ordersInsert.params[4], 'cancelled');
+  assert.equal(ordersInsert.params[6], 'cancelled');
+});
+
+test('cuando Falabella marca un pedido como devuelto, el ciclo de vida guarda returned_at', async () => {
+  const db = new FakeDb();
+  const client = {
+    getOrdersV2: async () => response([{
+      OrderId: '3249038634',
+      OrderNumber: '3249038634',
+      CreatedAt: '2026-08-20T17:36:00Z',
+      UpdatedAt: '2026-08-21T12:10:00Z',
+      GrandTotal: 71.84,
+      Statuses: [{ Status: 'returned' }],
+    }]),
+  };
+  await syncFalabellaOrders(7, { mode: 'day', date: '2026-08-20' }, fakeDependencies(db, client));
+  const lifecycle = db.queries.find((query) => query.sql.startsWith('insert into falabella_order_lifecycle'));
+  assert.equal(lifecycle.params[3], 'returned');
+  assert.match(lifecycle.sql, /returned_at/);
+  assert.match(lifecycle.sql, /excluded.current_status='returned'/);
+  const ordersInsert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.equal(ordersInsert.params[6], 'returned');
+});
+
 test('el sync periódico recupera cabeceras sin artículos desde el corte operativo', async () => {
   const db = new FakeDb();
   const client = { getOrdersV2: async () => response([]) };

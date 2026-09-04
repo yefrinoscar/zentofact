@@ -104,9 +104,14 @@ async function recordOrderLifecycle(db, input) {
   await db.query(
     `insert into falabella_order_lifecycle (
        company_id, order_id, order_number, current_status, pending_at,
-       ready_to_ship_at, shipped_at, last_provider_update_at,
+       ready_to_ship_at, shipped_at, canceled_at, returned_at, last_provider_update_at,
        first_observed_at, last_observed_at
-     ) values ($1,$2,$3,$4,$5,null,null,$6,now(),now())
+     ) values (
+       $1,$2,$3,$4,$5,null,null,
+       case when $4='canceled' then coalesce($6::timestamptz, now()) else null end,
+       case when $4='returned' then coalesce($6::timestamptz, now()) else null end,
+       $6,now(),now()
+     )
      on conflict (company_id, order_id) do update set
        order_number=excluded.order_number,
        pending_at=coalesce(falabella_order_lifecycle.pending_at, excluded.pending_at),
@@ -120,6 +125,16 @@ async function recordOrderLifecycle(db, input) {
          falabella_order_lifecycle.shipped_at,
          case when falabella_order_lifecycle.current_status in ('pending','ready_to_ship')
            and excluded.current_status='shipped'
+           then coalesce(excluded.last_provider_update_at, now()) end
+       ),
+       canceled_at=coalesce(
+         falabella_order_lifecycle.canceled_at,
+         case when excluded.current_status='canceled'
+           then coalesce(excluded.last_provider_update_at, now()) end
+       ),
+       returned_at=coalesce(
+         falabella_order_lifecycle.returned_at,
+         case when excluded.current_status='returned'
            then coalesce(excluded.last_provider_update_at, now()) end
        ),
        current_status=excluded.current_status,

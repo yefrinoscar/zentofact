@@ -53,6 +53,26 @@ const SEED_ORDERS = [
     stockState: 'applied',
     stockApplied: 1,
   },
+  {
+    key: 'canceled',
+    orderNumber: 'PV-10004',
+    customer: { name: 'Marta Preview', firstName: 'Marta', lastName: 'Preview', documentNumber: '33445566' },
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+    falabellaStatus: 'canceled',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'returned',
+    orderNumber: 'PV-10005',
+    customer: { name: 'Nora Preview', firstName: 'Nora', lastName: 'Preview', documentNumber: '77889900' },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    falabellaStatus: 'returned',
+    stockState: 'none',
+    stockApplied: 0,
+  },
 ];
 
 const SEED_LOGISTICS_ORDERS = [
@@ -647,18 +667,22 @@ async function ensureSampleOrders(companiesByRuc, products) {
          order_status, payment_status, fulfillment_status, document_status, provider_status,
          document_requirement, document_type_policy, currency, subtotal, total,
          customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
-         items_status, created_by
+         items_status, created_by, cancelled_at, returned_at
        ) VALUES (
          $1,$2,$3,$4,
          $5,'paid',$6,'not_requested',$6,
          'optional','automatic','PEN',$7,$7,
-         $8::jsonb,$9::jsonb,$10::jsonb,$11,$11,$11,'complete',$12
+         $8::jsonb,$9::jsonb,$10::jsonb,$11,$11,$11,'complete',$12,
+         CASE WHEN $5 = 'cancelled' OR $6 = 'cancelled' THEN $11 ELSE NULL END,
+         CASE WHEN $6 = 'returned' THEN $11 ELSE NULL END
        )
        ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
          order_status = EXCLUDED.order_status,
          fulfillment_status = EXCLUDED.fulfillment_status,
          shipping = EXCLUDED.shipping,
          promised_shipping_at = EXCLUDED.promised_shipping_at,
+         cancelled_at = coalesce(orders.cancelled_at, EXCLUDED.cancelled_at),
+         returned_at = coalesce(orders.returned_at, EXCLUDED.returned_at),
          last_seen_at = NOW(),
          updated_at = NOW()
        RETURNING id`,
@@ -733,15 +757,19 @@ async function ensureFalabellaInboxOrders(limbo, product) {
     await pool.query(
       `INSERT INTO falabella_order_lifecycle (
          company_id, order_id, order_number, current_status, pending_at,
-         ready_to_ship_at, shipped_at, first_observed_at, last_observed_at
+         ready_to_ship_at, shipped_at, canceled_at, returned_at, first_observed_at, last_observed_at
        ) VALUES (
          $1,$2,$3,$4,NOW(),
          CASE WHEN $4 IN ('ready_to_ship','shipped') THEN NOW() ELSE NULL END,
          CASE WHEN $4 = 'shipped' THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'canceled' THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'returned' THEN NOW() ELSE NULL END,
          NOW(), NOW()
        )
        ON CONFLICT (company_id, order_id) DO UPDATE SET
          current_status = EXCLUDED.current_status,
+         canceled_at = coalesce(falabella_order_lifecycle.canceled_at, EXCLUDED.canceled_at),
+         returned_at = coalesce(falabella_order_lifecycle.returned_at, EXCLUDED.returned_at),
          last_observed_at = NOW()`,
       [limbo.id, orderId, spec.orderNumber, spec.falabellaStatus],
     );

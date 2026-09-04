@@ -124,6 +124,7 @@ type Product = {
   sellerStockTotal?: number;
   quantityOnHand: number;
   quantityReserved: number;
+  quantityPendingReturn?: number;
   available: number;
   reorderPoint?: number | null;
   listingsCount?: number;
@@ -2023,9 +2024,12 @@ function ProductDrawer({
         </TabsContent>
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
-          <MetricRow columns={3}>
+          <MetricRow columns={product.quantityPendingReturn ? 4 : 3}>
             <Metric label="Stock" value={`${formatNumber(product.available)} u`} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
+            {product.quantityPendingReturn ? (
+              <Metric label="Por aprobar" value={`${formatNumber(product.quantityPendingReturn)} u`} />
+            ) : null}
             <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
           </MetricRow>
           <div className="mt-6 flex items-center justify-between gap-3">

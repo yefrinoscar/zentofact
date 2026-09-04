@@ -19,7 +19,7 @@ const SPECIAL_FILTERS = ['none', 'outOfStock', 'unpublished', 'lowStock'];
 const CATALOG_SORTS = {
   updatedAt: { catalog: 'p.updated_at', page: 'page.updated_at' },
   name: { catalog: 'lower(p.name)', page: 'lower(page.name)' },
-  available: { catalog: '(i.quantity_on_hand - i.quantity_reserved)', page: 'page.available' },
+  available: { catalog: '(i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))', page: 'page.available' },
   sellerStock: {
     catalog: 'listing_stats.seller_stock_total',
     page: 'listing_stats.seller_stock_total',
@@ -82,12 +82,16 @@ function sellerStockSql() {
   )`;
 }
 
+function inventoryAvailableSql() {
+  return '(i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))';
+}
+
 function lowStockSql() {
-  return 'i.reorder_point is not null and i.quantity_on_hand - i.quantity_reserved <= i.reorder_point';
+  return `i.reorder_point is not null and ${inventoryAvailableSql()} <= i.reorder_point`;
 }
 
 function inventoryStatusSql(status) {
-  const available = '(i.quantity_on_hand - i.quantity_reserved)';
+  const available = inventoryAvailableSql();
   if (status === 'outOfStock') return `${available} <= 0`;
   if (status === 'lowStock') {
     return `${available} > 0 and i.reorder_point is not null and ${available} <= i.reorder_point`;
@@ -408,10 +412,11 @@ async function summarizeProducts(filters = {}, db) {
        count(*) filter (where ${scope} and ${inventoryStatusSql('inStock')}) as with_stock,
        count(*) filter (where ${scope} and ${inventoryStatusSql('outOfStock')}) as without_stock,
        count(*) filter (where ${scope} and coalesce(sales30.sold, 0) = 0) as without_sales,
-       coalesce(sum(i.quantity_on_hand - i.quantity_reserved) filter (where ${scope}), 0) as units_available,
+       coalesce(sum(${inventoryAvailableSql()}) filter (where ${scope}), 0) as units_available,
        coalesce(sum(i.quantity_reserved) filter (where ${scope}), 0) as units_reserved,
-       coalesce(sum(greatest(0, coalesce(i.reorder_point, sales30.sold, 0) - (i.quantity_on_hand - i.quantity_reserved))) filter (where ${scope}), 0) as units_to_reorder,
-       coalesce(sum((i.quantity_on_hand - i.quantity_reserved) * coalesce(coverage.listing_price, p.reference_price, 0)) filter (where ${scope}), 0) as inventory_value,
+       coalesce(sum(i.quantity_pending_return) filter (where ${scope}), 0) as units_pending_return,
+       coalesce(sum(greatest(0, coalesce(i.reorder_point, sales30.sold, 0) - ${inventoryAvailableSql()})) filter (where ${scope}), 0) as units_to_reorder,
+       coalesce(sum((${inventoryAvailableSql()}) * coalesce(coverage.listing_price, p.reference_price, 0)) filter (where ${scope}), 0) as inventory_value,
        coalesce(sum(sales30.sold) filter (where ${scope}), 0) as units_sold_30,
        coalesce(sum(sales30.revenue) filter (where ${scope}), 0) as revenue_30
      from products p
@@ -454,8 +459,8 @@ export async function listProducts(filters = {}, db) {
   const pageValues = [...values, limit, offset];
   const order = catalogOrder(filters);
   const catalogSql = order.requiresListingStats
-    ? `select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
-         i.quantity_on_hand - i.quantity_reserved as available,
+    ? `select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+         ${inventoryAvailableSql()} as available,
          count(*) over() as total_count,
          listing_stats.listings_count,
          listing_stats.sellers_count,
@@ -477,8 +482,8 @@ export async function listProducts(filters = {}, db) {
          listing_stats.seller_price_max,
          listing_stats.seller_stock_total
        from (
-         select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
-           i.quantity_on_hand - i.quantity_reserved as available,
+         select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+           ${inventoryAvailableSql()} as available,
            count(*) over() as total_count
          from products p
          join product_inventory i on i.product_id=p.id
@@ -533,8 +538,8 @@ export async function getProduct(id, db) {
   const productId = positiveInt(id, 'productId');
   const [productResult, listingsResult] = await Promise.all([
     target.query(
-      `select p.*, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
-         i.quantity_on_hand - i.quantity_reserved as available,
+      `select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+         ${inventoryAvailableSql()} as available,
          listing_stats.listings_count,
          listing_stats.sellers_count,
          listing_stats.channels,
