@@ -1,7 +1,7 @@
 import { applyReadyOrderStock } from './catalog-operations.js';
 import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
-import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
+import { INVENTORY_LISTEN_FROM_AT, isAfterInventoryListenFrom } from './stock-commitment.js';
 import { loadCore } from './utils.js';
 
 const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
@@ -242,7 +242,25 @@ export async function getConfig(db) {
   const [inventory, paused, statsRows, reconciliationRows] = await Promise.all([
     catalogInventoryFlagState(db),
     getPaused(db),
-    client.query('select status, count(*)::int as n from inventory_stock_jobs group by status'),
+    client.query(
+      `select j.status, count(*)::int as n
+         from inventory_stock_jobs j
+         left join lateral (
+           select ordered_at
+           from orders
+           where id=j.order_id
+              or (
+                j.order_id is null
+                and company_id=j.company_id
+                and external_order_id=j.external_order_id
+              )
+           order by (id=j.order_id) desc, id asc
+           limit 1
+         ) order_row on true
+        where order_row.ordered_at >= $1::timestamptz
+        group by j.status`,
+      [INVENTORY_LISTEN_FROM_AT],
+    ),
     client.query(`select last_reconciled_at, last_reconciliation, last_reconciliation_error
                     from inventory_stock_state where id=1`),
   ]);
@@ -313,9 +331,10 @@ export async function recentJobs(limit = 60, db) {
          left join products product on product.id=oi.product_id
         where oi.order_id=order_row.id
      ) item_summary on true
+     where order_row.ordered_at >= $2::timestamptz
      order by j.updated_at desc
      limit $1`,
-    [Math.min(Math.max(Number(limit) || 60, 1), 200)],
+    [Math.min(Math.max(Number(limit) || 60, 1), 200), INVENTORY_LISTEN_FROM_AT],
   );
   return result.rows;
 }
@@ -529,11 +548,14 @@ export async function enqueueStockJob(input = {}, db) {
   }
   const source = text(input.source, 50) || 'system';
   let identity = orderId ? (await (await target(db)).query(
-    `select id, company_id, external_order_id, external_order_number
+    `select id, company_id, external_order_id, external_order_number, ordered_at
      from orders where id=$1`,
     [orderId],
   )).rows[0] : { company_id: companyId, external_order_id: externalOrderId };
   if (!identity) return { enqueued: false, ignored: 'pedido inexistente' };
+  if (orderId && !isAfterInventoryListenFrom(identity.ordered_at)) {
+    return { enqueued: false, ignored: 'fuera del período' };
+  }
   const result = await withIdentityLock(
     db,
     Number(identity.company_id),
@@ -541,14 +563,17 @@ export async function enqueueStockJob(input = {}, db) {
     async (client) => {
       if (orderId) {
         identity = (await client.query(
-          `select id, company_id, external_order_id, external_order_number
+          `select id, company_id, external_order_id, external_order_number, ordered_at
            from orders where id=$1`,
           [orderId],
         )).rows[0];
         if (!identity) return { rows: [] };
+        if (!isAfterInventoryListenFrom(identity.ordered_at)) {
+          return { rows: [], ignored: 'fuera del período' };
+        }
       } else {
         const matches = await client.query(
-          `select id, company_id, external_order_id, external_order_number
+          `select id, company_id, external_order_id, external_order_number, ordered_at
            from orders
            where company_id=$1 and external_order_id=$2
            order by id limit 2`,
@@ -556,6 +581,9 @@ export async function enqueueStockJob(input = {}, db) {
         );
         if (matches.rows.length === 1) {
           [identity] = matches.rows;
+          if (!isAfterInventoryListenFrom(identity.ordered_at)) {
+            return { rows: [], ignored: 'fuera del período' };
+          }
           orderId = Number(identity.id);
         }
       }
@@ -581,7 +609,7 @@ export async function enqueueStockJob(input = {}, db) {
     },
   );
   const job = result.rows[0];
-  if (!job) return { enqueued: false, ignored: 'pedido inexistente' };
+  if (!job) return { enqueued: false, ignored: result.ignored || 'pedido inexistente' };
   return {
     enqueued: job?.status === 'pending',
     already: job?.status !== 'pending',
@@ -675,12 +703,25 @@ export async function processStockQueue(input = {}, db) {
                       and matched.external_order_id=candidate.external_order_id)=1
            )
          )
+         and exists (
+           select 1
+           from orders listen_order
+           where listen_order.ordered_at >= $3::timestamptz
+             and (
+               listen_order.id=candidate.order_id
+               or (
+                 candidate.order_id is null
+                 and listen_order.company_id=candidate.company_id
+                 and listen_order.external_order_id=candidate.external_order_id
+               )
+             )
+         )
        order by created_at asc
        limit $1
        for update skip locked
      )
      returning *`,
-    [limit, MAX_ATTEMPTS],
+    [limit, MAX_ATTEMPTS, INVENTORY_LISTEN_FROM_AT],
   );
   const stats = { claimed: claimed.rows.length, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0 };
   for (const row of claimed.rows) {
@@ -757,8 +798,9 @@ export async function reopenReservedStockJobsForCommit(db) {
   return { reopened: result.rows.length };
 }
 
-export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
+export async function enqueueStockJobsSinceListenFrom(input = {}, db, dependencies = {}) {
   const since = input.since || INVENTORY_LISTEN_FROM_AT;
+  const enqueue = dependencies.enqueue || enqueueStockJob;
   const client = await target(db);
   const orders = await client.query(
     `select o.id as order_id, o.company_id, o.external_order_id, o.external_order_number
@@ -770,9 +812,14 @@ export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
        and exists (
          select 1 from order_items oi
          where oi.order_id=o.id
-           and oi.stock_state in ('none','skipped_policy','skipped_unmapped','skipped_insufficient')
+           and oi.stock_state in ('none','skipped_policy')
        )
-     order by o.id
+       and not exists (
+         select 1 from inventory_stock_jobs j
+         where j.order_id=o.id
+           and j.status in ('pending','processing')
+       )
+     order by o.ordered_at desc, o.id desc
      limit 50`,
     [since],
   );
@@ -782,12 +829,13 @@ export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
   let enqueued = 0;
   let already = 0;
   for (const row of orders.rows) {
-    const result = await enqueueStockJob({
+    const result = await enqueue({
       orderId: row.order_id,
       companyId: row.company_id,
       externalOrderId: row.external_order_id,
       orderNumber: row.external_order_number,
       source: input.source || 'listen',
+      resetAttempts: true,
     }, db);
     if (result.enqueued) enqueued += 1;
     else already += 1;
