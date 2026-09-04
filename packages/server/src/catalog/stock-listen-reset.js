@@ -1,6 +1,6 @@
 import { loadCore } from './utils.js';
 
-export const INVENTORY_LISTEN_RESET_KEY = 'inventory_listen_reset_v1';
+export const INVENTORY_LISTEN_RESET_KEY = 'inventory_listen_reset_v2';
 
 const log = (...args) => console.log('[stock-listen-reset]', ...args);
 
@@ -18,7 +18,7 @@ export async function resetInventoryListenHistory(db) {
   const client = ownsConnection ? await source.connect() : source;
   if (ownsConnection) await client.query('begin');
   try {
-    await client.query("select pg_advisory_xact_lock(hashtextextended('inventory-listen-reset-v1', 0))");
+    await client.query("select pg_advisory_xact_lock(hashtextextended('inventory-listen-reset-v2', 0))");
     await client.query(`
       create table if not exists system_settings (
         key text primary key,

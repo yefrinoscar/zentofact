@@ -226,6 +226,7 @@ test('una venta manual conserva el productId del catálogo para descontar stock'
   const db = new IngestDb(account({ channel_code: 'manual' }));
   await ingestOrder(manualSale({
     fulfillmentStatus: 'ready_to_ship',
+    orderedAt: '2026-09-04T18:00:00.000Z',
     shipping: { type: 'recojo' },
     items: [{
       externalItemId: 'VTA-1-1',
@@ -251,6 +252,7 @@ test('una venta manual sin companyId nace sin seller asociado', async () => {
   const db = new IngestDb(account({ channel_code: 'manual' }));
   const { companyId: _omitted, ...sale } = manualSale({
     fulfillmentStatus: 'ready_to_ship',
+    orderedAt: '2026-09-04T18:00:00.000Z',
     shipping: { type: 'recojo' },
     items: [{
       externalItemId: 'VTA-1-1',

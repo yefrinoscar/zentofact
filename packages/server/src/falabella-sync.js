@@ -1,6 +1,6 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
-import { shouldEnqueueStockJob } from './catalog/stock-commitment.js';
+import { shouldListenStockOrder } from './catalog/stock-commitment.js';
 import { operationalErrorBody } from './error-log.js';
 import { isFalabellaSyncEnabled } from './system-config.js';
 import {
@@ -251,7 +251,10 @@ async function upsertOrders(db, companyId, orders, context = {}) {
           ? catalogInventoryEnabledForSync(context.syncMode, restockNow)
           : (restockNow ? true : (context.enqueueStock ? false : context.catalogInventoryEnabled)),
       }, db);
-        if (context.enqueueStock && shouldEnqueueStockJob(lifecycleStatus)) {
+        if (context.enqueueStock && shouldListenStockOrder({
+          status: lifecycleStatus,
+          orderedAt: normalized.falabellaCreatedAt,
+        })) {
           await enqueueStockJob({
           orderId: ingested.order.id,
           companyId,
@@ -418,7 +421,10 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
           correlationId: `falabella-sync-items:${companyId}`,
           catalogInventoryEnabled: false,
         }, db);
-        if (applyStock && shouldEnqueueStockJob(canonicalLifecycleStatus(normalized.status))) {
+        if (applyStock && shouldListenStockOrder({
+          status: canonicalLifecycleStatus(normalized.status),
+          orderedAt: normalized.falabellaCreatedAt,
+        })) {
           await enqueueStockJob({
             orderId: ingested.order.id,
             companyId,

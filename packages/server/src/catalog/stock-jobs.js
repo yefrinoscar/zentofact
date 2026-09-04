@@ -654,7 +654,7 @@ export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
      where o.order_status not in ('cancelled','failed')
        and o.fulfillment_status in ('pending','preparing')
        and o.items_status='complete'
-       and (o.ordered_at is null or o.ordered_at >= $1::timestamptz)
+       and o.ordered_at >= $1::timestamptz
        and exists (
          select 1 from order_items oi
          where oi.order_id=o.id

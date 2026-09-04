@@ -1,5 +1,5 @@
-// 12:00 America/Lima del 3 set 2026. Pedidos anteriores no reservan ni descuentan.
-export const INVENTORY_LISTEN_FROM_AT = '2026-09-03T17:00:00.000Z';
+// 12:00 America/Lima del 4 set 2026. Pedidos anteriores no reservan ni descuentan.
+export const INVENTORY_LISTEN_FROM_AT = '2026-09-04T17:00:00.000Z';
 
 export const STOCK_RESERVE_FULFILLMENT = new Set(['pending', 'preparing']);
 export const STOCK_COMMIT_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
@@ -28,10 +28,15 @@ export function shouldEnqueueStockJob(status) {
 }
 
 export function isAfterInventoryListenFrom(value) {
-  if (value == null || value === '') return true;
+  if (value == null || value === '') return false;
   const time = new Date(value).getTime();
-  if (Number.isNaN(time)) return true;
+  if (Number.isNaN(time)) return false;
   return time >= Date.parse(INVENTORY_LISTEN_FROM_AT);
+}
+
+export function shouldListenStockOrder(input = {}) {
+  return shouldEnqueueStockJob(input.status)
+    && isAfterInventoryListenFrom(orderListenAt(input) ?? input.orderedAt ?? input.ordered_at);
 }
 
 export function orderListenAt(order) {

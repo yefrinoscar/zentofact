@@ -8,6 +8,7 @@ import {
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
 import { stockPhase } from './catalog/stock-phase.js';
+import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
   falabellaCanonicalIdentity,
   importFalabellaCatalog,
@@ -178,6 +179,7 @@ function item(overrides = {}) {
 }
 
 function phaseInput(db, upsertedItems, overrides = {}) {
+  const { persisted, ...rest } = overrides;
   return {
     db,
     existing: null,
@@ -187,13 +189,15 @@ function phaseInput(db, upsertedItems, overrides = {}) {
       order_status: 'confirmed',
       fulfillment_status: 'ready_to_ship',
       external_order_number: '3999111222',
+      ordered_at: INVENTORY_LISTEN_FROM_AT,
+      ...persisted,
     },
     account: { id: 3, channelCode: 'falabella', settings: {} },
     upsertedItems,
     doomedItems: [],
     source: 'sync',
     enabled: true,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -428,7 +432,7 @@ test('un pedido pending reserva stock y no descuenta el almacén', async () => {
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
-      ordered_at: '2026-09-03T17:00:00.000Z',
+      ordered_at: '2026-09-04T17:00:00.000Z',
     },
   }));
   assert.equal(result.applied, 0);
@@ -447,7 +451,7 @@ test('un pedido pending anterior al corte no reserva ni descuenta', async () => 
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
-      ordered_at: '2026-09-03T16:59:59.000Z',
+      ordered_at: '2026-09-04T16:59:59.000Z',
     },
   }));
   assert.equal(result.reserved, 0);
@@ -468,7 +472,7 @@ test('al pasar a listo para enviar la reserva deja de estar reservada y descuent
     existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'ready_to_ship',
-      external_order_number: '3999111222', ordered_at: '2026-09-03T17:00:00.000Z',
+      external_order_number: '3999111222', ordered_at: '2026-09-04T17:00:00.000Z',
     },
   }));
   assert.equal(result.applied, 1);
@@ -505,7 +509,7 @@ test('reservar más que el disponible marketplace marca la línea y no toca el a
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
-      ordered_at: '2026-09-03T18:00:00.000Z',
+      ordered_at: '2026-09-04T18:00:00.000Z',
     },
   }));
   assert.equal(result.skipped, 1);
