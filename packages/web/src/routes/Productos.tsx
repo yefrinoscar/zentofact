@@ -2777,7 +2777,7 @@ function Field({
   min?: number | string;
   autoFocus?: boolean;
 }) {
-  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
+  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
 }
 
 function ProfitOwnerOptions({ owners, id = 'profit-owner-options' }: { owners: string[]; id?: string }) {
