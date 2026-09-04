@@ -114,9 +114,11 @@ el pedido desde pendiente.
 
 - Desde el 3 set 2026 a las 12:00 America/Lima, un pedido `pending` o
   `preparing` reserva el producto maestro. `quantity_on_hand` no cambia.
-  `available` baja porque `available = on_hand - reserved`. Al pasar a
-  `ready_to_ship` la reserva se confirma: baja `quantity_on_hand` y
-  `quantity_reserved`. `shipped` y `delivered` confirman si todavía
+  `available` baja porque `available = on_hand - reserved`. El número
+  que el catálogo, el resumen y las ventas llaman Stock es `available`.
+  `quantity_on_hand` solo aparece como En almacén en Inventario. Al
+  pasar a `ready_to_ship` la reserva se confirma: baja `quantity_on_hand`
+  y `quantity_reserved`. `shipped` y `delivered` confirman si todavía
   faltaba. Pedidos anteriores a esa hora no reservan ni descuentan.
 - El webhook y la bandeja no escriben el saldo en el request: encolan un
   job en `inventory_stock_jobs`. El worker escucha pedidos pendientes
