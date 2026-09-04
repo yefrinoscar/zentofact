@@ -11,6 +11,11 @@ import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
+import {
+  shouldShowStockJobAttempts,
+  stockJobDetail,
+  visibleStockJobStatus,
+} from '../lib/stock-job-presentation';
 
 type Config = {
   inventoryEnabled: boolean;
@@ -21,6 +26,8 @@ type Config = {
   stats: Record<string, number>;
   workerIntervalSeconds: number;
   reconciliationIntervalSeconds: number;
+  maxAttempts: number;
+  listenFromAt: string;
   lastReconciledAt: string | null;
   lastReconciliationError?: string | null;
   batchSize: number;
@@ -50,7 +57,20 @@ type Job = {
   attempts: number;
   result: Record<string, unknown> | null;
   last_error: string | null;
+  ordered_at: string | null;
   updated_at: string;
+  items?: Array<{
+    id: number;
+    title: string;
+    sellerSku: string;
+    quantity: number;
+    mainSku: string | null;
+    stockState: string;
+  }>;
+  reserved_units?: string | number;
+  applied_units?: string | number;
+  unmatched_items?: number;
+  insufficient_items?: number;
 };
 
 type OrderPreview = {
@@ -84,24 +104,32 @@ type OrderPreview = {
   }>;
 };
 
+type OrderPreviewItem = NonNullable<OrderPreview['items']>[number];
+
 const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: string }> = {
   done: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2, label: 'Descontado' },
+  reserved: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Clock, label: 'Reservado' },
+  unmatched: { cls: 'bg-amber-50 text-amber-800 border-amber-300', icon: Link2, label: 'Sin asociación' },
+  insufficient: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Sin stock' },
+  processed: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: CheckCircle2, label: 'Procesado' },
+  outside_window: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Fuera del período' },
   pending: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock, label: 'En cola' },
   processing: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Loader2, label: 'Procesando' },
   skipped: { cls: 'bg-slate-100 text-slate-600 border-slate-200', icon: XCircle, label: 'Omitido' },
-  failed: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Falló' },
+  failed: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Requiere atención' },
 };
 
 const FILTERS = [
   ['all', 'Todas'],
-  ['done', 'Descontados'],
+  ['done', 'Procesados'],
   ['pending', 'En cola'],
   ['processing', 'Procesando'],
-  ['failed', 'Fallidos'],
+  ['failed', 'Requieren atención'],
   ['skipped', 'Omitidos'],
 ] as const;
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ job }: { job: Job }) {
+  const status = visibleStockJobStatus(job);
   const style = STATUS_STYLES[status] || STATUS_STYLES.skipped;
   const Icon = style.icon;
   return (
@@ -159,18 +187,18 @@ function fullDateTime(value?: string) {
   });
 }
 
-function formatJobDetail(job: Job) {
-  const result = job.result || {};
-  const applied = Number(result.applied);
-  const skipped = Number(result.skipped);
-  if (job.last_error) return job.last_error;
-  if (Number.isFinite(applied) && applied > 0) return `${applied} línea${applied === 1 ? '' : 's'} descontada${applied === 1 ? '' : 's'}`;
-  const reserved = Number(result.reserved);
-  if (Number.isFinite(reserved) && reserved > 0) return `${reserved} línea${reserved === 1 ? '' : 's'} reservada${reserved === 1 ? '' : 's'}`;
-  if (Number.isFinite(skipped) && skipped > 0) return `${skipped} línea${skipped === 1 ? '' : 's'} omitida${skipped === 1 ? '' : 's'}`;
-  if (result.supersededByOrderId) return 'Reemplazado por job canónico';
-  if (typeof result.missing === 'boolean' && result.missing) return 'Esperando pedido canónico';
-  return job.status === 'done' ? 'Sin cambios de stock' : '—';
+function itemStockReason(item: OrderPreviewItem) {
+  if (!item.productId && !item.mainSku) return 'No tiene producto maestro.';
+  const labels: Record<string, string> = {
+    pending: 'Reservado; descuenta al quedar listo para enviar.',
+    applied: 'Descontado del almacén.',
+    skipped_unmapped: 'No tiene producto maestro.',
+    skipped_insufficient: 'El producto maestro no tiene stock disponible.',
+    skipped_policy: 'Fuera del corte de descuentos.',
+    reversed: 'Stock reintegrado.',
+    none: 'Pendiente de procesar.',
+  };
+  return labels[item.stockState] || 'Estado de stock no reconocido.';
 }
 
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
@@ -221,6 +249,14 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
                     )}
                     {item.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></> : null}
                   </p>
+                  <p className={cn(
+                    'mt-1',
+                    item.stockState === 'skipped_unmapped' || item.stockState === 'skipped_insufficient'
+                      ? 'font-medium text-amber-700'
+                      : 'text-muted-foreground',
+                  )}>
+                    {itemStockReason(item)}
+                  </p>
                 </div>
               ))}
             </div>
@@ -233,7 +269,11 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
           {preview?.stock && (
             <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs">
               <p className="font-medium text-foreground">
-                {preview.stock.applied != null ? `${preview.stock.applied} descontadas` : 'Sin descuento aún'}
+                {Number(preview.stock.applied || 0) > 0
+                  ? `${preview.stock.applied} línea${Number(preview.stock.applied) === 1 ? '' : 's'} descontada${Number(preview.stock.applied) === 1 ? '' : 's'}`
+                  : items.some((item) => item.stockState === 'pending')
+                    ? 'Stock reservado; aún no sale del almacén.'
+                    : 'Sin descuento de almacén.'}
               </p>
               {preview.stock.skipped != null && Number(preview.stock.skipped) > 0 && (
                 <p className="mt-0.5 text-muted-foreground">{preview.stock.skipped} omitidas</p>
@@ -323,6 +363,22 @@ function SkeletonRows() {
           <div className="h-4 flex-1 animate-pulse rounded bg-muted" />
         </div>
       ))}
+    </div>
+  );
+}
+
+function JobProducts({ job }: { job: Job }) {
+  const items = job.items || [];
+  if (!items.length) return <span className="text-xs text-muted-foreground">Artículos pendientes</span>;
+  const first = items[0];
+  return (
+    <div className="max-w-72 text-xs">
+      <p className="line-clamp-2 font-medium text-foreground">{first.title}</p>
+      <p className="mt-0.5 text-muted-foreground">
+        {first.mainSku ? <>Maestro <span className="font-mono text-foreground">{first.mainSku}</span></> : <span className="font-medium text-amber-700">Sin producto maestro</span>}
+        {first.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{first.sellerSku}</span></> : null}
+        {items.length > 1 ? ` · +${items.length - 1}` : ''}
+      </p>
     </div>
   );
 }
@@ -526,6 +582,16 @@ export default function DescuentosCola() {
         </div>
       )}
 
+      {Number(config.stats?.failed || 0) > 0 && (
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            <span className="font-medium">{config.stats.failed} descuentos requieren atención.</span>{' '}
+            Revisa el motivo y corrígelos.
+          </span>
+        </div>
+      )}
+
       {unmatched.length > 0 && (
         <section className="overflow-hidden rounded-xl border border-amber-300 bg-card" aria-labelledby="unmatched-stock-title">
           <div role="alert" className="daisy-alert rounded-none border-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 shadow-none">
@@ -648,6 +714,7 @@ export default function DescuentosCola() {
                 <tr className="border-b border-border">
                   <th className="px-5 py-2.5 font-medium">Empresa</th>
                   <th className="px-5 py-2.5 font-medium">Orden</th>
+                  <th className="px-5 py-2.5 font-medium">Producto</th>
                   <th className="px-5 py-2.5 font-medium">Estado</th>
                   <th className="px-5 py-2.5 font-medium">Origen</th>
                   <th className="px-5 py-2.5 font-medium">Detalle</th>
@@ -657,18 +724,25 @@ export default function DescuentosCola() {
               <tbody>
                 {shownJobs.map((job) => {
                   const failed = job.status === 'failed';
-                  const canRetry = failed || job.status === 'skipped';
+                  const unmatchedItem = unmatched.find((item) => item.orderNumbers.includes(job.order_number));
+                  const canRetry = (failed || job.status === 'skipped') && !unmatchedItem;
+                  const shownAttempts = Math.min(job.attempts, config.maxAttempts || 3);
                   return (
                     <tr key={job.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
                       <td className="px-5 py-2.5 text-foreground">{job.company}</td>
                       <td className="px-5 py-2.5"><SearchableOrderNumber job={job} /></td>
-                      <td className="px-5 py-2.5"><StatusBadge status={job.status} /></td>
+                      <td className="px-5 py-2.5"><JobProducts job={job} /></td>
+                      <td className="px-5 py-2.5"><StatusBadge job={job} /></td>
                       <td className="px-5 py-2.5"><SourceBadge source={job.source} /></td>
                       <td className="px-5 py-2.5 text-xs">
                         <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>
-                          {formatJobDetail(job)}
+                          {stockJobDetail(job, config.listenFromAt)}
                         </span>
-                        {job.attempts > 1 && <span className="ml-1 text-muted-foreground opacity-60">(intento {job.attempts})</span>}
+                        {shouldShowStockJobAttempts(job) && (
+                          <span className="ml-1 text-muted-foreground opacity-70">
+                            ({shownAttempts} de {config.maxAttempts || 3} intentos)
+                          </span>
+                        )}
                         {canRetry && (
                           <button
                             onClick={() => retryJob(job.id)}
@@ -676,6 +750,15 @@ export default function DescuentosCola() {
                             className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
                           >
                             <RotateCcw className="h-3 w-3" /> Reintentar
+                          </button>
+                        )}
+                        {unmatchedItem && (
+                          <button
+                            type="button"
+                            onClick={() => openAssignment(unmatchedItem)}
+                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 transition hover:bg-amber-100"
+                          >
+                            <Link2 className="h-3 w-3" /> Asignar maestro
                           </button>
                         )}
                       </td>

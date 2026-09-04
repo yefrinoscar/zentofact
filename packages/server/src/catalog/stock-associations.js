@@ -34,7 +34,7 @@ export async function listUnmatchedStockItems(db) {
             o.company_id,
             coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company,
             channel.code as channel_code,
-            min(o.channel_account_id) as channel_account_id,
+            o.channel_account_id,
             coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), '')) as seller_sku,
             max(nullif(trim(oi.provider_sku), '')) as shop_sku,
             max(nullif(trim(oi.description), '')) as title,
@@ -46,14 +46,13 @@ export async function listUnmatchedStockItems(db) {
        join companies c on c.id=o.company_id
        join order_channel_accounts account on account.id=o.channel_account_id
        join order_channels channel on channel.id=account.channel_id
-      where oi.stock_state='skipped_unmapped'
-        and oi.product_id is null
+      where oi.product_id is null
         and o.order_status not in ('cancelled','failed')
         and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
         and o.items_status='complete'
         and o.ordered_at >= $1::timestamptz
         and coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), '')) is not null
-      group by o.company_id, company, channel.code,
+      group by o.company_id, company, channel.code, o.channel_account_id,
                coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''))
       order by min(o.ordered_at), min(oi.id)`,
     [INVENTORY_LISTEN_FROM_AT],
@@ -76,6 +75,7 @@ export async function assignUnmatchedStockItem(input = {}, db, dependencies = {}
               coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), '')) as seller_sku,
               nullif(trim(oi.provider_sku), '') as shop_sku,
               nullif(trim(oi.description), '') as title,
+              oi.product_id,
               oi.stock_state
          from order_items oi
          join orders o on o.id=oi.order_id
@@ -86,7 +86,7 @@ export async function assignUnmatchedStockItem(input = {}, db, dependencies = {}
       [orderItemId],
     )).rows[0];
     if (!item) throw httpError('Artículo de pedido no encontrado.', 404);
-    if (item.stock_state !== 'skipped_unmapped') {
+    if (item.product_id != null) {
       throw httpError('Este artículo ya no está pendiente de asociación.', 409, 'stock_item_already_resolved');
     }
     const sellerSku = normalized(item.seller_sku);
@@ -121,19 +121,19 @@ export async function assignUnmatchedStockItem(input = {}, db, dependencies = {}
          join order_channel_accounts account on account.id=o.channel_account_id
          join order_channels channel on channel.id=account.channel_id
         where oi.order_id=o.id
-          and oi.stock_state='skipped_unmapped'
           and oi.product_id is null
           and o.order_status not in ('cancelled','failed')
           and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
           and o.items_status='complete'
           and o.ordered_at >= $4::timestamptz
           and o.company_id=$5
-          and channel.code=$6
-          and coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''))=$7
+          and o.channel_account_id=$6
+          and channel.code=$7
+          and coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''))=$8
         returning oi.id as order_item_id, o.id as order_id, o.company_id,
                   o.external_order_id, o.external_order_number as order_number`,
       [Number(listing.id), productId, product.main_sku, INVENTORY_LISTEN_FROM_AT,
-        Number(item.company_id), item.channel_code, sellerSku],
+        Number(item.company_id), Number(item.channel_account_id), item.channel_code, sellerSku],
     );
     if (!updated.rows.length) {
       throw httpError('La asociación cambió mientras se procesaba. Actualiza e intenta nuevamente.', 409);
@@ -149,6 +149,7 @@ export async function assignUnmatchedStockItem(input = {}, db, dependencies = {}
       externalOrderId: order.external_order_id,
       orderNumber: order.order_number,
       source: 'association',
+      resetAttempts: true,
     }, db);
   }
 
