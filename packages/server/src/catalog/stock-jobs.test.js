@@ -194,7 +194,12 @@ test('un job done no se vuelve a procesar al reencolar', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
   await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
-  const again = await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
+  const again = await enqueueStockJob({
+    companyId: 1,
+    externalOrderId: 'A',
+    orderNumber: '1',
+    resetAttempts: true,
+  }, db);
   assert.equal(again.enqueued, false);
   assert.equal(again.job.status, 'done');
   const stats = await processStockQueue({ apply: async () => ({ applied: 99 }) }, db);
@@ -297,6 +302,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           order_status: 'confirmed',
           fulfillment_status: 'pending',
           items_status: 'complete',
+          items_error: null,
           total: '34.99',
           items_count: 1,
           stock_applied: 0,
@@ -322,6 +328,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
 
   const preview = await jobOrderPreview(12, db);
   assert.equal(preview.order.itemsStatus, 'complete');
+  assert.equal(preview.order.itemsError, null);
   assert.deepEqual(preview.items, [{
     id: 991,
     title: 'Camiseta reductora',

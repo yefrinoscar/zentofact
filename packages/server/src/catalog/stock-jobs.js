@@ -367,7 +367,7 @@ export async function jobOrderPreview(id, db) {
 
   const orderResult = await client.query(
     `select o.id, o.external_order_number, o.order_status, o.fulfillment_status,
-            o.items_status, o.total,
+            o.items_status, o.items_error, o.total,
             o.ordered_at, o.promised_shipping_at,
             count(oi.id)::int as items_count,
             coalesce(sum(oi.stock_applied_quantity), 0)::int as stock_applied
@@ -416,6 +416,7 @@ export async function jobOrderPreview(id, db) {
       orderNumber: order.external_order_number || job.order_number,
       status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),
       itemsStatus: order.items_status,
+      itemsError: order.items_error || null,
       total: order.total,
       itemsCount: order.items_count,
       stockApplied: order.stock_applied,
@@ -596,7 +597,7 @@ export async function enqueueStockJob(input = {}, db) {
           source,
         }, client);
       if (input.resetAttempts === true && enqueued.rows[0]) {
-        return client.query(
+        const reset = await client.query(
           `update inventory_stock_jobs
               set status='pending', attempts=0, last_error=null,
                   next_attempt_at=null, updated_at=now()
@@ -605,6 +606,7 @@ export async function enqueueStockJob(input = {}, db) {
             returning *`,
           [enqueued.rows[0].id],
         );
+        return reset.rows.length > 0 ? reset : enqueued;
       }
       return enqueued;
     },
