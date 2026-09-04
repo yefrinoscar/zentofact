@@ -49,6 +49,8 @@ const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
+const listenReset = await import('./catalog/stock-listen-reset.js');
+await listenReset.resetInventoryListenHistory();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
