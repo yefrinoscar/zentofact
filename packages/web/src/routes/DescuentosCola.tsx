@@ -84,6 +84,7 @@ function SourceBadge({ source }: { source: string }) {
     webhook: 'Webhook',
     cron: 'Cron',
     catchup: 'Recuperación',
+    listen: 'Escucha',
     manual: 'Venta manual',
     system: 'Sistema',
   };
