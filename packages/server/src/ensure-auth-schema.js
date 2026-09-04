@@ -1,12 +1,11 @@
-import { getMigrations } from 'better-auth/db/migration';
 import { Pool } from 'pg';
-import { auth } from './auth.js';
+import { LOCAL_CREDENTIAL_ISSUER } from './db-schema.js';
 
 function migrationErrorMessage(error) {
   return String(error?.message || error || '');
 }
 
-function isIssuerBlocked(error) {
+export function isIssuerBlocked(error) {
   const message = migrationErrorMessage(error);
   return message.includes('issuer') && message.includes('account');
 }
@@ -20,31 +19,35 @@ async function withAuthPool(fn) {
   }
 }
 
-async function ensureIssuerColumnNullable(pool) {
-  await pool.query('ALTER TABLE account ADD COLUMN IF NOT EXISTS issuer TEXT');
-  await pool.query(`
-    UPDATE account
-       SET issuer = 'local:credential'
-     WHERE "providerId" = 'credential'
-       AND (issuer IS NULL OR issuer = '')
+/** Better Auth 1.6 never creates issuer; 1.7 refuses to add it as NOT NULL on a populated table. */
+export async function ensureAccountIssuerColumn(pool) {
+  const { rows } = await pool.query(`
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'account'
+    LIMIT 1
   `);
+  if (!rows.length) return { tableExisted: false };
+  await pool.query('ALTER TABLE account ADD COLUMN IF NOT EXISTS issuer TEXT');
+  await pool.query(
+    `UPDATE account
+        SET issuer = $1
+      WHERE "providerId" = 'credential'
+        AND (issuer IS NULL OR issuer = '')`,
+    [LOCAL_CREDENTIAL_ISSUER],
+  );
+  return { tableExisted: true };
 }
 
 async function softenIssuerIfAccountExists() {
-  await withAuthPool(async (pool) => {
-    const { rows } = await pool.query(`
-      SELECT 1
-      FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'account'
-      LIMIT 1
-    `);
-    if (!rows.length) return;
-    await ensureIssuerColumnNullable(pool);
-  });
+  await withAuthPool(ensureAccountIssuerColumn);
 }
 
 export async function ensureAuthSchema() {
   await softenIssuerIfAccountExists();
+
+  const { getMigrations } = await import('better-auth/db/migration');
+  const { auth } = await import('./auth.js');
 
   let migrations;
   try {
@@ -52,7 +55,7 @@ export async function ensureAuthSchema() {
   } catch (error) {
     if (!isIssuerBlocked(error)) throw error;
     console.warn('[AUTH] Migración de issuer bloqueada; creando columna nullable y reintentando.');
-    await withAuthPool(ensureIssuerColumnNullable);
+    await withAuthPool(ensureAccountIssuerColumn);
     migrations = await getMigrations(auth.options);
   }
 
@@ -69,7 +72,7 @@ export async function ensureAuthSchema() {
   } catch (error) {
     if (!isIssuerBlocked(error)) throw error;
     console.warn('[AUTH] Migración de issuer bloqueada; creando columna nullable y reintentando.');
-    await withAuthPool(ensureIssuerColumnNullable);
+    await withAuthPool(ensureAccountIssuerColumn);
     const retry = await getMigrations(auth.options);
     await retry.runMigrations();
   }
