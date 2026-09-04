@@ -283,15 +283,17 @@ export async function recentJobs(limit = 60, db) {
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      left join lateral (
-       select id, external_order_number, ordered_at
+       select orders.id, orders.external_order_number, orders.ordered_at, channel.code as channel_code
        from orders
-       where id=j.order_id
+       join order_channel_accounts account on account.id=orders.channel_account_id
+       join order_channels channel on channel.id=account.channel_id
+       where orders.id=j.order_id
           or (
             j.order_id is null
-            and company_id=j.company_id
-            and external_order_id=j.external_order_id
+            and orders.company_id=j.company_id
+            and orders.external_order_id=j.external_order_id
           )
-       order by (id=j.order_id) desc, id asc
+       order by (orders.id=j.order_id) desc, orders.id asc
        limit 1
      ) order_row on true
      left join lateral (
@@ -301,6 +303,20 @@ export async function recentJobs(limit = 60, db) {
                 'sellerSku', coalesce(oi.sku, ''),
                 'quantity', oi.quantity,
                 'mainSku', coalesce(nullif(oi.main_sku, ''), nullif(product.main_sku, '')),
+                'imageUrl', coalesce(
+                  nullif(product.image_url, ''),
+                  nullif(listing.metadata->'images'->>0, ''),
+                  nullif(listing.metadata->'images'->0->>'Url', ''),
+                  nullif(listing.metadata->'images'->0->>'url', ''),
+                  nullif(listing.metadata->>'imageUrl', ''),
+                  nullif(oi.raw_data->>'ImageUrl', ''),
+                  nullif(oi.raw_data->>'ImageURL', ''),
+                  case when order_row.channel_code='falabella'
+                    and coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'
+                  then 'https://media.falabella.com/falabellaPE/'
+                    || coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) || '_01'
+                  end
+                ),
                 'stockState', oi.stock_state
               ) order by oi.id) as items,
               coalesce(sum(oi.stock_applied_quantity)
@@ -311,6 +327,7 @@ export async function recentJobs(limit = 60, db) {
               count(*) filter (where oi.stock_state='skipped_insufficient') as insufficient_items
          from order_items oi
          left join products product on product.id=oi.product_id
+         left join product_listings listing on listing.id=oi.listing_id
         where oi.order_id=order_row.id
      ) item_summary on true
      order by j.updated_at desc
@@ -375,9 +392,19 @@ export async function jobOrderPreview(id, db) {
             oi.product_id,
             coalesce(nullif(oi.main_sku, ''), nullif(product.main_sku, '')) as main_sku,
             nullif(product.name, '') as product_name,
+            coalesce(
+              nullif(product.image_url, ''),
+              nullif(listing.metadata->'images'->>0, ''),
+              nullif(listing.metadata->'images'->0->>'Url', ''),
+              nullif(listing.metadata->'images'->0->>'url', ''),
+              nullif(listing.metadata->>'imageUrl', ''),
+              nullif(oi.raw_data->>'ImageUrl', ''),
+              nullif(oi.raw_data->>'ImageURL', '')
+            ) as image_url,
             oi.stock_state
        from order_items oi
        left join products product on product.id=oi.product_id
+       left join product_listings listing on listing.id=oi.listing_id
       where oi.order_id=$1
       order by oi.id`,
     [order.id],
@@ -412,6 +439,7 @@ export async function jobOrderPreview(id, db) {
       quantity: Number(item.quantity || 0),
       productId: item.product_id == null ? null : Number(item.product_id),
       mainSku: item.main_sku || null,
+      imageUrl: item.image_url || null,
       stockState: item.stock_state,
     })),
     company: job.company,
@@ -573,6 +601,7 @@ export async function enqueueStockJob(input = {}, db) {
               set status='pending', attempts=0, last_error=null,
                   next_attempt_at=null, updated_at=now()
             where id=$1
+              and status in ('failed','skipped')
             returning *`,
           [enqueued.rows[0].id],
         );
@@ -701,7 +730,7 @@ export async function processStockQueue(input = {}, db) {
         const next = await finishJob(client, job, 'pending', {
           retry: true,
           error: result?.itemsPending
-            ? 'El pedido todavía no tiene sus artículos completos.'
+            ? (text(result?.itemsError, 2000) || 'El canal todavía no entrega los artículos del pedido.')
             : 'Pedido canónico todavía no está disponible.',
           result,
         });

@@ -22,7 +22,7 @@ import {
 } from '@zentofact/core';
 import { FalabellaApiClient } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
-import { attachFalabellaOrderItems, upsertFalabellaWebhookOrder } from './falabella-sync.js';
+import { fetchFalabellaWebhookOrder, upsertFalabellaWebhookOrder } from './falabella-sync.js';
 import {
   JOB_KIND_CREDIT_NOTE,
   JOB_KIND_INVOICE,
@@ -605,24 +605,7 @@ async function fetchOrderById(client, orderId) {
 async function fetchOrderForWebhook(companyId, orderId, orderNumber) {
   const company = await getCompany(companyId);
   if (!company?.falabellaApiUserId?.trim() || !company?.falabellaApiKey?.trim()) return null;
-  const client = new FalabellaApiClient({
-    userId: company.falabellaApiUserId,
-    apiKey: company.falabellaApiKey,
-    version: '2.0',
-    defaultFormat: 'JSON',
-  });
-  if (orderId) {
-    const byId = await fetchOrderById(client, orderId);
-    if (byId) return attachFalabellaOrderItems(client, byId);
-  }
-  if (orderNumber) {
-    const dates = [today(), dateOnly(Date.now() - 24 * 60 * 60 * 1000)];
-    for (const date of dates) {
-      const found = await client.findOrderByOrderNumber(orderNumber, date);
-      if (found?.raw) return attachFalabellaOrderItems(client, found.raw);
-    }
-  }
-  return null;
+  return fetchFalabellaWebhookOrder({ company, orderId, orderNumber });
 }
 
 async function saveResolvedOrderNumber(job, orderNumber) {
