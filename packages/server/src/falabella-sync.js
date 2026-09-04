@@ -261,6 +261,7 @@ async function upsertOrders(db, companyId, orders, context = {}) {
           externalOrderId: normalized.orderId,
           orderNumber: normalized.orderNumber,
           source: context.source || 'sync',
+          resetAttempts: ingested.order.itemsStatus === 'complete',
           }, context.stockDb || db).catch((error) => {
             console.warn(JSON.stringify({
             event: 'catalog.stock.enqueue_failed',
@@ -431,6 +432,7 @@ async function hydrateMissingOrderItems(db, companyId, client, options = {}) {
             externalOrderId: normalized.orderId,
             orderNumber: normalized.orderNumber,
             source: 'sync',
+            resetAttempts: true,
           }, options.stockDb || db).catch(() => {});
         }
         if (!applyStock) {
@@ -820,6 +822,44 @@ export async function attachFalabellaOrderItems(client, order) {
     }));
     return order;
   }
+}
+
+function falabellaWebhookClient(company, version) {
+  return new FalabellaApiClient({
+    userId: company.falabellaApiUserId,
+    apiKey: company.falabellaApiKey,
+    version,
+    defaultFormat: 'JSON',
+    fetchImpl: providerFetch(),
+  });
+}
+
+export async function fetchFalabellaWebhookOrder(input) {
+  const company = input.company;
+  const makeClient = input.makeClient || ((version) => falabellaWebhookClient(company, version));
+  const orderClient = makeClient('2.0');
+  const itemsClient = makeClient('1.0');
+  const orderId = String(input.orderId || '').trim();
+  const orderNumber = String(input.orderNumber || '').trim();
+
+  if (orderId) {
+    const response = await orderClient.call({ action: 'GetOrder', params: { OrderId: orderId } });
+    const body = response?.data?.SuccessResponse?.Body?.Orders?.Order
+      ?? response?.data?.SuccessResponse?.Body?.Order;
+    const order = Array.isArray(body) ? body[0] : body;
+    if (order && typeof order === 'object') return attachFalabellaOrderItems(itemsClient, order);
+  }
+
+  if (orderNumber && typeof orderClient?.findOrderByOrderNumber === 'function') {
+    const today = new Date();
+    const dates = [today, new Date(today.getTime() - 86_400_000)]
+      .map((date) => date.toISOString().slice(0, 10));
+    for (const date of dates) {
+      const found = await orderClient.findOrderByOrderNumber(orderNumber, date);
+      if (found?.raw) return attachFalabellaOrderItems(itemsClient, found.raw);
+    }
+  }
+  return null;
 }
 
 export async function upsertFalabellaWebhookOrder(companyId, order, db) {

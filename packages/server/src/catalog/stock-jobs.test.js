@@ -115,7 +115,7 @@ class JobDb {
     if (compact.startsWith('update inventory_stock_jobs') && compact.includes("set status='pending', attempts=0")) {
       const [id] = params;
       const job = [...this.jobs.values()].find((row) => Number(row.id) === Number(id));
-      if (!job) return { rows: [] };
+      if (!job || !['failed', 'skipped'].includes(job.status)) return { rows: [] };
       job.status = 'pending';
       job.attempts = 0;
       job.last_error = null;
@@ -194,7 +194,12 @@ test('un job done no se vuelve a procesar al reencolar', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
   await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
-  const again = await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
+  const again = await enqueueStockJob({
+    companyId: 1,
+    externalOrderId: 'A',
+    orderNumber: '1',
+    resetAttempts: true,
+  }, db);
   assert.equal(again.enqueued, false);
   assert.equal(again.job.status, 'done');
   const stats = await processStockQueue({ apply: async () => ({ applied: 99 }) }, db);
@@ -261,6 +266,7 @@ test('una cabecera sin artículos completos no puede quedar como descontada', as
       orderNumber: '3250692389',
       itemCount: 0,
       itemsPending: true,
+      itemsError: 'Falabella respondió Invalid Action al consultar los artículos.',
       applied: 0,
       skipped: 0,
     }),
@@ -270,7 +276,7 @@ test('una cabecera sin artículos completos no puede quedar como descontada', as
   assert.equal(stats.done, 0);
   assert.equal(stats.retried, 1);
   assert.equal(job.status, 'pending');
-  assert.match(job.last_error, /artículos/i);
+  assert.equal(job.last_error, 'Falabella respondió Invalid Action al consultar los artículos.');
 });
 
 test('el detalle del job identifica cada línea y su producto maestro', async () => {
@@ -296,6 +302,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           order_status: 'confirmed',
           fulfillment_status: 'pending',
           items_status: 'complete',
+          items_error: null,
           total: '34.99',
           items_count: 1,
           stock_applied: 0,
@@ -311,6 +318,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           product_id: '21',
           main_sku: 'H9MN',
           product_name: 'Camiseta reductora',
+          image_url: 'https://media.falabella.com/falabellaPE/118765881_01',
           stock_state: 'pending',
         }] };
       }
@@ -320,6 +328,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
 
   const preview = await jobOrderPreview(12, db);
   assert.equal(preview.order.itemsStatus, 'complete');
+  assert.equal(preview.order.itemsError, null);
   assert.deepEqual(preview.items, [{
     id: 991,
     title: 'Camiseta reductora',
@@ -329,6 +338,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
     quantity: 1,
     productId: 21,
     mainSku: 'H9MN',
+    imageUrl: 'https://media.falabella.com/falabellaPE/118765881_01',
     stockState: 'pending',
   }]);
 });
@@ -356,6 +366,7 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
+  assert.match(query, /'imageUrl'/i);
   assert.match(query, /order_row\.ordered_at >= \$2::timestamptz/i);
   assert.equal(/ordered_at is null/i.test(query), false);
   assert.equal(params[1], INVENTORY_LISTEN_FROM_AT);

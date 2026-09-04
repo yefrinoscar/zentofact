@@ -5,6 +5,7 @@ import {
   effectiveFalabellaItemStatus,
   falabellaLabelCount,
   fetchFalabellaPages,
+  fetchFalabellaWebhookOrder,
   listLocalFalabellaOrders,
   normalizeFalabellaOrder,
   normalizeFalabellaStatus,
@@ -68,6 +69,48 @@ test('normaliza una orden y conserva el JSON original', () => {
   assert.equal(normalized.invoiceRequired, true);
   assert.equal(normalized.status, 'shipped');
   assert.equal(normalized.raw, raw);
+});
+
+test('el webhook consulta la cabecera con v2 y los artículos con v1', async () => {
+  const calls = [];
+  const clients = {
+    '2.0': {
+      async call(input) {
+        calls.push({ version: '2.0', ...input });
+        return {
+          ok: true,
+          data: { SuccessResponse: { Body: { Order: {
+            OrderId: '5005220937',
+            OrderNumber: '3250709471',
+            Statuses: [{ Status: 'pending' }],
+          } } } },
+        };
+      },
+    },
+    '1.0': {
+      async call(input) {
+        calls.push({ version: '1.0', ...input });
+        return {
+          ok: true,
+          data: { SuccessResponse: { Body: { OrderItems: { OrderItem: [{
+            OrderItemId: '58400001', SellerSku: 'SKU-1', Name: 'Producto', Quantity: 1,
+          }] } } } },
+        };
+      },
+    },
+  };
+
+  const order = await fetchFalabellaWebhookOrder({
+    company: { falabellaApiUserId: 'user', falabellaApiKey: 'key' },
+    orderId: '5005220937',
+    makeClient: (version) => clients[version],
+  });
+
+  assert.equal(order.OrderItems.OrderItem.length, 1);
+  assert.deepEqual(calls.map(({ version, action }) => `${version}:${action}`), [
+    '2.0:GetOrder',
+    '1.0:GetOrderItems',
+  ]);
 });
 
 test('pagina hasta recibir una página incompleta y usa offsets correctos', async () => {
