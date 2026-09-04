@@ -4,8 +4,11 @@ import {
   capErrorMessage,
   formatInsumoActor,
   formatInsumoChange,
+  formatInsumoPurchaseCopy,
+  formatInsumoPurchaseValue,
   formatInsumoWhen,
   nextQuantity,
+  suggestInsumoPurchases,
 } from './insumos-log.ts';
 
 test('describe el cambio y el saldo que queda', () => {
@@ -26,4 +29,35 @@ test('avisa el tope antes de pedir el PIN', () => {
   assert.equal(nextQuantity(15, { delta: 1 }), 16);
   assert.equal(nextQuantity(4, { absoluteTarget: 12 }), 12);
   assert.equal(capErrorMessage('Fill grande', 16), 'Fill grande no puede pasar de 16.');
+});
+
+test('calcula cuánto pedir para días, semana y mes', () => {
+  const covered = suggestInsumoPurchases({ consumedRecent: 7, quantityOnHand: 8 });
+  assert.equal(covered.hasConsumption, true);
+  assert.equal(covered.days, 0);
+  assert.equal(covered.week, 0);
+  assert.equal(covered.month, 22);
+  assert.equal(formatInsumoPurchaseValue(covered.month), '22');
+  assert.equal(formatInsumoPurchaseValue(0, false), '—');
+});
+
+test('dice cuánto comprar para cubrir la semana y el mes', () => {
+  const empty = formatInsumoPurchaseCopy();
+  assert.equal(empty.empty, 'Todavía no hay consumo.');
+  assert.equal(empty.week, null);
+  const monthOnly = formatInsumoPurchaseCopy(suggestInsumoPurchases({
+    consumedRecent: 7,
+    quantityOnHand: 8,
+  }), 'rollos');
+  assert.equal(monthOnly.week?.value, 'Nada');
+  assert.equal(monthOnly.week?.label, 'para cubrir la semana');
+  assert.equal(monthOnly.month?.value, '22 rollos');
+  assert.equal(monthOnly.month?.label, 'para cubrir el mes');
+  const both = formatInsumoPurchaseCopy(suggestInsumoPurchases({
+    consumedRecent: 14,
+    quantityOnHand: 4,
+    packSize: 4,
+  }), 'rollos');
+  assert.equal(both.week?.value, '3 cajas');
+  assert.equal(both.month?.value, '14 cajas');
 });

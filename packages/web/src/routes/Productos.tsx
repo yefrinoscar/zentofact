@@ -43,6 +43,12 @@ import {
 } from '../lib/publication-preview';
 import { marketplaceProductUrl } from '../lib/marketplace-url';
 import {
+  eventFromStackedOverlay,
+  inventoryAdjustFormFromOnHand,
+  inventoryAdjustPayload,
+  type InventoryAdjustForm,
+} from '../lib/inventory-adjust';
+import {
   CatalogFilters,
   CATALOG_SORT_REQUESTS,
   type CatalogSort,
@@ -248,7 +254,7 @@ const initialCreate = {
   profitOwner: '',
   imageUrl: '',
 };
-const initialAdjust = { mode: 'delta', value: '', reason: '' };
+const initialAdjust: InventoryAdjustForm = { mode: 'absolute', value: '', reason: '' };
 const initialPublishVisual = {
   listingId: null as number | null,
   channelCode: 'falabella',
@@ -750,6 +756,11 @@ export default function Productos() {
     setModal(next);
   };
 
+  const openAdjust = () => {
+    setAdjustForm(inventoryAdjustFormFromOnHand(selectedProductRef.current?.quantityOnHand));
+    openModal('adjust');
+  };
+
   const openListingAssociation = (product: Product) => {
     setAssociationProduct(product);
     setAssociationSearch('');
@@ -795,14 +806,20 @@ export default function Productos() {
   const adjustInventory = async (event: FormEvent) => {
     event.preventDefault();
     if (!selectedId) return;
-    const value = Number(adjustForm.value);
-    const payload = adjustForm.mode === 'absolute'
-      ? { absoluteTarget: value, reason: adjustForm.reason }
-      : { delta: value, reason: adjustForm.reason };
+    let payload: ReturnType<typeof inventoryAdjustPayload>;
+    try {
+      payload = inventoryAdjustPayload(adjustForm);
+    } catch (caught: any) {
+      setActionError(caught?.message || 'Revisa la cantidad.');
+      return;
+    }
     const result = await runAction(() => api.adjustProductInventory(selectedId, payload), (response) => (
       response.noChange ? 'El almacén ya tenía ese valor.' : `En almacén queda en ${formatNumber(response.quantityOnHand)} u.`
     ));
-    if (result) setAdjustForm(initialAdjust);
+    if (result) {
+      setAdjustForm(inventoryAdjustFormFromOnHand(result.quantityOnHand));
+      setModal(null);
+    }
   };
 
   const updateProductImage = async (event: FormEvent) => {
@@ -1195,8 +1212,9 @@ export default function Productos() {
         onPreviousProduct={() => void navigateProduct('previous')}
         onNextProduct={() => void navigateProduct('next')}
         onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
+        holdOpen={modal === 'adjust' || modal === 'image' || modal === 'publish_visual' || modal === 'unpublish_visual'}
         onOpenImage={openProductImage}
-        onAdjust={() => openModal('adjust')}
+        onAdjust={openAdjust}
         onEditImage={() => {
           setImageUrl(selectedProduct?.imageUrl || '');
           openModal('image');
@@ -1220,7 +1238,41 @@ export default function Productos() {
 
       {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
 
-      {modal === 'adjust' && selectedProduct && <Modal title={`Ajustar stock · ${selectedProduct.mainSku}`} subtitle={`En almacén ${formatNumber(selectedProduct.quantityOnHand)} u. El ajuste no toca lo reservado.`} onClose={() => setModal(null)}><form onSubmit={adjustInventory} className="space-y-4"><Select value={adjustForm.mode} onValueChange={(value) => setAdjustForm({ ...adjustForm, mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="delta">Sumar o restar (delta)</SelectItem><SelectItem value="absolute">Fijar saldo absoluto</SelectItem></SelectContent></Select><Field label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'} type="number" value={adjustForm.value} onChange={(value) => setAdjustForm({ ...adjustForm, value })} required /><TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Registrar ajuste</Submit></form></Modal>}
+      {modal === 'adjust' && selectedProduct && (
+        <Modal
+          title={`Ajustar stock · ${selectedProduct.mainSku}`}
+          subtitle={`En almacén ${formatNumber(selectedProduct.quantityOnHand)} u. El ajuste no toca lo reservado.`}
+          onClose={() => setModal(null)}
+        >
+          <form onSubmit={adjustInventory} className="space-y-4">
+            <FilterChips
+              ariaLabel="Tipo de ajuste"
+              value={adjustForm.mode}
+              onChange={(mode) => setAdjustForm({
+                mode,
+                reason: adjustForm.reason,
+                value: mode === 'absolute' ? String(selectedProduct.quantityOnHand) : '',
+              })}
+              options={[
+                { value: 'absolute', label: 'Fijar saldo' },
+                { value: 'delta', label: 'Sumar o restar' },
+              ]}
+            />
+            <Field
+              label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'}
+              type="number"
+              value={adjustForm.value}
+              onChange={(value) => setAdjustForm({ ...adjustForm, value })}
+              required
+              min={adjustForm.mode === 'absolute' ? 0 : undefined}
+              autoFocus
+            />
+            <TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required />
+            <ActionFeedback error={actionError} message={actionMessage} />
+            <Submit busy={busy}>Registrar ajuste</Submit>
+          </form>
+        </Modal>
+      )}
 
       {modal === 'image' && selectedProduct && <Modal title="Foto del producto" subtitle={`${selectedProduct.name} · SKU interno ${selectedProduct.mainSku}`} onClose={() => setModal(null)}><form onSubmit={updateProductImage} className="space-y-4">
         <div className="flex items-center gap-4">
@@ -1743,7 +1795,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
 function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
-  onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
+  onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
   onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName,
   onSaveDescription,
 }: {
@@ -1768,6 +1820,7 @@ function ProductDrawer({
   onPreviousProduct: () => void;
   onNextProduct: () => void;
   onClose: () => void;
+  holdOpen?: boolean;
   onOpenImage: (product: Product) => void;
   onAdjust: () => void;
   onEditImage: () => void;
@@ -1796,11 +1849,22 @@ function ProductDrawer({
 
   const notionTabClass = 'h-9 flex-none rounded-lg px-3 text-[13px] font-medium text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground data-active:bg-muted! data-active:text-foreground! after:hidden';
 
-  return <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+  const keepStackedOverlay = (event: Event) => {
+    if (eventFromStackedOverlay(event)) event.preventDefault();
+  };
+
+  return <Sheet open={open} onOpenChange={(next) => { if (!next && !holdOpen) onClose(); }}>
     <SheetContent
       showCloseButton={false}
       className="gap-0 overflow-hidden border-l border-border/70 bg-background p-0 text-foreground shadow-2xl sm:max-w-[46rem] sm:rounded-none"
+      onPointerDownOutside={keepStackedOverlay}
+      onFocusOutside={keepStackedOverlay}
+      onInteractOutside={keepStackedOverlay}
       onEscapeKeyDown={(event) => {
+        if (holdOpen) {
+          event.preventDefault();
+          return;
+        }
         const target = event.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) event.preventDefault();
       }}
@@ -1909,6 +1973,7 @@ function ProductDrawer({
               profitOwners={profitOwners}
               savingField={savingField}
               onSavePrice={onSavePrice}
+              onAdjust={onAdjust}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
               onSaveDescription={onSaveDescription}
@@ -2246,6 +2311,7 @@ function ProductProperties({
   profitOwners,
   savingField,
   onSavePrice,
+  onAdjust,
   onSaveCommission,
   onSaveProfitOwner,
   onSaveDescription,
@@ -2254,6 +2320,7 @@ function ProductProperties({
   profitOwners: string[];
   savingField: ProductEditableField | null;
   onSavePrice: (value: string) => void;
+  onAdjust: () => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSaveDescription: (value: string) => void;
@@ -2269,9 +2336,15 @@ function ProductProperties({
           <span className="text-xs text-muted-foreground">Haz clic para editar</span>
         </div>
         <div>
-          <OverviewRow icon={<Boxes />} label="Stock">
-            <span className="text-sm tabular-nums">{formatNumber(product.available)} u</span>
-          </OverviewRow>
+          <button
+            type="button"
+            className={cn(OVERVIEW_ROW_CLASS, 'w-full cursor-text text-left')}
+            onClick={onAdjust}
+            aria-label="Ajustar stock"
+          >
+            <span className="flex min-w-0 items-center gap-2 truncate text-sm text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"><Boxes />Stock</span>
+            <span className="min-w-0 text-sm tabular-nums">{formatNumber(product.available)} u</span>
+          </button>
           <OverviewRow icon={<Clock3 />} label="Reservado">
             <span className="text-sm tabular-nums">{formatNumber(product.quantityReserved)} u</span>
           </OverviewRow>
@@ -2655,10 +2728,18 @@ function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const keepSelectOpen = (event: Event) => {
+    if (event.target instanceof Element && event.target.closest('[data-slot="select-content"]')) {
+      event.preventDefault();
+    }
+  };
   return <Dialog open onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
     <DialogContent
       overlayClassName="z-[70]"
       className={cn('z-[70] max-h-[92vh] gap-0 overflow-hidden p-0', wide ? 'sm:max-w-4xl' : 'sm:max-w-xl')}
+      onPointerDownOutside={keepSelectOpen}
+      onFocusOutside={keepSelectOpen}
+      onInteractOutside={keepSelectOpen}
       onKeyDownCapture={(event) => {
         if (event.key !== 'Escape') return;
         event.preventDefault();
@@ -2683,6 +2764,8 @@ function Field({
   type = 'text',
   className,
   list,
+  min,
+  autoFocus,
 }: {
   label: string;
   value: string;
@@ -2691,8 +2774,10 @@ function Field({
   type?: string;
   className?: string;
   list?: string;
+  min?: number | string;
+  autoFocus?: boolean;
 }) {
-  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} required={required} list={list} min={type === 'number' ? '0' : undefined} /></label>;
+  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
 }
 
 function ProfitOwnerOptions({ owners, id = 'profit-owner-options' }: { owners: string[]; id?: string }) {

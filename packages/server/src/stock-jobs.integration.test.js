@@ -39,7 +39,8 @@ test('PostgreSQL real: la identidad de stock converge y no procesa duplicados', 
         id bigserial primary key,
         company_id integer not null,
         external_order_id text not null,
-        external_order_number text not null
+        external_order_number text not null,
+        ordered_at timestamptz not null default '2026-09-03T17:00:00.000Z'
       )
     `);
     await ensureStockJobTables(pool);
