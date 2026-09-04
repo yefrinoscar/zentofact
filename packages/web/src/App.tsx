@@ -18,6 +18,7 @@ import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import BandejaLogistica from './routes/BandejaLogistica';
 import PedidosMulticanal from './routes/PedidosMulticanal';
+import Cancelados from './routes/Cancelados';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
 import MobileMenu from './routes/MobileMenu';
@@ -62,6 +63,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/orders': {
     title: 'Pedidos',
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
+  },
+  '/cancelados': {
+    title: 'Cancelados',
+    subtitle: 'Cancelados y devueltos, con la fecha en que pasaron a ese estado.',
   },
   '/mis-ventas': {
     title: 'Mis ventas',
@@ -278,6 +283,7 @@ function AppLayout() {
               <Route path="/envio-propio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders/envio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
+              <Route path="/cancelados" element={<RequirePermission permission="order_management" {...permissionState}><Cancelados /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />

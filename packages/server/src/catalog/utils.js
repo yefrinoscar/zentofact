@@ -56,8 +56,9 @@ export function mapProduct(row) {
     unit: row.unit,
     quantityOnHand: row.quantity_on_hand == null ? 0 : Number(row.quantity_on_hand),
     quantityReserved: row.quantity_reserved == null ? 0 : Number(row.quantity_reserved),
+    quantityPendingReturn: row.quantity_pending_return == null ? 0 : Number(row.quantity_pending_return),
     available: row.available == null
-      ? Number(row.quantity_on_hand || 0) - Number(row.quantity_reserved || 0)
+      ? Number(row.quantity_on_hand || 0) - Number(row.quantity_reserved || 0) - Number(row.quantity_pending_return || 0)
       : Number(row.available),
     reorderPoint: row.reorder_point == null ? null : Number(row.reorder_point),
     listingsCount: row.listings_count == null ? undefined : Number(row.listings_count),

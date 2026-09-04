@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Ban,
   Building2,
   ChartNoAxesCombined,
   CircleDollarSign,
@@ -64,6 +65,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
+      { to: '/cancelados', icon: Ban, label: 'Cancelados', permission: 'order_management' },
       { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },

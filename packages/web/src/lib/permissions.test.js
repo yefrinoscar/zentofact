@@ -16,6 +16,7 @@ test('envío propio es una opción de Ajustes', () => {
   assert.equal(pathPermission('/orders/envio'), 'settings');
   assert.equal(pathPermission('/settings'), 'settings');
   assert.equal(pathPermission('/orders'), 'order_management');
+  assert.equal(pathPermission('/cancelados'), 'order_management');
 });
 
 test('insumos pertenece a Pedidos junto a preparación y escaneo', () => {
@@ -43,9 +44,13 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
 test('el operador ya no tiene el módulo de salidas', () => {
   assert.equal(PERMISSIONS.some(({ key }) => key === 'salidas'), false);
   assert.equal(pathPermission('/salidas'), null);
-  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'insumos']);
+  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'return_stock_approve', 'orders_inbox', 'orders_scanner', 'insumos']);
   assert.deepEqual(
     parsePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'], 'operator'),
+    ROLE_PRESETS.operator.permissions,
+  );
+  assert.deepEqual(
+    parsePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'insumos'], 'operator'),
     ROLE_PRESETS.operator.permissions,
   );
 });
