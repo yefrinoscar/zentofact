@@ -55,6 +55,22 @@ export async function resolveListing(dbInput, input) {
       return { unmapped: true, reason: 'ambiguous_shop_sku' };
     }
   }
+  if (channelCode === 'ripley' && sellerSku && shopSku && sellerSku !== shopSku) {
+    const swappedSeller = await db.query(
+      `${select}
+       where l.channel_code=$1 and l.company_id=$2 and l.seller_sku=$3 and l.status='active'
+       limit 1`,
+      [channelCode, companyId, shopSku],
+    );
+    if (swappedSeller.rows.length) return resolvedRow(swappedSeller.rows[0]);
+    const swappedShop = await db.query(
+      `${select}
+       where l.channel_code=$1 and l.company_id=$2 and l.shop_sku=$3 and l.status='active'
+       order by l.id limit 2`,
+      [channelCode, companyId, sellerSku],
+    );
+    if (swappedShop.rows.length === 1) return resolvedRow(swappedShop.rows[0]);
+  }
   console.warn(JSON.stringify({ event: 'catalog.sku.unmapped', reason: 'not_found', channelCode, companyId, sellerSku, shopSku }));
   return { unmapped: true, reason: 'not_found' };
 }
