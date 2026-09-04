@@ -15,6 +15,7 @@ import {
   userHasPermission,
 } from './permissions.js';
 import { authAccounts, authSessions, authUsers, LOCAL_CREDENTIAL_ISSUER, userAuditLog } from './db-schema.js';
+import { toPublicUserError } from './user-errors.js';
 
 const PASSWORD_MIN_LENGTH = 12;
 const USER_ADMIN_LOCK = 917204;
@@ -155,20 +156,15 @@ async function assertAdminInvariants(tx, current, nextRole, nextActive) {
 export async function ensureAuthSchema() {
   // Better Auth crea "user"/session/account; sin esto un Postgres vacío
   // (p. ej. Railway PR preview) rompe el boot en ensureUserColumns.
-  const { getMigrations } = await import('better-auth/db/migration');
-  const { auth } = await import('./auth.js');
-  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
-  if (toBeCreated?.length || toBeAdded?.length) {
-    console.log(
-      '[auth] migrando schema:',
-      (toBeCreated || []).map((t) => t.table || t.name || Object.keys(t)[0]).join(', ') || '(sin tablas nuevas)',
-    );
-  }
-  await runMigrations();
+  const { ensureAuthSchema: migrateAuthSchema } = await import('./ensure-auth-schema.js');
+  await migrateAuthSchema();
 }
 
 export async function ensureUserColumns() {
   // DDL de compatibilidad para tablas de Better Auth; el CRUD usa Drizzle.
+  // issuer MUST exist before createUser and before Better Auth 1.7 migrations.
+  const { ensureAccountIssuerColumn } = await import('./ensure-auth-schema.js');
+  await ensureAccountIssuerColumn(pool);
   await ensureAuthSchema();
   await pool.query(`
     ALTER TABLE "user" ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'operator';
@@ -296,6 +292,8 @@ export async function createUser({ name, email, password, role = 'operator', per
       updatedAt: now,
     });
     await addAudit(tx, { actorId, targetId: userId, action: 'user.create', details: { role: roleKey, active: !!active } });
+  }).catch((error) => {
+    throw toPublicUserError(error);
   });
 
   return getUserById(userId);
@@ -394,4 +392,4 @@ export async function revokeAllSessionsForUser(userId) {
   return { ok: true, revoked };
 }
 
-export { ROLE_PRESETS, ALL_PERMISSION_KEYS, userHasPermission };
+export { ROLE_PRESETS, ALL_PERMISSION_KEYS, userHasPermission, toPublicUserError };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createLogId, operationalErrorBody } from './error-log.js';
+import { clientErrorMessage, createLogId, operationalErrorBody } from './error-log.js';
 
 test('createLogId returns a short copyable identifier', () => {
   const logId = createLogId();
@@ -34,4 +34,34 @@ test('operationalErrorBody logs context and returns the same logId', () => {
   assert.equal(payload.status, 502);
   assert.equal(payload.message, 'Falabella rechazó la operación.');
   assert.equal(payload.stack, error.stack);
+});
+
+test('clientErrorMessage oculta SQL de Drizzle al cliente', () => {
+  assert.equal(
+    clientErrorMessage(new Error('Failed query: insert into "account" ("password") values ($1)\nparams: hash')),
+    'No se pudo completar la operación.',
+  );
+  assert.equal(clientErrorMessage(new Error('Correo inválido')), 'Correo inválido');
+});
+
+test('operationalErrorBody registra la causa de Postgres y no la devuelve como error', () => {
+  const lines = [];
+  const error = new Error('Failed query: insert into "account" ("issuer") values ($1)');
+  error.cause = new Error('column "issuer" of relation "account" does not exist');
+  const body = operationalErrorBody(error, {
+    operation: 'api',
+    context: { method: 'POST', path: '/users', status: 400 },
+  }, {
+    createLogId: () => 'log_bbbbbbbbbbbb',
+    log: (line) => lines.push(line),
+  });
+
+  assert.deepEqual(body, {
+    error: 'No se pudo completar la operación.',
+    logId: 'log_bbbbbbbbbbbb',
+  });
+  const payload = JSON.parse(lines[0].slice('[ZF_LOG] log_bbbbbbbbbbbb '.length));
+  assert.equal(payload.message, error.message);
+  assert.equal(payload.cause, 'column "issuer" of relation "account" does not exist');
+  assert.equal(payload.path, '/users');
 });
