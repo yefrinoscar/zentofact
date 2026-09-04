@@ -7,7 +7,7 @@ import {
   capErrorMessage,
   formatInsumoActor,
   formatInsumoChange,
-  formatInsumoPurchaseValue,
+  formatInsumoPurchaseCopy,
   formatInsumoQuantity,
   formatInsumoWhen,
   nextQuantity,
@@ -556,39 +556,41 @@ function InsumoMeter({
         {Number.isFinite(cap) ? (
           <p className="mt-1 hidden text-xs text-muted-foreground md:block">máx. {cap}</p>
         ) : null}
-        <InsumoPurchaseHint purchase={insumo.purchase} />
+        <InsumoPurchaseHint purchase={insumo.purchase} unit={unitLabel(insumo.unit)} />
       </div>
     </article>
   );
 }
 
-const PURCHASE_ITEMS = [
-  { key: 'days', label: 'Días' },
-  { key: 'week', label: 'Semana' },
-  { key: 'month', label: 'Mes' },
-] as const;
-
-function InsumoPurchaseHint({ purchase }: { purchase?: InsumoPurchase }) {
-  const hasConsumption = Boolean(purchase?.hasConsumption);
+function InsumoPurchaseHint({
+  purchase,
+  unit,
+}: {
+  purchase?: InsumoPurchase;
+  unit: string;
+}) {
+  const copy = formatInsumoPurchaseCopy(purchase, unit);
+  if (copy.empty) {
+    return (
+      <p className="mt-3 text-xs text-muted-foreground md:text-center">{copy.empty}</p>
+    );
+  }
+  const items = [copy.week, copy.month].filter((item): item is NonNullable<typeof item> => item != null);
   return (
-    <div className="mt-3 w-full md:max-w-48">
-      <p className="text-[11px] font-medium text-muted-foreground md:text-center">A pedir</p>
-      <dl className="mt-1 grid grid-cols-3 gap-1" aria-label="A pedir">
-        {PURCHASE_ITEMS.map((item) => {
-          const value = purchase?.[item.key];
-          const needed = hasConsumption && Number(value) > 0;
-          return (
-            <div key={item.key} className="min-w-0 md:text-center">
-              <dt className="text-[11px] text-muted-foreground">{item.label}</dt>
-              <dd className={cn(
-                'text-sm font-semibold tabular-nums',
-                needed ? 'text-foreground' : 'text-muted-foreground',
-              )}>
-                {formatInsumoPurchaseValue(value, hasConsumption)}
-              </dd>
-            </div>
-          );
-        })}
+    <div className="mt-3 w-full md:max-w-56">
+      <p className="text-[11px] font-medium text-muted-foreground md:text-center">Comprar</p>
+      <dl className="mt-1 grid grid-cols-2 gap-3" aria-label="Cuánto comprar">
+        {items.map((item) => (
+          <div key={item.label} className="min-w-0 md:text-center">
+            <dd className={cn(
+              'text-base font-semibold tabular-nums',
+              item.needed ? 'text-foreground' : 'text-muted-foreground',
+            )}>
+              {item.value}
+            </dd>
+            <dt className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{item.label}</dt>
+          </div>
+        ))}
       </dl>
     </div>
   );

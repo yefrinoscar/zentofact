@@ -101,7 +101,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/insumos': {
     title: 'Insumos',
-    subtitle: 'Cantidad de empaque y cuánto pedir.',
+    subtitle: 'Cuánto comprar para la semana y el mes.',
   },
   '/auto-emision': {
     title: 'Automatización',

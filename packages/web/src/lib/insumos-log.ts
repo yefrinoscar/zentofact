@@ -79,3 +79,38 @@ export function formatInsumoPurchaseValue(value?: number | null, hasConsumption 
   if (!hasConsumption || value == null || !Number.isFinite(Number(value))) return '—';
   return formatInsumoQuantity(value);
 }
+
+export type InsumoPurchaseAmount = {
+  value: string;
+  label: string;
+  needed: boolean;
+};
+
+export type InsumoPurchaseCopy = {
+  empty: string | null;
+  week: InsumoPurchaseAmount | null;
+  month: InsumoPurchaseAmount | null;
+};
+
+function purchaseAmount(quantity: number, unit: string, label: string): InsumoPurchaseAmount {
+  const needed = Number(quantity) > 0;
+  return {
+    value: needed ? `${formatInsumoQuantity(quantity)} ${unit}`.trim() : 'Nada',
+    label,
+    needed,
+  };
+}
+
+export function formatInsumoPurchaseCopy(
+  purchase?: InsumoPurchase | null,
+  unit = 'rollos',
+): InsumoPurchaseCopy {
+  if (!purchase?.hasConsumption) {
+    return { empty: 'Todavía no hay consumo.', week: null, month: null };
+  }
+  return {
+    empty: null,
+    week: purchaseAmount(purchase.week, unit, 'para cubrir la semana'),
+    month: purchaseAmount(purchase.month, unit, 'para cubrir el mes'),
+  };
+}

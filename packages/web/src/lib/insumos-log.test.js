@@ -4,6 +4,7 @@ import {
   capErrorMessage,
   formatInsumoActor,
   formatInsumoChange,
+  formatInsumoPurchaseCopy,
   formatInsumoPurchaseValue,
   formatInsumoWhen,
   nextQuantity,
@@ -38,4 +39,24 @@ test('calcula cuánto pedir para días, semana y mes', () => {
   assert.equal(covered.month, 22);
   assert.equal(formatInsumoPurchaseValue(covered.month), '22');
   assert.equal(formatInsumoPurchaseValue(0, false), '—');
+});
+
+test('dice cuánto comprar para cubrir la semana y el mes', () => {
+  const empty = formatInsumoPurchaseCopy();
+  assert.equal(empty.empty, 'Todavía no hay consumo.');
+  assert.equal(empty.week, null);
+  const monthOnly = formatInsumoPurchaseCopy(suggestInsumoPurchases({
+    consumedRecent: 7,
+    quantityOnHand: 8,
+  }), 'rollos');
+  assert.equal(monthOnly.week?.value, 'Nada');
+  assert.equal(monthOnly.week?.label, 'para cubrir la semana');
+  assert.equal(monthOnly.month?.value, '22 rollos');
+  assert.equal(monthOnly.month?.label, 'para cubrir el mes');
+  const both = formatInsumoPurchaseCopy(suggestInsumoPurchases({
+    consumedRecent: 14,
+    quantityOnHand: 4,
+  }), 'rollos');
+  assert.equal(both.week?.value, '10 rollos');
+  assert.equal(both.month?.value, '56 rollos');
 });
