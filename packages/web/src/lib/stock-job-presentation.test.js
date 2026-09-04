@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isListableStockJob,
   shouldShowStockJobAttempts,
   stockJobDetail,
   visibleStockJobStatus,
@@ -19,6 +20,7 @@ test('una venta anterior al corte no aparece como descontada', () => {
   assert.equal(visibleStockJobStatus(job), 'outside_window');
   assert.match(stockJobDetail(job, LISTEN_FROM), /^No se descontó:/);
   assert.match(stockJobDetail(job, LISTEN_FROM), /anterior al inicio de descuentos/);
+  assert.equal(isListableStockJob(job), false);
 });
 
 test('un pedido ya aplicado conserva el estado descontado aunque el webhook se repita', () => {
@@ -33,6 +35,7 @@ test('un pedido ya aplicado conserva el estado descontado aunque el webhook se r
   assert.equal(visibleStockJobStatus(job), 'done');
   assert.equal(stockJobDetail(job, LISTEN_FROM), '1 u descontada');
   assert.equal(shouldShowStockJobAttempts(job), false);
+  assert.equal(isListableStockJob(job), true);
 });
 
 test('el contador de intentos solo acompaña trabajos que aún requieren seguimiento', () => {

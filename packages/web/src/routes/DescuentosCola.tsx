@@ -12,6 +12,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
 import {
+  isListableStockJob,
   shouldShowStockJobAttempts,
   stockJobDetail,
   visibleStockJobStatus,
@@ -512,7 +513,8 @@ export default function DescuentosCola() {
     );
   }
 
-  const shownJobs = filter === 'all' ? jobs : jobs.filter((job) => job.status === filter);
+  const listableJobs = jobs.filter(isListableStockJob);
+  const shownJobs = filter === 'all' ? listableJobs : listableJobs.filter((job) => job.status === filter);
 
   return (
     <div className="space-y-5">
@@ -701,11 +703,11 @@ export default function DescuentosCola() {
         </div>
 
         <div className="max-h-[520px] overflow-auto">
-          {refreshing && jobs.length === 0 ? <SkeletonRows /> : null}
-          {!refreshing && jobs.length === 0 ? (
+          {refreshing && listableJobs.length === 0 ? <SkeletonRows /> : null}
+          {!refreshing && listableJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay descuentos en cola.</p>
           ) : null}
-          {jobs.length > 0 && shownJobs.length === 0 ? (
+          {listableJobs.length > 0 && shownJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Nada en este filtro.</p>
           ) : null}
           {shownJobs.length > 0 ? (

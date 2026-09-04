@@ -48,6 +48,10 @@ export function visibleStockJobStatus(job: StockJobForPresentation) {
   return 'processed';
 }
 
+export function isListableStockJob(job: StockJobForPresentation) {
+  return visibleStockJobStatus(job) !== 'outside_window';
+}
+
 export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: string | null) {
   const result = job.result || {};
   const unmatched = count(job.unmatched_items);

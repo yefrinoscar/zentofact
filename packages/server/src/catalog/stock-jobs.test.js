@@ -43,14 +43,14 @@ class JobDb {
         })),
       };
     }
-    if (compact.includes('from inventory_stock_jobs group by status')) {
+    if (compact.includes('from inventory_stock_jobs') && compact.includes('group by')) {
       const counts = new Map();
       for (const job of this.jobs.values()) {
         counts.set(job.status, (counts.get(job.status) || 0) + 1);
       }
       return { rows: [...counts.entries()].map(([status, n]) => ({ status, n })) };
     }
-    if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
+    if (compact.startsWith('select id, company_id, external_order_id, external_order_number')) {
       return { rows: [] };
     }
     if (compact.includes('select paused from inventory_stock_state')) {
@@ -335,9 +335,11 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
 
 test('la tabla de jobs incluye productos y estado actual del stock', async () => {
   let query = '';
+  let params = [];
   const rows = await recentJobs(10, {
-    async query(sql) {
+    async query(sql, values = []) {
       query = String(sql);
+      params = values;
       return { rows: [{
         id: 12,
         items: [{ id: 991, title: 'Camiseta reductora', mainSku: 'H9MN' }],
@@ -354,6 +356,8 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
+  assert.match(query, /order_row\.ordered_at >= \$2::timestamptz/i);
+  assert.equal(params[1], INVENTORY_LISTEN_FROM_AT);
 });
 
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
@@ -435,6 +439,30 @@ test('con el descuento apagado el worker no procesa la cola', async () => {
   assert.equal(stats.inventoryDisabled, true);
   assert.equal(stats.claimed, 0);
   assert.equal([...db.jobs.values()][0].status, 'pending');
+});
+
+test('no encola un pedido anterior al inicio de descuentos', async () => {
+  const result = await enqueueStockJob({
+    orderId: 88,
+    source: 'webhook',
+  }, {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from orders')) {
+        return { rows: [{
+          id: 88,
+          company_id: 1,
+          external_order_id: '3250570980',
+          external_order_number: '3250570980',
+          ordered_at: '2026-09-02T22:27:00.000Z',
+        }] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(result.enqueued, false);
+  assert.equal(result.ignored, 'fuera del período');
 });
 
 test('la escucha encola pedidos operativos desde las 12:00 Lima del corte', async () => {
