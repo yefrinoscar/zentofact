@@ -55,6 +55,7 @@ test('el reset restaura ventas reservadas, suelta reservas y borra la cola', asy
       if (compact.startsWith('delete from inventory_movements')) return { rows: [{ id: 1 }] };
       if (compact.startsWith('update product_inventory')) return { rows: [{ product_id: 1 }, { product_id: 2 }, { product_id: 3 }] };
       if (compact.startsWith('delete from inventory_stock_jobs')) return { rows: Array.from({ length: 7 }, (_, id) => ({ id })) };
+      if (compact.includes('insert into inventory_stock_state')) return { rows: [{ paused: false }] };
       return { rows: [] };
     },
   });
@@ -65,6 +66,8 @@ test('el reset restaura ventas reservadas, suelta reservas y borra la cola', asy
   assert.equal(result.movementsDeleted, 1);
   assert.equal(result.reservedCleared, 3);
   assert.equal(result.jobsDeleted, 7);
+  assert.equal(result.workerPaused, false);
   assert.equal(calls.some((sql) => sql.includes('quantity_reserved=0')), true);
   assert.equal(calls.some((sql) => sql.startsWith('delete from inventory_stock_jobs')), true);
+  assert.equal(calls.some((sql) => sql.includes('set paused = false')), true);
 });

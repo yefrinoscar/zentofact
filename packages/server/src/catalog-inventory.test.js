@@ -432,7 +432,7 @@ test('un pedido pending reserva stock y no descuenta el almacén', async () => {
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
-      ordered_at: '2026-09-04T17:00:00.000Z',
+      ordered_at: INVENTORY_LISTEN_FROM_AT,
     },
   }));
   assert.equal(result.applied, 0);
@@ -451,7 +451,7 @@ test('un pedido pending anterior al corte no reserva ni descuenta', async () => 
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
-      ordered_at: '2026-09-04T16:59:59.000Z',
+      ordered_at: new Date(Date.parse(INVENTORY_LISTEN_FROM_AT) - 1000).toISOString(),
     },
   }));
   assert.equal(result.reserved, 0);
@@ -472,7 +472,7 @@ test('al pasar a listo para enviar la reserva deja de estar reservada y descuent
     existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
     persisted: {
       id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'ready_to_ship',
-      external_order_number: '3999111222', ordered_at: '2026-09-04T17:00:00.000Z',
+      external_order_number: '3999111222', ordered_at: INVENTORY_LISTEN_FROM_AT,
     },
   }));
   assert.equal(result.applied, 1);

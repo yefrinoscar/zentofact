@@ -1,5 +1,5 @@
-// 12:00 America/Lima del 4 set 2026. Pedidos anteriores no reservan ni descuentan.
-export const INVENTORY_LISTEN_FROM_AT = '2026-09-04T17:00:00.000Z';
+// 12:00 America/Lima del 3 set 2026. Pedidos anteriores no reservan ni descuentan.
+export const INVENTORY_LISTEN_FROM_AT = '2026-09-03T17:00:00.000Z';
 
 export const STOCK_RESERVE_FULFILLMENT = new Set(['pending', 'preparing']);
 export const STOCK_COMMIT_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);

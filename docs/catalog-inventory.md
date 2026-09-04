@@ -112,13 +112,14 @@ el pedido desde pendiente.
 
 ## Invariantes de stock
 
-- Desde el 4 set 2026 a las 12:00 America/Lima, webhook, cron y la
+- Desde el 3 set 2026 a las 12:00 America/Lima, webhook, cron y la
   escucha de la cola toman un pedido `pending` o `preparing` con
   `ordered_at` de esa hora en adelante y reservan el producto maestro.
   Un pedido sin `ordered_at` no entra. `quantity_on_hand` no cambia. El
   primer arranque de esta versión borra la cola de descuentos, suelta
-  reservas y deshace solo ventas con `metadata.reserved=true`. Los
-  descuentos viejos de listo para enviar no se tocan.
+  reservas, deshace solo ventas con `metadata.reserved=true` y deja el
+  worker **activo** (`paused=false`) para que el deploy empiece a
+  escuchar. Los descuentos viejos de listo para enviar no se tocan.
   `available` baja porque `available = on_hand - reserved`. El número
   que el catálogo, el resumen, Inventario y las ventas llaman Stock es
   `available`. `quantity_on_hand` solo aparece como En almacén. Al

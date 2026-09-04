@@ -1,6 +1,6 @@
 import { loadCore } from './utils.js';
 
-export const INVENTORY_LISTEN_RESET_KEY = 'inventory_listen_reset_v2';
+export const INVENTORY_LISTEN_RESET_KEY = 'inventory_listen_reset_v3';
 
 const log = (...args) => console.log('[stock-listen-reset]', ...args);
 
@@ -18,7 +18,7 @@ export async function resetInventoryListenHistory(db) {
   const client = ownsConnection ? await source.connect() : source;
   if (ownsConnection) await client.query('begin');
   try {
-    await client.query("select pg_advisory_xact_lock(hashtextextended('inventory-listen-reset-v2', 0))");
+    await client.query("select pg_advisory_xact_lock(hashtextextended('inventory-listen-reset-v3', 0))");
     await client.query(`
       create table if not exists system_settings (
         key text primary key,
@@ -101,6 +101,15 @@ export async function resetInventoryListenHistory(db) {
 
     const deletedJobs = await client.query('delete from inventory_stock_jobs returning id');
 
+    const worker = await client.query(`
+      insert into inventory_stock_state (id, paused, updated_at)
+      values (1, false, now())
+      on conflict (id) do update
+        set paused = false,
+            updated_at = now()
+      returning paused
+    `);
+
     await client.query(
       `insert into system_settings (key, value, updated_at, updated_by)
        values ($1, $2::jsonb, now(), 'system.listen-reset')
@@ -118,6 +127,7 @@ export async function resetInventoryListenHistory(db) {
       movementsDeleted: deletedMovements.rows.length,
       reservedCleared: released.rows.length,
       jobsDeleted: deletedJobs.rows.length,
+      workerPaused: worker.rows[0]?.paused === true,
     };
     log(JSON.stringify(summary));
     return summary;

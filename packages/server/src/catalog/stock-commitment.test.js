@@ -24,14 +24,16 @@ test('la cola escucha pending y listo para enviar', () => {
   assert.equal(shouldEnqueueStockJob('cancelled'), false);
 });
 
-test('la escucha empieza el 4 set 2026 a las 12:00 Lima', () => {
-  assert.equal(INVENTORY_LISTEN_FROM_AT, '2026-09-04T17:00:00.000Z');
+test('la escucha empieza el 3 set 2026 a las 12:00 Lima', () => {
+  assert.equal(INVENTORY_LISTEN_FROM_AT, '2026-09-03T17:00:00.000Z');
   assert.equal(isAfterInventoryListenFrom(null), false);
-  assert.equal(isAfterInventoryListenFrom('2026-09-04T16:59:59.000Z'), false);
-  assert.equal(isAfterInventoryListenFrom('2026-09-04T17:00:00.000Z'), true);
-  assert.equal(isAfterInventoryListenFrom('2026-09-04T17:00:01.000Z'), true);
+  assert.equal(isAfterInventoryListenFrom(''), false);
+  assert.equal(isAfterInventoryListenFrom('no-es-fecha'), false);
+  assert.equal(isAfterInventoryListenFrom('2026-09-03T16:59:59.000Z'), false);
+  assert.equal(isAfterInventoryListenFrom('2026-09-03T17:00:00.000Z'), true);
+  assert.equal(isAfterInventoryListenFrom('2026-09-03T17:00:01.000Z'), true);
   assert.equal(shouldListenStockOrder({ status: 'pending' }), false);
-  assert.equal(shouldListenStockOrder({ status: 'pending', orderedAt: '2026-09-04T16:59:59.000Z' }), false);
-  assert.equal(shouldListenStockOrder({ status: 'pending', orderedAt: '2026-09-04T17:00:00.000Z' }), true);
-  assert.equal(shouldListenStockOrder({ status: 'cancelled', orderedAt: '2026-09-04T17:00:00.000Z' }), false);
+  assert.equal(shouldListenStockOrder({ status: 'pending', orderedAt: '2026-09-03T16:59:59.000Z' }), false);
+  assert.equal(shouldListenStockOrder({ status: 'pending', orderedAt: '2026-09-03T17:00:00.000Z' }), true);
+  assert.equal(shouldListenStockOrder({ status: 'cancelled', orderedAt: '2026-09-03T17:00:00.000Z' }), false);
 });
