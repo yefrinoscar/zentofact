@@ -371,6 +371,25 @@ test('resuelve por seller SKU con aislamiento de company y detecta shop SKU ambi
   assert.deepEqual(ambiguous, { unmapped: true, reason: 'ambiguous_shop_sku' });
 });
 
+test('Ripley resuelve si el pedido trae offer y product SKU al revés', async () => {
+  const db = new InventoryDb();
+  db.listings.push(listing({
+    listing_id: 80,
+    channel_code: 'ripley',
+    company_id: 2,
+    seller_sku: 'S166285',
+    shop_sku: 'HOG025',
+  }));
+  const resolved = await resolveListing(db, {
+    channelCode: 'ripley',
+    companyId: 2,
+    sellerSku: 'HOG025',
+    shopSku: 'S166285',
+  });
+  assert.equal(resolved.listing.id, 80);
+  assert.equal(resolved.listing.sellerSku, 'S166285');
+});
+
 test('reconcilia cantidades oscilantes con revisiones monotónicas sin doble descuento', async () => {
   const db = new InventoryDb(10);
   db.listings.push(listing());

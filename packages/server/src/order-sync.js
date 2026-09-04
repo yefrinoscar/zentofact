@@ -1,7 +1,7 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
-import { ingestRipleyOrder } from './order-adapters/ripley.js';
+import { ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
@@ -209,9 +209,10 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
           && createdAt <= new Date(window.to);
       })
       : page.orders;
-    for (const normalized of orders) {
+    for (const listed of orders) {
       try {
         await db.query('begin');
+        const normalized = await withRipleyOrderLines(client, listed);
         const result = await (dependencies.ingestRipleyOrder || ingestRipleyOrder)({
           companyId: account.companyId,
           company: { ...account, id: account.companyId },
@@ -257,7 +258,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             channelAccountId: account.channelAccountId,
             channelCode: account.channelCode,
             runId,
-            externalOrderId: normalized?.orderId,
+            externalOrderId: listed.orderId,
           },
         });
         lastLogId = logged.logId;

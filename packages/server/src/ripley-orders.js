@@ -1,5 +1,5 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
-import { ensureRipleyOrderAccount, ingestRipleyOrder } from './order-adapters/ripley.js';
+import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
 
@@ -65,7 +65,8 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
     );
     const orders = await client.listAllOrders(ripleySyncWindow(options, claimed.rows[0].last_successful_sync_at));
     const results = [];
-    for (const normalized of orders) {
+    for (const listed of orders) {
+      const normalized = await withRipleyOrderLines(client, listed);
       results.push(await ingestRipleyOrder({
         companyId,
         normalized,
