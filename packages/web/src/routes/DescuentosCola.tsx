@@ -213,7 +213,7 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
   const [failed, setFailed] = useState(false);
   const canShowImage = Boolean(imageUrl) && !failed;
   return (
-    <div className={cn('daisy-avatar shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
+    <div className={cn('daisy-avatar relative z-0 shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
       <div className={cn(size, 'overflow-hidden rounded-md bg-muted text-muted-foreground')}>
         {canShowImage ? (
           <img
@@ -739,7 +739,7 @@ export default function DescuentosCola() {
           </div>
         </div>
 
-        <div className="max-h-[520px] overflow-auto">
+        <div className="relative z-0 max-h-[520px] overflow-auto">
           {refreshing && listableJobs.length === 0 ? <SkeletonRows /> : null}
           {!refreshing && listableJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay descuentos en cola.</p>
@@ -749,15 +749,15 @@ export default function DescuentosCola() {
           ) : null}
           {shownJobs.length > 0 ? (
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <thead className="sticky top-0 z-20 bg-card text-left text-xs text-muted-foreground">
                 <tr className="border-b border-border">
-                  <th className="px-5 py-2.5 font-medium">Empresa</th>
-                  <th className="px-5 py-2.5 font-medium">Orden</th>
-                  <th className="px-5 py-2.5 font-medium">Producto</th>
-                  <th className="px-5 py-2.5 font-medium">Estado</th>
-                  <th className="px-5 py-2.5 font-medium">Origen</th>
-                  <th className="px-5 py-2.5 font-medium">Detalle</th>
-                  <th className="px-5 py-2.5 font-medium">Cuándo</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Empresa</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Orden</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Producto</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Estado</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Origen</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Detalle</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Cuándo</th>
                 </tr>
               </thead>
               <tbody>
