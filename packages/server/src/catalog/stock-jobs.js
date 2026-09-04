@@ -233,14 +233,20 @@ export async function getConfig(db) {
 export async function recentJobs(limit = 60, db) {
   const client = await target(db);
   const result = await client.query(
-    `select j.id, j.company_id, coalesce(c.nombre, c.nombre_comercial, c.razon_social) as company,
+    `select j.id, j.company_id,
+            coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company,
             coalesce(nullif(j.order_number, ''), order_row.external_order_number) as order_number,
             j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
-            j.created_at, j.updated_at
+            j.created_at, j.updated_at,
+            coalesce(item_summary.items, '[]'::jsonb) as items,
+            coalesce(item_summary.reserved_units, 0) as reserved_units,
+            coalesce(item_summary.applied_units, 0) as applied_units,
+            coalesce(item_summary.unmatched_items, 0)::int as unmatched_items,
+            coalesce(item_summary.insufficient_items, 0)::int as insufficient_items
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      left join lateral (
-       select external_order_number
+       select id, external_order_number
        from orders
        where id=j.order_id
           or (
@@ -251,6 +257,25 @@ export async function recentJobs(limit = 60, db) {
        order by (id=j.order_id) desc, id asc
        limit 1
      ) order_row on true
+     left join lateral (
+       select jsonb_agg(jsonb_build_object(
+                'id', oi.id,
+                'title', coalesce(nullif(product.name, ''), nullif(oi.description, ''), 'Producto sin nombre'),
+                'sellerSku', coalesce(oi.sku, ''),
+                'quantity', oi.quantity,
+                'mainSku', coalesce(nullif(oi.main_sku, ''), nullif(product.main_sku, '')),
+                'stockState', oi.stock_state
+              ) order by oi.id) as items,
+              coalesce(sum(oi.stock_applied_quantity)
+                filter (where oi.stock_state='pending'), 0) as reserved_units,
+              coalesce(sum(oi.stock_applied_quantity)
+                filter (where oi.stock_state='applied'), 0) as applied_units,
+              count(*) filter (where oi.product_id is null) as unmatched_items,
+              count(*) filter (where oi.stock_state='skipped_insufficient') as insufficient_items
+         from order_items oi
+         left join products product on product.id=oi.product_id
+        where oi.order_id=order_row.id
+     ) item_summary on true
      order by j.updated_at desc
      limit $1`,
     [Math.min(Math.max(Number(limit) || 60, 1), 200)],

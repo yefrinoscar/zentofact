@@ -8,6 +8,7 @@ import {
   getPaused,
   jobOrderPreview,
   processStockQueue,
+  recentJobs,
   runStockReconciliation,
   reopenReservedStockJobsForCommit,
   setPaused,
@@ -286,6 +287,28 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
     mainSku: 'H9MN',
     stockState: 'pending',
   }]);
+});
+
+test('la tabla de jobs incluye productos y estado actual del stock', async () => {
+  let query = '';
+  const rows = await recentJobs(10, {
+    async query(sql) {
+      query = String(sql);
+      return { rows: [{
+        id: 12,
+        items: [{ id: 991, title: 'Camiseta reductora', mainSku: 'H9MN' }],
+        reserved_units: '1',
+        applied_units: '0',
+        unmatched_items: 0,
+      }] };
+    },
+  });
+
+  assert.equal(rows[0].items[0].mainSku, 'H9MN');
+  assert.match(query, /jsonb_agg/i);
+  assert.match(query, /reserved_units/i);
+  assert.match(query, /unmatched_items/i);
+  assert.match(query, /product_id is null/i);
 });
 
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
