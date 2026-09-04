@@ -49,6 +49,9 @@ const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
+const { shouldListenStockOrder } = await import('./catalog/stock-commitment.js');
+const listenReset = await import('./catalog/stock-listen-reset.js');
+await listenReset.resetInventoryListenHistory();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
@@ -522,7 +525,10 @@ app.post('/order-management/orders/manual', async (c) => {
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
     });
-    if (result?.order?.companyId && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
+    if (result?.order?.companyId && shouldListenStockOrder({
+      status: result.order.fulfillmentStatus,
+      orderedAt: result.order.orderedAt,
+    })) {
       try {
         await stockJobs.enqueueStockJob({
           orderId: result.order.id,
@@ -1640,6 +1646,12 @@ app.post('/auto-emit/config/:companyId', async (c) => {
 });
 app.post('/auto-emit/pause', async (c) => { try { const { paused } = await c.req.json(); return ok(c, await autoEmit.setPaused(paused)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/cron', async (c) => { try { return ok(c, await autoEmit.setCron(await c.req.json())); } catch (e) { return fail(c, e, 400); } });
+app.post('/auto-emit/alert-emails', async (c) => {
+  try {
+    const body = await c.req.json();
+    return ok(c, await autoEmit.setAlertEmails(body.emails ?? body.alertEmails ?? ''));
+  } catch (e) { return fail(c, e, 400); }
+});
 app.post('/auto-emit/dry-run', async (c) => { try { const { dryRun } = await c.req.json(); return ok(c, await autoEmit.setDryRun(dryRun)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await autoEmit.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
 app.get('/auto-emit/jobs/:id/order-preview', async (c) => { try { return ok(c, await autoEmit.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });

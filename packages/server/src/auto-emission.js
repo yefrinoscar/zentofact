@@ -32,6 +32,9 @@ import {
   jobKindForStatus,
   normStatus,
 } from './auto-emission-policy.js';
+import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
+import { sendEmail } from './mailer.js';
+import { listUsers } from './users.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 
@@ -311,12 +314,14 @@ export async function ensureTables() {
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
-      next_attempt_at timestamptz
+      next_attempt_at timestamptz,
+      alerted_at timestamptz
     );
     alter table emission_jobs add column if not exists order_id text;
     alter table emission_jobs add column if not exists current_step text;
     alter table emission_jobs add column if not exists next_attempt_at timestamptz;
     alter table emission_jobs add column if not exists kind text not null default 'invoice';
+    alter table emission_jobs add column if not exists alerted_at timestamptz;
     do $$
     declare rec record;
     begin
@@ -367,6 +372,7 @@ export async function ensureTables() {
     alter table auto_emission_state add column if not exists cron_interval_minutes integer not null default 60;
     alter table auto_emission_state add column if not exists cron_window_days integer not null default 3;
     alter table auto_emission_state add column if not exists dry_run boolean not null default true;
+    alter table auto_emission_state add column if not exists alert_emails text;
   `);
   // Semilla por ambiente: al crear el estado por primera vez, usa la env AUTO_EMIT_DRY_RUN de ESE ambiente.
   await pool.query(
@@ -416,6 +422,22 @@ export async function setCron({ enabled, intervalMinutes, windowDays }) {
   return next;
 }
 
+export async function getAlertEmails() {
+  const r = await pool.query('select alert_emails from auto_emission_state where id=1');
+  return parseAlertEmails(r.rows[0]?.alert_emails);
+}
+
+export async function setAlertEmails(value) {
+  const emails = parseAlertEmailInput(value);
+  await pool.query(
+    `insert into auto_emission_state (id, alert_emails, updated_at) values (1, $1, now())
+     on conflict (id) do update set alert_emails=excluded.alert_emails, updated_at=now()`,
+    [emails.join(', ')],
+  );
+  log(`avisos: ${emails.length ? emails.join(', ') : 'sin lista; se usa quien emite boletas'}`);
+  return { alertEmails: emails };
+}
+
 // ── Pausa global de la cola (runtime, sin reiniciar) ──
 export async function getPaused() {
   const r = await pool.query('select paused from auto_emission_state where id=1');
@@ -434,7 +456,7 @@ export async function setPaused(paused) {
 // Reintentar un job (fallido/omitido) → vuelve a pending, reinicia intentos.
 export async function retryJob(id) {
   const r = await pool.query(
-    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, next_attempt_at=null, updated_at=now()
+    `update emission_jobs set status='pending', attempts=0, last_error=null, current_step=null, next_attempt_at=null, alerted_at=null, updated_at=now()
      where id=$1 returning id, company_id, order_number, status`, [id]);
   return r.rows[0] || null;
 }
@@ -449,6 +471,7 @@ export async function getConfig() {
   const paused = await getPaused();
   const cron = await getCron();
   const dryRun = await getDryRun();
+  const alertEmails = await getAlertEmails();
   // A qué SUNAT emite realmente (lo decide el ambiente).
   const forced = (process.env.SUNAT_FORCE_ENV || '').trim().toLowerCase();
   const sunatEnv = forced.startsWith('prod')
@@ -468,6 +491,7 @@ export async function getConfig() {
     reconcileEnabled: RECONCILE_ENABLED,
     paused,
     cron,
+    alertEmails,
     stats,
     // Base sin secret ni companyId; la URL real se arma por empresa en el servidor.
     webhookBase: `${publicApiBaseUrl()}/webhooks/falabella`,
@@ -543,7 +567,7 @@ async function falabellaDocumentPolicy(companyId) {
 export async function recentJobs(limit = 50) {
   const r = await pool.query(
     `select j.id, j.company_id, c.nombre as company, coalesce(nullif(b.order_number, ''), nullif(f.order_number, ''), j.order_number) as order_number, j.order_id, j.status, j.source,
-            j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.created_at, j.updated_at
+            j.kind, j.attempts, j.result, j.last_error, j.boleta_numero, j.current_step, j.alerted_at, j.created_at, j.updated_at
      from emission_jobs j left join companies c on c.id=j.company_id
      left join lateral (
        select order_number from boletas
@@ -990,20 +1014,47 @@ async function processCreditNoteJob(job, { order, orderNumber, orderDate, setSte
   return { status: 'done', result: `nota de crédito ${numero} ACEPTADA`, boletaNumero: numero || null };
 }
 
+async function alertFailedEmission(job, { lastError, status } = {}) {
+  try {
+    const company = job.company || (await getCompany(job.company_id).catch(() => null))?.nombre || null;
+    const stored = await getAlertEmails();
+    await notifyFailedEmissionIfNeeded({
+      ...job,
+      companyName: company,
+      lastError: lastError || job.last_error,
+      status: status || job.status,
+    }, {
+      sendEmail,
+      listUsers,
+      configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
+      fallbackEmail: process.env.ADMIN_EMAIL,
+      markAlerted: async (item) => {
+        await pool.query('update emission_jobs set alerted_at=now() where id=$1', [item.id]);
+      },
+      log,
+    });
+  } catch (error) {
+    log(`aviso de emisión error:`, error.message);
+  }
+}
+
 export async function processQueue(limit = 3) {
   if (await getPaused()) return 0; // cola pausada desde el panel
   const client = await pool.connect();
   let jobs = [];
+  let timedOutJobs = [];
   try {
-    await client.query(
+    const timedOut = await client.query(
       `update emission_jobs
        set status='failed',
            last_error='timeout ${timeoutLabel()} en etapa: ' || coalesce(current_step, 'sin etapa registrada'),
            updated_at=now()
        where status='processing'
-         and updated_at < now() - ($1::int * interval '1 millisecond')`,
+         and updated_at < now() - ($1::int * interval '1 millisecond')
+       returning *`,
       [JOB_TIMEOUT_MS],
     );
+    timedOutJobs = timedOut.rows;
     // Toma jobs sin pisarse entre instancias.
     const res = await client.query(
       `update emission_jobs set status='processing', attempts=attempts+1, current_step='iniciando', updated_at=now()
@@ -1017,6 +1068,10 @@ export async function processQueue(limit = 3) {
     jobs = res.rows;
   } finally {
     client.release();
+  }
+
+  for (const job of timedOutJobs) {
+    await alertFailedEmission(job, { lastError: job.last_error, status: 'failed' });
   }
 
   for (const job of jobs) {
@@ -1038,6 +1093,7 @@ export async function processQueue(limit = 3) {
               updated_at=now()
           where id=$1`,
         [job.id, nextStatus, r.error || 'retry', retryDelaySeconds(job.attempts)]);
+        await alertFailedEmission(job, { lastError: r.error || 'retry', status: nextStatus });
       } else {
         await pool.query(`update emission_jobs set status=$2, result=$3, boleta_numero=$4, last_error=null, current_step=null, next_attempt_at=null, updated_at=now() where id=$1`,
           [job.id, r.status, r.result || null, r.boletaNumero || null]);
@@ -1055,6 +1111,7 @@ export async function processQueue(limit = 3) {
             updated_at=now()
         where id=$1`,
       [job.id, nextStatus, String(e.message || e), isTimeout ? currentStep : null, retryDelaySeconds(job.attempts)]);
+      await alertFailedEmission(job, { lastError: String(e.message || e), status: nextStatus });
     }
   }
   return jobs.length;

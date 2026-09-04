@@ -12,7 +12,9 @@ Estado: implementado detrás de feature flag (2026-08-08).
 - Importación Falabella que reutiliza un `main_sku` sanitizado existente.
 - Reconciliación de pedidos listos para enviar, enviados o entregados,
   cambios de cantidad, líneas eliminadas, cancelaciones, fallos y
-  devoluciones. Un pedido `pending` no descuenta stock.
+  devoluciones. Un pedido `pending` o `preparing` reserva stock
+  (`quantity_reserved`). Al pasar a `ready_to_ship` la reserva se
+  confirma y se descuenta el almacén.
 - Cada movimiento de venta cita el número de pedido y el seller. El
   descuento aplica al producto maestro asociado, no a cada publicación.
 - Cola operativa para `skipped_unmapped` y `skipped_insufficient`.
@@ -104,23 +106,35 @@ indica que `quantity_on_hand` cambió sin un registro equivalente en
 auditable: registra el saldo contado, la diferencia aplicada, el motivo y el
 usuario que hizo el cambio.
 
-Desactivar el flag detiene el descuento en re-sync e hidratación histórica;
-no borra saldos ni movimientos. El paso a listo para enviar (webhook o
-bandeja) sigue aplicando el movimiento.
+Desactivar el flag detiene reservas y descuentos en re-sync e hidratación
+histórica; no borra saldos ni movimientos. El webhook o la bandeja encolan
+el pedido desde pendiente.
 
 ## Invariantes de stock
 
-- El stock interno se descuenta cuando el pedido pasa a `ready_to_ship`
-  (el mismo momento que habilita la boleta), no al confirmarlo ni al
-  recibirlo como `pending`. `shipped` y `delivered` también son elegibles
-  si el descuento todavía no se aplicó.
-- El webhook y la bandeja no descuentan en el request: encolan un job en
-  `inventory_stock_jobs`. Un worker aparte (lotes de 8, reintento) escribe
-  el movimiento. La cola de boletas sigue siendo otra; el mismo evento
-  `listo para enviar` alimenta las dos. Un backfill por fecha operativa
-  (`POST /catalog/inventory/apply-ready-orders`) encola el día y drena la cola.
-- `stock_applied_quantity` indica cuántas unidades de una línea ya están en el
-  ledger. `stock_revision` solo aumenta cuando se inserta un movement real.
+- Desde el 3 set 2026 a las 12:00 America/Lima, webhook, cron y la
+  escucha de la cola toman un pedido `pending` o `preparing` con
+  `ordered_at` de esa hora en adelante y reservan el producto maestro.
+  Un pedido sin `ordered_at` no entra. `quantity_on_hand` no cambia. El
+  primer arranque de esta versión borra la cola de descuentos, suelta
+  reservas, deshace solo ventas con `metadata.reserved=true` y deja el
+  worker **activo** (`paused=false`) para que el deploy empiece a
+  escuchar. Los descuentos viejos de listo para enviar no se tocan.
+  `available` baja porque `available = on_hand - reserved`. El número
+  que el catálogo, el resumen, Inventario y las ventas llaman Stock es
+  `available`. `quantity_on_hand` solo aparece como En almacén. Al
+  pasar a `ready_to_ship` la reserva se confirma: baja `quantity_on_hand`
+  y `quantity_reserved`. `shipped` y `delivered` confirman si todavía
+  faltaba. Pedidos anteriores a esa hora no reservan ni descuentan.
+- El webhook y la bandeja no escriben el saldo en el request: encolan un
+  job en `inventory_stock_jobs`. El worker escucha pedidos pendientes
+  posteriores al corte, reserva, y al listo para enviar confirma. La cola
+  de boletas sigue siendo otra y se alimenta al listo para enviar. Un
+  backfill por fecha operativa (`POST /catalog/inventory/apply-ready-orders`)
+  encola el día listo para enviar y drena la cola.
+- En `pending`, `stock_applied_quantity` es la cantidad reservada. En
+  `applied`, es la cantidad ya descontada del almacén. `stock_revision`
+  solo aumenta cuando se inserta un movement real.
 - Las claves usan la revisión monotónica (`...:rev:N`), no la cantidad final.
 - Un re-sync idéntico no llama al ledger.
 - Una línea se revierte antes del `DELETE`; las FKs del ledger pasan a `NULL`

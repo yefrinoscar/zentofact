@@ -47,10 +47,14 @@ class IngestDb {
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
     if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
       const onHand = this.inventory.get(Number(params[0])) ?? 100;
-      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: 0 }] };
+      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: this.reserved || 0 }] };
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.inventory.set(Number(params[1]), Number(params[0]));
+      return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_reserved')) {
+      this.reserved = Number(params[0]);
       return { rows: [] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
@@ -222,6 +226,7 @@ test('una venta manual conserva el productId del catálogo para descontar stock'
   const db = new IngestDb(account({ channel_code: 'manual' }));
   await ingestOrder(manualSale({
     fulfillmentStatus: 'ready_to_ship',
+    orderedAt: '2026-09-04T18:00:00.000Z',
     shipping: { type: 'recojo' },
     items: [{
       externalItemId: 'VTA-1-1',
@@ -247,6 +252,7 @@ test('una venta manual sin companyId nace sin seller asociado', async () => {
   const db = new IngestDb(account({ channel_code: 'manual' }));
   const { companyId: _omitted, ...sale } = manualSale({
     fulfillmentStatus: 'ready_to_ship',
+    orderedAt: '2026-09-04T18:00:00.000Z',
     shipping: { type: 'recojo' },
     items: [{
       externalItemId: 'VTA-1-1',

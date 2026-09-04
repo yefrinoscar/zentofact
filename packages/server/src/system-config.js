@@ -14,8 +14,8 @@ export const SYSTEM_FLAGS = {
   catalog_inventory: {
     key: 'catalog_inventory',
     envVar: 'CATALOG_INVENTORY_ENABLED',
-    label: 'Descuento de inventario al listo para enviar',
-    description: 'Descuenta el producto maestro al listo para enviar y reintegra en cancelación o devolución. Es el mismo interruptor que muestra Cola de descuentos.',
+    label: 'Descuento de inventario desde pendiente',
+    description: 'Reserva el producto maestro desde pendiente, lo descuenta del almacén al listo para enviar y reintegra en cancelación o devolución. Es el mismo interruptor que muestra Cola de descuentos.',
     confirmWord: null,
     requireListings: true,
     docsPath: '/docs/catalog-inventory.md',

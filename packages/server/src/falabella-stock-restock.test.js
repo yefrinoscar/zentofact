@@ -40,6 +40,7 @@ function accountRow() {
 class RestockDb {
   constructor(quantity = 10) {
     this.quantity = quantity;
+    this.reserved = 0;
     this.movements = new Map();
     this.orders = new Map();
     this.items = new Map();
@@ -57,8 +58,8 @@ class RestockDb {
       enabled: true,
       status: 'success',
       full_sync_completed: true,
-      cursor_updated_at: '2026-08-18T10:00:00Z',
-      last_successful_sync_at: '2026-08-18T10:00:00Z',
+      cursor_updated_at: '2026-09-03T10:00:00Z',
+      last_successful_sync_at: '2026-09-03T10:00:00Z',
       sync_interval_minutes: 10,
     };
     this.released = false;
@@ -155,10 +156,10 @@ class RestockDb {
         ordered_at: params[20],
         promised_shipping_at: params[21],
         provider_updated_at: params[22],
-        first_seen_at: '2026-08-18T15:00:00Z',
-        last_seen_at: '2026-08-18T15:00:00Z',
-        created_at: '2026-08-18T15:00:00Z',
-        updated_at: '2026-08-18T15:00:00Z',
+        first_seen_at: '2026-09-03T15:00:00Z',
+        last_seen_at: '2026-09-03T15:00:00Z',
+        created_at: '2026-09-03T15:00:00Z',
+        updated_at: '2026-09-03T15:00:00Z',
       };
       this.orders.set(key, row);
       return { rows: [{ ...row }] };
@@ -200,7 +201,7 @@ class RestockDb {
     }
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
     if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
-      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: 0 }] };
+      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: this.reserved || 0 }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -230,6 +231,10 @@ class RestockDb {
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.quantity = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_reserved')) {
+      this.reserved = Number(params[0]);
       return { rows: [] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
@@ -276,11 +281,11 @@ class RestockDb {
   }
 }
 
-function falabellaOrder({ status, items, updatedAt = '2026-08-18T16:00:00Z' }) {
+function falabellaOrder({ status, items, updatedAt = '2026-09-03T19:00:00Z' }) {
   return {
     OrderId: '99',
     OrderNumber: '3248709095',
-    CreatedAt: '2026-08-18T15:00:00Z',
+    CreatedAt: '2026-09-03T18:00:00Z',
     UpdatedAt: updatedAt,
     GrandTotal: '129.90',
     Statuses: [{ Status: status }],
@@ -323,8 +328,8 @@ test('cancelar un pedido ya listo para enviar reintegra el stock con motivo de c
       orderId: '99',
       orderNumber: '3248709095',
       status: 'ready_to_ship',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T15:10:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T18:10:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({ status: 'ready_to_ship', items: [orderItem()] }),
@@ -341,11 +346,11 @@ test('cancelar un pedido ya listo para enviar reintegra el stock con motivo de c
       orderId: '99',
       orderNumber: '3248709095',
       status: 'canceled',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T16:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T19:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
-      raw: falabellaOrder({ status: 'canceled', updatedAt: '2026-08-18T16:00:00Z' }),
+      raw: falabellaOrder({ status: 'canceled', updatedAt: '2026-09-03T19:00:00Z' }),
     },
   }, db);
 
@@ -368,8 +373,8 @@ test('devolver un pedido ya listo para enviar reintegra el stock con motivo de d
       orderId: '99',
       orderNumber: '3248709095',
       status: 'ready_to_ship',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T15:10:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T18:10:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({ status: 'ready_to_ship', items: [orderItem()] }),
@@ -386,11 +391,11 @@ test('devolver un pedido ya listo para enviar reintegra el stock con motivo de d
       orderId: '99',
       orderNumber: '3248709095',
       status: 'returned',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T18:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T20:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
-      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-08-18T18:00:00Z' }),
+      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-09-03T18:00:00Z' }),
     },
   }, db);
 
@@ -411,8 +416,8 @@ async function ingestReadyToShip(db, { quantity = 1, catalogInventoryEnabled = t
       orderId: '99',
       orderNumber: '3248709095',
       status: 'ready_to_ship',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T15:10:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T18:10:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({
@@ -434,7 +439,7 @@ test('el sync de GetOrders reintegra una unidad al cancelar sin volver a pedir e
       return {
         ok: true,
         status: 200,
-        data: { orders: [falabellaOrder({ status: 'canceled', updatedAt: '2026-08-18T16:00:00Z' })] },
+        data: { orders: [falabellaOrder({ status: 'canceled', updatedAt: '2026-09-03T19:00:00Z' })] },
       };
     },
     async call() {
@@ -442,7 +447,7 @@ test('el sync de GetOrders reintegra una unidad al cancelar sin volver a pedir e
     },
   };
 
-  await syncFalabellaOrders(7, { now: '2026-08-18T16:00:00Z' }, {
+  await syncFalabellaOrders(7, { now: '2026-09-03T19:00:00Z' }, {
     pool: { connect: async () => db },
     getCompany: async () => ({
       id: 7, activo: true, falabellaApiUserId: 'seller', falabellaApiKey: 'secret',
@@ -469,14 +474,14 @@ test('el sync de GetOrders reintegra una unidad al devolver un pedido ya enviado
       orderId: '99',
       orderNumber: '3248709095',
       status: 'delivered',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T17:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T17:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({
         status: 'delivered',
         items: [orderItem({ quantity: 1, status: 'delivered' })],
-        updatedAt: '2026-08-18T17:00:00Z',
+        updatedAt: '2026-09-03T17:00:00Z',
       }),
     },
   }, db);
@@ -490,11 +495,11 @@ test('el sync de GetOrders reintegra una unidad al devolver un pedido ya enviado
       orderId: '99',
       orderNumber: '3248709095',
       status: 'returned',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T20:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T20:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
-      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-08-18T20:00:00Z' }),
+      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-09-03T20:00:00Z' }),
     },
   }, db);
 
@@ -510,11 +515,11 @@ test('el sync de GetOrders reintegra una unidad al devolver un pedido ya enviado
       orderId: '99',
       orderNumber: '3248709095',
       status: 'returned',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T20:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T20:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
-      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-08-18T20:00:00Z' }),
+      raw: falabellaOrder({ status: 'returned', updatedAt: '2026-09-03T20:00:00Z' }),
     },
   }, db);
   assert.equal(db.quantity, 5);
@@ -533,14 +538,14 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido ya enviado a d
       orderId: '99',
       orderNumber: '3248709095',
       status: 'shipped',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T17:00:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T17:00:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({
         status: 'shipped',
         items: [orderItem({ quantity: 1, status: 'shipped' })],
-        updatedAt: '2026-08-18T17:00:00Z',
+        updatedAt: '2026-09-03T17:00:00Z',
       }),
     },
   }, db);
@@ -549,8 +554,8 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido ya enviado a d
     order_id: '99',
     order_number: '3248709095',
     status: 'shipped',
-    falabella_created_at: '2026-08-18T15:00:00Z',
-    falabella_updated_at: '2026-08-18T17:00:00Z',
+    falabella_created_at: '2026-09-03T15:00:00Z',
+    falabella_updated_at: '2026-09-03T17:00:00Z',
     raw_data: falabellaOrder({ status: 'shipped', items: [orderItem({ quantity: 1, status: 'shipped' })] }),
     label_count: 1,
   }];
@@ -568,7 +573,7 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido ya enviado a d
     },
   };
 
-  await syncFalabellaOrders(7, { now: '2026-08-18T20:00:00Z' }, {
+  await syncFalabellaOrders(7, { now: '2026-09-03T20:00:00Z' }, {
     pool: { connect: async () => db },
     getCompany: async () => ({
       id: 7,
@@ -599,8 +604,8 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido listo para env
       orderId: '99',
       orderNumber: '3248709095',
       status: 'ready_to_ship',
-      falabellaCreatedAt: '2026-08-18T15:00:00Z',
-      falabellaUpdatedAt: '2026-08-18T15:10:00Z',
+      falabellaCreatedAt: '2026-09-04T18:00:00Z',
+      falabellaUpdatedAt: '2026-09-03T18:10:00Z',
       grandTotal: 129.9,
       currency: 'PEN',
       raw: falabellaOrder({ status: 'ready_to_ship', items: [orderItem()] }),
@@ -610,8 +615,8 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido listo para env
     order_id: '99',
     order_number: '3248709095',
     status: 'ready_to_ship',
-    falabella_created_at: '2026-08-18T15:00:00Z',
-    falabella_updated_at: '2026-08-18T15:10:00Z',
+    falabella_created_at: '2026-09-03T18:00:00Z',
+    falabella_updated_at: '2026-09-03T18:10:00Z',
     raw_data: falabellaOrder({ status: 'ready_to_ship', items: [orderItem()] }),
     label_count: 1,
   }];
@@ -629,7 +634,7 @@ test('el sync reintegra stock cuando GetOrderItems pasa un pedido listo para env
     },
   };
 
-  await syncFalabellaOrders(7, { now: '2026-08-18T16:00:00Z' }, {
+  await syncFalabellaOrders(7, { now: '2026-09-03T20:00:00Z' }, {
     pool: { connect: async () => db },
     getCompany: async () => ({
       id: 7,

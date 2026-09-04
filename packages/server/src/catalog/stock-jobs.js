@@ -1,6 +1,7 @@
 import { applyReadyOrderStock } from './catalog-operations.js';
 import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
+import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { loadCore } from './utils.js';
 
 const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
@@ -468,13 +469,31 @@ export async function enqueueStockJob(input = {}, db) {
           orderId = Number(identity.id);
         }
       }
-      if (orderId) return enqueueCanonicalStockJob(orderId, source, client);
-      return enqueueLegacyStockJob({
-        companyId,
-        externalOrderId,
-        orderNumber: text(input.orderNumber) || null,
-        source,
-      }, client);
+      const enqueued = orderId
+        ? await enqueueCanonicalStockJob(orderId, source, client)
+        : await enqueueLegacyStockJob({
+          companyId,
+          externalOrderId,
+          orderNumber: text(input.orderNumber) || null,
+          source,
+        }, client);
+      if (orderId) {
+        await client.query(
+          `update inventory_stock_jobs job
+              set status='pending', next_attempt_at=null, updated_at=now()
+            from orders o
+           where job.order_id=$1
+             and o.id=$1
+             and job.status='done'
+             and o.fulfillment_status in ('ready_to_ship','shipped','delivered')
+             and exists (
+               select 1 from order_items oi
+               where oi.order_id=o.id and oi.stock_state='pending'
+             )`,
+          [orderId],
+        );
+      }
+      return enqueued;
     },
   );
   const job = result.rows[0];
@@ -608,6 +627,62 @@ export async function processStockQueue(input = {}, db) {
   return stats;
 }
 
+export async function reopenReservedStockJobsForCommit(db) {
+  const client = await target(db);
+  const result = await client.query(
+    `update inventory_stock_jobs job
+        set status='pending', next_attempt_at=null, updated_at=now()
+      from orders o
+     where job.order_id=o.id
+       and job.status='done'
+       and o.fulfillment_status in ('ready_to_ship','shipped','delivered')
+       and exists (
+         select 1 from order_items oi
+         where oi.order_id=o.id and oi.stock_state='pending'
+       )
+     returning job.id`,
+  );
+  return { reopened: result.rows.length };
+}
+
+export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
+  const since = input.since || INVENTORY_LISTEN_FROM_AT;
+  const client = await target(db);
+  const orders = await client.query(
+    `select o.id as order_id, o.company_id, o.external_order_id, o.external_order_number
+     from orders o
+     where o.order_status not in ('cancelled','failed')
+       and o.fulfillment_status in ('pending','preparing')
+       and o.items_status='complete'
+       and o.ordered_at >= $1::timestamptz
+       and exists (
+         select 1 from order_items oi
+         where oi.order_id=o.id
+           and oi.stock_state in ('none','skipped_unmapped','skipped_insufficient')
+       )
+     order by o.id
+     limit 50`,
+    [since],
+  );
+  if (input.dryRun === true) {
+    return { since, dryRun: true, orders: orders.rows.length, enqueued: 0, already: 0 };
+  }
+  let enqueued = 0;
+  let already = 0;
+  for (const row of orders.rows) {
+    const result = await enqueueStockJob({
+      orderId: row.order_id,
+      companyId: row.company_id,
+      externalOrderId: row.external_order_id,
+      orderNumber: row.external_order_number,
+      source: input.source || 'listen',
+    }, db);
+    if (result.enqueued) enqueued += 1;
+    else already += 1;
+  }
+  return { since, orders: orders.rows.length, enqueued, already };
+}
+
 export async function enqueueStockJobsForOperationalDate(input = {}, db) {
   const date = limaDate(input.date || limaOffset(-1));
   const client = await target(db);
@@ -667,8 +742,13 @@ export function startStockJobWorker() {
     if (running) return;
     running = true;
     try {
+      if (await getPaused()) return;
+      const listened = await enqueueStockJobsSinceListenFrom({ source: 'listen' });
+      const reopened = await reopenReservedStockJobsForCommit();
       const stats = await processStockQueue();
-      if (stats.claimed) log(JSON.stringify(stats));
+      if (stats.claimed || listened.enqueued || reopened.reopened) {
+        log(JSON.stringify({ ...stats, listened, reopened }));
+      }
     } catch (error) {
       log('worker error:', error?.message || error);
     } finally {

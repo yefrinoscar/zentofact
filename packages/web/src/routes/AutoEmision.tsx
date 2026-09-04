@@ -26,12 +26,14 @@ type CronCfg = { enabled: boolean; intervalMinutes: number; windowDays: number }
 type Config = {
   globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion'; reconcileEnabled: boolean;
   paused: boolean; stats: Record<string, number>; cron: CronCfg;
+  alertEmails?: string[];
   companies: CompanyCfg[]; webhookBase: string;
 };
 type Job = {
   id: number; company: string; order_number: string; order_id: string | null;
   status: string; source: string; kind?: string | null; attempts: number; result: string | null;
-  last_error: string | null; boleta_numero: string | null; current_step?: string | null; updated_at: string;
+  last_error: string | null; boleta_numero: string | null; current_step?: string | null;
+  alerted_at?: string | null; updated_at: string;
 };
 type OrderPreview = {
   error?: string;
@@ -390,6 +392,10 @@ export default function AutoEmision() {
   const [webhookError, setWebhookError] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(DEFAULT_WEBHOOK_EVENTS);
   const [webhookIdQuery, setWebhookIdQuery] = useState('');
+  const [alertEmailsDraft, setAlertEmailsDraft] = useState('');
+  const [alertEmailsSaving, setAlertEmailsSaving] = useState(false);
+  const [alertEmailsError, setAlertEmailsError] = useState('');
+  const [alertEmailsSaved, setAlertEmailsSaved] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const showDevCronInterval = ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -455,6 +461,32 @@ export default function AutoEmision() {
     const next = { ...config.cron, ...patch };
     setConfig((prev) => (prev ? { ...prev, cron: next } : prev));
     try { await api.autoEmitSetCron(patch); } catch { setConfig((prev) => (prev ? { ...prev, cron: config.cron } : prev)); }
+  };
+
+  const openConfig = (open: boolean) => {
+    setConfigOpen(open);
+    if (open && config) {
+      setAlertEmailsDraft((config.alertEmails || []).join('\n'));
+      setAlertEmailsError('');
+      setAlertEmailsSaved(false);
+    }
+  };
+
+  const saveAlertEmails = async () => {
+    setAlertEmailsSaving(true);
+    setAlertEmailsError('');
+    setAlertEmailsSaved(false);
+    try {
+      const response = await api.autoEmitSetAlertEmails(alertEmailsDraft);
+      const emails = response?.alertEmails || [];
+      setConfig((prev) => (prev ? { ...prev, alertEmails: emails } : prev));
+      setAlertEmailsDraft(emails.join('\n'));
+      setAlertEmailsSaved(true);
+    } catch (error: any) {
+      setAlertEmailsError(error?.message || 'No se pudieron guardar los correos.');
+    } finally {
+      setAlertEmailsSaving(false);
+    }
   };
 
   const webhookCompanies = config?.companies.filter((company) => company.hasFalabella) || [];
@@ -576,7 +608,7 @@ export default function AutoEmision() {
   };
 
   const retryJob = async (id: number) => {
-    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, status: 'pending', last_error: null } : j)));
+    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, status: 'pending', last_error: null, alerted_at: null, attempts: 0 } : j)));
     try { await api.autoEmitRetryJob(id); } catch { /* noop */ }
     await Promise.all([loadLogs(), loadConfig()]);
   };
@@ -685,7 +717,7 @@ export default function AutoEmision() {
             {config.paused ? <><Play className="h-4 w-4" /> Reanudar</> : <><Pause className="h-4 w-4" /> Pausar cola</>}
           </button>
           <button
-            onClick={() => setConfigOpen(true)}
+            onClick={() => openConfig(true)}
             className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
           >
             <SettingsIcon className="h-4 w-4" /> Configuración
@@ -800,6 +832,7 @@ export default function AutoEmision() {
                             {j.last_error || j.result || (j.current_step ? `Etapa: ${j.current_step}` : <span className="opacity-50">—</span>)}
                           </span>
                           {j.attempts > 1 && <span className="ml-1 text-muted-foreground opacity-60">(intento {j.attempts})</span>}
+                          {j.alerted_at && <span className="ml-1 text-amber-700">Aviso enviado</span>}
                           {(failed || j.status === 'skipped') && (
                             <button onClick={() => retryJob(j.id)} title="Volver a intentar" className="ml-2 inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground">
                               <RotateCcw className="h-3 w-3" /> Reintentar
@@ -821,17 +854,54 @@ export default function AutoEmision() {
 
       {/* Configuración (modal con tabs) */}
       {/* sm:max-w-* pisa el max-w-md del Dialog base; hace falta el prefijo sm: */}
-      <Dialog open={configOpen} onOpenChange={setConfigOpen}>
+      <Dialog open={configOpen} onOpenChange={openConfig}>
         <DialogContent className="flex max-h-[min(92vh,900px)] w-[calc(100%-1.5rem)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl md:max-w-4xl lg:max-w-5xl">
           <DialogHeader className="shrink-0 border-b border-border px-6 py-4 pr-14">
             <DialogTitle>Configuración</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            <Tabs defaultValue="webhook">
+            <Tabs defaultValue="alerts">
               <TabsList className="mb-5">
+                <TabsTrigger value="alerts">Avisos</TabsTrigger>
                 <TabsTrigger value="cron">Revisión automática</TabsTrigger>
                 <TabsTrigger value="webhook">Webhook</TabsTrigger>
               </TabsList>
+
+              <TabsContent value="alerts" className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Correos de aviso</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Si un comprobante no sale tras 3 intentos.</p>
+                </div>
+                <textarea
+                  value={alertEmailsDraft}
+                  onChange={(event) => {
+                    setAlertEmailsDraft(event.target.value);
+                    setAlertEmailsSaved(false);
+                    setAlertEmailsError('');
+                  }}
+                  rows={5}
+                  placeholder={'facturacion@empresa.pe'}
+                  className="min-h-[120px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                />
+                <p className="text-xs text-muted-foreground">Un correo por línea. Vacío: avisa a quien emite boletas.</p>
+                {alertEmailsError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {alertEmailsError}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveAlertEmails}
+                    disabled={alertEmailsSaving}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {alertEmailsSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    Guardar correos
+                  </button>
+                  {alertEmailsSaved && <span className="text-xs font-medium text-emerald-700">Guardado</span>}
+                </div>
+              </TabsContent>
 
               {/* Cron */}
               <TabsContent value="cron" className="space-y-4">
