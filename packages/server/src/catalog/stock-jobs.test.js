@@ -76,10 +76,6 @@ class JobDb {
       const key = this.key(companyId, externalOrderId);
       const existing = this.jobs.get(key);
       if (existing) {
-        if (existing.status === 'failed' || existing.status === 'skipped') {
-          existing.status = 'pending';
-          existing.next_attempt_at = null;
-        }
         existing.order_number = orderNumber || existing.order_number;
         existing.updated_at = new Date().toISOString();
         return { rows: [existing] };
@@ -103,8 +99,9 @@ class JobDb {
     }
     if (compact.includes('set status=\'processing\'') && compact.includes('for update skip locked')) {
       const limit = Number(params[0] || 8);
+      const maxAttempts = Number(params[1] || 3);
       const claimed = [...this.jobs.values()]
-        .filter((job) => job.status === 'pending')
+        .filter((job) => job.status === 'pending' && job.attempts < maxAttempts)
         .sort((left, right) => Number(left.id) - Number(right.id))
         .slice(0, limit)
         .map((job) => {
@@ -114,6 +111,17 @@ class JobDb {
           return { ...job };
         });
       return { rows: claimed };
+    }
+    if (compact.startsWith('update inventory_stock_jobs') && compact.includes("set status='pending', attempts=0")) {
+      const [id] = params;
+      const job = [...this.jobs.values()].find((row) => Number(row.id) === Number(id));
+      if (!job) return { rows: [] };
+      job.status = 'pending';
+      job.attempts = 0;
+      job.last_error = null;
+      job.next_attempt_at = null;
+      job.updated_at = new Date().toISOString();
+      return { rows: [{ ...job }] };
     }
     if (compact.startsWith('update inventory_stock_jobs') && compact.includes('status=$2')) {
       const [id, status, error, result] = params;
@@ -193,10 +201,10 @@ test('un job done no se vuelve a procesar al reencolar', async () => {
   assert.equal(stats.claimed, 0);
 });
 
-test('si el pedido aún no está, reintenta; al sexto intento falla', async () => {
+test('si el pedido aún no está, reintenta; al tercer intento pide atención', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'MISSING' }, db);
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     const stats = await processStockQueue({ apply: async () => ({ missing: true }) }, db);
     assert.equal(stats.retried, 1);
     assert.equal([...db.jobs.values()][0].status, 'pending');
@@ -204,7 +212,43 @@ test('si el pedido aún no está, reintenta; al sexto intento falla', async () =
   }
   const last = await processStockQueue({ apply: async () => ({ missing: true }) }, db);
   assert.equal(last.failed, 1);
-  assert.equal([...db.jobs.values()][0].status, 'failed');
+  const [failed] = db.jobs.values();
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.attempts, 3);
+
+  const cron = await enqueueStockJob({
+    companyId: 1, externalOrderId: 'MISSING', source: 'cron',
+  }, db);
+  assert.equal(cron.enqueued, false);
+  assert.equal(cron.job.status, 'failed');
+  assert.equal(cron.job.attempts, 3);
+
+  const fixed = await enqueueStockJob({
+    companyId: 1, externalOrderId: 'MISSING', source: 'association', resetAttempts: true,
+  }, db);
+  assert.equal(fixed.enqueued, true);
+  assert.equal(fixed.job.status, 'pending');
+  assert.equal(fixed.job.attempts, 0);
+});
+
+test('una línea omitida intenta tres veces y explica cómo resolverla', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({
+    companyId: 1, externalOrderId: 'UNMAPPED', orderNumber: '7934119901', source: 'cron',
+  }, db);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const stats = await processStockQueue({
+      apply: async () => ({ applied: 0, skipped: 1, unmapped: 1, insufficient: 0 }),
+    }, db);
+    const [job] = db.jobs.values();
+    assert.equal(job.attempts, attempt);
+    assert.equal(job.status, attempt === 3 ? 'failed' : 'pending');
+    if (attempt < 3) job.next_attempt_at = null;
+  }
+
+  const [job] = db.jobs.values();
+  assert.equal(job.last_error, '1 línea sin producto maestro. Asigna el producto maestro para continuar.');
 });
 
 test('una cabecera sin artículos completos no puede quedar como descontada', async () => {
@@ -309,6 +353,7 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /reserved_units/i);
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
+  assert.match(query, /order_row\.ordered_at/i);
 });
 
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
@@ -324,6 +369,8 @@ test('la cola separa la identidad canónica de la compatibilidad legacy', async 
   assert.match(migrationSql, /where order_id is null/i);
   assert.match(migrationSql, /matched_orders[\s\S]*having count\(\*\)=1/i);
   assert.match(migrationSql, /existing\.order_id=matched\.order_id/i);
+  assert.match(migrationSql, /attempts=3/i);
+  assert.match(migrationSql, /attemptsCappedFrom/i);
 });
 
 test('pausar la cola detiene el procesamiento', async () => {
@@ -347,6 +394,8 @@ test('la cola muestra el mismo descuento que Configuración del sistema', async 
   assert.equal(on.inventorySourceLabel, 'Base de datos');
   assert.equal(on.inventoryKillSwitch, false);
   assert.equal(on.reconciliationIntervalSeconds, 60);
+  assert.equal(on.maxAttempts, 3);
+  assert.equal(on.listenFromAt, INVENTORY_LISTEN_FROM_AT);
   assert.equal(on.lastReconciledAt, '2026-09-03T23:30:00.000Z');
 
   invalidateSystemConfigCache();
@@ -422,4 +471,5 @@ test('reabre un job done cuando la reserva debe confirmarse', async () => {
   assert.match(sql, /stock_state='pending'/i);
   assert.match(sql, /ready_to_ship/i);
   assert.match(sql, /job\.status='done'/i);
+  assert.match(sql, /attempts=0/i);
 });

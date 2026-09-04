@@ -188,6 +188,7 @@ async function resolveItemProduct(db, item, input) {
   if (companyId == null) {
     await writeResolution(db, item, { stockState: 'skipped_unmapped' });
     stats.skipped += 1;
+    stats.unmapped += 1;
     return false;
   }
   const resolved = await resolveListing(db, {
@@ -200,6 +201,7 @@ async function resolveItemProduct(db, item, input) {
   if (resolved.unmapped) {
     await writeResolution(db, item, { stockState: 'skipped_unmapped' });
     stats.skipped += 1;
+    stats.unmapped += 1;
     return false;
   }
   item.product_id = resolved.product.id;
@@ -252,6 +254,7 @@ async function reserveItem(db, item, input) {
       });
     }
     stats.skipped += 1;
+    stats.insufficient += 1;
     console.error(JSON.stringify({
       event: 'catalog.stock.insufficient_reserve', orderId: context.orderId, itemId: item.id,
       productId: item.product_id, already, target: quantity, available: error.onHand,
@@ -402,6 +405,7 @@ async function commitItem(db, item, input) {
       stockState: 'skipped_insufficient',
     });
     stats.skipped += 1;
+    stats.insufficient += 1;
     console.error(JSON.stringify({
       event: 'catalog.stock.insufficient', orderId, itemId: item.id,
       productId: item.product_id, already, target: quantity, onHand: error.onHand,
@@ -444,6 +448,8 @@ export async function stockPhase(input) {
     enabled: Boolean(saleEnabled),
     applied: 0,
     skipped: 0,
+    unmapped: 0,
+    insufficient: 0,
     reversed: 0,
     reserved: 0,
     committed: 0,
