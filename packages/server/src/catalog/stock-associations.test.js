@@ -96,9 +96,11 @@ test('asocia el seller SKU, repara todas sus líneas y reencola cada pedido', as
       metadata: { source: 'stock_unmatched_assignment', orderItemId: 91 },
     },
   }]);
-  assert.deepEqual(enqueued.map((item) => ({ orderId: item.orderId, source: item.source })), [
-    { orderId: 501, source: 'association' },
-    { orderId: 502, source: 'association' },
+  assert.deepEqual(enqueued.map((item) => ({
+    orderId: item.orderId, source: item.source, resetAttempts: item.resetAttempts,
+  })), [
+    { orderId: 501, source: 'association', resetAttempts: true },
+    { orderId: 502, source: 'association', resetAttempts: true },
   ]);
   assert.equal(result.updatedItems, 2);
   assert.equal(result.ordersQueued, 2);

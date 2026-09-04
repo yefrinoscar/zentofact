@@ -576,6 +576,8 @@ test('una venta manual sin productId ni listing asociado queda marcada como no m
   }));
   assert.equal(result.applied, 0);
   assert.equal(result.skipped, 1);
+  assert.equal(result.unmapped, 1);
+  assert.equal(result.insufficient, 0);
   assert.equal(db.quantity, 10);
   assert.equal(db.items.get(101).stock_state, 'skipped_unmapped');
 });
@@ -641,6 +643,8 @@ test('stock insuficiente marketplace conserva el pedido y marca la línea para o
   db.items.set(101, item());
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }]));
   assert.equal(result.skipped, 1);
+  assert.equal(result.unmapped, 0);
+  assert.equal(result.insufficient, 1);
   assert.equal(db.quantity, 0);
   assert.equal(db.movements.size, 0);
   assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');

@@ -5,7 +5,7 @@ import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { loadCore } from './utils.js';
 
 const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
-const MAX_ATTEMPTS = 6;
+const MAX_ATTEMPTS = 3;
 const STALE_PROCESSING_MS = 60_000;
 const DEFAULT_LIMIT = 8;
 const WORKER_INTERVAL_MS = 5_000;
@@ -177,6 +177,40 @@ export async function ensureStockJobTables(db) {
     alter table inventory_stock_state add column if not exists last_reconciliation_error text;
     insert into inventory_stock_state (id, paused) values (1, false)
     on conflict (id) do nothing;
+    update inventory_stock_jobs job
+       set status='failed',
+           attempts=${MAX_ATTEMPTS},
+           last_error=case
+             when exists (
+               select 1 from order_items oi
+               where oi.order_id=job.order_id
+                 and (oi.product_id is null or oi.stock_state='skipped_unmapped')
+             ) then 'Hay líneas sin producto maestro. Asigna el producto maestro para continuar.'
+             when exists (
+               select 1 from order_items oi
+               where oi.order_id=job.order_id and oi.stock_state='skipped_insufficient'
+             ) then 'El producto maestro no tiene stock disponible. Repón stock y reintenta.'
+             else coalesce(job.last_error, 'No se pudo completar el descuento después de 3 intentos.')
+           end,
+           result=coalesce(job.result, '{}'::jsonb) || jsonb_build_object(
+             'attemptsCappedFrom', job.attempts
+           ),
+           next_attempt_at=null,
+           updated_at=now()
+      where job.attempts >= ${MAX_ATTEMPTS}
+        and job.status in ('pending','processing','done')
+        and exists (
+          select 1 from order_items oi
+          where oi.order_id=job.order_id
+            and (oi.product_id is null or oi.stock_state in ('skipped_unmapped','skipped_insufficient'))
+        );
+    update inventory_stock_jobs
+       set result=coalesce(result, '{}'::jsonb) || jsonb_build_object(
+             'attemptsCappedFrom', attempts
+           ),
+           attempts=${MAX_ATTEMPTS},
+           updated_at=now()
+     where attempts > ${MAX_ATTEMPTS};
   `);
       if (ownsTransaction) await client.query('commit');
     } catch (error) {
@@ -223,6 +257,8 @@ export async function getConfig(db) {
     stats,
     workerIntervalSeconds: WORKER_INTERVAL_MS / 1000,
     reconciliationIntervalSeconds: RECONCILIATION_INTERVAL_MS / 1000,
+    maxAttempts: MAX_ATTEMPTS,
+    listenFromAt: INVENTORY_LISTEN_FROM_AT,
     lastReconciledAt: reconciliation.last_reconciled_at || null,
     lastReconciliation: reconciliation.last_reconciliation || {},
     lastReconciliationError: reconciliation.last_reconciliation_error || null,
@@ -238,6 +274,7 @@ export async function recentJobs(limit = 60, db) {
             coalesce(nullif(j.order_number, ''), order_row.external_order_number) as order_number,
             j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
             j.created_at, j.updated_at,
+            order_row.ordered_at,
             coalesce(item_summary.items, '[]'::jsonb) as items,
             coalesce(item_summary.reserved_units, 0) as reserved_units,
             coalesce(item_summary.applied_units, 0) as applied_units,
@@ -246,7 +283,7 @@ export async function recentJobs(limit = 60, db) {
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      left join lateral (
-       select id, external_order_number
+       select id, external_order_number, ordered_at
        from orders
        where id=j.order_id
           or (
@@ -399,8 +436,6 @@ async function enqueueCanonicalStockJob(orderId, source, client) {
               company_id=order_row.company_id,
               external_order_id=order_row.external_order_id,
               order_number=order_row.external_order_number,
-              status=case when job.status in ('failed','skipped') then 'pending' else job.status end,
-              next_attempt_at=case when job.status in ('failed','skipped') then null else job.next_attempt_at end,
               updated_at=now()
          from canonical_order order_row
         where job.order_id is null
@@ -425,12 +460,10 @@ async function enqueueCanonicalStockJob(orderId, source, client) {
          status=case
            when exists (select 1 from legacy where status='done') then 'done'
            when inventory_stock_jobs.status='processing' then 'processing'
-           when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
            else inventory_stock_jobs.status
          end,
          next_attempt_at=case
            when exists (select 1 from legacy where status='done') then null
-           when inventory_stock_jobs.status in ('failed','skipped') then null
            else inventory_stock_jobs.next_attempt_at
          end,
          updated_at=now()
@@ -478,14 +511,6 @@ async function enqueueLegacyStockJob(input, client) {
      ) values ($1,$2,$3,'pending',$4,now(),now())
      on conflict (company_id, external_order_id) where order_id is null do update set
        order_number=coalesce(nullif(excluded.order_number, ''), inventory_stock_jobs.order_number),
-       status=case
-         when inventory_stock_jobs.status in ('failed','skipped') then 'pending'
-         else inventory_stock_jobs.status
-       end,
-       next_attempt_at=case
-         when inventory_stock_jobs.status in ('failed','skipped') then null
-         else inventory_stock_jobs.next_attempt_at
-       end,
        updated_at=now()
      returning *`,
     [input.companyId, input.externalOrderId, input.orderNumber, input.source],
@@ -542,21 +567,14 @@ export async function enqueueStockJob(input = {}, db) {
           orderNumber: text(input.orderNumber) || null,
           source,
         }, client);
-      if (orderId) {
-        await client.query(
-          `update inventory_stock_jobs job
-              set status='pending', next_attempt_at=null, updated_at=now()
-            from orders o
-           where job.order_id=$1
-             and o.id=$1
-             and job.status='done'
-             and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
-             and exists (
-               select 1 from order_items oi
-               where oi.order_id=o.id
-                 and oi.stock_state in ('none','pending','skipped_policy','skipped_unmapped','skipped_insufficient')
-             )`,
-          [orderId],
+      if (input.resetAttempts === true && enqueued.rows[0]) {
+        return client.query(
+          `update inventory_stock_jobs
+              set status='pending', attempts=0, last_error=null,
+                  next_attempt_at=null, updated_at=now()
+            where id=$1
+            returning *`,
+          [enqueued.rows[0].id],
         );
       }
       return enqueued;
@@ -607,6 +625,18 @@ async function finishJob(client, job, status, { error = null, result = {}, retry
   return nextStatus;
 }
 
+function blockedStockReason(result = {}) {
+  const unmapped = Number(result.unmapped || 0);
+  const insufficient = Number(result.insufficient || 0);
+  if (unmapped > 0) {
+    return `${unmapped} línea${unmapped === 1 ? '' : 's'} sin producto maestro. Asigna el producto maestro para continuar.`;
+  }
+  if (insufficient > 0) {
+    return `${insufficient} línea${insufficient === 1 ? '' : 's'} sin stock disponible. Repón stock y reintenta.`;
+  }
+  return null;
+}
+
 export async function processStockQueue(input = {}, db) {
   if (await getPaused(db)) return { claimed: 0, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0, paused: true };
   if (!(await isCatalogInventoryEnabled(db))) {
@@ -617,19 +647,20 @@ export async function processStockQueue(input = {}, db) {
   const client = await target(db);
   await client.query(
     `update inventory_stock_jobs
-     set status='pending',
+     set status=case when attempts >= $2 then 'failed' else 'pending' end,
          last_error=coalesce(last_error, 'timeout de procesamiento'),
-         next_attempt_at=now(),
+         next_attempt_at=case when attempts >= $2 then null else now() end,
          updated_at=now()
      where status='processing'
        and updated_at < now() - ($1::int * interval '1 millisecond')`,
-    [STALE_PROCESSING_MS],
+    [STALE_PROCESSING_MS, MAX_ATTEMPTS],
   );
   const claimed = await client.query(
     `update inventory_stock_jobs set status='processing', attempts=attempts+1, updated_at=now()
      where id in (
        select candidate.id from inventory_stock_jobs candidate
        where candidate.status='pending'
+         and candidate.attempts < $2
          and (candidate.next_attempt_at is null or candidate.next_attempt_at <= now())
          and (
            candidate.order_id is not null
@@ -649,7 +680,7 @@ export async function processStockQueue(input = {}, db) {
        for update skip locked
      )
      returning *`,
-    [limit],
+    [limit, MAX_ATTEMPTS],
   );
   const stats = { claimed: claimed.rows.length, done: 0, failed: 0, retried: 0, applied: 0, skipped: 0 };
   for (const row of claimed.rows) {
@@ -678,6 +709,18 @@ export async function processStockQueue(input = {}, db) {
         else stats.retried += 1;
         continue;
       }
+      const blockedReason = blockedStockReason(result);
+      if (blockedReason) {
+        const next = await finishJob(client, job, 'pending', {
+          retry: true,
+          error: blockedReason,
+          result,
+        });
+        if (next === 'failed') stats.failed += 1;
+        else stats.retried += 1;
+        stats.skipped += Number(result?.skipped || 0);
+        continue;
+      }
       await finishJob(client, job, 'done', { result });
       stats.done += 1;
       stats.applied += Number(result?.applied || 0);
@@ -699,7 +742,8 @@ export async function reopenReservedStockJobsForCommit(db) {
   const client = await target(db);
   const result = await client.query(
     `update inventory_stock_jobs job
-        set status='pending', next_attempt_at=null, updated_at=now()
+        set status='pending', attempts=0, last_error=null,
+            next_attempt_at=null, updated_at=now()
       from orders o
      where job.order_id=o.id
        and job.status='done'

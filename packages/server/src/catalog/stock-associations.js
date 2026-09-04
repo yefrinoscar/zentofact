@@ -149,6 +149,7 @@ export async function assignUnmatchedStockItem(input = {}, db, dependencies = {}
       externalOrderId: order.external_order_id,
       orderNumber: order.order_number,
       source: 'association',
+      resetAttempts: true,
     }, db);
   }
 
