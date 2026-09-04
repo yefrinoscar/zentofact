@@ -267,7 +267,7 @@ test('la escucha encola pendientes desde las 12:00 Lima del corte', async () => 
   assert.equal(preview.enqueued, 0);
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
   assert.match(sql, /fulfillment_status in \('pending','preparing'\)/i);
-  assert.match(sql, /coalesce\(o\.ordered_at, o\.created_at\) >= \$1::timestamptz/i);
+  assert.match(sql, /\(o\.ordered_at is null or o\.ordered_at >= \$1::timestamptz\)/i);
 });
 
 test('reabre un job done cuando la reserva debe confirmarse', async () => {
