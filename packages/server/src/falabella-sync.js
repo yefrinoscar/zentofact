@@ -1,6 +1,6 @@
 import { FalabellaApiClient, getFalabellaError, normalizeGetOrdersResult } from '@zentofact/falabella-api';
 import { enqueueStockJob } from './catalog/stock-jobs.js';
-import { shouldListenStockOrder } from './catalog/stock-commitment.js';
+import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
 import { operationalErrorBody } from './error-log.js';
 import { isFalabellaSyncEnabled } from './system-config.js';
 import {
@@ -684,7 +684,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       if (windowFrom >= windowTo) {
         const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
           applyRecentStock: Boolean(state.last_successful_sync_at),
-          observedSince,
+          observedSince: INVENTORY_LISTEN_FROM_AT,
           stockDb: dbPool,
         });
         const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient);
@@ -721,7 +721,9 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
     });
     const itemHydration = await hydrateMissingOrderItems(db, companyId, orderItemsClient, {
       applyRecentStock: mode === 'incremental' && Boolean(state.last_successful_sync_at),
-      observedSince,
+      observedSince: mode === 'incremental' || mode === 'range'
+        ? INVENTORY_LISTEN_FROM_AT
+        : observedSince,
       seller: company.nombreComercial || company.nombre || company.razonSocial,
       runId,
       stockDb: dbPool,

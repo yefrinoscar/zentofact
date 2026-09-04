@@ -251,12 +251,16 @@ function MobilePickerChrome({
   onSearchChange,
   onSubmitSearch,
   searchInputRef,
+  title,
+  description,
 }: {
   onClose: () => void;
   search: string;
   onSearchChange: (value: string) => void;
   onSubmitSearch: () => void;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
+  title: string;
+  description: string;
 }) {
   return (
     <div className="sticky top-0 z-10 border-b border-border bg-background">
@@ -265,10 +269,8 @@ function MobilePickerChrome({
         <div className="flex items-start gap-3 pr-2">
           <div className="min-w-0 flex-1">
             <SheetHeader className="gap-1 text-left">
-              <SheetTitle className="text-[17px] leading-tight">Elegir producto</SheetTitle>
-              <SheetDescription className="text-[13px] leading-snug">
-                Busca por nombre o SKU. Sin stock no se agrega.
-              </SheetDescription>
+              <SheetTitle className="text-[17px] leading-tight">{title}</SheetTitle>
+              <SheetDescription className="text-[13px] leading-snug">{description}</SheetDescription>
             </SheetHeader>
           </div>
           <Button
@@ -349,6 +351,8 @@ export function ProductSearchPicker({
   submittedSearch,
   onSelect,
   canSelect,
+  title = 'Elegir producto',
+  description = 'Busca por nombre o SKU. Sin stock no se agrega.',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -360,6 +364,8 @@ export function ProductSearchPicker({
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
   canSelect?: (product: CatalogProductForSale) => boolean;
+  title?: string;
+  description?: string;
 }) {
   const isMobile = useIsMobile();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -398,6 +404,8 @@ export function ProductSearchPicker({
               onSearchChange={onSearchChange}
               onSubmitSearch={onSubmitSearch}
               searchInputRef={searchRef}
+              title={title}
+              description={description}
             />
             <ProductResults
               products={products}
@@ -416,8 +424,8 @@ export function ProductSearchPicker({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         <DialogHeader className="border-b border-border px-5 py-4 pr-14">
-          <DialogTitle>Elegir producto</DialogTitle>
-          <DialogDescription>Busca por nombre o SKU. Sin stock no se agrega.</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DesktopPickerBody
           search={search}

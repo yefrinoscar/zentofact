@@ -167,6 +167,7 @@ export async function applyReadyOrderStock(input = {}, db) {
         orderId: Number(order.id),
         orderNumber: order.external_order_number,
         itemCount: items.length,
+        itemsPending: order.items_status !== 'complete',
       };
     }
     if (stockCommitmentAction(order.fulfillment_status) === 'none') {
@@ -204,6 +205,7 @@ export async function applyReadyOrderStock(input = {}, db) {
       orderId: Number(order.id),
       orderNumber: order.external_order_number,
       itemCount: items.length,
+      itemsPending: order.items_status !== 'complete',
     };
   });
 }

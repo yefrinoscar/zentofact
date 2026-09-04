@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
-  AlertTriangle, CheckCircle2, Clock, Loader2, PackageMinus, Pause, Play,
+  AlertTriangle, CheckCircle2, Clock, Link2, Loader2, PackageMinus, Pause, Play,
   RefreshCw, RotateCcw, XCircle,
 } from 'lucide-react';
+import { ProductSearchPicker } from '../components/ProductSearchPicker';
+import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import type { CatalogProductForSale } from '../lib/registrar-venta';
 
 type Config = {
   inventoryEnabled: boolean;
@@ -16,7 +20,24 @@ type Config = {
   paused: boolean;
   stats: Record<string, number>;
   workerIntervalSeconds: number;
+  reconciliationIntervalSeconds: number;
+  lastReconciledAt: string | null;
+  lastReconciliationError?: string | null;
   batchSize: number;
+};
+
+type UnmatchedStockItem = {
+  orderItemId: number;
+  companyId: number;
+  company: string;
+  channelCode: string;
+  channelAccountId: number;
+  sellerSku: string;
+  shopSku: string | null;
+  title: string;
+  lineCount: number;
+  quantity: number;
+  orderNumbers: string[];
 };
 
 type Job = {
@@ -38,6 +59,7 @@ type OrderPreview = {
   order?: {
     orderNumber?: string;
     status?: string;
+    itemsStatus?: string;
     total?: string | number | null;
     itemsCount?: number;
     stockApplied?: number;
@@ -49,6 +71,17 @@ type OrderPreview = {
     skipped?: number | null;
     missing?: boolean;
   };
+  items?: Array<{
+    id: number;
+    title: string;
+    description: string;
+    sellerSku: string;
+    providerSku: string | null;
+    quantity: number;
+    productId: number | null;
+    mainSku: string | null;
+    stockState: string;
+  }>;
 };
 
 const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: string }> = {
@@ -85,6 +118,7 @@ function SourceBadge({ source }: { source: string }) {
     cron: 'Cron',
     catchup: 'Recuperación',
     listen: 'Escucha',
+    association: 'Asociación',
     manual: 'Venta manual',
     system: 'Sistema',
   };
@@ -141,6 +175,7 @@ function formatJobDetail(job: Job) {
 
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
   const order = preview?.order;
+  const items = preview?.items || [];
   return (
     <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
       {loading ? (
@@ -170,6 +205,31 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
             <span className="text-muted-foreground">Stock aplicado</span>
             <span className="text-right font-medium text-foreground">{order.stockApplied ?? 0} u</span>
           </div>
+          {items.length > 0 ? (
+            <div className="divide-y divide-border rounded-md border border-border">
+              {items.map((item) => (
+                <div key={item.id} className="px-2.5 py-2 text-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="line-clamp-2 font-medium text-foreground">{item.title}</p>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">{item.quantity} u</span>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    {item.mainSku ? (
+                      <>Maestro <span className="font-mono text-foreground">{item.mainSku}</span></>
+                    ) : (
+                      <span className="font-medium text-amber-700">Sin producto maestro</span>
+                    )}
+                    {item.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></> : null}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : order.itemsStatus === 'pending' ? (
+            <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+              <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Artículos aún no cargados. La sincronización volverá a intentar.</span>
+            </div>
+          ) : null}
           {preview?.stock && (
             <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs">
               <p className="font-medium text-foreground">
@@ -268,11 +328,18 @@ function SkeletonRows() {
 }
 
 export default function DescuentosCola() {
+  const { showSnackbar } = useOperatorSnackbar();
   const [config, setConfig] = useState<Config | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [unmatched, setUnmatched] = useState<UnmatchedStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<string>('all');
+  const [assignmentItem, setAssignmentItem] = useState<UnmatchedStockItem | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+  const [submittedProductSearch, setSubmittedProductSearch] = useState('');
+  const [assigningProductId, setAssigningProductId] = useState<number | null>(null);
   const timer = useRef<number | null>(null);
 
   const loadConfig = useCallback(async () => {
@@ -288,20 +355,72 @@ export default function DescuentosCola() {
     finally { if (spin) setRefreshing(false); }
   }, []);
 
+  const loadUnmatched = useCallback(async () => {
+    try { setUnmatched(await api.stockJobsUnmatched()); } catch { /* noop */ }
+  }, []);
+
+  useEffect(() => {
+    const debounce = window.setTimeout(() => setSubmittedProductSearch(productSearch.trim()), 220);
+    return () => window.clearTimeout(debounce);
+  }, [productSearch]);
+
+  const productsQuery = useQuery({
+    queryKey: ['stock-unmatched-product-search', submittedProductSearch],
+    queryFn: () => api.listCatalogProducts({
+      search: submittedProductSearch || undefined,
+      status: 'active',
+      sortBy: 'updatedAt',
+      sortDir: 'desc',
+      limit: 12,
+    }),
+    enabled: pickerOpen,
+    staleTime: 15_000,
+  });
+
   useEffect(() => {
     (async () => {
-      await Promise.all([loadConfig(), loadJobs()]);
+      await Promise.all([loadConfig(), loadJobs(), loadUnmatched()]);
       setLoading(false);
     })();
-  }, [loadConfig, loadJobs]);
+  }, [loadConfig, loadJobs, loadUnmatched]);
 
   useEffect(() => {
     timer.current = window.setInterval(() => {
       void loadJobs();
       void loadConfig();
+      void loadUnmatched();
     }, 3000);
     return () => { if (timer.current) window.clearInterval(timer.current); };
-  }, [loadJobs, loadConfig]);
+  }, [loadJobs, loadConfig, loadUnmatched]);
+
+  const openAssignment = (item: UnmatchedStockItem) => {
+    const suggestedSearch = item.title || item.sellerSku;
+    setAssignmentItem(item);
+    setProductSearch(suggestedSearch);
+    setSubmittedProductSearch(suggestedSearch);
+    setPickerOpen(true);
+  };
+
+  const assignProduct = async (product: CatalogProductForSale) => {
+    if (!assignmentItem || assigningProductId != null) return;
+    setAssigningProductId(product.id);
+    try {
+      const result = await api.stockJobsAssignUnmatched(assignmentItem.orderItemId, product.id);
+      setPickerOpen(false);
+      showSnackbar({
+        message: `${assignmentItem.sellerSku} asociado a ${product.mainSku}. ${result.ordersQueued} pedido${result.ordersQueued === 1 ? '' : 's'} vuelto${result.ordersQueued === 1 ? '' : 's'} a encolar.`,
+      });
+      await Promise.all([loadUnmatched(), loadJobs(), loadConfig()]);
+    } catch (error: any) {
+      showSnackbar({
+        message: error?.message || 'No se pudo asociar el producto maestro.',
+        tone: 'error',
+        duration: 7000,
+      });
+    } finally {
+      setAssigningProductId(null);
+    }
+  };
 
   const togglePaused = async () => {
     if (!config) return;
@@ -357,7 +476,14 @@ export default function DescuentosCola() {
           </span>
           <span className="inline-flex items-center gap-2 text-muted-foreground">
             <PackageMinus className="h-4 w-4" />
-            Worker cada {config.workerIntervalSeconds}s · lotes de {config.batchSize}
+            Worker cada {config.workerIntervalSeconds}s · conciliación cada {config.reconciliationIntervalSeconds}s · lotes de {config.batchSize}
+          </span>
+          <span className={cn('text-xs', config.lastReconciliationError ? 'text-red-600' : 'text-muted-foreground')}>
+            {config.lastReconciliationError
+              ? `Última conciliación con error: ${config.lastReconciliationError}`
+              : config.lastReconciledAt
+                ? `Última conciliación: ${fullDateTime(config.lastReconciledAt)}`
+                : 'La conciliación aún no registra una ejecución.'}
           </span>
         </div>
         <button
@@ -398,6 +524,47 @@ export default function DescuentosCola() {
             <span className="font-medium">Cola pausada.</span> El worker no corre. El descuento del sistema no cambia.
           </span>
         </div>
+      )}
+
+      {unmatched.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-amber-300 bg-card" aria-labelledby="unmatched-stock-title">
+          <div role="alert" className="daisy-alert rounded-none border-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 shadow-none">
+            <AlertTriangle className="h-5 w-5 shrink-0" />
+            <div className="min-w-0">
+              <h2 id="unmatched-stock-title" className="text-sm font-semibold">
+                {unmatched.length} producto{unmatched.length === 1 ? '' : 's'} sin asociación
+              </h2>
+              <p className="text-xs text-amber-800">
+                Estas líneas no pueden descontarse hasta asignarlas a un producto maestro.
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-border">
+            {unmatched.map((item) => (
+              <div key={`${item.companyId}-${item.channelCode}-${item.sellerSku}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <div className="min-w-[16rem] flex-1">
+                  <p className="line-clamp-2 text-sm font-medium text-foreground">{item.title || 'Producto sin nombre'}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{item.company}</span>
+                    {' · '}Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span>
+                    {item.shopSku ? <> · Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></> : null}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {item.quantity} u sin descontar · pedidos {item.orderNumbers.join(', ')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openAssignment(item)}
+                  className="daisy-btn daisy-btn-sm shrink-0 border-amber-300 bg-white text-amber-900 shadow-none hover:bg-amber-100"
+                >
+                  <Link2 className="h-4 w-4" />
+                  Asignar producto maestro
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <div className="rounded-2xl border border-border bg-card">
@@ -523,6 +690,23 @@ export default function DescuentosCola() {
           ) : null}
         </div>
       </div>
+
+      <ProductSearchPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        search={productSearch}
+        onSearchChange={setProductSearch}
+        onSubmitSearch={() => setSubmittedProductSearch(productSearch.trim())}
+        products={(productsQuery.data?.products || []) as CatalogProductForSale[]}
+        isFetching={productsQuery.isFetching || assigningProductId != null}
+        submittedSearch={submittedProductSearch}
+        onSelect={assignProduct}
+        canSelect={() => assigningProductId == null}
+        title="Asignar producto maestro"
+        description={assignmentItem
+          ? `Elige el maestro para ${assignmentItem.sellerSku}. La asociación se aplicará a sus pedidos pendientes.`
+          : 'Elige el producto maestro.'}
+      />
     </div>
   );
 }
