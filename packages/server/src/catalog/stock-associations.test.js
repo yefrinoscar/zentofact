@@ -25,7 +25,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
   });
 
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
-  assert.match(sql, /stock_state='skipped_unmapped'/i);
+  assert.doesNotMatch(sql, /where\s+oi\.stock_state='skipped_unmapped'/i);
   assert.match(sql, /product_id is null/i);
   assert.deepEqual(rows, [{
     orderItemId: 91,
@@ -53,7 +53,7 @@ test('asocia el seller SKU, repara todas sus líneas y reencola cada pedido', as
           order_item_id: '91', company_id: 4, channel_account_id: '12',
           channel_code: 'falabella', seller_sku: 'S126695',
           shop_sku: 'PMP20000722586-1', title: 'Camiseta reductora',
-          stock_state: 'skipped_unmapped',
+          product_id: null, stock_state: 'skipped_policy',
         }] };
       }
       if (sql.startsWith('select id, main_sku, name from products')) {
@@ -63,6 +63,7 @@ test('asocia el seller SKU, repara todas sus líneas y reencola cada pedido', as
         assert.equal(values[0], 71);
         assert.equal(values[1], 33);
         assert.equal(values[2], 'CAM-RED-M');
+        assert.equal(values[5], 12);
         return { rows: [
           { order_item_id: '91', order_id: '501', company_id: 4, external_order_id: 'A', order_number: '7934119901' },
           { order_item_id: '92', order_id: '502', company_id: 4, external_order_id: 'B', order_number: '7934178001' },
