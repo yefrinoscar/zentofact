@@ -63,6 +63,7 @@ export async function resetInventoryListenHistory(db) {
            group by product_id
         ) sales
        where inventory.product_id = sales.product_id
+      returning inventory.product_id
     `);
 
     const items = await client.query(`
@@ -80,12 +81,14 @@ export async function resetInventoryListenHistory(db) {
                  and coalesce((movement.metadata->>'reserved')::boolean, false)=true
             )
           )
+      returning id
     `);
 
     const deletedMovements = await client.query(`
       delete from inventory_movements
        where movement_type='sale'
          and coalesce((metadata->>'reserved')::boolean, false)=true
+      returning id
     `);
 
     const released = await client.query(`
@@ -93,9 +96,10 @@ export async function resetInventoryListenHistory(db) {
          set quantity_reserved=0,
              updated_at=now()
        where quantity_reserved <> 0
+      returning product_id
     `);
 
-    const deletedJobs = await client.query('delete from inventory_stock_jobs');
+    const deletedJobs = await client.query('delete from inventory_stock_jobs returning id');
 
     await client.query(
       `insert into system_settings (key, value, updated_at, updated_by)
@@ -109,11 +113,11 @@ export async function resetInventoryListenHistory(db) {
     const summary = {
       skipped: false,
       listenSales: listenSales.rows.length,
-      productsRestored: restored.rowCount || 0,
-      itemsReset: items.rowCount || 0,
-      movementsDeleted: deletedMovements.rowCount || 0,
-      reservedCleared: released.rowCount || 0,
-      jobsDeleted: deletedJobs.rowCount || 0,
+      productsRestored: restored.rows.length,
+      itemsReset: items.rows.length,
+      movementsDeleted: deletedMovements.rows.length,
+      reservedCleared: released.rows.length,
+      jobsDeleted: deletedJobs.rows.length,
     };
     log(JSON.stringify(summary));
     return summary;

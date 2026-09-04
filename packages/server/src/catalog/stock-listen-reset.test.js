@@ -50,11 +50,11 @@ test('el reset restaura ventas reservadas, suelta reservas y borra la cola', asy
       if (compact.includes('select id, product_id, quantity_delta, order_item_id')) {
         return { rows: [{ id: 1, product_id: 9, quantity_delta: -1, order_item_id: 4 }] };
       }
-      if (compact.startsWith('update product_inventory inventory')) return { rowCount: 1, rows: [] };
-      if (compact.startsWith('update order_items')) return { rowCount: 2, rows: [] };
-      if (compact.startsWith('delete from inventory_movements')) return { rowCount: 1, rows: [] };
-      if (compact.startsWith('update product_inventory')) return { rowCount: 3, rows: [] };
-      if (compact.startsWith('delete from inventory_stock_jobs')) return { rowCount: 7, rows: [] };
+      if (compact.startsWith('update product_inventory inventory')) return { rows: [{ product_id: 9 }] };
+      if (compact.startsWith('update order_items')) return { rows: [{ id: 4 }, { id: 5 }] };
+      if (compact.startsWith('delete from inventory_movements')) return { rows: [{ id: 1 }] };
+      if (compact.startsWith('update product_inventory')) return { rows: [{ product_id: 1 }, { product_id: 2 }, { product_id: 3 }] };
+      if (compact.startsWith('delete from inventory_stock_jobs')) return { rows: Array.from({ length: 7 }, (_, id) => ({ id })) };
       return { rows: [] };
     },
   });
