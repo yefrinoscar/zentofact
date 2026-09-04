@@ -800,7 +800,7 @@ export default function Productos() {
       ? { absoluteTarget: value, reason: adjustForm.reason }
       : { delta: value, reason: adjustForm.reason };
     const result = await runAction(() => api.adjustProductInventory(selectedId, payload), (response) => (
-      response.noChange ? 'El stock ya tenía ese valor.' : `Stock actualizado a ${formatNumber(response.quantityOnHand)}.`
+      response.noChange ? 'El almacén ya tenía ese valor.' : `En almacén queda en ${formatNumber(response.quantityOnHand)} u.`
     ));
     if (result) setAdjustForm(initialAdjust);
   };
@@ -1959,9 +1959,9 @@ function ProductDrawer({
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <MetricRow columns={3}>
-            <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
+            <Metric label="Stock" value={`${formatNumber(product.available)} u`} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
-            <Metric label="Disponible" value={`${formatNumber(product.available)} u`} />
+            <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
           </MetricRow>
           <div className="mt-6 flex items-center justify-between gap-3">
             <div>
