@@ -5,10 +5,12 @@ import {
   createInsumo,
   DEFAULT_INSUMOS,
   listInsumoMovements,
+  limaLookbackStart,
   listInsumos,
   mapInsumo,
   quantityCapFor,
   slugifyInsumoName,
+  suggestInsumoPurchases,
   updateInsumo,
 } from './insumos.js';
 
@@ -156,6 +158,25 @@ class InsumosDb {
         created_at: '2026-08-19T12:00:00.000Z',
       });
       return { rows: [] };
+    }
+
+    if (compact.includes('from insumo_movements') && compact.includes('quantity_delta < 0')) {
+      const since = new Date(params[0]);
+      const ids = (params[1] || []).map(Number);
+      const consumed = new Map();
+      for (const movement of this.movements) {
+        const id = Number(movement.insumo_id);
+        if (!ids.includes(id)) continue;
+        if (Number(movement.quantity_delta) >= 0) continue;
+        if (new Date(movement.created_at) < since) continue;
+        consumed.set(id, (consumed.get(id) || 0) + (-Number(movement.quantity_delta)));
+      }
+      return {
+        rows: [...consumed.entries()].map(([insumo_id, amount]) => ({
+          insumo_id,
+          consumed: amount,
+        })),
+      };
     }
 
     if (compact.includes('from insumo_movements')) {
@@ -365,6 +386,72 @@ test('cada fill no puede pasar de 16', async () => {
   );
   const ok = await adjustInsumo(1, { absoluteTarget: 16, pin: CHANGE_PIN }, 'user-1', pequeno);
   assert.equal(ok.insumo.quantityOnHand, 16);
+});
+
+test('la ventana de consumo empieza al inicio del día en Lima', () => {
+  const noonUtc = new Date('2026-09-04T17:00:00.000Z');
+  assert.equal(limaLookbackStart(7, noonUtc).toISOString(), '2026-08-29T05:00:00.000Z');
+  const lateLimaYesterday = new Date('2026-09-04T04:00:00.000Z');
+  assert.equal(limaLookbackStart(7, lateLimaYesterday).toISOString(), '2026-08-28T05:00:00.000Z');
+});
+
+test('sugiere compra según el ritmo de los últimos 7 días', () => {
+  assert.deepEqual(suggestInsumoPurchases({ consumedRecent: 7, quantityOnHand: 8 }), {
+    lookbackDays: 7,
+    consumed: 7,
+    hasConsumption: true,
+    days: 0,
+    week: 0,
+    month: 22,
+  });
+  assert.deepEqual(suggestInsumoPurchases({ consumedRecent: 14, quantityOnHand: 8 }), {
+    lookbackDays: 7,
+    consumed: 14,
+    hasConsumption: true,
+    days: 0,
+    week: 6,
+    month: 52,
+  });
+  assert.deepEqual(suggestInsumoPurchases({ consumedRecent: 0, quantityOnHand: 2 }), {
+    lookbackDays: 7,
+    consumed: 0,
+    hasConsumption: false,
+    days: 0,
+    week: 0,
+    month: 0,
+  });
+  assert.deepEqual(suggestInsumoPurchases({ consumedRecent: 1, quantityOnHand: 0 }), {
+    lookbackDays: 7,
+    consumed: 1,
+    hasConsumption: true,
+    days: 1,
+    week: 1,
+    month: 5,
+  });
+});
+
+test('lista cuánto pedir a partir de las salidas recientes', async () => {
+  const since = limaLookbackStart();
+  const inside = new Date(since.getTime() + (12 * 60 * 60 * 1000)).toISOString();
+  const outside = new Date(since.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+  const db = new InsumosDb([seedRow({ quantity_on_hand: 8 })]);
+  db.movements.push(
+    { id: 1, insumo_id: 1, quantity_delta: -1, quantity_after: 8, created_at: inside },
+    { id: 2, insumo_id: 1, quantity_delta: -1, quantity_after: 9, created_at: inside },
+    { id: 3, insumo_id: 1, quantity_delta: -1, quantity_after: 10, created_at: inside },
+    { id: 4, insumo_id: 1, quantity_delta: -1, quantity_after: 11, created_at: inside },
+    { id: 5, insumo_id: 1, quantity_delta: -1, quantity_after: 12, created_at: inside },
+    { id: 6, insumo_id: 1, quantity_delta: -1, quantity_after: 13, created_at: inside },
+    { id: 7, insumo_id: 1, quantity_delta: -1, quantity_after: 14, created_at: inside },
+    { id: 8, insumo_id: 1, quantity_delta: -4, quantity_after: 18, created_at: outside },
+    { id: 9, insumo_id: 1, quantity_delta: 6, quantity_after: 8, created_at: inside },
+  );
+  const result = await listInsumos({}, db);
+  assert.equal(result.items[0].purchase.consumed, 7);
+  assert.equal(result.items[0].purchase.hasConsumption, true);
+  assert.equal(result.items[0].purchase.days, 0);
+  assert.equal(result.items[0].purchase.week, 0);
+  assert.equal(result.items[0].purchase.month, 22);
 });
 
 test('el movimiento guarda quién lo hizo y a qué hora', async () => {

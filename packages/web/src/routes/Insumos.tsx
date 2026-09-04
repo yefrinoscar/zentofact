@@ -7,9 +7,12 @@ import {
   capErrorMessage,
   formatInsumoActor,
   formatInsumoChange,
+  formatInsumoPurchaseValue,
   formatInsumoQuantity,
   formatInsumoWhen,
   nextQuantity,
+  suggestInsumoPurchases,
+  type InsumoPurchase,
 } from '../lib/insumos-log';
 import { InsumoIcon, hasInsumoPhoto, type InsumoIconKey } from '../components/insumo-icons';
 import { Button } from '../components/ui/button';
@@ -48,6 +51,7 @@ type Insumo = {
   status: string;
   lowStock: boolean;
   updatedAt?: string | null;
+  purchase?: InsumoPurchase;
 };
 
 type InsumosResponse = {
@@ -145,6 +149,12 @@ function patchQuantity(payload: InsumosResponse | undefined, id: number, quantit
         ...item,
         quantityOnHand: next,
         lowStock: reorder > 0 ? next <= reorder : next <= 0,
+        purchase: item.purchase
+          ? suggestInsumoPurchases({
+            consumedRecent: item.purchase.consumed,
+            quantityOnHand: next,
+          })
+          : item.purchase,
       };
     }),
   };
@@ -546,7 +556,40 @@ function InsumoMeter({
         {Number.isFinite(cap) ? (
           <p className="mt-1 hidden text-xs text-muted-foreground md:block">máx. {cap}</p>
         ) : null}
+        <InsumoPurchaseHint purchase={insumo.purchase} />
       </div>
     </article>
+  );
+}
+
+const PURCHASE_ITEMS = [
+  { key: 'days', label: 'Días' },
+  { key: 'week', label: 'Semana' },
+  { key: 'month', label: 'Mes' },
+] as const;
+
+function InsumoPurchaseHint({ purchase }: { purchase?: InsumoPurchase }) {
+  const hasConsumption = Boolean(purchase?.hasConsumption);
+  return (
+    <div className="mt-3 w-full md:max-w-48">
+      <p className="text-[11px] font-medium text-muted-foreground md:text-center">A pedir</p>
+      <dl className="mt-1 grid grid-cols-3 gap-1" aria-label="A pedir">
+        {PURCHASE_ITEMS.map((item) => {
+          const value = purchase?.[item.key];
+          const needed = hasConsumption && Number(value) > 0;
+          return (
+            <div key={item.key} className="min-w-0 md:text-center">
+              <dt className="text-[11px] text-muted-foreground">{item.label}</dt>
+              <dd className={cn(
+                'text-sm font-semibold tabular-nums',
+                needed ? 'text-foreground' : 'text-muted-foreground',
+              )}>
+                {formatInsumoPurchaseValue(value, hasConsumption)}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
   );
 }

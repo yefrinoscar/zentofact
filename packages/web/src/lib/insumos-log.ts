@@ -35,3 +35,47 @@ export function nextQuantity(current: number, change: { delta?: number; absolute
 export function capErrorMessage(name: string, cap: number) {
   return `${name} no puede pasar de ${cap}.`;
 }
+
+export const PURCHASE_LOOKBACK_DAYS = 7;
+export const PURCHASE_HORIZONS = { days: 3, week: 7, month: 30 } as const;
+
+export type InsumoPurchase = {
+  lookbackDays: number;
+  consumed: number;
+  hasConsumption: boolean;
+  days: number;
+  week: number;
+  month: number;
+};
+
+export function suggestInsumoPurchases({
+  consumedRecent,
+  quantityOnHand,
+  lookbackDays = PURCHASE_LOOKBACK_DAYS,
+}: {
+  consumedRecent: number;
+  quantityOnHand: number;
+  lookbackDays?: number;
+}): InsumoPurchase {
+  const consumed = Math.max(0, Number(consumedRecent) || 0);
+  const onHand = Math.max(0, Number(quantityOnHand) || 0);
+  const windowDays = Number(lookbackDays) > 0 ? Number(lookbackDays) : PURCHASE_LOOKBACK_DAYS;
+  const hasConsumption = consumed > 0;
+  const dailyRate = hasConsumption ? consumed / windowDays : 0;
+  const buyFor = (horizonDays: number) => (
+    hasConsumption ? Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand)) : 0
+  );
+  return {
+    lookbackDays: windowDays,
+    consumed,
+    hasConsumption,
+    days: buyFor(PURCHASE_HORIZONS.days),
+    week: buyFor(PURCHASE_HORIZONS.week),
+    month: buyFor(PURCHASE_HORIZONS.month),
+  };
+}
+
+export function formatInsumoPurchaseValue(value?: number | null, hasConsumption = true) {
+  if (!hasConsumption || value == null || !Number.isFinite(Number(value))) return '—';
+  return formatInsumoQuantity(value);
+}

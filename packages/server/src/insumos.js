@@ -19,6 +19,44 @@ export const DEFAULT_INSUMOS = [
   { code: 'cinta-scotch', name: 'Cinta scotch', unit: 'rollos', iconKey: 'cinta-scotch', reorderPoint: 3 },
 ];
 
+export const INSUMO_TZ = 'America/Lima';
+export const PURCHASE_LOOKBACK_DAYS = 7;
+export const PURCHASE_HORIZONS = Object.freeze({ days: 3, week: 7, month: 30 });
+
+export function limaDateKey(value = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: INSUMO_TZ }).format(value);
+}
+
+export function limaLookbackStart(days = PURCHASE_LOOKBACK_DAYS, now = new Date()) {
+  const windowDays = Number(days) > 0 ? Number(days) : PURCHASE_LOOKBACK_DAYS;
+  const start = new Date(`${limaDateKey(now)}T00:00:00.000-05:00`);
+  start.setTime(start.getTime() - (windowDays - 1) * 24 * 60 * 60 * 1000);
+  return start;
+}
+
+export function suggestInsumoPurchases({
+  consumedRecent,
+  quantityOnHand,
+  lookbackDays = PURCHASE_LOOKBACK_DAYS,
+} = {}) {
+  const consumed = Math.max(0, Number(consumedRecent) || 0);
+  const onHand = Math.max(0, Number(quantityOnHand) || 0);
+  const windowDays = Number(lookbackDays) > 0 ? Number(lookbackDays) : PURCHASE_LOOKBACK_DAYS;
+  const hasConsumption = consumed > 0;
+  const dailyRate = hasConsumption ? consumed / windowDays : 0;
+  const buyFor = (horizonDays) => (
+    hasConsumption ? Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand)) : 0
+  );
+  return {
+    lookbackDays: windowDays,
+    consumed,
+    hasConsumption,
+    days: buyFor(PURCHASE_HORIZONS.days),
+    week: buyFor(PURCHASE_HORIZONS.week),
+    month: buyFor(PURCHASE_HORIZONS.month),
+  };
+}
+
 const SORT_COLUMNS = {
   name: 'i.name',
   quantity: 'i.quantity_on_hand',
@@ -326,13 +364,34 @@ export async function listInsumos(filters = {}, db) {
     [status, search, lowStockOnly, limit, offset],
   );
   const items = result.rows.map(mapInsumo);
+  const consumed = await consumptionByInsumoIds(items.map((item) => item.id), db);
   return {
-    items,
+    items: items.map((item) => ({
+      ...item,
+      purchase: suggestInsumoPurchases({
+        consumedRecent: consumed.get(item.id) || 0,
+        quantityOnHand: item.quantityOnHand,
+      }),
+    })),
     totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,
     lowStockCount: result.rows[0] ? Number(result.rows[0].low_stock_count) : 0,
     limit,
     offset,
   };
+}
+
+async function consumptionByInsumoIds(ids, db) {
+  if (!ids.length) return new Map();
+  const result = await target(db).query(
+    `select insumo_id, coalesce(sum(-quantity_delta), 0) as consumed
+     from insumo_movements
+     where quantity_delta < 0
+       and created_at >= $1
+       and insumo_id = any($2::bigint[])
+     group by insumo_id`,
+    [limaLookbackStart(), ids],
+  );
+  return new Map(result.rows.map((row) => [Number(row.insumo_id), Number(row.consumed)]));
 }
 
 export async function createInsumo(input = {}, actorUserId, db) {
