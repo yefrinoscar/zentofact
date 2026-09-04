@@ -570,6 +570,11 @@ const apiHttp = {
   stockJobsRetry: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/retry`, { method: 'POST' }),
   stockJobsOrderPreview: (id: number) => req(`/catalog/stock-jobs/jobs/${id}/order-preview`),
   stockJobsRun: (limit = 8) => req(`/catalog/stock-jobs/run${qs({ limit })}`, { method: 'POST' }),
+  stockJobsUnmatched: () => req('/catalog/stock-jobs/unmatched'),
+  stockJobsAssignUnmatched: (orderItemId: number, productId: number) => req(
+    `/catalog/stock-jobs/unmatched/${orderItemId}/assign`,
+    { method: 'POST', body: JSON.stringify({ productId }) },
+  ),
 
   onProgress: (cb: (data: any) => void) => { progressHandler = cb; },
 };

@@ -10,6 +10,7 @@ import {
   normalizeFalabellaStatus,
   syncFalabellaOrders,
 } from './falabella-sync.js';
+import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 
 test('una sincronización histórica nunca mueve inventario aunque encuentre cancelaciones', () => {
   assert.equal(catalogInventoryEnabledForSync('month', true), false);
@@ -250,6 +251,21 @@ test('una sincronización por día pide a Falabella los pedidos creados en esa f
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);
   assert.equal(db.queries.some((query) => query.sql.includes('cursor_updated_at=case') && query.params[4] === 'day'), true);
+});
+
+test('el sync periódico recupera cabeceras sin artículos desde el corte operativo', async () => {
+  const db = new FakeDb();
+  const client = { getOrdersV2: async () => response([]) };
+
+  await syncFalabellaOrders(7, {
+    mode: 'range',
+    from: '2026-09-03T20:00:00.000Z',
+    to: '2026-09-03T20:30:00.000Z',
+  }, fakeDependencies(db, client));
+
+  const detailHydration = db.queries.find((query) => query.sql.includes('fo.synchronized_at >= $3'));
+  assert.ok(detailHydration);
+  assert.equal(detailHydration.params[2], INVENTORY_LISTEN_FROM_AT);
 });
 
 test('rechaza una segunda sincronización de la misma empresa sin llamar Falabella', async () => {

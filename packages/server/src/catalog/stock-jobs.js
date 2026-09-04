@@ -9,6 +9,7 @@ const MAX_ATTEMPTS = 6;
 const STALE_PROCESSING_MS = 60_000;
 const DEFAULT_LIMIT = 8;
 const WORKER_INTERVAL_MS = 5_000;
+const RECONCILIATION_INTERVAL_MS = 60_000;
 const log = (...args) => console.log('[stock-jobs]', ...args);
 
 function limaOffset(days) {
@@ -171,6 +172,9 @@ export async function ensureStockJobTables(db) {
       paused boolean not null default false,
       updated_at timestamptz not null default now()
     );
+    alter table inventory_stock_state add column if not exists last_reconciled_at timestamptz;
+    alter table inventory_stock_state add column if not exists last_reconciliation jsonb not null default '{}'::jsonb;
+    alter table inventory_stock_state add column if not exists last_reconciliation_error text;
     insert into inventory_stock_state (id, paused) values (1, false)
     on conflict (id) do nothing;
   `);
@@ -201,12 +205,15 @@ export async function setPaused(paused, db) {
 
 export async function getConfig(db) {
   const client = await target(db);
-  const [inventory, paused, statsRows] = await Promise.all([
+  const [inventory, paused, statsRows, reconciliationRows] = await Promise.all([
     catalogInventoryFlagState(db),
     getPaused(db),
     client.query('select status, count(*)::int as n from inventory_stock_jobs group by status'),
+    client.query(`select last_reconciled_at, last_reconciliation, last_reconciliation_error
+                    from inventory_stock_state where id=1`),
   ]);
   const stats = Object.fromEntries(statsRows.rows.map((row) => [row.status, row.n]));
+  const reconciliation = reconciliationRows.rows[0] || {};
   return {
     inventoryEnabled: inventory.effective === true,
     inventoryLabel: inventory.label,
@@ -215,6 +222,10 @@ export async function getConfig(db) {
     paused,
     stats,
     workerIntervalSeconds: WORKER_INTERVAL_MS / 1000,
+    reconciliationIntervalSeconds: RECONCILIATION_INTERVAL_MS / 1000,
+    lastReconciledAt: reconciliation.last_reconciled_at || null,
+    lastReconciliation: reconciliation.last_reconciliation || {},
+    lastReconciliationError: reconciliation.last_reconciliation_error || null,
     batchSize: DEFAULT_LIMIT,
   };
 }
@@ -276,7 +287,8 @@ export async function jobOrderPreview(id, db) {
   if (!job) return { error: 'Job no encontrado' };
 
   const orderResult = await client.query(
-    `select o.external_order_number, o.order_status, o.fulfillment_status, o.total,
+    `select o.id, o.external_order_number, o.order_status, o.fulfillment_status,
+            o.items_status, o.total,
             o.ordered_at, o.promised_shipping_at,
             count(oi.id)::int as items_count,
             coalesce(sum(oi.stock_applied_quantity), 0)::int as stock_applied
@@ -292,12 +304,29 @@ export async function jobOrderPreview(id, db) {
     [job.company_id, job.external_order_id, job.order_id],
   );
   const order = orderResult.rows[0];
+  const items = order ? (await client.query(
+    `select oi.id,
+            oi.description,
+            oi.sku as seller_sku,
+            oi.provider_sku,
+            oi.quantity,
+            oi.product_id,
+            coalesce(nullif(oi.main_sku, ''), nullif(product.main_sku, '')) as main_sku,
+            nullif(product.name, '') as product_name,
+            oi.stock_state
+       from order_items oi
+       left join products product on product.id=oi.product_id
+      where oi.order_id=$1
+      order by oi.id`,
+    [order.id],
+  )).rows : [];
   const result = job.result || {};
   return {
     source: job.source,
     order: order ? {
       orderNumber: order.external_order_number || job.order_number,
       status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),
+      itemsStatus: order.items_status,
       total: order.total,
       itemsCount: order.items_count,
       stockApplied: order.stock_applied,
@@ -312,6 +341,17 @@ export async function jobOrderPreview(id, db) {
       skipped: result.skipped ?? null,
       missing: result.missing ?? false,
     },
+    items: items.map((item) => ({
+      id: Number(item.id),
+      title: item.product_name || item.description || 'Producto sin nombre',
+      description: item.description || '',
+      sellerSku: item.seller_sku || '',
+      providerSku: item.provider_sku || null,
+      quantity: Number(item.quantity || 0),
+      productId: item.product_id == null ? null : Number(item.product_id),
+      mainSku: item.main_sku || null,
+      stockState: item.stock_state,
+    })),
     company: job.company,
   };
 }
@@ -485,10 +525,11 @@ export async function enqueueStockJob(input = {}, db) {
            where job.order_id=$1
              and o.id=$1
              and job.status='done'
-             and o.fulfillment_status in ('ready_to_ship','shipped','delivered')
+             and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
              and exists (
                select 1 from order_items oi
-               where oi.order_id=o.id and oi.stock_state='pending'
+               where oi.order_id=o.id
+                 and oi.stock_state in ('none','pending','skipped_policy','skipped_unmapped','skipped_insufficient')
              )`,
           [orderId],
         );
@@ -600,10 +641,12 @@ export async function processStockQueue(input = {}, db) {
         // históricos en descuentos automáticos.
         includeSkippedPolicy: true,
       }, db);
-      if (result?.missing) {
+      if (result?.missing || result?.itemsPending) {
         const next = await finishJob(client, job, 'pending', {
           retry: true,
-          error: 'Pedido canónico todavía no está disponible.',
+          error: result?.itemsPending
+            ? 'El pedido todavía no tiene sus artículos completos.'
+            : 'Pedido canónico todavía no está disponible.',
           result,
         });
         if (next === 'failed') stats.failed += 1;
@@ -652,13 +695,13 @@ export async function enqueueStockJobsSinceListenFrom(input = {}, db) {
     `select o.id as order_id, o.company_id, o.external_order_id, o.external_order_number
      from orders o
      where o.order_status not in ('cancelled','failed')
-       and o.fulfillment_status in ('pending','preparing')
+       and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
        and o.items_status='complete'
        and o.ordered_at >= $1::timestamptz
        and exists (
          select 1 from order_items oi
          where oi.order_id=o.id
-           and oi.stock_state in ('none','skipped_unmapped','skipped_insufficient')
+           and oi.stock_state in ('none','skipped_policy','skipped_unmapped','skipped_insufficient')
        )
      order by o.id
      limit 50`,
@@ -736,6 +779,57 @@ export async function drainStockQueue(input = {}, db) {
   return totals;
 }
 
+export async function runStockReconciliation(input = {}, db, dependencies = {}) {
+  const paused = await (dependencies.getPaused || getPaused)(db);
+  if (paused) return { paused: true, listened: null, reopened: null };
+  const record = dependencies.record || (async (result, error) => {
+    const client = await target(db);
+    await client.query(
+      `update inventory_stock_state
+          set last_reconciled_at=now(),
+              last_reconciliation=$1::jsonb,
+              last_reconciliation_error=$2,
+              updated_at=now()
+        where id=1`,
+      [JSON.stringify(result || {}), error || null],
+    );
+  });
+  try {
+    const listened = await (dependencies.enqueueSince || enqueueStockJobsSinceListenFrom)(
+      { source: input.source || 'cron' },
+      db,
+    );
+    const reopened = await (dependencies.reopen || reopenReservedStockJobsForCommit)(db);
+    const result = { paused: false, listened, reopened };
+    await record(result, null);
+    return result;
+  } catch (error) {
+    await record(null, String(error?.message || error).slice(0, 2000)).catch(() => {});
+    throw error;
+  }
+}
+
+export function startStockReconciliationCron() {
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const result = await runStockReconciliation();
+      if (result.listened?.enqueued || result.reopened?.reopened) log(JSON.stringify({ cron: result }));
+    } catch (error) {
+      log('cron error:', error?.message || error);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(() => { tick().catch(() => {}); }, RECONCILIATION_INTERVAL_MS);
+  timer.unref?.();
+  setTimeout(() => { tick().catch(() => {}); }, 3_000).unref?.();
+  log(`conciliación cron cada ${RECONCILIATION_INTERVAL_MS / 1000}s.`);
+  return timer;
+}
+
 export function startStockJobWorker() {
   let running = false;
   const tick = async () => {
@@ -743,12 +837,8 @@ export function startStockJobWorker() {
     running = true;
     try {
       if (await getPaused()) return;
-      const listened = await enqueueStockJobsSinceListenFrom({ source: 'listen' });
-      const reopened = await reopenReservedStockJobsForCommit();
       const stats = await processStockQueue();
-      if (stats.claimed || listened.enqueued || reopened.reopened) {
-        log(JSON.stringify({ ...stats, listened, reopened }));
-      }
+      if (stats.claimed) log(JSON.stringify(stats));
     } catch (error) {
       log('worker error:', error?.message || error);
     } finally {
