@@ -52,8 +52,12 @@ _Avoid_: Estado del canal
 Pedido cuya identidad y cabecera ya fueron recibidas, pero cuyos artículos todavía no están completos. No está listo para inventario, facturación ni acciones operativas.
 _Avoid_: Pedido sincronizado
 
+**Reservado**:
+Unidades de un Producto comprometidas a un Pedido pendiente o en preparación. Siguen en el Almacén y no están disponibles para vender. Dejan de estar reservadas al pasar a Listo para enviar o al cancelarse.
+_Avoid_: stock aplicado, descontado
+
 **Listo para enviar**:
-Estado de entrega en el que el pedido ya está preparado y sale del almacén. Es el momento en que se descuenta el stock del Producto.
+Estado de entrega en el que el pedido ya está preparado y sale del almacén. Ahí se confirma la reserva: el stock del Producto deja de estar Reservado y se descuenta del almacén.
 _Avoid_: confirmed, pending
 
 **Movimiento de inventario**:

@@ -49,6 +49,9 @@ const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
+const { shouldListenStockOrder } = await import('./catalog/stock-commitment.js');
+const listenReset = await import('./catalog/stock-listen-reset.js');
+await listenReset.resetInventoryListenHistory();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
@@ -522,7 +525,10 @@ app.post('/order-management/orders/manual', async (c) => {
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
     });
-    if (result?.order?.companyId && ['ready_to_ship', 'shipped', 'delivered'].includes(result.order.fulfillmentStatus)) {
+    if (result?.order?.companyId && shouldListenStockOrder({
+      status: result.order.fulfillmentStatus,
+      orderedAt: result.order.orderedAt,
+    })) {
       try {
         await stockJobs.enqueueStockJob({
           orderId: result.order.id,

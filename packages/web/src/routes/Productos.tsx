@@ -800,7 +800,7 @@ export default function Productos() {
       ? { absoluteTarget: value, reason: adjustForm.reason }
       : { delta: value, reason: adjustForm.reason };
     const result = await runAction(() => api.adjustProductInventory(selectedId, payload), (response) => (
-      response.noChange ? 'El stock ya tenía ese valor.' : `Stock actualizado a ${formatNumber(response.quantityOnHand)}.`
+      response.noChange ? 'El almacén ya tenía ese valor.' : `En almacén queda en ${formatNumber(response.quantityOnHand)} u.`
     ));
     if (result) setAdjustForm(initialAdjust);
   };
@@ -1096,22 +1096,6 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
-  const saveStock = useCallback((raw: string) => {
-    if (!selectedProduct) return;
-    const trimmed = raw.trim();
-    const parsed = Number(trimmed);
-    if (trimmed === '' || !Number.isFinite(parsed) || parsed < 0) {
-      setFieldError('El stock debe ser un número válido.');
-      return;
-    }
-    if (parsed === Number(selectedProduct.quantityOnHand)) return;
-    setFieldError('');
-    setActionError('');
-    setActionMessage('');
-    setAdjustForm({ mode: 'absolute', value: String(parsed), reason: '' });
-    setModal('adjust');
-  }, [selectedProduct]);
-
   return (
     <div className="space-y-4">
       <CatalogInventoryKpis
@@ -1224,7 +1208,6 @@ export default function Productos() {
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
-        onSaveStock={saveStock}
         onSaveName={saveName}
         onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
@@ -1237,7 +1220,7 @@ export default function Productos() {
 
       {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
 
-      {modal === 'adjust' && selectedProduct && <Modal title={`Ajustar stock · ${selectedProduct.mainSku}`} subtitle={`Saldo actual: ${formatNumber(selectedProduct.quantityOnHand)}. El movimiento queda auditado.`} onClose={() => setModal(null)}><form onSubmit={adjustInventory} className="space-y-4"><Select value={adjustForm.mode} onValueChange={(value) => setAdjustForm({ ...adjustForm, mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="delta">Sumar o restar (delta)</SelectItem><SelectItem value="absolute">Fijar saldo absoluto</SelectItem></SelectContent></Select><Field label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'} type="number" value={adjustForm.value} onChange={(value) => setAdjustForm({ ...adjustForm, value })} required /><TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Registrar ajuste</Submit></form></Modal>}
+      {modal === 'adjust' && selectedProduct && <Modal title={`Ajustar stock · ${selectedProduct.mainSku}`} subtitle={`En almacén ${formatNumber(selectedProduct.quantityOnHand)} u. El ajuste no toca lo reservado.`} onClose={() => setModal(null)}><form onSubmit={adjustInventory} className="space-y-4"><Select value={adjustForm.mode} onValueChange={(value) => setAdjustForm({ ...adjustForm, mode: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="delta">Sumar o restar (delta)</SelectItem><SelectItem value="absolute">Fijar saldo absoluto</SelectItem></SelectContent></Select><Field label={adjustForm.mode === 'absolute' ? 'Nuevo saldo' : 'Cantidad (+ entrada / − salida)'} type="number" value={adjustForm.value} onChange={(value) => setAdjustForm({ ...adjustForm, value })} required /><TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Registrar ajuste</Submit></form></Modal>}
 
       {modal === 'image' && selectedProduct && <Modal title="Foto del producto" subtitle={`${selectedProduct.name} · SKU interno ${selectedProduct.mainSku}`} onClose={() => setModal(null)}><form onSubmit={updateProductImage} className="space-y-4">
         <div className="flex items-center gap-4">
@@ -1762,7 +1745,7 @@ function ProductDrawer({
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
   onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName,
-  onSaveDescription, onSaveStock,
+  onSaveDescription,
 }: {
   open: boolean;
   product: Product | null;
@@ -1799,7 +1782,6 @@ function ProductDrawer({
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
-  onSaveStock: (value: string) => void;
   onSaveName: (value: string) => void;
   onSaveDescription: (value: string) => void;
 }) {
@@ -1926,7 +1908,6 @@ function ProductDrawer({
               product={product}
               profitOwners={profitOwners}
               savingField={savingField}
-              onSaveStock={onSaveStock}
               onSavePrice={onSavePrice}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
@@ -1978,9 +1959,9 @@ function ProductDrawer({
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
           <MetricRow columns={3}>
-            <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
+            <Metric label="Stock" value={`${formatNumber(product.available)} u`} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
-            <Metric label="Disponible" value={`${formatNumber(product.available)} u`} />
+            <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
           </MetricRow>
           <div className="mt-6 flex items-center justify-between gap-3">
             <div>
@@ -2264,7 +2245,6 @@ function ProductProperties({
   product,
   profitOwners,
   savingField,
-  onSaveStock,
   onSavePrice,
   onSaveCommission,
   onSaveProfitOwner,
@@ -2273,7 +2253,6 @@ function ProductProperties({
   product: Product;
   profitOwners: string[];
   savingField: ProductEditableField | null;
-  onSaveStock: (value: string) => void;
   onSavePrice: (value: string) => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
@@ -2290,18 +2269,7 @@ function ProductProperties({
           <span className="text-xs text-muted-foreground">Haz clic para editar</span>
         </div>
         <div>
-          <OverviewField
-            icon={<Boxes />}
-            label="Stock"
-            productId={product.id}
-            field="quantityOnHand"
-            value={String(product.quantityOnHand)}
-            display={`${formatNumber(product.quantityOnHand)} u`}
-            type="number"
-            saving={false}
-            onSave={onSaveStock}
-          />
-          <OverviewRow icon={<CheckCircle2 />} label="Disponible">
+          <OverviewRow icon={<Boxes />} label="Stock">
             <span className="text-sm tabular-nums">{formatNumber(product.available)} u</span>
           </OverviewRow>
           <OverviewRow icon={<Clock3 />} label="Reservado">

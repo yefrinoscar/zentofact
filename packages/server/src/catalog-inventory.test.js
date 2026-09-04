@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyInventoryMovement,
+  applyInventoryReservation,
   InsufficientStockError,
   listMovements,
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
 import { stockPhase } from './catalog/stock-phase.js';
+import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
   falabellaCanonicalIdentity,
   importFalabellaCatalog,
@@ -33,6 +35,7 @@ import {
 class InventoryDb {
   constructor(quantity = 10) {
     this.quantity = quantity;
+    this.reserved = 0;
     this.movements = new Map();
     this.items = new Map();
     this.listings = [];
@@ -45,7 +48,7 @@ class InventoryDb {
     this.queries.push({ sql: compact, params });
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
     if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
-      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: 0 }] };
+      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: this.reserved }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -66,6 +69,10 @@ class InventoryDb {
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.quantity = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_reserved')) {
+      this.reserved = Number(params[0]);
       return { rows: [] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
@@ -172,6 +179,7 @@ function item(overrides = {}) {
 }
 
 function phaseInput(db, upsertedItems, overrides = {}) {
+  const { persisted, ...rest } = overrides;
   return {
     db,
     existing: null,
@@ -181,13 +189,15 @@ function phaseInput(db, upsertedItems, overrides = {}) {
       order_status: 'confirmed',
       fulfillment_status: 'ready_to_ship',
       external_order_number: '3999111222',
+      ordered_at: INVENTORY_LISTEN_FROM_AT,
+      ...persisted,
     },
     account: { id: 3, channelCode: 'falabella', settings: {} },
     upsertedItems,
     doomedItems: [],
     source: 'sync',
     enabled: true,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -415,17 +425,112 @@ test('líneas históricas hidratadas para ventas nunca aplican stock retroactivo
   assert.equal(db.items.get(101).stock_state, 'skipped_policy');
 });
 
-test('un pedido pending no descuenta stock hasta listo para enviar', async () => {
+test('un pedido pending reserva stock y no descuenta el almacén', async () => {
   const db = new InventoryDb(10);
   db.listings.push(listing());
   db.items.set(101, item());
   const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
-    persisted: { id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
+      ordered_at: INVENTORY_LISTEN_FROM_AT,
+    },
   }));
   assert.equal(result.applied, 0);
+  assert.equal(result.reserved, 1);
   assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 2);
   assert.equal(db.movements.size, 0);
-  assert.equal(db.items.get(101).stock_state, 'none');
+  assert.equal(db.items.get(101).stock_state, 'pending');
+  assert.equal(db.items.get(101).stock_applied_quantity, 2);
+});
+
+test('un pedido pending anterior al corte no reserva ni descuenta', async () => {
+  const db = new InventoryDb(10);
+  db.listings.push(listing());
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
+      ordered_at: new Date(Date.parse(INVENTORY_LISTEN_FROM_AT) - 1000).toISOString(),
+    },
+  }));
+  assert.equal(result.reserved, 0);
+  assert.equal(result.applied, 0);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.items.get(101).stock_state, 'skipped_policy');
+});
+
+test('al pasar a listo para enviar la reserva deja de estar reservada y descuenta el almacén', async () => {
+  const db = new InventoryDb(10);
+  db.reserved = 2;
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'pending', stock_applied_quantity: 2,
+  }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'ready_to_ship',
+      external_order_number: '3999111222', ordered_at: INVENTORY_LISTEN_FROM_AT,
+    },
+  }));
+  assert.equal(result.applied, 1);
+  assert.equal(result.committed, 1);
+  assert.equal(db.quantity, 8);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.items.get(101).stock_state, 'applied');
+});
+
+test('cancelar un pedido reservado suelta la reserva sin movimiento de almacén', async () => {
+  const db = new InventoryDb(10);
+  db.reserved = 2;
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'pending', stock_applied_quantity: 2, stock_revision: 0,
+  }));
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'pending' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'cancelled', fulfillment_status: 'cancelled',
+      external_order_number: '3248709095',
+    },
+  }));
+  assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.movements.size, 0);
+  assert.equal(db.items.get(101).stock_state, 'reversed');
+});
+
+test('reservar más que el disponible marketplace marca la línea y no toca el almacén', async () => {
+  const db = new InventoryDb(1);
+  db.listings.push(listing({ quantity_on_hand: 1 }));
+  db.items.set(101, item());
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
+      ordered_at: '2026-09-04T18:00:00.000Z',
+    },
+  }));
+  assert.equal(result.skipped, 1);
+  assert.equal(db.quantity, 1);
+  assert.equal(db.reserved, 0);
+  assert.equal(db.items.get(101).stock_state, 'skipped_insufficient');
+});
+
+test('applyInventoryReservation baja el disponible y no el almacén', async () => {
+  const db = new InventoryDb(10);
+  const reserved = await applyInventoryReservation(db, { productId: 5, quantityDelta: 3 });
+  assert.equal(reserved.quantityOnHand, 10);
+  assert.equal(reserved.quantityReserved, 3);
+  assert.equal(reserved.available, 7);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 3);
+  await assert.rejects(
+    () => applyInventoryReservation(db, { productId: 5, quantityDelta: 8 }),
+    InsufficientStockError,
+  );
+  assert.equal(db.reserved, 3);
 });
 
 test('al pasar a listo para enviar descuenta el producto maestro y deja el pedido en el movimiento', async () => {

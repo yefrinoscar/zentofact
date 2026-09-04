@@ -1,10 +1,16 @@
 import {
   applyInventoryMovement,
+  applyInventoryReservation,
   InsufficientStockError,
   inventoryConfig,
 } from './inventory-service.js';
 import { resolveListing } from './sku-resolver.js';
 import { isCatalogInventoryEnabled } from '../system-config.js';
+import {
+  isAfterInventoryListenFrom,
+  orderListenAt,
+  stockCommitmentAction,
+} from './stock-commitment.js';
 
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
@@ -125,6 +131,17 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     error.code = 'invalid_applied_stock_item';
     throw error;
   }
+  if (item.stock_state === 'pending') {
+    await applyInventoryReservation(db, {
+      productId: item.product_id,
+      quantityDelta: -already,
+      allowNegative: true,
+    });
+    await writeStock(db, item, {
+      stockState: 'reversed', appliedQuantity: 0, revision: item.stock_revision,
+    });
+    return { applied: true, reservedReleased: true };
+  }
   const nextRevision = item.stock_revision + 1;
   const key = `${movementType}:order_item:${item.id}:rev:${nextRevision}`;
   const result = await applyInventoryMovement(db, {
@@ -165,6 +182,233 @@ function allowNegative({ account, isMarketplace, override }) {
   return isMarketplace ? inventoryConfig.allowNegativeMarketplace : inventoryConfig.allowNegativeManual;
 }
 
+async function resolveItemProduct(db, item, input) {
+  const { companyId, channelCode, account, stats } = input;
+  if (item.product_id) return true;
+  if (companyId == null) {
+    await writeResolution(db, item, { stockState: 'skipped_unmapped' });
+    stats.skipped += 1;
+    return false;
+  }
+  const resolved = await resolveListing(db, {
+    channelCode,
+    companyId,
+    channelAccountId: account.id,
+    sellerSku: item.sku,
+    shopSku: item.provider_sku,
+  });
+  if (resolved.unmapped) {
+    await writeResolution(db, item, { stockState: 'skipped_unmapped' });
+    stats.skipped += 1;
+    return false;
+  }
+  item.product_id = resolved.product.id;
+  item.listing_id = resolved.listing.id;
+  item.main_sku = resolved.product.mainSku;
+  return true;
+}
+
+async function reserveItem(db, item, input) {
+  const { context, stats, allowNegativeOverride, account, isMarketplace } = input;
+  const quantity = Number(item.quantity);
+  const already = number(item.stock_applied_quantity);
+  if (item.stock_state === 'applied') return;
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    if (already > 0) {
+      const reversed = await reverseItem(db, item, {
+        ...context,
+        reason: restockReason('invalid_quantity', context.persisted),
+      });
+      if (reversed.applied) stats.reversed += 1;
+    }
+    return;
+  }
+  if (already === quantity && item.stock_state === 'pending') return;
+  const deltaUnits = quantity - already;
+  if (deltaUnits === 0) return;
+  try {
+    await applyInventoryReservation(db, {
+      productId: item.product_id,
+      quantityDelta: deltaUnits,
+      allowNegative: allowNegative({ account, isMarketplace, override: allowNegativeOverride }),
+    });
+    await writeStock(db, item, {
+      productId: item.product_id,
+      listingId: item.listing_id,
+      mainSku: item.main_sku,
+      stockState: 'pending',
+      appliedQuantity: quantity,
+      revision: item.stock_revision,
+    });
+    stats.reserved += 1;
+  } catch (error) {
+    if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
+    if (item.stock_state === 'none') {
+      await writeResolution(db, item, {
+        productId: item.product_id,
+        listingId: item.listing_id,
+        mainSku: item.main_sku,
+        stockState: 'skipped_insufficient',
+      });
+    }
+    stats.skipped += 1;
+    console.error(JSON.stringify({
+      event: 'catalog.stock.insufficient_reserve', orderId: context.orderId, itemId: item.id,
+      productId: item.product_id, already, target: quantity, available: error.onHand,
+    }));
+  }
+}
+
+async function commitItem(db, item, input) {
+  const {
+    context, stats, source, orderId, allowNegativeOverride, account, isMarketplace,
+  } = input;
+  const quantity = Number(item.quantity);
+  let already = number(item.stock_applied_quantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    if (already > 0 || item.stock_state === 'applied' || item.stock_state === 'pending') {
+      const reversed = await reverseItem(db, item, {
+        ...context,
+        reason: restockReason('invalid_quantity', context.persisted),
+      });
+      if (reversed.applied) stats.reversed += 1;
+    } else {
+      console.warn(JSON.stringify({ event: 'catalog.stock.invalid_quantity', orderId, itemId: item.id, quantity: item.quantity }));
+    }
+    return;
+  }
+
+  const negative = allowNegative({ account, isMarketplace, override: allowNegativeOverride });
+  if (item.stock_state === 'pending') {
+    if (already !== quantity) {
+      try {
+        await applyInventoryReservation(db, {
+          productId: item.product_id,
+          quantityDelta: quantity - already,
+          allowNegative: negative,
+        });
+        already = quantity;
+        item.stock_applied_quantity = quantity;
+      } catch (error) {
+        if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
+        stats.skipped += 1;
+        return;
+      }
+    }
+    const nextRevision = item.stock_revision + 1;
+    const key = `sale:order_item:${item.id}:rev:${nextRevision}`;
+    try {
+      const result = await applyInventoryMovement(db, {
+        productId: item.product_id,
+        quantityDelta: -quantity,
+        movementType: 'sale',
+        reason: movementReason(context.orderNumber),
+        idempotencyKey: key,
+        allowNegative: negative,
+        orderId,
+        orderItemId: item.id,
+        listingId: item.listing_id,
+        source,
+        actorUserId: context.actorUserId,
+        metadata: {
+          externalItemId: item.external_item_id,
+          orderNumber: context.orderNumber,
+          sku: item.sku || item.provider_sku || null,
+          from: 0,
+          to: quantity,
+          revision: nextRevision,
+          fulfillmentStatus: context.persisted.fulfillment_status,
+          reserved: true,
+        },
+      });
+      if (result.applied === true || already === quantity) {
+        await applyInventoryReservation(db, {
+          productId: item.product_id,
+          quantityDelta: -quantity,
+          allowNegative: true,
+        });
+        await writeStock(db, item, {
+          productId: item.product_id,
+          listingId: item.listing_id,
+          mainSku: item.main_sku,
+          stockState: 'applied',
+          appliedQuantity: quantity,
+          revision: result.applied === true ? nextRevision : item.stock_revision,
+        });
+        if (result.applied === true) {
+          stats.applied += 1;
+          stats.committed += 1;
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
+      stats.skipped += 1;
+      console.error(JSON.stringify({
+        event: 'catalog.stock.insufficient', orderId, itemId: item.id,
+        productId: item.product_id, already, target: quantity, onHand: error.onHand,
+      }));
+    }
+    return;
+  }
+
+  if (already === quantity && item.stock_state === 'applied') return;
+  const deltaUnits = quantity - already;
+  if (deltaUnits === 0) return;
+  const movementType = already === 0 ? 'sale' : 'sale_adjust';
+  const nextRevision = item.stock_revision + 1;
+  const key = `${movementType}:order_item:${item.id}:rev:${nextRevision}`;
+  try {
+    const result = await applyInventoryMovement(db, {
+      productId: item.product_id,
+      quantityDelta: -deltaUnits,
+      movementType,
+      reason: movementReason(context.orderNumber),
+      idempotencyKey: key,
+      allowNegative: negative,
+      orderId,
+      orderItemId: item.id,
+      listingId: item.listing_id,
+      source,
+      actorUserId: context.actorUserId,
+      metadata: {
+        externalItemId: item.external_item_id,
+        orderNumber: context.orderNumber,
+        sku: item.sku || item.provider_sku || null,
+        from: already,
+        to: quantity,
+        revision: nextRevision,
+        fulfillmentStatus: context.persisted.fulfillment_status,
+      },
+    });
+    if (result.applied === true) {
+      await writeStock(db, item, {
+        productId: item.product_id,
+        listingId: item.listing_id,
+        mainSku: item.main_sku,
+        stockState: 'applied',
+        appliedQuantity: quantity,
+        revision: nextRevision,
+      });
+      stats.applied += 1;
+    } else if (already !== quantity) {
+      console.warn(JSON.stringify({ event: 'catalog.stock.idempotency_mismatch', key, already, target: quantity, itemId: item.id }));
+    }
+  } catch (error) {
+    if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
+    await writeResolution(db, item, {
+      productId: item.product_id,
+      listingId: item.listing_id,
+      mainSku: item.main_sku,
+      stockState: 'skipped_insufficient',
+    });
+    stats.skipped += 1;
+    console.error(JSON.stringify({
+      event: 'catalog.stock.insufficient', orderId, itemId: item.id,
+      productId: item.product_id, already, target: quantity, onHand: error.onHand,
+    }));
+  }
+}
+
 export async function stockPhase(input) {
   const {
     db,
@@ -183,11 +427,12 @@ export async function stockPhase(input) {
     || MARKETPLACE_CHANNELS.has(String(channelCode || '').trim().toLowerCase());
   const currentFulfillment = persisted.fulfillment_status;
   const previousFulfillment = existing?.fulfillment_status;
+  const action = stockCommitmentAction(currentFulfillment);
   const becameEligible = isStockEligibleFulfillment(currentFulfillment)
     && (!existing || !isStockEligibleFulfillment(previousFulfillment));
-  // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
   const saleEnabled = input.enabled
     ?? (becameEligible ? true : await isCatalogInventoryEnabled(db));
+  const afterCutoff = isAfterInventoryListenFrom(orderListenAt(persisted));
   const context = {
     orderId,
     orderNumber: orderNumberOf(persisted),
@@ -195,12 +440,19 @@ export async function stockPhase(input) {
     actorUserId,
     persisted,
   };
-  const stats = { enabled: Boolean(saleEnabled), applied: 0, skipped: 0, reversed: 0, becameEligible };
+  const stats = {
+    enabled: Boolean(saleEnabled),
+    applied: 0,
+    skipped: 0,
+    reversed: 0,
+    reserved: 0,
+    committed: 0,
+    becameEligible,
+  };
 
   await db.query('select id from orders where id=$1 for update', [orderId]);
   if (persisted.items_status === 'pending' || persisted.items_status === 'error') return stats;
 
-  // A. Revertir las líneas ausentes mientras sus FKs todavía existen.
   for (const row of doomedItems) {
     const result = await reverseItem(db, row, {
       ...context,
@@ -212,7 +464,6 @@ export async function stockPhase(input) {
   const currentStatus = persisted.order_status;
   const isReturned = persisted.fulfillment_status === 'returned';
   const isTerminalNow = TERMINAL_STATUSES.has(currentStatus) || isReturned;
-  // Un pedido que llega terminal por primera vez nunca genera una venta.
   if (!existing && isTerminalNow) return stats;
   if (isTerminalNow) {
     const result = await db.query(
@@ -233,7 +484,7 @@ export async function stockPhase(input) {
     return stats;
   }
 
-  if (!isStockEligibleFulfillment(currentFulfillment) && !upsertedItems.length) return stats;
+  if (action === 'none' && !upsertedItems.length) return stats;
 
   let saleItems = upsertedItems;
   if (!saleItems.length) {
@@ -247,11 +498,20 @@ export async function stockPhase(input) {
     )).rows;
   }
 
+  const itemInput = {
+    context,
+    stats,
+    source,
+    orderId,
+    companyId,
+    channelCode,
+    account,
+    isMarketplace,
+    allowNegativeOverride: input.allowNegative,
+  };
+
   for (const row of saleItems) {
     const item = mutableItem(row);
-    // Las líneas históricas recuperadas bajo demanda para analítica de ventas no
-    // deben convertirse después en movimientos de stock retroactivos, salvo que
-    // el pedido acabe de pasar a listo para enviar o se pida explícitamente.
     if (item.stock_state === 'reversed') continue;
     const terminalKind = itemTerminalKind(item.provider_status);
     if (terminalKind) {
@@ -263,103 +523,24 @@ export async function stockPhase(input) {
       if (reversed.applied) stats.reversed += 1;
       continue;
     }
-    if (!isStockEligibleFulfillment(currentFulfillment) || !saleEnabled) continue;
+    if (action === 'none' || !saleEnabled) continue;
+    if (item.stock_state === 'skipped_policy' && !afterCutoff) continue;
     if (item.stock_state === 'skipped_policy' && !input.includeSkippedPolicy && !becameEligible) continue;
-    const quantity = Number(item.quantity);
-    const already = number(item.stock_applied_quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      if (already > 0 || item.stock_state === 'applied') {
-        const reversed = await reverseItem(db, item, {
-          ...context,
-          reason: restockReason('invalid_quantity', persisted),
-        });
-        if (reversed.applied) stats.reversed += 1;
-      } else {
-        console.warn(JSON.stringify({ event: 'catalog.stock.invalid_quantity', orderId, itemId: item.id, quantity: item.quantity }));
+    if ((item.stock_state === 'none' || item.stock_state === 'skipped_policy') && !afterCutoff) {
+      if (item.stock_state === 'none') {
+        await writeResolution(db, item, { stockState: 'skipped_policy' });
       }
+      stats.skipped += 1;
       continue;
     }
 
-    if (!item.product_id) {
-      if (companyId == null) {
-        await writeResolution(db, item, { stockState: 'skipped_unmapped' });
-        stats.skipped += 1;
-        continue;
-      }
-      const resolved = await resolveListing(db, {
-        channelCode,
-        companyId,
-        channelAccountId: account.id,
-        sellerSku: item.sku,
-        shopSku: item.provider_sku,
-      });
-      if (resolved.unmapped) {
-        await writeResolution(db, item, { stockState: 'skipped_unmapped' });
-        stats.skipped += 1;
-        continue;
-      }
-      item.product_id = resolved.product.id;
-      item.listing_id = resolved.listing.id;
-      item.main_sku = resolved.product.mainSku;
-    }
+    if (!await resolveItemProduct(db, item, itemInput)) continue;
 
-    const target = quantity;
-    if (already === target && item.stock_state === 'applied') continue;
-    const deltaUnits = target - already;
-    if (deltaUnits === 0) continue;
-    const movementType = already === 0 ? 'sale' : 'sale_adjust';
-    const nextRevision = item.stock_revision + 1;
-    const key = `${movementType}:order_item:${item.id}:rev:${nextRevision}`;
-    try {
-      const result = await applyInventoryMovement(db, {
-        productId: item.product_id,
-        quantityDelta: -deltaUnits,
-        movementType,
-        reason: movementReason(context.orderNumber),
-        idempotencyKey: key,
-        allowNegative: allowNegative({ account, isMarketplace, override: input.allowNegative }),
-        orderId,
-        orderItemId: item.id,
-        listingId: item.listing_id,
-        source,
-        actorUserId,
-        metadata: {
-          externalItemId: item.external_item_id,
-          orderNumber: context.orderNumber,
-          sku: item.sku || item.provider_sku || null,
-          from: already,
-          to: target,
-          revision: nextRevision,
-          fulfillmentStatus: currentFulfillment,
-        },
-      });
-      if (result.applied === true) {
-        await writeStock(db, item, {
-          productId: item.product_id,
-          listingId: item.listing_id,
-          mainSku: item.main_sku,
-          stockState: 'applied',
-          appliedQuantity: target,
-          revision: nextRevision,
-        });
-        stats.applied += 1;
-      } else if (already !== target) {
-        console.warn(JSON.stringify({ event: 'catalog.stock.idempotency_mismatch', key, already, target, itemId: item.id }));
-      }
-    } catch (error) {
-      if (!(error instanceof InsufficientStockError) || !isMarketplace) throw error;
-      await writeResolution(db, item, {
-        productId: item.product_id,
-        listingId: item.listing_id,
-        mainSku: item.main_sku,
-        stockState: 'skipped_insufficient',
-      });
-      stats.skipped += 1;
-      console.error(JSON.stringify({
-        event: 'catalog.stock.insufficient', orderId, itemId: item.id,
-        productId: item.product_id, already, target, onHand: error.onHand,
-      }));
+    if (action === 'reserve') {
+      await reserveItem(db, item, itemInput);
+      continue;
     }
+    await commitItem(db, item, itemInput);
   }
   return stats;
 }

@@ -1,6 +1,7 @@
 import { inventoryConfig } from './inventory-service.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
-import { STOCK_ELIGIBLE_FULFILLMENT, stockPhase } from './stock-phase.js';
+import { stockPhase } from './stock-phase.js';
+import { stockCommitmentAction } from './stock-commitment.js';
 import { httpError, inTransaction, loadCore, positiveInt, text } from './utils.js';
 
 const READY_FULFILLMENT_SQL = `'ready_to_ship','shipped','delivered'`;
@@ -77,7 +78,7 @@ export async function applyStockToOpenOrders(listingIdInput, input = {}, db) {
        join order_channels ch on ch.id=a.channel_id
        where o.company_id=$1 and ch.code=$2
          and o.order_status in ('confirmed','completed')
-         and o.fulfillment_status in ('ready_to_ship','shipped','delivered')
+         and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')
          and oi.stock_state in ('skipped_unmapped','skipped_insufficient')
          and (oi.sku=$3 or (nullif($4, '') is not null and oi.provider_sku=$4))
        order by o.id, oi.id for update of oi`,
@@ -168,17 +169,16 @@ export async function applyReadyOrderStock(input = {}, db) {
         itemCount: items.length,
       };
     }
-    if (!STOCK_ELIGIBLE_FULFILLMENT.has(String(order.fulfillment_status || ''))) {
-      const updated = await client.query(
-        `update orders
-         set fulfillment_status='ready_to_ship',
-             order_status=case when order_status in ('cancelled','failed') then order_status else 'confirmed' end,
-             updated_at=now()
-         where id=$1
-         returning *`,
-        [order.id],
-      );
-      Object.assign(order, updated.rows[0]);
+    if (stockCommitmentAction(order.fulfillment_status) === 'none') {
+      return {
+        applied: 0,
+        skipped: 0,
+        reversed: 0,
+        reserved: 0,
+        orderId: Number(order.id),
+        orderNumber: order.external_order_number,
+        ignored: true,
+      };
     }
     const items = (await client.query(
       `select id, external_item_id, sku, provider_sku, quantity, product_id, listing_id,
