@@ -1,3 +1,5 @@
+import { enqueueStockJob } from '../catalog/stock-jobs.js';
+import { shouldListenStockOrder } from '../catalog/stock-commitment.js';
 import { ensureOrderChannelAccount, ingestOrder } from '../order-management.js';
 
 function text(value) {
@@ -115,9 +117,56 @@ export async function ensureRipleyOrderAccount(db, companyId, displayName, shopI
   }, db);
 }
 
-export async function ingestRipleyOrder(input, db) {
+function orderHasLines(normalized) {
+  const lines = normalized?.raw?.order_lines;
+  return Array.isArray(lines) && lines.length > 0;
+}
+
+export async function withRipleyOrderLines(client, normalized) {
+  if (!normalized?.orderId || orderHasLines(normalized) || typeof client?.listOrders !== 'function') {
+    return normalized;
+  }
+  const page = await client.listOrders({ orderIds: [normalized.orderId], max: 1 });
+  const detailed = (page?.orders || []).find((order) => order.orderId === normalized.orderId);
+  return orderHasLines(detailed) ? detailed : normalized;
+}
+
+export function shouldEnqueueRipleyStockJob(order) {
+  return shouldListenStockOrder({
+    status: order?.fulfillmentStatus,
+    orderedAt: order?.orderedAt,
+  });
+}
+
+export async function enqueueRipleyStockJob(order, input = {}, db, enqueue = enqueueStockJob) {
+  if (!order?.id || !shouldEnqueueRipleyStockJob(order)) {
+    return { enqueued: false, ignored: 'no elegible' };
+  }
+  try {
+    return await enqueue({
+      orderId: order.id,
+      companyId: input.companyId || order.companyId,
+      externalOrderId: order.externalOrderId,
+      orderNumber: order.externalOrderNumber,
+      source: input.source || 'sync',
+    }, db);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'catalog.stock.enqueue_failed',
+      channel: 'ripley',
+      companyId: input.companyId || order.companyId,
+      orderId: order.externalOrderId,
+      message: String(error?.message || error),
+    }));
+    return { enqueued: false, ignored: 'error' };
+  }
+}
+
+export async function ingestRipleyOrder(input, db, dependencies = {}) {
   const normalized = input.normalized;
   const raw = normalized?.raw || {};
+  const ingest = dependencies.ingest || ingestOrder;
+  const enqueue = dependencies.enqueue || enqueueStockJob;
   const account = input.account || await ensureRipleyOrderAccount(
     db,
     input.companyId,
@@ -126,7 +175,7 @@ export async function ingestRipleyOrder(input, db) {
   );
   const statuses = mapRipleyCanonicalStatus(normalized?.status);
   const items = mapRipleyOrderItems(raw);
-  return ingestOrder({
+  const ingested = await ingest({
     companyId: input.companyId,
     channelAccountId: account.id,
     automatic: true,
@@ -152,11 +201,14 @@ export async function ingestRipleyOrder(input, db) {
       hasIncident: Boolean(raw?.has_incident),
     },
     items,
-    itemsComplete: true,
+    itemsComplete: items.length > 0,
     rawPayload: raw,
     source: input.source || 'sync',
     correlationId: input.correlationId,
     eventId: input.eventId,
+    catalogInventoryEnabled: input.catalogInventoryEnabled === true,
     providerOccurredAt: normalized?.updatedAt || normalized?.createdAt,
   }, db);
+  await enqueueRipleyStockJob(ingested.order, input, db, enqueue);
+  return ingested;
 }

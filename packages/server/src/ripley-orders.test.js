@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ingestRipleyOrder,
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
+  shouldEnqueueRipleyStockJob,
+  withRipleyOrderLines,
 } from './order-adapters/ripley.js';
+import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import { ripleySyncWindow, syncAllRipleyOrders } from './ripley-orders.js';
 
 test('el polling incremental usa el cursor de la última sincronización', () => {
@@ -42,6 +46,110 @@ test('normaliza líneas, dirección y tracking de una orden Ripley', () => {
     quantity: 2, unitPrice: 10.5, discountAmount: null, total: 21, providerStatus: 'SHIPPING',
     metadata: { categoryCode: '', categoryLabel: '' }, rawData: raw.order_lines[0],
   });
+});
+
+test('encola descuento de Ripley desde el corte y no marca vacío como completo', async () => {
+  const afterCutoff = new Date(Date.parse(INVENTORY_LISTEN_FROM_AT) + 60_000).toISOString();
+  assert.equal(shouldEnqueueRipleyStockJob({
+    fulfillmentStatus: 'pending',
+    orderedAt: afterCutoff,
+  }), true);
+  assert.equal(shouldEnqueueRipleyStockJob({
+    fulfillmentStatus: 'ready_to_ship',
+    orderedAt: afterCutoff,
+  }), true);
+  assert.equal(shouldEnqueueRipleyStockJob({
+    fulfillmentStatus: 'pending',
+    orderedAt: '2026-09-02T22:27:00.000Z',
+  }), false);
+  assert.equal(shouldEnqueueRipleyStockJob({
+    fulfillmentStatus: 'cancelled',
+    orderedAt: afterCutoff,
+  }), false);
+
+  const enqueued = [];
+  let ingestPayload = null;
+  await ingestRipleyOrder({
+    companyId: 2,
+    source: 'sync',
+    account: { id: 9, channelCode: 'ripley' },
+    normalized: {
+      orderId: 'R-TODAY',
+      orderNumber: 'RP-88821',
+      status: 'SHIPPING',
+      createdAt: afterCutoff,
+      raw: {
+        order_lines: [{
+          order_line_id: 'L-1', offer_sku: 'S166285', product_sku: 'HOG025',
+          product_title: 'Silla evolutiva', quantity: 1, price_unit: 10, total_price: 10,
+        }],
+      },
+    },
+  }, null, {
+    ingest: async (input) => {
+      ingestPayload = input;
+      return {
+        order: {
+          id: 501,
+          companyId: 2,
+          externalOrderId: 'R-TODAY',
+          externalOrderNumber: 'RP-88821',
+          fulfillmentStatus: 'ready_to_ship',
+          orderedAt: afterCutoff,
+        },
+      };
+    },
+    enqueue: async (input) => {
+      enqueued.push(input);
+      return { enqueued: true };
+    },
+  });
+
+  assert.equal(ingestPayload.itemsComplete, true);
+  assert.equal(ingestPayload.catalogInventoryEnabled, false);
+  assert.equal(ingestPayload.items[0].sku, 'S166285');
+  assert.deepEqual(enqueued, [{
+    orderId: 501,
+    companyId: 2,
+    externalOrderId: 'R-TODAY',
+    orderNumber: 'RP-88821',
+    source: 'sync',
+  }]);
+
+  const empty = await ingestRipleyOrder({
+    companyId: 2,
+    account: { id: 9, channelCode: 'ripley' },
+    normalized: { orderId: 'R-EMPTY', orderNumber: 'RP-EMPTY', status: 'SHIPPING', createdAt: afterCutoff, raw: {} },
+  }, null, {
+    ingest: async (input) => {
+      ingestPayload = input;
+      return { order: { id: 502, fulfillmentStatus: 'ready_to_ship', orderedAt: afterCutoff } };
+    },
+    enqueue: async () => ({ enqueued: true }),
+  });
+  assert.equal(ingestPayload.itemsComplete, false);
+  assert.equal(empty.order.id, 502);
+});
+
+test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {
+  const listed = { orderId: 'R-1', raw: { order_id: 'R-1' } };
+  const detailed = {
+    orderId: 'R-1',
+    raw: { order_id: 'R-1', order_lines: [{ order_line_id: 'L-1', offer_sku: 'S166285' }] },
+  };
+  const calls = [];
+  const hydrated = await withRipleyOrderLines({
+    async listOrders(options) {
+      calls.push(options);
+      return { orders: [detailed] };
+    },
+  }, listed);
+  assert.deepEqual(calls, [{ orderIds: ['R-1'], max: 1 }]);
+  assert.equal(hydrated.raw.order_lines[0].offer_sku, 'S166285');
+  const already = await withRipleyOrderLines({
+    async listOrders() { throw new Error('no debe pedir de nuevo'); },
+  }, detailed);
+  assert.equal(already, detailed);
 });
 
 test('sincroniza solo empresas activas con API key de Ripley y aísla fallos', async () => {
