@@ -129,8 +129,8 @@ const FILTERS = [
   ['skipped', 'Omitidos'],
 ] as const;
 
-function StatusBadge({ job }: { job: Job }) {
-  const status = visibleStockJobStatus(job);
+function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | null }) {
+  const status = visibleStockJobStatus(job, listenFromAt);
   const style = STATUS_STYLES[status] || STATUS_STYLES.skipped;
   const Icon = style.icon;
   return (
@@ -513,7 +513,7 @@ export default function DescuentosCola() {
     );
   }
 
-  const listableJobs = jobs.filter(isListableStockJob);
+  const listableJobs = jobs.filter((job) => isListableStockJob(job, config.listenFromAt));
   const shownJobs = filter === 'all' ? listableJobs : listableJobs.filter((job) => job.status === filter);
 
   return (
@@ -734,7 +734,7 @@ export default function DescuentosCola() {
                       <td className="px-5 py-2.5 text-foreground">{job.company}</td>
                       <td className="px-5 py-2.5"><SearchableOrderNumber job={job} /></td>
                       <td className="px-5 py-2.5"><JobProducts job={job} /></td>
-                      <td className="px-5 py-2.5"><StatusBadge job={job} /></td>
+                      <td className="px-5 py-2.5"><StatusBadge job={job} listenFromAt={config.listenFromAt} /></td>
                       <td className="px-5 py-2.5"><SourceBadge source={job.source} /></td>
                       <td className="px-5 py-2.5 text-xs">
                         <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>

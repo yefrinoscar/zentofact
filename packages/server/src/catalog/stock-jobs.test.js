@@ -357,7 +357,37 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
   assert.match(query, /order_row\.ordered_at >= \$2::timestamptz/i);
+  assert.equal(/ordered_at is null/i.test(query), false);
   assert.equal(params[1], INVENTORY_LISTEN_FROM_AT);
+});
+
+test('el worker no reclama ventas anteriores al corte', async () => {
+  let claimSql = '';
+  let claimParams = [];
+  const stats = await processStockQueue({
+    apply: async () => ({ applied: 1 }),
+  }, {
+    async query(sql, params = []) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from system_settings')) {
+        return { rows: [{ key: 'catalog_inventory', value: { enabled: true } }] };
+      }
+      if (compact.includes('select paused from inventory_stock_state')) {
+        return { rows: [{ paused: false }] };
+      }
+      if (compact.includes('timeout de procesamiento')) return { rows: [] };
+      if (compact.includes('for update skip locked')) {
+        claimSql = String(sql);
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(stats.claimed, 0);
+  assert.match(claimSql, /listen_order\.ordered_at >= \$3::timestamptz/i);
+  assert.equal(claimParams[2], INVENTORY_LISTEN_FROM_AT);
 });
 
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
@@ -483,8 +513,61 @@ test('la escucha encola pedidos operativos desde las 12:00 Lima del corte', asyn
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
   assert.match(sql, /fulfillment_status in \('pending','preparing','ready_to_ship','shipped','delivered'\)/i);
   assert.match(sql, /o\.ordered_at >= \$1::timestamptz/i);
-  assert.match(sql, /oi\.stock_state in \('none','skipped_policy','skipped_unmapped','skipped_insufficient'\)/i);
+  assert.match(sql, /oi\.stock_state in \('none','skipped_policy'\)/i);
+  assert.match(sql, /j\.status in \('pending','processing'\)/i);
+  assert.match(sql, /order by o\.ordered_at desc, o\.id desc/i);
   assert.equal(/o\.ordered_at is null/i.test(sql), false);
+});
+
+test('la escucha reencola primero las compras recientes del período', async () => {
+  const calls = [];
+  const result = await enqueueStockJobsSinceListenFrom({
+    source: 'cron',
+  }, {
+    async query() {
+      return { rows: [{
+        order_id: 44,
+        company_id: 1,
+        external_order_id: '3250999000',
+        external_order_number: '3250999000',
+      }] };
+    },
+  }, {
+    enqueue: async (input) => {
+      calls.push(input);
+      return { enqueued: true };
+    },
+  });
+
+  assert.equal(result.enqueued, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].orderId, 44);
+  assert.equal(calls[0].source, 'cron');
+  assert.equal(calls[0].resetAttempts, true);
+});
+
+test('no encola un pedido canónico sin fecha de compra', async () => {
+  const result = await enqueueStockJob({
+    orderId: 90,
+    source: 'webhook',
+  }, {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from orders')) {
+        return { rows: [{
+          id: 90,
+          company_id: 1,
+          external_order_id: '3250999001',
+          external_order_number: '3250999001',
+          ordered_at: null,
+        }] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(result.enqueued, false);
+  assert.equal(result.ignored, 'fuera del período');
 });
 
 test('reabre un job done cuando la reserva debe confirmarse', async () => {

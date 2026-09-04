@@ -38,18 +38,30 @@ function limaDateTime(value?: string | null) {
   }).format(date);
 }
 
-export function visibleStockJobStatus(job: StockJobForPresentation) {
+const DEFAULT_LISTEN_FROM_AT = '2026-09-03T17:00:00.000Z';
+
+export function isAtOrAfterListenFrom(orderedAt?: string | null, listenFromAt?: string | null) {
+  if (!orderedAt) return false;
+  const time = Date.parse(orderedAt);
+  const cutoff = Date.parse(listenFromAt || DEFAULT_LISTEN_FROM_AT);
+  if (Number.isNaN(time) || Number.isNaN(cutoff)) return false;
+  return time >= cutoff;
+}
+
+export function visibleStockJobStatus(job: StockJobForPresentation, listenFromAt?: string | null) {
   if (job.status !== 'done') return job.status;
   if (count(job.unmatched_items) > 0) return 'unmatched';
   if (count(job.insufficient_items) > 0) return 'insufficient';
-  if (hasStockState(job, 'skipped_policy')) return 'outside_window';
+  if (hasStockState(job, 'skipped_policy') && !isAtOrAfterListenFrom(job.ordered_at, listenFromAt)) {
+    return 'outside_window';
+  }
   if (count(job.reserved_units) > 0) return 'reserved';
   if (count(job.applied_units) > 0 || count(job.result?.applied) > 0) return 'done';
   return 'processed';
 }
 
-export function isListableStockJob(job: StockJobForPresentation) {
-  return visibleStockJobStatus(job) !== 'outside_window';
+export function isListableStockJob(job: StockJobForPresentation, listenFromAt?: string | null) {
+  return isAtOrAfterListenFrom(job.ordered_at, listenFromAt);
 }
 
 export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: string | null) {
@@ -63,7 +75,7 @@ export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: stri
   if (job.last_error) return job.last_error;
   if (unmatched > 0) return `${unmatched} línea${unmatched === 1 ? '' : 's'} sin producto maestro`;
   if (insufficient > 0) return `${insufficient} línea${insufficient === 1 ? '' : 's'} sin stock disponible`;
-  if (hasStockState(job, 'skipped_policy')) {
+  if (hasStockState(job, 'skipped_policy') && !isAtOrAfterListenFrom(job.ordered_at, listenFromAt)) {
     const orderedAt = limaDateTime(job.ordered_at);
     const cutoff = limaDateTime(listenFromAt);
     const dates = orderedAt && cutoff
