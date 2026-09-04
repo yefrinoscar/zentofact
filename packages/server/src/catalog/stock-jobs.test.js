@@ -6,7 +6,9 @@ import {
   ensureStockJobTables,
   getConfig,
   getPaused,
+  jobOrderPreview,
   processStockQueue,
+  runStockReconciliation,
   reopenReservedStockJobsForCommit,
   setPaused,
 } from './stock-jobs.js';
@@ -52,6 +54,13 @@ class JobDb {
     }
     if (compact.includes('select paused from inventory_stock_state')) {
       return { rows: [{ paused: this.paused }] };
+    }
+    if (compact.includes('select last_reconciled_at')) {
+      return { rows: [{
+        last_reconciled_at: '2026-09-03T23:30:00.000Z',
+        last_reconciliation: { enqueued: 2 },
+        last_reconciliation_error: null,
+      }] };
     }
     if (compact.includes('insert into inventory_stock_state')) {
       this.paused = !!params[0];
@@ -197,6 +206,88 @@ test('si el pedido aún no está, reintenta; al sexto intento falla', async () =
   assert.equal([...db.jobs.values()][0].status, 'failed');
 });
 
+test('una cabecera sin artículos completos no puede quedar como descontada', async () => {
+  const db = new JobDb();
+  await enqueueStockJob({ companyId: 1, externalOrderId: 'PENDING-ITEMS', orderNumber: '3250692389' }, db);
+
+  const stats = await processStockQueue({
+    apply: async () => ({
+      orderId: 186824,
+      orderNumber: '3250692389',
+      itemCount: 0,
+      itemsPending: true,
+      applied: 0,
+      skipped: 0,
+    }),
+  }, db);
+
+  const [job] = db.jobs.values();
+  assert.equal(stats.done, 0);
+  assert.equal(stats.retried, 1);
+  assert.equal(job.status, 'pending');
+  assert.match(job.last_error, /artículos/i);
+});
+
+test('el detalle del job identifica cada línea y su producto maestro', async () => {
+  const db = {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from inventory_stock_jobs j')) {
+        return { rows: [{
+          id: 12,
+          company_id: 9,
+          external_order_id: '5005215407',
+          order_id: '186824',
+          order_number: '3250692389',
+          source: 'cron',
+          result: { reserved: 1 },
+          company: 'HIGHER',
+        }] };
+      }
+      if (compact.includes('from orders o') && compact.includes('items_count')) {
+        return { rows: [{
+          id: '186824',
+          external_order_number: '3250692389',
+          order_status: 'confirmed',
+          fulfillment_status: 'pending',
+          items_status: 'complete',
+          total: '34.99',
+          items_count: 1,
+          stock_applied: 0,
+        }] };
+      }
+      if (compact.includes('from order_items oi')) {
+        return { rows: [{
+          id: '991',
+          description: 'Camiseta reductora negra M',
+          seller_sku: 'AG83',
+          provider_sku: 'PMP-AG83',
+          quantity: '1',
+          product_id: '21',
+          main_sku: 'H9MN',
+          product_name: 'Camiseta reductora',
+          stock_state: 'pending',
+        }] };
+      }
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  };
+
+  const preview = await jobOrderPreview(12, db);
+  assert.equal(preview.order.itemsStatus, 'complete');
+  assert.deepEqual(preview.items, [{
+    id: 991,
+    title: 'Camiseta reductora',
+    description: 'Camiseta reductora negra M',
+    sellerSku: 'AG83',
+    providerSku: 'PMP-AG83',
+    quantity: 1,
+    productId: 21,
+    mainSku: 'H9MN',
+    stockState: 'pending',
+  }]);
+});
+
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
   let migrationSql = '';
   await ensureStockJobTables({
@@ -232,12 +323,36 @@ test('la cola muestra el mismo descuento que Configuración del sistema', async 
   assert.equal(on.inventoryLabel, 'Descuento de inventario desde pendiente');
   assert.equal(on.inventorySourceLabel, 'Base de datos');
   assert.equal(on.inventoryKillSwitch, false);
+  assert.equal(on.reconciliationIntervalSeconds, 60);
+  assert.equal(on.lastReconciledAt, '2026-09-03T23:30:00.000Z');
 
   invalidateSystemConfigCache();
   db.settings = { catalog_inventory: false };
   const off = await getConfig(db);
   assert.equal(off.inventoryEnabled, false);
   assert.equal(off.inventorySourceLabel, 'Base de datos');
+});
+
+test('el cron reconcilia pedidos elegibles sin depender del webhook', async () => {
+  const calls = [];
+  const records = [];
+  const result = await runStockReconciliation({}, null, {
+    getPaused: async () => false,
+    enqueueSince: async (input) => {
+      calls.push(input);
+      return { orders: 2, enqueued: 2, already: 0 };
+    },
+    reopen: async () => ({ reopened: 1 }),
+    record: async (value) => { records.push(value); },
+  });
+
+  assert.deepEqual(calls, [{ source: 'cron' }]);
+  assert.deepEqual(result, {
+    paused: false,
+    listened: { orders: 2, enqueued: 2, already: 0 },
+    reopened: { reopened: 1 },
+  });
+  assert.deepEqual(records, [result]);
 });
 
 test('con el descuento apagado el worker no procesa la cola', async () => {
@@ -250,7 +365,7 @@ test('con el descuento apagado el worker no procesa la cola', async () => {
   assert.equal([...db.jobs.values()][0].status, 'pending');
 });
 
-test('la escucha encola pendientes desde las 12:00 Lima del corte', async () => {
+test('la escucha encola pedidos operativos desde las 12:00 Lima del corte', async () => {
   let sql = '';
   let params = [];
   const preview = await enqueueStockJobsSinceListenFrom({
@@ -266,8 +381,9 @@ test('la escucha encola pendientes desde las 12:00 Lima del corte', async () => 
   assert.equal(preview.orders, 1);
   assert.equal(preview.enqueued, 0);
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
-  assert.match(sql, /fulfillment_status in \('pending','preparing'\)/i);
+  assert.match(sql, /fulfillment_status in \('pending','preparing','ready_to_ship','shipped','delivered'\)/i);
   assert.match(sql, /o\.ordered_at >= \$1::timestamptz/i);
+  assert.match(sql, /oi\.stock_state in \('none','skipped_policy','skipped_unmapped','skipped_insufficient'\)/i);
   assert.equal(/o\.ordered_at is null/i.test(sql), false);
 });
 

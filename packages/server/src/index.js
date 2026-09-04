@@ -47,6 +47,7 @@ const autoEmit = await import('./auto-emission.js');
 await autoEmit.ensureTables();
 const stockJobs = await import('./catalog/stock-jobs.js');
 await stockJobs.ensureStockJobTables();
+const stockAssociations = await import('./catalog/stock-associations.js');
 const systemConfig = await import('./system-config.js');
 await systemConfig.ensureSystemConfigTable();
 const { shouldListenStockOrder } = await import('./catalog/stock-commitment.js');
@@ -799,6 +800,18 @@ app.post('/catalog/stock-jobs/run', async (c) => {
     const stats = await stockJobs.processStockQueue({ limit: Number(c.req.query('limit') || 8) });
     return ok(c, stats);
   } catch (e) { return fail(c, e); }
+});
+app.get('/catalog/stock-jobs/unmatched', async (c) => {
+  try { return ok(c, await stockAssociations.listUnmatchedStockItems()); }
+  catch (e) { return fail(c, e); }
+});
+app.post('/catalog/stock-jobs/unmatched/:orderItemId/assign', async (c) => {
+  try {
+    return ok(c, await stockAssociations.assignUnmatchedStockItem({
+      orderItemId: Number(c.req.param('orderItemId')),
+      productId: (await c.req.json()).productId,
+    }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Usuarios (solo admin / permiso users) ──
@@ -1754,5 +1767,6 @@ serve({ fetch: app.fetch, port }, (info) => {
   autoEmit.startAutoEmission();
   falabellaSync.startFalabellaSyncScheduler();
   orderSync.startOrderSyncScheduler();
+  stockJobs.startStockReconciliationCron();
   stockJobs.startStockJobWorker();
 });
