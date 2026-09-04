@@ -43,6 +43,8 @@ export type InsumoPurchase = {
   lookbackDays: number;
   consumed: number;
   hasConsumption: boolean;
+  packSize: number;
+  purchaseUnit: string;
   days: number;
   week: number;
   month: number;
@@ -52,23 +54,32 @@ export function suggestInsumoPurchases({
   consumedRecent,
   quantityOnHand,
   lookbackDays = PURCHASE_LOOKBACK_DAYS,
+  packSize = 1,
+  unit = 'rollos',
 }: {
   consumedRecent: number;
   quantityOnHand: number;
   lookbackDays?: number;
+  packSize?: number;
+  unit?: string;
 }): InsumoPurchase {
   const consumed = Math.max(0, Number(consumedRecent) || 0);
   const onHand = Math.max(0, Number(quantityOnHand) || 0);
   const windowDays = Number(lookbackDays) > 0 ? Number(lookbackDays) : PURCHASE_LOOKBACK_DAYS;
+  const size = Number(packSize) > 1 ? Number(packSize) : 1;
   const hasConsumption = consumed > 0;
   const dailyRate = hasConsumption ? consumed / windowDays : 0;
-  const buyFor = (horizonDays: number) => (
-    hasConsumption ? Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand)) : 0
-  );
+  const buyFor = (horizonDays: number) => {
+    if (!hasConsumption) return 0;
+    const rolls = Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand));
+    return size > 1 ? Math.ceil(rolls / size) : rolls;
+  };
   return {
     lookbackDays: windowDays,
     consumed,
     hasConsumption,
+    packSize: size,
+    purchaseUnit: size > 1 ? 'cajas' : unit,
     days: buyFor(PURCHASE_HORIZONS.days),
     week: buyFor(PURCHASE_HORIZONS.week),
     month: buyFor(PURCHASE_HORIZONS.month),
@@ -108,9 +119,10 @@ export function formatInsumoPurchaseCopy(
   if (!purchase?.hasConsumption) {
     return { empty: 'Todavía no hay consumo.', week: null, month: null };
   }
+  const purchaseUnit = purchase.purchaseUnit || unit;
   return {
     empty: null,
-    week: purchaseAmount(purchase.week, unit, 'para cubrir la semana'),
-    month: purchaseAmount(purchase.month, unit, 'para cubrir el mes'),
+    week: purchaseAmount(purchase.week, purchaseUnit, 'para cubrir la semana'),
+    month: purchaseAmount(purchase.month, purchaseUnit, 'para cubrir el mes'),
   };
 }

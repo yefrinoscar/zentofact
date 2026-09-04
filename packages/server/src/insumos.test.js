@@ -331,6 +331,11 @@ test('el tope es 36 para cinta y 16 para cada fill', () => {
   assert.equal(quantityCapFor({ code: 'cinta-fill', name: 'Fill grande', icon_key: 'cinta-fill' }), 16);
   assert.equal(quantityCapFor({ code: 'fill-pequeno', name: 'Fill pequeño', icon_key: 'fill-pequeno' }), 16);
   assert.equal(mapInsumo(seedRow()).quantityCap, 16);
+  assert.equal(mapInsumo(seedRow()).packSize, 4);
+  assert.equal(mapInsumo(seedRow()).supplierCode, 'P06');
+  assert.equal(mapInsumo(seedRow({
+    code: 'fill-pequeno', name: 'Fill pequeño', icon_key: 'fill-pequeno',
+  })).supplierCode, 'P31');
   assert.equal(mapInsumo(seedRow({
     code: 'cinta-scotch', name: 'Cinta scotch', icon_key: 'cinta-scotch',
   })).quantityCap, 36);
@@ -400,6 +405,8 @@ test('sugiere compra según el ritmo de los últimos 7 días', () => {
     lookbackDays: 7,
     consumed: 7,
     hasConsumption: true,
+    packSize: 1,
+    purchaseUnit: 'rollos',
     days: 0,
     week: 0,
     month: 22,
@@ -408,6 +415,8 @@ test('sugiere compra según el ritmo de los últimos 7 días', () => {
     lookbackDays: 7,
     consumed: 14,
     hasConsumption: true,
+    packSize: 1,
+    purchaseUnit: 'rollos',
     days: 0,
     week: 6,
     month: 52,
@@ -416,6 +425,8 @@ test('sugiere compra según el ritmo de los últimos 7 días', () => {
     lookbackDays: 7,
     consumed: 0,
     hasConsumption: false,
+    packSize: 1,
+    purchaseUnit: 'rollos',
     days: 0,
     week: 0,
     month: 0,
@@ -424,10 +435,26 @@ test('sugiere compra según el ritmo de los últimos 7 días', () => {
     lookbackDays: 7,
     consumed: 1,
     hasConsumption: true,
+    packSize: 1,
+    purchaseUnit: 'rollos',
     days: 1,
     week: 1,
     month: 5,
   });
+});
+
+test('el fill se compra por caja de 4 rollos', () => {
+  const grande = suggestInsumoPurchases({
+    consumedRecent: 7, quantityOnHand: 8, packSize: 4, unit: 'rollos',
+  });
+  assert.equal(grande.purchaseUnit, 'cajas');
+  assert.equal(grande.week, 0);
+  assert.equal(grande.month, 6);
+  const pequeno = suggestInsumoPurchases({
+    consumedRecent: 14, quantityOnHand: 4, packSize: 4, unit: 'rollos',
+  });
+  assert.equal(pequeno.week, 3);
+  assert.equal(pequeno.month, 14);
 });
 
 test('lista cuánto pedir a partir de las salidas recientes', async () => {
@@ -451,7 +478,10 @@ test('lista cuánto pedir a partir de las salidas recientes', async () => {
   assert.equal(result.items[0].purchase.hasConsumption, true);
   assert.equal(result.items[0].purchase.days, 0);
   assert.equal(result.items[0].purchase.week, 0);
-  assert.equal(result.items[0].purchase.month, 22);
+  assert.equal(result.items[0].purchase.month, 6);
+  assert.equal(result.items[0].purchase.purchaseUnit, 'cajas');
+  assert.equal(result.items[0].packSize, 4);
+  assert.equal(result.items[0].supplierCode, 'P06');
 });
 
 test('el movimiento guarda quién lo hizo y a qué hora', async () => {

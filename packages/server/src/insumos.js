@@ -12,6 +12,11 @@ export const INSUMO_STATUSES = ['active', 'archived'];
 export const DEFAULT_INSUMO_CHANGE_PIN = '2324';
 export const CINTA_QUANTITY_CAP = 36;
 export const FILL_QUANTITY_CAP = 16;
+export const FILL_PURCHASE_PACK = 4;
+export const INSUMO_SUPPLIER_CODES = Object.freeze({
+  'cinta-fill': 'P06',
+  'fill-pequeno': 'P31',
+});
 
 export const DEFAULT_INSUMOS = [
   { code: 'cinta-fill', name: 'Fill grande', unit: 'rollos', iconKey: 'cinta-fill', reorderPoint: 2 },
@@ -34,23 +39,38 @@ export function limaLookbackStart(days = PURCHASE_LOOKBACK_DAYS, now = new Date(
   return start;
 }
 
+export function purchasePackSizeFor(row = {}) {
+  const haystack = [row.code, row.icon_key, row.iconKey, row.name]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  if (haystack.includes('fill')) return FILL_PURCHASE_PACK;
+  return 1;
+}
+
 export function suggestInsumoPurchases({
   consumedRecent,
   quantityOnHand,
   lookbackDays = PURCHASE_LOOKBACK_DAYS,
+  packSize = 1,
+  unit = 'rollos',
 } = {}) {
   const consumed = Math.max(0, Number(consumedRecent) || 0);
   const onHand = Math.max(0, Number(quantityOnHand) || 0);
   const windowDays = Number(lookbackDays) > 0 ? Number(lookbackDays) : PURCHASE_LOOKBACK_DAYS;
+  const size = Number(packSize) > 1 ? Number(packSize) : 1;
   const hasConsumption = consumed > 0;
   const dailyRate = hasConsumption ? consumed / windowDays : 0;
-  const buyFor = (horizonDays) => (
-    hasConsumption ? Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand)) : 0
-  );
+  const buyFor = (horizonDays) => {
+    if (!hasConsumption) return 0;
+    const rolls = Math.max(0, Math.ceil((dailyRate * horizonDays) - onHand));
+    return size > 1 ? Math.ceil(rolls / size) : rolls;
+  };
   return {
     lookbackDays: windowDays,
     consumed,
     hasConsumption,
+    packSize: size,
+    purchaseUnit: size > 1 ? 'cajas' : unit,
     days: buyFor(PURCHASE_HORIZONS.days),
     week: buyFor(PURCHASE_HORIZONS.week),
     month: buyFor(PURCHASE_HORIZONS.month),
@@ -201,6 +221,8 @@ export function mapInsumo(row) {
     status: row.status,
     lowStock: reorderPoint != null && quantityOnHand <= reorderPoint,
     quantityCap: quantityCapFor(row),
+    packSize: purchasePackSizeFor(row),
+    supplierCode: INSUMO_SUPPLIER_CODES[row.code] || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by,
@@ -371,6 +393,8 @@ export async function listInsumos(filters = {}, db) {
       purchase: suggestInsumoPurchases({
         consumedRecent: consumed.get(item.id) || 0,
         quantityOnHand: item.quantityOnHand,
+        packSize: item.packSize,
+        unit: item.unit,
       }),
     })),
     totalCount: result.rows[0] ? Number(result.rows[0].total_count) : 0,

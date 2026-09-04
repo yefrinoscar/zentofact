@@ -56,7 +56,8 @@ test('dice cuánto comprar para cubrir la semana y el mes', () => {
   const both = formatInsumoPurchaseCopy(suggestInsumoPurchases({
     consumedRecent: 14,
     quantityOnHand: 4,
+    packSize: 4,
   }), 'rollos');
-  assert.equal(both.week?.value, '10 rollos');
-  assert.equal(both.month?.value, '56 rollos');
+  assert.equal(both.week?.value, '3 cajas');
+  assert.equal(both.month?.value, '14 cajas');
 });

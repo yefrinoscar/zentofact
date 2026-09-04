@@ -47,6 +47,8 @@ type Insumo = {
   iconKey: InsumoIconKey | string;
   quantityOnHand: number;
   quantityCap?: number | null;
+  packSize?: number;
+  supplierCode?: string | null;
   reorderPoint: number | null;
   status: string;
   lowStock: boolean;
@@ -153,6 +155,8 @@ function patchQuantity(payload: InsumosResponse | undefined, id: number, quantit
           ? suggestInsumoPurchases({
             consumedRecent: item.purchase.consumed,
             quantityOnHand: next,
+            packSize: item.purchase.packSize || item.packSize,
+            unit: item.unit,
           })
           : item.purchase,
       };
@@ -531,6 +535,9 @@ function InsumoMeter({
         <div className="flex items-center justify-between gap-2 md:flex-col md:justify-center">
           <div className="min-w-0 md:mt-3">
             <h2 className="truncate text-sm font-medium text-foreground">{insumo.name}</h2>
+            {insumo.supplierCode ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{insumo.supplierCode}</p>
+            ) : null}
             <p className={cn('mt-0.5 text-xs font-semibold md:hidden', tone.text)}>
               {tone.label}
               <span className="ml-1 font-normal text-muted-foreground">{unitLabel(insumo.unit)}</span>
@@ -556,7 +563,7 @@ function InsumoMeter({
         {Number.isFinite(cap) ? (
           <p className="mt-1 hidden text-xs text-muted-foreground md:block">máx. {cap}</p>
         ) : null}
-        <InsumoPurchaseHint purchase={insumo.purchase} unit={unitLabel(insumo.unit)} />
+        <InsumoPurchaseHint purchase={insumo.purchase} />
       </div>
     </article>
   );
@@ -564,21 +571,23 @@ function InsumoMeter({
 
 function InsumoPurchaseHint({
   purchase,
-  unit,
 }: {
   purchase?: InsumoPurchase;
-  unit: string;
 }) {
-  const copy = formatInsumoPurchaseCopy(purchase, unit);
+  const copy = formatInsumoPurchaseCopy(purchase, purchase?.purchaseUnit || 'rollos');
   if (copy.empty) {
     return (
       <p className="mt-3 text-xs text-muted-foreground md:text-center">{copy.empty}</p>
     );
   }
   const items = [copy.week, copy.month].filter((item): item is NonNullable<typeof item> => item != null);
+  const pack = Number(purchase?.packSize);
   return (
     <div className="mt-3 w-full md:max-w-56">
-      <p className="text-[11px] font-medium text-muted-foreground md:text-center">Comprar</p>
+      <p className="text-[11px] font-medium text-muted-foreground md:text-center">
+        Comprar
+        {pack > 1 ? ` · caja x${pack}` : ''}
+      </p>
       <dl className="mt-1 grid grid-cols-2 gap-3" aria-label="Cuánto comprar">
         {items.map((item) => (
           <div key={item.label} className="min-w-0 md:text-center">
