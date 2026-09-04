@@ -43,14 +43,14 @@ class JobDb {
         })),
       };
     }
-    if (compact.includes('from inventory_stock_jobs group by status')) {
+    if (compact.includes('from inventory_stock_jobs') && compact.includes('group by')) {
       const counts = new Map();
       for (const job of this.jobs.values()) {
         counts.set(job.status, (counts.get(job.status) || 0) + 1);
       }
       return { rows: [...counts.entries()].map(([status, n]) => ({ status, n })) };
     }
-    if (compact.startsWith('select id, company_id, external_order_id, external_order_number from orders')) {
+    if (compact.startsWith('select id, company_id, external_order_id, external_order_number')) {
       return { rows: [] };
     }
     if (compact.includes('select paused from inventory_stock_state')) {
@@ -115,7 +115,7 @@ class JobDb {
     if (compact.startsWith('update inventory_stock_jobs') && compact.includes("set status='pending', attempts=0")) {
       const [id] = params;
       const job = [...this.jobs.values()].find((row) => Number(row.id) === Number(id));
-      if (!job) return { rows: [] };
+      if (!job || !['failed', 'skipped'].includes(job.status)) return { rows: [] };
       job.status = 'pending';
       job.attempts = 0;
       job.last_error = null;
@@ -194,7 +194,12 @@ test('un job done no se vuelve a procesar al reencolar', async () => {
   const db = new JobDb();
   await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
   await processStockQueue({ apply: async () => ({ applied: 1 }) }, db);
-  const again = await enqueueStockJob({ companyId: 1, externalOrderId: 'A', orderNumber: '1' }, db);
+  const again = await enqueueStockJob({
+    companyId: 1,
+    externalOrderId: 'A',
+    orderNumber: '1',
+    resetAttempts: true,
+  }, db);
   assert.equal(again.enqueued, false);
   assert.equal(again.job.status, 'done');
   const stats = await processStockQueue({ apply: async () => ({ applied: 99 }) }, db);
@@ -261,6 +266,7 @@ test('una cabecera sin artículos completos no puede quedar como descontada', as
       orderNumber: '3250692389',
       itemCount: 0,
       itemsPending: true,
+      itemsError: 'Falabella respondió Invalid Action al consultar los artículos.',
       applied: 0,
       skipped: 0,
     }),
@@ -270,7 +276,7 @@ test('una cabecera sin artículos completos no puede quedar como descontada', as
   assert.equal(stats.done, 0);
   assert.equal(stats.retried, 1);
   assert.equal(job.status, 'pending');
-  assert.match(job.last_error, /artículos/i);
+  assert.equal(job.last_error, 'Falabella respondió Invalid Action al consultar los artículos.');
 });
 
 test('el detalle del job identifica cada línea y su producto maestro', async () => {
@@ -296,6 +302,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           order_status: 'confirmed',
           fulfillment_status: 'pending',
           items_status: 'complete',
+          items_error: null,
           total: '34.99',
           items_count: 1,
           stock_applied: 0,
@@ -311,6 +318,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           product_id: '21',
           main_sku: 'H9MN',
           product_name: 'Camiseta reductora',
+          image_url: 'https://media.falabella.com/falabellaPE/118765881_01',
           stock_state: 'pending',
         }] };
       }
@@ -320,6 +328,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
 
   const preview = await jobOrderPreview(12, db);
   assert.equal(preview.order.itemsStatus, 'complete');
+  assert.equal(preview.order.itemsError, null);
   assert.deepEqual(preview.items, [{
     id: 991,
     title: 'Camiseta reductora',
@@ -329,15 +338,18 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
     quantity: 1,
     productId: 21,
     mainSku: 'H9MN',
+    imageUrl: 'https://media.falabella.com/falabellaPE/118765881_01',
     stockState: 'pending',
   }]);
 });
 
 test('la tabla de jobs incluye productos y estado actual del stock', async () => {
   let query = '';
+  let params = [];
   const rows = await recentJobs(10, {
-    async query(sql) {
+    async query(sql, values = []) {
       query = String(sql);
+      params = values;
       return { rows: [{
         id: 12,
         items: [{ id: 991, title: 'Camiseta reductora', mainSku: 'H9MN' }],
@@ -354,6 +366,39 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
+  assert.match(query, /'imageUrl'/i);
+  assert.match(query, /order_row\.ordered_at >= \$2::timestamptz/i);
+  assert.equal(/ordered_at is null/i.test(query), false);
+  assert.equal(params[1], INVENTORY_LISTEN_FROM_AT);
+});
+
+test('el worker no reclama ventas anteriores al corte', async () => {
+  let claimSql = '';
+  let claimParams = [];
+  const stats = await processStockQueue({
+    apply: async () => ({ applied: 1 }),
+  }, {
+    async query(sql, params = []) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from system_settings')) {
+        return { rows: [{ key: 'catalog_inventory', value: { enabled: true } }] };
+      }
+      if (compact.includes('select paused from inventory_stock_state')) {
+        return { rows: [{ paused: false }] };
+      }
+      if (compact.includes('timeout de procesamiento')) return { rows: [] };
+      if (compact.includes('for update skip locked')) {
+        claimSql = String(sql);
+        claimParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(stats.claimed, 0);
+  assert.match(claimSql, /listen_order\.ordered_at >= \$3::timestamptz/i);
+  assert.equal(claimParams[2], INVENTORY_LISTEN_FROM_AT);
 });
 
 test('la cola separa la identidad canónica de la compatibilidad legacy', async () => {
@@ -437,6 +482,30 @@ test('con el descuento apagado el worker no procesa la cola', async () => {
   assert.equal([...db.jobs.values()][0].status, 'pending');
 });
 
+test('no encola un pedido anterior al inicio de descuentos', async () => {
+  const result = await enqueueStockJob({
+    orderId: 88,
+    source: 'webhook',
+  }, {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from orders')) {
+        return { rows: [{
+          id: 88,
+          company_id: 1,
+          external_order_id: '3250570980',
+          external_order_number: '3250570980',
+          ordered_at: '2026-09-02T22:27:00.000Z',
+        }] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(result.enqueued, false);
+  assert.equal(result.ignored, 'fuera del período');
+});
+
 test('la escucha encola pedidos operativos desde las 12:00 Lima del corte', async () => {
   let sql = '';
   let params = [];
@@ -455,8 +524,61 @@ test('la escucha encola pedidos operativos desde las 12:00 Lima del corte', asyn
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
   assert.match(sql, /fulfillment_status in \('pending','preparing','ready_to_ship','shipped','delivered'\)/i);
   assert.match(sql, /o\.ordered_at >= \$1::timestamptz/i);
-  assert.match(sql, /oi\.stock_state in \('none','skipped_policy','skipped_unmapped','skipped_insufficient'\)/i);
+  assert.match(sql, /oi\.stock_state in \('none','skipped_policy'\)/i);
+  assert.match(sql, /j\.status in \('pending','processing'\)/i);
+  assert.match(sql, /order by o\.ordered_at desc, o\.id desc/i);
   assert.equal(/o\.ordered_at is null/i.test(sql), false);
+});
+
+test('la escucha reencola primero las compras recientes del período', async () => {
+  const calls = [];
+  const result = await enqueueStockJobsSinceListenFrom({
+    source: 'cron',
+  }, {
+    async query() {
+      return { rows: [{
+        order_id: 44,
+        company_id: 1,
+        external_order_id: '3250999000',
+        external_order_number: '3250999000',
+      }] };
+    },
+  }, {
+    enqueue: async (input) => {
+      calls.push(input);
+      return { enqueued: true };
+    },
+  });
+
+  assert.equal(result.enqueued, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].orderId, 44);
+  assert.equal(calls[0].source, 'cron');
+  assert.equal(calls[0].resetAttempts, true);
+});
+
+test('no encola un pedido canónico sin fecha de compra', async () => {
+  const result = await enqueueStockJob({
+    orderId: 90,
+    source: 'webhook',
+  }, {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from orders')) {
+        return { rows: [{
+          id: 90,
+          company_id: 1,
+          external_order_id: '3250999001',
+          external_order_number: '3250999001',
+          ordered_at: null,
+        }] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  });
+
+  assert.equal(result.enqueued, false);
+  assert.equal(result.ignored, 'fuera del período');
 });
 
 test('reabre un job done cuando la reserva debe confirmarse', async () => {

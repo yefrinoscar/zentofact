@@ -12,6 +12,7 @@ import api from '../lib/api';
 import { cn } from '../lib/cn';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
 import {
+  isListableStockJob,
   shouldShowStockJobAttempts,
   stockJobDetail,
   visibleStockJobStatus,
@@ -65,6 +66,7 @@ type Job = {
     sellerSku: string;
     quantity: number;
     mainSku: string | null;
+    imageUrl: string | null;
     stockState: string;
   }>;
   reserved_units?: string | number;
@@ -80,6 +82,7 @@ type OrderPreview = {
     orderNumber?: string;
     status?: string;
     itemsStatus?: string;
+    itemsError?: string | null;
     total?: string | number | null;
     itemsCount?: number;
     stockApplied?: number;
@@ -100,6 +103,7 @@ type OrderPreview = {
     quantity: number;
     productId: number | null;
     mainSku: string | null;
+    imageUrl: string | null;
     stockState: string;
   }>;
 };
@@ -128,8 +132,8 @@ const FILTERS = [
   ['skipped', 'Omitidos'],
 ] as const;
 
-function StatusBadge({ job }: { job: Job }) {
-  const status = visibleStockJobStatus(job);
+function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | null }) {
+  const status = visibleStockJobStatus(job, listenFromAt);
   const style = STATUS_STYLES[status] || STATUS_STYLES.skipped;
   const Icon = style.icon;
   return (
@@ -201,6 +205,34 @@ function itemStockReason(item: OrderPreviewItem) {
   return labels[item.stockState] || 'Estado de stock no reconocido.';
 }
 
+function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
+  imageUrl?: string | null;
+  title: string;
+  size?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const canShowImage = Boolean(imageUrl) && !failed;
+  return (
+    <div className={cn('daisy-avatar shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
+      <div className={cn(size, 'overflow-hidden rounded-md bg-muted text-muted-foreground')}>
+        {canShowImage ? (
+          <img
+            src={imageUrl || undefined}
+            alt={`Foto de ${title}`}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center" aria-label="Producto sin foto">
+            <PackageMinus className="h-4 w-4" />
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
   const order = preview?.order;
   const items = preview?.items || [];
@@ -236,34 +268,37 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
           {items.length > 0 ? (
             <div className="divide-y divide-border rounded-md border border-border">
               {items.map((item) => (
-                <div key={item.id} className="px-2.5 py-2 text-xs">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="line-clamp-2 font-medium text-foreground">{item.title}</p>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">{item.quantity} u</span>
+                <div key={item.id} className="flex gap-2.5 px-2.5 py-2 text-xs">
+                  <StockProductImage imageUrl={item.imageUrl} title={item.title} size="h-11 w-11" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="line-clamp-2 font-medium text-foreground">{item.title}</p>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{item.quantity} u</span>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      {item.mainSku ? (
+                        <>Maestro <span className="font-mono text-foreground">{item.mainSku}</span></>
+                      ) : (
+                        <span className="font-medium text-amber-700">Sin producto maestro</span>
+                      )}
+                      {item.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></> : null}
+                    </p>
+                    <p className={cn(
+                      'mt-1',
+                      item.stockState === 'skipped_unmapped' || item.stockState === 'skipped_insufficient'
+                        ? 'font-medium text-amber-700'
+                        : 'text-muted-foreground',
+                    )}>
+                      {itemStockReason(item)}
+                    </p>
                   </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {item.mainSku ? (
-                      <>Maestro <span className="font-mono text-foreground">{item.mainSku}</span></>
-                    ) : (
-                      <span className="font-medium text-amber-700">Sin producto maestro</span>
-                    )}
-                    {item.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></> : null}
-                  </p>
-                  <p className={cn(
-                    'mt-1',
-                    item.stockState === 'skipped_unmapped' || item.stockState === 'skipped_insufficient'
-                      ? 'font-medium text-amber-700'
-                      : 'text-muted-foreground',
-                  )}>
-                    {itemStockReason(item)}
-                  </p>
                 </div>
               ))}
             </div>
           ) : order.itemsStatus === 'pending' ? (
             <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
               <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>Artículos aún no cargados. La sincronización volverá a intentar.</span>
+              <span>{order.itemsError || 'El canal todavía no entrega los artículos. La sincronización volverá a intentar.'}</span>
             </div>
           ) : null}
           {preview?.stock && (
@@ -372,13 +407,16 @@ function JobProducts({ job }: { job: Job }) {
   if (!items.length) return <span className="text-xs text-muted-foreground">Artículos pendientes</span>;
   const first = items[0];
   return (
-    <div className="max-w-72 text-xs">
-      <p className="line-clamp-2 font-medium text-foreground">{first.title}</p>
-      <p className="mt-0.5 text-muted-foreground">
-        {first.mainSku ? <>Maestro <span className="font-mono text-foreground">{first.mainSku}</span></> : <span className="font-medium text-amber-700">Sin producto maestro</span>}
-        {first.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{first.sellerSku}</span></> : null}
-        {items.length > 1 ? ` · +${items.length - 1}` : ''}
-      </p>
+    <div className="flex max-w-72 items-center gap-2.5 text-xs">
+      <StockProductImage imageUrl={first.imageUrl} title={first.title} />
+      <div className="min-w-0">
+        <p className="line-clamp-2 font-medium text-foreground">{first.title}</p>
+        <p className="mt-0.5 text-muted-foreground">
+          {first.mainSku ? <>Maestro <span className="font-mono text-foreground">{first.mainSku}</span></> : <span className="font-medium text-amber-700">Sin producto maestro</span>}
+          {first.sellerSku ? <> · Seller SKU <span className="font-mono text-foreground">{first.sellerSku}</span></> : null}
+          {items.length > 1 ? ` · +${items.length - 1}` : ''}
+        </p>
+      </div>
     </div>
   );
 }
@@ -512,7 +550,8 @@ export default function DescuentosCola() {
     );
   }
 
-  const shownJobs = filter === 'all' ? jobs : jobs.filter((job) => job.status === filter);
+  const listableJobs = jobs.filter((job) => isListableStockJob(job, config.listenFromAt));
+  const shownJobs = filter === 'all' ? listableJobs : listableJobs.filter((job) => job.status === filter);
 
   return (
     <div className="space-y-5">
@@ -701,11 +740,11 @@ export default function DescuentosCola() {
         </div>
 
         <div className="max-h-[520px] overflow-auto">
-          {refreshing && jobs.length === 0 ? <SkeletonRows /> : null}
-          {!refreshing && jobs.length === 0 ? (
+          {refreshing && listableJobs.length === 0 ? <SkeletonRows /> : null}
+          {!refreshing && listableJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay descuentos en cola.</p>
           ) : null}
-          {jobs.length > 0 && shownJobs.length === 0 ? (
+          {listableJobs.length > 0 && shownJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Nada en este filtro.</p>
           ) : null}
           {shownJobs.length > 0 ? (
@@ -732,7 +771,7 @@ export default function DescuentosCola() {
                       <td className="px-5 py-2.5 text-foreground">{job.company}</td>
                       <td className="px-5 py-2.5"><SearchableOrderNumber job={job} /></td>
                       <td className="px-5 py-2.5"><JobProducts job={job} /></td>
-                      <td className="px-5 py-2.5"><StatusBadge job={job} /></td>
+                      <td className="px-5 py-2.5"><StatusBadge job={job} listenFromAt={config.listenFromAt} /></td>
                       <td className="px-5 py-2.5"><SourceBadge source={job.source} /></td>
                       <td className="px-5 py-2.5 text-xs">
                         <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>
