@@ -41,7 +41,7 @@ Companies: LIMBO `20990001001`, MANTA RAYA `20990001002`, YAKURUNA `20990001003`
 | SKU | Stock | Listings |
 |---|---|---|
 | AG301 | 12 | LIMBO + MANTA RAYA Falabella |
-| HOG025 | 8 | LIMBO + YAKURUNA Falabella, Ripley `S166285` |
+| HOG025 | 8 | LIMBO + YAKURUNA Falabella, Ripley `S166285`, LIMBO Mercado Libre `HOG025` |
 | BB110 | 25 | YAKURUNA Falabella |
 | BB220 | 40 | LIMBO + MANTA RAYA Falabella |
 | HOG040 | 15 | YAKURUNA Falabella |
@@ -69,6 +69,7 @@ Unified sample orders on LIMBO:
 | PV-10001 | Falabella | `pending` | `#/bandeja` tab Pendientes |
 | QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · printable label |
 | RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · three unit lines shown as one product `x3` |
+| ML-10030 | Mercado Libre | `pending` | `#/bandeja` tab Pendientes |
 | PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
 | PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
 
@@ -76,7 +77,7 @@ Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, and RP
 
 ## Flags
 
-`SEED_PREVIEW=true`. `FALABELLA_SYNC_ENABLED=false`. `MARKETPLACE_PUBLICATION_MUTATION_ENABLED=false`. `AUTO_EMIT_ENABLED=false`. `SUNAT_FORCE_ENV=beta`. Inbox is local DB. Seller API stays off.
+`SEED_PREVIEW=true`. `FALABELLA_SYNC_ENABLED=false`. `MERCADO_LIBRE_SYNC_ENABLED=false`. `MARKETPLACE_PUBLICATION_MUTATION_ENABLED=false`. `AUTO_EMIT_ENABLED=false`. `SUNAT_FORCE_ENV=beta`. Inbox is local DB. Seller APIs stay off. Mercado Libre has no seeded refresh token.
 
 ## Drive
 

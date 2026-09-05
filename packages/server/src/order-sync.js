@@ -1,11 +1,14 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
+import { enrichMercadoLibreOrder } from './mercado-libre-webhook.js';
+import { mercadoLibreClientForCompany } from './mercado-libre-tokens.js';
+import { ingestMercadoLibreOrder } from './order-adapters/mercadolibre.js';
 import { ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
-import { isFalabellaSyncEnabled } from './system-config.js';
+import { isFalabellaSyncEnabled, isMercadoLibreSyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -25,6 +28,19 @@ function positiveId(value, field) {
   return parsed;
 }
 
+const DEFAULT_SYNC_CHANNELS = ['falabella', 'ripley', 'mercado_libre'];
+
+function syncChannelSql(channelCodes) {
+  const requested = Array.isArray(channelCodes)
+    ? channelCodes
+    : String(channelCodes || '').split(',');
+  const allowed = [...new Set(requested.map((value) => String(value || '').trim()).filter(Boolean))];
+  const channels = (allowed.length ? allowed : DEFAULT_SYNC_CHANNELS)
+    .filter((code) => DEFAULT_SYNC_CHANNELS.includes(code));
+  if (!channels.length) throw new Error('Canal de sincronización inválido.');
+  return channels.map((code) => `'${code}'`).join(',');
+}
+
 function accountRow(row) {
   if (!row) return null;
   return {
@@ -40,10 +56,26 @@ function accountRow(row) {
     falabellaApiKey: row.falabella_api_key,
     ripleyApiKey: row.ripley_api_key,
     ripleyShopId: row.ripley_shop_id,
+    mercadoLibreUserId: row.mercado_libre_user_id,
+    mercadoLibreSiteId: row.mercado_libre_site_id,
+    mercadoLibreAccessToken: row.mercado_libre_access_token,
+    mercadoLibreRefreshToken: row.mercado_libre_refresh_token,
+    mercadoLibreTokenExpiresAt: row.mercado_libre_token_expires_at,
     nombre: row.nombre,
     nombreComercial: row.nombre_comercial,
     razonSocial: row.razon_social,
   };
+}
+
+const MERCADO_LIBRE_GRANT_SQL = `nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id = trim(c.mercado_libre_user_id)`;
+
+export function mercadoLibreAccountHasGrant(account) {
+  const userId = String(account?.mercadoLibreUserId || '').trim();
+  const refreshToken = String(account?.mercadoLibreRefreshToken || '').trim();
+  const externalAccountId = String(account?.externalAccountId || '').trim();
+  return Boolean(userId && refreshToken && externalAccountId === userId);
 }
 
 function hasCredentials(account) {
@@ -51,6 +83,7 @@ function hasCredentials(account) {
     return Boolean(account.falabellaApiUserId?.trim() && account.falabellaApiKey?.trim());
   }
   if (account.channelCode === 'ripley') return Boolean(account.ripleyApiKey?.trim());
+  if (account.channelCode === 'mercado_libre') return mercadoLibreAccountHasGrant(account);
   return false;
 }
 
@@ -68,7 +101,9 @@ async function loadAccount(db, accountId) {
        a.display_name, a.auto_create_orders, a.active,
        ch.code as channel_code,
        c.activo as company_active, c.nombre, c.nombre_comercial, c.razon_social,
-       c.falabella_api_user_id, c.falabella_api_key, c.ripley_api_key, c.ripley_shop_id
+       c.falabella_api_user_id, c.falabella_api_key, c.ripley_api_key, c.ripley_shop_id,
+       c.mercado_libre_user_id, c.mercado_libre_site_id, c.mercado_libre_access_token,
+       c.mercado_libre_refresh_token, c.mercado_libre_token_expires_at
      from order_channel_accounts a
      join order_channels ch on ch.id=a.channel_id
      join companies c on c.id=a.company_id
@@ -120,11 +155,12 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   const where = [
     'c.activo=true',
     'a.active=true',
-    "ch.code in ('falabella','ripley')",
+    `ch.code in (${syncChannelSql(filters.channelCodes)})`,
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      when 'mercado_libre' then ${MERCADO_LIBRE_GRANT_SQL}
       else false end`,
   ];
   const companyId = positiveId(filters.companyId, 'companyId');
@@ -274,7 +310,105 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
   return { pages, received, upserted, failed, lastLogId };
 }
 
+export async function syncMercadoLibrePages(db, account, window, runId, dependencies = {}) {
+  const client = dependencies.mercadoLibreClient
+    || await mercadoLibreClientForCompany({
+      id: account.companyId,
+      mercadoLibreUserId: account.mercadoLibreUserId,
+      mercadoLibreSiteId: account.mercadoLibreSiteId,
+      mercadoLibreAccessToken: account.mercadoLibreAccessToken,
+      mercadoLibreRefreshToken: account.mercadoLibreRefreshToken,
+      mercadoLibreTokenExpiresAt: account.mercadoLibreTokenExpiresAt,
+    }, dependencies);
+  let pages = 0;
+  let received = 0;
+  let upserted = 0;
+  let failed = 0;
+  let lastLogId = null;
+  let completed = false;
+  const pageSize = 50;
+  for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
+    const page = await client.searchOrders({
+      sellerId: account.mercadoLibreUserId || account.externalAccountId,
+      offset,
+      limit: pageSize,
+      updatedFrom: window.from,
+      updatedTo: window.to,
+    });
+    pages += 1;
+    received += page.orders.length;
+    for (const listed of page.orders) {
+      try {
+        await db.query('begin');
+        const enriched = await (dependencies.enrichMercadoLibreOrder || enrichMercadoLibreOrder)(client, listed);
+        const result = await (dependencies.ingestMercadoLibreOrder || ingestMercadoLibreOrder)({
+          companyId: account.companyId,
+          displayName: account.displayName,
+          userId: account.mercadoLibreUserId || account.externalAccountId,
+          account: {
+            id: account.channelAccountId,
+            companyId: account.companyId,
+            channelCode: account.channelCode,
+            displayName: account.displayName,
+          },
+          normalized: enriched.order,
+          shipment: enriched.shipment,
+          billing: enriched.billing,
+          siteId: account.mercadoLibreSiteId,
+          correlationId: `order-sync:${runId}`,
+          eventId: `mercado-libre:${enriched.order.orderId}:${enriched.order.updatedAt || enriched.order.createdAt || 'observed'}`,
+          source: 'sync',
+        }, db);
+        await db.query('commit');
+        if (!result.skipped) upserted += 1;
+        if (result.itemsPending) {
+          failed += 1;
+          const logged = operationalErrorBody(
+            new Error(result.itemsError || 'Mercado Libre no devolvió los items del pedido.'),
+            {
+              operation: 'order_sync_items',
+              context: {
+                seller: account.displayName,
+                companyId: account.companyId,
+                channelAccountId: account.channelAccountId,
+                channelCode: account.channelCode,
+                runId,
+                externalOrderId: enriched.order.orderId,
+              },
+            },
+          );
+          lastLogId = logged.logId;
+        }
+      } catch (error) {
+        await db.query('rollback').catch(() => {});
+        failed += 1;
+        const logged = operationalErrorBody(error, {
+          operation: 'order_sync_order',
+          context: {
+            seller: account.displayName,
+            companyId: account.companyId,
+            channelAccountId: account.channelAccountId,
+            channelCode: account.channelCode,
+            runId,
+            externalOrderId: listed.orderId,
+          },
+        });
+        lastLogId = logged.logId;
+      }
+    }
+    if (page.orders.length < pageSize || offset + page.limit >= page.total) {
+      completed = true;
+      break;
+    }
+  }
+  if (!completed) throw new Error('La sincronización de Mercado Libre excedió el límite seguro de páginas.');
+  return { pages, received, upserted, failed, lastLogId };
+}
+
 async function dispatchAccountSync(db, account, window, runId, dependencies) {
+  if (account.channelCode === 'mercado_libre') {
+    return syncMercadoLibrePages(db, account, window, runId, dependencies);
+  }
   if (account.channelCode === 'ripley') {
     return syncRipleyPages(db, account, window, runId, dependencies);
   }
@@ -410,11 +544,12 @@ async function eligibleAccountIds(filters = {}, db) {
     'c.activo=true',
     'a.active=true',
     'a.auto_create_orders=true',
-    "ch.code in ('falabella','ripley')",
+    `ch.code in (${syncChannelSql(filters.channelCodes)})`,
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      when 'mercado_libre' then ${MERCADO_LIBRE_GRANT_SQL}
       else false end`,
   ];
   for (const [field, column] of [['companyId', 'a.company_id'], ['channelAccountId', 'a.id']]) {
@@ -467,11 +602,19 @@ export function startOrderSyncScheduler(dependencies = {}) {
   let running = false;
   const tick = async () => {
     // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
-    if (!(await isFalabellaSyncEnabled(dependencies.db))) return;
+    const [falabellaOn, mercadoLibreOn] = await Promise.all([
+      isFalabellaSyncEnabled(dependencies.db),
+      isMercadoLibreSyncEnabled(dependencies.db),
+    ]);
+    const channelCodes = [
+      ...(falabellaOn ? ['falabella', 'ripley'] : []),
+      ...(mercadoLibreOn ? ['mercado_libre'] : []),
+    ];
+    if (!channelCodes.length) return;
     if (running) return;
     running = true;
     try {
-      await syncOrders({ mode: 'incremental', due: true }, dependencies);
+      await syncOrders({ mode: 'incremental', due: true, channelCodes }, dependencies);
     } finally {
       running = false;
     }

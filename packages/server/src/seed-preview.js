@@ -182,6 +182,24 @@ const SEED_LOGISTICS_ORDERS = [
     stockState: 'none',
     stockApplied: 0,
   },
+  {
+    key: 'ml-pending',
+    orderNumber: 'ML-10030',
+    channel: 'mercado_libre',
+    sku: 'HOG025',
+    customer: {
+      name: 'Sofía Preview',
+      firstName: 'Sofía',
+      lastName: 'Preview',
+      documentNumber: '99887766',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 1,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
 ];
 
 const SEED_USERS = [
@@ -258,6 +276,7 @@ const SEED_PRODUCTS = [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
       { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S166285', title: 'Silla evolutiva gris · Ripley' },
+      { companyRuc: '20990001001', channelCode: 'mercado_libre', sellerSku: 'HOG025', title: 'Silla evolutiva gris · Mercado Libre' },
     ],
   },
   {
@@ -521,11 +540,11 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
   for (const listing of spec.listings) {
     const company = companiesByRuc.get(listing.companyRuc);
     if (!company) continue;
-    const account = await ensureFalabellaChannelAccount(company);
+    const account = await ensureChannelAccount(company, listing.channelCode);
     const saved = await upsertListing(productId, {
       channelCode: listing.channelCode,
       companyId: company.id,
-      channelAccountId: listing.channelCode === 'falabella' ? account?.id : null,
+      channelAccountId: account?.id || null,
       sellerSku: listing.sellerSku,
       shopSku: listing.sellerSku,
       title: listing.title,

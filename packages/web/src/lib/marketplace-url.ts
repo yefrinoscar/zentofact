@@ -40,5 +40,14 @@ export function marketplaceProductUrl({ channelCode, metadata, shopSku, title }:
   const channel = String(channelCode || '').trim().toLowerCase();
   if (channel === 'falabella') return falabellaProductUrl(metadata);
   if (channel === 'ripley') return ripleyProductUrl(title, shopSku);
+  if (channel === 'mercado_libre' || channel === 'mercadolibre') {
+    const permalink = String(metadata?.permalink || metadata?.url || '').trim();
+    try {
+      const url = new URL(permalink);
+      if (url.protocol === 'https:' && /(^|\.)mercadolibre\.com(\.pe)?$/i.test(url.hostname)) return url.href;
+    } catch {
+      return null;
+    }
+  }
   return null;
 }

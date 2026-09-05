@@ -3,7 +3,7 @@ import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } f
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
-const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
+const CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre', 'manual']);
 const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
 const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);

@@ -107,7 +107,7 @@ type AssociationCandidate = Listing & {
 };
 
 type AssociationAvailability = 'recommended' | 'all';
-type AssociationChannel = 'all' | 'falabella' | 'ripley';
+type AssociationChannel = 'all' | 'falabella' | 'ripley' | 'mercado_libre';
 type Product = {
   id: number;
   mainSku: string;
@@ -623,7 +623,7 @@ export default function Productos() {
         productId: associationProduct.id,
         search: associationSubmittedSearch,
         channelCode: associationChannel === 'all' ? undefined : associationChannel,
-        channelCodes: associationChannel === 'all' ? 'falabella,ripley' : undefined,
+        channelCodes: associationChannel === 'all' ? 'falabella,ripley,mercado_libre' : undefined,
         availability: associationAvailability,
         limit: ASSOCIATION_PAGE_SIZE,
         offset: associationPage * ASSOCIATION_PAGE_SIZE,
@@ -1316,7 +1316,7 @@ export default function Productos() {
                   autoFocus
                 />
               </div>
-              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem></SelectContent></Select>
+              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem><SelectItem value="mercado_libre">Mercado Libre</SelectItem></SelectContent></Select>
               <Select value={associationAvailability} onValueChange={(value: AssociationAvailability) => { setAssociationAvailability(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por disponibilidad"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recommended">Activos con stock</SelectItem><SelectItem value="all">Cualquier estado</SelectItem></SelectContent></Select>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Productos disponibles para asociar">

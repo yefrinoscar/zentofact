@@ -907,6 +907,9 @@ export async function listOrders(filters = {}, db) {
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      when 'mercado_libre' then nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id = trim(c.mercado_libre_user_id)
       else true end`);
   }
   if (companyId) {

@@ -1,5 +1,5 @@
 export type LogisticsStage = 'pending' | 'ready' | 'shipped';
-export type LogisticsChannel = 'falabella' | 'ripley' | 'manual';
+export type LogisticsChannel = 'falabella' | 'ripley' | 'mercado_libre' | 'manual';
 export type LogisticsUrgency = 'overdue' | 'today' | 'tomorrow' | 'later';
 
 export type LogisticsOrderLike = {
@@ -17,6 +17,7 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'all', label: 'Todos' },
   { value: 'falabella', label: 'Falabella' },
   { value: 'ripley', label: 'Ripley' },
+  { value: 'mercado_libre', label: 'Mercado Libre' },
   { value: 'manual', label: 'Manual' },
 ];
 
@@ -60,6 +61,7 @@ const LIMA = 'America/Lima';
 const CHANNEL_LABELS: Record<string, string> = {
   falabella: 'Falabella',
   ripley: 'Ripley',
+  mercado_libre: 'Mercado Libre',
   manual: 'Manual',
 };
 
@@ -78,6 +80,7 @@ export function logisticsChannelClass(code?: string | null) {
   const value = String(code || '').trim().toLowerCase();
   if (value === 'falabella') return 'border-lime-200 bg-lime-50 text-lime-800';
   if (value === 'ripley') return 'border-violet-200 bg-violet-50 text-violet-800';
+  if (value === 'mercado_libre') return 'border-amber-200 bg-amber-50 text-amber-800';
   if (value === 'manual') return 'border-teal-200 bg-teal-50 text-teal-800';
   return 'border-slate-200 bg-slate-100 text-slate-700';
 }
@@ -86,6 +89,7 @@ export function logisticsChannelDotClass(code?: string | null) {
   const value = String(code || '').trim().toLowerCase();
   if (value === 'falabella') return 'bg-lime-500';
   if (value === 'ripley') return 'bg-violet-500';
+  if (value === 'mercado_libre') return 'bg-amber-500';
   if (value === 'manual') return 'bg-teal-500';
   return 'bg-slate-400';
 }
@@ -101,7 +105,7 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
   const carrier = CARRIER_LABELS[String(order.shipping?.carrier || order.metadata?.shippingCarrier || '').trim().toLowerCase()];
   if (carrier) return carrier;
   if (type === 'envio' || order.shipping?.trackingCode) return 'Envío';
-  if (order.channelCode === 'falabella' || order.channelCode === 'ripley') return 'Marketplace';
+  if (order.channelCode === 'falabella' || order.channelCode === 'ripley' || order.channelCode === 'mercado_libre') return 'Marketplace';
   return '—';
 }
 

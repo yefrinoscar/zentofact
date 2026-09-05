@@ -14,7 +14,7 @@
     "ws": "8.21.0"
   },
   "scripts": {
-    "dev": "npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core && npm run build -w @zentofact/ripley-api && sh -c 'trap \"kill 0\" INT TERM EXIT; npm run dev -w @zentofact/falabella-api & npm run dev -w @zentofact/core & npm run dev -w @zentofact/ripley-api & PORT=3010 npm run dev -w @zentofact/server & VITE_API_TARGET=http://localhost:3010 VITE_SUNAT_ENV=beta npm run dev -w @zentofact/web & wait'",
+    "dev": "npm run build -w @zentofact/falabella-api && npm run build -w @zentofact/core && npm run build -w @zentofact/ripley-api && npm run build -w @zentofact/mercado-libre-api && sh -c 'trap \"kill 0\" INT TERM EXIT; npm run dev -w @zentofact/falabella-api & npm run dev -w @zentofact/core & npm run dev -w @zentofact/ripley-api & npm run dev -w @zentofact/mercado-libre-api & PORT=3010 npm run dev -w @zentofact/server & VITE_API_TARGET=http://localhost:3010 VITE_SUNAT_ENV=beta npm run dev -w @zentofact/web & wait'",
     "dev:all": "vp run -r dev",
     "dev:api": "npm run dev -w @zentofact/server",
     "dev:web": "npm run dev -w @zentofact/web",

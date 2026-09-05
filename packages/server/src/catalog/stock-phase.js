@@ -15,7 +15,7 @@ import {
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
-const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley']);
+const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
 
 export function isStockEligibleFulfillment(status) {
   return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());

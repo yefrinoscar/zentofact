@@ -35,6 +35,11 @@ test('Ripley carga la sesión antes de validar el permiso de pedidos', () => {
   assert.equal(isProtectedPath('/ripley/1/orders'), true);
 });
 
+test('Mercado Libre exige sesión para conectar una empresa', () => {
+  assert.equal(isProtectedPath('/integrations/mercado-libre/status'), true);
+  assert.equal(isProtectedPath('/integrations/mercado-libre/4/connect'), true);
+});
+
 test('no protege rutas públicas con prefijos parecidos', () => {
   assert.equal(isProtectedPath('/orders-inbox-public'), false);
   assert.equal(isProtectedPath('/health'), false);

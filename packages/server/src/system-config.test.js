@@ -35,6 +35,7 @@ test('registro de flags conocidos', () => {
   assert.ok(isKnownSystemFlag('marketplace_publication_mutation'));
   assert.ok(isKnownSystemFlag('falabella_sync'));
   assert.ok(isKnownSystemFlag('ripley_sync'));
+  assert.ok(isKnownSystemFlag('mercado_libre_sync'));
   assert.equal(isKnownSystemFlag('no_existe'), false);
   assert.equal(SYSTEM_FLAGS.catalog_inventory.envVar, 'CATALOG_INVENTORY_ENABLED');
   assert.equal(SYSTEM_FLAGS.catalog_inventory.confirmWord, null);

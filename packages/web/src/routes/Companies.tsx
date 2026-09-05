@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
-  MoreHorizontal, RefreshCw, Search,
+  MoreHorizontal, RefreshCw, Search, Link2, Unlink,
 } from 'lucide-react';
 import {
   ColumnDef,
@@ -68,6 +68,8 @@ type CompanyRow = {
   ripleyShopId?: string | null;
   ripleySvcUsername?: string | null;
   ripleySvcBaseUrl?: string | null;
+  mercadoLibreUserId?: string | null;
+  mercadoLibreSiteId?: string | null;
 
   activo?: boolean | null;
   hasSolCredentials?: boolean;
@@ -76,10 +78,11 @@ type CompanyRow = {
   hasFalabellaCredentials?: boolean;
   hasRipleyCredentials?: boolean;
   hasRipleySvcCredentials?: boolean;
+  hasMercadoLibreCredentials?: boolean;
 };
 
-type ChannelAutoEmission = { falabella: boolean; ripley: boolean };
-type ChannelAutoCreateOrders = { falabella: boolean; ripley: boolean };
+type ChannelAutoEmission = { falabella: boolean; ripley: boolean; mercado_libre: boolean };
+type ChannelAutoCreateOrders = { falabella: boolean; ripley: boolean; mercado_libre: boolean };
 type ChannelAccount = {
   channelCode?: string;
   autoCreateOrders?: boolean;
@@ -87,8 +90,8 @@ type ChannelAccount = {
   settings?: { autoEmitDocuments?: boolean };
 };
 
-const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false };
-const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true };
+const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false, mercado_libre: false };
+const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true, mercado_libre: true };
 
 const initialForm: CompanyForm = {
   nombre: '',
@@ -173,13 +176,14 @@ function isChannelAccount(value: unknown): value is ChannelAccount {
 
 function billingInput(
   companyId: number,
-  channelCode: 'falabella' | 'ripley',
+  channelCode: 'falabella' | 'ripley' | 'mercado_libre',
   autoCreateOrders: boolean,
   autoEmitDocuments: boolean,
+  externalAccountId = 'default',
 ): {
   companyId: number;
-  channelCode: 'falabella' | 'ripley';
-  externalAccountId: 'default';
+  channelCode: 'falabella' | 'ripley' | 'mercado_libre';
+  externalAccountId: string;
   displayName: string;
   autoCreateOrders: boolean;
   documentRequirement: 'disabled' | 'required';
@@ -190,8 +194,8 @@ function billingInput(
   return {
     companyId,
     channelCode,
-    externalAccountId: 'default',
-    displayName: channelCode === 'falabella' ? 'Falabella' : 'Ripley',
+    externalAccountId,
+    displayName: channelCode === 'falabella' ? 'Falabella' : channelCode === 'ripley' ? 'Ripley' : 'Mercado Libre',
     autoCreateOrders,
     documentRequirement: autoEmitDocuments ? 'required' : 'disabled',
     documentTypePolicy: 'automatic',
@@ -228,6 +232,9 @@ export default function Companies() {
   const [initialFalabellaAutoEmission, setInitialFalabellaAutoEmission] = useState(false);
   const [search, setSearch] = useState('');
   const [setupFilter, setSetupFilter] = useState('all');
+  const [mercadoLibreAppConfigured, setMercadoLibreAppConfigured] = useState(false);
+  const [disconnectingMercadoLibre, setDisconnectingMercadoLibre] = useState(false);
+  const [oauthNotice, setOauthNotice] = useState('');
 
   const load = () => {
     setLoadingCompanies(true);
@@ -245,6 +252,12 @@ export default function Companies() {
 
   useEffect(() => {
     load();
+    api.getMercadoLibreIntegrationStatus()
+      .then((status: { configured?: boolean }) => setMercadoLibreAppConfigured(status?.configured === true))
+      .catch(() => setMercadoLibreAppConfigured(false));
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    if (params.get('ml') === 'connected') setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
+    if (params.get('ml') === 'error') setOauthNotice(params.get('message') || 'No se pudo conectar Mercado Libre.');
   }, []);
 
   const resetForm = () => {
@@ -317,7 +330,7 @@ export default function Companies() {
     if (enablingFalabellaEmission && !hasFalabellaCredentials) {
       throw new Error('Configura las credenciales API de Falabella antes de activar la emisión automática.');
     }
-    await Promise.all([
+    const jobs = [
       api.configureOrderChannelAccount(billingInput(
         companyId,
         'falabella',
@@ -331,7 +344,18 @@ export default function Companies() {
         channelAutoEmission.ripley,
       )),
       api.autoEmitSetCompany(companyId, enablingFalabellaEmission),
-    ]);
+    ];
+    const mercadoLibreUserId = String(editing?.mercadoLibreUserId || '').trim();
+    if (mercadoLibreUserId) {
+      jobs.push(api.configureOrderChannelAccount(billingInput(
+        companyId,
+        'mercado_libre',
+        channelAutoCreateOrders.mercado_libre,
+        channelAutoEmission.mercado_libre,
+        mercadoLibreUserId,
+      )));
+    }
+    await Promise.all(jobs);
   };
 
   const confirmFalabellaEmission = () => {
@@ -501,6 +525,17 @@ export default function Companies() {
       ),
     },
     {
+      id: 'mercadoLibre',
+      header: 'Mercado Libre',
+      cell: ({ row }) => (
+        <SetupBadge
+          ok={!!row.original.hasMercadoLibreCredentials}
+          okTitle={row.original.mercadoLibreUserId ? `Conectado · ${row.original.mercadoLibreUserId}` : 'Mercado Libre conectado'}
+          badTitle="Esta empresa todavía no autorizó su cuenta de Mercado Libre"
+        />
+      ),
+    },
+    {
       id: 'certificado',
       header: 'Certificado',
       cell: ({ row }) => (
@@ -597,15 +632,18 @@ export default function Companies() {
       const channelAccounts = Array.isArray(accounts) ? accounts.filter(isChannelAccount) : [];
       const falabella = channelAccounts.find((account) => account.channelCode === 'falabella');
       const ripley = channelAccounts.find((account) => account.channelCode === 'ripley');
+      const mercadoLibre = channelAccounts.find((account) => account.channelCode === 'mercado_libre');
       const configuredCompanies = Array.isArray(autoEmission?.companies) ? autoEmission.companies : [];
       const automatic = configuredCompanies.find((configured: { id?: number; enabled?: boolean }) => configured.id === company.id)?.enabled === true;
       setChannelAutoCreateOrders({
         falabella: falabella?.autoCreateOrders !== false,
         ripley: ripley?.autoCreateOrders !== false,
+        mercado_libre: mercadoLibre?.autoCreateOrders !== false,
       });
       setChannelAutoEmission({
         falabella: automatic,
         ripley: ripley?.settings?.autoEmitDocuments === true,
+        mercado_libre: mercadoLibre?.settings?.autoEmitDocuments === true,
       });
       setInitialFalabellaAutoEmission(automatic);
     }).catch((caught: unknown) => {
@@ -802,6 +840,73 @@ export default function Companies() {
                 <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
               </div>
 
+              <div className="mt-4 pt-4 border-t border-border">
+                <p className="mb-2 text-sm font-medium text-muted-foreground">Mercado Libre</p>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Cada empresa conecta su propia cuenta de Mercado Libre. Un administrador de esa cuenta debe autorizar la app.
+                </p>
+                {oauthNotice && (
+                  <p className="mb-3 text-xs text-muted-foreground">{oauthNotice}</p>
+                )}
+                {editing?.hasMercadoLibreCredentials ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Conectado</p>
+                      <p className="font-mono text-xs text-muted-foreground">
+                        user_id {editing.mercadoLibreUserId || '—'}
+                        {editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={disconnectingMercadoLibre}
+                      onClick={() => {
+                        if (!window.confirm('¿Desconectar Mercado Libre de esta empresa? Los pedidos ya importados se conservan.')) return;
+                        setDisconnectingMercadoLibre(true);
+                        api.disconnectMercadoLibre(editing.id)
+                          .then(() => { setOauthNotice('Mercado Libre quedó desconectado.'); return load(); })
+                          .then(() => {
+                            setEditing((current) => current ? {
+                              ...current,
+                              hasMercadoLibreCredentials: false,
+                              mercadoLibreUserId: null,
+                              mercadoLibreSiteId: null,
+                            } : current);
+                          })
+                          .catch((caught: unknown) => {
+                            setError(caught instanceof Error ? caught.message : 'No se pudo desconectar Mercado Libre.');
+                          })
+                          .finally(() => setDisconnectingMercadoLibre(false));
+                      }}
+                    >
+                      <Unlink /> Desconectar
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                    <p className="text-sm text-muted-foreground">
+                      {mercadoLibreAppConfigured
+                        ? 'Todavía no hay una cuenta autorizada para esta empresa.'
+                        : 'Falta configurar la app de Mercado Libre en el servidor.'}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!editing || !mercadoLibreAppConfigured}
+                      onClick={() => {
+                        if (!editing) return;
+                        window.location.assign(`/integrations/mercado-libre/${editing.id}/connect`);
+                      }}
+                    >
+                      <Link2 /> Conectar
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="mt-4 border-t border-border pt-4">
                 <p className="text-sm font-medium text-muted-foreground">Comprobantes por canal</p>
                 <div className="mt-1 divide-y divide-border">
@@ -827,6 +932,18 @@ export default function Companies() {
                       disabled={loadingBilling}
                       onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
                       aria-label="Emitir boletas y facturas automáticamente para Ripley"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium">Mercado Libre</p>
+                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                    </div>
+                    <Switch
+                      checked={channelAutoEmission.mercado_libre}
+                      disabled={loadingBilling || !editing?.hasMercadoLibreCredentials}
+                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, mercado_libre: checked }))}
+                      aria-label="Emitir boletas y facturas automáticamente para Mercado Libre"
                     />
                   </div>
                 </div>

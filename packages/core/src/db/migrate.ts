@@ -39,6 +39,14 @@ const DDL = `
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_username TEXT;
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_password TEXT;
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS ripley_svc_base_url TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_user_id TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_site_id TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_access_token TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_refresh_token TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_token_expires_at BIGINT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_mercado_libre_user_id
+    ON companies (mercado_libre_user_id)
+    WHERE nullif(trim(mercado_libre_user_id), '') IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS branches (
     id SERIAL PRIMARY KEY,
@@ -1000,6 +1008,20 @@ const DDL = `
   FROM companies c
   JOIN order_channels ch ON ch.code = 'ripley'
   WHERE nullif(trim(c.ripley_api_key), '') IS NOT NULL
+  ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
+
+  INSERT INTO order_channel_accounts (
+    company_id, channel_id, external_account_id, display_name,
+    auto_create_orders, document_requirement, document_type_policy, settings
+  )
+  SELECT
+    c.id, ch.id, trim(c.mercado_libre_user_id),
+    coalesce(nullif(c.nombre, ''), nullif(c.nombre_comercial, ''), c.razon_social, 'Mercado Libre'),
+    TRUE, 'optional', 'automatic', '{"origin":"mercado_libre_oauth"}'::jsonb
+  FROM companies c
+  JOIN order_channels ch ON ch.code = 'mercado_libre'
+  WHERE nullif(trim(c.mercado_libre_refresh_token), '') IS NOT NULL
+    AND nullif(trim(c.mercado_libre_user_id), '') IS NOT NULL
   ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING;
 
   -- Toda empresa puede registrar ventas desde la interfaz sin depender de
