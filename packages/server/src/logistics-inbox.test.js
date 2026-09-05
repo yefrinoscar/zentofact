@@ -307,6 +307,26 @@ test('si Ripley no se puede imprimir, el error dice la causa y no un mensaje gen
   );
 });
 
+test('un PDF inválido de Falabella no tumba la impresión de Ripley', async () => {
+  const result = await printLogisticsPack(
+    { orderIds: [51, 52], includePacking: false },
+    {
+      db: new PrintDb([
+        printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),
+        printRow({ id: 52, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-52' }),
+      ]),
+      getFalabellaLabel: async () => ({ base64: Buffer.from('<html>error</html>').toString('base64') }),
+      listRipleyLabels: async () => ({ labels: [] }),
+      downloadRipleyLabels: async () => ({ labels_generated: '' }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.labelCount, 1);
+  assert.equal(result.skipped.length, 2);
+  assert.match(result.skipped.find((entry) => entry.id === 51).reason, /vacía/);
+  assert.match(result.skipped.find((entry) => entry.id === 52).reason, /ZentoFact/);
+});
+
 test('arma los ids de búsqueda Ripley sin repetir', () => {
   assert.deepEqual(ripleyOrderLookupIds({
     externalOrderId: '7935256701-A',

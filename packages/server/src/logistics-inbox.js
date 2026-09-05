@@ -350,12 +350,19 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
 
 function decodePdf(value) {
   if (!value) return null;
-  if (Buffer.isBuffer(value)) return value;
-  if (value instanceof Uint8Array) return Buffer.from(value);
-  const text = String(value);
-  const base64 = text.includes(',') ? text.split(',').pop() : text;
-  if (!base64) return null;
-  return Buffer.from(base64, 'base64');
+  let buffer = null;
+  if (Buffer.isBuffer(value)) buffer = value;
+  else if (value instanceof Uint8Array) buffer = Buffer.from(value);
+  else {
+    const text = String(value);
+    const base64 = text.includes(',') ? text.split(',').pop() : text;
+    if (!base64) return null;
+    buffer = Buffer.from(base64, 'base64');
+  }
+  if (!buffer?.length) return null;
+  const header = buffer.subarray(0, 8).toString('utf8');
+  if (!header.includes('%PDF')) return null;
+  return buffer;
 }
 
 async function mergePdfBuffers(buffers) {
