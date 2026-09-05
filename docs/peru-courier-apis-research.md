@@ -1,20 +1,24 @@
 # APIs de courier y última milla en Perú
 
-Investigación realizada el 5 de septiembre de 2026. El alcance son fuentes primarias: sitios oficiales, portales de desarrolladores, OpenAPI/Swagger, Play Store de la empresa, LinkedIn de la empresa, términos y portales de clientes. Los blogs de agencias (por ejemplo `kom.pe`) se citan solo como rumor de mercado y **no** como prueba de que exista una API.
-
-Esta nota responde a la pregunta operativa: ¿Dinsides, Shalom y Marvisur (los tres carriers de etiqueta manual de ZentoFact) tienen API para crear envíos? La respuesta corta es **no, no publican una**. El resto del documento lista qué sí existe para no quedarse solo en el no.
+Investigación realizada el 5 de septiembre de 2026. Segunda pasada el mismo día: no solo portales de “developers”, sino los JS oficiales y los backends HTTP que esas webs ya llaman. Cada claim de endpoint first-party se contrastó con una llamada en vivo o con el bundle oficial.
 
 ZentoFact ya trata tres couriers peruanos como carriers de envío con etiqueta manual y precio escrito por el vendedor: `marvisuar` → «Marvisuar», `shaloom` → «Shaloom», `dinsides` → «Dinsides» (`packages/web/src/lib/shipping-carrier.ts`). Express (`nosotros`) es flota propia. Esta nota no implementa conectores.
 
 ## Conclusión ejecutiva
 
-Los tres carriers que ZentoFact usa hoy **no publican una API oficial** para crear envíos, generar etiquetas ni hacer tracking programático.
+**Sí hay API.** La primera lectura (“no publican portal de developers ⇒ no hay API ⇒ todo manual”) estaba mal. Los tres carriers de ZentoFact tienen backend HTTP first-party. Es la API de su propia web/app, no un SDK partner con Swagger.
 
-- **Dinsides Courier** opera un portal web de clientes (login a pedido) más WhatsApp/teléfono. No hay portal de desarrolladores.
-- **Shalom** (nombre comercial oficial; el producto escribe «Shaloom») opera **Shalom App**, **Shalom Pro** (web + registros masivos) y **Shalom Empresas** (`corp.shalom.pe` + `cliente.shalom.pe`). El rastreo público ahora exige login. Existe un wrapper de terceros (`shalom-api-peru.com`) que inicia sesión en `pro.shalom.pe` con email/password del cliente. No es de Shalom.
-- **Expreso Marvisur** (nombre comercial oficial; el producto escribe «Marvisuar») ofrece tracking por número de GRTE en la web, cotización por WhatsApp y sucursales. No hay docs de API.
+| Courier | Backend first-party (oficial, sin docs) | Crear envío por HTTP | Tracking por HTTP | Cotizar / agencias |
+| --- | --- | --- | --- | --- |
+| **Shalom** | `*.shalomcontrol.com/api/v1/web/*` + rutas same-origin de `pro.shalom.pe` / `cliente.shalom.pe` | Sí, detrás de sesión Pro/Empresas (`/envia_ya/service_order/`, `/quote-service-order`) | Sí. Legacy abierto: `POST newwebservices.shalomcontrol.com/api/v1/web/rastrea/buscar`. Prod actual: mismo path en `serviceswebapi.shalomcontrol.com` con Bearer del front | 552 agencias en vivo. Tarifa pide origen |
+| **Dinsides Courier** | Portal CodeIgniter en `dinsidescourier.com` (`ci_dinsides`) | Sí, detrás de login: `POST /login/validar` → `POST /pedido/registro` (está en `public/js/pedido.js`) | Sí, HTML público: `GET /seguimiento/pedido/{codigo}` | Tarifario en la home. Alta de usuario por WhatsApp |
+| **Expreso Marvisur** | `https://marvicom.expresomarvisur.com/backend/api` (`apiBaseUrl` del JS de `expresomarvisur.com`) | **No** en la API pública. Solo formularios de cotización/reclamo | Sí, sin login: `POST /backend/api/WebApi` `{"modo":1,"serie","numero"}` | Sí: 193 sucursales (`Sucursales` modo 20). Tarifario Arequipa→Lima respondió S/7–20 |
 
-Sí hay APIs oficiales, documentadas, útiles para ZentoFact si se abre un segundo grupo de carriers:
+Lo que **no** hay: portal de desarrolladores, API key de partner, OpenAPI, webhooks documentados, ni promesa de estabilidad. Los wrappers `shalom-api-peru.com` / `shalom-api.lat` no son Shalom: envuelven estos mismos hosts y, para crear guía, inician sesión en `pro.shalom.pe`.
+
+**Implicación ZentoFact:** tracking de Shalom y Marvisur se puede hablar en JSON hoy, contra el mismo host que usa su web. Crear guía Shalom/Dinsides es HTTP con cuenta de vendedor (sesión), no tipear en un Excel. Crear guía Marvisur sigue fuera de esa API pública. Eso no es un conector partner; es un conector al backend de su web y se puede romper cuando cambien el JS.
+
+Sí hay APIs oficiales, documentadas, útiles si se abre un segundo grupo de carriers:
 
 | Encaje | Quién | Qué da la API oficial |
 | --- | --- | --- |
@@ -26,15 +30,20 @@ Sí hay APIs oficiales, documentadas, útiles para ZentoFact si se abre un segun
 
 AfterShip Tracking lista **99minutos** y **Chazki** (requieren conexión de cuenta). No lista Olva, Shalom, Marvisur ni Dinsides en la tabla oficial de slugs revisada.
 
-**Recomendación de producto:** no scrapear ni usar wrappers no oficiales para Shalom/Marvisur/Dinsides. Si se quiere automatizar etiquetas, el camino más corto es (1) Envíame u otro agregador con contrato, o (2) un conector directo a Urbaner / PedidosYa Envíos / Urbano / 99minutos / Chazki / Cabify, y dejar los tres carriers actuales en modo manual. Corregir las etiquetas de UI a **Shalom** y **Marvisur** cuando se toque ese código.
+**Recomendación de producto:** no tratar a Shalom / Dinsides / Marvisur como “sin API”. Hay dos caminos:
+
+1. **Conector first-party (los que ya usamos):** tracking JSON contra Shalom `rastrea/buscar` y Marvisur `WebApi`; alta de envío Shalom Pro / Dinsides con la cuenta del seller. Pedir por escrito a cada comercial que ese uso esté permitido. No pasar por `shalom-api-peru.com`.
+2. **Conector partner documentado (carriers nuevos):** Envíame, Urbano, Urbaner, PedidosYa Envíos, 99minutos, Chazki, Cabify.
+
+Corregir las etiquetas de UI a **Shalom** y **Marvisur** cuando se toque ese código.
 
 ## Matriz de evidencia
 
 | Carrier / plataforma | API pública documentada | Tipo | Crear envío | Cotizar | Tracking | Etiqueta | Webhooks | Recojo | Calidad de evidencia |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Dinsides Courier | No | Portal + WhatsApp | No | Tarifario web | Portal de cliente | No | No | Recojo anunciado como servicio | Sitio oficial |
-| Shalom | No (oficial) | App + Shalom Pro + agencia | No oficial | Calculadora en Pro | Web/app con login | PDF vía Pro / wrapper no oficial | No oficial | Agencia / recojo anunciado | Sitio + Play Store + LinkedIn oficial |
-| Expreso Marvisur | No | Web tracking + sucursal + WhatsApp | No | Formulario / WhatsApp | GRTE en web | Descarga de guía en web | No | Agencia | Sitio oficial |
+| Dinsides Courier | No documentada; sí hay HTTP de portal | CodeIgniter + jQuery | `POST /pedido/registro` (sesión) | Tarifario web | `GET /seguimiento/pedido/{codigo}` HTML | No | No | Recojo como servicio | Sitio + `pedido.js` + llamadas en vivo |
+| Shalom | No documentada; sí hay REST first-party | `*.shalomcontrol.com` + Pro/Empresas | Sesión Pro/Empresas | `tarifa/mostrar` + Pro `/quote-service-order` | `POST /api/v1/web/rastrea/buscar` | PDF/GRT por `ose_id` (Pro / fileserver) | No oficial | Agencia / recojo | JS oficial + 552 agencias 200 |
+| Expreso Marvisur | No documentada; sí hay API IIS | `marvicom…/backend/api` | No en API pública | `POST Tarifario` modo 5 | `POST WebApi` modo 1 | Descarga guía modo 3 | No | Agencia | `apiBaseUrl` en JS + 193 sucursales 200 |
 | Olva | No pública | Registro web + zona clientes + app | No documentado | Cotizador web | Web + app | Rótulo en registro web | No documentado | Zona clientes | Sitio oficial; API de contrato solo en fuentes secundarias |
 | Urbano Perú | Sí | REST partner | Sí | No listado como endpoint separado en las páginas de envío | Sí | PDF | Notificaciones anunciadas | Sí (pickup / inversa) | Docs oficiales `urbano.com.pe` |
 | Chazki | Sí | REST partner | Sí | Cobertura | Sí | PDF (Tonny) | Sí | Pickup en flujo de entrega | `docs.chazki.com` |
@@ -60,57 +69,54 @@ AfterShip Tracking lista **99minutos** y **Chazki** (requieren conexión de cuen
 
 ## 1. Carriers que ZentoFact ya usa (prioridad)
 
+Segunda pasada: se bajó el JS oficial y se llamó a los hosts que ese JS declara. No se usaron cuentas de cliente. No se enviaron altas de envío.
+
 ### 1.1 Dinsides Courier
 
 | Campo | Hallazgo |
 | --- | --- |
 | Nombre comercial | **Dinsides Courier** |
-| Sitio | [https://dinsidescourier.com/](https://dinsidescourier.com/) (también [www.dinsidescourier.com/registro](https://www.dinsidescourier.com/registro)) |
-| API pública | **No.** No hay `/developer`, Swagger, ni mención de API/integración/webhooks en el sitio. |
-| Modelo | B2B informal: portal de clientes + teléfono/WhatsApp. Login en [dinsidescourier.com/login](https://dinsidescourier.com/login) («Solicita tu usuario»). |
-| Operaciones documentadas | Ninguna programática. |
-| Auth | Usuario/contraseña del portal (no documentado como API). |
-| Docs | No existen. |
-| Cómo toman pedidos hoy | Registro/login web, «Solicita tu plan Premium», teléfonos 922 509 459 y 992 565 076, email `contacto@dinsidescourier.com`. LinkedIn de la empresa pide WhatsApp 992 565 076 para fulfillment. |
-| Evidencia | Oficial: sitio y [LinkedIn company](https://www.linkedin.com/company/dinsides-courier/). No se encontró app en Play Store ni docs de rastreo público sin cuenta. |
+| Sitio | [https://dinsidescourier.com/](https://dinsidescourier.com/) · login [dinsidescourier.com/login](https://dinsidescourier.com/login) · staging [test.dinsidescourier.com](https://test.dinsidescourier.com/) |
+| ¿Hay API HTTP? | **Sí.** Portal CodeIgniter 3. Cookie `ci_dinsides`. El front llama rutas same-origin con jQuery, no un `/api/v1` con API key. `/swagger` y `/api` son 404. |
+| Crear envío | `POST /pedido/registro` — URL hardcodeada en [public/js/pedido.js](https://dinsidescourier.com/public/js/pedido.js) (línea ~653). Después de éxito redirige a `pedido/listado_cliente`. Login: `POST /login/validar` en [public/js/login.js](https://dinsidescourier.com/public/js/login.js); roles 2/3 van a `pedido/nuevo`. |
+| Tracking | Público HTML: `GET /seguimiento/pedido/{codigo}`. Home hace `location.href = base_url + 'seguimiento/pedido/' + pedido`. Verificado 200 `text/html` con filas `REGISTRADO` / `EN RUTA` para `TEST123`. No es JSON. |
+| Auth | Teléfono + clave del portal. Usuario se pide por WhatsApp (`992 565 076`). No hay self-serve HTTP de alta. |
+| Mobile / chat | Flutter [jhonLapa/movil-dinsides](https://github.com/jhonLapa/movil-dinsides) pega a `test.dinsidescourier.com/*.php` (chat). El repo C# `conning-backv2` es planillas, no envíos. |
 
-Servicios que el sitio declara: contraentrega (efectivo, transferencia, Yape, Plin, POS), recojo a domicilio, cambio de prenda/producto, fulfillment, reutilizado. Cobertura: tarifario de distritos de Lima/Callao. El tarifario incluye líneas **«Envío Agencia Marvisur»**, **«Envío Agencia Olva Courier»** y **«Envío Agencia Shalom»** a S/5: Dinsides también deja paquetes en agencias de esos tres. Oficinas: Av. Arica 1702 (Cercado) y Jirón Antonio Bazo 1284 (La Victoria / Gamarra). Se presentan como «operador logístico oficial de Gamarra».
+Servicios de la home: contraentrega, recojo, cambio de prenda/producto, fulfillment. Tarifario Lima/Callao incluye **Envío Agencia Marvisur / Olva / Shalom** a S/5. Oficinas Av. Arica 1702 y Jr. Antonio Bazo 1284.
 
-Búsquedas de «Dinsides API», «Dinsides integración», «Dinsides rastreo desarrolladores», «Dinsides webhooks» no devolvieron portal técnico. `test.dinsidescourier.com` muestra un campo «Número de seguimiento de tu pedido» (staging, no documentado).
-
-**Implicación ZentoFact:** seguir con etiqueta manual. Un conector exigiría negociación directa; no hay contrato de API publicado.
+**Implicación ZentoFact:** un conector Dinsides es automatizar el mismo HTTP del portal (sesión + `pedido/registro`) y leer `/seguimiento/pedido/{codigo}`. No es “manual porque no hay API”; es “API de portal, sin contrato publicado”.
 
 ### 1.2 Shalom (el producto escribe «Shaloom»)
 
 | Campo | Hallazgo |
 | --- | --- |
-| Nombre comercial | **Shalom**. LinkedIn oficial: [Shalom Empresarial](https://www.linkedin.com/company/shalom-empresarial). Homepage [shalom.com.pe](https://shalom.com.pe/). No hay empresa «Shaloom». |
-| Sitios | Público: [shalom.com.pe](https://shalom.com.pe/). Pro: [pro.shalom.pe](https://pro.shalom.pe/) y [shalom.com.pe/proweb](https://shalom.com.pe/proweb). Empresas: formulario [corp.shalom.pe](https://corp.shalom.pe/) y login [cliente.shalom.pe/login](https://cliente.shalom.pe/login). FAQ: [shalom.com.pe/faq/envios_preguntas](https://shalom.com.pe/faq/envios_preguntas). Rastreo: `shalom.com.pe/rastrea` (anunciado por la empresa en LinkedIn). |
-| App | Play Store **SHALOM**, id `pe.com.shalom.overskull`, developer OVERSKULL, 1 M+ descargas, sitio `shalom.com.pe/app`. Registra, rastrea, paga, cambia destino. |
-| API oficial | **No publicada.** El menú oficial ofrece App, Pro Web, Empresas y Store. Ninguna página enlaza docs, Swagger ni “desarrolladores”. Shalom Pro ofrece registros **manuales y masivos**, pago online, calculadora, historial y rastreo compartible. Shalom Empresas es un formulario comercial (RUC, volumen mensual, rubro) más un login de cliente. |
-| API no oficial | [shalom-api-peru.com](https://shalom-api-peru.com/) + [docs](https://shalom-api-peru.com/docs/). REST de terceros: `X-API-Key` pedida por WhatsApp + credenciales de `pro.shalom.pe`. Crea preguías reales, tracking, PDF por `ose_id`. El propio docs admite que hace «un login real» (90 s–2 min). **No es Shalom.** Riesgo de ToS, phishing y rotura. |
-| Auth oficial | Cuenta Shalom Pro / App (email + password). Desde 2026 la empresa exige login para rastrear ([comunicado LinkedIn](https://es.linkedin.com/pulse/refuerzo-en-la-plataforma-de-rastreo-env%C3%ADos-nueva-medida-jye8e)). |
-| Cómo toman pedidos | Agencia; pre-registro en Pro (24 h para dejar el bulto); Excel/formato masivo (tutorial oficial en LinkedIn); app. |
-| Evidencia | Oficial alta para el modelo de negocio. Cero docs oficiales de API. Wrapper de terceros bien documentado pero no autorizable para producción de ZentoFact. |
+| Nombre comercial | **Shalom**. Sitios [shalom.com.pe](https://shalom.com.pe/), Pro [pro.shalom.pe](https://pro.shalom.pe/), Empresas [corp.shalom.pe](https://corp.shalom.pe/) + [cliente.shalom.pe/login](https://cliente.shalom.pe/login). App Play Store `pe.com.shalom.overskull`. |
+| ¿Hay API HTTP? | **Sí, first-party.** El SPA de [shalom.com.pe/assets/index-e49ef0f2.js](https://shalom.com.pe/assets/index-e49ef0f2.js) declara `web: "https://serviceswebapi.shalomcontrol.com"` y arma `host + "/api/v1/web" + path`. Paths de rastreo en ese JS: `/rastrea/buscar`, `/rastrea/estados`, `/rastrea/comprobante`, `/rastrea/grt`. También `servicespayment`, `fileserver`, `pro.shalom.pe`, `newwebservices.shalomcontrol.com` (PDFs). |
+| Hosts | Prod web: `serviceswebapi.shalomcontrol.com` (Bearer del front; sin token responde 403 cifrado). Legacy abierto: `newwebservices.shalomcontrol.com`. PREPROD `servicesweb.shalomcontrol.com` (el gist de sucursales ya da 404 ahí). Pro/Empresas: JSON same-origin. |
+| Tracking en vivo | `POST https://newwebservices.shalomcontrol.com/api/v1/web/rastrea/buscar` → 200 JSON. Vacío: `"Ingrese un número de orden."` Solo número: `"Ingrese un código de orden."` Cuerpo: `numero`, `codigo`, `ose_id`. |
+| Agencias en vivo | `POST https://newwebservices.shalomcontrol.com/api/v1/web/agencias/listar` → **200**, `"Lista de agencias."`, **552** filas, ~2.7 MB. Campos `ter_id`, `ter_abrebiatura`, `departamento`, `latitud`, `longitud`. |
+| Tarifa | `POST …/tarifa/mostrar` → 200 `"Envíe un origen."` |
+| Crear envío | No está en `/api/v1/web`. Está en Pro/Empresas: `/envia_ya/service_order/`, `/quote-service-order`, `/import-excel`. Esas rutas piden sesión. |
+| Wrappers de terceros | [shalom-api-peru.com](https://shalom-api-peru.com/docs/) y [shalom-api.lat](https://shalom-api.lat/) envuelven tracking/agencias y, para crear, hacen login en `pro.shalom.pe`. No son Shalom. `n8n-nodes-shalom` solo habla con `api.shalom-api.lat`. |
 
-Endpoints internos del front de Shalom (no documentados, no usar): `https://servicesweb.shalomcontrol.com/api/v1/web/agencias/listar` aparece en un gist de sucursales. Un post de LinkedIn de un tercero describe dos URLs de tracking no oficiales.
+El gist [TJhon](https://gist.github.com/TJhon/0db45e83d2fdd6cae9ece4b4dddda641) apuntaba a `servicesweb.shalomcontrol.com/api/v1/web/agencias/listar` (muerto). El mismo contrato vive en `newwebservices.shalomcontrol.com`.
 
-**Implicación ZentoFact:** el nombre de UI debería ser **Shalom**. Integración automática oficial = pedirle a Shalom Empresas un contrato de API (no hay portal). No usar `shalom-api-peru.com` ni scrapear `pro.shalom.pe`.
+**Implicación ZentoFact:** tracking + catálogo de agencias ya son JSON first-party. Crear guía es la API de Shalom Pro con la cuenta del seller, no un portal de partners. No meter el wrapper de terceros en producción.
 
 ### 1.3 Expreso Marvisur (el producto escribe «Marvisuar»)
 
 | Campo | Hallazgo |
 | --- | --- |
-| Nombre comercial | **Expreso Marvisur**. Razón social **Arequipa Expreso Marvisur E.I.R.L.**, RUC **20498189637** ([FAQ](https://expresomarvisur.com/seccion/preguntas-frecuentes)). No existe «Marvisuar» como marca. |
-| Sitio | [https://www.expresomarvisur.com/](https://www.expresomarvisur.com/) |
-| API pública | **No.** Búsqueda `site:expresomarvisur.com` API / integración / desarrolladores / webhooks: sin hits. |
-| Tracking | Home: «seguimiento con el número de GRTE», ejemplo `V001-0000001`. [Descargar guía](https://expresomarvisur.com/seccion/consulta-gret) pide n° de documento del remitente + serie. |
-| Cotizar / crear | [Cotiza](https://www.expresomarvisur.com/cotizacion), [contacto](https://expresomarvisur.com/contacto). WhatsApp cotizaciones 959 177 150, consultas 974 210 358, call center 054-206733. Emails `ventas@expresomarvisur.com`, `cotizaciones@expresomarvisur.com`. |
-| Empresas | Home: asesor exclusivo, seguimiento, línea de crédito, flota. No menciona API. Agencia Lima para envíos simultáneos: Jr. Sebastián Lorente 453-495, Barrios Altos (FAQ). |
-| Backend no oficial | Gist de terceros llama `POST https://marvicom.expresomarvisur.com/backend/api/Sucursales` (sucursales del front). No es API de clientes. |
-| Evidencia | Oficial para web/WhatsApp/sucursal. Cero docs de desarrolladores. |
+| Nombre comercial | **Expreso Marvisur**. RUC **20498189637**. Sitio [expresomarvisur.com](https://www.expresomarvisur.com/). |
+| ¿Hay API HTTP? | **Sí.** El chunk [chunk-LFVYSD7X.js](https://www.expresomarvisur.com/chunk-LFVYSD7X.js) fija `apiBaseUrl:"https://marvicom.expresomarvisur.com/backend/api"`. Angular `HttpClient`. Sin `Authorization`. CORS: origin `https://www.expresomarvisur.com`. IIS/ASP.NET. Errores nombran procs `Web.PRC_Tarifario`, `[Auditoria].[dbo].[PRC_Seguimiento]`. |
+| Tracking en vivo | Home publica el ejemplo `V001-0000001`. `POST /backend/api/WebApi` `{"modo":1,"serie":"V001","numero":"0000001"}` → **200** `"TRANSACCION REALIZADA CON EXITO"`, **4 eventos** (RECEPCION / EN RUTA / ENTREGADO, Lima→Huancayo 2023). Parser del JS: `^(V(?!000)\d{3})-?(\d{1,7})$`. |
+| Sucursales en vivo | `POST /backend/api/Sucursales` `{"modo":20}` → **200**, **193** filas (dirección, teléfonos, correo). Modo 21 = orígenes (153). Modo 22 = destinos (128). |
+| Tarifario en vivo | `POST /backend/api/Tarifario` `{"modo":5,"ori_tar":"AREQUIPA","des_tar":"LIMA"}` → **200**, sobre S/7, min paq S/12, paq S/15, max S/20. |
+| Crear envío | **No hay path de alta de guía** en el JS público. Writes: cotización (`Cotizacion/GuardarCotizacionArchivo`), reclamos, postulaciones. `Seguimiento` existe (POST 200 con proc vacío) pero el body no está en el JS de marketing. |
+| Terceros | El mismo `Sucursales` modo 20 está en el gist TJhon. [ky1ar/soporte scrapMarvisur.php](https://github.com/ky1ar/soporte/blob/master/routes/scrapMarvisur.php) proxea `WebApi` modo 1. |
 
-**Implicación ZentoFact:** el nombre de UI debería ser **Marvisur** o **Expreso Marvisur**. Seguir manual. Un conector exigiría negociación comercial; no hay portal.
+**Implicación ZentoFact:** tracking y tarifa Marvisur ya son JSON sin login. Crear la GRTE no está en esa API pública: eso sí sigue agencia / WhatsApp / lo que el comercial habilite aparte.
 
 ---
 
@@ -338,12 +344,15 @@ Sin portal PE ni lista de Olva/Shalom en fuentes primarias revisadas. No usar co
 9. **Moova** — last-mile, B2B REST, webhooks.
 10. **SimpliRoute** — solo si se rutea Express propio.
 
-### Existe como producto, no como API pública
+### Existe como HTTP first-party (sin portal de developers)
 
-- **Olva:** portal, Excel/masivos, app, tracking. API de contrato no publicada.
-- **Shalom:** Pro + App + Excel masivo + agencias. Wrapper de terceros (no usar).
-- **Marvisur:** GRTE web + WhatsApp + sucursal.
-- **Dinsides:** portal + WhatsApp. Tarifario Lima + drop en agencias Olva/Shalom/Marvisur.
+- **Shalom:** REST `*.shalomcontrol.com/api/v1/web` (tracking + 552 agencias verificados) + alta en Pro/Empresas con sesión.
+- **Dinsides:** `POST /login/validar` + `POST /pedido/registro` + tracking HTML `/seguimiento/pedido/{codigo}`.
+- **Marvisur:** `marvicom…/backend/api` — tracking, tarifario, 193 sucursales. **Sin create-shipment** en esa API.
+- **Olva:** portal + copy de «integración tecnológica». API de contrato no publicada. Home 2026-09-05 no expuso un `apiBaseUrl` en HTML estático (SPA/WAF).
+
+### Existe como producto, no como API pública usable
+
 - **inDrive:** app + WhatsApp.
 - **Nirex:** Shopify + Excel.
 - **pickit / Sharf:** web + integraciones a medida / marketplace apps.
@@ -375,7 +384,7 @@ No hay portal. La única vía es contrato. Preguntas concretas, para no perder l
 5. ¿Sandbox?
 6. Dinsides: el tarifario ya deja paquetes en agencia Olva/Shalom/Marvisur. ¿Eso es drop-off propio o solo un servicio de “llevar a la agencia”?
 
-Hasta que contesten por escrito, ZentoFact no tiene contra qué integrar.
+Ya hay contra qué integrar (los backends de su web). La llamada al comercial sirve para **autorizar** ese uso y, en Marvisur, para pedir el alta de GRTE que la API pública no tiene.
 
 ---
 
@@ -385,9 +394,16 @@ Hasta que contesten por escrito, ZentoFact no tiene contra qué integrar.
 
 - https://dinsidescourier.com/
 - https://dinsidescourier.com/login
+- https://dinsidescourier.com/public/js/login.js
+- https://dinsidescourier.com/public/js/pedido.js
+- https://dinsidescourier.com/seguimiento/pedido/TEST123
 - https://www.dinsidescourier.com/registro
 - https://www.linkedin.com/company/dinsides-courier/
 - https://shalom.com.pe/
+- https://shalom.com.pe/assets/index-e49ef0f2.js
+- https://newwebservices.shalomcontrol.com/api/v1/web/agencias/listar
+- https://newwebservices.shalomcontrol.com/api/v1/web/rastrea/buscar
+- https://serviceswebapi.shalomcontrol.com/
 - https://shalom.com.pe/proweb
 - https://shalom.com.pe/faq/envios_preguntas
 - https://pro.shalom.pe/
@@ -398,6 +414,10 @@ Hasta que contesten por escrito, ZentoFact no tiene contra qué integrar.
 - https://www.linkedin.com/company/shalom-empresarial
 - https://es.linkedin.com/pulse/refuerzo-en-la-plataforma-de-rastreo-env%C3%ADos-nueva-medida-jye8e
 - https://www.expresomarvisur.com/
+- https://www.expresomarvisur.com/chunk-LFVYSD7X.js
+- https://marvicom.expresomarvisur.com/backend/api/Sucursales
+- https://marvicom.expresomarvisur.com/backend/api/WebApi
+- https://marvicom.expresomarvisur.com/backend/api/Tarifario
 - https://expresomarvisur.com/seccion/preguntas-frecuentes
 - https://expresomarvisur.com/seccion/consulta-gret
 - https://expresomarvisur.com/contacto
@@ -468,6 +488,8 @@ Hasta que contesten por escrito, ZentoFact no tiene contra qué integrar.
 
 ## 6. Método y límites
 
-Consultado el 5 de septiembre de 2026. Varios sitios (Shalom, Marvisur, Urbano Nuxt, PedidosYa PE) son SPA: el texto de marketing/FAQ se tomó de páginas que sí hidratan o de FAQ/LinkedIn oficiales. No se firmaron contratos ni se pidieron tokens. La existencia de una API partner no publicada (Olva, Shalom Empresas) **no se puede afirmar** más allá de «el comercial puede tener algo»; las docs públicas no la muestran.
+Consultado el 5 de septiembre de 2026. Segunda pasada el mismo día: JS oficial + POST/GET a los hosts que ese JS declara. Shalom `newwebservices` devolvió 552 agencias y JSON de rastrea. Marvisur `WebApi`/`Sucursales`/`Tarifario` devolvieron JSON. Dinsides `pedido.js` + página de seguimiento HTML 200. No se firmaron contratos ni se usaron cuentas de cliente. No se creó ningún envío.
+
+La API partner “oficial con PDF” de Olva/Shalom Empresas **sigue sin docs públicas**. Eso ya no implica “no hay HTTP”.
 
 No se implementó ningún conector.
