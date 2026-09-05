@@ -45,7 +45,7 @@ function ChannelMark({ channel, className }: { channel: ChannelTab; className?: 
       src={mark.src}
       alt=""
       title={mark.label}
-      className={cn('size-4 overflow-hidden rounded-[3px] object-cover', className)}
+      className={cn('size-5 overflow-hidden rounded-[3px] object-cover', className)}
     />
   );
 }
@@ -231,7 +231,7 @@ function ChannelReady({
       src={CHANNEL_MARK[channel].src}
       alt={CHANNEL_MARK[channel].label}
       title={title}
-      className={cn('size-4 overflow-hidden rounded-[3px] object-cover', ready ? 'opacity-100' : 'opacity-25')}
+      className={cn('size-5 overflow-hidden rounded-[3px] object-cover', ready ? 'opacity-100' : 'opacity-25')}
     />
   );
 }

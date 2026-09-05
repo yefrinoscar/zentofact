@@ -2641,7 +2641,7 @@ function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) 
   if (compact === 'mercadolibre') {
     const href = listing ? marketplaceProductUrl(listing) : null;
     const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-amber-50 px-1.5 text-[11px] font-medium text-amber-800 sm:min-h-6';
-    const mark = <img src={mercadoLibreIcon} alt="" className="h-3.5 w-3.5 overflow-hidden rounded-[3px] object-cover" />;
+    const mark = <img src={mercadoLibreIcon} alt="" className="size-4 overflow-hidden rounded-[3px] object-cover" />;
     if (!listing || !href) return <span className={badgeClassName} title="Mercado Libre">{mark} Mercado Libre</span>;
 
     return <MarketplaceProductLink href={href} listing={listing} marketplace="Mercado Libre" className={badgeClassName}>

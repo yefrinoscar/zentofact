@@ -352,7 +352,7 @@ export function ChannelMark({ code, className }: { code?: string | null; classNa
     );
   }
   if (value === 'mercado_libre') {
-    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 overflow-hidden rounded-sm object-cover', className)} />;
+    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-6 shrink-0 overflow-hidden rounded-sm object-cover', className)} />;
   }
   return (
     <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">
