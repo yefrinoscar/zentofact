@@ -134,7 +134,7 @@ function HoverNumber({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" className="cursor-help rounded-full" aria-label={`${label} ${value}`}>
+        <button type="button" className="inline-flex cursor-help rounded-full" aria-label={`${label} ${value}`}>
           {children}
         </button>
       </TooltipTrigger>
@@ -430,7 +430,7 @@ export default function Cancelados() {
                         {order.companyName ? (
                           <Badge
                             variant="outline"
-                            className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground"
+                            className="max-w-full truncate rounded-full bg-muted px-2.5 font-medium text-foreground"
                             title={order.companyName}
                           >
                             {order.companyName}
