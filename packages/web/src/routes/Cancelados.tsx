@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Loader2, Search } from 'lucide-react';
@@ -11,8 +11,6 @@ import { usePermissions } from '../hooks/usePermissions';
 import {
   cancellationKind,
   cancellationKindLabel,
-  creditNoteAction,
-  documentTag,
   parseCanceledDateRange,
   stockApprovalLabel,
   type CancellationKind,
@@ -32,7 +30,6 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 
 type Company = {
   id: number;
@@ -116,31 +113,6 @@ function kindBadgeClass(kind: CancellationKind) {
   return kind === 'returned'
     ? 'border-amber-200 bg-amber-50 text-amber-800'
     : 'border-slate-200 bg-slate-100 text-slate-700';
-}
-
-const mutedTagClass = 'rounded-full bg-muted px-2.5 font-medium text-muted-foreground';
-
-function HoverNumber({
-  number,
-  label,
-  children,
-}: {
-  number?: string | null;
-  label: string;
-  children: ReactNode;
-}) {
-  const value = String(number || '').trim();
-  if (!value) return children;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button type="button" className="inline-flex cursor-help rounded-full" aria-label={`${label} ${value}`}>
-          {children}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top">{value}</TooltipContent>
-    </Tooltip>
-  );
 }
 
 function ChannelMark({ code }: { code?: string | null }) {
@@ -267,7 +239,6 @@ export default function Cancelados() {
   });
 
   return (
-    <TooltipProvider delayDuration={0}>
       <div className="space-y-3">
       <div className="space-y-2">
         <div className="relative max-w-md">
@@ -275,7 +246,7 @@ export default function Cancelados() {
           <Input
             value={search}
             onChange={(event) => applySearch(event.target.value)}
-            placeholder="Buscar pedido o comprobante"
+            placeholder="Buscar pedido"
             aria-label="Buscar devoluciones"
             className="h-9 pl-9"
           />
@@ -362,8 +333,6 @@ export default function Cancelados() {
                   <TableHead>Producto</TableHead>
                   <TableHead>Cambio</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead>Seller</TableHead>
-                  <TableHead>Comprobante</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
                   {canApproveReturn && <TableHead className="text-right">Aprobar</TableHead>}
                 </TableRow>
@@ -371,22 +340,31 @@ export default function Cancelados() {
               <TableBody>
                 {orders.map((order) => {
                   const kindValue = order.kind || cancellationKind(order);
-                  const note = creditNoteAction(order);
-                  const document = documentTag(order.documentKind, order.documentNumber);
                   const products = productLines(order.items);
                   return (
                     <TableRow key={order.id}>
                       <TableCell>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-start gap-2">
                           <ChannelMark code={order.channelCode} />
-                          <button
-                            type="button"
-                            onClick={() => void copyText(order.externalOrderNumber)}
-                            className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
-                            title="Copiar número de pedido"
-                          >
-                            {order.externalOrderNumber}
-                          </button>
+                          <div className="min-w-0 space-y-1">
+                            <button
+                              type="button"
+                              onClick={() => void copyText(order.externalOrderNumber)}
+                              className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                              title="Copiar número de pedido"
+                            >
+                              {order.externalOrderNumber}
+                            </button>
+                            {order.companyName ? (
+                              <Badge
+                                variant="outline"
+                                className="max-w-full truncate rounded-full bg-muted px-2.5 font-medium text-foreground"
+                                title={order.companyName}
+                              >
+                                {order.companyName}
+                              </Badge>
+                            ) : null}
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -424,31 +402,6 @@ export default function Cancelados() {
                               {stockApprovalLabel(order.stockApproval)}
                             </Badge>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {order.companyName ? (
-                          <Badge
-                            variant="outline"
-                            className="max-w-full truncate rounded-full bg-muted px-2.5 font-medium text-foreground"
-                            title={order.companyName}
-                          >
-                            {order.companyName}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {document ? (
-                            <HoverNumber number={document.number} label={document.label}>
-                              <Badge variant="outline" className={mutedTagClass}>{document.label}</Badge>
-                            </HoverNumber>
-                          ) : null}
-                          <HoverNumber number={note.number} label="Nota de crédito">
-                            <Badge variant="outline" className={mutedTagClass}>{note.label}</Badge>
-                          </HoverNumber>
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-medium">{money(order.total, order.currency)}</TableCell>
@@ -564,6 +517,5 @@ export default function Cancelados() {
         </DialogContent>
       </Dialog>
       </div>
-    </TooltipProvider>
   );
 }
