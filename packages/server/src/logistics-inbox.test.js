@@ -287,7 +287,8 @@ test('un pedido Ripley sin etiqueta oficial sigue armando PDF y guía de armado'
   assert.ok(pdf.getPageCount() >= 2);
 });
 
-test('si Ripley no se puede imprimir, el error dice la causa y no un mensaje genérico', async () => {
+test('si Ripley no se puede imprimir, el error dice la causa y deja el detalle en el log', async () => {
+  const lines = [];
   await assert.rejects(
     () => printLogisticsPack(
       { orderIds: [40], includePacking: false },
@@ -298,13 +299,29 @@ test('si Ripley no se puede imprimir, el error dice la causa y no un mensaje gen
           channel_code: 'ripley',
           channel_name: 'Ripley',
           external_order_id: 'R-40',
+          external_order_number: '7935256701',
         })]),
         listRipleyLabels: async () => ({ labels: [] }),
         downloadRipleyLabels: async () => ({ labels_generated: '' }),
+        createLogId: () => 'log_dddddddddddd',
+        log: (line) => lines.push(line),
       },
     ),
-    /no tiene seller/,
+    (error) => {
+      assert.match(error.message, /no tiene seller/);
+      assert.equal(error.logId, 'log_dddddddddddd');
+      assert.deepEqual(error.details.orderIds, [40]);
+      assert.equal(error.details.orders[0].channel, 'ripley');
+      assert.equal(error.details.orders[0].externalOrderNumber, '7935256701');
+      assert.match(error.details.skipped[0].reason, /seller/);
+      return true;
+    },
   );
+  const payload = JSON.parse(lines.find((line) => String(line).includes('logistics.print.failed')));
+  assert.equal(payload.event, 'logistics.print.failed');
+  assert.equal(payload.logId, 'log_dddddddddddd');
+  assert.deepEqual(payload.orderIds, [40]);
+  assert.equal(payload.orders[0].externalOrderNumber, '7935256701');
 });
 
 test('un PDF inválido de Falabella no tumba la impresión de Ripley', async () => {
