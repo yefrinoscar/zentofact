@@ -746,8 +746,8 @@ export default function Cancelados() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
-                  <th className="pb-2 pr-3 font-medium">Producto</th>
-                  <th className="pb-2 pl-5 font-medium">Unidad</th>
+                  <th className="w-12 pb-2 font-medium" aria-hidden="true" />
+                  <th className="pb-2 pl-2 font-medium">Unidad</th>
                   <th className="pb-2 font-medium">Destino</th>
                 </tr>
               </thead>
@@ -759,56 +759,53 @@ export default function Cancelados() {
                     quantity: line.quantity,
                   };
                   const units = returnUnits(line);
-                  return units.map((destination, unitIndex) => (
-                    <tr
-                      key={`${line.orderItemId}-${unitIndex}`}
-                      className={cn(
-                        'align-middle',
-                        unitIndex === 0 ? 'border-t border-border' : null,
-                      )}
-                    >
-                      {unitIndex === 0 ? (
-                        <td rowSpan={Math.max(1, line.quantity)} className="py-2.5 pr-3 align-top">
-                          <div className="flex items-start gap-2.5">
-                            <ProductThumb item={item} onOpen={setImagePreview} />
-                            <div className="min-w-0">
-                              <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
-                              {item.sku ? (
-                                <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
-                              ) : null}
-                            </div>
+                  return [
+                    <tr key={`${line.orderItemId}-product`} className="border-t border-border">
+                      <td colSpan={3} className="pt-3 pb-1">
+                        <div className="flex items-start gap-2.5">
+                          <ProductThumb item={item} onOpen={setImagePreview} />
+                          <div className="min-w-0">
+                            <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
+                            {item.sku ? (
+                              <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
+                            ) : null}
                           </div>
-                        </td>
-                      ) : null}
-                      <td className="py-2 pl-5 font-mono text-xs text-muted-foreground">
-                        {returnUnitLabel(unitIndex, line.quantity)}
-                      </td>
-                      <td className="py-2">
-                        <div className="flex flex-wrap gap-1.5">
-                          <DestinationChoice
-                            destination="stock"
-                            selected={destination === 'stock'}
-                            disabled={approveMutation.isPending}
-                            unitLabel={returnUnitLabel(unitIndex, line.quantity)}
-                            sku={item.sku || ''}
-                            onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                              row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
-                            )))}
-                          />
-                          <DestinationChoice
-                            destination="merma"
-                            selected={destination === 'merma'}
-                            disabled={approveMutation.isPending}
-                            unitLabel={returnUnitLabel(unitIndex, line.quantity)}
-                            sku={item.sku || ''}
-                            onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                              row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
-                            )))}
-                          />
                         </div>
                       </td>
-                    </tr>
-                  ));
+                    </tr>,
+                    ...units.map((destination, unitIndex) => (
+                      <tr key={`${line.orderItemId}-${unitIndex}`}>
+                        <td className="w-12 py-1.5" aria-hidden="true" />
+                        <td className="py-1.5 pl-2 font-mono text-xs text-muted-foreground">
+                          {returnUnitLabel(unitIndex, line.quantity)}
+                        </td>
+                        <td className="py-1.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            <DestinationChoice
+                              destination="stock"
+                              selected={destination === 'stock'}
+                              disabled={approveMutation.isPending}
+                              unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                              sku={item.sku || ''}
+                              onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                                row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
+                              )))}
+                            />
+                            <DestinationChoice
+                              destination="merma"
+                              selected={destination === 'merma'}
+                              disabled={approveMutation.isPending}
+                              unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                              sku={item.sku || ''}
+                              onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                                row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
+                              )))}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    )),
+                  ];
                 })}
               </tbody>
             </table>
