@@ -32,8 +32,6 @@ import ripleyLogo from '../assets/ripley.svg';
 
 type ChannelTab = 'falabella' | 'ripley' | 'mercado_libre';
 
-const CHANNEL_TAB_CLASS = 'h-9 flex-none rounded-lg px-3 text-[13px] font-medium text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground data-active:bg-muted! data-active:text-foreground! after:hidden';
-
 const CHANNEL_MARK: Record<ChannelTab, { src: string; label: string }> = {
   falabella: { src: falabellaLogo, label: 'Falabella' },
   ripley: { src: ripleyLogo, label: 'Ripley' },
@@ -54,9 +52,12 @@ function ChannelMark({ channel, className }: { channel: ChannelTab; className?: 
 
 function ChannelTabTrigger({ value }: { value: ChannelTab }) {
   return (
-    <TabsTrigger value={value} className={CHANNEL_TAB_CLASS}>
+    <TabsTrigger
+      value={value}
+      className="h-full min-w-0 flex-1 rounded-none px-2 text-[13px] after:bottom-0 sm:px-3"
+    >
       <ChannelMark channel={value} />
-      {CHANNEL_MARK[value].label}
+      <span className="truncate">{CHANNEL_MARK[value].label}</span>
     </TabsTrigger>
   );
 }
@@ -822,19 +823,22 @@ export default function Companies() {
 
               <div className="mt-4 border-t border-border pt-4">
                 <p className="text-sm font-medium text-muted-foreground">Canales</p>
-                <p className="mt-1 text-xs text-muted-foreground">Credenciales y comprobantes de cada marketplace.</p>
                 <Tabs
                   value={channelTab}
                   onValueChange={(value) => setChannelTab(value as ChannelTab)}
-                  className="mt-3 gap-3"
+                  className="mt-2 gap-0"
                 >
-                  <TabsList variant="line" className="h-auto w-full flex-wrap justify-start gap-1 rounded-none bg-transparent p-0">
+                  <TabsList
+                    variant="line"
+                    aria-label="Canales"
+                    className="h-11 w-full justify-stretch gap-0 rounded-none border-b border-border bg-transparent p-0"
+                  >
                     <ChannelTabTrigger value="falabella" />
                     <ChannelTabTrigger value="ripley" />
                     <ChannelTabTrigger value="mercado_libre" />
                   </TabsList>
 
-                  <TabsContent value="falabella" className="space-y-4">
+                  <TabsContent value="falabella" className="space-y-4 pt-4">
                     <div>
                       <p className="mb-2 text-sm font-medium text-muted-foreground">Seller</p>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -886,7 +890,7 @@ export default function Companies() {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="ripley" className="space-y-4">
+                  <TabsContent value="ripley" className="space-y-4 pt-4">
                     <div>
                       <p className="mb-2 text-sm font-medium text-muted-foreground">Mirakl</p>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -940,7 +944,7 @@ export default function Companies() {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="mercado_libre" className="space-y-4">
+                  <TabsContent value="mercado_libre" className="space-y-4 pt-4">
                     <p className="text-xs text-muted-foreground">
                       Cada empresa conecta su propia cuenta. Un administrador debe autorizar la app.
                     </p>
