@@ -71,7 +71,7 @@ import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import falabellaIcon from '../assets/falabella.png';
-import mercadoLibreIcon from '../assets/mercado-libre.png';
+import { ChannelMark } from '../components/channel-mark';
 
 type Company = {
   id: number;
@@ -2641,7 +2641,7 @@ function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) 
   if (compact === 'mercadolibre') {
     const href = listing ? marketplaceProductUrl(listing) : null;
     const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-amber-50 px-1.5 text-[11px] font-medium text-amber-800 sm:min-h-6';
-    const mark = <img src={mercadoLibreIcon} alt="" className="size-4 overflow-hidden rounded-[3px] object-cover" />;
+    const mark = <ChannelMark code="mercado_libre" size="xs" />;
     if (!listing || !href) return <span className={badgeClassName} title="Mercado Libre">{mark} Mercado Libre</span>;
 
     return <MarketplaceProductLink href={href} listing={listing} marketplace="Mercado Libre" className={badgeClassName}>

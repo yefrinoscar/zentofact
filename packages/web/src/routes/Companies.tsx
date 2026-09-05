@@ -26,29 +26,9 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import falabellaLogo from '../assets/falabella.png';
-import mercadoLibreLogo from '../assets/mercado-libre.png';
-import ripleyLogo from '../assets/ripley.svg';
+import { ChannelMark } from '../components/channel-mark';
 
 type ChannelTab = 'falabella' | 'ripley' | 'mercado_libre';
-
-const CHANNEL_MARK: Record<ChannelTab, { src: string; label: string }> = {
-  falabella: { src: falabellaLogo, label: 'Falabella' },
-  ripley: { src: ripleyLogo, label: 'Ripley' },
-  mercado_libre: { src: mercadoLibreLogo, label: 'Mercado Libre' },
-};
-
-function ChannelMark({ channel, className }: { channel: ChannelTab; className?: string }) {
-  const mark = CHANNEL_MARK[channel];
-  return (
-    <img
-      src={mark.src}
-      alt=""
-      title={mark.label}
-      className={cn('size-5 overflow-hidden rounded-[3px] object-cover', className)}
-    />
-  );
-}
 
 function FormSection({
   id,
@@ -64,7 +44,7 @@ function FormSection({
   return (
     <section id={id} className="space-y-4 border-t border-border pt-8 first:border-t-0 first:pt-0">
       <div className="flex items-center gap-2">
-        {channel ? <ChannelMark channel={channel} /> : null}
+        {channel ? <ChannelMark code={channel} /> : null}
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
       </div>
       {children}
@@ -227,11 +207,10 @@ function ChannelReady({
   title: string;
 }) {
   return (
-    <img
-      src={CHANNEL_MARK[channel].src}
-      alt={CHANNEL_MARK[channel].label}
+    <ChannelMark
+      code={channel}
       title={title}
-      className={cn('size-5 overflow-hidden rounded-[3px] object-cover', ready ? 'opacity-100' : 'opacity-25')}
+      className={ready ? 'opacity-100' : 'opacity-25'}
     />
   );
 }
@@ -1057,13 +1036,13 @@ export default function Companies() {
                 >
                   <TabsList variant="line" aria-label="Canales" className="h-11 w-full justify-start gap-0 rounded-none border-b border-border bg-transparent p-0">
                     <TabsTrigger value="falabella" className="h-full flex-none rounded-none px-3">
-                      <ChannelMark channel="falabella" /> Falabella
+                      <ChannelMark code="falabella" /> Falabella
                     </TabsTrigger>
                     <TabsTrigger value="ripley" className="h-full flex-none rounded-none px-3">
-                      <ChannelMark channel="ripley" /> Ripley
+                      <ChannelMark code="ripley" /> Ripley
                     </TabsTrigger>
                     <TabsTrigger value="mercado_libre" className="h-full flex-none rounded-none px-3">
-                      <ChannelMark channel="mercado_libre" /> Mercado Libre
+                      <ChannelMark code="mercado_libre" /> Mercado Libre
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="falabella" className="space-y-4 pt-5">{falabellaChannelPanel}</TabsContent>
