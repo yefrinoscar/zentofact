@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
-  MoreHorizontal, RefreshCw, Search, Link2, Unlink, ArrowLeft,
+  MoreHorizontal, Search, Link2, Unlink, ArrowLeft,
 } from 'lucide-react';
 import {
   ColumnDef,
@@ -15,14 +15,12 @@ import {
 import api from '../lib/api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
-  TablePanelHeader, TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter, TableRow,
 } from '@/components/ui/table';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -30,20 +28,8 @@ import {
 import falabellaLogo from '../assets/falabella.png';
 import mercadoLibreLogo from '../assets/mercado-libre.svg';
 import ripleyLogo from '../assets/ripley.svg';
-import { PrototypeSwitcher } from '../components/PrototypeSwitcher';
-import {
-  COMPANY_CHANNEL_TAB_VARIANTS,
-  CompanyChannelTabsPrototype,
-  companyChannelTabsPageClass,
-  type CompanyChannelTab,
-} from './Companies.channel-tabs.prototype';
 
-function companiesHref(path: string, searchParams: URLSearchParams) {
-  const variant = searchParams.get('variant');
-  return variant ? `${path}?variant=${encodeURIComponent(variant)}` : path;
-}
-
-type ChannelTab = CompanyChannelTab;
+type ChannelTab = 'falabella' | 'ripley' | 'mercado_libre';
 
 const CHANNEL_MARK: Record<ChannelTab, { src: string; label: string }> = {
   falabella: { src: falabellaLogo, label: 'Falabella' },
@@ -63,16 +49,56 @@ function ChannelMark({ channel, className }: { channel: ChannelTab; className?: 
   );
 }
 
-function ChannelTabTrigger({ value }: { value: ChannelTab }) {
+function FormSection({
+  id,
+  title,
+  channel,
+  children,
+}: {
+  id?: string;
+  title: string;
+  channel?: ChannelTab;
+  children: ReactNode;
+}) {
   return (
-    <TabsTrigger value={value}>
-      <ChannelMark channel={value} />
-      {CHANNEL_MARK[value].label}
-    </TabsTrigger>
+    <section id={id} className="space-y-4">
+      <div className="flex items-center gap-2">
+        {channel ? <ChannelMark channel={channel} /> : null}
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      </div>
+      {children}
+    </section>
   );
 }
 
-const CHANNEL_TAB_PROTOTYPE = import.meta.env.DEV;
+function EmissionRow({
+  checked,
+  disabled,
+  onCheckedChange,
+  hint,
+  label = 'Emitir automáticamente',
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  hint?: string;
+  label?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div>
+        <p className="text-sm font-medium text-foreground">{label}</p>
+        {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      </div>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+        aria-label={label}
+      />
+    </div>
+  );
+}
 
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
@@ -178,32 +204,34 @@ function setupReady(c: CompanyRow) {
   return hasFalabellaApi(c) && hasCertificate(c) && hasSol(c);
 }
 
-function SetupBadge({
-  ok,
-  okTitle,
-  badTitle,
-  okLabel = 'Configurado',
-  badLabel = 'Pendiente',
+function companyShortName(c: CompanyRow) {
+  return (c.nombreComercial || c.nombre || c.razonSocial || 'Sin nombre').trim();
+}
+
+function setupGap(c: CompanyRow) {
+  const missing: string[] = [];
+  if (!hasFalabellaApi(c)) missing.push('Falabella');
+  if (!hasCertificate(c)) missing.push('certificado');
+  if (!hasSol(c)) missing.push('SOL');
+  return missing.join(', ');
+}
+
+function ChannelReady({
+  channel,
+  ready,
+  title,
 }: {
-  ok: boolean;
-  okTitle: string;
-  badTitle: string;
-  okLabel?: string;
-  badLabel?: string;
+  channel: ChannelTab;
+  ready: boolean;
+  title: string;
 }) {
   return (
-    <Badge
-      variant="outline"
-      title={ok ? okTitle : badTitle}
-      className={cn(
-        'rounded-md',
-        ok
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
-          : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
-      )}
-    >
-      {ok ? okLabel : badLabel}
-    </Badge>
+    <img
+      src={CHANNEL_MARK[channel].src}
+      alt={CHANNEL_MARK[channel].label}
+      title={title}
+      className={cn('size-4 rounded-[3px] object-contain', ready ? 'opacity-100' : 'opacity-25')}
+    />
   );
 }
 
@@ -260,7 +288,6 @@ export default function Companies() {
   const isNew = location.pathname === '/companies/nueva';
   const companyId = Number(companyIdParam);
   const isEditor = isNew || Boolean(companyIdParam);
-  const channelTabsVariant = searchParams.get('variant') || 'A';
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -291,7 +318,6 @@ export default function Companies() {
   const [mercadoLibreAppConfigured, setMercadoLibreAppConfigured] = useState(false);
   const [disconnectingMercadoLibre, setDisconnectingMercadoLibre] = useState(false);
   const [oauthNotice, setOauthNotice] = useState('');
-  const [channelTab, setChannelTab] = useState<ChannelTab>('falabella');
 
   const load = () => {
     setLoadingCompanies(true);
@@ -334,7 +360,6 @@ export default function Companies() {
     setChannelAutoCreateOrders(initialAutoCreateOrders);
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
-    setChannelTab('falabella');
     if (certInputRef.current) certInputRef.current.value = '';
   };
 
@@ -356,7 +381,7 @@ export default function Companies() {
     setEditing(null);
     resetForm();
     setSaving(false);
-    navigate(companiesHref('/companies', searchParams));
+    navigate('/companies');
   };
 
   const readFormSnapshot = (): CompanyForm => {
@@ -542,105 +567,83 @@ export default function Companies() {
     });
   }, [companies, search, setupFilter]);
 
-  const readyCompanies = useMemo(() => companies.filter(setupReady).length, [companies]);
-
   const columns = useMemo<ColumnDef<CompanyRow>[]>(() => [
     {
-      accessorKey: 'ruc',
-      header: 'RUC',
-      cell: ({ row }) => (
-        <span className="font-mono text-xs tabular-nums text-foreground">{row.original.ruc || '—'}</span>
-      ),
-    },
-    {
       id: 'nombre',
-      accessorFn: (c) => c.nombre || c.razonSocial || '',
+      accessorFn: (c) => companyShortName(c),
       header: 'Empresa',
       cell: ({ row }) => {
-        const c = row.original;
-        const name = c.nombre || c.razonSocial || 'Sin nombre';
+        const company = row.original;
         return (
           <div className="min-w-0">
-            <p className="truncate font-medium text-foreground">{name}</p>
-            {c.nombreComercial ? (
-              <p className="truncate text-xs text-muted-foreground">{c.nombreComercial}</p>
-            ) : c.razonSocial && c.nombre && c.razonSocial !== c.nombre ? (
-              <p className="truncate text-xs text-muted-foreground">{c.razonSocial}</p>
+            <p className="truncate font-medium text-foreground">{companyShortName(company)}</p>
+            <p className="font-mono text-xs tabular-nums text-muted-foreground">{company.ruc || '—'}</p>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'canales',
+      header: 'Canales',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const company = row.original;
+        const ripleyReady = Boolean(company.hasRipleyCredentials || company.hasRipleySvcCredentials);
+        return (
+          <div className="flex items-center gap-2">
+            <ChannelReady
+              channel="falabella"
+              ready={hasFalabellaApi(company)}
+              title={hasFalabellaApi(company) ? 'Falabella configurado' : 'Falabella pendiente'}
+            />
+            <ChannelReady
+              channel="ripley"
+              ready={ripleyReady}
+              title={ripleyReady ? 'Ripley configurado' : 'Ripley pendiente'}
+            />
+            <ChannelReady
+              channel="mercado_libre"
+              ready={Boolean(company.hasMercadoLibreCredentials)}
+              title={company.hasMercadoLibreCredentials
+                ? (company.mercadoLibreUserId ? `Mercado Libre · ${company.mercadoLibreUserId}` : 'Mercado Libre conectado')
+                : 'Mercado Libre pendiente'}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      id: 'estado',
+      accessorFn: (company) => setupReady(company) ? 'Lista' : setupGap(company),
+      header: 'Estado',
+      cell: ({ row }) => {
+        const ready = setupReady(row.original);
+        return (
+          <div className="min-w-0">
+            <p className={cn('text-sm', ready ? 'text-foreground' : 'text-muted-foreground')}>
+              {ready ? 'Lista' : 'Incompleta'}
+            </p>
+            {!ready && setupGap(row.original) ? (
+              <p className="truncate text-xs text-muted-foreground">Falta {setupGap(row.original)}</p>
             ) : null}
           </div>
         );
       },
     },
     {
-      id: 'falabella',
-      header: () => (
-        <span className="inline-flex items-center gap-1.5">
-          <ChannelMark channel="falabella" />
-          Falabella
-        </span>
-      ),
-      cell: ({ row }) => (
-        <SetupBadge
-          ok={hasFalabellaApi(row.original)}
-          okTitle="API Falabella configurada"
-          badTitle="Falta User ID o API Key de Falabella"
-        />
-      ),
-    },
-    {
-      id: 'mercadoLibre',
-      header: () => (
-        <span className="inline-flex items-center gap-1.5">
-          <ChannelMark channel="mercado_libre" />
-          Mercado Libre
-        </span>
-      ),
-      cell: ({ row }) => (
-        <SetupBadge
-          ok={!!row.original.hasMercadoLibreCredentials}
-          okTitle={row.original.mercadoLibreUserId ? `Conectado · ${row.original.mercadoLibreUserId}` : 'Mercado Libre conectado'}
-          badTitle="Esta empresa todavía no autorizó su cuenta de Mercado Libre"
-        />
-      ),
-    },
-    {
-      id: 'certificado',
-      header: 'Certificado',
-      cell: ({ row }) => (
-        <SetupBadge
-          ok={hasCertificate(row.original)}
-          okTitle="Certificado digital cargado"
-          badTitle="Falta certificado digital"
-        />
-      ),
-    },
-    {
-      id: 'estado',
-      header: 'Estado',
-      cell: ({ row }) => (
-        <SetupBadge
-          ok={setupReady(row.original)}
-          okTitle="Empresa lista (Falabella + certificado + SOL)"
-          badTitle="Configuración incompleta"
-          okLabel="Lista"
-          badLabel="Incompleta"
-        />
-      ),
-    },
-    {
       id: 'acciones',
-      header: () => <span className="block text-right">Acciones</span>,
+      header: () => <span className="sr-only">Acciones</span>,
       enableSorting: false,
       cell: ({ row }) => (
-        <div className="flex justify-end">
+        <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`Acciones de ${row.original.nombre || row.original.razonSocial || 'empresa'}`}>
+              <Button variant="ghost" size="icon-sm" aria-label={`Acciones de ${companyShortName(row.original)}`}>
                 <MoreHorizontal />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              <DropdownMenuItem onClick={() => navigate(companiesHref(`/companies/${row.original.id}`, searchParams))}>
+              <DropdownMenuItem onClick={() => navigate(`/companies/${row.original.id}`)}>
                 <Pencil /> Editar
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -652,7 +655,7 @@ export default function Companies() {
         </div>
       ),
     },
-  ], []);
+  ], [navigate]);
 
   const table = useReactTable({
     data: filteredCompanies,
@@ -691,8 +694,6 @@ export default function Companies() {
       ripleySvcPassword: '',
       ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
-    const mlResult = searchParams.get('ml');
-    setChannelTab(mlResult === 'connected' || mlResult === 'error' || oauthNotice ? 'mercado_libre' : 'falabella');
     setLoadingBilling(true);
     void Promise.all([
       api.listOrderChannelAccounts({ companyId: company.id }),
@@ -727,8 +728,6 @@ export default function Companies() {
       setEditing(null);
       resetForm();
       setEditorLoading(false);
-      const ml = searchParams.get('ml');
-      if (ml === 'connected' || ml === 'error') setChannelTab('mercado_libre');
       return;
     }
     if (!Number.isInteger(companyId) || companyId < 1) {
@@ -767,28 +766,29 @@ export default function Companies() {
     placeholder = '',
     options?: { revealable?: boolean; revealed?: boolean; onToggleReveal?: () => void },
   ) => (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-foreground">{label}</label>
+    <div className="space-y-1.5">
+      <Label htmlFor={key}>{label}</Label>
       <div className="relative">
-        <input
+        <Input
+          id={key}
           name={key}
           type={options?.revealable ? (options.revealed ? 'text' : 'password') : type}
           value={form[key]}
           onChange={(e) => setForm({ ...form, [key]: e.target.value })}
           placeholder={placeholder}
-          className={`w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none transition focus:border-ring ${
-            options?.revealable ? 'pr-10' : ''
-          }`}
+          className={options?.revealable ? 'pr-10' : undefined}
         />
         {options?.revealable && options.onToggleReveal && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="absolute inset-y-0 right-1 my-auto"
             onClick={options.onToggleReveal}
-            className="absolute inset-y-0 right-0 inline-flex items-center px-3 text-muted-foreground hover:text-foreground"
-            title={options.revealed ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            title={options.revealed ? 'Ocultar' : 'Mostrar'}
           >
-            {options.revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
+            {options.revealed ? <EyeOff /> : <Eye />}
+          </Button>
         )}
       </div>
     </div>
@@ -799,136 +799,102 @@ export default function Companies() {
     && (form.falabellaApiKey.trim() || editing?.hasFalabellaCredentials),
   );
 
+  const keepSecret = 'Vacío conserva la actual';
   const falabellaChannelPanel = (
-    <>
-      <div>
-        <p className="mb-2 text-sm font-medium text-muted-foreground">Seller</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {field('Usuario Seller', 'sellerUsername')}
-          {field(
-            'Contraseña Seller',
-            'sellerPassword',
-            'password',
-            editing?.hasSellerPassword ? 'Dejar vacío para mantener la actual' : '',
-            {
-              revealable: true,
-              revealed: showSellerPassword,
-              onToggleReveal: () => setShowSellerPassword((value) => !value),
-            },
-          )}
-        </div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {field('Usuario seller', 'sellerUsername')}
+        {field(
+          'Contraseña seller',
+          'sellerPassword',
+          'password',
+          editing?.hasSellerPassword ? keepSecret : '',
+          {
+            revealable: true,
+            revealed: showSellerPassword,
+            onToggleReveal: () => setShowSellerPassword((value) => !value),
+          },
+        )}
+        {field('User ID', 'falabellaApiUserId')}
+        {field(
+          'API key',
+          'falabellaApiKey',
+          'password',
+          editing?.hasFalabellaCredentials ? keepSecret : '',
+          {
+            revealable: true,
+            revealed: showFalabellaApiKey,
+            onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
+          },
+        )}
       </div>
-      <div>
-        <p className="mb-2 text-sm font-medium text-muted-foreground">API</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {field('User ID API', 'falabellaApiUserId', 'text', 'Settings > Integration Management > API')}
-          {field(
-            'API Key',
-            'falabellaApiKey',
-            'password',
-            editing?.hasFalabellaCredentials ? 'Dejar vacío para mantener la actual' : '',
-            {
-              revealable: true,
-              revealed: showFalabellaApiKey,
-              onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
-            },
-          )}
-        </div>
-      </div>
-      <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-        <div>
-          <p className="text-sm font-medium">Comprobantes</p>
-          <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
-          {!falabellaCredentialsReady && (
-            <p className="mt-1 text-xs text-muted-foreground">Configura la API para activar la emisión.</p>
-          )}
-        </div>
-        <Switch
-          checked={channelAutoEmission.falabella}
-          disabled={loadingBilling || !falabellaCredentialsReady}
-          onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, falabella: checked }))}
-          aria-label="Emitir boletas y facturas automáticamente para Falabella"
-        />
-      </div>
-    </>
+      <EmissionRow
+        checked={channelAutoEmission.falabella}
+        disabled={loadingBilling || !falabellaCredentialsReady}
+        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, falabella: checked }))}
+        hint={falabellaCredentialsReady ? 'Boletas y facturas al dejar el pedido listo.' : 'Configura la API para activarla.'}
+      />
+    </div>
   );
 
   const ripleyChannelPanel = (
-    <>
-      <div>
-        <p className="mb-2 text-sm font-medium text-muted-foreground">Mirakl</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {field('Shop ID (opcional)', 'ripleyShopId', 'text', 'Se usa cuando la key accede a varias tiendas')}
-          <div className="md:col-span-2">{field(
-            'API Key',
-            'ripleyApiKey',
-            'password',
-            editing?.hasRipleyCredentials ? 'Dejar vacío para mantener la actual' : '',
-            {
-              revealable: true,
-              revealed: showRipleyApiKey,
-              onToggleReveal: () => setShowRipleyApiKey((value) => !value),
-            },
-          )}</div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {field('Shop ID', 'ripleyShopId', 'text', 'Si la key cubre varias tiendas')}
+        {field(
+          'API key',
+          'ripleyApiKey',
+          'password',
+          editing?.hasRipleyCredentials ? keepSecret : '',
+          {
+            revealable: true,
+            revealed: showRipleyApiKey,
+            onToggleReveal: () => setShowRipleyApiKey((value) => !value),
+          },
+        )}
+        {field('Usuario SVC', 'ripleySvcUsername')}
+        {field(
+          'Contraseña SVC',
+          'ripleySvcPassword',
+          'password',
+          editing?.hasRipleySvcCredentials ? keepSecret : '',
+          {
+            revealable: true,
+            revealed: showRipleySvcPassword,
+            onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
+          },
+        )}
+        <div className="sm:col-span-2">
+          {field('URL SVC', 'ripleySvcBaseUrl', 'url', 'La de producción, no la de laboratorio')}
         </div>
       </div>
-      <div>
-        <p className="mb-2 text-sm font-medium text-muted-foreground">Seller Center</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
-          {field(
-            'Contraseña SVC',
-            'ripleySvcPassword',
-            'password',
-            editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
-            {
-              revealable: true,
-              revealed: showRipleySvcPassword,
-              onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
-            },
-          )}
-          <div className="md:col-span-2">
-            {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
-          </div>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
-      </div>
-      <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-        <div>
-          <p className="text-sm font-medium">Comprobantes</p>
-          <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
-          <p className="mt-1 text-xs text-muted-foreground">Se activará al sincronizar pedidos.</p>
-        </div>
-        <Switch
-          checked={channelAutoEmission.ripley}
-          disabled={loadingBilling}
-          onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
-          aria-label="Emitir boletas y facturas automáticamente para Ripley"
-        />
-      </div>
-    </>
+      <EmissionRow
+        checked={channelAutoEmission.ripley}
+        disabled={loadingBilling}
+        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
+        hint="Se activa al sincronizar pedidos."
+      />
+    </div>
   );
 
   const mercadoLibreChannelPanel = (
-    <>
-      <p className="text-xs text-muted-foreground">
-        Cada empresa conecta su propia cuenta. Un administrador debe autorizar la app.
-      </p>
-      {oauthNotice && (
-        <p className="text-xs text-muted-foreground">{oauthNotice}</p>
-      )}
-      {editing?.hasMercadoLibreCredentials ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <ChannelMark channel="mercado_libre" className="mt-0.5 size-5" />
-            <div>
-              <p className="text-sm font-medium text-foreground">Conectado</p>
-              <p className="font-mono text-xs text-muted-foreground">
-                user_id {editing.mercadoLibreUserId || '—'}
-                {editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}
-              </p>
-            </div>
-          </div>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            {editing?.hasMercadoLibreCredentials ? 'Conectado' : 'Sin conectar'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {oauthNotice || (editing?.hasMercadoLibreCredentials
+              ? `user_id ${editing.mercadoLibreUserId || '—'}${editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}`
+              : !editing
+                ? 'Guarda la empresa para conectar la cuenta.'
+                : mercadoLibreAppConfigured
+                  ? 'Autoriza la cuenta de esta empresa.'
+                  : 'Falta la app de Mercado Libre en el servidor.')}
+          </p>
+        </div>
+        {editing?.hasMercadoLibreCredentials ? (
           <Button
             type="button"
             variant="outline"
@@ -955,19 +921,7 @@ export default function Companies() {
           >
             <Unlink /> Desconectar
           </Button>
-        </div>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
-          <div className="flex min-w-0 items-start gap-2.5">
-            <ChannelMark channel="mercado_libre" className="mt-0.5 size-5" />
-            <p className="text-sm text-muted-foreground">
-              {!editing
-                ? 'Guarda la empresa para conectar la cuenta.'
-                : mercadoLibreAppConfigured
-                  ? 'Todavía no hay una cuenta autorizada para esta empresa.'
-                  : 'Falta configurar la app de Mercado Libre en el servidor.'}
-            </p>
-          </div>
+        ) : (
           <Button
             type="button"
             variant="outline"
@@ -980,221 +934,172 @@ export default function Companies() {
           >
             <Link2 /> Conectar
           </Button>
-        </div>
-      )}
-      <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
-        <div>
-          <p className="text-sm font-medium">Comprobantes</p>
-          <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
-          {!editing?.hasMercadoLibreCredentials && (
-            <p className="mt-1 text-xs text-muted-foreground">Conecta la cuenta para activar la emisión.</p>
-          )}
-        </div>
-        <Switch
-          checked={channelAutoEmission.mercado_libre}
-          disabled={loadingBilling || !editing?.hasMercadoLibreCredentials}
-          onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, mercado_libre: checked }))}
-          aria-label="Emitir boletas y facturas automáticamente para Mercado Libre"
-        />
+        )}
       </div>
-    </>
+      <EmissionRow
+        checked={channelAutoEmission.mercado_libre}
+        disabled={loadingBilling || !editing?.hasMercadoLibreCredentials}
+        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, mercado_libre: checked }))}
+        hint={editing?.hasMercadoLibreCredentials ? undefined : 'Conecta la cuenta para activarla.'}
+      />
+    </div>
   );
+
+  useEffect(() => {
+    if (!isEditor || editorLoading) return;
+    const ml = searchParams.get('ml');
+    if (ml === 'connected' || ml === 'error') {
+      document.getElementById('mercado-libre')?.scrollIntoView({ block: 'start' });
+    }
+  }, [isEditor, editorLoading, searchParams]);
 
   if (isEditor) {
     return (
-      <div className={cn(
-        'space-y-4',
-        CHANNEL_TAB_PROTOTYPE && 'pb-20',
-        CHANNEL_TAB_PROTOTYPE ? companyChannelTabsPageClass(channelTabsVariant) : 'max-w-3xl',
-      )}>
-        <Button
-          type="button"
-          variant="ghost"
-          className="-ml-2 h-9 shrink-0 cursor-pointer px-2 text-muted-foreground hover:text-foreground"
-          onClick={closeEditor}
-        >
-          <ArrowLeft /> Empresas
-        </Button>
-
-        {oauthNotice && (
-          <p className="text-sm text-muted-foreground">{oauthNotice}</p>
-        )}
+      <div className="mx-auto max-w-3xl space-y-8 pb-6">
+        <div className="flex items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            className="-ml-2 h-9 shrink-0 px-2 text-muted-foreground hover:text-foreground"
+            onClick={closeEditor}
+          >
+            <ArrowLeft /> Empresas
+          </Button>
+          {!editorLoading && (isNew || editing) ? (
+            <Button type="submit" form="company-form" disabled={saving || loadingBilling}>
+              {saving ? 'Guardando…' : editing ? 'Guardar' : 'Crear empresa'}
+            </Button>
+          ) : null}
+        </div>
 
         {editorLoading ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
-            <Loader2 className="size-8 animate-spin text-muted-foreground/60" />
-            <p className="text-sm font-medium">Cargando empresa</p>
+            <Loader2 className="size-6 animate-spin text-muted-foreground/60" />
+            <p className="text-sm text-muted-foreground">Cargando empresa</p>
           </div>
         ) : !isNew && !editing ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
-            <AlertCircle className="size-8 text-destructive" />
+            <AlertCircle className="size-6 text-destructive" />
             <p className="text-sm font-medium">No se pudo abrir la empresa</p>
             <p className="text-sm text-muted-foreground">{error || 'No se encontró la empresa.'}</p>
           </div>
         ) : (
             <form
+              id="company-form"
               ref={formRef}
+              className="space-y-8"
               onSubmit={(event) => {
                 event.preventDefault();
                 void (editing ? handleUpdate() : handleCreate());
               }}
             >
               {error && (
-                <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="flex items-start gap-2 text-sm text-destructive">
+                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
                   <span>{error}</span>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {field('RUC (11 dígitos)', 'ruc')}
-                {field('Nombre', 'nombre')}
-                {field('Razón Social', 'razonSocial')}
-                {field('Nombre Comercial', 'nombreComercial')}
-                {field('Ubigeo (6 dígitos)', 'ubigeo')}
-                <div className="md:col-span-2">{field('Dirección', 'direccion')}</div>
-                {field('Usuario SOL', 'usuarioSol')}
-                {field(
-                  'Clave SOL',
-                  'claveSol',
-                  'password',
-                  editing?.hasSolCredentials ? 'Dejar vacío para mantener la actual' : '',
-                  {
-                    revealable: true,
-                    revealed: showClaveSol,
-                    onToggleReveal: () => setShowClaveSol((value) => !value),
-                  },
-                )}
-              </div>
-
-              <div className="mt-4 border-t border-border pt-4">
-                <p className="text-sm font-medium text-muted-foreground">Canales</p>
-                {CHANNEL_TAB_PROTOTYPE ? (
-                  <CompanyChannelTabsPrototype
-                    variant={channelTabsVariant}
-                    channelTab={channelTab}
-                    onChannelTabChange={setChannelTab}
-                    channels={[
-                      { value: 'falabella', label: 'Falabella', src: falabellaLogo, helper: 'API y seller', ready: falabellaCredentialsReady },
-                      { value: 'ripley', label: 'Ripley', src: ripleyLogo, helper: 'Mirakl y SVC', ready: Boolean(editing?.hasRipleyCredentials || editing?.hasRipleySvcCredentials || form.ripleyApiKey.trim() || form.ripleySvcUsername.trim()) },
-                      { value: 'mercado_libre', label: 'Mercado Libre', src: mercadoLibreLogo, helper: 'OAuth por empresa', ready: Boolean(editing?.hasMercadoLibreCredentials) },
-                    ]}
-                    panels={{
-                      falabella: falabellaChannelPanel,
-                      ripley: ripleyChannelPanel,
-                      mercado_libre: mercadoLibreChannelPanel,
-                    }}
-                  />
-                ) : (
-                <Tabs
-                  value={channelTab}
-                  onValueChange={(value) => setChannelTab(value as ChannelTab)}
-                  className="mt-3"
-                >
-                  <TabsList className="mb-5" aria-label="Canales">
-                    <ChannelTabTrigger value="falabella" />
-                    <ChannelTabTrigger value="ripley" />
-                    <ChannelTabTrigger value="mercado_libre" />
-                  </TabsList>
-
-                  <TabsContent value="falabella" className="space-y-4">{falabellaChannelPanel}</TabsContent>
-                  <TabsContent value="ripley" className="space-y-4">{ripleyChannelPanel}</TabsContent>
-                  <TabsContent value="mercado_libre" className="space-y-4">{mercadoLibreChannelPanel}</TabsContent>
-                </Tabs>
-                )}
-                {loadingBilling && (
-                  <p className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="size-3 animate-spin" /> Cargando configuración
-                  </p>
-                )}
-              </div>
-
-              <div className="mt-4 space-y-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
-                    Certificado digital {!editing && <span className="text-red-500">*</span>}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      value={
-                        certFileName
-                          || (hasStoredCert ? 'Certificado ya almacenado' : '')
-                      }
-                      readOnly
-                      placeholder=".pfx o .p12"
-                      className={`flex-1 rounded-lg border border-input px-3 py-2 text-sm ${
-                        hasStoredCert && !certFileName
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-background'
-                      }`}
-                    />
-                    <input
-                      ref={certInputRef}
-                      type="file"
-                      accept=".pfx,.p12,application/x-pkcs12"
-                      className="hidden"
-                      onChange={(e) => void onCertFileChange(e.target.files?.[0] || null)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => certInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm transition hover:bg-accent"
-                    >
-                      <Upload className="h-4 w-4" /> Examinar
-                    </button>
-                  </div>
-                  {certFileName ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Se subirá el archivo seleccionado al guardar.
-                    </p>
-                  ) : null}
+              <FormSection title="Empresa">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {field('RUC', 'ruc')}
+                  {field('Nombre', 'nombre')}
+                  {field('Razón social', 'razonSocial')}
+                  {field('Nombre comercial', 'nombreComercial')}
+                  {field('Ubigeo', 'ubigeo')}
+                  <div className="sm:col-span-2">{field('Dirección', 'direccion')}</div>
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">Contraseña del certificado</label>
-                  <div className="relative">
-                    <input
-                      type={showCertPassword ? 'text' : 'password'}
-                      value={certPass}
-                      onChange={(e) => setCertPass(e.target.value)}
-                      placeholder={hasStoredCert ? 'Dejar vacío para mantener la actual' : ''}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm shadow-sm outline-none transition focus:border-ring"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCertPassword((value) => !value)}
-                      className="absolute inset-y-0 right-0 inline-flex items-center px-3 text-muted-foreground hover:text-foreground"
-                      title={showCertPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                    >
-                      {showCertPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
+              </FormSection>
+
+              <FormSection title="SUNAT">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {field('Usuario SOL', 'usuarioSol')}
+                  {field(
+                    'Clave SOL',
+                    'claveSol',
+                    'password',
+                    editing?.hasSolCredentials ? keepSecret : '',
+                    {
+                      revealable: true,
+                      revealed: showClaveSol,
+                      onToggleReveal: () => setShowClaveSol((value) => !value),
+                    },
+                  )}
+                </div>
+              </FormSection>
+
+              <FormSection title="Falabella" channel="falabella">
+                {falabellaChannelPanel}
+              </FormSection>
+
+              <FormSection title="Ripley" channel="ripley">
+                {ripleyChannelPanel}
+              </FormSection>
+
+              <FormSection id="mercado-libre" title="Mercado Libre" channel="mercado_libre">
+                {mercadoLibreChannelPanel}
+              </FormSection>
+
+              {loadingBilling && (
+                <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" /> Cargando canales
+                </p>
+              )}
+
+              <FormSection title="Certificado">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="company-certificate">
+                      Archivo {!editing && <span className="text-destructive">*</span>}
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="company-certificate"
+                        readOnly
+                        value={certFileName || (hasStoredCert ? 'Ya está cargado' : '')}
+                        placeholder=".pfx o .p12"
+                      />
+                      <input
+                        ref={certInputRef}
+                        type="file"
+                        accept=".pfx,.p12,application/x-pkcs12"
+                        className="hidden"
+                        onChange={(e) => void onCertFileChange(e.target.files?.[0] || null)}
+                      />
+                      <Button type="button" variant="outline" onClick={() => certInputRef.current?.click()}>
+                        <Upload /> Examinar
+                      </Button>
+                    </div>
+                    {certFileName ? (
+                      <p className="text-xs text-muted-foreground">Se sube al guardar.</p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="company-cert-pass">Contraseña</Label>
+                    <div className="relative">
+                      <Input
+                        id="company-cert-pass"
+                        type={showCertPassword ? 'text' : 'password'}
+                        value={certPass}
+                        onChange={(e) => setCertPass(e.target.value)}
+                        placeholder={hasStoredCert ? keepSecret : ''}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute inset-y-0 right-1 my-auto"
+                        onClick={() => setShowCertPassword((value) => !value)}
+                        title={showCertPassword ? 'Ocultar' : 'Mostrar'}
+                      >
+                        {showCertPassword ? <EyeOff /> : <Eye />}
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="mt-6 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  disabled={saving}
-                  className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-accent disabled:opacity-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving || loadingBilling}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear empresa'}
-                </button>
-              </div>
+              </FormSection>
             </form>
-        )}
-        {CHANNEL_TAB_PROTOTYPE && (
-          <PrototypeSwitcher
-            variants={COMPANY_CHANNEL_TAB_VARIANTS}
-            current={channelTabsVariant}
-          />
         )}
       </div>
     );
@@ -1227,23 +1132,13 @@ export default function Companies() {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => navigate(companiesHref('/companies/nueva', searchParams))}>
+        <Button onClick={() => navigate('/companies/nueva')}>
           <Plus data-icon="inline-start" />
           Nueva empresa
         </Button>
       </div>
 
       <TablePanel aria-label="Directorio de empresas">
-        <TablePanelHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">{companies.length} empresa(s)</p>
-            <p className="text-xs text-muted-foreground">{readyCompanies} listas · {companies.length - readyCompanies} con configuración pendiente</p>
-          </div>
-          <Button variant="outline" onClick={() => void load()} disabled={loadingCompanies}>
-            <RefreshCw className={cn(loadingCompanies && 'animate-spin')} />
-            Actualizar
-          </Button>
-        </TablePanelHeader>
           {loadingCompanies ? (
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <Loader2 className="size-8 animate-spin text-muted-foreground/60" />
@@ -1259,7 +1154,7 @@ export default function Companies() {
             <div className="flex flex-col items-center gap-2 py-14 text-center">
               <Building2 className="size-8 text-muted-foreground/60" />
               <p className="text-sm font-medium">No hay empresas registradas</p>
-              <p className="text-sm text-muted-foreground">Crea tu primera empresa para comenzar a emitir.</p>
+              <p className="text-sm text-muted-foreground">Crea la primera para emitir.</p>
             </div>
           ) : filteredCompanies.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-14 text-center">
@@ -1268,14 +1163,14 @@ export default function Companies() {
               <p className="text-sm text-muted-foreground">Prueba con otra búsqueda o filtro.</p>
             </div>
           ) : (
-            <Table className="min-w-[820px]">
+            <Table>
               <TableHeader>
                 {table.getHeaderGroups().map((headerGroup) => (
                   <TableRow key={headerGroup.id} className="hover:bg-transparent">
                     {headerGroup.headers.map((header) => (
                       <TableHead
                         key={header.id}
-                        className={cn(header.column.id === 'acciones' && 'text-right')}
+                        className={cn(header.column.id === 'acciones' && 'w-12 text-right')}
                       >
                         {header.isPlaceholder ? null : header.column.getCanSort() ? (
                           <button
@@ -1299,7 +1194,11 @@ export default function Companies() {
               </TableHeader>
               <TableBody>
                 {table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
+                  <TableRow
+                    key={row.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/companies/${row.original.id}`)}
+                  >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
