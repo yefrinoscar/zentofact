@@ -267,7 +267,7 @@ export default function Cancelados() {
   });
 
   return (
-    <TooltipProvider delayDuration={150}>
+    <TooltipProvider delayDuration={0}>
       <div className="space-y-3">
       <div className="space-y-2">
         <div className="relative max-w-md">
