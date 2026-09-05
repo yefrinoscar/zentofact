@@ -79,4 +79,35 @@ describe('MercadoLibreApiClient', () => {
       (error) => error instanceof Error && /HTTP 401/.test(error.message),
     );
   });
+
+  it('downloads shipment labels as bytes', async () => {
+    const fetchImpl = mock.fn(async () => new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    }));
+    const client = new MercadoLibreApiClient({ accessToken: 'tok', fetchImpl });
+    const bytes = await client.getShipmentLabels(['900000031']);
+    assert.equal(bytes[0], 0x25);
+    const url = String(fetchImpl.mock.calls[0].arguments[0]);
+    assert.match(url, /\/shipment_labels\?/);
+    assert.match(url, /shipment_ids=900000031/);
+    assert.match(url, /response_type=pdf/);
+  });
+
+  it('allows HTTP only on localhost', () => {
+    assert.ok(new MercadoLibreApiClient({
+      accessToken: 'tok',
+      baseUrl: 'http://127.0.0.1:3999',
+      fetchImpl: async () => new Response('{}'),
+    }));
+    assert.throws(
+      () => new MercadoLibreApiClient({ accessToken: 'tok', baseUrl: 'http://api.mercadolibre.com' }),
+      /HTTPS/,
+    );
+  });
+
+  it('refuses sandbox tokens against the live API', async () => {
+    const client = new MercadoLibreApiClient({ accessToken: 'SANDBOX-LIMBO-ACCESS' });
+    await assert.rejects(() => client.getMe(), /sandbox/);
+  });
 });

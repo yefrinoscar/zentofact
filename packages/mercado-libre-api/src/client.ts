@@ -34,7 +34,9 @@ export class MercadoLibreApiClient {
     if (!token) throw new Error('Falta el access token de Mercado Libre.');
     this.accessToken = token;
     this.baseUrl = new URL(options.baseUrl?.trim() || DEFAULT_API_BASE);
-    if (this.baseUrl.protocol !== 'https:') throw new Error('La URL de Mercado Libre debe usar HTTPS.');
+    if (!isAllowedMercadoLibreBase(this.baseUrl)) {
+      throw new Error('La URL de Mercado Libre debe usar HTTPS.');
+    }
     this.fetchImpl = options.fetchImpl || fetch;
     this.siteId = nonEmptyText(options.siteId) || 'MPE';
   }
@@ -92,6 +94,18 @@ export class MercadoLibreApiClient {
     }));
     if (!shipment) throw new Error('Mercado Libre devolvió un envío inválido.');
     return shipment;
+  }
+
+  async getShipmentLabels(shipmentIds: string[], responseType: 'pdf' | 'zpl2' = 'pdf'): Promise<Uint8Array> {
+    const ids = [...new Set(shipmentIds.map((value) => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('Faltan shipment_ids para la etiqueta.');
+    if (ids.length > 50) throw new Error('Mercado Libre admite hasta 50 envíos por etiqueta.');
+    const url = this.url('/shipment_labels');
+    url.searchParams.set('shipment_ids', ids.join(','));
+    url.searchParams.set('response_type', responseType === 'zpl2' ? 'zpl2' : 'pdf');
+    return this.getBytes(url, {
+      Accept: responseType === 'zpl2' ? 'text/plain' : 'application/pdf',
+    });
   }
 
   async getBillingInfo(billingInfoId: string, siteId = this.siteId): Promise<MercadoLibreBillingInfo> {
@@ -159,6 +173,7 @@ export class MercadoLibreApiClient {
 
   private async getJson(pathOrUrl: string | URL, extraHeaders: Record<string, string> = {}): Promise<unknown> {
     const url = typeof pathOrUrl === 'string' ? this.url(pathOrUrl) : pathOrUrl;
+    this.assertSandboxIsolation(url);
     const response = await this.fetchImpl(url, {
       headers: {
         Accept: 'application/json',
@@ -170,6 +185,36 @@ export class MercadoLibreApiClient {
     if (!response.ok) throw providerError(response.status, body);
     return body;
   }
+
+  private async getBytes(pathOrUrl: string | URL, extraHeaders: Record<string, string> = {}): Promise<Uint8Array> {
+    const url = typeof pathOrUrl === 'string' ? this.url(pathOrUrl) : pathOrUrl;
+    this.assertSandboxIsolation(url);
+    const response = await this.fetchImpl(url, {
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        ...extraHeaders,
+      },
+    });
+    if (!response.ok) throw providerError(response.status, await readJson(response));
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length) throw new Error('Mercado Libre devolvió una etiqueta vacía.');
+    return bytes;
+  }
+
+  private assertSandboxIsolation(url: URL) {
+    if (!this.accessToken.startsWith('SANDBOX-')) return;
+    if (this.fetchImpl !== fetch) return;
+    const host = url.hostname.toLowerCase();
+    if (host === 'api.mercadolibre.com' || host.endsWith('.mercadolibre.com')) {
+      throw new Error('Un token sandbox de Mercado Libre no puede usarse contra la API real.');
+    }
+  }
+}
+
+function isAllowedMercadoLibreBase(url: URL) {
+  if (url.protocol === 'https:') return true;
+  const host = url.hostname.toLowerCase();
+  return url.protocol === 'http:' && (host === 'localhost' || host === '127.0.0.1' || host === '::1');
 }
 
 function requiredId(value: unknown, field: string) {
