@@ -576,6 +576,8 @@ function normalizeOrderRow(row) {
     createdBy: row.created_by || null,
   };
   normalized.documentDecision = resolveDocumentDecision(normalized);
+  const items = normalizeOrderListItems(row.items);
+  if (items) normalized.items = items;
   return normalized;
 }
 
@@ -914,6 +916,64 @@ const SALESPERSON_COMMISSION_SQL = `coalesce(
   ) / 100, 2)
 )`;
 
+const ORDER_LIST_ITEMS_JOIN = `
+     left join lateral (
+       select coalesce(json_agg(json_build_object(
+         'name', nullif(trim(coalesce(p.name, oi.description, '')), ''),
+         'sku', nullif(trim(coalesce(p.main_sku, oi.main_sku, oi.sku, '')), ''),
+         'quantity', oi.quantity,
+         'imageUrl', coalesce(
+           nullif(p.image_url, ''),
+           nullif(psku.image_url, ''),
+           nullif(listing.metadata->'images'->>0, ''),
+           nullif(listing.metadata->'images'->0->>'Url', ''),
+           nullif(listing.metadata->'images'->0->>'url', ''),
+           nullif(listing.metadata->>'imageUrl', ''),
+           nullif(oi.raw_data->>'Image', ''),
+           nullif(oi.raw_data->>'ImageUrl', ''),
+           nullif(oi.raw_data->>'ImageURL', ''),
+           nullif(oi.raw_data->>'ProductImage', ''),
+           nullif(oi.raw_data->>'MainImage', '')
+         ),
+         'shopSku', coalesce(
+           nullif(trim(listing.shop_sku), ''),
+           nullif(trim(oi.provider_sku), ''),
+           nullif(trim(oi.raw_data->>'ShopSku'), ''),
+           nullif(trim(oi.raw_data->>'ShopSKU'), '')
+         )
+       ) order by oi.id), '[]'::json) as items
+       from order_items oi
+       left join products p on p.id=oi.product_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+       left join product_listings listing on listing.id = oi.listing_id
+       where oi.order_id=o.id
+     ) lines on true`;
+
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function normalizeOrderListItems(value) {
+  if (value == null) return undefined;
+  return parseJsonArray(value).map((item) => ({
+    name: String(item?.name || '').trim() || null,
+    sku: String(item?.sku || '').trim() || null,
+    quantity: Number(item?.quantity || 0),
+    imageUrl: String(item?.imageUrl || '').trim() || null,
+    shopSku: String(item?.shopSku || '').trim() || null,
+  }));
+}
+
 const ORDER_LIST_SORT_COLUMNS = {
   orderedAt: 'coalesce(o.ordered_at, o.created_at)',
   total: 'o.total',
@@ -982,7 +1042,8 @@ export async function listOrders(filters = {}, db) {
     values.push(requiredText(filters.createdBy, 'createdBy', 300));
     where.push(`o.created_by=$${values.length}`);
   }
-  if (filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true') {
+  const salesOnly = filters.salesOnly === true || String(filters.salesOnly || '').toLowerCase() === 'true';
+  if (salesOnly) {
     where.push(`o.order_status not in ('cancelled', 'failed')`);
     where.push(`o.payment_status not in ('refunded', 'failed')`);
     where.push(`o.fulfillment_status not in ('cancelled', 'returned', 'failed')`);
@@ -1001,12 +1062,14 @@ export async function listOrders(filters = {}, db) {
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
-       ${filters.salesOnly ? `${SALESPERSON_COMMISSION_SQL} as commission,` : ''}
+       ${salesOnly ? `${SALESPERSON_COMMISSION_SQL} as commission,` : ''}
+       ${salesOnly ? 'lines.items,' : ''}
        count(*) over()::int as total_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
      left join companies c on c.id=o.company_id
+     ${salesOnly ? ORDER_LIST_ITEMS_JOIN : ''}
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by ${orderBy}
      limit $${values.length - 1} offset $${values.length}`,
