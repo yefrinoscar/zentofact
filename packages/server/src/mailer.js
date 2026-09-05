@@ -1,8 +1,12 @@
 // Envío de correo transaccional por Resend.
 // Sin API key, el contenido se imprime en logs (mismo contrato que el reset de contraseña).
 
-const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
-const RESEND_FROM_EMAIL = String(process.env.RESEND_FROM_EMAIL || 'ZentoFact <onboarding@resend.dev>').trim();
+function resendConfig() {
+  return {
+    apiKey: String(process.env.RESEND_API_KEY || '').trim(),
+    fromEmail: String(process.env.RESEND_FROM_EMAIL || 'ZentoFact <onboarding@resend.dev>').trim(),
+  };
+}
 
 function recipientsOf(to) {
   return (Array.isArray(to) ? to : [to])
@@ -10,11 +14,16 @@ function recipientsOf(to) {
     .filter((entry) => entry.includes('@'));
 }
 
+export function isMailerConfigured() {
+  return Boolean(resendConfig().apiKey);
+}
+
 export async function sendEmail({ to, subject, html, text, logLabel = 'mailer' } = {}) {
   const recipients = recipientsOf(to);
   if (!recipients.length) return { sent: false, reason: 'no-recipients' };
 
-  if (!RESEND_API_KEY) {
+  const { apiKey, fromEmail } = resendConfig();
+  if (!apiKey) {
     console.warn(`[${logLabel}] RESEND_API_KEY no configurado. Correo (solo logs):`);
     console.warn(`[${logLabel}] to=${recipients.join(',')}`);
     console.warn(`[${logLabel}] subject=${subject}`);
@@ -25,11 +34,11 @@ export async function sendEmail({ to, subject, html, text, logLabel = 'mailer' }
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${RESEND_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: RESEND_FROM_EMAIL,
+      from: fromEmail,
       to: recipients,
       subject,
       html,
