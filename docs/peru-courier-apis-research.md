@@ -2,6 +2,8 @@
 
 Investigación realizada el 5 de septiembre de 2026. El alcance son fuentes primarias: sitios oficiales, portales de desarrolladores, OpenAPI/Swagger, Play Store de la empresa, LinkedIn de la empresa, términos y portales de clientes. Los blogs de agencias (por ejemplo `kom.pe`) se citan solo como rumor de mercado y **no** como prueba de que exista una API.
 
+Esta nota responde a la pregunta operativa: ¿Dinsides, Shalom y Marvisur (los tres carriers de etiqueta manual de ZentoFact) tienen API para crear envíos? La respuesta corta es **no, no publican una**. El resto del documento lista qué sí existe para no quedarse solo en el no.
+
 ZentoFact ya trata tres couriers peruanos como carriers de envío con etiqueta manual y precio escrito por el vendedor: `marvisuar` → «Marvisuar», `shaloom` → «Shaloom», `dinsides` → «Dinsides» (`packages/web/src/lib/shipping-carrier.ts`). Express (`nosotros`) es flota propia. Esta nota no implementa conectores.
 
 ## Conclusión ejecutiva
@@ -9,7 +11,7 @@ ZentoFact ya trata tres couriers peruanos como carriers de envío con etiqueta m
 Los tres carriers que ZentoFact usa hoy **no publican una API oficial** para crear envíos, generar etiquetas ni hacer tracking programático.
 
 - **Dinsides Courier** opera un portal web de clientes (login a pedido) más WhatsApp/teléfono. No hay portal de desarrolladores.
-- **Shalom** (nombre comercial oficial; el producto escribe «Shaloom») opera **Shalom App** y **Shalom Pro** (web + registros masivos). El rastreo público ahora exige login. Existe un wrapper de terceros (`shalom-api-peru.com`) que inicia sesión en `pro.shalom.pe` con email/password del cliente. No es de Shalom.
+- **Shalom** (nombre comercial oficial; el producto escribe «Shaloom») opera **Shalom App**, **Shalom Pro** (web + registros masivos) y **Shalom Empresas** (`corp.shalom.pe` + `cliente.shalom.pe`). El rastreo público ahora exige login. Existe un wrapper de terceros (`shalom-api-peru.com`) que inicia sesión en `pro.shalom.pe` con email/password del cliente. No es de Shalom.
 - **Expreso Marvisur** (nombre comercial oficial; el producto escribe «Marvisuar») ofrece tracking por número de GRTE en la web, cotización por WhatsApp y sucursales. No hay docs de API.
 
 Sí hay APIs oficiales, documentadas, útiles para ZentoFact si se abre un segundo grupo de carriers:
@@ -37,7 +39,7 @@ AfterShip Tracking lista **99minutos** y **Chazki** (requieren conexión de cuen
 | Urbano Perú | Sí | REST partner | Sí | No listado como endpoint separado en las páginas de envío | Sí | PDF | Notificaciones anunciadas | Sí (pickup / inversa) | Docs oficiales `urbano.com.pe` |
 | Chazki | Sí | REST partner | Sí | Cobertura | Sí | PDF (Tonny) | Sí | Pickup en flujo de entrega | `docs.chazki.com` |
 | Urbaner | Sí | REST | Sí | Sí | Sí | No destacado | No destacado en la intro | Ventanas de entrega | `developers.urbaner.com` |
-| PedidosYa Envíos | Sí | REST OpenAPI 3 | Sí | Estimate | Sí + GPS | No (red de riders) | Sí | Pickup waypoint | `developers.pedidosya.com` |
+| PedidosYa Envíos | Sí | REST OpenAPI 3 | Sí | Estimate | Sí + GPS | `/v3/shippings/labels` en la OpenAPI | Sí | Pickup waypoint | `developers.pedidosya.com` |
 | 99minutos | Sí | REST OpenAPI 3 | Sí | Implícito en orden | Sí | Guías | Sí | Operación propia | `developers.99minutos.com` |
 | Cabify Logistics | Sí | REST | Sí | Estimate | Sí | Tipos que usan almacén | Sí | Pickup | `developers.cabify.com` + `cabifylogistics.com/pe` |
 | DHL Express | Sí | REST + SOAP | Sí | Rating | Sí | PDF | — | Sí | `developer.dhl.com` |
@@ -83,9 +85,9 @@ Búsquedas de «Dinsides API», «Dinsides integración», «Dinsides rastreo de
 | Campo | Hallazgo |
 | --- | --- |
 | Nombre comercial | **Shalom**. LinkedIn oficial: [Shalom Empresarial](https://www.linkedin.com/company/shalom-empresarial). Homepage [shalom.com.pe](https://shalom.com.pe/). No hay empresa «Shaloom». |
-| Sitios | Público: [shalom.com.pe](https://shalom.com.pe/). Pro: [pro.shalom.pe](https://pro.shalom.pe/) y [shalom.com.pe/proweb](https://shalom.com.pe/proweb). FAQ: [shalom.com.pe/faq/envios_preguntas](https://shalom.com.pe/faq/envios_preguntas). Rastreo: `shalom.com.pe/rastrea` (anunciado por la empresa en LinkedIn). |
+| Sitios | Público: [shalom.com.pe](https://shalom.com.pe/). Pro: [pro.shalom.pe](https://pro.shalom.pe/) y [shalom.com.pe/proweb](https://shalom.com.pe/proweb). Empresas: formulario [corp.shalom.pe](https://corp.shalom.pe/) y login [cliente.shalom.pe/login](https://cliente.shalom.pe/login). FAQ: [shalom.com.pe/faq/envios_preguntas](https://shalom.com.pe/faq/envios_preguntas). Rastreo: `shalom.com.pe/rastrea` (anunciado por la empresa en LinkedIn). |
 | App | Play Store **SHALOM**, id `pe.com.shalom.overskull`, developer OVERSKULL, 1 M+ descargas, sitio `shalom.com.pe/app`. Registra, rastrea, paga, cambia destino. |
-| API oficial | **No publicada.** El FAQ oficial dice que se envía por Shalom App, Shalom Pro o agencia. Shalom Pro ofrece registros **manuales y masivos**, pago online, calculadora, historial y rastreo compartible. |
+| API oficial | **No publicada.** El menú oficial ofrece App, Pro Web, Empresas y Store. Ninguna página enlaza docs, Swagger ni “desarrolladores”. Shalom Pro ofrece registros **manuales y masivos**, pago online, calculadora, historial y rastreo compartible. Shalom Empresas es un formulario comercial (RUC, volumen mensual, rubro) más un login de cliente. |
 | API no oficial | [shalom-api-peru.com](https://shalom-api-peru.com/) + [docs](https://shalom-api-peru.com/docs/). REST de terceros: `X-API-Key` pedida por WhatsApp + credenciales de `pro.shalom.pe`. Crea preguías reales, tracking, PDF por `ose_id`. El propio docs admite que hace «un login real» (90 s–2 min). **No es Shalom.** Riesgo de ToS, phishing y rotura. |
 | Auth oficial | Cuenta Shalom Pro / App (email + password). Desde 2026 la empresa exige login para rastrear ([comunicado LinkedIn](https://es.linkedin.com/pulse/refuerzo-en-la-plataforma-de-rastreo-env%C3%ADos-nueva-medida-jye8e)). |
 | Cómo toman pedidos | Agencia; pre-registro en Pro (24 h para dejar el bulto); Excel/formato masivo (tutorial oficial en LinkedIn); app. |
@@ -122,8 +124,9 @@ Endpoints internos del front de Shalom (no documentados, no usar): `https://serv
 | API pública | **No.** `site:olvacourier.com` API / desarrolladores / web service: vacío. Corporativo es un **formulario** ([/corporativo](https://www.olvacourier.com/corporativo/)). |
 | Cómo operan | [Registro de envíos en línea](https://www.olvacourier.com/preguntas-frecuentes/) + tutorial ([guía](https://www.olvacourier.com/como-registrar-un-envio-en-la-web-de-olva-paso-a-paso-guia/)). Recojo en **Zona de clientes**. Tracking web + app Play Store + Facebook + (01) 714 0909. WhatsApp 964 771 829. Clientes corporativos: usuario/contraseña para reportes (FAQ). Envíos masivos (>20) en tienda. |
 | Etiqueta | El flujo de registro pide imprimir y pegar el rótulo. |
-| API de contrato | Agencias (Vexsoluciones, `kom.pe`) afirman token + docs privadas tras contrato. **No hay PDF ni OpenAPI de Olva.** Tratarlo como «posible API partner no publicada». |
-| Evidencia | Oficial: portal y FAQ. API: solo secundario. |
+| Integración tecnológica (oficial, sin docs) | El home de Olva ofrece a empresas «infraestructura para grandes volúmenes de envío, pago al crédito, **integración tecnológica** y reportes detallados» ([olvacourier.com](https://www.olvacourier.com/)). Esa frase es de Olva. El canal para pedirla es el formulario corporativo, no un portal de developers. El FAQ corporativo solo documenta usuario/contraseña para **reportes** de envíos. |
+| API de contrato | Agencias (Vexsoluciones WooCommerce, `kom.pe`) afirman token + docs privadas tras contrato. **No hay PDF ni OpenAPI de Olva.** Tratarlo como «posible API partner no publicada; hay que pedírsela al comercial». |
+| Evidencia | Oficial: portal, FAQ y copy de «integración tecnológica». Contrato API: solo secundario. |
 
 ### 2.2 Urbano Perú (Urbano Express)
 
@@ -166,7 +169,7 @@ Same-day / next-day / Flex, no reemplazo de Marvisur nacional.
 | Campo | Hallazgo |
 | --- | --- |
 | Nombre | **PedidosYa Envíos**. PE: [envios.pedidosya.com.pe](https://envios.pedidosya.com.pe/). Docs [developers.pedidosya.com](https://developers.pedidosya.com/), OpenAPI [v3.json](https://developers.pedidosya.com/courier-api/v3.json), guía [courier-doc](https://developers.pedidosya.com/courier-doc/introduction). |
-| API | REST. Host `https://courier-api.pedidosya.com`. Estimate, confirm, create, list, details, tracking GPS, coverage, working zones, cancel, cash collection, PIN, proof of delivery, webhooks. |
+| API | REST. Host `https://courier-api.pedidosya.com`. Estimate, confirm, create, list, details, tracking GPS, coverage, working zones, cancel, cash collection, PIN, proof of delivery, **labels** (`/v3/shippings/labels` en la OpenAPI 3.0.0), webhooks. |
 | Auth | Token en `Authorization` (credenciales de cuenta PedidosYa Envíos). |
 | Perú | Sitio `.com.pe` y copy «Estamos entregando en Perú». La OpenAPI usa ejemplos UY; la cobertura real se valida con `/working-zones` o estimate. |
 | No confundir | [Partner API](https://developer.pedidosya.com/api-specifications) = catálogo/órdenes de restaurante (OAuth client credentials), no courier. |
@@ -257,6 +260,15 @@ Same-day / next-day / Flex, no reemplazo de Marvisur nacional.
 ### 2.15 Motorizado / «APIs de motorizado»
 
 No hay un estándar peruano «Motorizado API». El equivalente documentado es Urbaner, PedidosYa Envíos, Cabify Logistics, Chazki Tonny, 99minutos, Moova, inDrive (sin API).
+
+### 2.16 Fuera de alcance (aparecen en búsquedas, no sirven aquí)
+
+| Nombre | Por qué no entra |
+| --- | --- |
+| Envíoclick | API real, pero es **México** (`envioclick.com/mx`). |
+| Servientrega SOAP `web.servientrega.com:8081/GeneracionGuias.asmx` | Web service **Colombia**. Envíame mencionó Servientrega como operador PE en 2022; no hay portal PE de desarrolladores. |
+| Qayarix | Last-mile PE histórico (`qayarix.com`). Sin docs de API. LinkedIn lo muestra como empresa muy chica. |
+| Halcourier / Klimber | No son couriers peruanos de paquetería (Halcourier es otro mercado; Klimber es insurtech). |
 
 ---
 
@@ -352,6 +364,19 @@ Sin portal PE ni lista de Olva/Shalom en fuentes primarias revisadas. No usar co
 | `marvisuar` / «Marvisuar» | **Expreso Marvisur** (Arequipa Expreso Marvisur E.I.R.L.) | FAQ + schema.org del sitio |
 | `dinsides` / «Dinsides» | **Dinsides Courier** | dinsidescourier.com |
 
+### Qué pedirle al comercial si se quiere insistir con los tres actuales
+
+No hay portal. La única vía es contrato. Preguntas concretas, para no perder la llamada:
+
+1. ¿Existe API o SFTP/Excel de alta de envíos, o solo portal/WhatsApp?
+2. ¿Pueden crear guía, devolver PDF/ZPL y un tracking id estable?
+3. ¿Hay webhook de estado o solo consulta?
+4. ¿Auth: API key, usuario/clave, o login de humano?
+5. ¿Sandbox?
+6. Dinsides: el tarifario ya deja paquetes en agencia Olva/Shalom/Marvisur. ¿Eso es drop-off propio o solo un servicio de “llevar a la agencia”?
+
+Hasta que contesten por escrito, ZentoFact no tiene contra qué integrar.
+
 ---
 
 ## 5. Fuentes (todas las URLs usadas)
@@ -366,6 +391,8 @@ Sin portal PE ni lista de Olva/Shalom en fuentes primarias revisadas. No usar co
 - https://shalom.com.pe/proweb
 - https://shalom.com.pe/faq/envios_preguntas
 - https://pro.shalom.pe/
+- https://corp.shalom.pe/
+- https://cliente.shalom.pe/login
 - https://wordpress.shalom.com.pe/conoce-mas-de-shalom-pro/
 - https://play.google.com/store/apps/details?id=pe.com.shalom.overskull
 - https://www.linkedin.com/company/shalom-empresarial
