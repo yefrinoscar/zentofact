@@ -54,7 +54,7 @@ function ChannelTabTrigger({ value }: { value: ChannelTab }) {
   return (
     <TabsTrigger
       value={value}
-      className="h-full min-w-0 flex-1 rounded-none px-2 text-[13px] after:hidden data-active:bg-background sm:px-3"
+      className="h-full min-w-0 flex-1 rounded-none border-r border-border px-2 text-[13px] text-muted-foreground last:border-r-0 after:hidden data-[state=active]:bg-background data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-[inset_0_-2px_0_0_var(--foreground)] sm:px-3"
     >
       <ChannelMark channel={value} />
       <span className="truncate">{CHANNEL_MARK[value].label}</span>
@@ -829,9 +829,8 @@ export default function Companies() {
                   className="mt-2 gap-0 overflow-hidden rounded-lg border border-border"
                 >
                   <TabsList
-                    variant="line"
                     aria-label="Canales"
-                    className="h-11 w-full justify-stretch gap-0 rounded-none border-b border-border bg-muted/60 p-0"
+                    className="h-12! w-full justify-stretch gap-0 rounded-none rounded-t-lg bg-muted p-0"
                   >
                     <ChannelTabTrigger value="falabella" />
                     <ChannelTabTrigger value="ripley" />
