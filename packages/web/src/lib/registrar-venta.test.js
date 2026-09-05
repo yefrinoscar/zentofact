@@ -534,3 +534,20 @@ test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () 
   // El canal es un error de configuración, no un paso del recorrido.
   assert.equal(firstInvalidSaleStep(validSale({ channelAccountId: null })), null);
 });
+
+
+test('el regreso respeta el origen aun cuando el usuario puede acceder a ambas pantallas', async () => {
+  const { saleReturnPath } = await import('./registrar-venta.ts');
+  assert.equal(saleReturnPath('mis-ventas', true), '/mis-ventas');
+  assert.equal(saleReturnPath('orders', true), '/orders');
+  assert.equal(saleReturnPath(null, false), '/mis-ventas');
+  assert.equal(saleReturnPath('orders', false), '/mis-ventas');
+  assert.equal(saleReturnPath(null, true), '/orders');
+});
+
+test('la comisión del producto se multiplica por unidades y distingue cero de sin configurar', async () => {
+  const { saleProductCommission } = await import('./registrar-venta.ts');
+  assert.equal(saleProductCommission([{ commissionAmount: 7.5, quantity: 2 }, { commissionAmount: 3, quantity: 1 }]), 18);
+  assert.equal(saleProductCommission([{ commissionAmount: 0, quantity: 2 }]), 0);
+  assert.equal(saleProductCommission([{ quantity: 2 }]), undefined);
+});

@@ -106,3 +106,8 @@ test('la etiqueta de día no se desplaza por zona horaria', () => {
   assert.match(dayKeyLabel('2026-01-01'), /^1 ene/);
   assert.equal(dayKeyLabel('nope'), '');
 });
+
+test('la fila usa la comisión de los productos calculada por el servidor, incluso cero', () => {
+  assert.equal(saleListRow({ total: 200, commission: 15 }, 0).commission, 15);
+  assert.equal(saleListRow({ total: 200, commission: 0 }, 10).commission, 0);
+});

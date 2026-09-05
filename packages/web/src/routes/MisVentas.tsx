@@ -36,8 +36,7 @@ const integer = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 0 });
 function sortToQuery(sorting: SortingState): Pick<MisVentasQuery, 'sortBy' | 'sortDir'> {
   const [sort] = sorting;
   if (!sort) return { sortBy: DEFAULT_MIS_VENTAS_QUERY.sortBy, sortDir: DEFAULT_MIS_VENTAS_QUERY.sortDir };
-  // Commission is a fixed share of the total, so both columns share the server sort.
-  const sortBy: SalesSortBy = sort.id === 'total' || sort.id === 'commission' ? 'total' : 'orderedAt';
+  const sortBy: SalesSortBy = sort.id === 'total' || sort.id === 'commission' ? sort.id : 'orderedAt';
   return { sortBy, sortDir: sort.desc ? 'desc' : 'asc' };
 }
 
@@ -231,7 +230,7 @@ export default function MisVentas() {
         duration: null,
         action: {
           label: 'Reintentar',
-          onClick: () => navigate('/orders/nueva'),
+          onClick: () => navigate('/orders/nueva?from=mis-ventas'),
         },
       });
     }
@@ -254,7 +253,7 @@ export default function MisVentas() {
   return (
     <div className="space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="flex items-center justify-stretch sm:justify-end">
-        <Button type="button" className="h-11 w-full sm:h-9 sm:w-auto" onClick={() => navigate('/orders/nueva')}>
+        <Button type="button" className="h-11 w-full sm:h-9 sm:w-auto" onClick={() => navigate('/orders/nueva?from=mis-ventas')}>
           <Plus data-icon="inline-start" />
           Registrar venta
         </Button>

@@ -287,7 +287,7 @@ const apiHttp = {
     to?: string;
     limit?: number;
     offset?: number;
-    sortBy?: 'orderedAt' | 'total';
+    sortBy?: 'orderedAt' | 'total' | 'commission';
     sortDir?: 'asc' | 'desc';
   } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),

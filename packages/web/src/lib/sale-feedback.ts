@@ -17,6 +17,7 @@ export type OptimisticSale = {
   externalOrderNumber?: string | null;
   customer?: { name?: string | null } | null;
   total?: number | null;
+  commission?: number | null;
   metadata?: { paymentMethod?: string | null } | null;
   orderedAt?: string | null;
   createdAt?: string | null;
@@ -126,6 +127,7 @@ export function buildOptimisticSale(input: {
   orderNumber: string;
   customerName: string;
   total: number;
+  commission?: number;
   paymentMethod?: string;
   orderedAt?: string;
 }): OptimisticSale {
@@ -134,6 +136,7 @@ export function buildOptimisticSale(input: {
     externalOrderNumber: input.orderNumber,
     customer: { name: String(input.customerName || '').trim() },
     total: Number(input.total) || 0,
+    commission: input.commission,
     metadata: { paymentMethod: input.paymentMethod || 'despues' },
     orderedAt,
     createdAt: orderedAt,
@@ -143,11 +146,11 @@ export function buildOptimisticSale(input: {
 function bumpPeriod(
   period: OptimisticPeriod | undefined,
   total: number,
-  commissionPercent: number,
+  saleCommission: number,
 ) {
   const orders = (Number(period?.orders) || 0) + 1;
   const nextTotal = (Number(period?.total) || 0) + total;
-  const commission = Math.round(nextTotal * (Number(commissionPercent) || 0)) / 100;
+  const commission = Math.round(((Number(period?.commission) || 0) + saleCommission) * 100) / 100;
   return { orders, total: nextTotal, commission };
 }
 
@@ -171,6 +174,7 @@ export function applyOptimisticSale(
 ): OptimisticHome {
   const prepend = options.prepend !== false;
   const total = Number(sale.total) || 0;
+  const commission = sale.commission ?? Math.round(total * commissionPercent) / 100;
   const existing = Array.isArray(home?.orders) ? home.orders : [];
   const number = String(sale.externalOrderNumber || '').trim();
   const withoutDup = number
@@ -178,14 +182,14 @@ export function applyOptimisticSale(
     : existing;
   const saleDate = limaDateKey(sale.orderedAt || sale.createdAt || undefined, options.now || new Date());
   const daily = Array.isArray(home?.daily)
-    ? home.daily.map((day) => (day.date === saleDate ? { ...day, ...bumpPeriod(day, total, commissionPercent) } : day))
+    ? home.daily.map((day) => (day.date === saleDate ? { ...day, ...bumpPeriod(day, total, commission) } : day))
     : home?.daily;
   const limit = Number(home?.limit) || 0;
   const orders = prepend ? [sale, ...withoutDup] : existing;
   return {
     ...home,
-    today: bumpPeriod(home?.today, total, commissionPercent),
-    month: bumpPeriod(home?.month, total, commissionPercent),
+    today: bumpPeriod(home?.today, total, commission),
+    month: bumpPeriod(home?.month, total, commission),
     daily,
     orders: limit > 0 && orders.length > limit ? orders.slice(0, limit) : orders,
     ordersTotal: (Number(home?.ordersTotal) || withoutDup.length) + 1,
