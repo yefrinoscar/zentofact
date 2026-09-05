@@ -1,6 +1,7 @@
 // Emisión automática Falabella: boletas/facturas y notas de crédito.
 // Flujo: webhook (o cron) -> cola en Postgres -> worker emite INDIVIDUAL.
-// Cancelada/devuelta con comprobante aceptado -> nota de crédito.
+// Cancelada/devuelta completa con comprobante aceptado -> nota de crédito.
+// Un ítem cancelado junto a otro entregado no anula el comprobante entero.
 // Toda la lógica vive aquí (server); reusa @zentofact/core y el cliente Falabella. No toca el core.
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
@@ -33,7 +34,7 @@ import {
   normStatus,
 } from './auto-emission-policy.js';
 import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
-import { sendEmail } from './mailer.js';
+import { isMailerConfigured, sendEmail } from './mailer.js';
 import { listUsers } from './users.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
@@ -492,6 +493,7 @@ export async function getConfig() {
     paused,
     cron,
     alertEmails,
+    mailer: { configured: isMailerConfigured() },
     stats,
     // Base sin secret ni companyId; la URL real se arma por empresa en el servidor.
     webhookBase: `${publicApiBaseUrl()}/webhooks/falabella`,
@@ -997,24 +999,30 @@ async function processCreditNoteJob(job, { order, orderNumber, orderDate, setSte
   return { status: 'done', result: `nota de crédito ${numero} ACEPTADA`, boletaNumero: numero || null };
 }
 
+async function alertMailerOptions() {
+  const stored = await getAlertEmails();
+  return {
+    sendEmail,
+    listUsers,
+    configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
+    fallbackEmail: process.env.ADMIN_EMAIL,
+    log,
+  };
+}
+
 async function alertFailedEmission(job, { lastError, status } = {}) {
   try {
     const company = job.company || (await getCompany(job.company_id).catch(() => null))?.nombre || null;
-    const stored = await getAlertEmails();
     await notifyFailedEmissionIfNeeded({
       ...job,
       companyName: company,
       lastError: lastError || job.last_error,
       status: status || job.status,
     }, {
-      sendEmail,
-      listUsers,
-      configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
-      fallbackEmail: process.env.ADMIN_EMAIL,
+      ...(await alertMailerOptions()),
       markAlerted: async (item) => {
         await pool.query('update emission_jobs set alerted_at=now() where id=$1', [item.id]);
       },
-      log,
     });
   } catch (error) {
     log(`aviso de emisión error:`, error.message);
@@ -1100,14 +1108,17 @@ export async function processQueue(limit = 3) {
   return jobs.length;
 }
 
-export async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
+const FULL_CREDIT_NOTE_STATUS_SQL = '^(canceled|cancelled|cancelada|returned|devuelta)(\\|(canceled|cancelled|cancelada|returned|devuelta))*$';
+
+export async function enqueueLocalCreditNotes(companyId, alreadyQueued, updatedAfter = MIN_ORDER_DATE) {
   const rows = (await pool.query(
     `select distinct fo.order_number, fo.order_id
      from falabella_orders fo
      where fo.company_id=$1
        and fo.order_number is not null and fo.order_number <> ''
-       and fo.status ~* '(canceled|cancelled|cancelada|returned|devuelta)'
+       and fo.status ~* $3
        and coalesce(fo.falabella_created_at, fo.first_seen_at) >= $2
+       and coalesce(fo.falabella_updated_at, fo.last_seen_at, fo.falabella_created_at) >= $4
        and (
          exists (
            select 1 from boletas b
@@ -1126,7 +1137,7 @@ export async function enqueueLocalCreditNotes(companyId, alreadyQueued) {
            and cn.estado_sunat='ACEPTADO'
            and (b.order_number=fo.order_number or f.order_number=fo.order_number)
        )`,
-    [companyId, MIN_ORDER_DATE],
+    [companyId, MIN_ORDER_DATE, FULL_CREDIT_NOTE_STATUS_SQL, updatedAfter],
   )).rows;
   let enqueued = 0;
   for (const row of rows) {
@@ -1202,11 +1213,11 @@ export async function reconcile() {
         }
         if (orders.length < 100) break;
       }
-      const creditNoteAfter = MIN_ORDER_DATE.toISOString().slice(0, 10) + 'T00:00:00+00:00';
+      const creditNoteUpdatedAfter = createdAfter;
       for (const falabellaStatus of ['canceled', 'returned']) {
         for (let offset = 0; offset < 3000; offset += 100) {
           const resp = await client.getOrdersV2({
-            createdAfter: creditNoteAfter,
+            updatedAfter: creditNoteUpdatedAfter,
             limit: 100,
             offset,
             status: falabellaStatus,
@@ -1215,6 +1226,7 @@ export async function reconcile() {
           for (const order of orders) {
             const on = String(order?.OrderNumber || '').trim();
             if (!on || creditNoteKnown.has(on) || !invoiceKnown.has(on)) continue;
+            if (jobKindForStatus(normStatus(statusOfOrder(order))) !== JOB_KIND_CREDIT_NOTE) continue;
             const queued = await enqueueIfNeeded(company.id, on, 'cron', order.OrderId ? String(order.OrderId) : null, JOB_KIND_CREDIT_NOTE);
             if (queued.enqueued) {
               creditNoteKnown.add(on);
@@ -1229,7 +1241,7 @@ export async function reconcile() {
     }
 
     // Pedidos cancelados/devueltos ya guardados en local, aunque Falabella no responda.
-    const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown);
+    const localCreditNotes = await enqueueLocalCreditNotes(company.id, creditNoteKnown, rawAfter);
     creditNotesEnqueued += localCreditNotes;
     if (enqueued || creditNotesEnqueued) {
       log(`cron ${company.nombre}: ${enqueued} comprobantes y ${creditNotesEnqueued} notas de crédito encolados`);

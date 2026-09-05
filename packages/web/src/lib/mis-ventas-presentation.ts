@@ -48,6 +48,14 @@ export type SalespersonHome = {
   commissionPercent?: number;
 };
 
+export type SalespersonSaleItem = {
+  name?: string | null;
+  sku?: string | null;
+  quantity?: number | null;
+  imageUrl?: string | null;
+  shopSku?: string | null;
+};
+
 export type SalespersonSale = {
   externalOrderNumber?: string | null;
   customer?: { name?: string | null } | null;
@@ -56,6 +64,7 @@ export type SalespersonSale = {
   metadata?: { paymentMethod?: string | null } | null;
   orderedAt?: string | null;
   createdAt?: string | null;
+  items?: SalespersonSaleItem[] | null;
 };
 
 export type SalesSortBy = 'orderedAt' | 'total' | 'commission';
@@ -211,11 +220,42 @@ export function dayKeyLabel(dateKey?: string | null) {
   return DAY_LABEL.format(new Date(`${key}T12:00:00.000Z`)).replace('.', '');
 }
 
+export function saleProductSummary(items?: SalespersonSaleItem[] | null) {
+  const lines = (items || []).filter((item) => (
+    String(item?.name || '').trim() || String(item?.sku || '').trim()
+  ));
+  const first = lines[0];
+  if (!first) {
+    return { name: '', sku: '', imageUrl: null as string | null, shopSku: null as string | null, extraCount: 0 };
+  }
+  return {
+    name: String(first.name || '').trim() || String(first.sku || '').trim(),
+    sku: String(first.sku || '').trim(),
+    imageUrl: String(first.imageUrl || '').trim() || null,
+    shopSku: String(first.shopSku || '').trim() || null,
+    extraCount: Math.max(lines.length - 1, 0),
+  };
+}
+
+export function saleProductTitle(product: string, extraCount = 0) {
+  const name = String(product || '').trim();
+  if (!name) return '';
+  if (extraCount <= 0) return name;
+  return `${name} y ${extraCount} más`;
+}
+
 export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
   const total = Number(order.total) || 0;
+  const product = saleProductSummary(order.items);
   return {
     number: String(order.externalOrderNumber || '').trim() || '—',
     customer: String(order.customer?.name || '').trim() || 'Sin nombre',
+    product: product.name,
+    productTitle: saleProductTitle(product.name, product.extraCount),
+    sku: product.sku,
+    imageUrl: product.imageUrl,
+    shopSku: product.shopSku,
+    extraCount: product.extraCount,
     total,
     commission: order.commission ?? estimateCommission(total, commissionPercent),
     payment: paymentMethodLabel(order.metadata?.paymentMethod),

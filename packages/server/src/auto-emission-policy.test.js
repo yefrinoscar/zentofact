@@ -5,6 +5,7 @@ import {
   JOB_KIND_INVOICE,
   decideCreditNoteJob,
   isCreditNoteStatus,
+  isPartialCreditNoteStatus,
   isReadyStatus,
   jobKindForStatus,
 } from './auto-emission-policy.js';
@@ -28,9 +29,23 @@ test('cancelada o devuelta encolan nota de crédito, no boleta', () => {
   assert.equal(jobKindForStatus('returned'), JOB_KIND_CREDIT_NOTE);
   assert.equal(jobKindForStatus('devuelta'), JOB_KIND_CREDIT_NOTE);
   assert.equal(jobKindForStatus('canceled|canceled'), JOB_KIND_CREDIT_NOTE);
+  assert.equal(jobKindForStatus('canceled|returned'), JOB_KIND_CREDIT_NOTE);
   assert.equal(isCreditNoteStatus('failed'), false);
   assert.equal(jobKindForStatus('pending'), null);
   assert.equal(jobKindForStatus('failed'), null);
+});
+
+test('un ítem cancelado o devuelto junto a otro vigente no anula el comprobante entero', () => {
+  assert.equal(isPartialCreditNoteStatus('delivered|canceled'), true);
+  assert.equal(isPartialCreditNoteStatus('shipped|returned'), true);
+  assert.equal(isPartialCreditNoteStatus('delivered|returned'), true);
+  assert.equal(isCreditNoteStatus('delivered|canceled'), false);
+  assert.equal(jobKindForStatus('delivered|canceled'), null);
+  assert.equal(jobKindForStatus('shipped|canceled'), null);
+  assert.equal(jobKindForStatus('delivered|returned'), null);
+  const decided = decideCreditNoteJob({ status: 'delivered|canceled', boleta });
+  assert.equal(decided.action, 'skip');
+  assert.match(decided.result, /mixto/);
 });
 
 test('sin boleta ni factura aceptada no corresponde nota de crédito', () => {

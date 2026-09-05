@@ -435,6 +435,11 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/insumos/movements${qs(filter)}`),
+  getInsumoAlertEmails: () => req('/insumos/alerts'),
+  setInsumoAlertEmails: (emails: string | string[]) => req('/insumos/alerts', {
+    method: 'PUT',
+    body: JSON.stringify({ emails }),
+  }),
 
   // Empresas
   listCompanies: () => req('/companies'),

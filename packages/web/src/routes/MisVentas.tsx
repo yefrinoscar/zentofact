@@ -15,6 +15,7 @@ import {
   type SalespersonHome,
   type SalespersonSale,
 } from '../lib/mis-ventas-presentation';
+import { ProductPhoto } from './registrar-venta/widgets';
 import {
   humanizeSaleError,
   registeredFromMisVentasState,
@@ -64,10 +65,13 @@ function MobileSalesList({
       <ul className="divide-y divide-border" aria-hidden>
         {Array.from({ length: 5 }, (_, index) => (
           <li key={index} className="flex items-start justify-between gap-3 py-3">
-            <div className="flex-1 space-y-2">
-              <div className="h-4 w-28 animate-pulse rounded bg-muted" />
-              <div className="h-3 w-40 animate-pulse rounded bg-muted" />
-              <div className="h-3 w-32 animate-pulse rounded bg-muted" />
+            <div className="flex min-w-0 flex-1 items-start gap-2.5">
+              <div className="size-9 shrink-0 animate-pulse rounded-md bg-muted" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+                <div className="h-3 w-40 animate-pulse rounded bg-muted" />
+                <div className="h-3 w-32 animate-pulse rounded bg-muted" />
+              </div>
             </div>
             <div className="h-4 w-16 animate-pulse rounded bg-muted" />
           </li>
@@ -88,10 +92,15 @@ function MobileSalesList({
               highlighted && '-mx-2 rounded-lg bg-primary/8 px-2',
             )}
           >
-            <div className="min-w-0">
-              <p className="truncate font-medium">{row.number}</p>
-              <p className="truncate text-sm text-muted-foreground">{row.customer}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{row.payment} · {row.date}</p>
+            <div className="flex min-w-0 items-start gap-2.5">
+              <ProductPhoto url={row.imageUrl} shopSku={row.shopSku} sku={row.sku} name={row.productTitle || row.number} size="sm" />
+              <div className="min-w-0">
+                <p className="line-clamp-2 font-medium leading-5">{row.productTitle || row.number}</p>
+                <p className="truncate text-sm text-muted-foreground">
+                  {row.productTitle ? `${row.number} · ${row.customer}` : row.customer}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{row.payment} · {row.date}</p>
+              </div>
             </div>
             <div className="shrink-0 text-right">
               <p className="text-sm font-semibold tabular-nums">{formatSaleMoney(row.total)}</p>
@@ -153,13 +162,19 @@ export default function MisVentas() {
       header: 'Venta',
       cell: ({ row }) => {
         const highlighted = Boolean(highlightOrder) && row.original.number === highlightOrder;
+        const sale = row.original;
         return (
-          <div className="min-w-0">
-            <p className="flex items-center gap-2 font-medium">
-              <span className="truncate">{row.original.number}</span>
-              {highlighted ? <Badge variant="secondary" className="shrink-0">Nueva</Badge> : null}
-            </p>
-            <p className="truncate text-sm text-muted-foreground">{row.original.customer}</p>
+          <div className="flex min-w-0 items-start gap-2.5">
+            <ProductPhoto url={sale.imageUrl} shopSku={sale.shopSku} sku={sale.sku} name={sale.productTitle || sale.number} size="sm" />
+            <div className="min-w-0">
+              <p className="flex items-start gap-2 font-medium">
+                <span className="line-clamp-2 leading-5">{sale.productTitle || sale.number}</span>
+                {highlighted ? <Badge variant="secondary" className="shrink-0">Nueva</Badge> : null}
+              </p>
+              <p className="truncate text-sm text-muted-foreground">
+                {sale.productTitle ? `${sale.number} · ${sale.customer}` : sale.customer}
+              </p>
+            </div>
           </div>
         );
       },
@@ -285,11 +300,11 @@ export default function MisVentas() {
           skeleton="plain"
           header={<p className="text-sm text-muted-foreground">{firstLoad ? 'Cargando ventas…' : countLabel}</p>}
           columnClassNames={{
-            sale: 'w-[34%]',
-            orderedAt: 'w-[18%]',
-            payment: 'w-[16%]',
-            total: 'w-[16%] text-right',
-            commission: 'w-[16%] text-right',
+            sale: 'w-[42%]',
+            orderedAt: 'w-[16%]',
+            payment: 'w-[14%]',
+            total: 'w-[14%] text-right',
+            commission: 'w-[14%] text-right',
           }}
           cellClassNames={{
             sale: 'whitespace-normal',

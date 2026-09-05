@@ -19,23 +19,49 @@ export function isPendingStatus(status) {
   return normStatus(status).includes('pending');
 }
 
+function statusParts(status) {
+  return normStatus(status).split('|').map((part) => part.trim()).filter(Boolean);
+}
+
+function partIsCanceled(part) {
+  return part.includes('canceled') || part.includes('cancelled') || part.includes('cancelada');
+}
+
+function partIsReturned(part) {
+  return part.includes('returned') || part.includes('devuelta');
+}
+
+function partIsCreditNote(part) {
+  return partIsCanceled(part) || partIsReturned(part);
+}
+
 export function isCanceledStatus(status) {
-  const key = normStatus(status);
-  return key.includes('canceled') || key.includes('cancelled') || key.includes('cancelada');
+  const parts = statusParts(status);
+  return parts.length > 0 && parts.every(partIsCanceled);
 }
 
 export function isReturnedStatus(status) {
-  const key = normStatus(status);
-  return key.includes('returned') || key.includes('devuelta');
+  const parts = statusParts(status);
+  return parts.length > 0 && parts.every(partIsReturned);
 }
 
+/** Cancelada/devuelta completa. Un ítem cancelado junto a otro entregado no cuenta. */
 export function isCreditNoteStatus(status) {
-  return isCanceledStatus(status) || isReturnedStatus(status);
+  const parts = statusParts(status);
+  return parts.length > 0 && parts.every(partIsCreditNote);
+}
+
+/** Hay ítems vigentes y otros cancelados/devueltos: no se anula el comprobante entero. */
+export function isPartialCreditNoteStatus(status) {
+  const parts = statusParts(status);
+  if (parts.length < 2) return false;
+  return parts.some(partIsCreditNote) && !parts.every(partIsCreditNote);
 }
 
 /** Qué job encolar según el estado de Falabella. null = no encolar. */
 export function jobKindForStatus(status) {
   if (isCreditNoteStatus(status)) return JOB_KIND_CREDIT_NOTE;
+  if (isPartialCreditNoteStatus(status)) return null;
   if (isReadyStatus(status)) return JOB_KIND_INVOICE;
   return null;
 }
@@ -81,6 +107,12 @@ export function decideCreditNoteJob({
   }
 
   const currentStatus = normStatus(status);
+  if (isPartialCreditNoteStatus(currentStatus)) {
+    return {
+      action: 'skip',
+      result: `estado mixto "${currentStatus}": hay ítems vigentes; no se emite nota de crédito de anulación completa`,
+    };
+  }
   if (!isCreditNoteStatus(currentStatus)) {
     if (isPendingStatus(currentStatus) || isReadyStatus(currentStatus)) {
       return { action: 'retry', error: `estado "${currentStatus || 'desconocido'}" aún no pide nota de crédito` };

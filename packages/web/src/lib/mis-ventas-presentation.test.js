@@ -8,6 +8,7 @@ import {
   paymentMixSlices,
   productivityStats,
   saleListRow,
+  saleProductTitle,
   salespersonKpis,
 } from './mis-ventas-presentation.ts';
 
@@ -31,10 +32,36 @@ test('la fila de venta muestra número, cliente, total, comisión, pago y fecha'
   }, 10);
   assert.equal(row.number, 'VTA-123');
   assert.equal(row.customer, 'Lucía');
+  assert.equal(row.product, '');
+  assert.equal(row.productTitle, '');
+  assert.equal(row.imageUrl, null);
   assert.equal(row.total, 85.5);
   assert.equal(row.commission, 8.55);
   assert.equal(row.payment, 'Yape / Plin');
   assert.ok(row.date);
+});
+
+test('la fila de venta toma el producto y la foto del primer ítem', () => {
+  const row = saleListRow({
+    externalOrderNumber: '2609050246',
+    customer: { name: 'Alexander' },
+    total: 25,
+    items: [
+      { name: 'Manta térmica AG301', sku: 'AG301', quantity: 1, imageUrl: '/seed/ag301.svg' },
+      { name: 'Bolso HOG025', sku: 'HOG025', quantity: 1, imageUrl: '/seed/hog025.svg' },
+    ],
+  });
+  assert.equal(row.product, 'Manta térmica AG301');
+  assert.equal(row.productTitle, 'Manta térmica AG301 y 1 más');
+  assert.equal(row.sku, 'AG301');
+  assert.equal(row.imageUrl, '/seed/ag301.svg');
+  assert.equal(row.extraCount, 1);
+});
+
+test('el título del producto nombra las líneas extra en palabras del vendedor', () => {
+  assert.equal(saleProductTitle('Manta térmica'), 'Manta térmica');
+  assert.equal(saleProductTitle('Manta térmica', 2), 'Manta térmica y 2 más');
+  assert.equal(saleProductTitle(''), '');
 });
 
 test('un método de pago desconocido queda como Sin dato', () => {

@@ -32,6 +32,8 @@ const { localWebOrigins } = await import('./local-web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 const insumos = await import('./insumos.js');
+const insumoLowStockAlert = await import('./insumo-low-stock-alert.js');
+const { sendEmail } = await import('./mailer.js');
 await insumos.ensureTables();
 if (shouldSeedPreview()) {
   const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
@@ -878,6 +880,24 @@ app.put('/system/config/:key', requireSuperadmin(), async (c) => {
   }
 });
 
+async function notifyInsumoLowStock(result) {
+  const current = result?.insumo;
+  const previous = result?.previous;
+  if (!current) return;
+  try {
+    const stored = await insumos.getAlertEmails();
+    await insumoLowStockAlert.notifyInsumoLowStockIfNeeded({ previous, current }, {
+      sendEmail,
+      listUsers: users.listUsers,
+      configuredEmails: stored.length ? stored : process.env.INSUMO_LOW_STOCK_ALERT_EMAIL,
+      fallbackEmail: process.env.ADMIN_EMAIL,
+      log: (...args) => console.warn('[insumos]', ...args),
+    });
+  } catch (error) {
+    console.warn('[insumos] aviso stock bajo:', error?.message || error);
+  }
+}
+
 app.get('/insumos', async (c) => {
   try {
     return ok(c, await insumos.listInsumos({
@@ -888,6 +908,15 @@ app.get('/insumos', async (c) => {
       limit: c.req.query('limit'),
       offset: c.req.query('offset'),
     }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/insumos/alerts', async (c) => {
+  try { return ok(c, { alertEmails: await insumos.getAlertEmails() }); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.put('/insumos/alerts', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await insumos.setAlertEmails(body.emails ?? body.alertEmails ?? ''));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/insumos/movements', async (c) => {
@@ -903,10 +932,19 @@ app.post('/insumos', async (c) => {
   try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/insumos/:id', async (c) => {
-  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try {
+    const result = await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'));
+    await notifyInsumoLowStock(result);
+    return ok(c, result.insumo);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/insumos/:id/adjust', async (c) => {
-  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try {
+    const result = await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'));
+    await notifyInsumoLowStock(result);
+    const { previous: _previous, ...publicResult } = result;
+    return ok(c, publicResult);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──
