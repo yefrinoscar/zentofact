@@ -61,7 +61,7 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <section id={id} className="space-y-4">
+    <section id={id} className="space-y-4 border-t border-border pt-8 first:border-t-0 first:pt-0">
       <div className="flex items-center gap-2">
         {channel ? <ChannelMark channel={channel} /> : null}
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
@@ -1006,8 +1006,10 @@ export default function Companies() {
                   {field('Nombre', 'nombre')}
                   {field('Razón social', 'razonSocial')}
                   {field('Nombre comercial', 'nombreComercial')}
-                  {field('Ubigeo', 'ubigeo')}
-                  <div className="sm:col-span-2">{field('Dirección', 'direccion')}</div>
+                  <div className="sm:col-span-2 grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_8.5rem]">
+                    {field('Dirección', 'direccion')}
+                    {field('Ubigeo', 'ubigeo')}
+                  </div>
                 </div>
               </FormSection>
 
