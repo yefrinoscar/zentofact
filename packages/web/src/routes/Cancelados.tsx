@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, ImageIcon, Loader2, Maximize2, Minus, Plus, Search } from 'lucide-react';
+import { Ban, ImageIcon, Loader2, Maximize2, Search } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
@@ -17,11 +17,14 @@ import {
   returnDecisionHelper,
   returnDecisionSummary,
   returnOutcomeLabel,
+  returnUnitLabel,
+  returnUnits,
   setReturnLineStock,
-  nudgeReturnLineMerma,
+  setReturnUnit,
   stockApprovalLabel,
   type CancellationKind,
   type ReturnLineDecision,
+  type ReturnUnitDestination,
 } from '../lib/canceled-orders-presentation';
 import { sellerShortName } from '../lib/seller-name';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
@@ -165,12 +168,16 @@ function productLines(items: CanceledOrder['items'] = []) {
 function pendingReturnDecisions(order: CanceledOrder | null): ReturnLineDecision[] {
   return productLines(order?.items)
     .filter((item) => item.approvalStatus === 'pending' && item.orderItemId)
-    .map((item) => ({
-      orderItemId: Number(item.orderItemId),
-      quantity: Number(item.quantity || 0),
-      stockQuantity: Number(item.quantity || 0),
-      mermaQuantity: 0,
-    }));
+    .map((item) => {
+      const quantity = Number(item.quantity || 0);
+      return {
+        orderItemId: Number(item.orderItemId),
+        quantity,
+        stockQuantity: quantity,
+        mermaQuantity: 0,
+        units: Array.from({ length: quantity }, () => 'stock' as const),
+      };
+    });
 }
 
 function ProductThumb({
@@ -234,68 +241,39 @@ function keepWhenStackedDialog(event: Event, previewOpen: boolean) {
   }
 }
 
-function ReturnDestination({
-  label,
-  count,
-  quantity,
+function DestinationChoice({
+  destination,
   selected,
-  tone,
   disabled,
+  unitLabel,
   onSelect,
-  onNudge,
 }: {
-  label: string;
-  count: number;
-  quantity: number;
+  destination: ReturnUnitDestination;
   selected: boolean;
-  tone: 'stock' | 'merma';
   disabled: boolean;
+  unitLabel: string;
   onSelect: () => void;
-  onNudge: (delta: number) => void;
 }) {
-  const canSplit = quantity > 1;
+  const merma = destination === 'merma';
+  const label = merma ? 'Merma' : 'A stock';
   return (
-    <div className="min-w-0 space-y-1.5">
-      <Button
-        type="button"
-        variant={selected ? 'default' : 'outline'}
-        disabled={disabled}
-        onClick={onSelect}
-        aria-pressed={selected}
-        className={cn(
-          'h-auto w-full flex-col gap-0.5 py-2.5 whitespace-normal',
-          tone === 'merma' && selected && 'bg-amber-600 text-white hover:bg-amber-600/90',
-          tone === 'merma' && !selected && 'border-amber-300 text-amber-950 hover:bg-amber-50',
-        )}
-      >
-        <span>{label}</span>
-        <span className="text-xs font-normal tabular-nums opacity-90">{count} u</span>
-      </Button>
-      {canSplit ? (
-        <div className="flex justify-center gap-1">
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            disabled={disabled || count <= 0}
-            aria-label={`Quitar 1 de ${label}`}
-            onClick={() => onNudge(-1)}
-          >
-            <Minus />
-          </Button>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            disabled={disabled || count >= quantity}
-            aria-label={`Sumar 1 a ${label}`}
-            onClick={() => onNudge(1)}
-          >
-            <Plus />
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    <Button
+      type="button"
+      size="xs"
+      variant={selected ? 'default' : 'outline'}
+      disabled={disabled}
+      onClick={onSelect}
+      aria-pressed={selected}
+      aria-label={`${label} unidad ${unitLabel}`}
+      className={cn(
+        merma && selected && 'border-rose-600 bg-rose-600 text-white hover:bg-rose-600/90',
+        merma && !selected && 'border-rose-200 text-rose-800 hover:bg-rose-50 hover:text-rose-900',
+        !merma && selected && 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600/90',
+        !merma && !selected && 'border-emerald-200 text-emerald-800 hover:bg-emerald-50 hover:text-emerald-900',
+      )}
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -725,7 +703,7 @@ export default function Cancelados() {
 
       <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending && !imagePreview) { setApproveOrder(null); setApproveDecisions([]); } }}>
         <DialogContent
-          className="sm:max-w-xl"
+          className="sm:max-w-2xl"
           onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
@@ -734,7 +712,7 @@ export default function Cancelados() {
           <DialogHeader>
             <DialogTitle>Revisar devolución</DialogTitle>
             <DialogDescription>
-              Marca stock o merma en cada producto.
+              Marca stock o merma en cada unidad.
             </DialogDescription>
           </DialogHeader>
           {approveDecisions.length > 1 || approveDecisions.some((line) => line.quantity > 1) ? (
@@ -743,6 +721,7 @@ export default function Cancelados() {
                 type="button"
                 size="xs"
                 variant="outline"
+                className="border-emerald-200 text-emerald-800 hover:bg-emerald-50"
                 disabled={approveMutation.isPending}
                 onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, line.quantity)))}
               >
@@ -752,6 +731,7 @@ export default function Cancelados() {
                 type="button"
                 size="xs"
                 variant="outline"
+                className="border-rose-200 text-rose-800 hover:bg-rose-50"
                 disabled={approveMutation.isPending}
                 onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, 0)))}
               >
@@ -759,60 +739,72 @@ export default function Cancelados() {
               </Button>
             </div>
           ) : null}
-          <div className="divide-y">
-            {approveDecisions.map((line) => {
-              const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
-                name: null,
-                sku: null,
-                quantity: line.quantity,
-              };
-              return (
-                <div key={line.orderItemId} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-                  <ProductThumb item={item} onOpen={setImagePreview} />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div>
-                      <p className="text-sm leading-5">{item.name || item.sku || '—'}</p>
-                      {item.sku ? (
-                        <p className="font-mono text-xs text-muted-foreground">
-                          {item.sku}
-                          {Number(line.quantity) > 0 ? ` · ${Number(line.quantity)} u` : ''}
-                        </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground">
+                  <th className="pb-2 pr-3 font-medium">Producto</th>
+                  <th className="pb-2 pl-5 font-medium">Unidad</th>
+                  <th className="pb-2 font-medium">Destino</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approveDecisions.flatMap((line) => {
+                  const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
+                    name: null,
+                    sku: null,
+                    quantity: line.quantity,
+                  };
+                  const units = returnUnits(line);
+                  return units.map((destination, unitIndex) => (
+                    <tr
+                      key={`${line.orderItemId}-${unitIndex}`}
+                      className={cn(
+                        'align-middle',
+                        unitIndex === 0 ? 'border-t border-border' : null,
+                      )}
+                    >
+                      {unitIndex === 0 ? (
+                        <td rowSpan={Math.max(1, line.quantity)} className="py-2.5 pr-3 align-top">
+                          <div className="flex items-start gap-2.5">
+                            <ProductThumb item={item} onOpen={setImagePreview} />
+                            <div className="min-w-0">
+                              <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
+                              {item.sku ? (
+                                <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </td>
                       ) : null}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ReturnDestination
-                        label="A stock"
-                        count={line.stockQuantity}
-                        quantity={line.quantity}
-                        selected={line.stockQuantity > 0}
-                        tone="stock"
-                        disabled={approveMutation.isPending}
-                        onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity) : row
-                        )))}
-                        onNudge={(delta) => setApproveDecisions((current) => current.map((row) => (
-                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.stockQuantity + delta) : row
-                        )))}
-                      />
-                      <ReturnDestination
-                        label="Merma"
-                        count={line.mermaQuantity}
-                        quantity={line.quantity}
-                        selected={line.mermaQuantity > 0}
-                        tone="merma"
-                        disabled={approveMutation.isPending}
-                        onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, 0) : row
-                        )))}
-                        onNudge={(delta) => setApproveDecisions((current) => current.map((row) => (
-                          row.orderItemId === line.orderItemId ? nudgeReturnLineMerma(row, delta) : row
-                        )))}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                      <td className="py-2 pl-5 font-mono text-xs text-muted-foreground">
+                        {returnUnitLabel(unitIndex, line.quantity)}
+                      </td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          <DestinationChoice
+                            destination="stock"
+                            selected={destination === 'stock'}
+                            disabled={approveMutation.isPending}
+                            onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                              row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
+                            )))}
+                          />
+                          <DestinationChoice
+                            destination="merma"
+                            selected={destination === 'merma'}
+                            disabled={approveMutation.isPending}
+                            onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                              row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
+                            )))}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ));
+                })}
+              </tbody>
+            </table>
           </div>
           <p className="text-sm text-muted-foreground">{returnDecisionHelper(approveSummary)}</p>
           {approveError && (

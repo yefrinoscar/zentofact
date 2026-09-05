@@ -36,11 +36,14 @@ export type ReturnLineItem = {
   mermaQuantity?: number | null;
 };
 
+export type ReturnUnitDestination = 'stock' | 'merma';
+
 export type ReturnLineDecision = {
   orderItemId: number;
   quantity: number;
   stockQuantity: number;
   mermaQuantity: number;
+  units?: ReturnUnitDestination[];
 };
 
 export function extraProductsLabel(count: number) {
@@ -82,7 +85,7 @@ export function returnDecisionHelper(summary: { stock: number; merma: number }) 
   }
   if (merma > 0) return `${unitLabel(merma)} a merma.`;
   if (stock > 0) return `${unitLabel(stock)} a stock.`;
-  return 'Marca stock o merma en cada producto.';
+  return 'Marca stock o merma en cada unidad.';
 }
 
 export function returnLineDecisionLabel(line: Pick<ReturnLineDecision, 'stockQuantity' | 'mermaQuantity'>) {
@@ -97,11 +100,49 @@ export function returnLineDecisionLabel(line: Pick<ReturnLineDecision, 'stockQua
 export function setReturnLineStock(line: ReturnLineDecision, stockQuantity: number): ReturnLineDecision {
   const quantity = Number(line.quantity);
   const stock = clampQuantity(stockQuantity, 0, quantity);
-  return { ...line, stockQuantity: stock, mermaQuantity: quantity - stock };
+  const merma = quantity - stock;
+  return {
+    ...line,
+    stockQuantity: stock,
+    mermaQuantity: merma,
+    units: [
+      ...Array.from({ length: stock }, () => 'stock' as const),
+      ...Array.from({ length: merma }, () => 'merma' as const),
+    ],
+  };
 }
 
-export function nudgeReturnLineMerma(line: ReturnLineDecision, delta: number): ReturnLineDecision {
-  return setReturnLineStock(line, Number(line.stockQuantity) - delta);
+export function returnUnits(line: ReturnLineDecision): ReturnUnitDestination[] {
+  const quantity = Math.max(0, Number(line.quantity) || 0);
+  if (Array.isArray(line.units) && line.units.length === quantity) return line.units;
+  const stock = clampQuantity(Number(line.stockQuantity || 0), 0, quantity);
+  return [
+    ...Array.from({ length: stock }, () => 'stock' as const),
+    ...Array.from({ length: quantity - stock }, () => 'merma' as const),
+  ];
+}
+
+export function setReturnUnit(
+  line: ReturnLineDecision,
+  unitIndex: number,
+  destination: ReturnUnitDestination,
+): ReturnLineDecision {
+  const quantity = Number(line.quantity);
+  const units = returnUnits(line).slice();
+  if (unitIndex < 0 || unitIndex >= quantity) return line;
+  units[unitIndex] = destination;
+  const stockQuantity = units.filter((unit) => unit === 'stock').length;
+  return {
+    ...line,
+    units,
+    stockQuantity,
+    mermaQuantity: quantity - stockQuantity,
+  };
+}
+
+export function returnUnitLabel(unitIndex: number, quantity: number) {
+  if (Number(quantity) <= 1) return '1';
+  return String(unitIndex + 1);
 }
 
 function unitLabel(count: number) {

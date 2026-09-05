@@ -14,7 +14,9 @@ import {
   returnDecisionHelper,
   returnLineDecisionLabel,
   setReturnLineStock,
-  nudgeReturnLineMerma,
+  setReturnUnit,
+  returnUnits,
+  returnUnitLabel,
 } from './canceled-orders-presentation.ts';
 
 test('distingue cancelada de devuelta', () => {
@@ -36,21 +38,28 @@ test('ofrece ver todos los productos y resume stock contra merma', () => {
   assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 0, mermaQuantity: 2 }]), 'Merma');
   assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 1, mermaQuantity: 1 }]), 'Stock y merma');
   const split = setReturnLineStock({ orderItemId: 9, quantity: 3, stockQuantity: 3, mermaQuantity: 0 }, 1);
-  assert.deepEqual(split, { orderItemId: 9, quantity: 3, stockQuantity: 1, mermaQuantity: 2 });
+  assert.deepEqual(split, {
+    orderItemId: 9,
+    quantity: 3,
+    stockQuantity: 1,
+    mermaQuantity: 2,
+    units: ['stock', 'merma', 'merma'],
+  });
   assert.deepEqual(returnDecisionSummary([split]), { stock: 1, merma: 2, balanced: true });
   assert.equal(returnDecisionHelper({ stock: 1, merma: 2 }), '1 u a stock. 2 u a merma.');
-  assert.equal(returnDecisionHelper({ stock: 0, merma: 0 }), 'Marca stock o merma en cada producto.');
+  assert.equal(returnDecisionHelper({ stock: 0, merma: 0 }), 'Marca stock o merma en cada unidad.');
   assert.equal(
     returnLineDecisionLabel({ stockQuantity: 1, mermaQuantity: 1 }),
     '1 u a stock · 1 u a merma',
   );
   const twoUnits = { orderItemId: 9, quantity: 2, stockQuantity: 2, mermaQuantity: 0 };
-  assert.deepEqual(nudgeReturnLineMerma(twoUnits, 1), {
-    orderItemId: 9, quantity: 2, stockQuantity: 1, mermaQuantity: 1,
-  });
-  assert.deepEqual(setReturnLineStock(twoUnits, 0), {
-    orderItemId: 9, quantity: 2, stockQuantity: 0, mermaQuantity: 2,
-  });
+  const mermaSecond = setReturnUnit(twoUnits, 1, 'merma');
+  assert.deepEqual(returnUnits(mermaSecond), ['stock', 'merma']);
+  assert.equal(mermaSecond.stockQuantity, 1);
+  assert.equal(mermaSecond.mermaQuantity, 1);
+  assert.equal(returnUnitLabel(0, 2), '1');
+  assert.equal(returnUnitLabel(1, 2), '2');
+  assert.deepEqual(setReturnLineStock(twoUnits, 0).units, ['merma', 'merma']);
 });
 
 test('describe el comprobante y la nota de crédito como en Falabella', () => {
