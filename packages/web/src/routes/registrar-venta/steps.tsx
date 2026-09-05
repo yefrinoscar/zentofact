@@ -20,9 +20,14 @@ import {
   DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
   SALE_SOURCES,
-  clampSaleQuantity,
+  applySaleMoneyInput,
+  applySaleQuantityInput,
+  commitSaleMoneyInput,
+  commitSaleQuantityInput,
   limaTodayKey,
   saleLineProfit,
+  saleMoneyInputValue,
+  saleQuantityInputValue,
   type DocumentRequest,
 } from '../../lib/registrar-venta';
 import {
@@ -277,14 +282,15 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                     <Label htmlFor={`qty-${line.id}`} className="text-[11px] text-muted-foreground">Cant.</Label>
                     <Input
                       id={`qty-${line.id}`}
-                      type="number"
+                      type="text"
                       inputMode="numeric"
-                      min={1}
-                      max={line.available ?? undefined}
-                      value={line.quantity}
-                      onChange={(event) => view.updateLine(line.id, {
-                        quantity: clampSaleQuantity(event.target.value, line.available),
-                      })}
+                      autoComplete="off"
+                      value={saleQuantityInputValue(line)}
+                      onChange={(event) => {
+                        const next = applySaleQuantityInput(event.target.value, line.available);
+                        if (next) view.updateLine(line.id, next);
+                      }}
+                      onBlur={(event) => view.updateLine(line.id, commitSaleQuantityInput(event.target.value, line.available))}
                       className={cn('h-10 bg-background sm:h-9', NUMBER_INPUT)}
                     />
                   </div>
@@ -292,12 +298,15 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                     <Label htmlFor={`price-${line.id}`} className="text-[11px] text-muted-foreground">Precio</Label>
                     <Input
                       id={`price-${line.id}`}
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      min={0}
-                      step="0.01"
-                      value={line.unitPrice}
-                      onChange={(event) => view.updateLine(line.id, { unitPrice: Math.max(0, Number(event.target.value || 0)) })}
+                      autoComplete="off"
+                      value={saleMoneyInputValue(line)}
+                      onChange={(event) => {
+                        const next = applySaleMoneyInput(event.target.value);
+                        if (next) view.updateLine(line.id, next);
+                      }}
+                      onBlur={(event) => view.updateLine(line.id, commitSaleMoneyInput(event.target.value))}
                       className={cn('h-10 bg-background tabular-nums sm:h-9', NUMBER_INPUT)}
                     />
                   </div>

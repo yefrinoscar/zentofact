@@ -81,6 +81,10 @@ export type SaleLine = {
   unitPrice: number;
   quantity: number;
   available?: number | null;
+  /** Texto mientras se edita Cant. Vacío se muestra vacío; no se fuerza a 1. */
+  quantityDraft?: string;
+  /** Texto mientras se edita Precio. Vacío se muestra vacío; no se fuerza a 0. */
+  unitPriceDraft?: string;
 };
 
 export type DropoffPlace = {
@@ -252,6 +256,47 @@ export function clampSaleQuantity(quantity: number | string, available?: number 
   const stock = Math.max(0, Math.floor(Number(available)));
   if (stock < 1) return qty;
   return Math.min(qty, stock);
+}
+
+const MONEY_DRAFT = /^\d*[.,]?\d{0,2}$/;
+
+export function saleQuantityInputValue(line: Pick<SaleLine, 'quantity' | 'quantityDraft'>) {
+  return line.quantityDraft ?? String(line.quantity);
+}
+
+export function saleMoneyInputValue(line: Pick<SaleLine, 'unitPrice' | 'unitPriceDraft'>) {
+  return line.unitPriceDraft ?? String(line.unitPrice);
+}
+
+/** Entero o vacío. Rechaza letras y decimales. El 0 se queda en el input para poder borrarlo. */
+export function applySaleQuantityInput(raw: string, available?: number | null): Partial<SaleLine> | null {
+  if (raw === '') return { quantityDraft: '' };
+  if (!/^\d+$/.test(raw)) return null;
+  if (raw === '0' || /^0\d+$/.test(raw)) return { quantityDraft: raw };
+  return { quantityDraft: raw, quantity: clampSaleQuantity(raw, available) };
+}
+
+export function commitSaleQuantityInput(raw: string, available?: number | null): Pick<SaleLine, 'quantity' | 'quantityDraft'> {
+  return { quantity: clampSaleQuantity(raw, available), quantityDraft: undefined };
+}
+
+/** Monto con hasta 2 decimales, o vacío. Acepta coma. El 0 se queda para poder borrarlo. */
+export function applySaleMoneyInput(raw: string): Partial<SaleLine> | null {
+  if (raw === '') return { unitPriceDraft: '' };
+  if (!MONEY_DRAFT.test(raw)) return null;
+  if (raw === '.' || raw === ',') return { unitPriceDraft: raw };
+  const amount = Number(raw.replace(',', '.'));
+  if (!Number.isFinite(amount)) return null;
+  return { unitPriceDraft: raw, unitPrice: Math.max(0, amount) };
+}
+
+export function commitSaleMoneyInput(raw: string): Pick<SaleLine, 'unitPrice' | 'unitPriceDraft'> {
+  if (raw === '' || raw === '.' || raw === ',') return { unitPrice: 0, unitPriceDraft: undefined };
+  const amount = Number(raw.replace(',', '.'));
+  return {
+    unitPrice: Number.isFinite(amount) ? Math.max(0, money2(amount)) : 0,
+    unitPriceDraft: undefined,
+  };
 }
 
 export function limaTodayKey(now = new Date()) {

@@ -17,7 +17,13 @@ import {
   productStock,
   remainingSaleStock,
   canSelectProductForSale,
+  applySaleMoneyInput,
+  applySaleQuantityInput,
   clampSaleQuantity,
+  commitSaleMoneyInput,
+  commitSaleQuantityInput,
+  saleMoneyInputValue,
+  saleQuantityInputValue,
   parseSellerShippingAmount,
   saleLinesTotal,
   validateManualSale,
@@ -108,6 +114,33 @@ test('un producto en 0 no se puede elegir y la cantidad no pasa el stock', () =>
   ]), false);
   assert.equal(clampSaleQuantity(9, 3), 3);
   assert.equal(clampSaleQuantity(0, 5), 1);
+});
+
+test('cantidad es entero y precio es monto; vacío y 0 se pueden borrar', () => {
+  assert.equal(saleQuantityInputValue({ quantity: 1 }), '1');
+  assert.equal(saleQuantityInputValue({ quantity: 1, quantityDraft: '' }), '');
+  assert.equal(saleQuantityInputValue({ quantity: 1, quantityDraft: '0' }), '0');
+  assert.deepEqual(applySaleQuantityInput(''), { quantityDraft: '' });
+  assert.deepEqual(applySaleQuantityInput('0'), { quantityDraft: '0' });
+  assert.equal(applySaleQuantityInput('1.5'), null);
+  assert.equal(applySaleQuantityInput('ab'), null);
+  assert.deepEqual(applySaleQuantityInput('2', 5), { quantityDraft: '2', quantity: 2 });
+  assert.deepEqual(applySaleQuantityInput('9', 3), { quantityDraft: '9', quantity: 3 });
+  assert.deepEqual(commitSaleQuantityInput('', 5), { quantity: 1, quantityDraft: undefined });
+  assert.deepEqual(commitSaleQuantityInput('0', 5), { quantity: 1, quantityDraft: undefined });
+
+  assert.equal(saleMoneyInputValue({ unitPrice: 23.97 }), '23.97');
+  assert.equal(saleMoneyInputValue({ unitPrice: 0, unitPriceDraft: '' }), '');
+  assert.equal(saleMoneyInputValue({ unitPrice: 0, unitPriceDraft: '0' }), '0');
+  assert.deepEqual(applySaleMoneyInput(''), { unitPriceDraft: '' });
+  assert.deepEqual(applySaleMoneyInput('0'), { unitPriceDraft: '0', unitPrice: 0 });
+  assert.deepEqual(applySaleMoneyInput('23.9'), { unitPriceDraft: '23.9', unitPrice: 23.9 });
+  assert.deepEqual(applySaleMoneyInput('23,97'), { unitPriceDraft: '23,97', unitPrice: 23.97 });
+  assert.equal(applySaleMoneyInput('23.976'), null);
+  assert.equal(applySaleMoneyInput('12a'), null);
+  assert.deepEqual(commitSaleMoneyInput(''), { unitPrice: 0, unitPriceDraft: undefined });
+  assert.deepEqual(commitSaleMoneyInput('0'), { unitPrice: 0, unitPriceDraft: undefined });
+  assert.deepEqual(commitSaleMoneyInput('23,9'), { unitPrice: 23.9, unitPriceDraft: undefined });
 });
 
 test('parseSellerShippingAmount trata vacío como no puesto y 0 como válido', () => {

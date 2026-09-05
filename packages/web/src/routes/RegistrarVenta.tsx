@@ -252,7 +252,7 @@ export default function RegistrarVenta() {
       const existing = current.find((line) => line.productId === product.id);
       if (existing) {
         return current.map((line) => line.productId === product.id
-          ? { ...line, quantity: line.quantity + 1, available }
+          ? { ...line, quantity: line.quantity + 1, available, quantityDraft: undefined }
           : line);
       }
       return [...current, {
