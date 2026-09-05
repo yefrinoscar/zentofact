@@ -724,6 +724,7 @@ export default function Cancelados() {
                             value={line.stockQuantity}
                             disabled={approveMutation.isPending}
                             className="h-8"
+                            onFocus={(event) => event.currentTarget.select()}
                             onChange={(event) => {
                               const next = Number(event.target.value);
                               setApproveDecisions((current) => current.map((row) => (
@@ -741,6 +742,7 @@ export default function Cancelados() {
                             value={line.mermaQuantity}
                             disabled={approveMutation.isPending}
                             className="h-8"
+                            onFocus={(event) => event.currentTarget.select()}
                             onChange={(event) => {
                               const next = Number(event.target.value);
                               setApproveDecisions((current) => current.map((row) => (
