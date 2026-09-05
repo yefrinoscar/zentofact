@@ -1675,19 +1675,6 @@ app.post('/auto-emit/alert-emails', async (c) => {
     return ok(c, await autoEmit.setAlertEmails(body.emails ?? body.alertEmails ?? ''));
   } catch (e) { return fail(c, e, 400); }
 });
-app.post('/auto-emit/notifications', async (c) => {
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    return ok(c, await autoEmit.sendOperatorNotification({
-      title: body.title ?? body.subject ?? '',
-      message: body.message ?? body.body ?? '',
-    }));
-  } catch (e) { return fail(c, e, 400); }
-});
-app.post('/auto-emit/alerts/test', async (c) => {
-  try { return ok(c, await autoEmit.sendFailedEmissionTestAlert()); }
-  catch (e) { return fail(c, e, 400); }
-});
 app.post('/auto-emit/dry-run', async (c) => { try { const { dryRun } = await c.req.json(); return ok(c, await autoEmit.setDryRun(dryRun)); } catch (e) { return fail(c, e, 400); } });
 app.post('/auto-emit/jobs/:id/retry', async (c) => { try { return ok(c, await autoEmit.retryJob(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
 app.get('/auto-emit/jobs/:id/order-preview', async (c) => { try { return ok(c, await autoEmit.jobOrderPreview(Number(c.req.param('id')))); } catch (e) { return fail(c, e); } });

@@ -32,13 +32,7 @@ import {
   jobKindForStatus,
   normStatus,
 } from './auto-emission-policy.js';
-import {
-  notifyFailedEmissionIfNeeded,
-  parseAlertEmailInput,
-  parseAlertEmails,
-  sendFailedEmissionAlertPreview,
-  sendOperatorNotification as sendOperatorNotificationEmail,
-} from './auto-emission-alert.js';
+import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
 import { isMailerConfigured, sendEmail } from './mailer.js';
 import { listUsers } from './users.js';
 
@@ -1013,23 +1007,6 @@ async function alertMailerOptions() {
     fallbackEmail: process.env.ADMIN_EMAIL,
     log,
   };
-}
-
-function requireDeliveredAlert(result) {
-  if (result?.notified) return result;
-  if (result?.reason === 'no-recipients') throw new Error('No hay destinatarios. Guarda un correo de aviso.');
-  if (result?.reason === 'no-mailer') throw new Error('No hay envío configurado');
-  throw new Error('No se pudo enviar el correo');
-}
-
-export async function sendOperatorNotification({ title, message } = {}) {
-  return requireDeliveredAlert(
-    await sendOperatorNotificationEmail({ title, message }, await alertMailerOptions()),
-  );
-}
-
-export async function sendFailedEmissionTestAlert() {
-  return requireDeliveredAlert(await sendFailedEmissionAlertPreview(await alertMailerOptions()));
 }
 
 async function alertFailedEmission(job, { lastError, status } = {}) {

@@ -3,13 +3,10 @@ import assert from 'node:assert/strict';
 import {
   FAILED_EMISSION_ALERT_AFTER_ATTEMPTS,
   buildFailedEmissionAlertEmail,
-  buildOperatorNotificationEmail,
   notifyFailedEmissionIfNeeded,
   parseAlertEmailInput,
   parseAlertEmails,
   resolveFailedEmissionAlertRecipients,
-  sendFailedEmissionAlertPreview,
-  sendOperatorNotification,
   shouldSendFailedEmissionAlert,
 } from './auto-emission-alert.js';
 import { ROLE_PRESETS } from './permissions.js';
@@ -200,75 +197,4 @@ test('un job de dos intentos no llama al correo', async () => {
   });
   assert.equal(result.skipped, true);
   assert.equal(called, false);
-});
-
-test('una notificación usa el título y escapa el HTML', () => {
-  const email = buildOperatorNotificationEmail({
-    title: 'Corte de emisión',
-    message: 'Hoy no se emiten boletas de <LIMBO>.',
-  });
-  assert.equal(email.subject, 'Corte de emisión');
-  assert.equal(email.text, 'Hoy no se emiten boletas de <LIMBO>.');
-  assert.match(email.html, /Hoy no se emiten boletas de &lt;LIMBO&gt;\./);
-  assert.doesNotMatch(email.html, /<LIMBO>/);
-});
-
-test('crear una notificación exige título y mensaje', () => {
-  assert.throws(() => buildOperatorNotificationEmail({ title: '', message: 'Hola' }), /título/);
-  assert.throws(() => buildOperatorNotificationEmail({ title: 'Aviso', message: '   ' }), /mensaje/);
-});
-
-test('al crear una notificación se envían los correos de aviso', async () => {
-  const sent = [];
-  const result = await sendOperatorNotification({
-    title: 'Corte de emisión',
-    message: 'Hoy no se emiten boletas de LIMBO.',
-  }, {
-    configuredEmails: 'ops@zentofact.local',
-    fallbackEmail: 'admin@zentofact.local',
-    sendEmail: async (payload) => {
-      sent.push(payload);
-      return { sent: true };
-    },
-  });
-  assert.equal(result.notified, true);
-  assert.deepEqual(result.to, ['ops@zentofact.local']);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].subject, 'Corte de emisión');
-  assert.match(sent[0].text, /Hoy no se emiten boletas de LIMBO/);
-});
-
-test('el aviso de prueba de boleta usa la misma plantilla y no marca un job', async () => {
-  const sent = [];
-  let marked = false;
-  const result = await sendFailedEmissionAlertPreview({
-    configuredEmails: 'ops@zentofact.local',
-    sendEmail: async (payload) => {
-      sent.push(payload);
-      return { sent: true };
-    },
-    markAlerted: async () => { marked = true; },
-  });
-  assert.equal(result.notified, true);
-  assert.equal(marked, false);
-  assert.equal(sent[0].subject, 'Prueba · Comprobante no emitido · pedido PV-PRUEBA');
-  assert.match(sent[0].text, /Este es un envío de prueba/);
-  assert.match(sent[0].text, /quedó fallido/);
-  assert.deepEqual(sent[0].to, ['ops@zentofact.local']);
-});
-
-test('la notificación y la boleta fallida avisan a los mismos correos', async () => {
-  const notification = await sendOperatorNotification({
-    title: 'Aviso',
-    message: 'Corte',
-  }, {
-    listUsers: async () => [billing, operator],
-    sendEmail: async () => ({ sent: true }),
-  });
-  const failed = await sendFailedEmissionAlertPreview({
-    listUsers: async () => [billing, operator],
-    sendEmail: async () => ({ sent: true }),
-  });
-  assert.deepEqual(notification.to, ['billing@preview.zentofact.local']);
-  assert.deepEqual(failed.to, notification.to);
 });
