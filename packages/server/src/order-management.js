@@ -1063,6 +1063,8 @@ function normalizeCanceledOrderRow(row) {
       name: String(item?.name || '').trim() || null,
       sku: String(item?.sku || '').trim() || null,
       quantity: Number(item?.quantity || 0),
+      imageUrl: String(item?.imageUrl || '').trim() || null,
+      shopSku: String(item?.shopSku || '').trim() || null,
     })),
   };
 }
@@ -1196,10 +1198,32 @@ export async function listCanceledOrders(filters = {}, db) {
        select coalesce(json_agg(json_build_object(
          'name', nullif(trim(coalesce(p.name, oi.description, '')), ''),
          'sku', nullif(trim(coalesce(p.main_sku, oi.main_sku, oi.sku, '')), ''),
-         'quantity', coalesce(rsa.quantity, oi.quantity)
+         'quantity', coalesce(rsa.quantity, oi.quantity),
+         'imageUrl', coalesce(
+           nullif(p.image_url, ''),
+           nullif(psku.image_url, ''),
+           nullif(listing.metadata->'images'->>0, ''),
+           nullif(listing.metadata->'images'->0->>'Url', ''),
+           nullif(listing.metadata->'images'->0->>'url', ''),
+           nullif(listing.metadata->>'imageUrl', ''),
+           nullif(oi.raw_data->>'Image', ''),
+           nullif(oi.raw_data->>'ImageUrl', ''),
+           nullif(oi.raw_data->>'ImageURL', ''),
+           nullif(oi.raw_data->>'ProductImage', ''),
+           nullif(oi.raw_data->>'MainImage', '')
+         ),
+         'shopSku', coalesce(
+           nullif(trim(listing.shop_sku), ''),
+           nullif(trim(oi.provider_sku), ''),
+           nullif(trim(oi.raw_data->>'ShopSku'), ''),
+           nullif(trim(oi.raw_data->>'ShopSKU'), '')
+         )
        ) order by oi.id), '[]'::json) as items
        from order_items oi
        left join products p on p.id=oi.product_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+       left join product_listings listing on listing.id = oi.listing_id
        left join return_stock_approvals rsa on rsa.order_item_id=oi.id
        where oi.order_id=o.id
          and (

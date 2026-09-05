@@ -803,6 +803,8 @@ test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', as
   assert.match(seen[0].sql, /returned_at/);
   assert.match(seen[0].sql, /from order_items oi/);
   assert.match(seen[0].sql, /left join products p on p.id=oi.product_id/);
+  assert.match(seen[0].sql, /p\.image_url/);
+  assert.match(seen[0].sql, /listing\.shop_sku/);
   assert.deepEqual(seen[0].params, ['2026-08-01', '2026-08-31', 50, 0]);
 
   await listCanceledOrders({ kind: 'returned', from: '2026-08-20', to: '2026-08-20' }, db);
@@ -811,6 +813,42 @@ test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', as
 
   await listCanceledOrders({ approval: 'pending', from: '2026-09-03', to: '2026-09-04' }, db);
   assert.match(seen[2].sql, /return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending'/);
+});
+
+test('expone la foto y el shop sku de cada ítem cancelado', async () => {
+  const db = {
+    async query() {
+      return {
+        rows: [{
+          id: 44,
+          company_id: 7,
+          nombre: 'LIMBO SAC',
+          nombre_comercial: 'LIMBO',
+          razon_social: 'LIMBO SAC',
+          channel_code: 'falabella',
+          channel_name: 'Falabella',
+          external_order_id: 'PV-10004',
+          external_order_number: 'PV-10004',
+          order_status: 'cancelled',
+          fulfillment_status: 'cancelled',
+          currency: 'PEN',
+          total: '189.90',
+          items: [{
+            name: 'Coche bastón',
+            sku: 'AG301',
+            quantity: 1,
+            imageUrl: 'https://img.example/ag301.jpg',
+            shopSku: '118765881',
+          }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listCanceledOrders({}, db);
+  assert.equal(result.orders[0].items[0].imageUrl, 'https://img.example/ag301.jpg');
+  assert.equal(result.orders[0].items[0].shopSku, '118765881');
+  assert.equal(result.orders[0].companyName, 'Limbo');
 });
 
 test('la serie diaria rellena con cero los días sin venta y estima comisión', () => {

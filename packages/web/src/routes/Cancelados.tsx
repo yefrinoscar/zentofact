@@ -1,12 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Loader2, Search } from 'lucide-react';
+import { Ban, ImageIcon, Loader2, Maximize2, Search } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { cn } from '../lib/cn';
+import { productImageSrc } from '../lib/logistics-inbox';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   cancellationKind,
@@ -72,7 +73,15 @@ type CanceledOrder = {
     name?: string | null;
     sku?: string | null;
     quantity?: number;
+    imageUrl?: string | null;
+    shopSku?: string | null;
   }>;
+};
+
+type ProductImagePreview = {
+  src: string;
+  name: string;
+  sku: string;
 };
 
 const PAGE_SIZE = 50;
@@ -136,8 +145,88 @@ function ChannelMark({ code }: { code?: string | null }) {
 
 function productLines(items: CanceledOrder['items'] = []) {
   const lines = items.filter((item) => item.name || item.sku);
-  if (lines.length === 0) return [{ name: null, sku: null, quantity: 0 }];
+  if (lines.length === 0) return [{ name: null, sku: null, quantity: 0, imageUrl: null, shopSku: null }];
   return lines;
+}
+
+function ProductThumb({
+  item,
+  onOpen,
+}: {
+  item: NonNullable<CanceledOrder['items']>[number];
+  onOpen: (preview: ProductImagePreview) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
+  const name = item.name || item.sku || 'Producto';
+  const canOpen = Boolean(src) && !failed;
+  const body = (
+    <>
+      <ImageIcon className="size-4 text-muted-foreground/40" />
+      {src && !failed ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-105"
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+    </>
+  );
+  if (canOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen({ src, name, sku: item.sku || '' })}
+        aria-label={`Ampliar foto de ${name}`}
+        title="Ampliar foto"
+        className="group relative grid size-12 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        {body}
+        <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true">
+          <Maximize2 className="size-4" />
+        </span>
+      </button>
+    );
+  }
+  return (
+    <span className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted" aria-hidden="true">
+      {body}
+    </span>
+  );
+}
+
+function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview | null; onClose: () => void }) {
+  return (
+    <Dialog open={preview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogContent
+        overlayClassName="z-[90] bg-black/70"
+        className="z-[90] max-h-[94vh] gap-0 overflow-hidden bg-zinc-950 p-0 text-white sm:max-w-5xl [&_[data-slot=dialog-close]]:bg-white/10 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-white/20"
+      >
+        {preview ? (
+          <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>Foto de {preview.name}</DialogTitle>
+              <DialogDescription>
+                {preview.sku ? `Vista ampliada del producto con SKU ${preview.sku}.` : 'Vista ampliada del producto.'}
+              </DialogDescription>
+            </DialogHeader>
+            <figure className="min-h-0">
+              <div className="flex min-h-64 items-center justify-center overflow-hidden p-4 sm:min-h-[32rem] sm:p-8">
+                <img src={preview.src} alt={preview.name} className="max-h-[calc(94vh-8rem)] max-w-full object-contain" />
+              </div>
+              <figcaption className="border-t border-white/10 bg-black/30 px-5 py-4 pr-16">
+                <p className="line-clamp-2 text-sm font-medium text-white">{preview.name}</p>
+                {preview.sku ? <p className="mt-1 font-mono text-xs text-white/60">SKU {preview.sku}</p> : null}
+              </figcaption>
+            </figure>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export default function Cancelados() {
@@ -154,6 +243,7 @@ export default function Cancelados() {
   const [page, setPage] = useState(0);
   const [approveOrder, setApproveOrder] = useState<CanceledOrder | null>(null);
   const [approveError, setApproveError] = useState('');
+  const [imagePreview, setImagePreview] = useState<ProductImagePreview | null>(null);
   const searchTimer = useRef(0);
 
   const applySearch = (value: string) => {
@@ -347,14 +437,6 @@ export default function Cancelados() {
                         <div className="flex items-start gap-2">
                           <ChannelMark code={order.channelCode} />
                           <div className="min-w-0 space-y-1">
-                            <button
-                              type="button"
-                              onClick={() => void copyText(order.externalOrderNumber)}
-                              className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
-                              title="Copiar número de pedido"
-                            >
-                              {order.externalOrderNumber}
-                            </button>
                             {order.companyName ? (
                               <Badge
                                 variant="outline"
@@ -364,27 +446,38 @@ export default function Cancelados() {
                                 {order.companyName}
                               </Badge>
                             ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void copyText(order.externalOrderNumber)}
+                              className="block font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                              title="Copiar número de pedido"
+                            >
+                              {order.externalOrderNumber}
+                            </button>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="max-w-[220px] space-y-1.5">
+                        <div className="max-w-[280px] space-y-1.5">
                           {products.map((item, index) => (
-                            <div key={`${item.sku || item.name || 'item'}-${index}`}>
-                              <p className="line-clamp-2 text-sm leading-5">
-                                {item.name || item.sku || '—'}
-                                {Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}
-                              </p>
-                              {item.sku && item.name ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void copyText(item.sku || '')}
-                                  className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
-                                  title="Copiar SKU"
-                                >
-                                  {item.sku}
-                                </button>
-                              ) : null}
+                            <div key={`${item.sku || item.name || 'item'}-${index}`} className="flex items-start gap-2.5">
+                              <ProductThumb item={item} onOpen={setImagePreview} />
+                              <div className="min-w-0">
+                                <p className="line-clamp-2 text-sm leading-5">
+                                  {item.name || item.sku || '—'}
+                                  {Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}
+                                </p>
+                                {item.sku && item.name ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyText(item.sku || '')}
+                                    className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                    title="Copiar SKU"
+                                  >
+                                    {item.sku}
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -516,6 +609,7 @@ export default function Cancelados() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
       </div>
   );
 }
