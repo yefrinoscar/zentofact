@@ -276,7 +276,7 @@ export default function Cancelados() {
             value={search}
             onChange={(event) => applySearch(event.target.value)}
             placeholder="Buscar pedido o comprobante"
-            aria-label="Buscar cancelados"
+            aria-label="Buscar devoluciones"
             className="h-9 pl-9"
           />
         </div>
@@ -342,15 +342,15 @@ export default function Cancelados() {
         </div>
       )}
 
-      <TablePanel aria-label="Pedidos cancelados y devueltos">
+      <TablePanel aria-label="Devoluciones">
         {loading && orders.length === 0 ? (
           <p className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Cargando cancelados…
+            <Loader2 className="size-4 animate-spin" /> Cargando devoluciones…
           </p>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <Ban className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay pedidos cancelados o devueltos en este rango</p>
+            <p className="text-sm font-medium">No hay devoluciones en este rango</p>
             <p className="text-sm text-muted-foreground">Cambia las fechas o espera el próximo sync.</p>
           </div>
         ) : (
