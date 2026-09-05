@@ -246,16 +246,19 @@ function DestinationChoice({
   selected,
   disabled,
   unitLabel,
+  sku,
   onSelect,
 }: {
   destination: ReturnUnitDestination;
   selected: boolean;
   disabled: boolean;
   unitLabel: string;
+  sku: string;
   onSelect: () => void;
 }) {
   const merma = destination === 'merma';
   const label = merma ? 'Merma' : 'A stock';
+  const name = sku ? `${label} ${sku} unidad ${unitLabel}` : `${label} unidad ${unitLabel}`;
   return (
     <Button
       type="button"
@@ -264,7 +267,7 @@ function DestinationChoice({
       disabled={disabled}
       onClick={onSelect}
       aria-pressed={selected}
-      aria-label={`${label} unidad ${unitLabel}`}
+      aria-label={name}
       className={cn(
         merma && selected && 'border-rose-600 bg-rose-600 text-white hover:bg-rose-600/90',
         merma && !selected && 'border-rose-200 text-rose-800 hover:bg-rose-50 hover:text-rose-900',
@@ -787,6 +790,7 @@ export default function Cancelados() {
                             selected={destination === 'stock'}
                             disabled={approveMutation.isPending}
                             unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                            sku={item.sku || ''}
                             onSelect={() => setApproveDecisions((current) => current.map((row) => (
                               row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
                             )))}
@@ -796,6 +800,7 @@ export default function Cancelados() {
                             selected={destination === 'merma'}
                             disabled={approveMutation.isPending}
                             unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                            sku={item.sku || ''}
                             onSelect={() => setApproveDecisions((current) => current.map((row) => (
                               row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
                             )))}
