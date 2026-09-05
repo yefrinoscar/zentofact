@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter, TableRow,
 } from '@/components/ui/table';
@@ -318,6 +319,10 @@ export default function Companies() {
   const [mercadoLibreAppConfigured, setMercadoLibreAppConfigured] = useState(false);
   const [disconnectingMercadoLibre, setDisconnectingMercadoLibre] = useState(false);
   const [oauthNotice, setOauthNotice] = useState('');
+  const [channelTab, setChannelTab] = useState<ChannelTab>(() => {
+    const ml = new URLSearchParams(window.location.hash.split('?')[1] || '').get('ml');
+    return ml === 'connected' || ml === 'error' ? 'mercado_libre' : 'falabella';
+  });
 
   const load = () => {
     setLoadingCompanies(true);
@@ -339,8 +344,14 @@ export default function Companies() {
       .then((status: { configured?: boolean }) => setMercadoLibreAppConfigured(status?.configured === true))
       .catch(() => setMercadoLibreAppConfigured(false));
     const ml = searchParams.get('ml');
-    if (ml === 'connected') setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
-    if (ml === 'error') setOauthNotice(searchParams.get('message') || 'No se pudo conectar Mercado Libre.');
+    if (ml === 'connected') {
+      setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
+      setChannelTab('mercado_libre');
+    }
+    if (ml === 'error') {
+      setOauthNotice(searchParams.get('message') || 'No se pudo conectar Mercado Libre.');
+      setChannelTab('mercado_libre');
+    }
   }, []);
 
   const resetForm = () => {
@@ -360,6 +371,7 @@ export default function Companies() {
     setChannelAutoCreateOrders(initialAutoCreateOrders);
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
+    setChannelTab('falabella');
     if (certInputRef.current) certInputRef.current.value = '';
   };
 
@@ -946,12 +958,10 @@ export default function Companies() {
   );
 
   useEffect(() => {
-    if (!isEditor || editorLoading) return;
+    if (!isEditor) return;
     const ml = searchParams.get('ml');
-    if (ml === 'connected' || ml === 'error') {
-      document.getElementById('mercado-libre')?.scrollIntoView({ block: 'start' });
-    }
-  }, [isEditor, editorLoading, searchParams]);
+    if (ml === 'connected' || ml === 'error') setChannelTab('mercado_libre');
+  }, [isEditor, searchParams]);
 
   if (isEditor) {
     return (
@@ -1030,23 +1040,33 @@ export default function Companies() {
                 </div>
               </FormSection>
 
-              <FormSection title="Falabella" channel="falabella">
-                {falabellaChannelPanel}
+              <FormSection title="Canales">
+                <Tabs
+                  value={channelTab}
+                  onValueChange={(value) => setChannelTab(value as ChannelTab)}
+                  className="gap-0"
+                >
+                  <TabsList variant="line" aria-label="Canales" className="h-11 w-full justify-start gap-0 rounded-none border-b border-border bg-transparent p-0">
+                    <TabsTrigger value="falabella" className="h-full flex-none rounded-none px-3">
+                      <ChannelMark channel="falabella" /> Falabella
+                    </TabsTrigger>
+                    <TabsTrigger value="ripley" className="h-full flex-none rounded-none px-3">
+                      <ChannelMark channel="ripley" /> Ripley
+                    </TabsTrigger>
+                    <TabsTrigger value="mercado_libre" className="h-full flex-none rounded-none px-3">
+                      <ChannelMark channel="mercado_libre" /> Mercado Libre
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="falabella" className="space-y-4 pt-5">{falabellaChannelPanel}</TabsContent>
+                  <TabsContent value="ripley" className="space-y-4 pt-5">{ripleyChannelPanel}</TabsContent>
+                  <TabsContent value="mercado_libre" className="space-y-4 pt-5">{mercadoLibreChannelPanel}</TabsContent>
+                </Tabs>
+                {loadingBilling && (
+                  <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" /> Cargando canales
+                  </p>
+                )}
               </FormSection>
-
-              <FormSection title="Ripley" channel="ripley">
-                {ripleyChannelPanel}
-              </FormSection>
-
-              <FormSection id="mercado-libre" title="Mercado Libre" channel="mercado_libre">
-                {mercadoLibreChannelPanel}
-              </FormSection>
-
-              {loadingBilling && (
-                <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="size-3 animate-spin" /> Cargando canales
-                </p>
-              )}
 
               <FormSection title="Certificado">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
