@@ -560,6 +560,7 @@ function normalizeOrderRow(row) {
     shippingAmount: row.shipping_amount == null ? null : Number(row.shipping_amount),
     discountAmount: row.discount_amount == null ? null : Number(row.discount_amount),
     total: row.total == null ? null : Number(row.total),
+    commission: row.commission == null ? null : Number(row.commission),
     customer: row.customer || {},
     shipping: row.shipping || {},
     metadata: row.metadata || {},
@@ -904,9 +905,19 @@ export async function ingestOrder(input, db) {
   }
 }
 
+const SALESPERSON_COMMISSION_SQL = `coalesce(
+  (select sum(p.commission_amount * oi.quantity)
+   from order_items oi join products p on p.id=oi.product_id
+   where oi.order_id=o.id),
+  round(coalesce(o.total, 0) * coalesce(
+    (select u.commission_percent from "user" u where u.id=o.created_by), 0
+  ) / 100, 2)
+)`;
+
 const ORDER_LIST_SORT_COLUMNS = {
   orderedAt: 'coalesce(o.ordered_at, o.created_at)',
   total: 'o.total',
+  commission: SALESPERSON_COMMISSION_SQL,
 };
 
 function orderListSort(sortBy, sortDir) {
@@ -990,6 +1001,7 @@ export async function listOrders(filters = {}, db) {
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
+       ${filters.salesOnly ? `${SALESPERSON_COMMISSION_SQL} as commission,` : ''}
        count(*) over()::int as total_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
@@ -1443,12 +1455,12 @@ function addCalendarDays(dateKey, days) {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
 }
 
-function periodStats(orders, total, commissionPercent) {
+function periodStats(orders, total, commissionPercent, commission) {
   const salesTotal = Number(total) || 0;
   return {
     orders: Number(orders) || 0,
     total: salesTotal,
-    commission: estimatedCommission(salesTotal, commissionPercent),
+    commission: commission == null ? estimatedCommission(salesTotal, commissionPercent) : Number(commission),
   };
 }
 
@@ -1471,7 +1483,7 @@ export function fillDailySales(rows, from, to, commissionPercent) {
   for (const row of rows || []) {
     const date = String(row.lima_date || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    byDate.set(date, periodStats(row.orders_count, row.sales_total, commissionPercent));
+    byDate.set(date, periodStats(row.orders_count, row.sales_total, commissionPercent, row.commission));
   }
   return calendarDays(from, to).map((date) => ({
     date,
@@ -1497,7 +1509,9 @@ export async function getSalespersonHome(filters = {}, db) {
          count(*) filter (where d.lima_date = $2::date)::int as today_orders,
          coalesce(sum(o.total) filter (where d.lima_date = $2::date), 0)::numeric as today_total,
          count(*) filter (where d.lima_date >= $3::date)::int as month_orders,
-         coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total
+         coalesce(sum(o.total) filter (where d.lima_date >= $3::date), 0)::numeric as month_total,
+         coalesce(sum(${SALESPERSON_COMMISSION_SQL}) filter (where d.lima_date = $2::date), 0) as today_commission,
+         coalesce(sum(${SALESPERSON_COMMISSION_SQL}) filter (where d.lima_date >= $3::date), 0) as month_commission
        from orders o
        cross join lateral (
          select (coalesce(o.ordered_at, o.created_at) at time zone 'America/Lima')::date as lima_date
@@ -1508,6 +1522,7 @@ export async function getSalespersonHome(filters = {}, db) {
     ),
     target.query(
       `select to_char(d.lima_date, 'YYYY-MM-DD') as lima_date,
+         coalesce(sum(${SALESPERSON_COMMISSION_SQL}), 0) as commission,
          count(*)::int as orders_count,
          coalesce(sum(o.total), 0)::numeric as sales_total
        from orders o
@@ -1549,8 +1564,8 @@ export async function getSalespersonHome(filters = {}, db) {
   ]);
   const row = kpi.rows[0] || {};
   return {
-    today: periodStats(row.today_orders, row.today_total, commissionPercent),
-    month: periodStats(row.month_orders, row.month_total, commissionPercent),
+    today: periodStats(row.today_orders, row.today_total, commissionPercent, row.today_commission),
+    month: periodStats(row.month_orders, row.month_total, commissionPercent, row.month_commission),
     range: { from, to },
     daily: fillDailySales(daily.rows, from, to, commissionPercent),
     paymentMix: payments.rows.map((mix) => ({

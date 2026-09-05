@@ -33,7 +33,17 @@ import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
+import {
+  buildManagedOrderListFilters,
+  deliveryLabel,
+  deliveryShowsAsTag,
+  managedOrderSearchIgnoresDate,
+  managedOrdersEmptyHint,
+  managedOrdersEmptyTitle,
+  managedOrdersSearchHelper,
+  managedOrdersTableLabel,
+  MANAGED_ORDER_TABLE_COLUMNS,
+} from '../lib/managed-orders-presentation';
 import {
   generateDocumentLabel,
   generateDocumentPath,
@@ -259,7 +269,6 @@ type SalesPulse = {
   };
 };
 
-const DAY_LIMIT = 500;
 const RANKING_SIZE = 6;
 const SEARCH_DELAY_MS = 250;
 
@@ -691,16 +700,14 @@ export default function PedidosMulticanal() {
     queryFn: () => api.listOrderChannels(),
     staleTime: 5 * 60_000,
   });
-  const orderFilters = useMemo(() => ({
-    companyId: companyId === 'all' ? undefined : Number(companyId),
-    channelCode: channelCode === 'all' ? undefined : channelCode,
-    fulfillmentStatus: fulfillmentStatus === 'all' ? undefined : fulfillmentStatus,
-    from: date,
-    to: date,
-    search: submittedSearch || undefined,
-    limit: DAY_LIMIT,
-    offset: 0,
+  const orderFilters = useMemo(() => buildManagedOrderListFilters({
+    companyId,
+    channelCode,
+    fulfillmentStatus,
+    date,
+    search: submittedSearch,
   }), [channelCode, companyId, date, fulfillmentStatus, submittedSearch]);
+  const searchIgnoresDate = managedOrderSearchIgnoresDate(submittedSearch);
   const ordersQuery = useQuery({
     queryKey: ['managed-orders', orderFilters],
     queryFn: () => api.listManagedOrders(orderFilters),
@@ -1062,10 +1069,12 @@ export default function PedidosMulticanal() {
     },
     {
       id: 'time',
-      header: 'Hora',
-      size: 72,
+      header: searchIgnoresDate ? 'Fecha' : 'Hora',
+      size: searchIgnoresDate ? 120 : 72,
       cell: ({ row }) => (
-        <span className="tabular-nums text-muted-foreground">{formatTime(row.original.orderedAt)}</span>
+        <span className="tabular-nums text-muted-foreground">
+          {searchIgnoresDate ? formatDate(row.original.orderedAt) : formatTime(row.original.orderedAt)}
+        </span>
       ),
     },
     {
@@ -1147,7 +1156,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById, goToGenerateDocument]);
+  }, [companyById, goToGenerateDocument, searchIgnoresDate]);
 
   const table = useReactTable({
     data: orders,
@@ -1205,7 +1214,7 @@ export default function PedidosMulticanal() {
             {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
             {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
           </Button>
-          <Button onClick={() => navigate('/orders/nueva')} className="h-11 min-w-0 cursor-pointer sm:h-9">
+          <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-11 min-w-0 cursor-pointer sm:h-9">
             <Plus /> Registrar venta
           </Button>
         </div>
@@ -1310,22 +1319,25 @@ export default function PedidosMulticanal() {
             {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => setCompanyId('all')} />}
             {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => setChannelCode('all')} />}
             {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
+            {managedOrdersSearchHelper(search) && (
+              <p className="self-center text-xs text-muted-foreground">{managedOrdersSearchHelper(search)}</p>
+            )}
           </div>
         )}
       </div>
 
       <OrdersVirtualTable
         table={table}
-        aria-label={`Pedidos de ${dayLabel(date)}`}
+        aria-label={managedOrdersTableLabel(dayLabel(date), submittedSearch)}
         loading={loading}
         fetching={fetching}
         onRowClick={openDetail}
         empty={(
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <Store className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
-            <p className="text-sm text-muted-foreground">Prueba otra búsqueda o registra una venta manual.</p>
-            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva')}><Plus /> Registrar venta</Button>
+            <p className="text-sm font-medium">{managedOrdersEmptyTitle(submittedSearch)}</p>
+            <p className="text-sm text-muted-foreground">{managedOrdersEmptyHint(submittedSearch)}</p>
+            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva?from=orders')}><Plus /> Registrar venta</Button>
           </div>
         )}
         footer={(

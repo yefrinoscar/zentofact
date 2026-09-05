@@ -62,6 +62,7 @@ export type CatalogProductForSale = {
   mainSku: string;
   name: string;
   imageUrl?: string | null;
+  commissionAmount?: number | null;
   referencePrice?: number | null;
   sellerPriceMin?: number | null;
   available?: number | null;
@@ -74,6 +75,7 @@ export type SaleLine = {
   sku: string;
   name: string;
   imageUrl?: string | null;
+  commissionAmount?: number | null;
   shopSku?: string | null;
   catalogPrice: number;
   unitPrice: number;
@@ -436,4 +438,15 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       metadata: { productId: line.productId, catalogPrice: line.catalogPrice },
     })),
   };
+}
+
+export function saleReturnPath(origin: string | null, canManageOrders: boolean) {
+  if (origin === 'mis-ventas') return '/mis-ventas';
+  if (origin === 'orders' && canManageOrders) return '/orders';
+  return canManageOrders ? '/orders' : '/mis-ventas';
+}
+
+export function saleProductCommission(lines: SaleLine[]): number | undefined {
+  if (!lines.some((line) => line.commissionAmount != null)) return undefined;
+  return Math.round(lines.reduce((sum, line) => sum + (line.commissionAmount ?? 0) * line.quantity, 0) * 100) / 100;
 }

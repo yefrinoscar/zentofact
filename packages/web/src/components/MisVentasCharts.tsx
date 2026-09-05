@@ -3,7 +3,6 @@ import { Bar, BarChart, CartesianGrid, Cell, Label, Pie, PieChart, XAxis, YAxis 
 import { cn } from '@/lib/utils';
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart';
 import {
-  commissionHint,
   dailySeries,
   dayKeyLabel,
   formatCompactMoney,
@@ -274,7 +273,7 @@ export function MisVentasCharts({ home, loading }: { home?: SalespersonHome | nu
           />
         </div>
         <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-          {commissionHint(home?.commissionPercent)} Comisión por día, últimos {windowLabel}.
+          Comisión por producto vendido. Últimos {windowLabel}.
         </p>
         {hasWindowSales ? (
           <DailyBars

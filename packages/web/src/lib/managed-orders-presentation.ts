@@ -51,3 +51,57 @@ export function deliveryLabel(order: ManagedOrderDeliveryInput) {
 export function deliveryShowsAsTag(label: string) {
   return label !== '—';
 }
+
+export const MANAGED_ORDER_LIST_LIMIT = 500;
+
+export type ManagedOrderListFilterInput = {
+  companyId: string;
+  channelCode: string;
+  fulfillmentStatus: string;
+  date: string;
+  search: string;
+};
+
+function trimmedSearch(search: string) {
+  return String(search || '').trim();
+}
+
+/** Una búsqueda localiza el pedido en cualquier día. La tira de fechas solo cubre el pulso del día. */
+export function buildManagedOrderListFilters(input: ManagedOrderListFilterInput) {
+  const search = trimmedSearch(input.search);
+  return {
+    companyId: input.companyId === 'all' ? undefined : Number(input.companyId),
+    channelCode: input.channelCode === 'all' ? undefined : input.channelCode,
+    fulfillmentStatus: input.fulfillmentStatus === 'all' ? undefined : input.fulfillmentStatus,
+    ...(search ? {} : { from: input.date, to: input.date }),
+    search: search || undefined,
+    limit: MANAGED_ORDER_LIST_LIMIT,
+    offset: 0,
+  };
+}
+
+export function managedOrderSearchIgnoresDate(search: string) {
+  return Boolean(trimmedSearch(search));
+}
+
+export function managedOrdersTableLabel(dateLabel: string, search: string) {
+  const query = trimmedSearch(search);
+  if (query) return `Pedidos con ${query}`;
+  return `Pedidos de ${dateLabel}`;
+}
+
+export function managedOrdersEmptyTitle(search: string) {
+  return trimmedSearch(search)
+    ? 'No hay pedidos con esa búsqueda'
+    : 'No hay pedidos para estos filtros';
+}
+
+export function managedOrdersEmptyHint(search: string) {
+  return trimmedSearch(search)
+    ? 'La búsqueda ignora la fecha. Prueba otro dato.'
+    : 'Prueba otra búsqueda o registra una venta manual.';
+}
+
+export function managedOrdersSearchHelper(search: string) {
+  return trimmedSearch(search) ? 'Busca en todos los días.' : '';
+}
