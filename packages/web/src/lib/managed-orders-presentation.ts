@@ -105,3 +105,29 @@ export function managedOrdersEmptyHint(search: string) {
 export function managedOrdersSearchHelper(search: string) {
   return trimmedSearch(search) ? 'Busca en todos los días.' : '';
 }
+
+export type ManagedOrderSellerInput = {
+  companyId?: number | null;
+  channelCode?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
+};
+
+function salespersonName(order: ManagedOrderSellerInput) {
+  return String(order.createdByName || '').trim();
+}
+
+/** Venta de vendedor: su nombre. Pedido de marketplace: el seller. */
+export function isSalespersonOrder(order: ManagedOrderSellerInput) {
+  return order.channelCode === 'manual' || order.createdByRole === 'vendedor';
+}
+
+export function sellerCellLabel(
+  order: ManagedOrderSellerInput,
+  companyById: Map<number, string>,
+) {
+  const name = salespersonName(order);
+  if (isSalespersonOrder(order) && name) return name;
+  if (order.companyId == null) return '';
+  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
+}

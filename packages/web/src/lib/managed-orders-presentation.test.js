@@ -6,11 +6,13 @@ import {
   buildManagedOrderListFilters,
   deliveryLabel,
   deliveryShowsAsTag,
+  isSalespersonOrder,
   managedOrderSearchIgnoresDate,
   managedOrdersEmptyHint,
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
+  sellerCellLabel,
 } from './managed-orders-presentation.ts';
 
 test('la bandeja de pedidos no muestra columna de teléfono', () => {
@@ -67,6 +69,37 @@ test('la búsqueda de pedidos omite la fecha comercial del día', () => {
   assert.equal(managedOrdersEmptyHint('3250666811'), 'La búsqueda ignora la fecha. Prueba otro dato.');
   assert.equal(managedOrdersSearchHelper('3250666811'), 'Busca en todos los días.');
   assert.equal(managedOrdersSearchHelper(''), '');
+});
+
+test('la columna Seller muestra el nombre del vendedor en ventas manuales', () => {
+  const companyById = new Map([[7, 'Limbo']]);
+  assert.equal(isSalespersonOrder({ channelCode: 'manual' }), true);
+  assert.equal(isSalespersonOrder({ createdByRole: 'vendedor' }), true);
+  assert.equal(isSalespersonOrder({ channelCode: 'falabella' }), false);
+  assert.equal(sellerCellLabel({
+    companyId: 7,
+    channelCode: 'manual',
+    createdByName: 'Vendedor Preview',
+    createdByRole: 'vendedor',
+  }, companyById), 'Vendedor Preview');
+  assert.equal(sellerCellLabel({
+    companyId: null,
+    channelCode: 'manual',
+    createdByName: '  Juan Pérez  ',
+  }, companyById), 'Juan Pérez');
+  assert.equal(sellerCellLabel({
+    companyId: 7,
+    channelCode: 'falabella',
+    createdByName: 'Vendedor Preview',
+  }, companyById), 'Limbo');
+  assert.equal(sellerCellLabel({
+    companyId: null,
+    channelCode: 'manual',
+  }, companyById), '');
+  assert.equal(sellerCellLabel({
+    companyId: 9,
+    channelCode: 'ripley',
+  }, companyById), 'Empresa 9');
 });
 
 test('regresión: etiquetas de reparto alineadas con shipping-carrier', async () => {
