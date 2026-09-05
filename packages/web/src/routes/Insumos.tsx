@@ -78,6 +78,10 @@ type InsumoMovementsResponse = {
   totalCount: number;
 };
 
+type InsumoAlertsResponse = {
+  alertEmails?: string[];
+};
+
 type PendingChange = {
   id: number;
   name: string;
@@ -170,6 +174,8 @@ export default function Insumos() {
   const [pin, setPin] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
   const [formError, setFormError] = useState('');
+  const [alertDraft, setAlertDraft] = useState<string | null>(null);
+  const [alertSaved, setAlertSaved] = useState(false);
 
   const listQuery = useQuery({
     queryKey: ['insumos'],
@@ -185,6 +191,24 @@ export default function Insumos() {
     }),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+  });
+
+  const alertsQuery = useQuery({
+    queryKey: ['insumos', 'alerts'],
+    queryFn: () => api.getInsumoAlertEmails(),
+    staleTime: 60_000,
+  });
+  const serverAlertEmails = ((alertsQuery.data as InsumoAlertsResponse | undefined)?.alertEmails || []).join('\n');
+  const alertEmailsDraft = alertDraft ?? serverAlertEmails;
+
+  const saveAlerts = useMutation({
+    mutationFn: (emails: string) => api.setInsumoAlertEmails(emails),
+    onSuccess: (data) => {
+      const emails = (data as InsumoAlertsResponse)?.alertEmails || [];
+      setAlertDraft(emails.join('\n'));
+      setAlertSaved(true);
+      queryClient.setQueryData(['insumos', 'alerts'], { alertEmails: emails });
+    },
   });
 
   const bump = useMutation({
@@ -286,6 +310,50 @@ export default function Insumos() {
           ))}
         </section>
       )}
+
+      <section className="border-t border-border pt-4" aria-label="Avisos de insumos">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Avisos</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Correo al llegar al mínimo.</p>
+          </div>
+          <form
+            className="grid w-full gap-2 sm:max-w-80"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (saveAlerts.isPending) return;
+              setAlertSaved(false);
+              saveAlerts.mutate(alertEmailsDraft);
+            }}
+          >
+            <textarea
+              id="insumo-alert-emails"
+              aria-label="Correos de aviso"
+              value={alertEmailsDraft}
+              rows={3}
+              placeholder="compras@empresa.pe"
+              disabled={alertsQuery.isPending || saveAlerts.isPending}
+              onChange={(event) => {
+                setAlertDraft(event.target.value);
+                setAlertSaved(false);
+              }}
+              className="min-h-[72px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+            />
+            <p className="text-xs text-muted-foreground">Vacío: avisa a quien ve Insumos.</p>
+            {saveAlerts.error ? (
+              <p className="text-sm text-red-600">
+                {saveAlerts.error instanceof Error ? saveAlerts.error.message : 'No se pudieron guardar los correos.'}
+              </p>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Button type="submit" size="sm" disabled={alertsQuery.isPending || saveAlerts.isPending}>
+                Guardar correos
+              </Button>
+              {alertSaved ? <span className="text-xs font-medium text-emerald-700">Guardado</span> : null}
+            </div>
+          </form>
+        </div>
+      </section>
 
       <TablePanel aria-label="Movimientos de insumos" aria-busy={movementsQuery.isPending || movementsQuery.isFetching}>
         <TablePanelHeader>
