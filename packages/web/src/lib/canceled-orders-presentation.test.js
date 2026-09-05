@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canceledListQuery,
   cancellationKind,
   cancellationKindLabel,
   stockApprovalLabel,
@@ -28,6 +29,12 @@ test('distingue cancelada de devuelta', () => {
   assert.equal(stockApprovalLabel('pending'), 'Por aprobar');
   assert.equal(stockApprovalLabel('approved'), 'Stock aprobado');
   assert.equal(stockApprovalLabel('not_required'), null);
+});
+
+test('la lista de devoluciones pide solo pedidos devueltos', () => {
+  assert.deepEqual(canceledListQuery(), { kind: 'returned', approval: undefined });
+  assert.deepEqual(canceledListQuery('returned'), { kind: 'returned', approval: undefined });
+  assert.deepEqual(canceledListQuery('pending_approval'), { kind: 'returned', approval: 'pending' });
 });
 
 test('ofrece ver todos los productos y resume stock contra merma', () => {

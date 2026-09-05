@@ -2,6 +2,15 @@ import { documentDateRangeForLastDays, type DocumentDateRange } from './document
 
 export type CancellationKind = 'cancelled' | 'returned';
 
+export type CanceledListView = 'returned' | 'pending_approval';
+
+export function canceledListQuery(view: CanceledListView = 'returned') {
+  return {
+    kind: 'returned' as const,
+    approval: view === 'pending_approval' ? 'pending' as const : undefined,
+  };
+}
+
 export type CanceledCreditNoteTone = 'done' | 'review' | 'pending' | 'none';
 
 export type CanceledOrderRow = {
