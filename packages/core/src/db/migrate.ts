@@ -1334,6 +1334,8 @@ const DDL = `
     CHECK (quantity > 0),
     CHECK (status IN ('pending', 'approved'))
   );
+  ALTER TABLE return_stock_approvals ADD COLUMN IF NOT EXISTS stock_quantity NUMERIC(14,4);
+  ALTER TABLE return_stock_approvals ADD COLUMN IF NOT EXISTS merma_quantity NUMERIC(14,4);
   CREATE INDEX IF NOT EXISTS idx_return_stock_approvals_pending
     ON return_stock_approvals(status, requested_at DESC)
     WHERE status = 'pending';
@@ -1944,6 +1946,11 @@ export async function runMigrations(pool: Pool): Promise<void> {
       ALTER COLUMN net TYPE NUMERIC(14,6),
       ALTER COLUMN igv TYPE NUMERIC(14,6),
       ALTER COLUMN gross TYPE NUMERIC(14,6)
+  `);
+  await pool.query(`
+    ALTER TABLE return_stock_approvals
+      ADD COLUMN IF NOT EXISTS stock_quantity NUMERIC(14,4),
+      ADD COLUMN IF NOT EXISTS merma_quantity NUMERIC(14,4)
   `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);

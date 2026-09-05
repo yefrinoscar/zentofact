@@ -805,6 +805,8 @@ test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', as
   assert.match(seen[0].sql, /left join products p on p.id=oi.product_id/);
   assert.match(seen[0].sql, /p\.image_url/);
   assert.match(seen[0].sql, /listing\.shop_sku/);
+  assert.match(seen[0].sql, /rsa\.stock_quantity/);
+  assert.match(seen[0].sql, /'approvalId', rsa.id/);
   assert.deepEqual(seen[0].params, ['2026-08-01', '2026-08-31', 50, 0]);
 
   await listCanceledOrders({ kind: 'returned', from: '2026-08-20', to: '2026-08-20' }, db);

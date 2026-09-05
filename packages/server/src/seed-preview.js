@@ -73,6 +73,21 @@ const SEED_ORDERS = [
     stockState: 'none',
     stockApplied: 0,
   },
+  {
+    key: 'returned-multi',
+    orderNumber: 'PV-10006',
+    customer: { name: 'Olga Preview', firstName: 'Olga', lastName: 'Preview', documentNumber: '99001122' },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    falabellaStatus: 'returned',
+    stockState: 'reversed',
+    stockApplied: 0,
+    needsReturnApproval: true,
+    items: [
+      { sku: 'AG301', quantity: 2 },
+      { sku: 'HOG025', quantity: 1 },
+    ],
+  },
 ];
 
 const SEED_LOGISTICS_ORDERS = [
@@ -275,6 +290,7 @@ const SEED_PRODUCTS = [
     brand: 'Zento',
     referencePrice: 249.0,
     stock: 8,
+    imageUrl: '/seed/hog025.svg',
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
@@ -711,29 +727,69 @@ async function ensureSampleOrders(companiesByRuc, products) {
       ],
     );
     const orderId = Number(orderResult.rows[0].id);
-    // Los marketplaces mandan una línea por unidad; la bandeja debe agruparlas.
-    for (let line = 1; line <= (spec.itemLines || 1); line += 1) {
-      await pool.query(
+    const lineSpecs = Array.isArray(spec.items) && spec.items.length
+      ? spec.items
+      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
+    const insertedItems = [];
+    let line = 0;
+    for (const lineSpec of lineSpecs) {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      const quantity = Math.max(1, Number(lineSpec.quantity || 1));
+      const unitPrice = lineProduct.referencePrice || 100;
+      line += 1;
+      const itemResult = await pool.query(
         `INSERT INTO order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
            unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
-         ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,$7,$8,$9::jsonb)
-         ON CONFLICT (order_id, external_item_id) DO NOTHING`,
+         ) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11::jsonb)
+         ON CONFLICT (order_id, external_item_id) DO NOTHING
+         RETURNING id, product_id, quantity`,
         [
           orderId,
           `${externalOrderId}-item-${line}`,
-          product.mainSku,
-          product.name,
-          product.referencePrice || 100,
-          product.productId,
+          lineProduct.mainSku,
+          lineProduct.name,
+          quantity,
+          unitPrice,
+          unitPrice * quantity,
+          lineProduct.productId,
           spec.stockState,
           spec.stockApplied,
           JSON.stringify({ origin: SEED_MARKER }),
         ],
       );
+      if (itemResult.rows[0]) insertedItems.push(itemResult.rows[0]);
+    }
+    if (spec.needsReturnApproval) {
+      for (const item of insertedItems) {
+        await pool.query(
+          `INSERT INTO return_stock_approvals (
+             order_id, order_item_id, product_id, quantity, status, returned_at
+           ) VALUES ($1,$2,$3,$4,'pending',$5)
+           ON CONFLICT (order_item_id) DO NOTHING`,
+          [orderId, item.id, item.product_id, item.quantity, promisedAt],
+        );
+        await pool.query(
+          `INSERT INTO product_inventory (product_id, quantity_on_hand, quantity_reserved, quantity_pending_return)
+           VALUES ($1, 0, 0, $2)
+           ON CONFLICT (product_id) DO UPDATE SET
+             quantity_pending_return = product_inventory.quantity_pending_return + EXCLUDED.quantity_pending_return,
+             updated_at = NOW()`,
+          [item.product_id, item.quantity],
+        );
+      }
     }
     inserted += 1;
   }
+  await pool.query(`
+    UPDATE product_inventory i
+       SET quantity_pending_return = coalesce((
+         SELECT sum(rsa.quantity)
+           FROM return_stock_approvals rsa
+          WHERE rsa.product_id = i.product_id AND rsa.status = 'pending'
+       ), 0),
+           updated_at = NOW()
+  `);
   return { orders: inserted };
 }
 

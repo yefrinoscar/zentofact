@@ -99,11 +99,11 @@ class InventoryDb {
       });
       return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
-    if (compact.startsWith('select id, product_id, quantity')) {
+    if (compact.includes('from return_stock_approvals') && compact.includes("status='pending'") && compact.includes('for update')) {
       return {
-        rows: [...this.approvals.values()].filter((row) => (
-          Number(row.order_id) === Number(params[0]) && row.status === 'pending'
-        )),
+        rows: [...this.approvals.values()]
+          .filter((row) => Number(row.order_id) === Number(params[0]) && row.status === 'pending')
+          .map((row) => ({ ...row, external_order_number: '3249612124' })),
       };
     }
     if (compact.startsWith('update return_stock_approvals')) {
@@ -111,6 +111,8 @@ class InventoryDb {
       if (row) {
         row.status = 'approved';
         row.reviewed_by = params[1];
+        row.stock_quantity = params[2];
+        row.merma_quantity = params[3];
       }
       return { rows: [] };
     }
@@ -799,8 +801,61 @@ test('una devolución desde el 3 set. 14:00 Lima queda por aprobar y no se vende
   const approved = await approveReturnStock(20, 'operator-1', db);
   assert.equal(approved.approvedLines, 1);
   assert.equal(approved.approvedQuantity, 2);
+  assert.equal(approved.mermaQuantity, 0);
   assert.equal(db.pendingReturn, 0);
   assert.equal(db.quantity, 10);
+  assert.equal(db.approvals.get(101).stock_quantity, 2);
+  assert.equal(db.approvals.get(101).merma_quantity, 0);
+});
+
+test('al revisar una devolución se puede mandar parte a merma', async () => {
+  const db = new InventoryDb(8);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  });
+  db.items.set(101, { ...applied });
+  const persisted = {
+    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
+    external_order_number: '3249612124',
+    returned_at: '2026-09-03T20:00:00.000Z',
+  };
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'delivered' },
+    persisted,
+  }));
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'returned' },
+    persisted,
+  }));
+  assert.equal(db.pendingReturn, 2);
+
+  const reviewed = await approveReturnStock(20, 'operator-1', db, {
+    lines: [{ orderItemId: 101, stockQuantity: 1, mermaQuantity: 1 }],
+  });
+  assert.equal(reviewed.approvedQuantity, 1);
+  assert.equal(reviewed.mermaQuantity, 1);
+  assert.equal(db.pendingReturn, 0);
+  assert.equal(db.quantity, 9);
+  const merma = [...db.movements.values()].find((row) => row.movement_type === 'adjustment_out');
+  assert.equal(merma.quantity_delta, -1);
+  assert.match(merma.reason, /Merma/);
+  assert.equal(db.approvals.get(101).stock_quantity, 1);
+  assert.equal(db.approvals.get(101).merma_quantity, 1);
+});
+
+test('rechaza una revisión cuya merma no cuadra con la línea', async () => {
+  const db = new InventoryDb(8);
+  db.approvals.set(101, {
+    id: 1, order_id: 20, order_item_id: 101, product_id: 5, quantity: 2, status: 'pending',
+  });
+  await assert.rejects(
+    () => approveReturnStock(20, 'operator-1', db, {
+      lines: [{ orderItemId: 101, stockQuantity: 2, mermaQuantity: 1 }],
+    }),
+    /sumar la cantidad/,
+  );
+  assert.equal(db.approvals.get(101).status, 'pending');
 });
 
 test('una línea cancelada o devuelta reintegra stock aunque el pedido siga listo para enviar', async () => {

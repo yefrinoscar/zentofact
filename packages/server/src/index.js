@@ -438,7 +438,8 @@ app.get('/order-management/canceled-orders', async (c) => {
 });
 app.post('/order-management/canceled-orders/:id/approve-return', requirePermission('return_stock_approve'), async (c) => {
   try {
-    return ok(c, await orderManagement.approveReturnStock(c.req.param('id'), c.get('user')?.id));
+    const payload = await c.req.json().catch(() => ({}));
+    return ok(c, await orderManagement.approveReturnStock(c.req.param('id'), c.get('user')?.id, undefined, payload));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/order-management/sales-pulse', requirePermission('order_management'), async (c) => {

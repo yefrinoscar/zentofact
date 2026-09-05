@@ -2689,6 +2689,7 @@ function ProductStatusBadge({ product, compact = false }: { product: Product; co
 
 function movementLabel(type: string, reason?: string | null) {
   if (type === 'return') return 'Devolución';
+  if (type === 'adjustment_out' && /^Merma\b/i.test(String(reason || ''))) return 'Merma';
   if (type === 'sale_reversal') {
     return String(reason || '').startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
   }

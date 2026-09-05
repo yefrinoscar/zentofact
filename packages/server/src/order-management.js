@@ -2,7 +2,7 @@ import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
-import { applyInventoryPendingReturn } from './catalog/inventory-service.js';
+import { applyInventoryMovement, applyInventoryPendingReturn } from './catalog/inventory-service.js';
 
 export const DOCUMENT_REQUIREMENTS = ['disabled', 'optional', 'required'];
 export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'customer_choice'];
@@ -1065,6 +1065,12 @@ function normalizeCanceledOrderRow(row) {
       quantity: Number(item?.quantity || 0),
       imageUrl: String(item?.imageUrl || '').trim() || null,
       shopSku: String(item?.shopSku || '').trim() || null,
+      orderItemId: item?.orderItemId == null ? null : Number(item.orderItemId),
+      productId: item?.productId == null ? null : Number(item.productId),
+      approvalId: item?.approvalId == null ? null : Number(item.approvalId),
+      approvalStatus: String(item?.approvalStatus || '').trim() || null,
+      stockQuantity: item?.stockQuantity == null || item?.stockQuantity === '' ? null : Number(item.stockQuantity),
+      mermaQuantity: item?.mermaQuantity == null || item?.mermaQuantity === '' ? null : Number(item.mermaQuantity),
     })),
   };
 }
@@ -1217,7 +1223,13 @@ export async function listCanceledOrders(filters = {}, db) {
            nullif(trim(oi.provider_sku), ''),
            nullif(trim(oi.raw_data->>'ShopSku'), ''),
            nullif(trim(oi.raw_data->>'ShopSKU'), '')
-         )
+         ),
+         'orderItemId', oi.id,
+         'productId', p.id,
+         'approvalId', rsa.id,
+         'approvalStatus', rsa.status,
+         'stockQuantity', rsa.stock_quantity,
+         'mermaQuantity', rsa.merma_quantity
        ) order by oi.id), '[]'::json) as items
        from order_items oi
        left join products p on p.id=oi.product_id
@@ -1244,15 +1256,81 @@ export async function listCanceledOrders(filters = {}, db) {
   };
 }
 
-export async function approveReturnStock(orderIdInput, actorUserId, db) {
+function sameQuantity(left, right) {
+  return Math.abs(Number(left) - Number(right)) < 0.00005;
+}
+
+function nonNegativeQuantity(value, field) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${field} inválido.`);
+  return parsed;
+}
+
+function parseReturnDecisions(input, pendingRows) {
+  const linesInput = Array.isArray(input?.lines) ? input.lines : null;
+  if (!linesInput || linesInput.length === 0) {
+    return pendingRows.map((row) => ({
+      id: Number(row.id),
+      orderItemId: Number(row.order_item_id),
+      productId: Number(row.product_id),
+      quantity: Number(row.quantity),
+      stockQuantity: Number(row.quantity),
+      mermaQuantity: 0,
+      orderNumber: row.external_order_number || null,
+    }));
+  }
+  if (linesInput.length !== pendingRows.length) {
+    const error = new Error('Marca todas las líneas de esta devolución.');
+    error.status = 400;
+    throw error;
+  }
+  const byItem = new Map(pendingRows.map((row) => [Number(row.order_item_id), row]));
+  const seen = new Set();
+  return linesInput.map((line) => {
+    const orderItemId = positiveInt(line.orderItemId, 'orderItemId');
+    if (seen.has(orderItemId)) {
+      const error = new Error('Hay una línea repetida.');
+      error.status = 400;
+      throw error;
+    }
+    seen.add(orderItemId);
+    const row = byItem.get(orderItemId);
+    if (!row) {
+      const error = new Error('Esa línea no está por aprobar.');
+      error.status = 400;
+      throw error;
+    }
+    const quantity = Number(row.quantity);
+    const stockQuantity = nonNegativeQuantity(line.stockQuantity, 'stockQuantity');
+    const mermaQuantity = nonNegativeQuantity(line.mermaQuantity, 'mermaQuantity');
+    if (!sameQuantity(stockQuantity + mermaQuantity, quantity)) {
+      const error = new Error('Las unidades a stock y merma deben sumar la cantidad de la línea.');
+      error.status = 400;
+      throw error;
+    }
+    return {
+      id: Number(row.id),
+      orderItemId,
+      productId: Number(row.product_id),
+      quantity,
+      stockQuantity,
+      mermaQuantity,
+      orderNumber: row.external_order_number || null,
+    };
+  });
+}
+
+export async function approveReturnStock(orderIdInput, actorUserId, db, decisions = {}) {
   const orderId = positiveInt(orderIdInput, 'orderId');
   const reviewer = optionalText(actorUserId, 300);
   const run = async (client) => {
     const pending = await client.query(
-      `select id, product_id, quantity
-         from return_stock_approvals
-        where order_id=$1 and status='pending'
-        for update`,
+      `select rsa.id, rsa.order_item_id, rsa.product_id, rsa.quantity,
+              o.external_order_number
+         from return_stock_approvals rsa
+         join orders o on o.id=rsa.order_id
+        where rsa.order_id=$1 and rsa.status='pending'
+        for update of rsa`,
       [orderId],
     );
     if (!pending.rows.length) {
@@ -1260,22 +1338,45 @@ export async function approveReturnStock(orderIdInput, actorUserId, db) {
       error.status = 400;
       throw error;
     }
-    for (const row of pending.rows) {
+    const lines = parseReturnDecisions(decisions, pending.rows);
+    for (const line of lines) {
       await applyInventoryPendingReturn(client, {
-        productId: Number(row.product_id),
-        quantityDelta: -Number(row.quantity),
+        productId: line.productId,
+        quantityDelta: -line.quantity,
       });
+      if (line.mermaQuantity > 0) {
+        const orderRef = line.orderNumber || orderId;
+        await applyInventoryMovement(client, {
+          productId: line.productId,
+          quantityDelta: -line.mermaQuantity,
+          movementType: 'adjustment_out',
+          reason: `Merma · pedido ${orderRef}`,
+          actorUserId: reviewer,
+          source: 'return_review',
+          orderId,
+          orderItemId: line.orderItemId,
+          idempotencyKey: `return-merma:order_item:${line.orderItemId}:qty:${line.mermaQuantity}`,
+          metadata: {
+            orderNumber: line.orderNumber,
+            stockQuantity: line.stockQuantity,
+            mermaQuantity: line.mermaQuantity,
+          },
+          allowNegative: true,
+        });
+      }
       await client.query(
         `update return_stock_approvals
-            set status='approved', reviewed_at=now(), reviewed_by=$2
+            set status='approved', reviewed_at=now(), reviewed_by=$2,
+                stock_quantity=$3, merma_quantity=$4
           where id=$1 and status='pending'`,
-        [row.id, reviewer],
+        [line.id, reviewer, line.stockQuantity, line.mermaQuantity],
       );
     }
     return {
       orderId,
-      approvedLines: pending.rows.length,
-      approvedQuantity: pending.rows.reduce((sum, row) => sum + Number(row.quantity), 0),
+      approvedLines: lines.length,
+      approvedQuantity: lines.reduce((sum, line) => sum + line.stockQuantity, 0),
+      mermaQuantity: lines.reduce((sum, line) => sum + line.mermaQuantity, 0),
     };
   };
   if (db) return run(db);

@@ -12,9 +12,15 @@ import { usePermissions } from '../hooks/usePermissions';
 import {
   cancellationKind,
   cancellationKindLabel,
+  extraProductsLabel,
   parseCanceledDateRange,
+  returnDecisionHelper,
+  returnDecisionSummary,
+  returnOutcomeLabel,
+  setReturnLineStock,
   stockApprovalLabel,
   type CancellationKind,
+  type ReturnLineDecision,
 } from '../lib/canceled-orders-presentation';
 import { sellerShortName } from '../lib/seller-name';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
@@ -75,6 +81,12 @@ type CanceledOrder = {
     quantity?: number;
     imageUrl?: string | null;
     shopSku?: string | null;
+    orderItemId?: number | null;
+    productId?: number | null;
+    approvalId?: number | null;
+    approvalStatus?: string | null;
+    stockQuantity?: number | null;
+    mermaQuantity?: number | null;
   }>;
 };
 
@@ -147,6 +159,17 @@ function productLines(items: CanceledOrder['items'] = []) {
   const lines = items.filter((item) => item.name || item.sku);
   if (lines.length === 0) return [{ name: null, sku: null, quantity: 0, imageUrl: null, shopSku: null }];
   return lines;
+}
+
+function pendingReturnDecisions(order: CanceledOrder | null): ReturnLineDecision[] {
+  return productLines(order?.items)
+    .filter((item) => item.approvalStatus === 'pending' && item.orderItemId)
+    .map((item) => ({
+      orderItemId: Number(item.orderItemId),
+      quantity: Number(item.quantity || 0),
+      stockQuantity: Number(item.quantity || 0),
+      mermaQuantity: 0,
+    }));
 }
 
 function ProductThumb({
@@ -242,7 +265,9 @@ export default function Cancelados() {
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [page, setPage] = useState(0);
   const [approveOrder, setApproveOrder] = useState<CanceledOrder | null>(null);
+  const [approveDecisions, setApproveDecisions] = useState<ReturnLineDecision[]>([]);
   const [approveError, setApproveError] = useState('');
+  const [productsOrder, setProductsOrder] = useState<CanceledOrder | null>(null);
   const [imagePreview, setImagePreview] = useState<ProductImagePreview | null>(null);
   const searchTimer = useRef(0);
 
@@ -317,9 +342,18 @@ export default function Cancelados() {
       ? 'Por aprobar'
       : cancellationKindLabel(kind);
   const approveMutation = useMutation({
-    mutationFn: (orderId: number) => api.approveReturnStock(orderId),
+    mutationFn: ({ orderId, lines }: { orderId: number; lines: ReturnLineDecision[] }) => (
+      api.approveReturnStock(orderId, {
+        lines: lines.map((line) => ({
+          orderItemId: line.orderItemId,
+          stockQuantity: line.stockQuantity,
+          mermaQuantity: line.mermaQuantity,
+        })),
+      })
+    ),
     onSuccess: async () => {
       setApproveOrder(null);
+      setApproveDecisions([]);
       setApproveError('');
       await queryClient.invalidateQueries({ queryKey: ['canceled-orders'] });
     },
@@ -327,6 +361,9 @@ export default function Cancelados() {
       setApproveError(error instanceof Error ? error.message : 'No se pudo aprobar la devolución.');
     },
   });
+  const approveSummary = returnDecisionSummary(approveDecisions);
+  const approveItems = productLines(approveOrder?.items);
+  const productsViewItems = productLines(productsOrder?.items);
 
   return (
       <div className="space-y-3">
@@ -431,6 +468,7 @@ export default function Cancelados() {
                 {orders.map((order) => {
                   const kindValue = order.kind || cancellationKind(order);
                   const products = productLines(order.items);
+                  const outcome = returnOutcomeLabel(products);
                   return (
                     <TableRow key={order.id}>
                       <TableCell>
@@ -459,7 +497,7 @@ export default function Cancelados() {
                       </TableCell>
                       <TableCell>
                         <div className="max-w-[280px] space-y-1.5">
-                          {products.map((item, index) => (
+                          {products.slice(0, 1).map((item, index) => (
                             <div key={`${item.sku || item.name || 'item'}-${index}`} className="flex items-start gap-2.5">
                               <ProductThumb item={item} onOpen={setImagePreview} />
                               <div className="min-w-0">
@@ -475,6 +513,15 @@ export default function Cancelados() {
                                     title="Copiar SKU"
                                   >
                                     {item.sku}
+                                  </button>
+                                ) : null}
+                                {products.length > 1 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProductsOrder(order)}
+                                    className="mt-1 block text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                                  >
+                                    {extraProductsLabel(products.length)}
                                   </button>
                                 ) : null}
                               </div>
@@ -495,6 +542,11 @@ export default function Cancelados() {
                               {stockApprovalLabel(order.stockApproval)}
                             </Badge>
                           )}
+                          {order.stockApproval !== 'pending' && outcome && (
+                            <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-100 text-slate-700">
+                              {outcome}
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-medium">{money(order.total, order.currency)}</TableCell>
@@ -507,6 +559,7 @@ export default function Cancelados() {
                               className="h-7 px-2.5"
                               onClick={() => {
                                 setApproveError('');
+                                setApproveDecisions(pendingReturnDecisions(order));
                                 setApproveOrder(order);
                               }}
                             >
@@ -562,30 +615,149 @@ export default function Cancelados() {
         )}
       </TablePanel>
 
-      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending) setApproveOrder(null); }}>
-        <DialogContent>
+      <Dialog open={Boolean(productsOrder)} onOpenChange={(open) => { if (!open) setProductsOrder(null); }}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Aprobar devolución</DialogTitle>
+            <DialogTitle>Productos del pedido</DialogTitle>
             <DialogDescription>
-              El pedido {approveOrder?.externalOrderNumber} pasa al stock que se puede vender.
+              {productsOrder?.externalOrderNumber}
+              {productsOrder?.companyName ? ` · ${productsOrder.companyName}` : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-1 text-sm">
-            {productLines(approveOrder?.items).map((item, index) => (
-              <p key={`${item.sku || item.name || 'item'}-${index}`}>
-                {item.name || item.sku || '—'}
-                {item.sku && item.name ? ` · ${item.sku}` : ''}
-                {Number(item.quantity) > 0 ? ` · ${Number(item.quantity)} u` : ''}
-              </p>
+          <div className="space-y-3">
+            {productsViewItems.map((item, index) => (
+              <div key={`${item.sku || item.name || 'item'}-${index}`} className="flex items-start gap-3">
+                <ProductThumb item={item} onOpen={setImagePreview} />
+                <div className="min-w-0">
+                  <p className="text-sm leading-5">{item.name || item.sku || '—'}</p>
+                  {item.sku ? <p className="font-mono text-xs text-muted-foreground">{item.sku}</p> : null}
+                  {Number(item.quantity) > 0 ? <p className="text-xs text-muted-foreground">{Number(item.quantity)} u</p> : null}
+                </div>
+              </div>
             ))}
           </div>
-          <p className="text-sm text-muted-foreground">
-            {Number(approveOrder?.pendingReturnQuantity) === 1
-              ? '1 unidad deja de estar por aprobar.'
-              : Number(approveOrder?.pendingReturnQuantity) > 1
-                ? `${approveOrder?.pendingReturnQuantity} unidades dejan de estar por aprobar.`
-                : 'Las unidades dejan de estar por aprobar.'}
-          </p>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending) { setApproveOrder(null); setApproveDecisions([]); } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Revisar devolución</DialogTitle>
+            <DialogDescription>
+              Elige qué vuelve al stock y qué es merma.
+            </DialogDescription>
+          </DialogHeader>
+          {approveDecisions.length > 1 || approveDecisions.some((line) => line.quantity > 1) ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={approveMutation.isPending}
+                onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, line.quantity)))}
+              >
+                Todo a stock
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={approveMutation.isPending}
+                onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, 0)))}
+              >
+                Todo a merma
+              </Button>
+            </div>
+          ) : null}
+          <div className="space-y-3">
+            {approveDecisions.map((line) => {
+              const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
+                name: null,
+                sku: null,
+                quantity: line.quantity,
+              };
+              return (
+                <div key={line.orderItemId} className="flex items-start gap-3">
+                  <ProductThumb item={item} onOpen={setImagePreview} />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <p className="text-sm leading-5">{item.name || item.sku || '—'}</p>
+                      {item.sku ? (
+                        <p className="font-mono text-xs text-muted-foreground">
+                          {item.sku}
+                          {Number(line.quantity) > 0 ? ` · ${Number(line.quantity)} u` : ''}
+                        </p>
+                      ) : null}
+                    </div>
+                    {Number(line.quantity) > 1 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="space-y-1 text-xs font-medium">
+                          A stock
+                          <Input
+                            type="number"
+                            min={0}
+                            max={line.quantity}
+                            value={line.stockQuantity}
+                            disabled={approveMutation.isPending}
+                            className="h-8"
+                            onChange={(event) => {
+                              const next = Number(event.target.value);
+                              setApproveDecisions((current) => current.map((row) => (
+                                row.orderItemId === line.orderItemId ? setReturnLineStock(row, next) : row
+                              )));
+                            }}
+                          />
+                        </label>
+                        <label className="space-y-1 text-xs font-medium">
+                          Merma
+                          <Input
+                            type="number"
+                            min={0}
+                            max={line.quantity}
+                            value={line.mermaQuantity}
+                            disabled={approveMutation.isPending}
+                            className="h-8"
+                            onChange={(event) => {
+                              const next = Number(event.target.value);
+                              setApproveDecisions((current) => current.map((row) => (
+                                row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity - next) : row
+                              )));
+                            }}
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant={line.stockQuantity > 0 ? 'default' : 'outline'}
+                          disabled={approveMutation.isPending}
+                          onClick={() => setApproveDecisions((current) => current.map((row) => (
+                            row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity) : row
+                          )))}
+                        >
+                          A stock
+                        </Button>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant={line.mermaQuantity > 0 ? 'default' : 'outline'}
+                          disabled={approveMutation.isPending}
+                          onClick={() => setApproveDecisions((current) => current.map((row) => (
+                            row.orderItemId === line.orderItemId ? setReturnLineStock(row, 0) : row
+                          )))}
+                        >
+                          Merma
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-sm text-muted-foreground">{returnDecisionHelper(approveSummary)}</p>
           {approveError && (
             <p className="text-sm text-rose-700">{approveError}</p>
           )}
@@ -594,14 +766,14 @@ export default function Cancelados() {
               type="button"
               variant="outline"
               disabled={approveMutation.isPending}
-              onClick={() => setApproveOrder(null)}
+              onClick={() => { setApproveOrder(null); setApproveDecisions([]); }}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              disabled={!approveOrder || approveMutation.isPending}
-              onClick={() => approveOrder && approveMutation.mutate(approveOrder.id)}
+              disabled={!approveOrder || approveMutation.isPending || (approveDecisions.length > 0 && !approveSummary.balanced)}
+              onClick={() => approveOrder && approveMutation.mutate({ orderId: approveOrder.id, lines: approveDecisions })}
             >
               {approveMutation.isPending ? <Loader2 className="animate-spin" /> : null}
               Confirmar

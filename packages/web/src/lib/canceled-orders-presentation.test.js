@@ -8,6 +8,11 @@ import {
   documentKindLabel,
   documentTag,
   parseCanceledDateRange,
+  extraProductsLabel,
+  returnOutcomeLabel,
+  returnDecisionSummary,
+  returnDecisionHelper,
+  setReturnLineStock,
 } from './canceled-orders-presentation.ts';
 
 test('distingue cancelada de devuelta', () => {
@@ -19,6 +24,19 @@ test('distingue cancelada de devuelta', () => {
   assert.equal(stockApprovalLabel('pending'), 'Por aprobar');
   assert.equal(stockApprovalLabel('approved'), 'Stock aprobado');
   assert.equal(stockApprovalLabel('not_required'), null);
+});
+
+test('ofrece ver todos los productos y resume stock contra merma', () => {
+  assert.equal(extraProductsLabel(1), null);
+  assert.equal(extraProductsLabel(2), 'Ver 2 productos');
+  assert.equal(extraProductsLabel(3), 'Ver 3 productos');
+  assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 2, mermaQuantity: 0 }]), null);
+  assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 0, mermaQuantity: 2 }]), 'Merma');
+  assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 1, mermaQuantity: 1 }]), 'Stock y merma');
+  const split = setReturnLineStock({ orderItemId: 9, quantity: 3, stockQuantity: 3, mermaQuantity: 0 }, 1);
+  assert.deepEqual(split, { orderItemId: 9, quantity: 3, stockQuantity: 1, mermaQuantity: 2 });
+  assert.deepEqual(returnDecisionSummary([split]), { stock: 1, merma: 2, balanced: true });
+  assert.equal(returnDecisionHelper({ stock: 1, merma: 2 }), '1 u a stock. 2 u a merma.');
 });
 
 test('describe el comprobante y la nota de crédito como en Falabella', () => {

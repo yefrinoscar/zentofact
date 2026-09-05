@@ -29,6 +29,77 @@ export function stockApprovalLabel(status?: string | null) {
   return null;
 }
 
+export type ReturnLineItem = {
+  quantity?: number | null;
+  approvalStatus?: string | null;
+  stockQuantity?: number | null;
+  mermaQuantity?: number | null;
+};
+
+export type ReturnLineDecision = {
+  orderItemId: number;
+  quantity: number;
+  stockQuantity: number;
+  mermaQuantity: number;
+};
+
+export function extraProductsLabel(count: number) {
+  if (count <= 1) return null;
+  return `Ver ${count} productos`;
+}
+
+export function returnOutcomeLabel(items: ReturnLineItem[] = []) {
+  let stock = 0;
+  let merma = 0;
+  for (const item of items) {
+    if (item.approvalStatus && item.approvalStatus !== 'approved') continue;
+    const hasSplit = item.stockQuantity != null || item.mermaQuantity != null;
+    if (!hasSplit) continue;
+    stock += Number(item.stockQuantity || 0);
+    merma += Number(item.mermaQuantity || 0);
+  }
+  if (merma > 0 && stock > 0) return 'Stock y merma';
+  if (merma > 0) return 'Merma';
+  return null;
+}
+
+export function returnDecisionSummary(lines: ReturnLineDecision[]) {
+  const stock = lines.reduce((sum, line) => sum + Number(line.stockQuantity || 0), 0);
+  const merma = lines.reduce((sum, line) => sum + Number(line.mermaQuantity || 0), 0);
+  const balanced = lines.every((line) => (
+    Number(line.stockQuantity) >= 0
+    && Number(line.mermaQuantity) >= 0
+    && Number(line.stockQuantity) + Number(line.mermaQuantity) === Number(line.quantity)
+  ));
+  return { stock, merma, balanced };
+}
+
+export function returnDecisionHelper(summary: { stock: number; merma: number }) {
+  const stock = Number(summary.stock || 0);
+  const merma = Number(summary.merma || 0);
+  if (stock > 0 && merma > 0) {
+    return `${unitLabel(stock)} a stock. ${unitLabel(merma)} a merma.`;
+  }
+  if (merma > 0) return `${unitLabel(merma)} a merma.`;
+  if (stock > 0) return `${unitLabel(stock)} a stock.`;
+  return 'Marca cada línea.';
+}
+
+export function setReturnLineStock(line: ReturnLineDecision, stockQuantity: number): ReturnLineDecision {
+  const quantity = Number(line.quantity);
+  const stock = clampQuantity(stockQuantity, 0, quantity);
+  return { ...line, stockQuantity: stock, mermaQuantity: quantity - stock };
+}
+
+function unitLabel(count: number) {
+  return count === 1 ? '1 u' : `${count} u`;
+}
+
+function clampQuantity(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
 export function documentKindLabel(kind?: string | null) {
   if (kind === 'factura') return 'Factura';
   if (kind === 'boleta') return 'Boleta';
