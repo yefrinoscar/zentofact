@@ -1,6 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } from './shipping-label-sheet.js';
 import { buildManualLabelSheet } from './manual-shipping-label.js';
+import { createLogId } from './error-log.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -500,6 +501,28 @@ function printFailureMessage(skipped) {
   return 'No hay nada para imprimir en esta selección.';
 }
 
+function summarizePrintOrders(orders) {
+  return orders.map((order) => ({
+    id: order.id,
+    channel: order.channelCode,
+    companyId: order.companyId || null,
+    companyName: order.companyName || null,
+    externalOrderId: order.externalOrderId || null,
+    externalOrderNumber: order.externalOrderNumber || null,
+  }));
+}
+
+function throwPrintFailure(skipped, extra = {}, dependencies = {}) {
+  const logId = (dependencies.createLogId || createLogId)();
+  const details = { skipped, ...extra };
+  const write = dependencies.log || console.error;
+  write(JSON.stringify({ event: 'logistics.print.failed', logId, ...details }));
+  const error = new Error(printFailureMessage(skipped));
+  error.logId = logId;
+  error.details = details;
+  throw error;
+}
+
 async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
   const lookupIds = ripleyOrderLookupIds(order);
   if (!lookupIds.length) throw new Error('El pedido Ripley no tiene número para buscar la etiqueta.');
@@ -614,7 +637,13 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   }
 
   if (!pdfParts.length && !selection.includePacking) {
-    throw new Error(printFailureMessage(skipped));
+    throwPrintFailure(skipped, {
+      orderIds: selection.orderIds,
+      includePacking: selection.includePacking,
+      labelCount,
+      pdfPartCount: pdfParts.length,
+      orders: summarizePrintOrders(orders),
+    }, dependencies);
   }
 
   const printable = orders.filter((order) => {
@@ -633,7 +662,15 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (packingPageCount) pdfParts.push(await packingPdf.save());
   }
 
-  if (!pdfParts.length) throw new Error(printFailureMessage(skipped));
+  if (!pdfParts.length) {
+    throwPrintFailure(skipped, {
+      orderIds: selection.orderIds,
+      includePacking: selection.includePacking,
+      labelCount,
+      pdfPartCount: pdfParts.length,
+      orders: summarizePrintOrders(orders),
+    }, dependencies);
+  }
 
   const bytes = await mergePdfBuffers(pdfParts);
   if (printable.length && dependencies.recordPrints !== false) {
