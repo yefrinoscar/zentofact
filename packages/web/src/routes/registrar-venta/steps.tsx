@@ -235,7 +235,7 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel
       title="Productos"
-      hint="Precio del catálogo. Ajusta si es por mayor."
+      hint="Comisión fija. Si subes el precio, es tuyo."
       icon={Package}
       action={(
         <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 cursor-pointer" onClick={view.openProductPicker}>

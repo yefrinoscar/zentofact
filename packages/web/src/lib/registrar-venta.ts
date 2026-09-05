@@ -201,18 +201,27 @@ export function productPrice(product: CatalogProductForSale) {
   return Number.isFinite(seller) && seller > 0 ? seller : 0;
 }
 
-/** Lo que queda al vender: precio menos la comisión fija del producto. */
+/** Precio del vendedor: el de catálogo menos la comisión fija. */
+export function sellerBasePrice(catalogPrice: number, commissionAmount: number) {
+  return money2(Number(catalogPrice) - Number(commissionAmount));
+}
+
+/** En el precio de catálogo el vendedor gana solo la comisión fija. */
 export function productProfit(product: CatalogProductForSale) {
   if (product.commissionAmount == null) return null;
-  return money2(productPrice(product) - Number(product.commissionAmount));
+  return money2(Number(product.commissionAmount));
 }
 
-export function saleLineProfit(line: Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount'>) {
+/** Lo extra sobre el precio del vendedor (catálogo − comisión) es del vendedor. */
+export function saleLineProfit(line: Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount' | 'catalogPrice'>) {
   if (line.commissionAmount == null) return null;
-  return money2((Number(line.unitPrice) - Number(line.commissionAmount)) * Number(line.quantity || 0));
+  const catalog = Number(line.catalogPrice);
+  const list = Number.isFinite(catalog) && catalog > 0 ? catalog : Number(line.unitPrice);
+  const sellerBase = sellerBasePrice(list, Number(line.commissionAmount));
+  return money2((Number(line.unitPrice) - sellerBase) * Number(line.quantity || 0));
 }
 
-export function saleProfit(lines: Array<Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount'>>) {
+export function saleProfit(lines: Array<Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount' | 'catalogPrice'>>) {
   if (!lines.some((line) => line.commissionAmount != null)) return null;
   return money2(lines.reduce((sum, line) => sum + (saleLineProfit(line) ?? 0), 0));
 }

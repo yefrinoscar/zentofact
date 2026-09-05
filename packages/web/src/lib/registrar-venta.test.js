@@ -13,6 +13,7 @@ import {
   productProfit,
   saleLineProfit,
   saleProfit,
+  sellerBasePrice,
   productStock,
   remainingSaleStock,
   canSelectProductForSale,
@@ -562,7 +563,8 @@ test('la comisión del producto se multiplica por unidades y distingue cero de s
   assert.equal(saleProductCommission([{ quantity: 2 }]), undefined);
 });
 
-test('la ganancia es el precio menos la comisión y se actualiza si baja el precio', () => {
+test('el vendedor gana la comisión fija y lo que sube sobre su precio', () => {
+  assert.equal(sellerBasePrice(25, 5), 20);
   assert.equal(productProfit({
     id: 1,
     mainSku: 'G-48',
@@ -570,13 +572,15 @@ test('la ganancia es el precio menos la comisión y se actualiza si baja el prec
     referencePrice: 25,
     sellerPriceMin: 23.97,
     commissionAmount: 5,
-  }), 20);
-  assert.equal(saleLineProfit({ unitPrice: 25, quantity: 1, commissionAmount: 5 }), 20);
-  assert.equal(saleLineProfit({ unitPrice: 23, quantity: 2, commissionAmount: 5 }), 36);
-  assert.equal(saleLineProfit({ unitPrice: 25, quantity: 1 }), null);
+  }), 5);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 25, quantity: 1, commissionAmount: 5 }), 5);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 28, quantity: 1, commissionAmount: 5 }), 8);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 23, quantity: 1, commissionAmount: 5 }), 3);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 23, quantity: 2, commissionAmount: 5 }), 6);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 25, quantity: 1 }), null);
   assert.equal(saleProfit([
-    { unitPrice: 25, quantity: 1, commissionAmount: 5 },
-    { unitPrice: 10, quantity: 1, commissionAmount: 2 },
-  ]), 28);
-  assert.equal(saleProfit([{ unitPrice: 25, quantity: 1 }]), null);
+    { catalogPrice: 25, unitPrice: 28, quantity: 1, commissionAmount: 5 },
+    { catalogPrice: 10, unitPrice: 10, quantity: 1, commissionAmount: 2 },
+  ]), 10);
+  assert.equal(saleProfit([{ catalogPrice: 25, unitPrice: 25, quantity: 1 }]), null);
 });
