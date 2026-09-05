@@ -8,7 +8,7 @@ import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
 import falabellaLogo from '../../assets/falabella.png';
-import mercadoLibreLogo from '../../assets/mercado-libre.svg';
+import mercadoLibreLogo from '../../assets/mercado-libre.png';
 import ripleyLogo from '../../assets/logo-blanco.svg';
 import {
   Dialog,
@@ -352,7 +352,7 @@ export function ChannelMark({ code, className }: { code?: string | null; classNa
     );
   }
   if (value === 'mercado_libre') {
-    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
+    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 overflow-hidden rounded-sm object-cover', className)} />;
   }
   return (
     <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">

@@ -27,7 +27,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import falabellaLogo from '../assets/falabella.png';
-import mercadoLibreLogo from '../assets/mercado-libre.svg';
+import mercadoLibreLogo from '../assets/mercado-libre.png';
 import ripleyLogo from '../assets/ripley.svg';
 
 type ChannelTab = 'falabella' | 'ripley' | 'mercado_libre';
@@ -45,7 +45,7 @@ function ChannelMark({ channel, className }: { channel: ChannelTab; className?: 
       src={mark.src}
       alt=""
       title={mark.label}
-      className={cn('size-4 rounded-[3px] object-contain', className)}
+      className={cn('size-4 overflow-hidden rounded-[3px] object-cover', className)}
     />
   );
 }
@@ -231,7 +231,7 @@ function ChannelReady({
       src={CHANNEL_MARK[channel].src}
       alt={CHANNEL_MARK[channel].label}
       title={title}
-      className={cn('size-4 rounded-[3px] object-contain', ready ? 'opacity-100' : 'opacity-25')}
+      className={cn('size-4 overflow-hidden rounded-[3px] object-cover', ready ? 'opacity-100' : 'opacity-25')}
     />
   );
 }
