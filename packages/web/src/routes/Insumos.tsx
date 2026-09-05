@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Minus, PackageOpen, Plus } from 'lucide-react';
+import { Minus, PackageOpen, Plus, Settings } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import {
@@ -176,6 +176,7 @@ export default function Insumos() {
   const [formError, setFormError] = useState('');
   const [alertDraft, setAlertDraft] = useState<string | null>(null);
   const [alertSaved, setAlertSaved] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   const listQuery = useQuery({
     queryKey: ['insumos'],
@@ -197,6 +198,7 @@ export default function Insumos() {
     queryKey: ['insumos', 'alerts'],
     queryFn: () => api.getInsumoAlertEmails(),
     staleTime: 60_000,
+    enabled: alertsOpen,
   });
   const serverAlertEmails = ((alertsQuery.data as InsumoAlertsResponse | undefined)?.alertEmails || []).join('\n');
   const alertEmailsDraft = alertDraft ?? serverAlertEmails;
@@ -275,8 +277,25 @@ export default function Insumos() {
   const bumpError = bump.error instanceof Error ? bump.error.message : bump.error ? 'No se pudo actualizar.' : '';
   const visibleError = formError || queryError || movementsError || (!pending && bumpError ? bumpError : '');
 
+  const openAlerts = (open: boolean) => {
+    if (!open && saveAlerts.isPending) return;
+    setAlertsOpen(open);
+    if (open) {
+      setAlertDraft(null);
+      setAlertSaved(false);
+      saveAlerts.reset();
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button type="button" variant="outline" onClick={() => openAlerts(true)}>
+          <Settings />
+          Avisos
+        </Button>
+      </div>
+
       {visibleError ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{visibleError}</div>
       ) : null}
@@ -310,50 +329,6 @@ export default function Insumos() {
           ))}
         </section>
       )}
-
-      <section className="border-t border-border pt-4" aria-label="Avisos de insumos">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Avisos</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Correo al llegar al mínimo.</p>
-          </div>
-          <form
-            className="grid w-full gap-2 sm:max-w-80"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (saveAlerts.isPending) return;
-              setAlertSaved(false);
-              saveAlerts.mutate(alertEmailsDraft);
-            }}
-          >
-            <textarea
-              id="insumo-alert-emails"
-              aria-label="Correos de aviso"
-              value={alertEmailsDraft}
-              rows={3}
-              placeholder="compras@empresa.pe"
-              disabled={alertsQuery.isPending || saveAlerts.isPending}
-              onChange={(event) => {
-                setAlertDraft(event.target.value);
-                setAlertSaved(false);
-              }}
-              className="min-h-[72px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-            />
-            <p className="text-xs text-muted-foreground">Vacío: avisa a quien ve Insumos.</p>
-            {saveAlerts.error ? (
-              <p className="text-sm text-red-600">
-                {saveAlerts.error instanceof Error ? saveAlerts.error.message : 'No se pudieron guardar los correos.'}
-              </p>
-            ) : null}
-            <div className="flex items-center gap-2">
-              <Button type="submit" size="sm" disabled={alertsQuery.isPending || saveAlerts.isPending}>
-                Guardar correos
-              </Button>
-              {alertSaved ? <span className="text-xs font-medium text-emerald-700">Guardado</span> : null}
-            </div>
-          </form>
-        </div>
-      </section>
 
       <TablePanel aria-label="Movimientos de insumos" aria-busy={movementsQuery.isPending || movementsQuery.isFetching}>
         <TablePanelHeader>
@@ -478,6 +453,63 @@ export default function Insumos() {
               <Button type="submit" disabled={bump.isPending || !pin.trim()}>
                 Guardar
               </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={alertsOpen} onOpenChange={openAlerts}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Avisos</DialogTitle>
+            <DialogDescription>Correo al llegar al mínimo.</DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (saveAlerts.isPending || alertsQuery.isPending) return;
+              setAlertSaved(false);
+              saveAlerts.mutate(alertEmailsDraft);
+            }}
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="insumo-alert-emails">Correos</Label>
+              <textarea
+                id="insumo-alert-emails"
+                aria-label="Correos de aviso"
+                value={alertEmailsDraft}
+                rows={5}
+                placeholder="compras@empresa.pe"
+                disabled={alertsQuery.isPending || saveAlerts.isPending}
+                onChange={(event) => {
+                  setAlertDraft(event.target.value);
+                  setAlertSaved(false);
+                }}
+                className="min-h-[120px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+              />
+              <p className="text-xs text-muted-foreground">Vacío: avisa a quien ve Insumos.</p>
+              {saveAlerts.error ? (
+                <p className="text-sm text-red-600">
+                  {saveAlerts.error instanceof Error ? saveAlerts.error.message : 'No se pudieron guardar los correos.'}
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saveAlerts.isPending}
+                onClick={() => openAlerts(false)}
+              >
+                Cerrar
+              </Button>
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={alertsQuery.isPending || saveAlerts.isPending}>
+                  Guardar correos
+                </Button>
+                {alertSaved ? <span className="text-xs font-medium text-emerald-700">Guardado</span> : null}
+              </div>
             </DialogFooter>
           </form>
         </DialogContent>
