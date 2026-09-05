@@ -42,6 +42,7 @@ import {
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
+  sellerCellLabel,
   MANAGED_ORDER_TABLE_COLUMNS,
 } from '../lib/managed-orders-presentation';
 import {
@@ -185,6 +186,9 @@ type ManagedOrder = {
     zoneLabel?: string;
     priceZone?: string;
   };
+  createdBy?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
   metadata?: {
     paymentMethod?: string;
     saleSource?: string;
@@ -361,11 +365,6 @@ function companyName(company: Company) {
       .trim());
   const name = candidates.sort((left, right) => left.length - right.length)[0];
   return name ? titleCaseSeller(name) : `Empresa ${company.id}`;
-}
-
-function sellerCellLabel(order: { companyId: number | null }, companyById: Map<number, string>) {
-  if (order.companyId == null) return '';
-  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
 }
 
 function formatMoney(value: number | null | undefined, currency = 'PEN') {
@@ -1376,7 +1375,7 @@ export default function PedidosMulticanal() {
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">
-                      {detail.channelName}{detail.companyId == null ? '' : ` · ${sellerCellLabel(detail, companyById)}`}
+                      {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
                     </SheetDescription>
                   </div>
                 </div>
