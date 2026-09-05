@@ -672,9 +672,9 @@ async function ensureSampleOrders(companiesByRuc, products) {
          $1,$2,$3,$4,
          $5,'paid',$6,'not_requested',$6,
          'optional','automatic','PEN',$7,$7,
-         $8::jsonb,$9::jsonb,$10::jsonb,$11,$11,$11,'complete',$12,
-         CASE WHEN $5 = 'cancelled' OR $6 = 'cancelled' THEN $11 ELSE NULL END,
-         CASE WHEN $6 = 'returned' THEN $11 ELSE NULL END
+         $8::jsonb,$9::jsonb,$10::jsonb,$11::timestamptz,$11::timestamptz,$11::timestamptz,'complete',$12,
+         CASE WHEN $5 = 'cancelled' OR $6 = 'cancelled' THEN $11::timestamptz ELSE NULL END,
+         CASE WHEN $6 = 'returned' THEN $11::timestamptz ELSE NULL END
        )
        ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
          order_status = EXCLUDED.order_status,
