@@ -35,14 +35,27 @@ export function documentKindLabel(kind?: string | null) {
   return '—';
 }
 
+function trimmedNumber(value?: string | null) {
+  const number = String(value || '').trim();
+  return number || null;
+}
+
+/** Tag visible: Boleta o Factura. El número sale al pasar el mouse. */
+export function documentTag(kind?: string | null, number?: string | null) {
+  const label = documentKindLabel(kind);
+  if (label === '—') return null;
+  return { label, number: trimmedNumber(number) };
+}
+
 export function creditNoteAction(row: Pick<CanceledOrderRow, 'creditNoteNumber' | 'documentNumber' | 'documentKind'>) {
-  if (row.creditNoteNumber) {
-    return { tone: 'done' as CanceledCreditNoteTone, label: `NC ${row.creditNoteNumber}` };
+  const number = trimmedNumber(row.creditNoteNumber);
+  if (number) {
+    return { tone: 'done' as CanceledCreditNoteTone, label: 'NC', number };
   }
   if (row.documentNumber || row.documentKind === 'boleta' || row.documentKind === 'factura') {
-    return { tone: 'pending' as CanceledCreditNoteTone, label: 'Sin NC' };
+    return { tone: 'pending' as CanceledCreditNoteTone, label: 'Sin NC', number: null };
   }
-  return { tone: 'none' as CanceledCreditNoteTone, label: 'Sin documento' };
+  return { tone: 'none' as CanceledCreditNoteTone, label: 'Sin documento', number: null };
 }
 
 export function parseCanceledDateRange(searchParams: URLSearchParams): DocumentDateRange {

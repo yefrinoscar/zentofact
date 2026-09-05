@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { Ban, Loader2, Search } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
@@ -12,7 +12,7 @@ import {
   cancellationKind,
   cancellationKindLabel,
   creditNoteAction,
-  documentKindLabel,
+  documentTag,
   parseCanceledDateRange,
   stockApprovalLabel,
   type CancellationKind,
@@ -32,6 +32,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 
 type Company = {
   id: number;
@@ -117,9 +118,29 @@ function kindBadgeClass(kind: CancellationKind) {
     : 'border-slate-200 bg-slate-100 text-slate-700';
 }
 
-function creditNoteClass(tone: ReturnType<typeof creditNoteAction>['tone']) {
-  if (tone === 'done') return 'bg-emerald-100 text-emerald-700';
-  return 'bg-muted text-muted-foreground';
+const mutedTagClass = 'rounded-full bg-muted px-2.5 font-medium text-muted-foreground';
+
+function HoverNumber({
+  number,
+  label,
+  children,
+}: {
+  number?: string | null;
+  label: string;
+  children: ReactNode;
+}) {
+  const value = String(number || '').trim();
+  if (!value) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="cursor-help rounded-full" aria-label={`${label} ${value}`}>
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{value}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function ChannelMark({ code }: { code?: string | null }) {
@@ -246,7 +267,8 @@ export default function Cancelados() {
   });
 
   return (
-    <div className="space-y-3">
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-3">
       <div className="space-y-2">
         <div className="relative max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -350,6 +372,7 @@ export default function Cancelados() {
                 {orders.map((order) => {
                   const kindValue = order.kind || cancellationKind(order);
                   const note = creditNoteAction(order);
+                  const document = documentTag(order.documentKind, order.documentNumber);
                   const products = productLines(order.items);
                   return (
                     <TableRow key={order.id}>
@@ -403,24 +426,29 @@ export default function Cancelados() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm">{order.companyName || '—'}</TableCell>
+                      <TableCell>
+                        {order.companyName ? (
+                          <Badge
+                            variant="outline"
+                            className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground"
+                            title={order.companyName}
+                          >
+                            {order.companyName}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {documentKindLabel(order.documentKind) !== '—' && (
-                            <span className={order.documentKind === 'factura'
-                              ? 'inline-flex rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700'
-                              : 'inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700'}
-                            >
-                              {documentKindLabel(order.documentKind)}
-                            </span>
-                          )}
-                          {order.documentNumber ? (
-                            <span className="font-mono text-xs">{order.documentNumber}</span>
+                          {document ? (
+                            <HoverNumber number={document.number} label={document.label}>
+                              <Badge variant="outline" className={mutedTagClass}>{document.label}</Badge>
+                            </HoverNumber>
                           ) : null}
-                          <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium', creditNoteClass(note.tone))}>
-                            {note.tone === 'done' && <CheckCircle2 className="h-3.5 w-3.5" />}
-                            {note.label}
-                          </span>
+                          <HoverNumber number={note.number} label="Nota de crédito">
+                            <Badge variant="outline" className={mutedTagClass}>{note.label}</Badge>
+                          </HoverNumber>
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-medium">{money(order.total, order.currency)}</TableCell>
@@ -535,6 +563,7 @@ export default function Cancelados() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

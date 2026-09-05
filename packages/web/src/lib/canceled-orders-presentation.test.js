@@ -6,6 +6,7 @@ import {
   stockApprovalLabel,
   creditNoteAction,
   documentKindLabel,
+  documentTag,
   parseCanceledDateRange,
 } from './canceled-orders-presentation.ts';
 
@@ -23,20 +24,24 @@ test('distingue cancelada de devuelta', () => {
 test('describe el comprobante y la nota de crédito como en Falabella', () => {
   assert.equal(documentKindLabel('boleta'), 'Boleta');
   assert.equal(documentKindLabel('factura'), 'Factura');
+  assert.deepEqual(documentTag('boleta', 'B001-000648'), { label: 'Boleta', number: 'B001-000648' });
+  assert.deepEqual(documentTag('factura', 'F001-000010'), { label: 'Factura', number: 'F001-000010' });
+  assert.deepEqual(documentTag('boleta', '  '), { label: 'Boleta', number: null });
+  assert.equal(documentTag('none'), null);
   assert.deepEqual(
     creditNoteAction({ creditNoteNumber: 'B001-000104', documentNumber: 'B001-001108', documentKind: 'boleta' }),
-    { tone: 'done', label: 'NC B001-000104' },
+    { tone: 'done', label: 'NC', number: 'B001-000104' },
   );
   assert.deepEqual(
     creditNoteAction({ documentNumber: 'F001-000010', documentKind: 'factura' }),
-    { tone: 'pending', label: 'Sin NC' },
+    { tone: 'pending', label: 'Sin NC', number: null },
   );
   assert.deepEqual(
     creditNoteAction({ documentNumber: 'B001-001090', documentKind: 'boleta' }),
-    { tone: 'pending', label: 'Sin NC' },
+    { tone: 'pending', label: 'Sin NC', number: null },
   );
-  assert.deepEqual(creditNoteAction({ documentKind: 'boleta' }), { tone: 'pending', label: 'Sin NC' });
-  assert.deepEqual(creditNoteAction({}), { tone: 'none', label: 'Sin documento' });
+  assert.deepEqual(creditNoteAction({ documentKind: 'boleta' }), { tone: 'pending', label: 'Sin NC', number: null });
+  assert.deepEqual(creditNoteAction({}), { tone: 'none', label: 'Sin documento', number: null });
 });
 
 test('el rango por defecto cubre los últimos 30 días', () => {
