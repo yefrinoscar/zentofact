@@ -75,9 +75,9 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         source: 'sync',
       }, db));
     }
-    const hasSvc = company.ripleySvcBaseUrl?.trim()
-      && company.ripleySvcUsername?.trim()
-      && company.ripleySvcPassword;
+    const hasSvc = (company.ripleySvcBaseUrl || company.ripley_svc_base_url)?.toString().trim()
+      && (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
+      && (company.ripleySvcPassword || company.ripley_svc_password);
     const logistics = hasSvc
       ? await (dependencies.syncLogistics || syncRipleyLogistics)(company, { db, fetchImpl: dependencies.fetchImpl })
       : { received: 0, matched: 0, status: 'not_configured' };

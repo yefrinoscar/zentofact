@@ -438,17 +438,88 @@ async function recordLabelPrints(db, orderIds, printedBy) {
   );
 }
 
+function svcPayload(value) {
+  const root = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return root.data && typeof root.data === 'object' && !Array.isArray(root.data) ? root.data : root;
+}
+
 function svcLabelId(label) {
-  return String(label?._id || label?.id || label?.document_id || '').trim();
+  return String(label?.document_id || label?.documentId || label?._id || label?.id || '').trim();
 }
 
 function svcLabels(payload) {
+  const data = svcPayload(payload);
   const root = payload && typeof payload === 'object' ? payload : {};
-  const data = root.data && typeof root.data === 'object' ? root.data : root;
-  const list = Array.isArray(data.labels) ? data.labels
-    : Array.isArray(root.labels) ? root.labels
-      : [];
-  return list;
+  if (Array.isArray(data.labels)) return data.labels;
+  if (Array.isArray(root.labels)) return root.labels;
+  return [];
+}
+
+function labelsForOrder(payload, orderId) {
+  const wanted = String(orderId || '').trim();
+  const labels = svcLabels(payload);
+  if (!wanted) return labels;
+  const matching = labels.filter((label) => {
+    const labelOrder = String(
+      label?.order_id || label?.orderId || label?.order_data?.order_id || '',
+    ).trim();
+    return !labelOrder || labelOrder === wanted;
+  });
+  return matching.length ? matching : labels;
+}
+
+function svcPdfValue(value, keys = ['labels_generated', 'pdf', 'base64', 'document']) {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (!value || typeof value !== 'object') return null;
+  for (const key of keys) {
+    if (typeof value[key] === 'string' && value[key].trim()) return value[key];
+  }
+  if (value.data && value.data !== value) return svcPdfValue(value.data, keys);
+  return null;
+}
+
+export function ripleyOrderLookupIds(order = {}) {
+  return [...new Set([
+    order.externalOrderId,
+    order.externalOrderNumber,
+    order.metadata?.commercialId,
+    order.metadata?.ripleySvc?.orderId,
+  ].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function printFailureMessage(skipped) {
+  if (skipped.length === 1) return skipped[0].reason;
+  if (skipped.length) return skipped.map((entry) => entry.reason).filter(Boolean).join(' ');
+  return 'No hay nada para imprimir en esta selección.';
+}
+
+async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
+  const lookupIds = ripleyOrderLookupIds(order);
+  if (!lookupIds.length) throw new Error('El pedido Ripley no tiene número para buscar la etiqueta.');
+  let lastEmpty = 'Ripley aún no tiene etiqueta.';
+  for (const orderId of lookupIds) {
+    try {
+      const listed = await listLabels({
+        companyId: order.companyId,
+        orderId,
+      });
+      const documentIds = labelsForOrder(listed, orderId).map(svcLabelId).filter(Boolean);
+      if (!documentIds.length) continue;
+      const downloaded = await downloadLabels({
+        companyId: order.companyId,
+        documentIds,
+        orderId,
+      });
+      const buffer = decodePdf(svcPdfValue(downloaded));
+      if (!buffer?.length) throw new Error('La etiqueta Ripley llegó vacía.');
+      return { buffer, labelCount: documentIds.length };
+    } catch (error) {
+      const reason = error.message || lastEmpty;
+      if (/credenciales|llegó vacía/i.test(reason)) throw error;
+      lastEmpty = reason;
+    }
+  }
+  throw new Error(lastEmpty);
 }
 
 export async function printLogisticsPack(input = {}, dependencies = {}) {
@@ -498,23 +569,28 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
         continue;
       }
       try {
-        const listed = await listLabels({
-          companyId: order.companyId,
-          orderId: order.externalOrderId,
-        });
-        const documentIds = svcLabels(listed).map(svcLabelId).filter(Boolean);
-        if (!documentIds.length) throw new Error('Ripley aún no tiene etiqueta.');
-        const downloaded = await downloadLabels({
-          companyId: order.companyId,
-          documentIds,
-          orderId: order.externalOrderId,
-        });
-        const buffer = decodePdf(downloaded?.labels_generated || downloaded?.pdf || downloaded?.base64);
-        if (!buffer?.length) throw new Error('La etiqueta Ripley llegó vacía.');
-        pdfParts.push(buffer);
-        labelCount += documentIds.length;
+        const downloaded = await downloadRipleyOrderLabel(order, listLabels, downloadLabels);
+        pdfParts.push(downloaded.buffer);
+        labelCount += downloaded.labelCount;
       } catch (error) {
-        skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta Ripley.' });
+        const reason = error.message || 'No se pudo bajar la etiqueta Ripley.';
+        console.warn(JSON.stringify({
+          event: 'logistics.print.ripley_skipped',
+          orderId: order.id,
+          externalOrderId: order.externalOrderId,
+          reason,
+        }));
+        try {
+          pdfParts.push(await buildManualLabelSheet([order]));
+          labelCount += 1;
+          skipped.push({
+            id: order.id,
+            reason: `${reason} Se imprimió una etiqueta ZentoFact.`,
+            printed: true,
+          });
+        } catch {
+          skipped.push({ id: order.id, reason });
+        }
       }
     }
   }
@@ -531,10 +607,14 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   }
 
   if (!pdfParts.length && !selection.includePacking) {
-    throw new Error('No se pudo armar ninguna etiqueta.');
+    throw new Error(printFailureMessage(skipped));
   }
 
-  const printable = orders.filter((order) => !skipped.some((entry) => entry.id === order.id));
+  const printable = orders.filter((order) => {
+    const skip = skipped.find((entry) => entry.id === order.id);
+    if (!skip) return CHANNELS.has(order.channelCode);
+    return skip.printed === true;
+  });
   let packingPageCount = 0;
   if (selection.includePacking && printable.length) {
     const packingPdf = await PDFDocument.create();
@@ -546,7 +626,7 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (packingPageCount) pdfParts.push(await packingPdf.save());
   }
 
-  if (!pdfParts.length) throw new Error('No hay nada para imprimir en esta selección.');
+  if (!pdfParts.length) throw new Error(printFailureMessage(skipped));
 
   const bytes = await mergePdfBuffers(pdfParts);
   if (printable.length && dependencies.recordPrints !== false) {
