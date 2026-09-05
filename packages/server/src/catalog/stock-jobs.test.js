@@ -329,6 +329,8 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
   const preview = await jobOrderPreview(12, db);
   assert.equal(preview.order.itemsStatus, 'complete');
   assert.equal(preview.order.itemsError, null);
+  assert.equal(preview.order.orderStatus, 'confirmed');
+  assert.equal(preview.order.fulfillmentStatus, 'pending');
   assert.deepEqual(preview.items, [{
     id: 991,
     title: 'Camiseta reductora',
@@ -341,6 +343,58 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
     imageUrl: 'https://media.falabella.com/falabellaPE/118765881_01',
     stockState: 'pending',
   }]);
+});
+
+test('el preview de un pedido cancelado entrega estados canónicos', async () => {
+  const preview = await jobOrderPreview(12, {
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from inventory_stock_jobs j')) {
+        return { rows: [{
+          id: 12,
+          company_id: 9,
+          external_order_id: '3250794530',
+          order_id: '200',
+          order_number: '3250794530',
+          source: 'webhook',
+          result: { reserved: 1 },
+          company: 'BEAUTY HOME E.I.R.L.',
+        }] };
+      }
+      if (compact.includes('from orders o') && compact.includes('items_count')) {
+        return { rows: [{
+          id: '200',
+          external_order_number: '3250794530',
+          order_status: 'cancelled',
+          fulfillment_status: 'cancelled',
+          items_status: 'complete',
+          items_error: null,
+          total: '89.90',
+          items_count: 1,
+          stock_applied: 0,
+        }] };
+      }
+      if (compact.includes('from order_items oi')) {
+        return { rows: [{
+          id: '991',
+          description: 'Mochila',
+          seller_sku: 'df65dr6',
+          provider_sku: null,
+          quantity: '1',
+          product_id: '21',
+          main_sku: 'G24N',
+          product_name: 'Mochila',
+          image_url: null,
+          stock_state: 'reversed',
+        }] };
+      }
+      throw new Error(`Query no simulada: ${compact}`);
+    },
+  });
+
+  assert.equal(preview.order.orderStatus, 'cancelled');
+  assert.equal(preview.order.fulfillmentStatus, 'cancelled');
+  assert.equal(preview.items[0].stockState, 'reversed');
 });
 
 test('la tabla de jobs incluye productos y estado actual del stock', async () => {
@@ -363,6 +417,8 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.equal(rows[0].items[0].mainSku, 'H9MN');
   assert.match(query, /jsonb_agg/i);
   assert.match(query, /reserved_units/i);
+  assert.match(query, /order_row\.order_status/i);
+  assert.match(query, /order_row\.fulfillment_status/i);
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
@@ -448,6 +504,34 @@ test('la cola muestra el mismo descuento que Configuración del sistema', async 
   const off = await getConfig(db);
   assert.equal(off.inventoryEnabled, false);
   assert.equal(off.inventorySourceLabel, 'Base de datos');
+});
+
+test('la config cuenta los jobs cancelados aparte de los procesados', async () => {
+  let statsSql = '';
+  await getConfig({
+    async query(sql) {
+      const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('from system_settings')) {
+        return { rows: [{ key: 'catalog_inventory', value: { enabled: true } }] };
+      }
+      if (compact.includes('select paused from inventory_stock_state')) {
+        return { rows: [{ paused: false }] };
+      }
+      if (compact.includes('select last_reconciled_at')) {
+        return { rows: [{ last_reconciled_at: null, last_reconciliation: {}, last_reconciliation_error: null }] };
+      }
+      if (compact.includes('from inventory_stock_jobs') && compact.includes('group by')) {
+        statsSql = String(sql);
+        return { rows: [{ status: 'cancelled', n: 1 }, { status: 'done', n: 2 }] };
+      }
+      throw new Error(`Query no esperada: ${compact}`);
+    },
+  }).then((config) => {
+    assert.equal(config.stats.cancelled, 1);
+    assert.equal(config.stats.done, 2);
+  });
+  assert.match(statsSql, /then 'cancelled'/i);
+  assert.match(statsSql, /order_row\.order_status in \('cancelled', 'failed'\)/i);
 });
 
 test('el cron reconcilia pedidos elegibles sin depender del webhook', async () => {

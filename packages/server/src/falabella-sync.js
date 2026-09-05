@@ -87,15 +87,15 @@ function validDate(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function canonicalLifecycleStatus(status) {
+export function canonicalLifecycleStatus(status) {
   const value = String(status || '').toLowerCase();
+  if (value.includes('canceled') || value.includes('cancelled')) return 'canceled';
+  if (value.includes('returned') || value.includes('return_')) return 'returned';
+  if (value.includes('failed')) return 'failed';
   if (value.includes('pending')) return 'pending';
   if (value.includes('ready_to_ship')) return 'ready_to_ship';
   if (value.includes('shipped')) return 'shipped';
   if (value.includes('delivered')) return 'delivered';
-  if (value.includes('canceled') || value.includes('cancelled')) return 'canceled';
-  if (value.includes('returned') || value.includes('return_')) return 'returned';
-  if (value.includes('failed')) return 'failed';
   return value;
 }
 

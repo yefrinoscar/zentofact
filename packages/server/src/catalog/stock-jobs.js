@@ -243,10 +243,20 @@ export async function getConfig(db) {
     catalogInventoryFlagState(db),
     getPaused(db),
     client.query(
-      `select j.status, count(*)::int as n
+      `select
+            case
+              when j.status = 'done'
+               and (
+                 order_row.order_status in ('cancelled', 'failed')
+                 or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
+               )
+              then 'cancelled'
+              else j.status
+            end as status,
+            count(*)::int as n
          from inventory_stock_jobs j
          left join lateral (
-           select ordered_at
+           select ordered_at, order_status, fulfillment_status
            from orders
            where id=j.order_id
               or (
@@ -258,7 +268,7 @@ export async function getConfig(db) {
            limit 1
          ) order_row on true
         where order_row.ordered_at >= $1::timestamptz
-        group by j.status`,
+        group by 1`,
       [INVENTORY_LISTEN_FROM_AT],
     ),
     client.query(`select last_reconciled_at, last_reconciliation, last_reconciliation_error
@@ -293,6 +303,8 @@ export async function recentJobs(limit = 60, db) {
             j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
             j.created_at, j.updated_at,
             order_row.ordered_at,
+            order_row.order_status,
+            order_row.fulfillment_status,
             coalesce(item_summary.items, '[]'::jsonb) as items,
             coalesce(item_summary.reserved_units, 0) as reserved_units,
             coalesce(item_summary.applied_units, 0) as applied_units,
@@ -301,7 +313,8 @@ export async function recentJobs(limit = 60, db) {
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      left join lateral (
-       select orders.id, orders.external_order_number, orders.ordered_at, channel.code as channel_code
+       select orders.id, orders.external_order_number, orders.ordered_at,
+              orders.order_status, orders.fulfillment_status, channel.code as channel_code
        from orders
        join order_channel_accounts account on account.id=orders.channel_account_id
        join order_channels channel on channel.id=account.channel_id
@@ -434,6 +447,8 @@ export async function jobOrderPreview(id, db) {
     order: order ? {
       orderNumber: order.external_order_number || job.order_number,
       status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),
+      orderStatus: order.order_status,
+      fulfillmentStatus: order.fulfillment_status,
       itemsStatus: order.items_status,
       itemsError: order.items_error || null,
       total: order.total,

@@ -66,7 +66,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/cancelados': {
     title: 'Devoluciones',
-    subtitle: 'Anulados o devueltos, con la fecha del cambio.',
+    subtitle: 'Pedidos que volvieron, con la fecha del cambio.',
   },
   '/mis-ventas': {
     title: 'Mis ventas',
@@ -102,7 +102,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/descuentos-stock': {
     title: 'Cola de descuentos',
-    subtitle: 'Desde pendiente. El stock queda reservado hasta listo para enviar.',
+    subtitle: 'Reservado hasta listo para enviar. Cancelado no descuenta.',
   },
   '/insumos': {
     title: 'Insumos',

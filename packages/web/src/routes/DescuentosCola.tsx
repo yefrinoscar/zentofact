@@ -14,7 +14,11 @@ import type { CatalogProductForSale } from '../lib/registrar-venta';
 import {
   isListableStockJob,
   shouldShowStockJobAttempts,
+  stockItemReason,
   stockJobDetail,
+  stockJobFilterBucket,
+  stockOrderStatusLabel,
+  stockPreviewFooter,
   visibleStockJobStatus,
 } from '../lib/stock-job-presentation';
 
@@ -73,6 +77,8 @@ type Job = {
   applied_units?: string | number;
   unmatched_items?: number;
   insufficient_items?: number;
+  order_status?: string | null;
+  fulfillment_status?: string | null;
 };
 
 type OrderPreview = {
@@ -81,6 +87,8 @@ type OrderPreview = {
   order?: {
     orderNumber?: string;
     status?: string;
+    orderStatus?: string;
+    fulfillmentStatus?: string;
     itemsStatus?: string;
     itemsError?: string | null;
     total?: string | number | null;
@@ -108,14 +116,14 @@ type OrderPreview = {
   }>;
 };
 
-type OrderPreviewItem = NonNullable<OrderPreview['items']>[number];
-
 const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: string }> = {
   done: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2, label: 'Descontado' },
   reserved: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Clock, label: 'Reservado' },
   unmatched: { cls: 'bg-amber-50 text-amber-800 border-amber-300', icon: Link2, label: 'Sin asociación' },
   insufficient: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Sin stock' },
   processed: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: CheckCircle2, label: 'Procesado' },
+  cancelled: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Cancelado' },
+  returned: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: RotateCcw, label: 'Devuelto' },
   outside_window: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Fuera del período' },
   pending: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock, label: 'En cola' },
   processing: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Loader2, label: 'Procesando' },
@@ -126,6 +134,7 @@ const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: st
 const FILTERS = [
   ['all', 'Todas'],
   ['done', 'Procesados'],
+  ['cancelled', 'Cancelados'],
   ['pending', 'En cola'],
   ['processing', 'Procesando'],
   ['failed', 'Requieren atención'],
@@ -191,18 +200,12 @@ function fullDateTime(value?: string) {
   });
 }
 
-function itemStockReason(item: OrderPreviewItem) {
-  if (!item.productId && !item.mainSku) return 'No tiene producto maestro.';
-  const labels: Record<string, string> = {
-    pending: 'Reservado; descuenta al quedar listo para enviar.',
-    applied: 'Descontado del almacén.',
-    skipped_unmapped: 'No tiene producto maestro.',
-    skipped_insufficient: 'El producto maestro no tiene stock disponible.',
-    skipped_policy: 'Fuera del corte de descuentos.',
-    reversed: 'Stock reintegrado.',
-    none: 'Pendiente de procesar.',
-  };
-  return labels[item.stockState] || 'Estado de stock no reconocido.';
+function previewOrderStatus(order: NonNullable<OrderPreview['order']>) {
+  return stockOrderStatusLabel({
+    status: order.status,
+    orderStatus: order.orderStatus,
+    fulfillmentStatus: order.fulfillmentStatus,
+  });
 }
 
 function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
@@ -236,6 +239,8 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
   const order = preview?.order;
   const items = preview?.items || [];
+  const statusLabel = order ? previewOrderStatus(order) : '';
+  const terminal = statusLabel === 'Cancelado' || statusLabel === 'Devuelto';
   return (
     <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
       {loading ? (
@@ -257,13 +262,15 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
             <span className="text-muted-foreground">Estado</span>
-            <span className="truncate text-right font-medium text-foreground">{order.status || '-'}</span>
+            <span className="truncate text-right font-medium text-foreground">{statusLabel}</span>
             <span className="text-muted-foreground">Total</span>
             <span className="text-right font-medium text-foreground">{money(order.total)}</span>
             <span className="text-muted-foreground">Items</span>
             <span className="text-right text-foreground">{order.itemsCount ?? '-'}</span>
-            <span className="text-muted-foreground">Stock aplicado</span>
-            <span className="text-right font-medium text-foreground">{order.stockApplied ?? 0} u</span>
+            <span className="text-muted-foreground">Descuento</span>
+            <span className="text-right font-medium text-foreground">
+              {terminal ? 'No' : `${order.stockApplied ?? 0} u`}
+            </span>
           </div>
           {items.length > 0 ? (
             <div className="divide-y divide-border rounded-md border border-border">
@@ -286,10 +293,15 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
                     <p className={cn(
                       'mt-1',
                       item.stockState === 'skipped_unmapped' || item.stockState === 'skipped_insufficient'
+                        || (item.stockState === 'pending' && terminal)
                         ? 'font-medium text-amber-700'
                         : 'text-muted-foreground',
                     )}>
-                      {itemStockReason(item)}
+                      {stockItemReason(item, {
+                        status: order.status,
+                        orderStatus: order.orderStatus,
+                        fulfillmentStatus: order.fulfillmentStatus,
+                      })}
                     </p>
                   </div>
                 </div>
@@ -303,13 +315,7 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
           ) : null}
           {preview?.stock && (
             <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs">
-              <p className="font-medium text-foreground">
-                {Number(preview.stock.applied || 0) > 0
-                  ? `${preview.stock.applied} línea${Number(preview.stock.applied) === 1 ? '' : 's'} descontada${Number(preview.stock.applied) === 1 ? '' : 's'}`
-                  : items.some((item) => item.stockState === 'pending')
-                    ? 'Stock reservado; aún no sale del almacén.'
-                    : 'Sin descuento de almacén.'}
-              </p>
+              <p className="font-medium text-foreground">{stockPreviewFooter(preview)}</p>
               {preview.stock.skipped != null && Number(preview.stock.skipped) > 0 && (
                 <p className="mt-0.5 text-muted-foreground">{preview.stock.skipped} omitidas</p>
               )}
@@ -551,7 +557,9 @@ export default function DescuentosCola() {
   }
 
   const listableJobs = jobs.filter((job) => isListableStockJob(job, config.listenFromAt));
-  const shownJobs = filter === 'all' ? listableJobs : listableJobs.filter((job) => job.status === filter);
+  const shownJobs = filter === 'all'
+    ? listableJobs
+    : listableJobs.filter((job) => stockJobFilterBucket(job, config.listenFromAt) === filter);
 
   return (
     <div className="space-y-5">
@@ -676,7 +684,7 @@ export default function DescuentosCola() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Descuentos de stock</h2>
-            <p className="text-xs text-muted-foreground">Desde pendiente. El stock queda reservado hasta listo para enviar.</p>
+            <p className="text-xs text-muted-foreground">Reservado hasta listo para enviar. Cancelado no descuenta.</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 3 s. No indica si el descuento está encendido.">

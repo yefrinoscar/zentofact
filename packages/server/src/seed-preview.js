@@ -277,11 +277,12 @@ const SEED_PRODUCTS = [
     name: 'Coche Bastón tipo Paraguas Liviano plegable Celeste',
     brand: 'Zento',
     referencePrice: 189.9,
+    commissionAmount: 20,
     stock: 12,
     imageUrl: '/seed/ag301.svg',
     listings: [
-      { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-AG301', title: 'Coche bastón celeste · LIMBO' },
-      { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-AG301', title: 'Coche bastón celeste · MANTA RAYA' },
+      { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-AG301', title: 'Coche bastón celeste · LIMBO', effectivePrice: 170.5 },
+      { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-AG301', title: 'Coche bastón celeste · MANTA RAYA', effectivePrice: 170.5 },
     ],
   },
   {
@@ -541,6 +542,7 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
       name: spec.name,
       brand: spec.brand,
       referencePrice: spec.referencePrice,
+      commissionAmount: spec.commissionAmount,
       status: 'active',
       description: `Producto demo del seed preview (${SEED_MARKER}).`,
       imageUrl: spec.imageUrl || null,
@@ -553,6 +555,13 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
     await pool.query(
       'UPDATE products SET image_url = $1, updated_at = now() WHERE id = $2',
       [spec.imageUrl, productId],
+    );
+  }
+
+  if (spec.commissionAmount != null) {
+    await pool.query(
+      'UPDATE products SET commission_amount = $1, updated_at = now() WHERE id = $2',
+      [spec.commissionAmount, productId],
     );
   }
 
@@ -576,7 +585,13 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
       title: listing.title,
       status: 'active',
       marketplaceQuantity: Math.max(1, Math.floor(spec.stock / Math.max(spec.listings.length, 1))),
-      metadata: { origin: SEED_MARKER },
+      metadata: {
+        origin: SEED_MARKER,
+        ...(listing.effectivePrice != null ? {
+          effectivePrice: listing.effectivePrice,
+          price: listing.effectivePrice,
+        } : {}),
+      },
     });
     listings.push(saved);
   }

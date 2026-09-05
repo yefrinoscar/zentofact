@@ -1090,20 +1090,14 @@ function normalizeCanceledOrderRow(row) {
 export async function listCanceledOrders(filters = {}, db) {
   const target = db || (await loadCore()).pool;
   const values = [];
-  const kind = String(filters.kind || '').trim().toLowerCase();
+  const kind = String(filters.kind || 'returned').trim().toLowerCase();
   const where = [];
   if (kind === 'returned') {
     where.push(`(o.fulfillment_status='returned' or exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id))`);
   } else if (kind === 'cancelled') {
     where.push(`(o.order_status='cancelled' or o.fulfillment_status='cancelled')`);
-  } else if (kind) {
-    throw new Error('kind inválido.');
   } else {
-    where.push(`(
-      o.order_status='cancelled'
-      or o.fulfillment_status in ('cancelled', 'returned')
-      or exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id)
-    )`);
+    throw new Error('kind inválido.');
   }
   const approval = String(filters.approval || '').trim().toLowerCase();
   if (approval === 'pending') {

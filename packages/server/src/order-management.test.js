@@ -362,6 +362,10 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
     orderStatus: 'cancelled',
     fulfillmentStatus: 'cancelled',
   });
+  assert.deepEqual(mapFalabellaCanonicalStatus('pending|canceled'), {
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+  });
 });
 
 test('arma la dirección oficial de Falabella desde AddressShipping', () => {
@@ -789,7 +793,7 @@ test('lista pedidos ordenando por total o fecha con una lista blanca', async () 
   assert.doesNotMatch(seen[2], /drop table/);
 });
 
-test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', async () => {
+test('lista solo devoluciones por la fecha en que pasaron a ese estado', async () => {
   const seen = [];
   const db = {
     async query(sql, params) {
@@ -798,7 +802,9 @@ test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', as
     },
   };
   await listCanceledOrders({ from: '2026-08-01', to: '2026-08-31', limit: 50 }, db);
-  assert.match(seen[0].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+  assert.match(seen[0].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
+  assert.doesNotMatch(seen[0].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+  assert.doesNotMatch(seen[0].sql, /o\.order_status='cancelled'/);
   assert.match(seen[0].sql, /cancelled_at/);
   assert.match(seen[0].sql, /returned_at/);
   assert.match(seen[0].sql, /from order_items oi/);
@@ -814,7 +820,12 @@ test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', as
   assert.doesNotMatch(seen[1].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
 
   await listCanceledOrders({ approval: 'pending', from: '2026-09-03', to: '2026-09-04' }, db);
+  assert.match(seen[2].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
   assert.match(seen[2].sql, /return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending'/);
+
+  await listCanceledOrders({ kind: 'cancelled', from: '2026-08-01', to: '2026-08-31' }, db);
+  assert.match(seen[3].sql, /o\.order_status='cancelled' or o\.fulfillment_status='cancelled'/);
+  assert.doesNotMatch(seen[3].sql, /o\.fulfillment_status='returned' or exists/);
 });
 
 test('expone la foto y el shop sku de cada ítem cancelado', async () => {

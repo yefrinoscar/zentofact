@@ -22,6 +22,7 @@ import {
   SALE_SOURCES,
   clampSaleQuantity,
   limaTodayKey,
+  saleLineProfit,
   type DocumentRequest,
 } from '../../lib/registrar-venta';
 import {
@@ -234,7 +235,7 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel
       title="Productos"
-      hint="Ajusta el precio si es por mayor."
+      hint="Comisión fija. Si subes el precio, es tuyo."
       icon={Package}
       action={(
         <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 cursor-pointer" onClick={view.openProductPicker}>
@@ -243,7 +244,9 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
       )}
     >
       <ul className="divide-y divide-border">
-        {view.lines.map((line, index) => (
+        {view.lines.map((line, index) => {
+          const profit = saleLineProfit(line);
+          return (
           <li key={line.id} className={cn('py-3', index === 0 && 'pt-0')}>
             <div className="flex items-start gap-3">
               <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} />
@@ -252,6 +255,11 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
                   <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-sm font-medium leading-5">{line.name}</p>
                     <p className="font-mono text-[11px] text-muted-foreground">{line.sku}</p>
+                    {profit != null ? (
+                      <p className="mt-0.5 text-[11px] tabular-nums text-emerald-700 dark:text-emerald-400">
+                        Ganas {formatSaleMoney(profit)}
+                      </p>
+                    ) : null}
                   </div>
                   <Button
                     type="button"
@@ -300,7 +308,8 @@ export function ProductosStep({ view }: { view: SaleFormView }) {
               </div>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </StepPanel>
   );

@@ -10,6 +10,7 @@ import { cn } from '../lib/cn';
 import { productImageSrc } from '../lib/logistics-inbox';
 import { usePermissions } from '../hooks/usePermissions';
 import {
+  canceledListQuery,
   cancellationKind,
   cancellationKindLabel,
   extraProductsLabel,
@@ -22,6 +23,7 @@ import {
   setReturnLineStock,
   setReturnUnit,
   stockApprovalLabel,
+  type CanceledListView,
   type CancellationKind,
   type ReturnLineDecision,
   type ReturnUnitDestination,
@@ -312,7 +314,7 @@ export default function Cancelados() {
   const selectedRange = parseCanceledDateRange(searchParams);
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
-  const [kind, setKind] = useState<'all' | CancellationKind | 'pending_approval'>('all');
+  const [kind, setKind] = useState<CanceledListView>('returned');
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -355,8 +357,7 @@ export default function Cancelados() {
   const filters = useMemo(() => ({
     companyId: companyId === 'all' ? undefined : Number(companyId),
     channelCode: channelCode === 'all' ? undefined : channelCode,
-    kind: kind === 'pending_approval' || kind === 'all' ? undefined : kind,
-    approval: kind === 'pending_approval' ? 'pending' as const : undefined,
+    ...canceledListQuery(kind),
     from: selectedRange.from,
     to: selectedRange.to,
     search: submittedSearch || undefined,
@@ -386,13 +387,9 @@ export default function Cancelados() {
     channels.find((channel) => channel.code === fallback.code) || fallback
   ));
   const selectedChannelName = channelCatalog.find((channel) => channel.code === channelCode)?.name || '';
-  const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || kind !== 'all' || Boolean(search.trim());
+  const hasActiveFilters = companyId !== 'all' || channelCode !== 'all' || kind !== 'returned' || Boolean(search.trim());
   const filterTriggerClass = 'h-9 w-auto min-w-[7.25rem] max-w-[11rem] rounded-md border-border bg-background';
-  const selectedKindLabel = kind === 'all'
-    ? 'Estado'
-    : kind === 'pending_approval'
-      ? 'Por aprobar'
-      : cancellationKindLabel(kind);
+  const selectedKindLabel = kind === 'pending_approval' ? 'Por aprobar' : 'Estado';
   const approveMutation = useMutation({
     mutationFn: ({ orderId, lines }: { orderId: number; lines: ReturnLineDecision[] }) => (
       api.approveReturnStock(orderId, {
@@ -459,9 +456,7 @@ export default function Cancelados() {
               <span className="truncate">{selectedKindLabel}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Canceladas y devueltas</SelectItem>
-              <SelectItem value="cancelled">Cancelada</SelectItem>
-              <SelectItem value="returned">Devuelta</SelectItem>
+              <SelectItem value="returned">Devueltas</SelectItem>
               <SelectItem value="pending_approval">Por aprobar</SelectItem>
             </SelectContent>
           </Select>
@@ -474,7 +469,7 @@ export default function Cancelados() {
               onClick={() => {
                 setCompanyId('all');
                 setChannelCode('all');
-                setKind('all');
+                setKind('returned');
                 setSearch('');
                 setSubmittedSearch('');
                 setPage(0);
