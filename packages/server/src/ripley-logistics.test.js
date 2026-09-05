@@ -37,6 +37,35 @@ test('el sandbox logístico inicia con una etiqueta elegible y sin manifiesto', 
   assert.equal(labels.environment, 'simulated');
 });
 
+test('acepta credenciales SVC guardadas en snake_case', async () => {
+  const paths = [];
+  const result = await listRipleySvcLabels(7, { orderId: 'R-1', limit: 25 }, {
+    getCompany: async () => ({
+      id: 7,
+      activo: true,
+      ripley_svc_base_url: 'https://sellercenter.ripley.test',
+      ripley_svc_username: 'seller',
+      ripley_svc_password: 'clave',
+    }),
+    fetchImpl: async (url) => {
+      paths.push(new URL(url).pathname);
+      if (String(url).includes('/auth/login/vendor')) {
+        return new Response(JSON.stringify({ access_token: 'token-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ labels: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.deepEqual(result, { labels: [] });
+  assert.ok(paths.includes('/api/current/auth/login/vendor'));
+  assert.ok(paths.includes('/api/v7/label/labels'));
+});
+
 test('sin sandbox conserva el bloqueo cuando faltan credenciales SVC', async () => {
   await assert.rejects(
     () => listRipleySvcManifests(7, {}, {

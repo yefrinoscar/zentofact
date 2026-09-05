@@ -15,14 +15,21 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function companyField(company, camel, snake) {
+  return text(company?.[camel] || company?.[snake]);
+}
+
 function svcClientFor(company, fetchImpl) {
-  if (!company?.ripleySvcBaseUrl?.trim() || !company?.ripleySvcUsername?.trim() || !company?.ripleySvcPassword) {
+  const baseUrl = companyField(company, 'ripleySvcBaseUrl', 'ripley_svc_base_url');
+  const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
+  const password = company?.ripleySvcPassword || company?.ripley_svc_password;
+  if (!baseUrl || !username || !password) {
     throw new Error('La empresa no tiene configuradas las credenciales productivas de Seller Center Ripley.');
   }
   return new RipleySvcClient({
-    baseUrl: company.ripleySvcBaseUrl,
-    username: company.ripleySvcUsername,
-    password: company.ripleySvcPassword,
+    baseUrl,
+    username,
+    password,
     fetchImpl,
   });
 }

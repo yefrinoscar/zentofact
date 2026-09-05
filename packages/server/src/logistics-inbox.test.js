@@ -7,6 +7,7 @@ import {
   parsePrintSelection,
   listLogisticsInbox,
   printLogisticsPack,
+  ripleyOrderLookupIds,
   urgencyForDeadline,
   groupLogisticsItems,
 } from './logistics-inbox.js';
@@ -201,7 +202,7 @@ test('filtra por urgencia y expone conteos de prioridad', async () => {
   assert.throws(() => parseLogisticsInboxFilters({ urgency: 'ayer' }), /Prioridad/);
 });
 
-test('compone Falabella y omite Ripley sin etiqueta', async () => {
+test('compone Falabella y, si Ripley no entrega etiqueta oficial, imprime una ZentoFact', async () => {
   const rows = [
     printRow({ id: 21, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-21' }),
     printRow({ id: 22, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-22' }),
@@ -215,8 +216,138 @@ test('compone Falabella y omite Ripley sin etiqueta', async () => {
       downloadRipleyLabels: async () => ({ labels_generated: '' }),
     },
   );
-  assert.equal(result.labelCount, 1);
+  assert.equal(result.labelCount, 2);
   assert.equal(result.skipped.length, 1);
   assert.equal(result.skipped[0].id, 22);
   assert.match(result.skipped[0].reason, /etiqueta/);
+  assert.match(result.skipped[0].reason, /ZentoFact/);
+  const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
+  assert.ok(pdf.getPageCount() >= 2);
+});
+
+test('busca la etiqueta Ripley por número comercial y acepta la respuesta envuelta', async () => {
+  const listedIds = [];
+  const rows = [
+    printRow({
+      id: 31,
+      channel_code: 'ripley',
+      channel_name: 'Ripley',
+      external_order_id: '7935256701-A',
+      external_order_number: '7935256701',
+      metadata: { commercialId: '7935256701' },
+    }),
+  ];
+  const result = await printLogisticsPack(
+    { orderIds: [31], includePacking: false },
+    {
+      db: new PrintDb(rows),
+      listRipleyLabels: async ({ orderId }) => {
+        listedIds.push(orderId);
+        if (orderId !== '7935256701') return { status: 200, data: { labels: [] } };
+        return {
+          status: 200,
+          data: { labels: [{ document_id: 'doc-31', _id: 'svc-31', order_id: '7935256701' }] },
+        };
+      },
+      downloadRipleyLabels: async ({ documentIds, orderId }) => {
+        assert.deepEqual(documentIds, ['doc-31']);
+        assert.equal(orderId, '7935256701');
+        return { status: 200, data: { labels_generated: (await stubLabelPdf('RIP')).base64 } };
+      },
+    },
+  );
+  assert.deepEqual(listedIds, ['7935256701-A', '7935256701']);
+  assert.equal(result.ok, true);
+  assert.equal(result.labelCount, 1);
+  assert.equal(result.skipped.length, 0);
+});
+
+test('un pedido Ripley sin etiqueta oficial sigue armando PDF y guía de armado', async () => {
+  const result = await printLogisticsPack(
+    { orderIds: [32], includePacking: true },
+    {
+      db: new PrintDb([printRow({
+        id: 32,
+        channel_code: 'ripley',
+        channel_name: 'Ripley',
+        external_order_id: 'R-32',
+      })]),
+      listRipleyLabels: async () => {
+        throw new Error('La empresa no tiene configuradas las credenciales productivas de Seller Center Ripley.');
+      },
+      downloadRipleyLabels: async () => ({ labels_generated: '' }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.labelCount, 1);
+  assert.ok(result.packingPageCount >= 1);
+  assert.match(result.skipped[0].reason, /credenciales productivas/);
+  assert.match(result.skipped[0].reason, /ZentoFact/);
+  const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
+  assert.ok(pdf.getPageCount() >= 2);
+});
+
+test('si Ripley no se puede imprimir, el error dice la causa y deja el detalle en el log', async () => {
+  const lines = [];
+  await assert.rejects(
+    () => printLogisticsPack(
+      { orderIds: [40], includePacking: false },
+      {
+        db: new PrintDb([printRow({
+          id: 40,
+          company_id: null,
+          channel_code: 'ripley',
+          channel_name: 'Ripley',
+          external_order_id: 'R-40',
+          external_order_number: '7935256701',
+        })]),
+        listRipleyLabels: async () => ({ labels: [] }),
+        downloadRipleyLabels: async () => ({ labels_generated: '' }),
+        createLogId: () => 'log_dddddddddddd',
+        log: (line) => lines.push(line),
+      },
+    ),
+    (error) => {
+      assert.match(error.message, /no tiene seller/);
+      assert.equal(error.logId, 'log_dddddddddddd');
+      assert.deepEqual(error.details.orderIds, [40]);
+      assert.equal(error.details.orders[0].channel, 'ripley');
+      assert.equal(error.details.orders[0].externalOrderNumber, '7935256701');
+      assert.match(error.details.skipped[0].reason, /seller/);
+      return true;
+    },
+  );
+  const payload = JSON.parse(lines.find((line) => String(line).includes('logistics.print.failed')));
+  assert.equal(payload.event, 'logistics.print.failed');
+  assert.equal(payload.logId, 'log_dddddddddddd');
+  assert.deepEqual(payload.orderIds, [40]);
+  assert.equal(payload.orders[0].externalOrderNumber, '7935256701');
+});
+
+test('un PDF inválido de Falabella no tumba la impresión de Ripley', async () => {
+  const result = await printLogisticsPack(
+    { orderIds: [51, 52], includePacking: false },
+    {
+      db: new PrintDb([
+        printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),
+        printRow({ id: 52, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-52' }),
+      ]),
+      getFalabellaLabel: async () => ({ base64: Buffer.from('<html>error</html>').toString('base64') }),
+      listRipleyLabels: async () => ({ labels: [] }),
+      downloadRipleyLabels: async () => ({ labels_generated: '' }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.labelCount, 1);
+  assert.equal(result.skipped.length, 2);
+  assert.match(result.skipped.find((entry) => entry.id === 51).reason, /vacía/);
+  assert.match(result.skipped.find((entry) => entry.id === 52).reason, /ZentoFact/);
+});
+
+test('arma los ids de búsqueda Ripley sin repetir', () => {
+  assert.deepEqual(ripleyOrderLookupIds({
+    externalOrderId: '7935256701-A',
+    externalOrderNumber: '7935256701',
+    metadata: { commercialId: '7935256701', ripleySvc: { orderId: 'svc-1' } },
+  }), ['7935256701-A', '7935256701', 'svc-1']);
 });
