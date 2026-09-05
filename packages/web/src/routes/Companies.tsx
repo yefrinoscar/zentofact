@@ -52,12 +52,9 @@ function ChannelMark({ channel, className }: { channel: ChannelTab; className?: 
 
 function ChannelTabTrigger({ value }: { value: ChannelTab }) {
   return (
-    <TabsTrigger
-      value={value}
-      className="h-full min-w-0 flex-1 rounded-none border-r border-border px-2 text-[13px] text-muted-foreground last:border-r-0 after:hidden data-[state=active]:bg-background data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-[inset_0_-2px_0_0_var(--foreground)] sm:px-3"
-    >
+    <TabsTrigger value={value}>
       <ChannelMark channel={value} />
-      <span className="truncate">{CHANNEL_MARK[value].label}</span>
+      {CHANNEL_MARK[value].label}
     </TabsTrigger>
   );
 }
@@ -826,18 +823,15 @@ export default function Companies() {
                 <Tabs
                   value={channelTab}
                   onValueChange={(value) => setChannelTab(value as ChannelTab)}
-                  className="mt-2 gap-0 overflow-hidden rounded-lg border border-border"
+                  className="mt-3"
                 >
-                  <TabsList
-                    aria-label="Canales"
-                    className="h-12! w-full justify-stretch gap-0 rounded-none rounded-t-lg bg-muted p-0"
-                  >
+                  <TabsList className="mb-5" aria-label="Canales">
                     <ChannelTabTrigger value="falabella" />
                     <ChannelTabTrigger value="ripley" />
                     <ChannelTabTrigger value="mercado_libre" />
                   </TabsList>
 
-                  <TabsContent value="falabella" className="space-y-4 bg-background p-4">
+                  <TabsContent value="falabella" className="space-y-4">
                     <div>
                       <p className="mb-2 text-sm font-medium text-muted-foreground">Seller</p>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -889,7 +883,7 @@ export default function Companies() {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="ripley" className="space-y-4 bg-background p-4">
+                  <TabsContent value="ripley" className="space-y-4">
                     <div>
                       <p className="mb-2 text-sm font-medium text-muted-foreground">Mirakl</p>
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -943,7 +937,7 @@ export default function Companies() {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="mercado_libre" className="space-y-4 bg-background p-4">
+                  <TabsContent value="mercado_libre" className="space-y-4">
                     <p className="text-xs text-muted-foreground">
                       Cada empresa conecta su propia cuenta. Un administrador debe autorizar la app.
                     </p>
