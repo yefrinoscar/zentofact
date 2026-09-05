@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, ImageIcon, Loader2, Maximize2, Search } from 'lucide-react';
+import { Ban, ImageIcon, Loader2, Maximize2, Minus, Plus, Search } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
@@ -18,6 +18,7 @@ import {
   returnDecisionSummary,
   returnOutcomeLabel,
   setReturnLineStock,
+  nudgeReturnLineMerma,
   stockApprovalLabel,
   type CancellationKind,
   type ReturnLineDecision,
@@ -231,6 +232,71 @@ function keepWhenStackedDialog(event: Event, previewOpen: boolean) {
   if (previewOpen && target.closest('[data-slot="dialog-overlay"]')) {
     event.preventDefault();
   }
+}
+
+function ReturnDestination({
+  label,
+  count,
+  quantity,
+  selected,
+  tone,
+  disabled,
+  onSelect,
+  onNudge,
+}: {
+  label: string;
+  count: number;
+  quantity: number;
+  selected: boolean;
+  tone: 'stock' | 'merma';
+  disabled: boolean;
+  onSelect: () => void;
+  onNudge: (delta: number) => void;
+}) {
+  const canSplit = quantity > 1;
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <Button
+        type="button"
+        variant={selected ? 'default' : 'outline'}
+        disabled={disabled}
+        onClick={onSelect}
+        aria-pressed={selected}
+        className={cn(
+          'h-auto w-full flex-col gap-0.5 py-2.5 whitespace-normal',
+          tone === 'merma' && selected && 'bg-amber-600 text-white hover:bg-amber-600/90',
+          tone === 'merma' && !selected && 'border-amber-300 text-amber-950 hover:bg-amber-50',
+        )}
+      >
+        <span>{label}</span>
+        <span className="text-xs font-normal tabular-nums opacity-90">{count} u</span>
+      </Button>
+      {canSplit ? (
+        <div className="flex justify-center gap-1">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="outline"
+            disabled={disabled || count <= 0}
+            aria-label={`Quitar 1 de ${label}`}
+            onClick={() => onNudge(-1)}
+          >
+            <Minus />
+          </Button>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="outline"
+            disabled={disabled || count >= quantity}
+            aria-label={`Sumar 1 a ${label}`}
+            onClick={() => onNudge(1)}
+          >
+            <Plus />
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview | null; onClose: () => void }) {
@@ -659,7 +725,7 @@ export default function Cancelados() {
 
       <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending && !imagePreview) { setApproveOrder(null); setApproveDecisions([]); } }}>
         <DialogContent
-          className="sm:max-w-lg"
+          className="sm:max-w-xl"
           onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
@@ -668,7 +734,7 @@ export default function Cancelados() {
           <DialogHeader>
             <DialogTitle>Revisar devolución</DialogTitle>
             <DialogDescription>
-              Elige qué vuelve al stock y qué es merma.
+              Marca stock o merma en cada producto.
             </DialogDescription>
           </DialogHeader>
           {approveDecisions.length > 1 || approveDecisions.some((line) => line.quantity > 1) ? (
@@ -693,7 +759,7 @@ export default function Cancelados() {
               </Button>
             </div>
           ) : null}
-          <div className="space-y-3">
+          <div className="divide-y">
             {approveDecisions.map((line) => {
               const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
                 name: null,
@@ -701,7 +767,7 @@ export default function Cancelados() {
                 quantity: line.quantity,
               };
               return (
-                <div key={line.orderItemId} className="flex items-start gap-3">
+                <div key={line.orderItemId} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
                   <ProductThumb item={item} onOpen={setImagePreview} />
                   <div className="min-w-0 flex-1 space-y-2">
                     <div>
@@ -713,71 +779,36 @@ export default function Cancelados() {
                         </p>
                       ) : null}
                     </div>
-                    {Number(line.quantity) > 1 ? (
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="space-y-1 text-xs font-medium">
-                          A stock
-                          <Input
-                            type="number"
-                            min={0}
-                            max={line.quantity}
-                            value={line.stockQuantity}
-                            disabled={approveMutation.isPending}
-                            className="h-8"
-                            onFocus={(event) => event.currentTarget.select()}
-                            onChange={(event) => {
-                              const next = Number(event.target.value);
-                              setApproveDecisions((current) => current.map((row) => (
-                                row.orderItemId === line.orderItemId ? setReturnLineStock(row, next) : row
-                              )));
-                            }}
-                          />
-                        </label>
-                        <label className="space-y-1 text-xs font-medium">
-                          Merma
-                          <Input
-                            type="number"
-                            min={0}
-                            max={line.quantity}
-                            value={line.mermaQuantity}
-                            disabled={approveMutation.isPending}
-                            className="h-8"
-                            onFocus={(event) => event.currentTarget.select()}
-                            onChange={(event) => {
-                              const next = Number(event.target.value);
-                              setApproveDecisions((current) => current.map((row) => (
-                                row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity - next) : row
-                              )));
-                            }}
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant={line.stockQuantity > 0 ? 'default' : 'outline'}
-                          disabled={approveMutation.isPending}
-                          onClick={() => setApproveDecisions((current) => current.map((row) => (
-                            row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity) : row
-                          )))}
-                        >
-                          A stock
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant={line.mermaQuantity > 0 ? 'default' : 'outline'}
-                          disabled={approveMutation.isPending}
-                          onClick={() => setApproveDecisions((current) => current.map((row) => (
-                            row.orderItemId === line.orderItemId ? setReturnLineStock(row, 0) : row
-                          )))}
-                        >
-                          Merma
-                        </Button>
-                      </div>
-                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <ReturnDestination
+                        label="A stock"
+                        count={line.stockQuantity}
+                        quantity={line.quantity}
+                        selected={line.stockQuantity > 0}
+                        tone="stock"
+                        disabled={approveMutation.isPending}
+                        onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.quantity) : row
+                        )))}
+                        onNudge={(delta) => setApproveDecisions((current) => current.map((row) => (
+                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, row.stockQuantity + delta) : row
+                        )))}
+                      />
+                      <ReturnDestination
+                        label="Merma"
+                        count={line.mermaQuantity}
+                        quantity={line.quantity}
+                        selected={line.mermaQuantity > 0}
+                        tone="merma"
+                        disabled={approveMutation.isPending}
+                        onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                          row.orderItemId === line.orderItemId ? setReturnLineStock(row, 0) : row
+                        )))}
+                        onNudge={(delta) => setApproveDecisions((current) => current.map((row) => (
+                          row.orderItemId === line.orderItemId ? nudgeReturnLineMerma(row, delta) : row
+                        )))}
+                      />
+                    </div>
                   </div>
                 </div>
               );

@@ -82,13 +82,26 @@ export function returnDecisionHelper(summary: { stock: number; merma: number }) 
   }
   if (merma > 0) return `${unitLabel(merma)} a merma.`;
   if (stock > 0) return `${unitLabel(stock)} a stock.`;
-  return 'Marca cada línea.';
+  return 'Marca stock o merma en cada producto.';
+}
+
+export function returnLineDecisionLabel(line: Pick<ReturnLineDecision, 'stockQuantity' | 'mermaQuantity'>) {
+  const stock = Number(line.stockQuantity || 0);
+  const merma = Number(line.mermaQuantity || 0);
+  if (stock > 0 && merma > 0) return `${unitLabel(stock)} a stock · ${unitLabel(merma)} a merma`;
+  if (merma > 0) return `${unitLabel(merma)} a merma`;
+  if (stock > 0) return `${unitLabel(stock)} a stock`;
+  return 'Marca stock o merma';
 }
 
 export function setReturnLineStock(line: ReturnLineDecision, stockQuantity: number): ReturnLineDecision {
   const quantity = Number(line.quantity);
   const stock = clampQuantity(stockQuantity, 0, quantity);
   return { ...line, stockQuantity: stock, mermaQuantity: quantity - stock };
+}
+
+export function nudgeReturnLineMerma(line: ReturnLineDecision, delta: number): ReturnLineDecision {
+  return setReturnLineStock(line, Number(line.stockQuantity) - delta);
 }
 
 function unitLabel(count: number) {

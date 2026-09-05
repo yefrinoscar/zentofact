@@ -12,7 +12,9 @@ import {
   returnOutcomeLabel,
   returnDecisionSummary,
   returnDecisionHelper,
+  returnLineDecisionLabel,
   setReturnLineStock,
+  nudgeReturnLineMerma,
 } from './canceled-orders-presentation.ts';
 
 test('distingue cancelada de devuelta', () => {
@@ -37,6 +39,18 @@ test('ofrece ver todos los productos y resume stock contra merma', () => {
   assert.deepEqual(split, { orderItemId: 9, quantity: 3, stockQuantity: 1, mermaQuantity: 2 });
   assert.deepEqual(returnDecisionSummary([split]), { stock: 1, merma: 2, balanced: true });
   assert.equal(returnDecisionHelper({ stock: 1, merma: 2 }), '1 u a stock. 2 u a merma.');
+  assert.equal(returnDecisionHelper({ stock: 0, merma: 0 }), 'Marca stock o merma en cada producto.');
+  assert.equal(
+    returnLineDecisionLabel({ stockQuantity: 1, mermaQuantity: 1 }),
+    '1 u a stock · 1 u a merma',
+  );
+  const twoUnits = { orderItemId: 9, quantity: 2, stockQuantity: 2, mermaQuantity: 0 };
+  assert.deepEqual(nudgeReturnLineMerma(twoUnits, 1), {
+    orderItemId: 9, quantity: 2, stockQuantity: 1, mermaQuantity: 1,
+  });
+  assert.deepEqual(setReturnLineStock(twoUnits, 0), {
+    orderItemId: 9, quantity: 2, stockQuantity: 0, mermaQuantity: 2,
+  });
 });
 
 test('describe el comprobante y la nota de crédito como en Falabella', () => {
