@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import {
   isListableStockJob,
   shouldShowStockJobAttempts,
+  stockItemReason,
   stockJobDetail,
+  stockJobFilterBucket,
+  stockOrderStatusLabel,
+  stockPreviewFooter,
   visibleStockJobStatus,
 } from './stock-job-presentation.ts';
 
@@ -43,6 +47,75 @@ test('un job sin fecha de compra no tapa la cola del período', () => {
   }, LISTEN_FROM), false);
 });
 
+test('un pedido cancelado no se lee como procesado ni reservado', () => {
+  const job = {
+    status: 'done',
+    ordered_at: '2026-09-04T16:10:00.000Z',
+    order_status: 'cancelled',
+    fulfillment_status: 'cancelled',
+    reserved_units: 0,
+    applied_units: 0,
+    items: [{ stockState: 'reversed' }],
+    result: { reserved: 1, applied: 0 },
+  };
+
+  assert.equal(visibleStockJobStatus(job, LISTEN_FROM), 'cancelled');
+  assert.equal(stockJobDetail(job, LISTEN_FROM), 'Cancelado. No descuenta.');
+  assert.equal(stockJobFilterBucket(job, LISTEN_FROM), 'cancelled');
+  assert.equal(stockOrderStatusLabel({
+    status: 'cancelled · cancelled',
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+  }), 'Cancelado');
+  assert.equal(stockPreviewFooter({
+    order: { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' },
+    items: [{ stockState: 'reversed', quantity: 1 }],
+    stock: { applied: 0 },
+  }), 'Cancelado. No descuenta.');
+  assert.equal(stockItemReason(
+    { stockState: 'reversed', productId: 1, mainSku: 'G24N' },
+    { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' },
+  ), 'Volvió al almacén.');
+});
+
+test('un snapshot viejo de reserva no manda si el pedido ya está cancelado', () => {
+  const job = {
+    status: 'done',
+    ordered_at: '2026-09-04T16:10:00.000Z',
+    reserved_units: 0,
+    applied_units: 0,
+    items: [{ stockState: 'reversed' }],
+    result: { reserved: 1 },
+  };
+
+  assert.equal(visibleStockJobStatus(job, LISTEN_FROM), 'cancelled');
+  assert.equal(stockJobDetail(job, LISTEN_FROM), 'Cancelado. No descuenta.');
+});
+
+test('si el pedido se canceló y el stock no se soltó, el detalle lo dice', () => {
+  const reserved = {
+    status: 'done',
+    ordered_at: '2026-09-04T16:10:00.000Z',
+    order_status: 'cancelled',
+    fulfillment_status: 'cancelled',
+    reserved_units: 1,
+    applied_units: 0,
+    items: [{ stockState: 'pending' }],
+    result: { reserved: 1 },
+  };
+  assert.equal(visibleStockJobStatus(reserved, LISTEN_FROM), 'cancelled');
+  assert.equal(stockJobDetail(reserved, LISTEN_FROM), 'Cancelado, pero sigue reservado.');
+
+  const applied = {
+    ...reserved,
+    reserved_units: 0,
+    applied_units: 1,
+    items: [{ stockState: 'applied' }],
+    result: { applied: 1 },
+  };
+  assert.equal(stockJobDetail(applied, LISTEN_FROM), 'Cancelado, pero sigue descontado.');
+});
+
 test('un pedido ya aplicado conserva el estado descontado aunque el webhook se repita', () => {
   const job = {
     status: 'done',
@@ -57,6 +130,7 @@ test('un pedido ya aplicado conserva el estado descontado aunque el webhook se r
   assert.equal(stockJobDetail(job, LISTEN_FROM), '1 u descontada');
   assert.equal(shouldShowStockJobAttempts(job), false);
   assert.equal(isListableStockJob(job, LISTEN_FROM), true);
+  assert.equal(stockJobFilterBucket(job, LISTEN_FROM), 'done');
 });
 
 test('el contador de intentos solo acompaña trabajos que aún requieren seguimiento', () => {

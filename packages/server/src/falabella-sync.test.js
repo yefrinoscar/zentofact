@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canonicalLifecycleStatus,
   catalogInventoryEnabledForSync,
   effectiveFalabellaItemStatus,
   falabellaLabelCount,
@@ -11,7 +12,7 @@ import {
   normalizeFalabellaStatus,
   syncFalabellaOrders,
 } from './falabella-sync.js';
-import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
+import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
 
 test('una sincronización histórica nunca mueve inventario aunque encuentre cancelaciones', () => {
   assert.equal(catalogInventoryEnabledForSync('month', true), false);
@@ -28,6 +29,16 @@ function response(orders, overrides = {}) {
     ...overrides,
   };
 }
+
+test('un Statuses histórico pending|canceled se trata como cancelado', () => {
+  assert.equal(canonicalLifecycleStatus('pending|canceled'), 'canceled');
+  assert.equal(canonicalLifecycleStatus('canceled'), 'canceled');
+  assert.equal(canonicalLifecycleStatus('pending'), 'pending');
+  assert.equal(shouldListenStockOrder({
+    status: canonicalLifecycleStatus('pending|canceled'),
+    orderedAt: INVENTORY_LISTEN_FROM_AT,
+  }), false);
+});
 
 test('normaliza estados anidados de Falabella sin perder valores', () => {
   assert.equal(

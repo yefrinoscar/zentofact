@@ -102,7 +102,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/descuentos-stock': {
     title: 'Cola de descuentos',
-    subtitle: 'Desde pendiente. El stock queda reservado hasta listo para enviar.',
+    subtitle: 'Reservado hasta listo para enviar. Cancelado no descuenta.',
   },
   '/insumos': {
     title: 'Insumos',

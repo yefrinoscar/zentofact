@@ -362,6 +362,10 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
     orderStatus: 'cancelled',
     fulfillmentStatus: 'cancelled',
   });
+  assert.deepEqual(mapFalabellaCanonicalStatus('pending|canceled'), {
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+  });
 });
 
 test('arma la dirección oficial de Falabella desde AddressShipping', () => {
