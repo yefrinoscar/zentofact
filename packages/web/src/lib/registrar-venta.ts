@@ -189,9 +189,32 @@ export function customerTaxPayload(input: ManualSaleInput) {
   return { name, phone };
 }
 
+function money2(value: number) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+/** Precio que ve el vendedor: el registrado del catálogo. El mínimo de marketplace solo si no hay precio maestro. */
 export function productPrice(product: CatalogProductForSale) {
-  const value = Number(product.sellerPriceMin ?? product.referencePrice ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  const reference = Number(product.referencePrice);
+  if (Number.isFinite(reference) && reference > 0) return reference;
+  const seller = Number(product.sellerPriceMin);
+  return Number.isFinite(seller) && seller > 0 ? seller : 0;
+}
+
+/** Lo que queda al vender: precio menos la comisión fija del producto. */
+export function productProfit(product: CatalogProductForSale) {
+  if (product.commissionAmount == null) return null;
+  return money2(productPrice(product) - Number(product.commissionAmount));
+}
+
+export function saleLineProfit(line: Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount'>) {
+  if (line.commissionAmount == null) return null;
+  return money2((Number(line.unitPrice) - Number(line.commissionAmount)) * Number(line.quantity || 0));
+}
+
+export function saleProfit(lines: Array<Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount'>>) {
+  if (!lines.some((line) => line.commissionAmount != null)) return null;
+  return money2(lines.reduce((sum, line) => sum + (saleLineProfit(line) ?? 0), 0));
 }
 
 export function productStock(product: CatalogProductForSale) {

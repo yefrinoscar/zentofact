@@ -8,6 +8,7 @@ import {
   SALE_STEPS,
   saleReturnPath,
   saleProductCommission,
+  saleProfit,
   buildManualSaleOrderPayload,
   firstInvalidSaleStep,
   limaTodayKey,
@@ -184,6 +185,7 @@ export default function RegistrarVenta() {
     shippingQuote,
     delivery === 'envio' && isSellerPricedShipping(shippingCarrier) ? (sellerShippingAmount ?? 0) : 0,
   );
+  const profit = saleProfit(lines);
 
   const saleInput: ManualSaleInput = {
     channelAccountId: manualAccount?.id,
@@ -497,6 +499,11 @@ export default function RegistrarVenta() {
                 {totals.shipping > 0 ? `Productos ${formatSaleMoney(totals.products)} · Envío ${formatSaleMoney(totals.shipping)}` : 'Total'}
               </p>
               <p className="truncate text-xl font-semibold tracking-tight tabular-nums">{formatSaleMoney(totals.total)}</p>
+              {profit != null ? (
+                <p className="truncate text-xs tabular-nums text-emerald-700 dark:text-emerald-400">
+                  Ganas {formatSaleMoney(profit)}
+                </p>
+              ) : null}
             </div>
           ) : (
             <div className="flex-1" aria-hidden="true" />
@@ -530,6 +537,7 @@ export default function RegistrarVenta() {
         submittedSearch={submittedSearch}
         onSelect={addProduct}
         canSelect={(product) => remainingSaleStock(product, lines) > 0}
+        showProfit
       />
     </form>
   );

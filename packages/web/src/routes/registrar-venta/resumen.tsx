@@ -1,5 +1,5 @@
 import { ClipboardCheck, Package, Pencil, Truck, User, Wallet, type LucideIcon } from 'lucide-react';
-import { type SaleStepId } from '../../lib/registrar-venta';
+import { saleLineProfit, saleProfit, type SaleStepId } from '../../lib/registrar-venta';
 import { formatSaleMoney, saleSummaryGroups, saleTotalRows } from '../../lib/sale-summary';
 import { cn } from '../../lib/cn';
 import { Button } from '../../components/ui/button';
@@ -85,6 +85,7 @@ export function ResumenStep({
     fiscalAddress: view.fiscalAddress,
   }, undefined, view.fleetOrigin?.address);
           const totalRows = saleTotalRows(view.totals, view.shippingQuote?.priceZoneName, view.shippingQuote?.distanceKm, view.shippingCarrier);
+  const profit = saleProfit(view.lines);
   const [cliente, entrega, pago] = groups;
 
   return (
@@ -119,7 +120,9 @@ export function ResumenStep({
         >
           {view.lines.length ? (
             <ul className="divide-y divide-border/70">
-              {view.lines.map((line, index) => (
+              {view.lines.map((line, index) => {
+                const profit = saleLineProfit(line);
+                return (
                 <li key={line.id} className={cn('flex items-start gap-3 py-2.5', index === 0 && 'pt-0')}>
                   <ProductPhoto url={line.imageUrl} shopSku={line.shopSku} sku={line.sku} name={line.name} size="sm" />
                   <div className="min-w-0 flex-1">
@@ -129,12 +132,18 @@ export function ResumenStep({
                       {' · '}
                       {line.quantity} × {formatSaleMoney(line.unitPrice)}
                     </p>
+                    {profit != null ? (
+                      <p className="mt-0.5 text-xs tabular-nums text-emerald-700 dark:text-emerald-400">
+                        Ganas {formatSaleMoney(profit)}
+                      </p>
+                    ) : null}
                   </div>
                   <p className="shrink-0 text-sm font-semibold tabular-nums">
                     {formatSaleMoney(line.unitPrice * line.quantity)}
                   </p>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           ) : (
             <p className="text-sm text-muted-foreground">Sin productos.</p>
@@ -162,6 +171,14 @@ export function ResumenStep({
               {formatSaleMoney(view.totals.total)}
             </span>
           </div>
+          {profit != null ? (
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate text-muted-foreground">Ganas</span>
+              <span className="shrink-0 tabular-nums text-emerald-700 dark:text-emerald-400">
+                {formatSaleMoney(profit)}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </StepPanel>

@@ -10,6 +10,9 @@ import {
   limaDateToIso,
   limaTodayKey,
   productPrice,
+  productProfit,
+  saleLineProfit,
+  saleProfit,
   productStock,
   remainingSaleStock,
   canSelectProductForSale,
@@ -55,20 +58,27 @@ function validSale(overrides = {}) {
   };
 }
 
-test('el precio de venta prioriza el mínimo seller sobre el de referencia', () => {
+test('el precio de venta usa el registrado y no el mínimo de marketplace', () => {
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
     name: 'X',
-    sellerPriceMin: 120,
-    referencePrice: 200,
-  }), 120);
+    sellerPriceMin: 23.97,
+    referencePrice: 25,
+  }), 25);
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
     name: 'X',
     referencePrice: 200,
   }), 200);
+  assert.equal(productPrice({
+    id: 1,
+    mainSku: 'A',
+    name: 'X',
+    sellerPriceMin: 23.97,
+    referencePrice: null,
+  }), 23.97);
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
@@ -550,4 +560,23 @@ test('la comisión del producto se multiplica por unidades y distingue cero de s
   assert.equal(saleProductCommission([{ commissionAmount: 7.5, quantity: 2 }, { commissionAmount: 3, quantity: 1 }]), 18);
   assert.equal(saleProductCommission([{ commissionAmount: 0, quantity: 2 }]), 0);
   assert.equal(saleProductCommission([{ quantity: 2 }]), undefined);
+});
+
+test('la ganancia es el precio menos la comisión y se actualiza si baja el precio', () => {
+  assert.equal(productProfit({
+    id: 1,
+    mainSku: 'G-48',
+    name: 'Escáner',
+    referencePrice: 25,
+    sellerPriceMin: 23.97,
+    commissionAmount: 5,
+  }), 20);
+  assert.equal(saleLineProfit({ unitPrice: 25, quantity: 1, commissionAmount: 5 }), 20);
+  assert.equal(saleLineProfit({ unitPrice: 23, quantity: 2, commissionAmount: 5 }), 36);
+  assert.equal(saleLineProfit({ unitPrice: 25, quantity: 1 }), null);
+  assert.equal(saleProfit([
+    { unitPrice: 25, quantity: 1, commissionAmount: 5 },
+    { unitPrice: 10, quantity: 1, commissionAmount: 2 },
+  ]), 28);
+  assert.equal(saleProfit([{ unitPrice: 25, quantity: 1 }]), null);
 });
