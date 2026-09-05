@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Banknote, Loader2 } from 'lucide-react';
 import api from '../lib/api';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   SALE_STEPS,
+  saleReturnPath,
+  saleProductCommission,
   buildManualSaleOrderPayload,
   firstInvalidSaleStep,
   limaTodayKey,
@@ -103,7 +105,8 @@ export default function RegistrarVenta() {
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
   const { can, isAdmin } = usePermissions();
-  const afterSavePath = can('salesperson') && !can('order_management') ? '/mis-ventas' : '/orders';
+  const [searchParams] = useSearchParams();
+  const afterSavePath = saleReturnPath(searchParams.get('from'), can('order_management'));
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
@@ -258,6 +261,7 @@ export default function RegistrarVenta() {
         imageUrl: product.imageUrl,
         shopSku: product.listings?.[0]?.shopSku || null,
         catalogPrice: price,
+        commissionAmount: product.commissionAmount,
         unitPrice: price,
         quantity: 1,
         available,
@@ -308,6 +312,7 @@ export default function RegistrarVenta() {
       orderNumber: registered.number,
       customerName: registered.customer,
       total: registered.total,
+      commission: saleProductCommission(lines),
       paymentMethod,
       orderedAt: payload.orderedAt,
     });

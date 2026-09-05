@@ -52,12 +52,13 @@ export type SalespersonSale = {
   externalOrderNumber?: string | null;
   customer?: { name?: string | null } | null;
   total?: number | null;
+  commission?: number | null;
   metadata?: { paymentMethod?: string | null } | null;
   orderedAt?: string | null;
   createdAt?: string | null;
 };
 
-export type SalesSortBy = 'orderedAt' | 'total';
+export type SalesSortBy = 'orderedAt' | 'total' | 'commission';
 export type SalesSortDir = 'asc' | 'desc';
 
 export type MisVentasQuery = {
@@ -216,7 +217,7 @@ export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
     number: String(order.externalOrderNumber || '').trim() || '—',
     customer: String(order.customer?.name || '').trim() || 'Sin nombre',
     total,
-    commission: estimateCommission(total, commissionPercent),
+    commission: order.commission ?? estimateCommission(total, commissionPercent),
     payment: paymentMethodLabel(order.metadata?.paymentMethod),
     date: saleDateLabel(order.orderedAt || order.createdAt),
   };
