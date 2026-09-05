@@ -200,8 +200,12 @@ class RestockDb {
       return { rows: [{ ...row }] };
     }
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
-    if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
-      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: this.reserved || 0 }] };
+    if (compact.startsWith('select quantity_on_hand, quantity_reserved')) {
+      return { rows: [{
+        quantity_on_hand: this.quantity,
+        quantity_reserved: this.reserved || 0,
+        quantity_pending_return: this.pendingReturn || 0,
+      }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -236,6 +240,17 @@ class RestockDb {
     if (compact.startsWith('update product_inventory set quantity_reserved')) {
       this.reserved = Number(params[0]);
       return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_pending_return')) {
+      this.pendingReturn = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('insert into return_stock_approvals')) {
+      const itemId = Number(params[1]);
+      if (this.approvals?.has?.(itemId)) return { rows: [] };
+      this.approvals = this.approvals || new Map();
+      this.approvals.set(itemId, { id: this.approvals.size + 1 });
+      return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
     if (compact.includes('from product_listings l') && compact.includes('l.seller_sku=$3')) {
