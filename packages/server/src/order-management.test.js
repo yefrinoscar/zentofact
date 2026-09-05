@@ -939,6 +939,13 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
         channel_code: 'manual',
         channel_name: 'Venta manual',
         channel_account_name: 'Mostrador',
+        items: [{
+          name: 'Manta térmica AG301',
+          sku: 'AG301',
+          quantity: 1,
+          imageUrl: '/seed/ag301.svg',
+          shopSku: null,
+        }],
         total_count: 1,
       }] };
     },
@@ -964,6 +971,13 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
     { method: 'yape_plin', orders: 2, total: 300 },
   ]);
   assert.equal(result.orders[0].createdBy, 'seller-9');
+  assert.deepEqual(result.orders[0].items, [{
+    name: 'Manta térmica AG301',
+    sku: 'AG301',
+    quantity: 1,
+    imageUrl: '/seed/ag301.svg',
+    shopSku: null,
+  }]);
   assert.equal(result.ordersTotal, 1);
   assert.equal(result.limit, 10);
   assert.equal(result.offset, 10);
@@ -974,7 +988,69 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
   }
   const list = queries.find((query) => query.sql.includes('total_count'));
   assert.match(list.sql, /order by o\.total asc/);
+  assert.match(list.sql, /lines\.items/);
+  assert.match(list.sql, /p\.image_url/);
   assert.deepEqual(list.params.slice(-2), [10, 10]);
+});
+
+test('la lista de ventas del vendedor incluye el producto y su foto', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /lines\.items/);
+      assert.match(sql, /p\.image_url/);
+      assert.match(sql, /p\.name/);
+      return {
+        rows: [{
+          id: 91,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: '2609050246',
+          external_order_number: '2609050246',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'optional',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 25,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 25,
+          customer: { name: 'Alexander' },
+          shipping: { type: 'recojo' },
+          metadata: { paymentMethod: 'efectivo' },
+          ordered_at: '2026-09-05T15:15:00Z',
+          promised_shipping_at: null,
+          provider_updated_at: null,
+          items_status: 'complete',
+          items_error: null,
+          first_seen_at: '2026-09-05T15:15:00Z',
+          last_seen_at: '2026-09-05T15:15:00Z',
+          created_at: '2026-09-05T15:15:00Z',
+          updated_at: '2026-09-05T15:15:00Z',
+          created_by: 'seller-9',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          items: [{
+            name: 'Manta térmica AG301',
+            sku: 'AG301',
+            quantity: 1,
+            imageUrl: '/seed/ag301.svg',
+            shopSku: null,
+          }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ createdBy: 'seller-9', salesOnly: true, limit: 10 }, db);
+  assert.equal(result.orders[0].externalOrderNumber, '2609050246');
+  assert.equal(result.orders[0].items[0].name, 'Manta térmica AG301');
+  assert.equal(result.orders[0].items[0].imageUrl, '/seed/ag301.svg');
 });
 
 test('el home del vendedor rechaza un rango invertido', async () => {
