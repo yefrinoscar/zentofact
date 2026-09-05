@@ -278,8 +278,13 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/order-management/canceled-orders${qs(filter)}`),
-  approveReturnStock: (orderId: number) =>
-    req(`/order-management/canceled-orders/${orderId}/approve-return`, { method: 'POST' }),
+  approveReturnStock: (orderId: number, data: {
+    lines?: Array<{ orderItemId: number; stockQuantity: number; mermaQuantity: number }>;
+  } = {}) =>
+    req(`/order-management/canceled-orders/${orderId}/approve-return`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
   getSalespersonHome: (filter: {

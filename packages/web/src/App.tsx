@@ -65,8 +65,8 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
   },
   '/cancelados': {
-    title: 'Cancelados',
-    subtitle: 'Cancelados y devueltos, con la fecha en que pasaron a ese estado.',
+    title: 'Devoluciones',
+    subtitle: 'Anulados o devueltos, con la fecha del cambio.',
   },
   '/mis-ventas': {
     title: 'Mis ventas',

@@ -1,21 +1,30 @@
 import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { Ban, ImageIcon, Loader2, Maximize2, Search } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { cn } from '../lib/cn';
+import { productImageSrc } from '../lib/logistics-inbox';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   cancellationKind,
   cancellationKindLabel,
-  creditNoteAction,
-  documentKindLabel,
+  extraProductsLabel,
   parseCanceledDateRange,
+  returnDecisionHelper,
+  returnDecisionSummary,
+  returnOutcomeLabel,
+  returnUnitLabel,
+  returnUnits,
+  setReturnLineStock,
+  setReturnUnit,
   stockApprovalLabel,
   type CancellationKind,
+  type ReturnLineDecision,
+  type ReturnUnitDestination,
 } from '../lib/canceled-orders-presentation';
 import { sellerShortName } from '../lib/seller-name';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
@@ -74,7 +83,21 @@ type CanceledOrder = {
     name?: string | null;
     sku?: string | null;
     quantity?: number;
+    imageUrl?: string | null;
+    shopSku?: string | null;
+    orderItemId?: number | null;
+    productId?: number | null;
+    approvalId?: number | null;
+    approvalStatus?: string | null;
+    stockQuantity?: number | null;
+    mermaQuantity?: number | null;
   }>;
+};
+
+type ProductImagePreview = {
+  src: string;
+  name: string;
+  sku: string;
 };
 
 const PAGE_SIZE = 50;
@@ -117,11 +140,6 @@ function kindBadgeClass(kind: CancellationKind) {
     : 'border-slate-200 bg-slate-100 text-slate-700';
 }
 
-function creditNoteClass(tone: ReturnType<typeof creditNoteAction>['tone']) {
-  if (tone === 'done') return 'bg-emerald-100 text-emerald-700';
-  return 'bg-muted text-muted-foreground';
-}
-
 function ChannelMark({ code }: { code?: string | null }) {
   const value = String(code || '').trim().toLowerCase();
   if (value === 'falabella') {
@@ -143,8 +161,147 @@ function ChannelMark({ code }: { code?: string | null }) {
 
 function productLines(items: CanceledOrder['items'] = []) {
   const lines = items.filter((item) => item.name || item.sku);
-  if (lines.length === 0) return [{ name: null, sku: null, quantity: 0 }];
+  if (lines.length === 0) return [{ name: null, sku: null, quantity: 0, imageUrl: null, shopSku: null }];
   return lines;
+}
+
+function pendingReturnDecisions(order: CanceledOrder | null): ReturnLineDecision[] {
+  return productLines(order?.items)
+    .filter((item) => item.approvalStatus === 'pending' && item.orderItemId)
+    .map((item) => {
+      const quantity = Number(item.quantity || 0);
+      return {
+        orderItemId: Number(item.orderItemId),
+        quantity,
+        stockQuantity: quantity,
+        mermaQuantity: 0,
+        units: Array.from({ length: quantity }, () => 'stock' as const),
+      };
+    });
+}
+
+function ProductThumb({
+  item,
+  onOpen,
+}: {
+  item: NonNullable<CanceledOrder['items']>[number];
+  onOpen: (preview: ProductImagePreview) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
+  const name = item.name || item.sku || 'Producto';
+  const canOpen = Boolean(src) && !failed;
+  const body = (
+    <>
+      <ImageIcon className="size-4 text-muted-foreground/40" />
+      {src && !failed ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-105"
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+    </>
+  );
+  if (canOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen({ src, name, sku: item.sku || '' })}
+        aria-label={`Ampliar foto de ${name}`}
+        title="Ampliar foto"
+        className="group relative grid size-12 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        {body}
+        <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true">
+          <Maximize2 className="size-4" />
+        </span>
+      </button>
+    );
+  }
+  return (
+    <span className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted" aria-hidden="true">
+      {body}
+    </span>
+  );
+}
+
+function keepWhenStackedDialog(event: Event, previewOpen: boolean) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('[data-slot="dialog-content"]')) {
+    event.preventDefault();
+    return;
+  }
+  if (previewOpen && target.closest('[data-slot="dialog-overlay"]')) {
+    event.preventDefault();
+  }
+}
+
+function DestinationChoice({
+  destination,
+  selected,
+  disabled,
+  unitLabel,
+  sku,
+  onSelect,
+}: {
+  destination: ReturnUnitDestination;
+  selected: boolean;
+  disabled: boolean;
+  unitLabel: string;
+  sku: string;
+  onSelect: () => void;
+}) {
+  const label = destination === 'merma' ? 'Merma' : 'A stock';
+  const name = sku ? `${label} ${sku} unidad ${unitLabel}` : `${label} unidad ${unitLabel}`;
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant={selected ? 'default' : 'outline'}
+      disabled={disabled}
+      onClick={onSelect}
+      aria-pressed={selected}
+      aria-label={name}
+    >
+      {label}
+    </Button>
+  );
+}
+
+function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview | null; onClose: () => void }) {
+  return (
+    <Dialog open={preview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogContent
+        overlayClassName="z-[90] bg-black/70"
+        className="z-[90] max-h-[94vh] gap-0 overflow-hidden bg-zinc-950 p-0 text-white sm:max-w-5xl [&_[data-slot=dialog-close]]:bg-white/10 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-white/20"
+      >
+        {preview ? (
+          <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>Foto de {preview.name}</DialogTitle>
+              <DialogDescription>
+                {preview.sku ? `Vista ampliada del producto con SKU ${preview.sku}.` : 'Vista ampliada del producto.'}
+              </DialogDescription>
+            </DialogHeader>
+            <figure className="min-h-0">
+              <div className="flex min-h-64 items-center justify-center overflow-hidden p-4 sm:min-h-[32rem] sm:p-8">
+                <img src={preview.src} alt={preview.name} className="max-h-[calc(94vh-8rem)] max-w-full object-contain" />
+              </div>
+              <figcaption className="border-t border-white/10 bg-black/30 px-5 py-4 pr-16">
+                <p className="line-clamp-2 text-sm font-medium text-white">{preview.name}</p>
+                {preview.sku ? <p className="mt-1 font-mono text-xs text-white/60">SKU {preview.sku}</p> : null}
+              </figcaption>
+            </figure>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export default function Cancelados() {
@@ -160,7 +317,10 @@ export default function Cancelados() {
   const [submittedSearch, setSubmittedSearch] = useState('');
   const [page, setPage] = useState(0);
   const [approveOrder, setApproveOrder] = useState<CanceledOrder | null>(null);
+  const [approveDecisions, setApproveDecisions] = useState<ReturnLineDecision[]>([]);
   const [approveError, setApproveError] = useState('');
+  const [productsOrder, setProductsOrder] = useState<CanceledOrder | null>(null);
+  const [imagePreview, setImagePreview] = useState<ProductImagePreview | null>(null);
   const searchTimer = useRef(0);
 
   const applySearch = (value: string) => {
@@ -234,9 +394,18 @@ export default function Cancelados() {
       ? 'Por aprobar'
       : cancellationKindLabel(kind);
   const approveMutation = useMutation({
-    mutationFn: (orderId: number) => api.approveReturnStock(orderId),
+    mutationFn: ({ orderId, lines }: { orderId: number; lines: ReturnLineDecision[] }) => (
+      api.approveReturnStock(orderId, {
+        lines: lines.map((line) => ({
+          orderItemId: line.orderItemId,
+          stockQuantity: line.stockQuantity,
+          mermaQuantity: line.mermaQuantity,
+        })),
+      })
+    ),
     onSuccess: async () => {
       setApproveOrder(null);
+      setApproveDecisions([]);
       setApproveError('');
       await queryClient.invalidateQueries({ queryKey: ['canceled-orders'] });
     },
@@ -244,17 +413,20 @@ export default function Cancelados() {
       setApproveError(error instanceof Error ? error.message : 'No se pudo aprobar la devolución.');
     },
   });
+  const approveSummary = returnDecisionSummary(approveDecisions);
+  const approveItems = productLines(approveOrder?.items);
+  const productsViewItems = productLines(productsOrder?.items);
 
   return (
-    <div className="space-y-3">
+      <div className="space-y-3">
       <div className="space-y-2">
         <div className="relative max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(event) => applySearch(event.target.value)}
-            placeholder="Buscar pedido o comprobante"
-            aria-label="Buscar cancelados"
+            placeholder="Buscar pedido"
+            aria-label="Buscar devoluciones"
             className="h-9 pl-9"
           />
         </div>
@@ -320,15 +492,15 @@ export default function Cancelados() {
         </div>
       )}
 
-      <TablePanel aria-label="Pedidos cancelados y devueltos">
+      <TablePanel aria-label="Devoluciones">
         {loading && orders.length === 0 ? (
           <p className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Cargando cancelados…
+            <Loader2 className="size-4 animate-spin" /> Cargando devoluciones…
           </p>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <Ban className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay pedidos cancelados o devueltos en este rango</p>
+            <p className="text-sm font-medium">No hay devoluciones en este rango</p>
             <p className="text-sm text-muted-foreground">Cambia las fechas o espera el próximo sync.</p>
           </div>
         ) : (
@@ -340,8 +512,6 @@ export default function Cancelados() {
                   <TableHead>Producto</TableHead>
                   <TableHead>Cambio</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead>Seller</TableHead>
-                  <TableHead>Comprobante</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
                   {canApproveReturn && <TableHead className="text-right">Aprobar</TableHead>}
                 </TableRow>
@@ -349,41 +519,64 @@ export default function Cancelados() {
               <TableBody>
                 {orders.map((order) => {
                   const kindValue = order.kind || cancellationKind(order);
-                  const note = creditNoteAction(order);
                   const products = productLines(order.items);
+                  const outcome = returnOutcomeLabel(products);
                   return (
                     <TableRow key={order.id}>
                       <TableCell>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-start gap-2">
                           <ChannelMark code={order.channelCode} />
-                          <button
-                            type="button"
-                            onClick={() => void copyText(order.externalOrderNumber)}
-                            className="font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
-                            title="Copiar número de pedido"
-                          >
-                            {order.externalOrderNumber}
-                          </button>
+                          <div className="min-w-0 space-y-1">
+                            {order.companyName ? (
+                              <Badge
+                                variant="outline"
+                                className="max-w-full truncate rounded-full bg-muted px-2.5 font-medium text-foreground"
+                                title={order.companyName}
+                              >
+                                {order.companyName}
+                              </Badge>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void copyText(order.externalOrderNumber)}
+                              className="block font-mono text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                              title="Copiar número de pedido"
+                            >
+                              {order.externalOrderNumber}
+                            </button>
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="max-w-[220px] space-y-1.5">
-                          {products.map((item, index) => (
-                            <div key={`${item.sku || item.name || 'item'}-${index}`}>
-                              <p className="line-clamp-2 text-sm leading-5">
-                                {item.name || item.sku || '—'}
-                                {Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}
-                              </p>
-                              {item.sku && item.name ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void copyText(item.sku || '')}
-                                  className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
-                                  title="Copiar SKU"
-                                >
-                                  {item.sku}
-                                </button>
-                              ) : null}
+                        <div className="max-w-[280px] space-y-1.5">
+                          {products.slice(0, 1).map((item, index) => (
+                            <div key={`${item.sku || item.name || 'item'}-${index}`} className="flex items-start gap-2.5">
+                              <ProductThumb item={item} onOpen={setImagePreview} />
+                              <div className="min-w-0">
+                                <p className="line-clamp-2 text-sm leading-5">
+                                  {item.name || item.sku || '—'}
+                                  {Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}
+                                </p>
+                                {item.sku && item.name ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyText(item.sku || '')}
+                                    className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                    title="Copiar SKU"
+                                  >
+                                    {item.sku}
+                                  </button>
+                                ) : null}
+                                {products.length > 1 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setProductsOrder(order)}
+                                    className="mt-1 block text-xs font-medium text-foreground underline-offset-2 hover:underline"
+                                  >
+                                    {extraProductsLabel(products.length)}
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -401,26 +594,11 @@ export default function Cancelados() {
                               {stockApprovalLabel(order.stockApproval)}
                             </Badge>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{order.companyName || '—'}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {documentKindLabel(order.documentKind) !== '—' && (
-                            <span className={order.documentKind === 'factura'
-                              ? 'inline-flex rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700'
-                              : 'inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700'}
-                            >
-                              {documentKindLabel(order.documentKind)}
-                            </span>
+                          {order.stockApproval !== 'pending' && outcome && (
+                            <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-100 text-slate-700">
+                              {outcome}
+                            </Badge>
                           )}
-                          {order.documentNumber ? (
-                            <span className="font-mono text-xs">{order.documentNumber}</span>
-                          ) : null}
-                          <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium', creditNoteClass(note.tone))}>
-                            {note.tone === 'done' && <CheckCircle2 className="h-3.5 w-3.5" />}
-                            {note.label}
-                          </span>
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-medium">{money(order.total, order.currency)}</TableCell>
@@ -433,6 +611,7 @@ export default function Cancelados() {
                               className="h-7 px-2.5"
                               onClick={() => {
                                 setApproveError('');
+                                setApproveDecisions(pendingReturnDecisions(order));
                                 setApproveOrder(order);
                               }}
                             >
@@ -488,30 +667,119 @@ export default function Cancelados() {
         )}
       </TablePanel>
 
-      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending) setApproveOrder(null); }}>
-        <DialogContent>
+      <Dialog open={Boolean(productsOrder)} onOpenChange={(open) => { if (!open && !imagePreview) setProductsOrder(null); }}>
+        <DialogContent
+          className="sm:max-w-lg"
+          onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onEscapeKeyDown={(event) => { if (imagePreview) event.preventDefault(); }}
+        >
           <DialogHeader>
-            <DialogTitle>Aprobar devolución</DialogTitle>
+            <DialogTitle>Productos del pedido</DialogTitle>
             <DialogDescription>
-              El pedido {approveOrder?.externalOrderNumber} pasa al stock que se puede vender.
+              {productsOrder?.externalOrderNumber}
+              {productsOrder?.companyName ? ` · ${productsOrder.companyName}` : ''}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-1 text-sm">
-            {productLines(approveOrder?.items).map((item, index) => (
-              <p key={`${item.sku || item.name || 'item'}-${index}`}>
-                {item.name || item.sku || '—'}
-                {item.sku && item.name ? ` · ${item.sku}` : ''}
-                {Number(item.quantity) > 0 ? ` · ${Number(item.quantity)} u` : ''}
-              </p>
+          <div className="space-y-3">
+            {productsViewItems.map((item, index) => (
+              <div key={`${item.sku || item.name || 'item'}-${index}`} className="flex items-start gap-3">
+                <ProductThumb item={item} onOpen={setImagePreview} />
+                <div className="min-w-0">
+                  <p className="text-sm leading-5">{item.name || item.sku || '—'}</p>
+                  {item.sku ? <p className="font-mono text-xs text-muted-foreground">{item.sku}</p> : null}
+                  {Number(item.quantity) > 0 ? <p className="text-xs text-muted-foreground">{Number(item.quantity)} u</p> : null}
+                </div>
+              </div>
             ))}
           </div>
-          <p className="text-sm text-muted-foreground">
-            {Number(approveOrder?.pendingReturnQuantity) === 1
-              ? '1 unidad deja de estar por aprobar.'
-              : Number(approveOrder?.pendingReturnQuantity) > 1
-                ? `${approveOrder?.pendingReturnQuantity} unidades dejan de estar por aprobar.`
-                : 'Las unidades dejan de estar por aprobar.'}
-          </p>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending && !imagePreview) { setApproveOrder(null); setApproveDecisions([]); } }}>
+        <DialogContent
+          className="sm:max-w-lg"
+          onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onEscapeKeyDown={(event) => { if (imagePreview) event.preventDefault(); }}
+        >
+          <DialogHeader>
+            <DialogTitle>Revisar devolución</DialogTitle>
+            <DialogDescription>
+              Marca stock o merma en cada unidad.
+            </DialogDescription>
+          </DialogHeader>
+          {approveDecisions.length > 1 || approveDecisions.some((line) => line.quantity > 1) ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={approveMutation.isPending}
+                onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, line.quantity)))}
+              >
+                Todo a stock
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={approveMutation.isPending}
+                onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, 0)))}
+              >
+                Todo a merma
+              </Button>
+            </div>
+          ) : null}
+          <div className="divide-y">
+            {approveDecisions.flatMap((line) => {
+              const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
+                name: null,
+                sku: null,
+                quantity: line.quantity,
+              };
+              const units = returnUnits(line);
+              return units.map((destination, unitIndex) => (
+                <div key={`${line.orderItemId}-${unitIndex}`} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                  <ProductThumb item={item} onOpen={setImagePreview} />
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
+                    {item.sku ? (
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {item.sku}
+                        {line.quantity > 1 ? ` · ${returnUnitLabel(unitIndex, line.quantity)}` : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <DestinationChoice
+                      destination="stock"
+                      selected={destination === 'stock'}
+                      disabled={approveMutation.isPending}
+                      unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                      sku={item.sku || ''}
+                      onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                        row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
+                      )))}
+                    />
+                    <DestinationChoice
+                      destination="merma"
+                      selected={destination === 'merma'}
+                      disabled={approveMutation.isPending}
+                      unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                      sku={item.sku || ''}
+                      onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                        row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
+                      )))}
+                    />
+                  </div>
+                </div>
+              ));
+            })}
+          </div>
+          <p className="text-sm text-muted-foreground">{returnDecisionHelper(approveSummary)}</p>
           {approveError && (
             <p className="text-sm text-rose-700">{approveError}</p>
           )}
@@ -520,14 +788,14 @@ export default function Cancelados() {
               type="button"
               variant="outline"
               disabled={approveMutation.isPending}
-              onClick={() => setApproveOrder(null)}
+              onClick={() => { setApproveOrder(null); setApproveDecisions([]); }}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              disabled={!approveOrder || approveMutation.isPending}
-              onClick={() => approveOrder && approveMutation.mutate(approveOrder.id)}
+              disabled={!approveOrder || approveMutation.isPending || (approveDecisions.length > 0 && !approveSummary.balanced)}
+              onClick={() => approveOrder && approveMutation.mutate({ orderId: approveOrder.id, lines: approveDecisions })}
             >
               {approveMutation.isPending ? <Loader2 className="animate-spin" /> : null}
               Confirmar
@@ -535,6 +803,7 @@ export default function Cancelados() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
+      </div>
   );
 }
