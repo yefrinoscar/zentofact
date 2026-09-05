@@ -233,9 +233,9 @@ app.use('/falabella', falabellaAccessGuard);
 app.use('/falabella/*', falabellaAccessGuard);
 
 const ok = (c, data, status = 200) => c.json(data, status);
-const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
-  operation: 'api',
-  context: { method: c.req.method, path: c.req.path, status },
+const fail = (c, e, status = 500, extra = {}) => c.json(operationalErrorBody(e, {
+  operation: extra.operation || 'api',
+  context: { method: c.req.method, path: c.req.path, status, ...extra.context },
 }), status);
 
 function salespersonOnlyUserId(c) {
@@ -373,15 +373,23 @@ app.get('/logistics-inbox', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 app.post('/logistics-inbox/print', async (c) => {
+  let body = {};
   try {
-    const body = await c.req.json();
+    body = await c.req.json();
     const user = c.get('user');
     return ok(c, await logisticsInbox.printLogisticsPackWithDefaults({
       ...body,
       printedBy: user?.email || user?.name || null,
     }));
+  } catch (e) {
+    return fail(c, e, 400, {
+      operation: 'logistics.print',
+      context: {
+        orderIds: Array.isArray(body?.orderIds) ? body.orderIds : undefined,
+        includePacking: body?.includePacking,
+      },
+    });
   }
-  catch (e) { return fail(c, e, 400); }
 });
 
 app.get('/order-management/geo/maps-key', async (c) => {
