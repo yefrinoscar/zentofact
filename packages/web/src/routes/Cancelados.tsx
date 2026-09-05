@@ -221,6 +221,18 @@ function ProductThumb({
   );
 }
 
+function keepWhenStackedDialog(event: Event, previewOpen: boolean) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest('[data-slot="dialog-content"]')) {
+    event.preventDefault();
+    return;
+  }
+  if (previewOpen && target.closest('[data-slot="dialog-overlay"]')) {
+    event.preventDefault();
+  }
+}
+
 function ProductImageDialog({ preview, onClose }: { preview: ProductImagePreview | null; onClose: () => void }) {
   return (
     <Dialog open={preview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
@@ -615,8 +627,14 @@ export default function Cancelados() {
         )}
       </TablePanel>
 
-      <Dialog open={Boolean(productsOrder)} onOpenChange={(open) => { if (!open) setProductsOrder(null); }}>
-        <DialogContent className="sm:max-w-lg">
+      <Dialog open={Boolean(productsOrder)} onOpenChange={(open) => { if (!open && !imagePreview) setProductsOrder(null); }}>
+        <DialogContent
+          className="sm:max-w-lg"
+          onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onEscapeKeyDown={(event) => { if (imagePreview) event.preventDefault(); }}
+        >
           <DialogHeader>
             <DialogTitle>Productos del pedido</DialogTitle>
             <DialogDescription>
@@ -639,8 +657,14 @@ export default function Cancelados() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending) { setApproveOrder(null); setApproveDecisions([]); } }}>
-        <DialogContent className="sm:max-w-lg">
+      <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending && !imagePreview) { setApproveOrder(null); setApproveDecisions([]); } }}>
+        <DialogContent
+          className="sm:max-w-lg"
+          onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
+          onEscapeKeyDown={(event) => { if (imagePreview) event.preventDefault(); }}
+        >
           <DialogHeader>
             <DialogTitle>Revisar devolución</DialogTitle>
             <DialogDescription>
