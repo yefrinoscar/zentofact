@@ -192,6 +192,12 @@ function commissionAmount(value) {
   return amount;
 }
 
+function wholesalePrice(value) {
+  const amount = finiteNumber(value, 'wholesalePrice', { nullable: true });
+  if (amount != null && amount < 0) throw httpError('wholesalePrice no puede ser negativo.', 400);
+  return amount;
+}
+
 function profitOwnerValue(value) {
   return text(value, 'profitOwner', 80, { nullable: true });
 }
@@ -1085,9 +1091,9 @@ export async function createProduct(input, actorUserId, db) {
       result = await client.query(
         `insert into products (
            main_sku, name, description, brand, status, attributes, barcode,
-           image_url, reference_price, commission_amount, profit_owner,
+           image_url, reference_price, wholesale_price, commission_amount, profit_owner,
            created_by, updated_by
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
          returning *`,
         [
           mainSku,
@@ -1099,6 +1105,7 @@ export async function createProduct(input, actorUserId, db) {
           text(input.barcode, 'barcode', 200, { nullable: true }),
           text(input.imageUrl, 'imageUrl', 2000, { nullable: true }),
           finiteNumber(input.referencePrice, 'referencePrice', { nullable: true }),
+          wholesalePrice(input.wholesalePrice),
           commissionAmount(input.commissionAmount),
           profitOwnerValue(input.profitOwner),
           actorUserId ? String(actorUserId) : null,
@@ -1135,6 +1142,7 @@ export async function updateProduct(id, input, actorUserId, db) {
   if (input.barcode !== undefined) add('barcode', text(input.barcode, 'barcode', 200, { nullable: true }));
   if (input.imageUrl !== undefined) add('image_url', text(input.imageUrl, 'imageUrl', 2000, { nullable: true }));
   if (input.referencePrice !== undefined) add('reference_price', finiteNumber(input.referencePrice, 'referencePrice', { nullable: true }));
+  if (input.wholesalePrice !== undefined) add('wholesale_price', wholesalePrice(input.wholesalePrice));
   if (input.commissionAmount !== undefined) add('commission_amount', commissionAmount(input.commissionAmount));
   if (input.profitOwner !== undefined) add('profit_owner', profitOwnerValue(input.profitOwner));
   if (!fields.length) return getProduct(productId, target);

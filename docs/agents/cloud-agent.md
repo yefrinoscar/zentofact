@@ -46,7 +46,7 @@ Companies: LIMBO `20990001001`, MANTA RAYA `20990001002`, YAKURUNA `20990001003`
 | BB220 | 40 | LIMBO + MANTA RAYA Falabella |
 | HOG040 | 15 | YAKURUNA Falabella |
 
-Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockOnHand` 12, `referencePrice` 189.9 and `commissionAmount` 20. Listings may show 170.5; Nueva venta must still start from 189.9 and show `Ganas S/ 20.00` (the fixed commission). If the seller raises the price, Ganas grows from that seller base (`189.9 − 20`). Open `#/productos` as superadmin or admin. Seller publications live in the product drawer, not on the master row.
+Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockOnHand` 12, `referencePrice` 189.9, `wholesalePrice` 160 and `commissionAmount` 20. Listings may show 170.5; Nueva venta must still start from 189.9 and show `Ganas S/ 20.00` (the fixed commission). If the seller raises the price, Ganas grows from that seller base (`189.9 − 20`). Open `#/productos` as superadmin or admin. Seller publications live in the product drawer, not on the master row. The master row and the product drawer show `Por mayor` from `wholesalePrice`; it does not change Nueva venta.
 
 Do not POST inventory adjust or click publication switches unless the task explicitly enables marketplace mutation.
 
