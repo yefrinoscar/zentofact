@@ -1,4 +1,4 @@
-// PROTOTYPE — tres formas de elegir canal en Empresas, vía ?variant= en /#/companies.
+// PROTOTYPE — tres formas de elegir canal en Empresas, vía ?variant= en el editor.
 // Pregunta: ¿cómo debe verse Falabella / Ripley / Mercado Libre en el editor?
 // Descartable: el ganador se reescribe en Companies.tsx.
 import type { ReactNode } from 'react';
@@ -133,6 +133,6 @@ export function CompanyChannelTabsPrototype({
   return <VariantA {...props} />;
 }
 
-export function companyChannelTabsModalWidth(variant: string) {
-  return variant === 'C' ? 'max-w-3xl' : 'max-w-2xl';
+export function companyChannelTabsPageClass(variant: string) {
+  return variant === 'C' ? 'max-w-5xl' : 'max-w-3xl';
 }

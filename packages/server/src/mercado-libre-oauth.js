@@ -81,12 +81,17 @@ export function verifyMercadoLibreOAuthState(state, env = process.env, now = Dat
 export function mercadoLibreWebRedirect(query = {}, env = process.env) {
   const origin = text(env.WEB_ORIGINS).split(',')[0].trim()
     || 'http://127.0.0.1:3011';
+  const companyId = Number(query.companyId);
+  const path = Number.isInteger(companyId) && companyId > 0
+    ? `/#/companies/${companyId}`
+    : '/#/companies';
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
+    if (key === 'companyId') continue;
     if (value) params.set(key, String(value));
   }
   const suffix = params.toString();
-  return `${origin.replace(/\/+$/, '')}/#/companies${suffix ? `?${suffix}` : ''}`;
+  return `${origin.replace(/\/+$/, '')}${path}${suffix ? `?${suffix}` : ''}`;
 }
 
 export async function startMercadoLibreConnect(companyIdInput, actor, env = process.env) {
@@ -114,10 +119,12 @@ export async function startMercadoLibreConnect(companyIdInput, actor, env = proc
 
 export async function finishMercadoLibreConnect(query = {}, dependencies = {}) {
   const env = dependencies.env || process.env;
+  let companyId = 0;
   try {
     const code = text(query.code);
     if (!code) throw httpError('Mercado Libre no devolvió el código de autorización.');
     const state = verifyMercadoLibreOAuthState(query.state, env, dependencies.now?.() || Date.now());
+    companyId = state.companyId;
     const app = mercadoLibreAppConfig(env);
     if (!app.configured) throw httpError('Falta la aplicación de Mercado Libre.', 503);
     const token = await (dependencies.exchangeAuthorizationCode || exchangeAuthorizationCode)({
@@ -156,11 +163,12 @@ export async function finishMercadoLibreConnect(query = {}, dependencies = {}) {
       displayName,
       token.userId,
     );
-    return mercadoLibreWebRedirect({ ml: 'connected' }, env);
+    return mercadoLibreWebRedirect({ ml: 'connected', companyId }, env);
   } catch (error) {
     return mercadoLibreWebRedirect({
       ml: 'error',
       message: String(error?.message || 'No se pudo conectar Mercado Libre.').slice(0, 180),
+      ...(companyId ? { companyId } : {}),
     }, env);
   }
 }

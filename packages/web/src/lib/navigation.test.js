@@ -13,6 +13,8 @@ test('mobileNavPathname no reescribe Nueva venta si también gestiona pedidos', 
   const can = (key) => key === 'salesperson' || key === 'order_management';
   assert.equal(mobileNavPathname('/orders/nueva', can), '/orders/nueva');
   assert.equal(isNavItemActive('/orders/nueva', '/orders'), true);
+  assert.equal(isNavItemActive('/companies/nueva', '/companies'), true);
+  assert.equal(isNavItemActive('/companies/4', '/companies'), true);
 });
 
 test('Envío propio no es un ítem de menú; vive en Ajustes', () => {

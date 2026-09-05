@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Plus, Pencil, Trash2, Building2, Upload, AlertCircle, Loader2, Eye, EyeOff,
-  MoreHorizontal, RefreshCw, Search, Link2, Unlink,
+  MoreHorizontal, RefreshCw, Search, Link2, Unlink, ArrowLeft,
 } from 'lucide-react';
 import {
   ColumnDef,
@@ -34,9 +34,14 @@ import { PrototypeSwitcher } from '../components/PrototypeSwitcher';
 import {
   COMPANY_CHANNEL_TAB_VARIANTS,
   CompanyChannelTabsPrototype,
-  companyChannelTabsModalWidth,
+  companyChannelTabsPageClass,
   type CompanyChannelTab,
 } from './Companies.channel-tabs.prototype';
+
+function companiesHref(path: string, searchParams: URLSearchParams) {
+  const variant = searchParams.get('variant');
+  return variant ? `${path}?variant=${encodeURIComponent(variant)}` : path;
+}
 
 type ChannelTab = CompanyChannelTab;
 
@@ -248,13 +253,19 @@ function billingInput(
 }
 
 export default function Companies() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { companyId: companyIdParam } = useParams();
   const [searchParams] = useSearchParams();
+  const isNew = location.pathname === '/companies/nueva';
+  const companyId = Number(companyIdParam);
+  const isEditor = isNew || Boolean(companyIdParam);
   const channelTabsVariant = searchParams.get('variant') || 'A';
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<CompanyRow | null>(null);
+  const [editorLoading, setEditorLoading] = useState(Boolean(companyIdParam));
   const [form, setForm] = useState<CompanyForm>(initialForm);
   const formRef = useRef<HTMLFormElement | null>(null);
   const certInputRef = useRef<HTMLInputElement | null>(null);
@@ -301,9 +312,9 @@ export default function Companies() {
     api.getMercadoLibreIntegrationStatus()
       .then((status: { configured?: boolean }) => setMercadoLibreAppConfigured(status?.configured === true))
       .catch(() => setMercadoLibreAppConfigured(false));
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    if (params.get('ml') === 'connected') setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
-    if (params.get('ml') === 'error') setOauthNotice(params.get('message') || 'No se pudo conectar Mercado Libre.');
+    const ml = searchParams.get('ml');
+    if (ml === 'connected') setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
+    if (ml === 'error') setOauthNotice(searchParams.get('message') || 'No se pudo conectar Mercado Libre.');
   }, []);
 
   const resetForm = () => {
@@ -342,10 +353,10 @@ export default function Companies() {
   };
 
   const closeEditor = () => {
-    setShowCreate(false);
     setEditing(null);
     resetForm();
     setSaving(false);
+    navigate(companiesHref('/companies', searchParams));
   };
 
   const readFormSnapshot = (): CompanyForm => {
@@ -629,7 +640,7 @@ export default function Companies() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              <DropdownMenuItem onClick={() => startEdit(row.original)}>
+              <DropdownMenuItem onClick={() => navigate(companiesHref(`/companies/${row.original.id}`, searchParams))}>
                 <Pencil /> Editar
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -654,7 +665,6 @@ export default function Companies() {
 
   const startEdit = (company: CompanyRow) => {
     setEditing(company);
-    setShowCreate(false);
     setHasStoredCert(!!company.hasCertificate);
     setCertFileName('');
     setCertBase64('');
@@ -681,8 +691,7 @@ export default function Companies() {
       ripleySvcPassword: '',
       ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
-    const oauthParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    const mlResult = oauthParams.get('ml');
+    const mlResult = searchParams.get('ml');
     setChannelTab(mlResult === 'connected' || mlResult === 'error' || oauthNotice ? 'mercado_libre' : 'falabella');
     setLoadingBilling(true);
     void Promise.all([
@@ -711,6 +720,45 @@ export default function Companies() {
       setError(message);
     }).finally(() => setLoadingBilling(false));
   };
+
+  useEffect(() => {
+    if (!isEditor) return;
+    if (isNew) {
+      setEditing(null);
+      resetForm();
+      setEditorLoading(false);
+      const ml = searchParams.get('ml');
+      if (ml === 'connected' || ml === 'error') setChannelTab('mercado_libre');
+      return;
+    }
+    if (!Number.isInteger(companyId) || companyId < 1) {
+      setError('No se encontró la empresa.');
+      setEditing(null);
+      setEditorLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setEditorLoading(true);
+    setError('');
+    void api.getCompany(companyId)
+      .then((company: CompanyRow) => {
+        if (cancelled) return;
+        startEdit(company);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setEditing(null);
+        setError(caught instanceof Error ? caught.message : 'No se encontró la empresa.');
+      })
+      .finally(() => {
+        if (!cancelled) setEditorLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditor, isNew, companyId]);
 
   const field = (
     label: string,
@@ -952,48 +1000,38 @@ export default function Companies() {
     </>
   );
 
-  return (
-    <div className="space-y-4">
-      {oauthNotice && (
-        <p className="text-sm text-muted-foreground">{oauthNotice}</p>
-      )}
-      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="grid min-w-0 w-full gap-3 sm:grid-cols-[minmax(0,24rem)_12rem] lg:max-w-xl">
-          <div className="relative min-w-0">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar empresa o RUC"
-              className="pl-9"
-            />
-          </div>
-          <Select value={setupFilter} onValueChange={setSetupFilter}>
-            <SelectTrigger className="w-full" aria-label="Filtrar empresas por configuración">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectItem value="all">Todos los estados</SelectItem>
-              <SelectItem value="ready">Listas</SelectItem>
-              <SelectItem value="incomplete">Incompletas</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+  if (isEditor) {
+    return (
+      <div className={cn(
+        'space-y-4',
+        CHANNEL_TAB_PROTOTYPE && 'pb-20',
+        CHANNEL_TAB_PROTOTYPE ? companyChannelTabsPageClass(channelTabsVariant) : 'max-w-3xl',
+      )}>
         <Button
-          onClick={() => {
-            resetForm();
-            setEditing(null);
-            setShowCreate(true);
-          }}
+          type="button"
+          variant="ghost"
+          className="-ml-2 h-9 shrink-0 cursor-pointer px-2 text-muted-foreground hover:text-foreground"
+          onClick={closeEditor}
         >
-          <Plus data-icon="inline-start" />
-          Nueva empresa
+          <ArrowLeft /> Empresas
         </Button>
-      </div>
 
-      {(showCreate || editing) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={cn('max-h-[90vh] w-full overflow-auto rounded-xl border border-border bg-card p-6 shadow-2xl', CHANNEL_TAB_PROTOTYPE ? companyChannelTabsModalWidth(channelTabsVariant) : 'max-w-2xl')}>
+        {oauthNotice && (
+          <p className="text-sm text-muted-foreground">{oauthNotice}</p>
+        )}
+
+        {editorLoading ? (
+          <div className="flex flex-col items-center gap-2 py-14 text-center">
+            <Loader2 className="size-8 animate-spin text-muted-foreground/60" />
+            <p className="text-sm font-medium">Cargando empresa</p>
+          </div>
+        ) : !isNew && !editing ? (
+          <div className="flex flex-col items-center gap-2 py-14 text-center">
+            <AlertCircle className="size-8 text-destructive" />
+            <p className="text-sm font-medium">No se pudo abrir la empresa</p>
+            <p className="text-sm text-muted-foreground">{error || 'No se encontró la empresa.'}</p>
+          </div>
+        ) : (
             <form
               ref={formRef}
               onSubmit={(event) => {
@@ -1001,8 +1039,6 @@ export default function Companies() {
                 void (editing ? handleUpdate() : handleCreate());
               }}
             >
-              <h2 className="mb-4 text-lg font-semibold">{editing ? 'Editar Empresa' : 'Nueva Empresa'}</h2>
-
               {error && (
                 <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1153,9 +1189,49 @@ export default function Companies() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        )}
+        {CHANNEL_TAB_PROTOTYPE && (
+          <PrototypeSwitcher
+            variants={COMPANY_CHANNEL_TAB_VARIANTS}
+            current={channelTabsVariant}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {oauthNotice && (
+        <p className="text-sm text-muted-foreground">{oauthNotice}</p>
       )}
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="grid min-w-0 w-full gap-3 sm:grid-cols-[minmax(0,24rem)_12rem] lg:max-w-xl">
+          <div className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar empresa o RUC"
+              className="pl-9"
+            />
+          </div>
+          <Select value={setupFilter} onValueChange={setSetupFilter}>
+            <SelectTrigger className="w-full" aria-label="Filtrar empresas por configuración">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="all">Todos los estados</SelectItem>
+              <SelectItem value="ready">Listas</SelectItem>
+              <SelectItem value="incomplete">Incompletas</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Button onClick={() => navigate(companiesHref('/companies/nueva', searchParams))}>
+          <Plus data-icon="inline-start" />
+          Nueva empresa
+        </Button>
+      </div>
 
       <TablePanel aria-label="Directorio de empresas">
         <TablePanelHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1240,12 +1316,6 @@ export default function Companies() {
           </TablePanelFooter>
         )}
       </TablePanel>
-      {CHANNEL_TAB_PROTOTYPE && (
-        <PrototypeSwitcher
-          variants={COMPANY_CHANNEL_TAB_VARIANTS}
-          current={channelTabsVariant}
-        />
-      )}
     </div>
   );
 }

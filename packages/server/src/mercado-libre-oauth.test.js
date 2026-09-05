@@ -65,6 +65,10 @@ test('arma el redirect de la app y detecta si falta la aplicación', () => {
     mercadoLibreWebRedirect({ ml: 'connected' }, env),
     'http://127.0.0.1:3011/#/companies?ml=connected',
   );
+  assert.equal(
+    mercadoLibreWebRedirect({ ml: 'connected', companyId: 4 }, env),
+    'http://127.0.0.1:3011/#/companies/4?ml=connected',
+  );
   assert.equal(mercadoLibreAppConfig(env).configured, true);
   assert.equal(mercadoLibreAppConfig({}).configured, false);
 });
