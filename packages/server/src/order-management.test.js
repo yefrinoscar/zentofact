@@ -6,6 +6,7 @@ import {
   getSalesPulse,
   getSalespersonHome,
   ingestOrder,
+  listCanceledOrders,
   listOrders,
   resolveDocumentDecision,
   updateOrderPayment,
@@ -45,9 +46,13 @@ class IngestDb {
     if (compact.startsWith('select a.*, ch.code as channel_code')) return { rows: [this.account] };
     if (compact.startsWith('select * from orders')) return { rows: [] };
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
-    if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
+    if (compact.startsWith('select quantity_on_hand, quantity_reserved')) {
       const onHand = this.inventory.get(Number(params[0])) ?? 100;
-      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: this.reserved || 0 }] };
+      return { rows: [{
+        quantity_on_hand: onHand,
+        quantity_reserved: this.reserved || 0,
+        quantity_pending_return: this.pendingReturn || 0,
+      }] };
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.inventory.set(Number(params[1]), Number(params[0]));
@@ -56,6 +61,17 @@ class IngestDb {
     if (compact.startsWith('update product_inventory set quantity_reserved')) {
       this.reserved = Number(params[0]);
       return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_pending_return')) {
+      this.pendingReturn = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('insert into return_stock_approvals')) {
+      const itemId = Number(params[1]);
+      if (this.approvals?.has?.(itemId)) return { rows: [] };
+      this.approvals = this.approvals || new Map();
+      this.approvals.set(itemId, { id: this.approvals.size + 1 });
+      return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -104,6 +120,8 @@ class IngestDb {
         items_status: params[23],
         items_error: params[24],
         created_by: params[25] ?? null,
+        cancelled_at: params[4] === 'cancelled' || params[6] === 'cancelled' ? params[22] : null,
+        returned_at: params[6] === 'returned' ? params[22] : null,
         first_seen_at: '2026-07-30T15:00:00Z',
         last_seen_at: '2026-07-30T15:00:00Z',
         created_at: '2026-07-30T15:00:00Z',
@@ -204,6 +222,42 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
   assert.equal(event.params[1], 'order.created');
   assert.equal(event.params[4], 'request-100');
+});
+
+test('al cancelar o devolver un pedido guarda la fecha del cambio una sola vez', async () => {
+  const canceledDb = new IngestDb();
+  const canceled = await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: '3249111405',
+    externalOrderNumber: '3249111405',
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+    providerUpdatedAt: '2026-08-21T15:40:00Z',
+    total: 8.98,
+    source: 'sync',
+  }, canceledDb);
+  const canceledInsert = canceledDb.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.match(canceledInsert.sql, /cancelled_at/);
+  assert.match(canceledInsert.sql, /returned_at/);
+  assert.match(canceledInsert.sql, /coalesce\(\s*orders.cancelled_at/);
+  assert.equal(canceled.order.cancelledAt, '2026-08-21T15:40:00.000Z');
+  assert.equal(canceled.order.returnedAt, null);
+
+  const returnedDb = new IngestDb();
+  const returned = await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: '3249038634',
+    externalOrderNumber: '3249038634',
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    providerUpdatedAt: '2026-08-20T17:36:00Z',
+    total: 71.84,
+    source: 'sync',
+  }, returnedDb);
+  assert.equal(returned.order.returnedAt, '2026-08-20T17:36:00.000Z');
+  assert.equal(returned.order.cancelledAt, null);
 });
 
 test('persiste una cabecera con items pendientes sin ejecutar efectos de stock', async () => {
@@ -733,6 +787,70 @@ test('lista pedidos ordenando por total o fecha con una lista blanca', async () 
   assert.match(seen[1], /order by coalesce\(o\.ordered_at, o\.created_at\) desc nulls last, o\.id desc/);
   assert.match(seen[2], /order by o\.ordered_at desc nulls last, o\.id desc/);
   assert.doesNotMatch(seen[2], /drop table/);
+});
+
+test('lista cancelados y devueltos por la fecha en que pasaron a ese estado', async () => {
+  const seen = [];
+  const db = {
+    async query(sql, params) {
+      seen.push({ sql: sql.replace(/\s+/g, ' '), params });
+      return { rows: [] };
+    },
+  };
+  await listCanceledOrders({ from: '2026-08-01', to: '2026-08-31', limit: 50 }, db);
+  assert.match(seen[0].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+  assert.match(seen[0].sql, /cancelled_at/);
+  assert.match(seen[0].sql, /returned_at/);
+  assert.match(seen[0].sql, /from order_items oi/);
+  assert.match(seen[0].sql, /left join products p on p.id=oi.product_id/);
+  assert.match(seen[0].sql, /p\.image_url/);
+  assert.match(seen[0].sql, /listing\.shop_sku/);
+  assert.match(seen[0].sql, /rsa\.stock_quantity/);
+  assert.match(seen[0].sql, /'approvalId', rsa.id/);
+  assert.deepEqual(seen[0].params, ['2026-08-01', '2026-08-31', 50, 0]);
+
+  await listCanceledOrders({ kind: 'returned', from: '2026-08-20', to: '2026-08-20' }, db);
+  assert.match(seen[1].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
+  assert.doesNotMatch(seen[1].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+
+  await listCanceledOrders({ approval: 'pending', from: '2026-09-03', to: '2026-09-04' }, db);
+  assert.match(seen[2].sql, /return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending'/);
+});
+
+test('expone la foto y el shop sku de cada ítem cancelado', async () => {
+  const db = {
+    async query() {
+      return {
+        rows: [{
+          id: 44,
+          company_id: 7,
+          nombre: 'LIMBO SAC',
+          nombre_comercial: 'LIMBO',
+          razon_social: 'LIMBO SAC',
+          channel_code: 'falabella',
+          channel_name: 'Falabella',
+          external_order_id: 'PV-10004',
+          external_order_number: 'PV-10004',
+          order_status: 'cancelled',
+          fulfillment_status: 'cancelled',
+          currency: 'PEN',
+          total: '189.90',
+          items: [{
+            name: 'Coche bastón',
+            sku: 'AG301',
+            quantity: 1,
+            imageUrl: 'https://img.example/ag301.jpg',
+            shopSku: '118765881',
+          }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listCanceledOrders({}, db);
+  assert.equal(result.orders[0].items[0].imageUrl, 'https://img.example/ag301.jpg');
+  assert.equal(result.orders[0].items[0].shopSku, '118765881');
+  assert.equal(result.orders[0].companyName, 'Limbo');
 });
 
 test('la serie diaria rellena con cero los días sin venta y estima comisión', () => {

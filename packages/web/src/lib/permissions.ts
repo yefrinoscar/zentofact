@@ -4,6 +4,7 @@ export type PermissionKey =
   | 'falabella_sellers'
   | 'salesperson'
   | 'order_management'
+  | 'return_stock_approve'
   | 'productos'
   | 'insumos'
   | 'orders_inbox'
@@ -51,6 +52,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'falabella_sellers', label: 'Falabella', description: 'Gestionar sellers, órdenes y sincronización de Falabella', path: '/falabella-api', section: 'operation' },
   { key: 'salesperson', label: 'Mis ventas', description: 'Ver tus ventas del día y del mes y registrar una venta', path: '/mis-ventas', section: 'orders' },
   { key: 'order_management', label: 'Todos los pedidos', description: 'Consultar y registrar pedidos de todos los canales', path: '/orders', section: 'orders' },
+  { key: 'return_stock_approve', label: 'Aprobar devoluciones', description: 'Revisar devoluciones y pasarlas al stock vendible', path: '/cancelados', section: 'orders' },
   { key: 'productos', label: 'Productos', description: 'Gestionar el catálogo multi-seller y el inventario compartido', path: '/productos', section: 'operation', hiddenInProduction: true },
   { key: 'orders_inbox', label: 'Recepción de pedidos', description: 'Recibir, revisar y preparar pedidos para despacho', path: '/bandeja', section: 'orders' },
   { key: 'orders_scanner', label: 'Preparación y escaneo', description: 'Escanear etiquetas y revisar el contenido de los bultos', path: '/scanner', section: 'orders' },
@@ -86,7 +88,7 @@ export const ROLE_PRESETS: Record<AppRole, { label: string; description: string;
   operator: {
     label: 'Operador',
     description: 'Recibe pedidos y realiza la preparación y el escaneo',
-    permissions: ['order_management', 'orders_inbox', 'orders_scanner', 'insumos'],
+    permissions: ['order_management', 'return_stock_approve', 'orders_inbox', 'orders_scanner', 'insumos'],
   },
   billing: {
     label: 'Facturación',
@@ -139,6 +141,7 @@ const PREVIOUS_OPERATOR_PRESET: PermissionKey[] = ['orders_inbox', 'orders_scann
 const OPERATOR_WITHOUT_SALIDAS: PermissionKey[] = ['order_management', 'orders_inbox', 'orders_scanner'];
 const OPERATOR_WITHOUT_INSUMOS = ['order_management', 'orders_inbox', 'orders_scanner', 'salidas'];
 const OPERATOR_WITH_SALIDAS = ['order_management', 'orders_inbox', 'orders_scanner', 'salidas', 'insumos'];
+const OPERATOR_WITHOUT_RETURN_APPROVAL: PermissionKey[] = ['order_management', 'orders_inbox', 'orders_scanner', 'insumos'];
 const INTERIM_BILLING_PRESET: PermissionKey[] = ['boletas', 'facturas', 'credit_notes_manage'];
 const INTERIM_VIEWER_PRESET: PermissionKey[] = [
   'falabella_sellers', 'orders_inbox', 'boletas', 'facturas',
@@ -204,6 +207,7 @@ export function parsePermissions(raw: unknown, role = 'operator'): PermissionKey
     || samePermissionSet(list, OPERATOR_WITHOUT_SALIDAS)
     || samePermissionSet(list, OPERATOR_WITHOUT_INSUMOS)
     || samePermissionSet(list, OPERATOR_WITH_SALIDAS)
+    || samePermissionSet(list, OPERATOR_WITHOUT_RETURN_APPROVAL)
   )) return [...ROLE_PRESETS.operator.permissions];
   if (normalizedRole === 'billing' && samePermissionSet(list, INTERIM_BILLING_PRESET)) {
     return [...ROLE_PRESETS.billing.permissions];
@@ -235,6 +239,7 @@ export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/envio-propio') || pathname.startsWith('/orders/envio')) return 'settings';
   if (pathname.startsWith('/orders')) return 'order_management';
+  if (pathname.startsWith('/cancelados')) return 'order_management';
   if (pathname.startsWith('/bandeja')) return 'orders_inbox';
   if (pathname.startsWith('/pedidos')) return 'orders_inbox';
   if (pathname.startsWith('/scanner')) return 'orders_scanner';

@@ -2,6 +2,7 @@ import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
 import { stockPhase } from './catalog/stock-phase.js';
+import { applyInventoryMovement, applyInventoryPendingReturn } from './catalog/inventory-service.js';
 
 export const DOCUMENT_REQUIREMENTS = ['disabled', 'optional', 'required'];
 export const DOCUMENT_TYPE_POLICIES = ['automatic', 'boleta', 'factura', 'customer_choice'];
@@ -427,6 +428,8 @@ const TRACKED_ORDER_COLUMNS = {
   ordered_at: 'orderedAt',
   promised_shipping_at: 'promisedShippingAt',
   provider_updated_at: 'providerUpdatedAt',
+  cancelled_at: 'cancelledAt',
+  returned_at: 'returnedAt',
 };
 
 function comparable(value) {
@@ -563,6 +566,8 @@ function normalizeOrderRow(row) {
     orderedAt: row.ordered_at,
     promisedShippingAt: row.promised_shipping_at,
     providerUpdatedAt: row.provider_updated_at,
+    cancelledAt: row.cancelled_at || null,
+    returnedAt: row.returned_at || null,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
@@ -644,9 +649,17 @@ async function ingestOrderInTransaction(input, db) {
          document_requirement, document_type_policy, requested_document_type,
          currency, subtotal, shipping_amount, discount_amount, total,
          customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
-         items_status, items_error, created_by
+         items_status, items_error, created_by, cancelled_at, returned_at
        ) values (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+         case when $5::text='cancelled' or $7::text='cancelled'
+           then coalesce($23::timestamptz, now())
+           else null
+         end,
+         case when $7::text='returned'
+           then coalesce($23::timestamptz, now())
+           else null
+         end
        )
        on conflict (channel_account_id, external_order_id) do update set
          external_order_number=excluded.external_order_number,
@@ -681,6 +694,18 @@ async function ingestOrderInTransaction(input, db) {
          promised_shipping_at=coalesce(excluded.promised_shipping_at, orders.promised_shipping_at),
          provider_updated_at=coalesce(excluded.provider_updated_at, orders.provider_updated_at),
          created_by=coalesce(orders.created_by, excluded.created_by),
+         cancelled_at=coalesce(
+           orders.cancelled_at,
+           case when excluded.order_status='cancelled' or excluded.fulfillment_status='cancelled'
+             then coalesce(excluded.provider_updated_at, now())
+           end
+         ),
+         returned_at=coalesce(
+           orders.returned_at,
+           case when excluded.fulfillment_status='returned'
+             then coalesce(excluded.provider_updated_at, now())
+           end
+         ),
          last_seen_at=now(),
          updated_at=now()
        returning *`,
@@ -981,6 +1006,393 @@ export async function listOrders(filters = {}, db) {
     limit,
     offset,
   };
+}
+
+function canceledDocumentKind(row) {
+  if (row.factura_id) return 'factura';
+  if (row.boleta_id) return 'boleta';
+  if (row.requested_document_type === 'factura' || row.requested_document_type === 'boleta') {
+    return row.requested_document_type;
+  }
+  const invoiceRequired = row.metadata && (row.metadata.invoiceRequired === true || row.metadata.invoiceRequired === 'true');
+  return invoiceRequired ? 'factura' : 'boleta';
+}
+
+function normalizeCanceledOrderRow(row) {
+  const documentKind = canceledDocumentKind(row);
+  const documentNumber = row.factura_numero || row.boleta_numero || null;
+  const kind = row.fulfillment_status === 'returned' || Number(row.return_approval_count || 0) > 0
+    ? 'returned'
+    : 'cancelled';
+  return {
+    id: Number(row.id),
+    companyId: row.company_id == null ? null : Number(row.company_id),
+    companyName: row.company_id == null ? null : shortSellerName(row),
+    channelCode: row.channel_code,
+    channelName: row.channel_name,
+    externalOrderId: row.external_order_id,
+    externalOrderNumber: row.external_order_number,
+    kind,
+    orderStatus: row.order_status,
+    fulfillmentStatus: row.fulfillment_status,
+    providerStatus: row.provider_status,
+    requestedDocumentType: row.requested_document_type,
+    currency: row.currency,
+    total: row.total == null ? null : Number(row.total),
+    orderedAt: row.ordered_at,
+    cancelledAt: row.cancelled_at || null,
+    returnedAt: row.returned_at || null,
+    changedAt: row.changed_at || row.returned_at || row.cancelled_at || null,
+    documentKind,
+    documentNumber,
+    documentStatus: row.factura_estado || row.boleta_estado || null,
+    creditNoteNumber: row.credit_note_numero || null,
+    creditNoteStatus: row.credit_note_estado || null,
+    stockApproval: Number(row.pending_return_count || 0) > 0
+      ? 'pending'
+      : Number(row.return_approval_count || 0) > 0
+        ? 'approved'
+        : 'not_required',
+    pendingReturnQuantity: Number(row.pending_return_quantity || 0),
+    items: (Array.isArray(row.items)
+      ? row.items
+      : typeof row.items === 'string'
+        ? (() => { try { const parsed = JSON.parse(row.items); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })()
+        : []
+    ).map((item) => ({
+      name: String(item?.name || '').trim() || null,
+      sku: String(item?.sku || '').trim() || null,
+      quantity: Number(item?.quantity || 0),
+      imageUrl: String(item?.imageUrl || '').trim() || null,
+      shopSku: String(item?.shopSku || '').trim() || null,
+      orderItemId: item?.orderItemId == null ? null : Number(item.orderItemId),
+      productId: item?.productId == null ? null : Number(item.productId),
+      approvalId: item?.approvalId == null ? null : Number(item.approvalId),
+      approvalStatus: String(item?.approvalStatus || '').trim() || null,
+      stockQuantity: item?.stockQuantity == null || item?.stockQuantity === '' ? null : Number(item.stockQuantity),
+      mermaQuantity: item?.mermaQuantity == null || item?.mermaQuantity === '' ? null : Number(item.mermaQuantity),
+    })),
+  };
+}
+
+export async function listCanceledOrders(filters = {}, db) {
+  const target = db || (await loadCore()).pool;
+  const values = [];
+  const kind = String(filters.kind || '').trim().toLowerCase();
+  const where = [];
+  if (kind === 'returned') {
+    where.push(`(o.fulfillment_status='returned' or exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id))`);
+  } else if (kind === 'cancelled') {
+    where.push(`(o.order_status='cancelled' or o.fulfillment_status='cancelled')`);
+  } else if (kind) {
+    throw new Error('kind inválido.');
+  } else {
+    where.push(`(
+      o.order_status='cancelled'
+      or o.fulfillment_status in ('cancelled', 'returned')
+      or exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id)
+    )`);
+  }
+  const approval = String(filters.approval || '').trim().toLowerCase();
+  if (approval === 'pending') {
+    where.push(`exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending')`);
+  } else if (approval === 'approved') {
+    where.push(`exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='approved')`);
+    where.push(`not exists (select 1 from return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending')`);
+  } else if (approval) {
+    throw new Error('approval inválido.');
+  }
+  const companyId = optionalPositiveInt(filters.companyId, 'companyId');
+  if (companyId) {
+    values.push(companyId);
+    where.push(`o.company_id=$${values.length}`);
+  }
+  if (filters.channelCode) {
+    values.push(channelCode(filters.channelCode));
+    where.push(`ch.code=$${values.length}`);
+  }
+  if (filters.search) {
+    values.push(String(filters.search).trim().slice(0, 120));
+    where.push(`(
+      o.external_order_id ilike '%' || $${values.length} || '%'
+      or o.external_order_number ilike '%' || $${values.length} || '%'
+      or coalesce(o.customer->>'name', '') ilike '%' || $${values.length} || '%'
+      or coalesce(b.numero_completo, '') ilike '%' || $${values.length} || '%'
+      or coalesce(f.numero_completo, '') ilike '%' || $${values.length} || '%'
+      or coalesce(cn.numero_completo, '') ilike '%' || $${values.length} || '%'
+      or exists (
+        select 1 from order_items oi
+        left join products p on p.id=oi.product_id
+        where oi.order_id=o.id
+          and (
+            coalesce(p.name, oi.description, '') ilike '%' || $${values.length} || '%'
+            or coalesce(p.main_sku, oi.main_sku, oi.sku, '') ilike '%' || $${values.length} || '%'
+          )
+      )
+    )`);
+  }
+  if (filters.createdBy) {
+    values.push(requiredText(filters.createdBy, 'createdBy', 300));
+    where.push(`o.created_by=$${values.length}`);
+  }
+  for (const [filterName, operator] of [['from', '>='], ['to', '<=']]) {
+    const value = String(filters[filterName] || '').trim();
+    if (!value) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${filterName} inválido.`);
+    values.push(value);
+    where.push(`(coalesce(o.cancelled_at, o.returned_at, o.provider_updated_at, o.updated_at) at time zone 'America/Lima')::date ${operator} $${values.length}::date`);
+  }
+  const limit = Math.min(Math.max(Number(filters.limit || 50), 1), 500);
+  const offset = Math.max(Number(filters.offset || 0), 0);
+  values.push(limit, offset);
+  const result = await target.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+       o.order_status, o.fulfillment_status, o.provider_status, o.requested_document_type,
+       o.currency, o.total, o.ordered_at, o.cancelled_at, o.returned_at, o.metadata,
+       coalesce(
+         case when o.fulfillment_status='returned' then o.returned_at end,
+         o.cancelled_at,
+         o.returned_at,
+         o.provider_updated_at,
+         o.updated_at
+       ) as changed_at,
+       ch.code as channel_code, ch.name as channel_name,
+       c.nombre_comercial, c.nombre, c.razon_social,
+       b.id as boleta_id, b.numero_completo as boleta_numero, b.estado_sunat as boleta_estado,
+       f.id as factura_id, f.numero_completo as factura_numero, f.estado_sunat as factura_estado,
+       cn.numero_completo as credit_note_numero, cn.estado_sunat as credit_note_estado,
+       rsa.pending_return_count, rsa.return_approval_count, rsa.pending_return_quantity,
+       lines.items,
+       count(*) over()::int as total_count
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     left join companies c on c.id=o.company_id
+     left join lateral (
+       select id, numero_completo, estado_sunat
+       from boletas
+       where company_id=o.company_id
+         and order_number in (o.external_order_number, o.external_order_id)
+       order by id desc
+       limit 1
+     ) b on true
+     left join lateral (
+       select id, numero_completo, estado_sunat
+       from facturas
+       where company_id=o.company_id
+         and order_number in (o.external_order_number, o.external_order_id)
+       order by id desc
+       limit 1
+     ) f on true
+     left join lateral (
+       select numero_completo, estado_sunat
+       from credit_notes
+       where company_id=o.company_id
+         and (affected_boleta_id=b.id or affected_factura_id=f.id)
+       order by id desc
+       limit 1
+     ) cn on true
+     left join lateral (
+       select
+         count(*) filter (where status='pending')::int as pending_return_count,
+         count(*)::int as return_approval_count,
+         coalesce(sum(quantity) filter (where status='pending'), 0)::numeric as pending_return_quantity
+       from return_stock_approvals
+       where order_id=o.id
+     ) rsa on true
+     left join lateral (
+       select coalesce(json_agg(json_build_object(
+         'name', nullif(trim(coalesce(p.name, oi.description, '')), ''),
+         'sku', nullif(trim(coalesce(p.main_sku, oi.main_sku, oi.sku, '')), ''),
+         'quantity', coalesce(rsa.quantity, oi.quantity),
+         'imageUrl', coalesce(
+           nullif(p.image_url, ''),
+           nullif(psku.image_url, ''),
+           nullif(listing.metadata->'images'->>0, ''),
+           nullif(listing.metadata->'images'->0->>'Url', ''),
+           nullif(listing.metadata->'images'->0->>'url', ''),
+           nullif(listing.metadata->>'imageUrl', ''),
+           nullif(oi.raw_data->>'Image', ''),
+           nullif(oi.raw_data->>'ImageUrl', ''),
+           nullif(oi.raw_data->>'ImageURL', ''),
+           nullif(oi.raw_data->>'ProductImage', ''),
+           nullif(oi.raw_data->>'MainImage', '')
+         ),
+         'shopSku', coalesce(
+           nullif(trim(listing.shop_sku), ''),
+           nullif(trim(oi.provider_sku), ''),
+           nullif(trim(oi.raw_data->>'ShopSku'), ''),
+           nullif(trim(oi.raw_data->>'ShopSKU'), '')
+         ),
+         'orderItemId', oi.id,
+         'productId', p.id,
+         'approvalId', rsa.id,
+         'approvalStatus', rsa.status,
+         'stockQuantity', rsa.stock_quantity,
+         'mermaQuantity', rsa.merma_quantity
+       ) order by oi.id), '[]'::json) as items
+       from order_items oi
+       left join products p on p.id=oi.product_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(oi.main_sku, ''), nullif(oi.sku, ''))
+       left join product_listings listing on listing.id = oi.listing_id
+       left join return_stock_approvals rsa on rsa.order_item_id=oi.id
+       where oi.order_id=o.id
+         and (
+           not exists (select 1 from return_stock_approvals x where x.order_id=o.id)
+           or rsa.id is not null
+         )
+     ) lines on true
+     where ${where.join(' and ')}
+     order by coalesce(o.cancelled_at, o.returned_at, o.provider_updated_at, o.updated_at) desc nulls last, o.id desc
+     limit $${values.length - 1} offset $${values.length}`,
+    values,
+  );
+  return {
+    orders: result.rows.map(normalizeCanceledOrderRow),
+    totalCount: Number(result.rows[0]?.total_count || 0),
+    limit,
+    offset,
+  };
+}
+
+function sameQuantity(left, right) {
+  return Math.abs(Number(left) - Number(right)) < 0.00005;
+}
+
+function nonNegativeQuantity(value, field) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${field} inválido.`);
+  return parsed;
+}
+
+function parseReturnDecisions(input, pendingRows) {
+  const linesInput = Array.isArray(input?.lines) ? input.lines : null;
+  if (!linesInput || linesInput.length === 0) {
+    return pendingRows.map((row) => ({
+      id: Number(row.id),
+      orderItemId: Number(row.order_item_id),
+      productId: Number(row.product_id),
+      quantity: Number(row.quantity),
+      stockQuantity: Number(row.quantity),
+      mermaQuantity: 0,
+      orderNumber: row.external_order_number || null,
+    }));
+  }
+  if (linesInput.length !== pendingRows.length) {
+    const error = new Error('Marca todas las líneas de esta devolución.');
+    error.status = 400;
+    throw error;
+  }
+  const byItem = new Map(pendingRows.map((row) => [Number(row.order_item_id), row]));
+  const seen = new Set();
+  return linesInput.map((line) => {
+    const orderItemId = positiveInt(line.orderItemId, 'orderItemId');
+    if (seen.has(orderItemId)) {
+      const error = new Error('Hay una línea repetida.');
+      error.status = 400;
+      throw error;
+    }
+    seen.add(orderItemId);
+    const row = byItem.get(orderItemId);
+    if (!row) {
+      const error = new Error('Esa línea no está por aprobar.');
+      error.status = 400;
+      throw error;
+    }
+    const quantity = Number(row.quantity);
+    const stockQuantity = nonNegativeQuantity(line.stockQuantity, 'stockQuantity');
+    const mermaQuantity = nonNegativeQuantity(line.mermaQuantity, 'mermaQuantity');
+    if (!sameQuantity(stockQuantity + mermaQuantity, quantity)) {
+      const error = new Error('Las unidades a stock y merma deben sumar la cantidad de la línea.');
+      error.status = 400;
+      throw error;
+    }
+    return {
+      id: Number(row.id),
+      orderItemId,
+      productId: Number(row.product_id),
+      quantity,
+      stockQuantity,
+      mermaQuantity,
+      orderNumber: row.external_order_number || null,
+    };
+  });
+}
+
+export async function approveReturnStock(orderIdInput, actorUserId, db, decisions = {}) {
+  const orderId = positiveInt(orderIdInput, 'orderId');
+  const reviewer = optionalText(actorUserId, 300);
+  const run = async (client) => {
+    const pending = await client.query(
+      `select rsa.id, rsa.order_item_id, rsa.product_id, rsa.quantity,
+              o.external_order_number
+         from return_stock_approvals rsa
+         join orders o on o.id=rsa.order_id
+        where rsa.order_id=$1 and rsa.status='pending'
+        for update of rsa`,
+      [orderId],
+    );
+    if (!pending.rows.length) {
+      const error = new Error('Esta devolución no tiene stock por aprobar.');
+      error.status = 400;
+      throw error;
+    }
+    const lines = parseReturnDecisions(decisions, pending.rows);
+    for (const line of lines) {
+      await applyInventoryPendingReturn(client, {
+        productId: line.productId,
+        quantityDelta: -line.quantity,
+      });
+      if (line.mermaQuantity > 0) {
+        const orderRef = line.orderNumber || orderId;
+        await applyInventoryMovement(client, {
+          productId: line.productId,
+          quantityDelta: -line.mermaQuantity,
+          movementType: 'adjustment_out',
+          reason: `Merma · pedido ${orderRef}`,
+          actorUserId: reviewer,
+          source: 'return_review',
+          orderId,
+          orderItemId: line.orderItemId,
+          idempotencyKey: `return-merma:order_item:${line.orderItemId}:qty:${line.mermaQuantity}`,
+          metadata: {
+            orderNumber: line.orderNumber,
+            stockQuantity: line.stockQuantity,
+            mermaQuantity: line.mermaQuantity,
+          },
+          allowNegative: true,
+        });
+      }
+      await client.query(
+        `update return_stock_approvals
+            set status='approved', reviewed_at=now(), reviewed_by=$2,
+                stock_quantity=$3, merma_quantity=$4
+          where id=$1 and status='pending'`,
+        [line.id, reviewer, line.stockQuantity, line.mermaQuantity],
+      );
+    }
+    return {
+      orderId,
+      approvedLines: lines.length,
+      approvedQuantity: lines.reduce((sum, line) => sum + line.stockQuantity, 0),
+      mermaQuantity: lines.reduce((sum, line) => sum + line.mermaQuantity, 0),
+    };
+  };
+  if (db) return run(db);
+  const { pool } = await loadCore();
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const result = await run(client);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getSalesPulse(filters = {}, db) {
