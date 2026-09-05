@@ -66,7 +66,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/cancelados': {
     title: 'Devoluciones',
-    subtitle: 'Anulados o devueltos, con la fecha del cambio.',
+    subtitle: 'Pedidos que volvieron, con la fecha del cambio.',
   },
   '/mis-ventas': {
     title: 'Mis ventas',
