@@ -23,10 +23,12 @@ type CompanyCfg = {
   webhookCallbackUrl?: string | null;
 };
 type CronCfg = { enabled: boolean; intervalMinutes: number; windowDays: number };
+type AlertSendResult = { sent?: boolean; logged?: boolean; to?: string[] };
 type Config = {
   globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion'; reconcileEnabled: boolean;
   paused: boolean; stats: Record<string, number>; cron: CronCfg;
   alertEmails?: string[];
+  mailer?: { configured: boolean };
   companies: CompanyCfg[]; webhookBase: string;
 };
 type Job = {
@@ -78,6 +80,13 @@ const DEFAULT_WEBHOOK_EVENTS = ['onOrderCreated', 'onOrderItemsStatusChanged'];
 
 function sunatLabel(env: string) {
   return env === 'beta' ? 'SUNAT beta' : 'SUNAT producción';
+}
+
+function alertSendMessage(response: AlertSendResult | null | undefined) {
+  const to = (response?.to || []).join(', ');
+  if (response?.sent) return to ? `Enviado a ${to}` : 'Enviado';
+  if (response?.logged) return to ? `Escrito en logs. Destino: ${to}` : 'Escrito en logs';
+  return '';
 }
 
 const STATUS_STYLES: Record<string, { cls: string; icon: any; label: string }> = {
@@ -396,6 +405,14 @@ export default function AutoEmision() {
   const [alertEmailsSaving, setAlertEmailsSaving] = useState(false);
   const [alertEmailsError, setAlertEmailsError] = useState('');
   const [alertEmailsSaved, setAlertEmailsSaved] = useState(false);
+  const [notificationTitle, setNotificationTitle] = useState('');
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [notificationSending, setNotificationSending] = useState(false);
+  const [notificationError, setNotificationError] = useState('');
+  const [notificationResult, setNotificationResult] = useState('');
+  const [failedAlertSending, setFailedAlertSending] = useState(false);
+  const [failedAlertError, setFailedAlertError] = useState('');
+  const [failedAlertResult, setFailedAlertResult] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const showDevCronInterval = ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -469,6 +486,12 @@ export default function AutoEmision() {
       setAlertEmailsDraft((config.alertEmails || []).join('\n'));
       setAlertEmailsError('');
       setAlertEmailsSaved(false);
+      setNotificationTitle('');
+      setNotificationMessage('');
+      setNotificationError('');
+      setNotificationResult('');
+      setFailedAlertError('');
+      setFailedAlertResult('');
     }
   };
 
@@ -486,6 +509,37 @@ export default function AutoEmision() {
       setAlertEmailsError(error?.message || 'No se pudieron guardar los correos.');
     } finally {
       setAlertEmailsSaving(false);
+    }
+  };
+
+  const sendNotification = async () => {
+    setNotificationSending(true);
+    setNotificationError('');
+    setNotificationResult('');
+    try {
+      const response = await api.autoEmitSendNotification({
+        title: notificationTitle,
+        message: notificationMessage,
+      });
+      setNotificationResult(alertSendMessage(response) || 'Enviado');
+    } catch (error: any) {
+      setNotificationError(error?.message || 'No se pudo enviar la notificación.');
+    } finally {
+      setNotificationSending(false);
+    }
+  };
+
+  const sendFailedAlertTest = async () => {
+    setFailedAlertSending(true);
+    setFailedAlertError('');
+    setFailedAlertResult('');
+    try {
+      const response = await api.autoEmitSendFailedAlertTest();
+      setFailedAlertResult(alertSendMessage(response) || 'Enviado');
+    } catch (error: any) {
+      setFailedAlertError(error?.message || 'No se pudo enviar el aviso de boleta.');
+    } finally {
+      setFailedAlertSending(false);
     }
   };
 
@@ -900,6 +954,81 @@ export default function AutoEmision() {
                     Guardar correos
                   </button>
                   {alertEmailsSaved && <span className="text-xs font-medium text-emerald-700">Guardado</span>}
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  {config.mailer?.configured ? 'Resend listo.' : 'Sin Resend. El envío queda en logs.'}
+                </p>
+
+                <div className="space-y-3 border-t border-border pt-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Notificación</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Llega a los correos de aviso.</p>
+                  </div>
+                  <input
+                    value={notificationTitle}
+                    onChange={(event) => {
+                      setNotificationTitle(event.target.value);
+                      setNotificationError('');
+                      setNotificationResult('');
+                    }}
+                    placeholder="Corte de emisión"
+                    aria-label="Título de la notificación"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                  />
+                  <textarea
+                    value={notificationMessage}
+                    onChange={(event) => {
+                      setNotificationMessage(event.target.value);
+                      setNotificationError('');
+                      setNotificationResult('');
+                    }}
+                    rows={4}
+                    placeholder="Hoy no se emiten boletas de LIMBO."
+                    aria-label="Mensaje de la notificación"
+                    className="min-h-[96px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+                  />
+                  {notificationError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {notificationError}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={sendNotification}
+                      disabled={notificationSending}
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-4 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {notificationSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                      Enviar notificación
+                    </button>
+                    {notificationResult && <span className="text-xs font-medium text-emerald-700">{notificationResult}</span>}
+                  </div>
+                </div>
+
+                <div className="space-y-3 border-t border-border pt-4">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Aviso de boleta</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">El mismo correo que sale si no emite.</p>
+                  </div>
+                  {failedAlertError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {failedAlertError}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={sendFailedAlertTest}
+                      disabled={failedAlertSending}
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border px-4 text-xs font-semibold text-foreground transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {failedAlertSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                      Enviar aviso de prueba
+                    </button>
+                    {failedAlertResult && <span className="text-xs font-medium text-emerald-700">{failedAlertResult}</span>}
+                  </div>
                 </div>
               </TabsContent>
 
