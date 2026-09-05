@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TablePanelFooter,
   TablePanelHeader, TableRow,
@@ -25,6 +26,40 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import falabellaLogo from '../assets/falabella.png';
+import mercadoLibreLogo from '../assets/mercado-libre.svg';
+import ripleyLogo from '../assets/ripley.svg';
+
+type ChannelTab = 'falabella' | 'ripley' | 'mercado_libre';
+
+const CHANNEL_TAB_CLASS = 'h-9 flex-none rounded-lg px-3 text-[13px] font-medium text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground data-active:bg-muted! data-active:text-foreground! after:hidden';
+
+const CHANNEL_MARK: Record<ChannelTab, { src: string; label: string }> = {
+  falabella: { src: falabellaLogo, label: 'Falabella' },
+  ripley: { src: ripleyLogo, label: 'Ripley' },
+  mercado_libre: { src: mercadoLibreLogo, label: 'Mercado Libre' },
+};
+
+function ChannelMark({ channel, className }: { channel: ChannelTab; className?: string }) {
+  const mark = CHANNEL_MARK[channel];
+  return (
+    <img
+      src={mark.src}
+      alt=""
+      title={mark.label}
+      className={cn('size-4 rounded-[3px] object-contain', className)}
+    />
+  );
+}
+
+function ChannelTabTrigger({ value }: { value: ChannelTab }) {
+  return (
+    <TabsTrigger value={value} className={CHANNEL_TAB_CLASS}>
+      <ChannelMark channel={value} />
+      {CHANNEL_MARK[value].label}
+    </TabsTrigger>
+  );
+}
 
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
@@ -235,6 +270,7 @@ export default function Companies() {
   const [mercadoLibreAppConfigured, setMercadoLibreAppConfigured] = useState(false);
   const [disconnectingMercadoLibre, setDisconnectingMercadoLibre] = useState(false);
   const [oauthNotice, setOauthNotice] = useState('');
+  const [channelTab, setChannelTab] = useState<ChannelTab>('falabella');
 
   const load = () => {
     setLoadingCompanies(true);
@@ -277,6 +313,7 @@ export default function Companies() {
     setChannelAutoCreateOrders(initialAutoCreateOrders);
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
+    setChannelTab('falabella');
     if (certInputRef.current) certInputRef.current.value = '';
   };
 
@@ -515,7 +552,12 @@ export default function Companies() {
     },
     {
       id: 'falabella',
-      header: 'Falabella',
+      header: () => (
+        <span className="inline-flex items-center gap-1.5">
+          <ChannelMark channel="falabella" />
+          Falabella
+        </span>
+      ),
       cell: ({ row }) => (
         <SetupBadge
           ok={hasFalabellaApi(row.original)}
@@ -526,7 +568,12 @@ export default function Companies() {
     },
     {
       id: 'mercadoLibre',
-      header: 'Mercado Libre',
+      header: () => (
+        <span className="inline-flex items-center gap-1.5">
+          <ChannelMark channel="mercado_libre" />
+          Mercado Libre
+        </span>
+      ),
       cell: ({ row }) => (
         <SetupBadge
           ok={!!row.original.hasMercadoLibreCredentials}
@@ -624,6 +671,9 @@ export default function Companies() {
       ripleySvcPassword: '',
       ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
+    const oauthParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const mlResult = oauthParams.get('ml');
+    setChannelTab(mlResult === 'connected' || mlResult === 'error' || oauthNotice ? 'mercado_libre' : 'falabella');
     setLoadingBilling(true);
     void Promise.all([
       api.listOrderChannelAccounts({ companyId: company.id }),
@@ -693,6 +743,9 @@ export default function Companies() {
 
   return (
     <div className="space-y-4">
+      {oauthNotice && (
+        <p className="text-sm text-muted-foreground">{oauthNotice}</p>
+      )}
       <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="grid min-w-0 w-full gap-3 sm:grid-cols-[minmax(0,24rem)_12rem] lg:max-w-xl">
           <div className="relative min-w-0">
@@ -767,190 +820,215 @@ export default function Companies() {
                 )}
               </div>
 
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella Seller</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario Seller', 'sellerUsername')}
-                  {field(
-                    'Contraseña Seller',
-                    'sellerPassword',
-                    'password',
-                    editing?.hasSellerPassword ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showSellerPassword,
-                      onToggleReveal: () => setShowSellerPassword((value) => !value),
-                    },
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella API</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('User ID API', 'falabellaApiUserId', 'text', 'Settings > Integration Management > API')}
-                  {field(
-                    'API Key',
-                    'falabellaApiKey',
-                    'password',
-                    editing?.hasFalabellaCredentials ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showFalabellaApiKey,
-                      onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
-                    },
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Ripley (Mirakl)</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Shop ID (opcional)', 'ripleyShopId', 'text', 'Se usa cuando la key accede a varias tiendas')}
-                  <div className="md:col-span-2">{field(
-                    'API Key',
-                    'ripleyApiKey',
-                    'password',
-                    editing?.hasRipleyCredentials ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showRipleyApiKey,
-                      onToggleReveal: () => setShowRipleyApiKey((value) => !value),
-                    },
-                  )}</div>
-                </div>
-                <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
-                  {field(
-                    'Contraseña SVC',
-                    'ripleySvcPassword',
-                    'password',
-                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showRipleySvcPassword,
-                      onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
-                    },
-                  )}
-                  <div className="md:col-span-2">
-                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
-                  </div>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Mercado Libre</p>
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Cada empresa conecta su propia cuenta de Mercado Libre. Un administrador de esa cuenta debe autorizar la app.
-                </p>
-                {oauthNotice && (
-                  <p className="mb-3 text-xs text-muted-foreground">{oauthNotice}</p>
-                )}
-                {editing?.hasMercadoLibreCredentials ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Conectado</p>
-                      <p className="font-mono text-xs text-muted-foreground">
-                        user_id {editing.mercadoLibreUserId || '—'}
-                        {editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={disconnectingMercadoLibre}
-                      onClick={() => {
-                        if (!window.confirm('¿Desconectar Mercado Libre de esta empresa? Los pedidos ya importados se conservan.')) return;
-                        setDisconnectingMercadoLibre(true);
-                        api.disconnectMercadoLibre(editing.id)
-                          .then(() => { setOauthNotice('Mercado Libre quedó desconectado.'); return load(); })
-                          .then(() => {
-                            setEditing((current) => current ? {
-                              ...current,
-                              hasMercadoLibreCredentials: false,
-                              mercadoLibreUserId: null,
-                              mercadoLibreSiteId: null,
-                            } : current);
-                          })
-                          .catch((caught: unknown) => {
-                            setError(caught instanceof Error ? caught.message : 'No se pudo desconectar Mercado Libre.');
-                          })
-                          .finally(() => setDisconnectingMercadoLibre(false));
-                      }}
-                    >
-                      <Unlink /> Desconectar
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
-                    <p className="text-sm text-muted-foreground">
-                      {mercadoLibreAppConfigured
-                        ? 'Todavía no hay una cuenta autorizada para esta empresa.'
-                        : 'Falta configurar la app de Mercado Libre en el servidor.'}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={!editing || !mercadoLibreAppConfigured}
-                      onClick={() => {
-                        if (!editing) return;
-                        window.location.assign(`/integrations/mercado-libre/${editing.id}/connect`);
-                      }}
-                    >
-                      <Link2 /> Conectar
-                    </Button>
-                  </div>
-                )}
-              </div>
-
               <div className="mt-4 border-t border-border pt-4">
-                <p className="text-sm font-medium text-muted-foreground">Comprobantes por canal</p>
-                <div className="mt-1 divide-y divide-border">
-                  <div className="flex items-center justify-between gap-4 py-3">
+                <p className="text-sm font-medium text-muted-foreground">Canales</p>
+                <p className="mt-1 text-xs text-muted-foreground">Credenciales y comprobantes de cada marketplace.</p>
+                <Tabs
+                  value={channelTab}
+                  onValueChange={(value) => setChannelTab(value as ChannelTab)}
+                  className="mt-3 gap-3"
+                >
+                  <TabsList variant="line" className="h-auto w-full flex-wrap justify-start gap-1 rounded-none bg-transparent p-0">
+                    <ChannelTabTrigger value="falabella" />
+                    <ChannelTabTrigger value="ripley" />
+                    <ChannelTabTrigger value="mercado_libre" />
+                  </TabsList>
+
+                  <TabsContent value="falabella" className="space-y-4">
                     <div>
-                      <p className="text-sm font-medium">Falabella</p>
-                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">Seller</p>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {field('Usuario Seller', 'sellerUsername')}
+                        {field(
+                          'Contraseña Seller',
+                          'sellerPassword',
+                          'password',
+                          editing?.hasSellerPassword ? 'Dejar vacío para mantener la actual' : '',
+                          {
+                            revealable: true,
+                            revealed: showSellerPassword,
+                            onToggleReveal: () => setShowSellerPassword((value) => !value),
+                          },
+                        )}
+                      </div>
                     </div>
-                    <Switch
-                      checked={channelAutoEmission.falabella}
-                      disabled={loadingBilling || !falabellaCredentialsReady}
-                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, falabella: checked }))}
-                      aria-label="Emitir boletas y facturas automáticamente para Falabella"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-4 py-3">
                     <div>
-                      <p className="text-sm font-medium">Ripley</p>
-                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">API</p>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {field('User ID API', 'falabellaApiUserId', 'text', 'Settings > Integration Management > API')}
+                        {field(
+                          'API Key',
+                          'falabellaApiKey',
+                          'password',
+                          editing?.hasFalabellaCredentials ? 'Dejar vacío para mantener la actual' : '',
+                          {
+                            revealable: true,
+                            revealed: showFalabellaApiKey,
+                            onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
+                          },
+                        )}
+                      </div>
                     </div>
-                    <Switch
-                      checked={channelAutoEmission.ripley}
-                      disabled={loadingBilling}
-                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
-                      aria-label="Emitir boletas y facturas automáticamente para Ripley"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-4 py-3">
+                    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
+                      <div>
+                        <p className="text-sm font-medium">Comprobantes</p>
+                        <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                        {!falabellaCredentialsReady && (
+                          <p className="mt-1 text-xs text-muted-foreground">Configura la API para activar la emisión.</p>
+                        )}
+                      </div>
+                      <Switch
+                        checked={channelAutoEmission.falabella}
+                        disabled={loadingBilling || !falabellaCredentialsReady}
+                        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, falabella: checked }))}
+                        aria-label="Emitir boletas y facturas automáticamente para Falabella"
+                      />
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="ripley" className="space-y-4">
                     <div>
-                      <p className="text-sm font-medium">Mercado Libre</p>
-                      <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">Mirakl</p>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {field('Shop ID (opcional)', 'ripleyShopId', 'text', 'Se usa cuando la key accede a varias tiendas')}
+                        <div className="md:col-span-2">{field(
+                          'API Key',
+                          'ripleyApiKey',
+                          'password',
+                          editing?.hasRipleyCredentials ? 'Dejar vacío para mantener la actual' : '',
+                          {
+                            revealable: true,
+                            revealed: showRipleyApiKey,
+                            onToggleReveal: () => setShowRipleyApiKey((value) => !value),
+                          },
+                        )}</div>
+                      </div>
                     </div>
-                    <Switch
-                      checked={channelAutoEmission.mercado_libre}
-                      disabled={loadingBilling || !editing?.hasMercadoLibreCredentials}
-                      onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, mercado_libre: checked }))}
-                      aria-label="Emitir boletas y facturas automáticamente para Mercado Libre"
-                    />
-                  </div>
-                </div>
-                {!falabellaCredentialsReady && (
-                  <p className="mt-1 text-xs text-muted-foreground">Configura la API de Falabella para activar la emisión automática.</p>
-                )}
-                <p className="mt-1 text-xs text-muted-foreground">Ripley se activará al sincronizar pedidos.</p>
+                    <div>
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">Seller Center</p>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
+                        {field(
+                          'Contraseña SVC',
+                          'ripleySvcPassword',
+                          'password',
+                          editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
+                          {
+                            revealable: true,
+                            revealed: showRipleySvcPassword,
+                            onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
+                          },
+                        )}
+                        <div className="md:col-span-2">
+                          {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
+                        </div>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
+                      <div>
+                        <p className="text-sm font-medium">Comprobantes</p>
+                        <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Se activará al sincronizar pedidos.</p>
+                      </div>
+                      <Switch
+                        checked={channelAutoEmission.ripley}
+                        disabled={loadingBilling}
+                        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, ripley: checked }))}
+                        aria-label="Emitir boletas y facturas automáticamente para Ripley"
+                      />
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="mercado_libre" className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      Cada empresa conecta su propia cuenta. Un administrador debe autorizar la app.
+                    </p>
+                    {oauthNotice && (
+                      <p className="text-xs text-muted-foreground">{oauthNotice}</p>
+                    )}
+                    {editing?.hasMercadoLibreCredentials ? (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                        <div className="flex min-w-0 items-start gap-2.5">
+                          <ChannelMark channel="mercado_libre" className="mt-0.5 size-5" />
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Conectado</p>
+                            <p className="font-mono text-xs text-muted-foreground">
+                              user_id {editing.mercadoLibreUserId || '—'}
+                              {editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={disconnectingMercadoLibre}
+                          onClick={() => {
+                            if (!window.confirm('¿Desconectar Mercado Libre de esta empresa? Los pedidos ya importados se conservan.')) return;
+                            setDisconnectingMercadoLibre(true);
+                            api.disconnectMercadoLibre(editing.id)
+                              .then(() => { setOauthNotice('Mercado Libre quedó desconectado.'); return load(); })
+                              .then(() => {
+                                setEditing((current) => current ? {
+                                  ...current,
+                                  hasMercadoLibreCredentials: false,
+                                  mercadoLibreUserId: null,
+                                  mercadoLibreSiteId: null,
+                                } : current);
+                              })
+                              .catch((caught: unknown) => {
+                                setError(caught instanceof Error ? caught.message : 'No se pudo desconectar Mercado Libre.');
+                              })
+                              .finally(() => setDisconnectingMercadoLibre(false));
+                          }}
+                        >
+                          <Unlink /> Desconectar
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+                        <div className="flex min-w-0 items-start gap-2.5">
+                          <ChannelMark channel="mercado_libre" className="mt-0.5 size-5" />
+                          <p className="text-sm text-muted-foreground">
+                            {!editing
+                              ? 'Guarda la empresa para conectar la cuenta.'
+                              : mercadoLibreAppConfigured
+                                ? 'Todavía no hay una cuenta autorizada para esta empresa.'
+                                : 'Falta configurar la app de Mercado Libre en el servidor.'}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={!editing || !mercadoLibreAppConfigured}
+                          onClick={() => {
+                            if (!editing) return;
+                            window.location.assign(`/integrations/mercado-libre/${editing.id}/connect`);
+                          }}
+                        >
+                          <Link2 /> Conectar
+                        </Button>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
+                      <div>
+                        <p className="text-sm font-medium">Comprobantes</p>
+                        <p className="text-xs text-muted-foreground">Emitir boletas y facturas automáticamente.</p>
+                        {!editing?.hasMercadoLibreCredentials && (
+                          <p className="mt-1 text-xs text-muted-foreground">Conecta la cuenta para activar la emisión.</p>
+                        )}
+                      </div>
+                      <Switch
+                        checked={channelAutoEmission.mercado_libre}
+                        disabled={loadingBilling || !editing?.hasMercadoLibreCredentials}
+                        onCheckedChange={(checked) => setChannelAutoEmission((current) => ({ ...current, mercado_libre: checked }))}
+                        aria-label="Emitir boletas y facturas automáticamente para Mercado Libre"
+                      />
+                    </div>
+                  </TabsContent>
+                </Tabs>
                 {loadingBilling && (
                   <p className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
                     <Loader2 className="size-3 animate-spin" /> Cargando configuración
