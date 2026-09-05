@@ -69,6 +69,7 @@ const ripleyCatalogImport = await import('./catalog/ripley-catalog-import.js');
 const mercadoLibreCatalogImport = await import('./catalog/mercadolibre-catalog-import.js');
 const mercadoLibreOauth = await import('./mercado-libre-oauth.js');
 const mercadoLibreWebhook = await import('./mercado-libre-webhook.js');
+const mercadoLibreSandbox = await import('./mercado-libre-sandbox.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
@@ -150,6 +151,11 @@ app.post('/webhooks/mercadolibre', async (c) => {
   try { payload = await c.req.json(); } catch { payload = {}; }
   return c.json(mercadoLibreWebhook.acknowledgeMercadoLibreWebhook(payload), 200);
 });
+if (mercadoLibreSandbox.mercadoLibreSandboxEnabled()) {
+  mercadoLibreSandbox.resetMercadoLibreSandbox();
+  app.route('/sandbox/mercadolibre', mercadoLibreSandbox.createMercadoLibreSandboxApp());
+  console.log('[mercado-libre] sandbox local en /sandbox/mercadolibre');
+}
 app.get('/integrations/mercado-libre/callback', async (c) => {
   const location = await mercadoLibreOauth.finishMercadoLibreConnect(c.req.query());
   return c.redirect(location);
@@ -930,7 +936,8 @@ app.patch('/companies/:id', requirePermission('companies'), async (c) => {
 app.delete('/companies/:id', requirePermission('companies'), async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
 app.get('/integrations/mercado-libre/status', requirePermission('companies'), (c) => {
   const app = mercadoLibreOauth.mercadoLibreAppConfig();
-  return ok(c, { configured: app.configured });
+  const sandbox = mercadoLibreSandbox.mercadoLibreSandboxEnabled();
+  return ok(c, { configured: app.configured, sandbox });
 });
 app.get('/integrations/mercado-libre/:companyId/connect', requirePermission('companies'), async (c) => {
   try {

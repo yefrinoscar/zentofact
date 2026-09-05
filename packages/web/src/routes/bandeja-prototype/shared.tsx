@@ -8,6 +8,7 @@ import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
 import falabellaLogo from '../../assets/falabella.png';
+import mercadoLibreLogo from '../../assets/mercado-libre.svg';
 import ripleyLogo from '../../assets/logo-blanco.svg';
 import {
   Dialog,
@@ -332,6 +333,9 @@ export function ActionButton({
       </Button>
     );
   }
+  if (step.kind === 'wait') {
+    return <span className={cn('text-xs text-muted-foreground', width)}>{step.label}</span>;
+  }
   return null;
 }
 
@@ -346,6 +350,9 @@ export function ChannelMark({ code, className }: { code?: string | null; classNa
         <img src={ripleyLogo} alt="" className="h-4 w-auto" />
       </span>
     );
+  }
+  if (value === 'mercado_libre') {
+    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
   }
   return (
     <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">

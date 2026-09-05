@@ -16,6 +16,7 @@ import {
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
+  logisticsFlowCopy,
   logisticsFlowSteps,
   logisticsNextStep,
   logisticsPrintSuccessCopy,
@@ -47,6 +48,15 @@ test('manual imprime siempre; Falabella solo si está listo; enviados no imprime
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1, metadata: { shippingId: '900000030' },
+  }), false);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1, metadata: { shippingId: '900000031' },
+  }), true);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1,
+  }), false);
   assert.equal(canMarkFalabellaReady({
     channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 3, externalOrderId: 'F-1',
   }), true);
@@ -89,6 +99,19 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
     { kind: 'ready', label: 'Marcar listo' },
   );
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
+  assert.deepEqual(
+    logisticsNextStep({ channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1 }),
+    { kind: 'wait', label: 'Esperando etiqueta' },
+  );
+  assert.deepEqual(
+    logisticsNextStep({
+      channelCode: 'mercado_libre',
+      fulfillmentStatus: 'ready_to_ship',
+      companyId: 1,
+      metadata: { shippingId: '900000031' },
+    }),
+    { kind: 'print', label: 'Imprimir' },
+  );
   assert.equal(labelWasPrinted({ labelPrint: { printCount: 1 } }), true);
   assert.equal(labelWasPrinted({ labelPrint: null }), false);
 });
@@ -105,6 +128,26 @@ test('el flujo de despacho marca los pasos completados', () => {
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'shipped' }).map((step) => step.state),
     ['done', 'done', 'done'],
+  );
+});
+
+test('Mercado Libre espera ME2 y luego imprime 10×15', () => {
+  assert.match(
+    logisticsFlowCopy({ channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1 }),
+    /Espera a que Mercado Envíos/,
+  );
+  assert.match(
+    logisticsFlowCopy({
+      channelCode: 'mercado_libre',
+      fulfillmentStatus: 'ready_to_ship',
+      companyId: 1,
+      metadata: { shippingId: '900000031' },
+    }),
+    /10×15/,
+  );
+  assert.deepEqual(
+    logisticsFlowSteps({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => step.label),
+    ['Preparar', 'Etiqueta ME2', 'Despachar'],
   );
 });
 

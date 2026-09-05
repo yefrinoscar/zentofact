@@ -431,7 +431,11 @@ Cuerpo estándar: `{ "message", "error", "status", "cause": [] }`.
 
 Etiquetas: `not_printable_status`, `invalid_shipment_mode`, `invalid_shipment_ff_public`, máximo 50 ids.
 
-## 12. SDK
+## 12. Sandbox local de preview (ZentoFact)
+
+Mercado Libre no publica un sandbox oficial: las pruebas reales usan usuarios de test en producción. En Cloud Agent / preview, `MERCADO_LIBRE_SANDBOX=true` levanta un imitador en proceso (`/sandbox/mercadolibre`) con tokens `SANDBOX-*`. Esos tokens no pueden usarse contra `https://api.mercadolibre.com`. Sirve para probar ingreso por webhook y la etiqueta ME2 10×15 en la bandeja. No sustituye un grant OAuth real.
+
+## 13. SDK
 
 Los repos `mercadolibre/*-sdk` (Node, PHP, Python, Java, .NET, Ruby, Go) declaran mantenimiento apagado desde la primera semana de abril de 2021. Un conector nuevo debe ser HTTP propio, al estilo `@zentofact/falabella-api` / Ripley.
 

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mercadoLibreGrantFromCompany, mercadoLibreTokenNeedsRefresh } from './mercado-libre-tokens.js';
+import {
+  mercadoLibreClientForCompany,
+  mercadoLibreGrantFromCompany,
+  mercadoLibreTokenNeedsRefresh,
+  refreshMercadoLibreGrant,
+} from './mercado-libre-tokens.js';
+import { SANDBOX_ACCESS_TOKEN, SANDBOX_REFRESH_TOKEN, SANDBOX_SELLER_ID } from './mercado-libre-sandbox.js';
 
 test('el grant existe solo cuando hay refresh token y user_id', () => {
   assert.equal(mercadoLibreGrantFromCompany({
@@ -22,4 +28,25 @@ test('renueva el access token dos minutos antes del vencimiento', () => {
     accessToken: 'tok',
     expiresAt: now + 5 * 60_000,
   }, now), false);
+});
+
+test('el grant sandbox no se refresca contra la API real', async () => {
+  const company = {
+    id: 1,
+    mercadoLibreUserId: SANDBOX_SELLER_ID,
+    mercadoLibreRefreshToken: SANDBOX_REFRESH_TOKEN,
+    mercadoLibreAccessToken: SANDBOX_ACCESS_TOKEN,
+  };
+  await assert.rejects(
+    () => refreshMercadoLibreGrant(company, { env: { MERCADO_LIBRE_SANDBOX: 'false' } }),
+    /MERCADO_LIBRE_SANDBOX/,
+  );
+  const grant = await refreshMercadoLibreGrant(company, { env: { MERCADO_LIBRE_SANDBOX: 'true' } });
+  assert.equal(grant.accessToken, SANDBOX_ACCESS_TOKEN);
+  const client = await mercadoLibreClientForCompany(company, {
+    env: { MERCADO_LIBRE_SANDBOX: 'true' },
+    skipLock: true,
+  });
+  const me = await client.getMe();
+  assert.equal(me.userId, SANDBOX_SELLER_ID);
 });

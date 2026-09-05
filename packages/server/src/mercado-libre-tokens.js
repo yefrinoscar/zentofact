@@ -1,5 +1,11 @@
 import { MercadoLibreApiClient, refreshAccessToken } from '@zentofact/mercado-libre-api';
 import { mercadoLibreAppConfig } from './mercado-libre-oauth.js';
+import {
+  isMercadoLibreSandboxToken,
+  mercadoLibreSandboxEnabled,
+  mercadoLibreSandboxFetch,
+  SANDBOX_ACCESS_TOKEN,
+} from './mercado-libre-sandbox.js';
 
 const REFRESH_SKEW_MS = 2 * 60_000;
 const refreshLocks = new Map();
@@ -47,6 +53,16 @@ async function persistGrant(companyId, token, previous) {
 export async function refreshMercadoLibreGrant(company, dependencies = {}) {
   const grant = mercadoLibreGrantFromCompany(company);
   if (!grant) throw new Error('Falta el grant de Mercado Libre.');
+  const env = dependencies.env || process.env;
+  if (isMercadoLibreSandboxToken(grant.refreshToken) || isMercadoLibreSandboxToken(grant.accessToken)) {
+    if (!mercadoLibreSandboxEnabled(env)) {
+      throw new Error('El grant sandbox de Mercado Libre requiere MERCADO_LIBRE_SANDBOX=true.');
+    }
+    return {
+      ...grant,
+      accessToken: grant.accessToken || SANDBOX_ACCESS_TOKEN,
+    };
+  }
   if (!mercadoLibreTokenNeedsRefresh(grant, dependencies.now?.() || Date.now()) && !dependencies.force) {
     return grant;
   }
@@ -72,10 +88,11 @@ export async function mercadoLibreClientForCompany(company, dependencies = {}) {
   const run = async () => {
     const grant = await refreshMercadoLibreGrant(company, dependencies);
     if (dependencies.client) return dependencies.client;
+    const sandbox = isMercadoLibreSandboxToken(grant.accessToken || grant.refreshToken);
     return new MercadoLibreApiClient({
       accessToken: grant.accessToken,
       siteId: grant.siteId,
-      fetchImpl: dependencies.fetchImpl,
+      fetchImpl: dependencies.fetchImpl || (sandbox ? mercadoLibreSandboxFetch : undefined),
     });
   };
   if (dependencies.skipLock) return run();

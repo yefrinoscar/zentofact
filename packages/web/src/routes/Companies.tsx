@@ -317,6 +317,7 @@ export default function Companies() {
   const [search, setSearch] = useState('');
   const [setupFilter, setSetupFilter] = useState('all');
   const [mercadoLibreAppConfigured, setMercadoLibreAppConfigured] = useState(false);
+  const [mercadoLibreSandbox, setMercadoLibreSandbox] = useState(false);
   const [disconnectingMercadoLibre, setDisconnectingMercadoLibre] = useState(false);
   const [oauthNotice, setOauthNotice] = useState('');
   const [channelTab, setChannelTab] = useState<ChannelTab>(() => {
@@ -341,8 +342,14 @@ export default function Companies() {
   useEffect(() => {
     load();
     api.getMercadoLibreIntegrationStatus()
-      .then((status: { configured?: boolean }) => setMercadoLibreAppConfigured(status?.configured === true))
-      .catch(() => setMercadoLibreAppConfigured(false));
+      .then((status: { configured?: boolean; sandbox?: boolean }) => {
+        setMercadoLibreAppConfigured(status?.configured === true);
+        setMercadoLibreSandbox(status?.sandbox === true);
+      })
+      .catch(() => {
+        setMercadoLibreAppConfigured(false);
+        setMercadoLibreSandbox(false);
+      });
     const ml = searchParams.get('ml');
     if (ml === 'connected') {
       setOauthNotice('Mercado Libre quedó conectado para esta empresa.');
@@ -898,12 +905,14 @@ export default function Companies() {
           </p>
           <p className="text-xs text-muted-foreground">
             {oauthNotice || (editing?.hasMercadoLibreCredentials
-              ? `user_id ${editing.mercadoLibreUserId || '—'}${editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}`
+              ? `${mercadoLibreSandbox ? 'Sandbox local · ' : ''}user_id ${editing.mercadoLibreUserId || '—'}${editing.mercadoLibreSiteId ? ` · ${editing.mercadoLibreSiteId}` : ''}`
               : !editing
                 ? 'Guarda la empresa para conectar la cuenta.'
                 : mercadoLibreAppConfigured
                   ? 'Autoriza la cuenta de esta empresa.'
-                  : 'Falta la app de Mercado Libre en el servidor.')}
+                  : mercadoLibreSandbox
+                    ? 'Sandbox local activo. LIMBO se conecta al sembrar el preview.'
+                    : 'Falta la app de Mercado Libre en el servidor.')}
           </p>
         </div>
         {editing?.hasMercadoLibreCredentials ? (
