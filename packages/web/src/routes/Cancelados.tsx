@@ -786,6 +786,7 @@ export default function Cancelados() {
                             destination="stock"
                             selected={destination === 'stock'}
                             disabled={approveMutation.isPending}
+                            unitLabel={returnUnitLabel(unitIndex, line.quantity)}
                             onSelect={() => setApproveDecisions((current) => current.map((row) => (
                               row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
                             )))}
@@ -794,6 +795,7 @@ export default function Cancelados() {
                             destination="merma"
                             selected={destination === 'merma'}
                             disabled={approveMutation.isPending}
+                            unitLabel={returnUnitLabel(unitIndex, line.quantity)}
                             onSelect={() => setApproveDecisions((current) => current.map((row) => (
                               row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
                             )))}
