@@ -32,8 +32,14 @@ import {
   jobKindForStatus,
   normStatus,
 } from './auto-emission-policy.js';
-import { notifyFailedEmissionIfNeeded, parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
-import { sendEmail } from './mailer.js';
+import {
+  notifyFailedEmissionIfNeeded,
+  parseAlertEmailInput,
+  parseAlertEmails,
+  sendFailedEmissionAlertPreview,
+  sendOperatorNotification as sendOperatorNotificationEmail,
+} from './auto-emission-alert.js';
+import { isMailerConfigured, sendEmail } from './mailer.js';
 import { listUsers } from './users.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
@@ -492,6 +498,7 @@ export async function getConfig() {
     paused,
     cron,
     alertEmails,
+    mailer: { configured: isMailerConfigured() },
     stats,
     // Base sin secret ni companyId; la URL real se arma por empresa en el servidor.
     webhookBase: `${publicApiBaseUrl()}/webhooks/falabella`,
@@ -997,24 +1004,47 @@ async function processCreditNoteJob(job, { order, orderNumber, orderDate, setSte
   return { status: 'done', result: `nota de crédito ${numero} ACEPTADA`, boletaNumero: numero || null };
 }
 
+async function alertMailerOptions() {
+  const stored = await getAlertEmails();
+  return {
+    sendEmail,
+    listUsers,
+    configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
+    fallbackEmail: process.env.ADMIN_EMAIL,
+    log,
+  };
+}
+
+function requireDeliveredAlert(result) {
+  if (result?.notified) return result;
+  if (result?.reason === 'no-recipients') throw new Error('No hay destinatarios. Guarda un correo de aviso.');
+  if (result?.reason === 'no-mailer') throw new Error('No hay envío configurado');
+  throw new Error('No se pudo enviar el correo');
+}
+
+export async function sendOperatorNotification({ title, message } = {}) {
+  return requireDeliveredAlert(
+    await sendOperatorNotificationEmail({ title, message }, await alertMailerOptions()),
+  );
+}
+
+export async function sendFailedEmissionTestAlert() {
+  return requireDeliveredAlert(await sendFailedEmissionAlertPreview(await alertMailerOptions()));
+}
+
 async function alertFailedEmission(job, { lastError, status } = {}) {
   try {
     const company = job.company || (await getCompany(job.company_id).catch(() => null))?.nombre || null;
-    const stored = await getAlertEmails();
     await notifyFailedEmissionIfNeeded({
       ...job,
       companyName: company,
       lastError: lastError || job.last_error,
       status: status || job.status,
     }, {
-      sendEmail,
-      listUsers,
-      configuredEmails: stored.length ? stored : process.env.AUTO_EMIT_ALERT_EMAIL,
-      fallbackEmail: process.env.ADMIN_EMAIL,
+      ...(await alertMailerOptions()),
       markAlerted: async (item) => {
         await pool.query('update emission_jobs set alerted_at=now() where id=$1', [item.id]);
       },
-      log,
     });
   } catch (error) {
     log(`aviso de emisión error:`, error.message);
