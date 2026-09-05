@@ -116,6 +116,7 @@ const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: st
   unmatched: { cls: 'bg-amber-50 text-amber-800 border-amber-300', icon: Link2, label: 'Sin asociación' },
   insufficient: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Sin stock' },
   processed: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: CheckCircle2, label: 'Procesado' },
+  reversed: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: RotateCcw, label: 'Reintegrado' },
   outside_window: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Fuera del período' },
   pending: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock, label: 'En cola' },
   processing: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Loader2, label: 'Procesando' },

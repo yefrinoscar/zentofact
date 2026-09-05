@@ -24,6 +24,12 @@ function hasStockState(job: StockJobForPresentation, state: string) {
   return job.items?.some((item) => item.stockState === state) === true;
 }
 
+function isReintegratedStockJob(job: StockJobForPresentation) {
+  return hasStockState(job, 'reversed')
+    && count(job.reserved_units) === 0
+    && count(job.applied_units) === 0;
+}
+
 function limaDateTime(value?: string | null) {
   if (!value) return null;
   const date = new Date(value);
@@ -56,6 +62,7 @@ export function visibleStockJobStatus(job: StockJobForPresentation, listenFromAt
     return 'outside_window';
   }
   if (count(job.reserved_units) > 0) return 'reserved';
+  if (isReintegratedStockJob(job)) return 'reversed';
   if (count(job.applied_units) > 0 || count(job.result?.applied) > 0) return 'done';
   return 'processed';
 }
@@ -85,6 +92,7 @@ export function stockJobDetail(job: StockJobForPresentation, listenFromAt?: stri
   }
   if (reservedUnits > 0) return `${reservedUnits} u reservada${reservedUnits === 1 ? '' : 's'}; descuenta al enviar`;
   if (appliedUnits > 0) return `${appliedUnits} u descontada${appliedUnits === 1 ? '' : 's'}`;
+  if (isReintegratedStockJob(job)) return 'Stock reintegrado';
   if (applied > 0) return `${applied} línea${applied === 1 ? '' : 's'} descontada${applied === 1 ? '' : 's'}`;
   const reserved = count(result.reserved);
   if (reserved > 0) return `${reserved} línea${reserved === 1 ? '' : 's'} reservada${reserved === 1 ? '' : 's'}`;

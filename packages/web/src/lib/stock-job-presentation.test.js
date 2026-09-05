@@ -43,6 +43,21 @@ test('un job sin fecha de compra no tapa la cola del período', () => {
   }, LISTEN_FROM), false);
 });
 
+test('un pedido cancelado no conserva la reserva del job después de reintegrar stock', () => {
+  const job = {
+    status: 'done',
+    ordered_at: '2026-09-04T16:10:00.000Z',
+    reserved_units: 0,
+    applied_units: 0,
+    items: [{ stockState: 'reversed' }],
+    result: { reserved: 1, applied: 0 },
+  };
+
+  assert.equal(visibleStockJobStatus(job, LISTEN_FROM), 'reversed');
+  assert.equal(stockJobDetail(job, LISTEN_FROM), 'Stock reintegrado');
+  assert.equal(isListableStockJob(job, LISTEN_FROM), true);
+});
+
 test('un pedido ya aplicado conserva el estado descontado aunque el webhook se repita', () => {
   const job = {
     status: 'done',
