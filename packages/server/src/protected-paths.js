@@ -16,6 +16,7 @@ export const PROTECTED_PATHS = [
   '/credit-notes',
   '/falabella',
   '/ripley',
+  '/integrations',
   '/workflow',
   '/auto-emit',
   '/system',

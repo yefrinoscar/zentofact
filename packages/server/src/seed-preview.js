@@ -217,6 +217,46 @@ const SEED_LOGISTICS_ORDERS = [
     stockState: 'none',
     stockApplied: 0,
   },
+  {
+    key: 'ml-pending',
+    orderNumber: 'ML-10030',
+    channel: 'mercado_libre',
+    sku: 'HOG025',
+    customer: {
+      name: 'Sofía Preview',
+      firstName: 'Sofía',
+      lastName: 'Preview',
+      documentNumber: '99887766',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    promisedOffsetDays: 1,
+    shipping: { type: 'envio' },
+    shippingId: '900000030',
+    logisticType: 'drop_off',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'ml-ready',
+    orderNumber: 'ML-10031',
+    channel: 'mercado_libre',
+    sku: 'HOG025',
+    customer: {
+      name: 'Tomás Preview',
+      firstName: 'Tomás',
+      lastName: 'Preview',
+      documentNumber: '11220033',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'ready_to_ship',
+    promisedOffsetDays: 0,
+    shipping: { type: 'envio', trackingCode: '280012345678901' },
+    shippingId: '900000031',
+    logisticType: 'drop_off',
+    stockState: 'none',
+    stockApplied: 0,
+  },
 ];
 
 const SEED_USERS = [
@@ -295,6 +335,7 @@ const SEED_PRODUCTS = [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
       { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S166285', title: 'Silla evolutiva gris · Ripley' },
+      { companyRuc: '20990001001', channelCode: 'mercado_libre', sellerSku: 'HOG025', title: 'Silla evolutiva gris · Mercado Libre' },
     ],
   },
   {
@@ -499,28 +540,35 @@ async function ensureCompany(data) {
   return { ...created, created: true };
 }
 
+async function channelExternalAccountId(channelCode) {
+  if (channelCode !== 'mercado_libre') return 'default';
+  const { mercadoLibreSandboxEnabled, SANDBOX_SELLER_ID } = await import('./mercado-libre-sandbox.js');
+  return mercadoLibreSandboxEnabled() ? SANDBOX_SELLER_ID : 'default';
+}
+
 async function ensureChannelAccount(company, channelCode) {
   const label = company.nombreComercial || company.nombre || company.razonSocial || channelCode;
   const displayName = channelCode === 'manual' ? `Ventas manuales · ${label}` : label;
+  const externalAccountId = await channelExternalAccountId(channelCode);
   await pool.query(
     `INSERT INTO order_channel_accounts (
        company_id, channel_id, external_account_id, display_name,
        auto_create_orders, document_requirement, document_type_policy, settings
      )
-     SELECT c.id, ch.id, 'default', $2, $4, 'optional', 'automatic', '{"origin":"preview_seed"}'::jsonb
+     SELECT c.id, ch.id, $5, $2, $4, 'optional', 'automatic', '{"origin":"preview_seed"}'::jsonb
      FROM companies c
      JOIN order_channels ch ON ch.code = $3
      WHERE c.id = $1
      ON CONFLICT (company_id, channel_id, external_account_id) DO NOTHING`,
-    [company.id, displayName, channelCode, channelCode !== 'manual'],
+    [company.id, displayName, channelCode, channelCode !== 'manual', externalAccountId],
   );
   const account = await pool.query(
     `SELECT a.id, a.company_id, ch.code AS channel_code
      FROM order_channel_accounts a
      JOIN order_channels ch ON ch.id = a.channel_id
-     WHERE a.company_id = $1 AND ch.code = $2 AND a.external_account_id = 'default'
+     WHERE a.company_id = $1 AND ch.code = $2 AND a.external_account_id = $3
      LIMIT 1`,
-    [company.id, channelCode],
+    [company.id, channelCode, externalAccountId],
   );
   return account.rows[0] ? { id: Number(account.rows[0].id), companyId: Number(account.rows[0].company_id) } : null;
 }
@@ -566,11 +614,11 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
   for (const listing of spec.listings) {
     const company = companiesByRuc.get(listing.companyRuc);
     if (!company) continue;
-    const account = await ensureFalabellaChannelAccount(company);
+    const account = await ensureChannelAccount(company, listing.channelCode);
     const saved = await upsertListing(productId, {
       channelCode: listing.channelCode,
       companyId: company.id,
-      channelAccountId: listing.channelCode === 'falabella' ? account?.id : null,
+      channelAccountId: account?.id || null,
       sellerSku: listing.sellerSku,
       shopSku: listing.sellerSku,
       title: listing.title,
@@ -705,6 +753,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
          order_status = EXCLUDED.order_status,
          fulfillment_status = EXCLUDED.fulfillment_status,
          shipping = EXCLUDED.shipping,
+         metadata = EXCLUDED.metadata,
          promised_shipping_at = EXCLUDED.promised_shipping_at,
          cancelled_at = coalesce(orders.cancelled_at, EXCLUDED.cancelled_at),
          returned_at = coalesce(orders.returned_at, EXCLUDED.returned_at),
@@ -721,7 +770,14 @@ async function ensureSampleOrders(companiesByRuc, products) {
         product.referencePrice || 100,
         JSON.stringify(spec.customer),
         JSON.stringify(spec.shipping || {}),
-        JSON.stringify({ origin: SEED_MARKER }),
+        JSON.stringify({
+          origin: SEED_MARKER,
+          ...(spec.shippingId ? {
+            shippingId: spec.shippingId,
+            siteId: 'MPE',
+            logisticType: spec.logisticType || 'drop_off',
+          } : {}),
+        }),
         new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
         'preview-seed',
       ],
@@ -842,6 +898,13 @@ async function ensureFalabellaInboxOrders(limbo, product) {
   return { falabellaOrders: SEED_ORDERS.length };
 }
 
+async function applyMercadoLibreSandboxPreview(companiesByRuc) {
+  const limbo = companiesByRuc.get('20990001001');
+  if (!limbo) return;
+  const { applyMercadoLibreSandboxCompany } = await import('./mercado-libre-sandbox.js');
+  await applyMercadoLibreSandboxCompany(limbo);
+}
+
 async function ensurePreviewFixtures() {
   const credentials = adminCredentials();
   const password = seedPassword();
@@ -874,6 +937,7 @@ async function ensurePreviewFixtures() {
   }));
   const limbo = companiesByRuc.get('20990001001');
   if (limbo && products[0]) {
+    await applyMercadoLibreSandboxPreview(companiesByRuc);
     await ensureSampleOrders(companiesByRuc, products);
     await ensureFalabellaInboxOrders(limbo, products[0]);
   }
@@ -932,6 +996,7 @@ export async function seedPreviewData({ force = false } = {}) {
   for (const company of companies) {
     await ensureFalabellaChannelAccount(company);
   }
+  await applyMercadoLibreSandboxPreview(companiesByRuc);
 
   const products = [];
   for (const spec of SEED_PRODUCTS) {

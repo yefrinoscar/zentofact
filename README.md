@@ -9,6 +9,8 @@ zentofact/
 ├── packages/
 │   ├── core/         ← @zentofact/core — logica SUNAT, PDF, BD
 │   ├── falabella-api/← @zentofact/falabella-api — cliente oficial Seller API
+│   ├── ripley-api/   ← @zentofact/ripley-api — cliente HTTP Ripley
+│   ├── mercado-libre-api/← @zentofact/mercado-libre-api — cliente HTTP Mercado Libre Perú
 │   ├── server/       ← @zentofact/server — API HTTP
 │   ├── web/          ← @zentofact/web — frontend React web
 └── package.json

@@ -29,8 +29,7 @@ import {
   Truck,
   X,
 } from 'lucide-react';
-import falabellaLogo from '../assets/falabella.png';
-import ripleyLogo from '../assets/logo-blanco.svg';
+import { ChannelMark } from '../components/channel-mark';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import {
@@ -573,44 +572,6 @@ function CopyableOrderNumber({ value }: { value: string }) {
   );
 }
 
-function channelTone(code: string) {
-  return {
-    falabella: 'border-lime-200 bg-lime-50 text-lime-800 dark:border-lime-900 dark:bg-lime-950/40 dark:text-lime-300',
-    mercado_libre: 'border-yellow-200 bg-yellow-50 text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/40 dark:text-yellow-300',
-    ripley: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 dark:border-fuchsia-900 dark:bg-fuchsia-950/40 dark:text-fuchsia-300',
-    manual: 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300',
-  }[code] || 'border-border bg-muted text-muted-foreground';
-}
-
-function ChannelMark({
-  code,
-  name,
-  size = 'sm',
-  ripleyMark = 'initials',
-}: {
-  code: string;
-  name: string;
-  size?: 'sm' | 'md';
-  ripleyMark?: 'initials' | 'official';
-}) {
-  const box = size === 'sm' ? 'size-4' : 'size-8';
-  if (code === 'falabella') {
-    return <img src={falabellaLogo} alt="Falabella" className={cn('shrink-0 rounded-sm object-contain', box)} />;
-  }
-  if (code === 'ripley' && ripleyMark === 'official') {
-    return (
-      <span className={cn('grid shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', box)} aria-hidden="true">
-        <img src={ripleyLogo} alt="" className={size === 'sm' ? 'h-3 w-auto' : 'h-6 w-auto'} />
-      </span>
-    );
-  }
-  return (
-    <span className={cn('grid shrink-0 place-items-center rounded-sm border font-bold', channelTone(code), size === 'sm' ? 'size-4 text-[8px]' : 'size-8 text-xs')} aria-hidden="true">
-      {name.slice(0, 2).toUpperCase()}
-    </span>
-  );
-}
-
 function falabellaMediaUrl(shopSku?: string | null) {
   const sku = String(shopSku || '').trim();
   if (!sku || !/^[A-Za-z0-9_-]+$/.test(sku)) return '';
@@ -1046,7 +1007,7 @@ export default function PedidosMulticanal() {
       size: 124,
       cell: ({ row }) => (
         <div className="flex min-w-0 items-center gap-1.5">
-          <ChannelMark code={row.original.channelCode} name={row.original.channelName} ripleyMark="official" />
+          <ChannelMark code={row.original.channelCode} name={row.original.channelName} size="xs" ripley="wordmark" />
           <span className="truncate">{originLabel(row.original)}</span>
         </div>
       ),
@@ -1372,7 +1333,7 @@ export default function PedidosMulticanal() {
             <>
               <SheetHeader className="border-b border-border px-5 py-4 pr-16">
                 <div className="flex min-w-0 items-center gap-3">
-                  <ChannelMark code={detail.channelCode} name={detail.channelName} size="md" />
+                  <ChannelMark code={detail.channelCode} name={detail.channelName} size="lg" ripley="wordmark" />
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">

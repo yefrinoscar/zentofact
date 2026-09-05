@@ -149,7 +149,7 @@ cmd_launch() {
     (cd "$repo_root" && npm run worktree:setup)
   fi
   ensure_workspace_modules
-  if [[ ! -f "$repo_root/packages/core/dist/index.js" || ! -f "$repo_root/packages/falabella-api/dist/index.js" || ! -f "$repo_root/packages/ripley-api/dist/index.js" ]]; then
+  if [[ ! -f "$repo_root/packages/core/dist/index.js" || ! -f "$repo_root/packages/falabella-api/dist/index.js" || ! -f "$repo_root/packages/ripley-api/dist/index.js" || ! -f "$repo_root/packages/mercado-libre-api/dist/index.js" ]]; then
     echo "building workspace packages"
     bash "$repo_root/scripts/cloud-agent-install.sh"
   fi

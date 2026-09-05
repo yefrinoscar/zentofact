@@ -27,6 +27,7 @@ const apiPrefixes = [
   '/credit-notes',
   '/falabella',
   '/ripley',
+  '/integrations',
   '/workflow',
   '/auto-emit',
   '/system',

@@ -1,5 +1,5 @@
 export type LogisticsStage = 'pending' | 'ready' | 'shipped';
-export type LogisticsChannel = 'falabella' | 'ripley' | 'manual';
+export type LogisticsChannel = 'falabella' | 'ripley' | 'mercado_libre' | 'manual';
 export type LogisticsUrgency = 'overdue' | 'today' | 'tomorrow' | 'later';
 
 export type LogisticsOrderLike = {
@@ -9,7 +9,7 @@ export type LogisticsOrderLike = {
   externalOrderId?: string | null;
   promisedShippingAt?: string | null;
   shipping?: { type?: string | null; carrier?: string | null; trackingCode?: string | null } | null;
-  metadata?: { delivery?: string | null; shippingCarrier?: string | null } | null;
+  metadata?: { delivery?: string | null; shippingCarrier?: string | null; shippingId?: string | null } | null;
   labelPrint?: { printCount?: number | null; lastPrintedAt?: string | null } | null;
 };
 
@@ -17,6 +17,7 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'all', label: 'Todos' },
   { value: 'falabella', label: 'Falabella' },
   { value: 'ripley', label: 'Ripley' },
+  { value: 'mercado_libre', label: 'Mercado Libre' },
   { value: 'manual', label: 'Manual' },
 ];
 
@@ -60,6 +61,7 @@ const LIMA = 'America/Lima';
 const CHANNEL_LABELS: Record<string, string> = {
   falabella: 'Falabella',
   ripley: 'Ripley',
+  mercado_libre: 'Mercado Libre',
   manual: 'Manual',
 };
 
@@ -78,6 +80,7 @@ export function logisticsChannelClass(code?: string | null) {
   const value = String(code || '').trim().toLowerCase();
   if (value === 'falabella') return 'border-lime-200 bg-lime-50 text-lime-800';
   if (value === 'ripley') return 'border-violet-200 bg-violet-50 text-violet-800';
+  if (value === 'mercado_libre') return 'border-amber-200 bg-amber-50 text-amber-800';
   if (value === 'manual') return 'border-teal-200 bg-teal-50 text-teal-800';
   return 'border-slate-200 bg-slate-100 text-slate-700';
 }
@@ -86,6 +89,7 @@ export function logisticsChannelDotClass(code?: string | null) {
   const value = String(code || '').trim().toLowerCase();
   if (value === 'falabella') return 'bg-lime-500';
   if (value === 'ripley') return 'bg-violet-500';
+  if (value === 'mercado_libre') return 'bg-amber-500';
   if (value === 'manual') return 'bg-teal-500';
   return 'bg-slate-400';
 }
@@ -101,7 +105,7 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
   const carrier = CARRIER_LABELS[String(order.shipping?.carrier || order.metadata?.shippingCarrier || '').trim().toLowerCase()];
   if (carrier) return carrier;
   if (type === 'envio' || order.shipping?.trackingCode) return 'Envío';
-  if (order.channelCode === 'falabella' || order.channelCode === 'ripley') return 'Marketplace';
+  if (order.channelCode === 'falabella' || order.channelCode === 'ripley' || order.channelCode === 'mercado_libre') return 'Marketplace';
   return '—';
 }
 
@@ -113,6 +117,11 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
   if (channel === 'manual') return true;
   if (channel === 'falabella') return status === 'ready_to_ship' && order.companyId != null;
   if (channel === 'ripley') return order.companyId != null && (status === 'ready_to_ship' || status === 'preparing' || status === 'pending');
+  if (channel === 'mercado_libre') {
+    return status === 'ready_to_ship'
+      && order.companyId != null
+      && Boolean(String(order.metadata?.shippingId || '').trim());
+  }
   return false;
 }
 
@@ -224,6 +233,10 @@ export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep 
   if (canMarkFalabellaReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
   if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Sin seller' };
+  if (order.channelCode === 'mercado_libre') {
+    if (order.companyId == null) return { kind: 'wait', label: 'Sin seller' };
+    return { kind: 'wait', label: 'Esperando etiqueta' };
+  }
   return { kind: 'view', label: 'Ver detalle' };
 }
 
@@ -238,6 +251,15 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Empacar', state: ready ? 'done' : 'current' },
       { label: 'Marcar listo', state: ready ? 'done' : 'todo' },
       { label: 'Etiqueta', state: shipped ? 'done' : ready ? 'current' : 'todo' },
+    ];
+  }
+  if (order.channelCode === 'mercado_libre') {
+    const ready = status === 'ready_to_ship' || shipped;
+    const printed = labelWasPrinted(order);
+    return [
+      { label: 'Preparar', state: ready || shipped ? 'done' : 'current' },
+      { label: 'Etiqueta ME2', state: shipped ? 'done' : printed ? 'done' : ready ? 'current' : 'todo' },
+      { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
     ];
   }
   const printed = labelWasPrinted(order);
@@ -258,6 +280,15 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
   }
   if (order.channelCode === 'ripley') {
     return 'Ripley genera la etiqueta desde Seller Center. Si aún no existe, la impresión avisará.';
+  }
+  if (order.channelCode === 'mercado_libre') {
+    if (canPrintLogisticsLabel(order)) {
+      return 'Mercado Envíos ya tiene la etiqueta ME2. Imprime el PDF 10×15 cm y pégalo en el bulto.';
+    }
+    if (status === 'pending' || status === 'preparing') {
+      return 'El pedido ya está pagado. Espera a que Mercado Envíos lo deje listo para imprimir la etiqueta.';
+    }
+    return 'Este pedido de Mercado Libre no tiene seller conectado; revísalo en Empresas.';
   }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
   return 'Empaca los productos e imprime la etiqueta ZentoFact con la guía de armado.';

@@ -66,6 +66,10 @@ const inventoryService = await import('./catalog/inventory-service.js');
 const skuResolver = await import('./catalog/sku-resolver.js');
 const catalogImport = await import('./catalog/catalog-import.js');
 const ripleyCatalogImport = await import('./catalog/ripley-catalog-import.js');
+const mercadoLibreCatalogImport = await import('./catalog/mercadolibre-catalog-import.js');
+const mercadoLibreOauth = await import('./mercado-libre-oauth.js');
+const mercadoLibreWebhook = await import('./mercado-libre-webhook.js');
+const mercadoLibreSandbox = await import('./mercado-libre-sandbox.js');
 const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
@@ -141,6 +145,21 @@ app.post('/webhooks/falabella/:companyId/:token', (c) =>
 app.post('/webhooks/falabella/:companyId', (c) =>
   handleFalabellaWebhook(c, c.req.param('companyId'), ''));
 app.on(['GET'], '/webhooks/falabella/*', (c) => c.json({ error: 'method not allowed' }, 405));
+
+app.post('/webhooks/mercadolibre', async (c) => {
+  let payload = {};
+  try { payload = await c.req.json(); } catch { payload = {}; }
+  return c.json(mercadoLibreWebhook.acknowledgeMercadoLibreWebhook(payload), 200);
+});
+if (mercadoLibreSandbox.mercadoLibreSandboxEnabled()) {
+  mercadoLibreSandbox.resetMercadoLibreSandbox();
+  app.route('/sandbox/mercadolibre', mercadoLibreSandbox.createMercadoLibreSandboxApp());
+  console.log('[mercado-libre] sandbox local en /sandbox/mercadolibre');
+}
+app.get('/integrations/mercado-libre/callback', async (c) => {
+  const location = await mercadoLibreOauth.finishMercadoLibreConnect(c.req.query());
+  return c.redirect(location);
+});
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 app.use('*', requireCsrf());
@@ -719,6 +738,12 @@ app.post('/catalog/sync/ripley', async (c) => {
     return ok(c, await ripleyCatalogImport.syncRipleyCatalog(body, c.get('user')?.id));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.post('/catalog/sync/mercado-libre', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await mercadoLibreCatalogImport.syncMercadoLibreCatalog(body, c.get('user')?.id));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/catalog/refresh-listing-snapshots', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -919,6 +944,21 @@ app.patch('/companies/:id', requirePermission('companies'), async (c) => {
   } catch (e) { return fail(c, e, 400); }
 });
 app.delete('/companies/:id', requirePermission('companies'), async (c) => { try { return ok(c, await core.deleteCompany(Number(c.req.param('id')))); } catch (e) { return fail(c, e, 400); } });
+app.get('/integrations/mercado-libre/status', requirePermission('companies'), (c) => {
+  const app = mercadoLibreOauth.mercadoLibreAppConfig();
+  const sandbox = mercadoLibreSandbox.mercadoLibreSandboxEnabled();
+  return ok(c, { configured: app.configured, sandbox });
+});
+app.get('/integrations/mercado-libre/:companyId/connect', requirePermission('companies'), async (c) => {
+  try {
+    const url = await mercadoLibreOauth.startMercadoLibreConnect(c.req.param('companyId'), c.get('user'));
+    return c.redirect(url);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/companies/:id/mercado-libre/disconnect', requirePermission('companies'), async (c) => {
+  try { return ok(c, await mercadoLibreOauth.disconnectMercadoLibre(c.req.param('id'))); }
+  catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/companies/:id/test-sunat', requirePermission('companies'), async (c) => {
   try { const { environment } = await c.req.json(); return ok(c, await core.testSunatConnection(Number(c.req.param('id')), environment)); }
   catch (e) { return fail(c, e); }

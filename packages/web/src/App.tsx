@@ -54,7 +54,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/bandeja': {
     title: 'Bandeja',
-    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley y manuales.',
+    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley, Mercado Libre y manuales.',
   },
   '/pedidos': {
     title: 'Bandeja Falabella',
@@ -83,6 +83,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/companies': {
     title: 'Empresas',
     subtitle: 'Configura empresas, credenciales y certificados de emisión.',
+  },
+  '/companies/nueva': {
+    title: 'Nueva empresa',
+    subtitle: 'Datos, canales y certificado de emisión.',
   },
   '/credit-notes': {
     title: 'Notas de crédito',
@@ -232,7 +236,9 @@ function AppLayout() {
     };
   }, [activeCompanyId, setActiveCompanyId]);
 
-  const currentRoute = routeMeta[normalizedPath] || routeMeta['/'];
+  const currentRoute = /^\/companies\/\d+$/.test(normalizedPath)
+    ? { title: 'Editar empresa', subtitle: 'Datos, canales y certificado de emisión.' }
+    : (routeMeta[normalizedPath] || routeMeta['/']);
   const permissionState = { user, loading, can, isMobile };
   const scannerMode = normalizedPath === '/scanner';
   const systemConfigRoute = (
@@ -287,6 +293,8 @@ function AppLayout() {
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
+              <Route path="/companies/nueva" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
+              <Route path="/companies/:companyId" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
               <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes_manage" {...permissionState}><CreditNotesList /></RequirePermission>} />

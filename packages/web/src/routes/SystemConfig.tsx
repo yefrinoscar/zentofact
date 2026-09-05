@@ -93,6 +93,7 @@ const FLAG_ORDER = [
   'marketplace_publication_mutation',
   'falabella_sync',
   'ripley_sync',
+  'mercado_libre_sync',
 ];
 
 export default function SystemConfig() {
@@ -105,6 +106,8 @@ export default function SystemConfig() {
   const [confirmText, setConfirmText] = useState('');
   const [ripleyReport, setRipleyReport] = useState<RipleyCatalogReport | null>(null);
   const [ripleySyncing, setRipleySyncing] = useState(false);
+  const [mercadoLibreReport, setMercadoLibreReport] = useState<RipleyCatalogReport | null>(null);
+  const [mercadoLibreSyncing, setMercadoLibreSyncing] = useState(false);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
@@ -155,6 +158,24 @@ export default function SystemConfig() {
     await applyFlag(confirmTarget, true, { confirm: confirmText.trim().toUpperCase() });
     setConfirmTarget(null);
     setConfirmText('');
+  };
+
+  const syncMercadoLibreCatalog = async (dryRun: boolean) => {
+    setMercadoLibreSyncing(true);
+    setError('');
+    try {
+      const report = await api.syncMercadoLibreCatalog({ dryRun }) as RipleyCatalogReport & { itemsReceived?: number };
+      setMercadoLibreReport({
+        ...report,
+        activeOffers: report.activeOffers ?? report.itemsReceived ?? 0,
+        inactiveOffers: report.inactiveOffers ?? 0,
+      });
+      if (!dryRun) setConfig(await api.getSystemConfig());
+    } catch (syncError: unknown) {
+      setError(syncError instanceof Error ? syncError.message : 'No se pudo preparar el catálogo de Mercado Libre.');
+    } finally {
+      setMercadoLibreSyncing(false);
+    }
   };
 
   const syncRipleyCatalog = async (dryRun: boolean) => {
@@ -283,6 +304,14 @@ export default function SystemConfig() {
                       </Button>
                     </div>
                   )}
+                  {flag.key === 'mercado_libre_sync' && (
+                    <div className="mt-3 border-t border-border pt-3">
+                      <Button type="button" variant="outline" size="sm" onClick={() => void syncMercadoLibreCatalog(true)} disabled={mercadoLibreSyncing}>
+                        <RefreshCw className={mercadoLibreSyncing ? 'animate-spin' : ''} />
+                        Revisar catálogo Mercado Libre
+                      </Button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -317,6 +346,34 @@ export default function SystemConfig() {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setRipleyReport(null)}>Cerrar</Button>
             {ripleyReport?.dryRun && <Button type="button" onClick={() => void syncRipleyCatalog(false)} disabled={ripleySyncing}>{ripleySyncing && <RefreshCw className="animate-spin" />} Aplicar cambios</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={mercadoLibreReport != null} onOpenChange={(open) => { if (!open) setMercadoLibreReport(null); }}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{mercadoLibreReport?.dryRun ? 'Revisión del catálogo Mercado Libre' : 'Catálogo Mercado Libre preparado'}</DialogTitle>
+            <DialogDescription>
+              {mercadoLibreReport
+                ? `${mercadoLibreReport.activeOffers} publicaciones revisadas por SELLER_SKU.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {mercadoLibreReport && (
+            <div className="min-h-0 space-y-5 overflow-y-auto pr-2 text-sm">
+              <CatalogReportSection title={`Asociar a productos existentes (${mercadoLibreReport.associated.length})`} items={mercadoLibreReport.associated} />
+              <CatalogReportSection title={`Crear productos maestros (${mercadoLibreReport.created.length})`} items={mercadoLibreReport.created} />
+              <CatalogReportSection title={`Conservar asociaciones existentes (${mercadoLibreReport.kept.length})`} items={mercadoLibreReport.kept} />
+              <CatalogReportSection title={`Sin asociación (${mercadoLibreReport.unassociated.length})`} items={mercadoLibreReport.unassociated} />
+              {mercadoLibreReport.errors.length > 0 && (
+                <div><h3 className="font-medium text-destructive">Errores ({mercadoLibreReport.errors.length})</h3><ul className="mt-2 space-y-1 text-xs text-destructive">{mercadoLibreReport.errors.map((item) => <li key={`${item.companyName}:${item.message}`}>{item.companyName}: {item.message}</li>)}</ul></div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setMercadoLibreReport(null)}>Cerrar</Button>
+            {mercadoLibreReport?.dryRun && <Button type="button" onClick={() => void syncMercadoLibreCatalog(false)} disabled={mercadoLibreSyncing}>{mercadoLibreSyncing && <RefreshCw className="animate-spin" />} Aplicar cambios</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

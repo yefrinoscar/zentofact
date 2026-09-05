@@ -17,7 +17,7 @@ export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', '
 export const RETURN_STOCK_APPROVAL_FROM_AT = '2026-09-03T19:00:00.000Z';
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
-const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley']);
+const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
 
 export function isStockEligibleFulfillment(status) {
   return STOCK_ELIGIBLE_FULFILLMENT.has(String(status || '').trim().toLowerCase());

@@ -71,6 +71,7 @@ import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import falabellaIcon from '../assets/falabella.png';
+import { ChannelMark } from '../components/channel-mark';
 
 type Company = {
   id: number;
@@ -107,7 +108,7 @@ type AssociationCandidate = Listing & {
 };
 
 type AssociationAvailability = 'recommended' | 'all';
-type AssociationChannel = 'all' | 'falabella' | 'ripley';
+type AssociationChannel = 'all' | 'falabella' | 'ripley' | 'mercado_libre';
 type Product = {
   id: number;
   mainSku: string;
@@ -624,7 +625,7 @@ export default function Productos() {
         productId: associationProduct.id,
         search: associationSubmittedSearch,
         channelCode: associationChannel === 'all' ? undefined : associationChannel,
-        channelCodes: associationChannel === 'all' ? 'falabella,ripley' : undefined,
+        channelCodes: associationChannel === 'all' ? 'falabella,ripley,mercado_libre' : undefined,
         availability: associationAvailability,
         limit: ASSOCIATION_PAGE_SIZE,
         offset: associationPage * ASSOCIATION_PAGE_SIZE,
@@ -1317,7 +1318,7 @@ export default function Productos() {
                   autoFocus
                 />
               </div>
-              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem></SelectContent></Select>
+              <Select value={associationChannel} onValueChange={(value: AssociationChannel) => { setAssociationChannel(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por canal"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los canales</SelectItem><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem><SelectItem value="mercado_libre">Mercado Libre</SelectItem></SelectContent></Select>
               <Select value={associationAvailability} onValueChange={(value: AssociationAvailability) => { setAssociationAvailability(value); setAssociationListingIds([]); setAssociationPage(0); }}><SelectTrigger className="h-10" aria-label="Filtrar por disponibilidad"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recommended">Activos con stock</SelectItem><SelectItem value="all">Cualquier estado</SelectItem></SelectContent></Select>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto" aria-label="Productos disponibles para asociar">
@@ -2641,13 +2642,20 @@ function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) 
       Ripley
     </MarketplaceProductLink>;
   }
-  const classes = compact === 'mercadolibre'
-      ? 'bg-amber-50 text-amber-800'
-      : 'bg-slate-100 text-slate-700';
-  return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium', classes)}>{channelLabel(normalized)}</span>;
+  if (compact === 'mercadolibre') {
+    const href = listing ? marketplaceProductUrl(listing) : null;
+    const badgeClassName = 'inline-flex min-h-11 shrink-0 items-center gap-1 overflow-hidden rounded-md bg-amber-50 px-1.5 text-[11px] font-medium text-amber-800 sm:min-h-6';
+    const mark = <ChannelMark code="mercado_libre" size="xs" />;
+    if (!listing || !href) return <span className={badgeClassName} title="Mercado Libre">{mark} Mercado Libre</span>;
+
+    return <MarketplaceProductLink href={href} listing={listing} marketplace="Mercado Libre" className={badgeClassName}>
+      {mark} Mercado Libre
+    </MarketplaceProductLink>;
+  }
+  return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-700')}>{channelLabel(normalized)}</span>;
 }
 
-function MarketplaceProductLink({ href, listing, marketplace, className, children }: { href: string; listing: Listing; marketplace: 'Falabella' | 'Ripley'; className: string; children: ReactNode }) {
+function MarketplaceProductLink({ href, listing, marketplace, className, children }: { href: string; listing: Listing; marketplace: 'Falabella' | 'Ripley' | 'Mercado Libre'; className: string; children: ReactNode }) {
   return <a
       href={href}
       target="_blank"

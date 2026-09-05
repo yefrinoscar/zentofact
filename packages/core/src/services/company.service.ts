@@ -56,6 +56,8 @@ export type PublicCompany = {
   ripleyShopId: string | null;
   ripleySvcUsername: string | null;
   ripleySvcBaseUrl: string | null;
+  mercadoLibreUserId: string | null;
+  mercadoLibreSiteId: string | null;
   logoPath: string | null;
   activo: boolean | null;
   createdAt: number | null;
@@ -66,7 +68,16 @@ export type PublicCompany = {
   hasFalabellaCredentials: boolean;
   hasRipleyCredentials: boolean;
   hasRipleySvcCredentials: boolean;
+  hasMercadoLibreCredentials: boolean;
 };
+
+export interface MercadoLibreGrantInput {
+  userId: string;
+  siteId?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
 
 export interface TestSunatConnectionResult {
   success: boolean;
@@ -122,6 +133,8 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     ripleyShopId: row.ripleyShopId ?? null,
     ripleySvcUsername: row.ripleySvcUsername ?? null,
     ripleySvcBaseUrl: row.ripleySvcBaseUrl ?? null,
+    mercadoLibreUserId: row.mercadoLibreUserId ?? null,
+    mercadoLibreSiteId: row.mercadoLibreSiteId ?? null,
     logoPath: row.logoPath ?? null,
     activo: row.activo ?? null,
     createdAt: row.createdAt ?? null,
@@ -132,6 +145,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
     hasRipleyCredentials: hasRipleyApiKey,
     hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword && hasText(row.ripleySvcBaseUrl),
+    hasMercadoLibreCredentials: hasText(row.mercadoLibreRefreshToken),
   };
 }
 
@@ -149,6 +163,14 @@ export async function getCompany(id: number) {
 export async function listPublicCompanies(): Promise<PublicCompany[]> {
   const rows = await listCompanies();
   return rows.map(toPublicCompany);
+}
+
+/** Una cuenta de Mercado Libre no puede estar conectada a dos empresas. */
+export async function getCompanyByMercadoLibreUserId(userId: string): Promise<CompanyRecord | undefined> {
+  const id = String(userId || '').trim();
+  if (!id) return undefined;
+  const rows = await db.select().from(companies).where(eq(companies.mercadoLibreUserId, id)).limit(1);
+  return rows[0];
 }
 
 export async function getPublicCompany(id: number): Promise<PublicCompany | undefined> {
@@ -249,6 +271,50 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
 export async function deleteCompany(id: number) {
   const now = Math.floor(Date.now() / 1000);
   return db.update(companies).set({ activo: false, updatedAt: now }).where(eq(companies.id, id));
+}
+
+export async function setMercadoLibreGrant(id: number, grant: MercadoLibreGrantInput): Promise<PublicCompany> {
+  const userId = String(grant.userId || '').trim();
+  const accessToken = String(grant.accessToken || '').trim();
+  const refreshToken = String(grant.refreshToken || '').trim();
+  const expiresAt = Number(grant.expiresAt);
+  if (!userId || !accessToken || !refreshToken || !Number.isFinite(expiresAt)) {
+    throw new Error('Falta el grant de Mercado Libre.');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const updated = await db.update(companies).set({
+      mercadoLibreUserId: userId,
+      mercadoLibreSiteId: String(grant.siteId || 'MPE').trim() || 'MPE',
+      mercadoLibreAccessToken: accessToken,
+      mercadoLibreRefreshToken: refreshToken,
+      mercadoLibreTokenExpiresAt: Math.trunc(expiresAt),
+      updatedAt: now,
+    }).where(eq(companies.id, id)).returning();
+    const row = updated[0];
+    if (!row) throw new Error('Empresa no encontrada.');
+    return toPublicCompany(row);
+  } catch (error: any) {
+    if (error?.code === '23505') {
+      throw new Error('Esa cuenta de Mercado Libre ya está conectada a otra empresa.');
+    }
+    throw error;
+  }
+}
+
+export async function clearMercadoLibreGrant(id: number): Promise<PublicCompany> {
+  const now = Math.floor(Date.now() / 1000);
+  const updated = await db.update(companies).set({
+    mercadoLibreUserId: null,
+    mercadoLibreSiteId: null,
+    mercadoLibreAccessToken: null,
+    mercadoLibreRefreshToken: null,
+    mercadoLibreTokenExpiresAt: null,
+    updatedAt: now,
+  }).where(eq(companies.id, id)).returning();
+  const row = updated[0];
+  if (!row) throw new Error('Empresa no encontrada.');
+  return toPublicCompany(row);
 }
 
 export async function testSunatConnection(companyId: number, environment: SunatEnvironment = 'beta'): Promise<TestSunatConnectionResult> {

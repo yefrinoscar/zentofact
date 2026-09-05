@@ -220,3 +220,38 @@ test('compone Falabella y omite Ripley sin etiqueta', async () => {
   assert.equal(result.skipped[0].id, 22);
   assert.match(result.skipped[0].reason, /etiqueta/);
 });
+
+test('imprime la etiqueta ME2 de Mercado Libre y omite si falta el envío', async () => {
+  const rows = [
+    printRow({
+      id: 31,
+      channel_code: 'mercado_libre',
+      channel_name: 'Mercado Libre',
+      external_order_id: '10031',
+      metadata: { shippingId: '900000031' },
+      company_id: 1,
+    }),
+    printRow({
+      id: 30,
+      channel_code: 'mercado_libre',
+      channel_name: 'Mercado Libre',
+      external_order_id: '10030',
+      metadata: {},
+      company_id: 1,
+    }),
+  ];
+  const result = await printLogisticsPack(
+    { orderIds: [31, 30], includePacking: false },
+    {
+      db: new PrintDb(rows),
+      getMercadoLibreLabel: async ({ shippingId }) => {
+        assert.equal(shippingId, '900000031');
+        return stubLabelPdf('ML');
+      },
+    },
+  );
+  assert.equal(result.labelCount, 1);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].id, 30);
+  assert.match(result.skipped[0].reason, /envío ME2/);
+});

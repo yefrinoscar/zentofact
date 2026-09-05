@@ -7,8 +7,7 @@ import { Check, CheckCircle2, Copy, ImageIcon, Loader2, PackageCheck, Printer, R
 import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
-import falabellaLogo from '../../assets/falabella.png';
-import ripleyLogo from '../../assets/logo-blanco.svg';
+import { ChannelMark } from '../../components/channel-mark';
 import {
   Dialog,
   DialogContent,
@@ -332,27 +331,13 @@ export function ActionButton({
       </Button>
     );
   }
+  if (step.kind === 'wait') {
+    return <span className={cn('text-xs text-muted-foreground', width)}>{step.label}</span>;
+  }
   return null;
 }
 
-export function ChannelMark({ code, className }: { code?: string | null; className?: string }) {
-  const value = String(code || '').trim().toLowerCase();
-  if (value === 'falabella') {
-    return <img src={falabellaLogo} alt="Falabella" title="Falabella" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
-  }
-  if (value === 'ripley') {
-    return (
-      <span className={cn('grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', className)} title="Ripley" aria-label="Ripley">
-        <img src={ripleyLogo} alt="" className="h-4 w-auto" />
-      </span>
-    );
-  }
-  return (
-    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">
-      M
-    </span>
-  );
-}
+export { ChannelMark };
 
 export function EmptyState({ view, children }: { view: BandejaView; children?: ReactNode }) {
   if (view.loading) {
@@ -607,10 +592,11 @@ function StageFilterQueue({
                 type="button"
                 onClick={() => view.setChannelCode(channel.value)}
                 className={cn(
-                  'rounded-md px-1.5 py-0.5',
+                  'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5',
                   active ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
+                {channel.value !== 'all' && channel.value !== 'manual' ? <ChannelMark code={channel.value} size="xs" /> : null}
                 {channel.label}
               </button>
             );
