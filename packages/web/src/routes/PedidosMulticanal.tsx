@@ -1214,7 +1214,7 @@ export default function PedidosMulticanal() {
             {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
             {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
           </Button>
-          <Button onClick={() => navigate('/orders/nueva')} className="h-11 min-w-0 cursor-pointer sm:h-9">
+          <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-11 min-w-0 cursor-pointer sm:h-9">
             <Plus /> Registrar venta
           </Button>
         </div>
@@ -1337,7 +1337,7 @@ export default function PedidosMulticanal() {
             <Store className="size-8 text-muted-foreground/50" />
             <p className="text-sm font-medium">{managedOrdersEmptyTitle(submittedSearch)}</p>
             <p className="text-sm text-muted-foreground">{managedOrdersEmptyHint(submittedSearch)}</p>
-            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva')}><Plus /> Registrar venta</Button>
+            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva?from=orders')}><Plus /> Registrar venta</Button>
           </div>
         )}
         footer={(
