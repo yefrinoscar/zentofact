@@ -137,6 +137,7 @@ function buildShipment({
     order_id: Number(orderId) || orderId,
     orders: [{ id: Number(orderId) || orderId }],
     last_updated: updatedAt,
+    date_ready_to_ship: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     destination: {
       receiver_address: {
         address_line: 'Av. Demo 101, Lima',
@@ -475,11 +476,15 @@ export function createMercadoLibreSandboxApp() {
     const shipmentId = text(body.shipmentId);
     const orderId = text(body.orderId);
     if (!shipmentId && !orderId) return c.json({ error: 'Falta orderId o shipmentId.' }, 400);
-    const ingested = await notifySandboxResource(
-      shipmentId ? `/shipments/${shipmentId}` : `/orders/${orderId}`,
-      shipmentId ? 'shipments' : 'orders_v2',
-    );
-    return c.json(ingested);
+    try {
+      const ingested = await notifySandboxResource(
+        shipmentId ? `/shipments/${shipmentId}` : `/orders/${orderId}`,
+        shipmentId ? 'shipments' : 'orders_v2',
+      );
+      return c.json(ingested);
+    } catch (error) {
+      return c.json({ error: error.message || String(error) }, 400);
+    }
   });
   app.post('/dev/ready-to-ship', async (c) => {
     let body = {};

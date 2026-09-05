@@ -109,8 +109,30 @@ export function mapMercadoLibreCustomer(raw, billing) {
     name: billingName || buyerName,
     documentNumber: text(billing?.documentNumber || buyer.doc_number),
     email: text(buyer.email),
-    phone: text(buyer.phone?.number || buyer.phone),
+    phone: buyerPhone(buyer),
   };
+}
+
+function buyerPhone(buyer) {
+  const phone = buyer.phone;
+  if (phone && typeof phone === 'object' && !Array.isArray(phone)) {
+    return text(phone.number || phone.area_code);
+  }
+  return text(phone);
+}
+
+export function mapMercadoLibrePromisedShippingAt(shipment, orderedAt, now = new Date()) {
+  const raw = objectRecord(shipment?.raw) || objectRecord(shipment) || {};
+  const lead = objectRecord(raw.lead_time) || {};
+  const schedule = objectRecord(lead.estimated_schedule) || {};
+  const option = objectRecord(raw.shipping_option) || {};
+  const estimated = objectRecord(option.estimated_delivery_final || option.estimated_delivery) || {};
+  const fromShipment = isoDate(raw.date_ready_to_ship)
+    || isoDate(schedule.limit)
+    || isoDate(estimated.date);
+  if (fromShipment) return fromShipment;
+  const base = isoDate(orderedAt) || now.toISOString();
+  return new Date(new Date(base).getTime() + 24 * 60 * 60 * 1000).toISOString();
 }
 
 export function mapMercadoLibreShipping(shipment) {
@@ -214,6 +236,10 @@ export async function ingestMercadoLibreOrder(input, db, dependencies = {}) {
     customer: mapMercadoLibreCustomer(raw, billing),
     shipping: mapMercadoLibreShipping(shipment),
     orderedAt: normalized?.createdAt || isoDate(raw.date_created),
+    promisedShippingAt: mapMercadoLibrePromisedShippingAt(
+      shipment,
+      normalized?.createdAt || raw.date_created,
+    ),
     providerUpdatedAt: normalized?.updatedAt || isoDate(raw.last_updated || raw.date_last_updated),
     metadata: {
       packId: text(normalized?.packId || raw.pack_id),

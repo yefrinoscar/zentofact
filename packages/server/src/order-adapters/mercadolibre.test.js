@@ -4,6 +4,7 @@ import {
   mapMercadoLibreCanonicalStatus,
   mapMercadoLibreCustomer,
   mapMercadoLibreOrderItems,
+  mapMercadoLibrePromisedShippingAt,
   mercadoLibrePaymentStatus,
   mercadoLibreRequestedDocumentType,
 } from './mercadolibre.js';
@@ -64,4 +65,19 @@ test('arma el cliente y el tipo de comprobante desde billing-info de Perú', () 
   assert.equal(mercadoLibreRequestedDocumentType(billing), 'boleta');
   assert.equal(mercadoLibreRequestedDocumentType({ documentType: 'RUC', customerType: 'BU' }), 'factura');
   assert.equal(mercadoLibrePaymentStatus('paid'), 'paid');
+  const withPhoneObject = mapMercadoLibreCustomer({
+    buyer: { first_name: 'Ana', phone: { number: '999111222' } },
+  }, null);
+  assert.equal(withPhoneObject.phone, '999111222');
+});
+
+test('el plazo de la bandeja sale del envío ME2 o del día siguiente', () => {
+  assert.equal(
+    mapMercadoLibrePromisedShippingAt({
+      raw: { date_ready_to_ship: '2026-09-06T16:00:00.000Z' },
+    }),
+    '2026-09-06T16:00:00.000Z',
+  );
+  const fallback = mapMercadoLibrePromisedShippingAt(null, '2026-09-05T10:00:00.000Z');
+  assert.equal(fallback, '2026-09-06T10:00:00.000Z');
 });
