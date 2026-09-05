@@ -256,8 +256,7 @@ function DestinationChoice({
   sku: string;
   onSelect: () => void;
 }) {
-  const merma = destination === 'merma';
-  const label = merma ? 'Merma' : 'A stock';
+  const label = destination === 'merma' ? 'Merma' : 'A stock';
   const name = sku ? `${label} ${sku} unidad ${unitLabel}` : `${label} unidad ${unitLabel}`;
   return (
     <Button
@@ -268,12 +267,6 @@ function DestinationChoice({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={name}
-      className={cn(
-        merma && selected && 'border-rose-600 bg-rose-600 text-white hover:bg-rose-600/90',
-        merma && !selected && 'border-rose-200 text-rose-800 hover:bg-rose-50 hover:text-rose-900',
-        !merma && selected && 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600/90',
-        !merma && !selected && 'border-emerald-200 text-emerald-800 hover:bg-emerald-50 hover:text-emerald-900',
-      )}
     >
       {label}
     </Button>
@@ -706,7 +699,7 @@ export default function Cancelados() {
 
       <Dialog open={Boolean(approveOrder)} onOpenChange={(open) => { if (!open && !approveMutation.isPending && !imagePreview) { setApproveOrder(null); setApproveDecisions([]); } }}>
         <DialogContent
-          className="sm:max-w-2xl"
+          className="sm:max-w-lg"
           onPointerDownOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onFocusOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
           onInteractOutside={(event) => keepWhenStackedDialog(event, Boolean(imagePreview))}
@@ -724,7 +717,6 @@ export default function Cancelados() {
                 type="button"
                 size="xs"
                 variant="outline"
-                className="border-emerald-200 text-emerald-800 hover:bg-emerald-50"
                 disabled={approveMutation.isPending}
                 onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, line.quantity)))}
               >
@@ -734,7 +726,6 @@ export default function Cancelados() {
                 type="button"
                 size="xs"
                 variant="outline"
-                className="border-rose-200 text-rose-800 hover:bg-rose-50"
                 disabled={approveMutation.isPending}
                 onClick={() => setApproveDecisions((current) => current.map((line) => setReturnLineStock(line, 0)))}
               >
@@ -742,73 +733,51 @@ export default function Cancelados() {
               </Button>
             </div>
           ) : null}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground">
-                  <th className="w-12 pb-2 font-medium" aria-hidden="true" />
-                  <th className="pb-2 pl-2 font-medium">Unidad</th>
-                  <th className="pb-2 font-medium">Destino</th>
-                </tr>
-              </thead>
-              <tbody>
-                {approveDecisions.flatMap((line) => {
-                  const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
-                    name: null,
-                    sku: null,
-                    quantity: line.quantity,
-                  };
-                  const units = returnUnits(line);
-                  return [
-                    <tr key={`${line.orderItemId}-product`} className="border-t border-border">
-                      <td colSpan={3} className="pt-3 pb-1">
-                        <div className="flex items-start gap-2.5">
-                          <ProductThumb item={item} onOpen={setImagePreview} />
-                          <div className="min-w-0">
-                            <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
-                            {item.sku ? (
-                              <p className="font-mono text-xs text-muted-foreground">{item.sku}</p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </td>
-                    </tr>,
-                    ...units.map((destination, unitIndex) => (
-                      <tr key={`${line.orderItemId}-${unitIndex}`}>
-                        <td className="w-12 py-1.5" aria-hidden="true" />
-                        <td className="py-1.5 pl-2 font-mono text-xs text-muted-foreground">
-                          {returnUnitLabel(unitIndex, line.quantity)}
-                        </td>
-                        <td className="py-1.5">
-                          <div className="flex flex-wrap gap-1.5">
-                            <DestinationChoice
-                              destination="stock"
-                              selected={destination === 'stock'}
-                              disabled={approveMutation.isPending}
-                              unitLabel={returnUnitLabel(unitIndex, line.quantity)}
-                              sku={item.sku || ''}
-                              onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                                row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
-                              )))}
-                            />
-                            <DestinationChoice
-                              destination="merma"
-                              selected={destination === 'merma'}
-                              disabled={approveMutation.isPending}
-                              unitLabel={returnUnitLabel(unitIndex, line.quantity)}
-                              sku={item.sku || ''}
-                              onSelect={() => setApproveDecisions((current) => current.map((row) => (
-                                row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
-                              )))}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    )),
-                  ];
-                })}
-              </tbody>
-            </table>
+          <div className="divide-y">
+            {approveDecisions.flatMap((line) => {
+              const item = approveItems.find((row) => Number(row.orderItemId) === line.orderItemId) || {
+                name: null,
+                sku: null,
+                quantity: line.quantity,
+              };
+              const units = returnUnits(line);
+              return units.map((destination, unitIndex) => (
+                <div key={`${line.orderItemId}-${unitIndex}`} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                  <ProductThumb item={item} onOpen={setImagePreview} />
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-sm leading-5">{item.name || item.sku || '—'}</p>
+                    {item.sku ? (
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {item.sku}
+                        {line.quantity > 1 ? ` · ${returnUnitLabel(unitIndex, line.quantity)}` : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <DestinationChoice
+                      destination="stock"
+                      selected={destination === 'stock'}
+                      disabled={approveMutation.isPending}
+                      unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                      sku={item.sku || ''}
+                      onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                        row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'stock') : row
+                      )))}
+                    />
+                    <DestinationChoice
+                      destination="merma"
+                      selected={destination === 'merma'}
+                      disabled={approveMutation.isPending}
+                      unitLabel={returnUnitLabel(unitIndex, line.quantity)}
+                      sku={item.sku || ''}
+                      onSelect={() => setApproveDecisions((current) => current.map((row) => (
+                        row.orderItemId === line.orderItemId ? setReturnUnit(row, unitIndex, 'merma') : row
+                      )))}
+                    />
+                  </div>
+                </div>
+              ));
+            })}
           </div>
           <p className="text-sm text-muted-foreground">{returnDecisionHelper(approveSummary)}</p>
           {approveError && (

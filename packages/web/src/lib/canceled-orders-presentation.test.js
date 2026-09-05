@@ -34,6 +34,7 @@ test('ofrece ver todos los productos y resume stock contra merma', () => {
   assert.equal(extraProductsLabel(1), null);
   assert.equal(extraProductsLabel(2), 'Ver 2 productos');
   assert.equal(extraProductsLabel(3), 'Ver 3 productos');
+  assert.equal(extraProductsLabel(4), 'Ver 4 productos');
   assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 2, mermaQuantity: 0 }]), null);
   assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 0, mermaQuantity: 2 }]), 'Merma');
   assert.equal(returnOutcomeLabel([{ approvalStatus: 'approved', stockQuantity: 1, mermaQuantity: 1 }]), 'Stock y merma');
@@ -57,8 +58,8 @@ test('ofrece ver todos los productos y resume stock contra merma', () => {
   assert.deepEqual(returnUnits(mermaSecond), ['stock', 'merma']);
   assert.equal(mermaSecond.stockQuantity, 1);
   assert.equal(mermaSecond.mermaQuantity, 1);
-  assert.equal(returnUnitLabel(0, 2), '1');
-  assert.equal(returnUnitLabel(1, 2), '2');
+  assert.equal(returnUnitLabel(0, 2), '1 de 2');
+  assert.equal(returnUnitLabel(1, 2), '2 de 2');
   assert.deepEqual(setReturnLineStock(twoUnits, 0).units, ['merma', 'merma']);
 });
 

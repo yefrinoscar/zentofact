@@ -142,7 +142,7 @@ export function setReturnUnit(
 
 export function returnUnitLabel(unitIndex: number, quantity: number) {
   if (Number(quantity) <= 1) return '1';
-  return String(unitIndex + 1);
+  return `${unitIndex + 1} de ${quantity}`;
 }
 
 function unitLabel(count: number) {
