@@ -27,6 +27,7 @@ import {
   Store,
   Tags,
   Truck,
+  UserRound,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
@@ -42,7 +43,9 @@ import {
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
-  sellerCellLabel,
+  sellerCellCaption,
+  sellerCellKindLabel,
+  sellerCellPresentation,
   MANAGED_ORDER_TABLE_COLUMNS,
 } from '../lib/managed-orders-presentation';
 import {
@@ -504,6 +507,40 @@ function originLabel(order: ManagedOrder) {
     return SALE_SOURCE_LABELS[order.metadata?.saleSource || ''] || 'Manual';
   }
   return order.channelName;
+}
+
+function SellerOrVendedorCell({
+  order,
+  companyById,
+}: {
+  order: ManagedOrder;
+  companyById: Map<number, string>;
+}) {
+  const cell = sellerCellPresentation(order, companyById);
+  if (!cell) return null;
+  const kindLabel = sellerCellKindLabel(cell.kind);
+  if (cell.kind === 'vendedor') {
+    return (
+      <div className="min-w-0" title={`${kindLabel} · ${cell.label}`}>
+        <p className="truncate">{cell.label}</p>
+        <Badge
+          variant="outline"
+          className="mt-0.5 max-w-full truncate rounded-md border-teal-200 bg-teal-50 px-1.5 py-0 font-medium text-teal-700 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-300"
+        >
+          <UserRound />
+          {kindLabel}
+        </Badge>
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0" title={`${kindLabel} · ${cell.label}`}>
+      <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground">
+        <Store />
+        {cell.label}
+      </Badge>
+    </div>
+  );
 }
 
 function deliveryBadge(order: ManagedOrder) {
@@ -1015,16 +1052,8 @@ export default function PedidosMulticanal() {
     {
       id: 'seller',
       header: 'Seller',
-      size: 132,
-      cell: ({ row }) => {
-        const seller = sellerCellLabel(row.original, companyById);
-        if (!seller) return null;
-        return (
-          <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={seller}>
-            {seller}
-          </Badge>
-        );
-      },
+      size: 148,
+      cell: ({ row }) => <SellerOrVendedorCell order={row.original} companyById={companyById} />,
     },
     {
       id: 'customer',
@@ -1375,7 +1404,7 @@ export default function PedidosMulticanal() {
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">
-                      {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
+                      {[detail.channelName, sellerCellCaption(detail, companyById)].filter(Boolean).join(' · ')}
                     </SheetDescription>
                   </div>
                 </div>

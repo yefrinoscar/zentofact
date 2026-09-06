@@ -113,6 +113,13 @@ export type ManagedOrderSellerInput = {
   createdByRole?: string | null;
 };
 
+export type SellerCellKind = 'seller' | 'vendedor';
+
+export type SellerCellPresentation = {
+  kind: SellerCellKind;
+  label: string;
+};
+
 function salespersonName(order: ManagedOrderSellerInput) {
   return String(order.createdByName || '').trim();
 }
@@ -122,12 +129,35 @@ export function isSalespersonOrder(order: ManagedOrderSellerInput) {
   return order.channelCode === 'manual' || order.createdByRole === 'vendedor';
 }
 
+export function sellerCellKindLabel(kind: SellerCellKind) {
+  return kind === 'vendedor' ? 'Vendedor' : 'Seller';
+}
+
+export function sellerCellPresentation(
+  order: ManagedOrderSellerInput,
+  companyById: Map<number, string>,
+): SellerCellPresentation | null {
+  const name = salespersonName(order);
+  if (isSalespersonOrder(order) && name) return { kind: 'vendedor', label: name };
+  if (order.companyId == null) return null;
+  return {
+    kind: 'seller',
+    label: companyById.get(order.companyId) || `Empresa ${order.companyId}`,
+  };
+}
+
 export function sellerCellLabel(
   order: ManagedOrderSellerInput,
   companyById: Map<number, string>,
 ) {
-  const name = salespersonName(order);
-  if (isSalespersonOrder(order) && name) return name;
-  if (order.companyId == null) return '';
-  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
+  return sellerCellPresentation(order, companyById)?.label || '';
+}
+
+export function sellerCellCaption(
+  order: ManagedOrderSellerInput,
+  companyById: Map<number, string>,
+) {
+  const cell = sellerCellPresentation(order, companyById);
+  if (!cell) return '';
+  return `${sellerCellKindLabel(cell.kind)} · ${cell.label}`;
 }

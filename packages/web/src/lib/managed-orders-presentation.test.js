@@ -12,7 +12,10 @@ import {
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
+  sellerCellCaption,
+  sellerCellKindLabel,
   sellerCellLabel,
+  sellerCellPresentation,
 } from './managed-orders-presentation.ts';
 
 test('la bandeja de pedidos no muestra columna de teléfono', () => {
@@ -100,6 +103,35 @@ test('la columna Seller muestra el nombre del vendedor en ventas manuales', () =
     companyId: 9,
     channelCode: 'ripley',
   }, companyById), 'Empresa 9');
+});
+
+test('la celda distingue seller de tienda y vendedor', () => {
+  const companyById = new Map([[7, 'Limbo']]);
+  assert.deepEqual(sellerCellPresentation({
+    companyId: 7,
+    channelCode: 'manual',
+    createdByName: 'Cesar Alfaro',
+    createdByRole: 'vendedor',
+  }, companyById), { kind: 'vendedor', label: 'Cesar Alfaro' });
+  assert.deepEqual(sellerCellPresentation({
+    companyId: 7,
+    channelCode: 'falabella',
+  }, companyById), { kind: 'seller', label: 'Limbo' });
+  assert.equal(sellerCellPresentation({
+    companyId: null,
+    channelCode: 'manual',
+  }, companyById), null);
+  assert.equal(sellerCellKindLabel('vendedor'), 'Vendedor');
+  assert.equal(sellerCellKindLabel('seller'), 'Seller');
+  assert.equal(sellerCellCaption({
+    companyId: 7,
+    channelCode: 'manual',
+    createdByName: 'Cesar Alfaro',
+  }, companyById), 'Vendedor · Cesar Alfaro');
+  assert.equal(sellerCellCaption({
+    companyId: 7,
+    channelCode: 'falabella',
+  }, companyById), 'Seller · Limbo');
 });
 
 test('regresión: etiquetas de reparto alineadas con shipping-carrier', async () => {
