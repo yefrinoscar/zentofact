@@ -277,6 +277,7 @@ const SEED_PRODUCTS = [
     name: 'Coche Bastón tipo Paraguas Liviano plegable Celeste',
     brand: 'Zento',
     referencePrice: 189.9,
+    wholesalePrice: 160,
     commissionAmount: 20,
     stock: 12,
     imageUrl: '/seed/ag301.svg',
@@ -290,6 +291,7 @@ const SEED_PRODUCTS = [
     name: 'Silla de comer evolutiva gris',
     brand: 'Zento',
     referencePrice: 249.0,
+    wholesalePrice: 210,
     stock: 8,
     imageUrl: '/seed/hog025.svg',
     listings: [
@@ -303,6 +305,7 @@ const SEED_PRODUCTS = [
     name: 'Almohada de lactancia multifunción',
     brand: 'Zento',
     referencePrice: 79.9,
+    wholesalePrice: 68,
     stock: 25,
     listings: [
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-BB110', title: 'Almohada lactancia · YAKURUNA' },
@@ -313,6 +316,7 @@ const SEED_PRODUCTS = [
     name: 'Set de platos antideslizantes 3 piezas',
     brand: 'Zento',
     referencePrice: 45.5,
+    wholesalePrice: 38,
     stock: 40,
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-BB220', title: 'Set platos · LIMBO' },
@@ -324,6 +328,7 @@ const SEED_PRODUCTS = [
     name: 'Organizador de pañales beige',
     brand: 'Zento',
     referencePrice: 59.0,
+    wholesalePrice: 49,
     stock: 15,
     listings: [
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG040', title: 'Organizador pañales · YAKURUNA' },
@@ -542,6 +547,7 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
       name: spec.name,
       brand: spec.brand,
       referencePrice: spec.referencePrice,
+      wholesalePrice: spec.wholesalePrice,
       commissionAmount: spec.commissionAmount,
       status: 'active',
       description: `Producto demo del seed preview (${SEED_MARKER}).`,
@@ -562,6 +568,13 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
     await pool.query(
       'UPDATE products SET commission_amount = $1, updated_at = now() WHERE id = $2',
       [spec.commissionAmount, productId],
+    );
+  }
+
+  if (spec.wholesalePrice != null) {
+    await pool.query(
+      'UPDATE products SET wholesale_price = $1, updated_at = now() WHERE id = $2',
+      [spec.wholesalePrice, productId],
     );
   }
 

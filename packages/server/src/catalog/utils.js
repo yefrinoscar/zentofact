@@ -51,6 +51,7 @@ export function mapProduct(row) {
     barcode: row.barcode,
     imageUrl: row.image_url,
     referencePrice: row.reference_price == null ? null : Number(row.reference_price),
+    wholesalePrice: row.wholesale_price == null ? null : Number(row.wholesale_price),
     commissionAmount: row.commission_amount == null ? null : Number(row.commission_amount),
     profitOwner: row.profit_owner || null,
     unit: row.unit,
