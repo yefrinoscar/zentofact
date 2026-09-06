@@ -258,15 +258,48 @@ export class RipleySvcClient {
   }
 
   private async login() {
+    const attempts: Record<string, unknown>[] = [];
     try {
-      await this.loginVendor();
+      await this.loginVendor(attempts);
     } catch (error) {
-      if (!isAuthFailure(error)) throw error;
-      await this.loginSellerSession();
+      if (!isAuthFailure(error)) throw withAuthDetails(error, this.authDetails(attempts));
+      try {
+        await this.loginSellerSession(attempts);
+      } catch (sessionError) {
+        throw withAuthDetails(combineAuthErrors(error, sessionError, this.authDetails(attempts)), this.authDetails(attempts));
+      }
     }
   }
 
-  private async loginVendor() {
+  private authDetails(attempts: Record<string, unknown>[]) {
+    return {
+      host: this.baseUrl.host,
+      username: this.username,
+      passwordLength: this.password.length,
+      country: this.country,
+      sent: {
+        officialApi: {
+          method: 'POST',
+          path: '/api/current/auth/login/vendor',
+          headers: {
+            Accept: 'application/json',
+            Authorization: 'Basic <usuario:contraseña en Base64>',
+            'X-Country': this.country,
+          },
+          body: null,
+        },
+        webFallback: {
+          method: 'POST',
+          path: '/api/auth/callback/custom-provider',
+          contentType: 'application/x-www-form-urlencoded',
+          fields: ['csrfToken', 'username', 'password', 'country', 'json', 'redirect'],
+        },
+      },
+      attempts,
+    };
+  }
+
+  private async loginVendor(attempts: Record<string, unknown>[] = []) {
     const url = this.url('/api/current/auth/login/vendor');
     const credentials = encodeBasicCredentials(this.username, this.password);
     const response = await this.fetchImpl(url, {
@@ -279,13 +312,21 @@ export class RipleySvcClient {
       },
     });
     const body = await readJson(response);
+    attempts.push({
+      step: 'vendor',
+      method: 'POST',
+      path: url.pathname,
+      host: url.host,
+      status: response.status,
+      ripley: ripleyMessage(body),
+    });
     if (!response.ok) throw providerError(response.status, body, url);
     const token = extractAccessToken(body);
     if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
     this.accessToken = token;
   }
 
-  private async loginSellerSession() {
+  private async loginSellerSession(attempts: Record<string, unknown>[] = []) {
     const csrfUrl = this.url('/api/auth/csrf');
     const csrfResponse = await this.fetchImpl(csrfUrl, {
       headers: { Accept: 'application/json' },
@@ -293,6 +334,14 @@ export class RipleySvcClient {
     this.rememberCookies(csrfResponse);
     const csrfBody = objectRecord(await readJson(csrfResponse));
     const csrfToken = nonEmptyText(csrfBody?.csrfToken);
+    attempts.push({
+      step: 'csrf',
+      method: 'GET',
+      path: csrfUrl.pathname,
+      host: csrfUrl.host,
+      status: csrfResponse.status,
+      ripley: ripleyMessage(csrfBody),
+    });
     if (!csrfResponse.ok || !csrfToken) {
       throw providerError(csrfResponse.status || 401, csrfBody || { message: 'Unauthorized' }, csrfUrl);
     }
@@ -309,6 +358,14 @@ export class RipleySvcClient {
     });
     this.rememberCookies(verifyResponse);
     const verifyBody = await readJson(verifyResponse);
+    attempts.push({
+      step: 'verify-user',
+      method: 'POST',
+      path: verifyUrl.pathname,
+      host: verifyUrl.host,
+      status: verifyResponse.status,
+      ripley: ripleyMessage(verifyBody),
+    });
     if (!verifyResponse.ok) throw providerError(verifyResponse.status, verifyBody, verifyUrl);
 
     const callbackUrl = this.url('/api/auth/callback/custom-provider');
@@ -330,12 +387,18 @@ export class RipleySvcClient {
       }).toString(),
     });
     this.rememberCookies(callbackResponse);
-    await readJson(callbackResponse);
+    const callbackBody = await readJson(callbackResponse);
+    attempts.push({
+      step: 'web-callback',
+      method: 'POST',
+      path: callbackUrl.pathname,
+      host: callbackUrl.host,
+      status: callbackResponse.status,
+      ripley: ripleyMessage(callbackBody),
+    });
     const redirected = callbackResponse.status >= 300 && callbackResponse.status < 400;
     if (!callbackResponse.ok && !redirected) {
-      throw new Error(
-        `Seller Center rechazó el usuario o la contraseña (${this.baseUrl.host}).`,
-      );
+      throw providerError(callbackResponse.status, callbackBody, callbackUrl);
     }
 
     const sessionUrl = this.url('/api/auth/session');
@@ -509,10 +572,44 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function providerError(status: number, body: unknown, url?: URL) {
-  const record = objectRecord(body);
-  const message = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
+  const message = ripleyMessage(body);
   const host = url?.host ? ` (${url.host})` : '';
-  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}${host}`);
+  const path = url?.pathname ? ` ${url.pathname}` : '';
+  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}${path}${host}`);
+}
+
+function ripleyMessage(body: unknown) {
+  const record = objectRecord(body);
+  const direct = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
+  if (direct && direct !== 'Unauthorized') return direct;
+  const location = nonEmptyText(record?.url);
+  if (location) {
+    try {
+      const error = new URL(location).searchParams.get('error');
+      if (error) return error;
+    } catch { /* ignore invalid next-auth urls */ }
+  }
+  return nonEmptyText(record?.provider) || direct;
+}
+
+function withAuthDetails(error: unknown, details: Record<string, unknown>) {
+  const next = error instanceof Error ? error : new Error(String(error));
+  (next as Error & { details?: unknown }).details = {
+    ...(((next as Error & { details?: Record<string, unknown> }).details) || {}),
+    ripleyAuth: details,
+  };
+  return next;
+}
+
+function combineAuthErrors(vendorError: unknown, sessionError: unknown, details: Record<string, unknown>) {
+  const vendor = vendorError instanceof Error ? vendorError.message : String(vendorError);
+  const session = sessionError instanceof Error ? sessionError.message : String(sessionError);
+  const username = String(details.username || '');
+  const passwordLength = Number(details.passwordLength || 0);
+  const country = String(details.country || '');
+  return new Error(
+    `${vendor} Luego ${session}. Enviamos POST /api/current/auth/login/vendor con Authorization Basic (usuario ${username}, clave de ${passwordLength} caracteres) y X-Country ${country}. La API oficial no recibe JSON de usuario/contraseña.`,
+  );
 }
 
 function extractAccessToken(value: unknown): string | null {

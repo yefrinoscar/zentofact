@@ -181,6 +181,50 @@ test('si el login vendor responde 401, entra con la sesión de Seller Center', a
   assert.equal(labelsCall.init.headers.Authorization, 'Bearer seller-token');
 });
 
+test('si vendor y la sesión fallan, el error trae lo que Ripley respondió y lo que se envió', async () => {
+  const client = new RipleySvcClient({
+    baseUrl: 'https://sellercenter.ripleylabs.com',
+    username: 'seller_limbo',
+    password: 'clave-invalida',
+    country: 'PE',
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/auth/login/vendor')) {
+        return response({ message: 'Invalid authentication credentials' }, 403);
+      }
+      if (path.endsWith('/api/auth/csrf')) return response({ csrfToken: 'csrf-1' });
+      if (path.endsWith('/api/auth/verify-user')) return response({ provider: 'custom-provider' });
+      if (path.endsWith('/api/auth/callback/custom-provider')) {
+        return response({
+          url: 'https://sellercenter.ripleylabs.com/api/auth/error?error=CredentialsSignin&provider=custom-provider',
+        }, 401);
+      }
+      return response({ message: 'should not list labels' }, 500);
+    },
+  });
+
+  await assert.rejects(
+    () => client.listLabels({ orderId: '7935614201' }),
+    (error) => {
+      assert.match(error.message, /HTTP 403: Invalid authentication credentials/);
+      assert.match(error.message, /HTTP 401: CredentialsSignin/);
+      assert.match(error.message, /Authorization Basic \(usuario seller_limbo, clave de 14 caracteres\)/);
+      assert.match(error.message, /X-Country PE/);
+      assert.equal(error.details.ripleyAuth.username, 'seller_limbo');
+      assert.equal(error.details.ripleyAuth.passwordLength, 14);
+      assert.equal(error.details.ripleyAuth.sent.officialApi.path, '/api/current/auth/login/vendor');
+      assert.equal(error.details.ripleyAuth.sent.officialApi.body, null);
+      assert.deepEqual(error.details.ripleyAuth.attempts.map((row) => [row.step, row.status, row.ripley]), [
+        ['vendor', 403, 'Invalid authentication credentials'],
+        ['csrf', 200, null],
+        ['verify-user', 200, 'custom-provider'],
+        ['web-callback', 401, 'CredentialsSignin'],
+      ]);
+      return true;
+    },
+  );
+});
+
 test('autentica SVC y lista la bandeja logística Fast Management', async () => {
   const calls = [];
   const client = new RipleySvcClient({
