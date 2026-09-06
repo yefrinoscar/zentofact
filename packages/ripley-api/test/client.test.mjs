@@ -136,90 +136,49 @@ test('sin URL SVC usa Seller Center y no Mirakl', async () => {
   assert.deepEqual([...new Set(hosts)], ['sellercenter.ripleylabs.com']);
 });
 
-test('si el login vendor responde 401, entra con la sesión de Seller Center', async () => {
-  const calls = [];
+test('si el login vendor falla, no usa el login web y reporta el Basic enviado', async () => {
+  const paths = [];
   const client = new RipleySvcClient({
     baseUrl: 'https://ripleyperu-prod.mirakl.net',
     username: 'seller_limbo',
-    password: 'clave',
+    password: 'clave-invalida',
     country: 'PE',
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url);
-      calls.push({ path: parsed.pathname, host: parsed.host, init });
+      paths.push(parsed.pathname);
       if (parsed.pathname.endsWith('/auth/login/vendor')) {
-        return response({ message: 'Unauthorized' }, 401);
-      }
-      if (parsed.pathname.endsWith('/api/auth/csrf')) {
-        return new Response(JSON.stringify({ csrfToken: 'csrf-1' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json', 'set-cookie': '__Host-next-auth.csrf-token=csrf-cookie' },
-        });
-      }
-      if (parsed.pathname.endsWith('/api/auth/verify-user')) {
-        return response({ provider: 'custom-provider' });
-      }
-      if (parsed.pathname.endsWith('/api/auth/callback/custom-provider')) {
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json', 'set-cookie': '__Secure-next-auth.session-token=session-jwt' },
-        });
-      }
-      if (parsed.pathname.endsWith('/api/auth/session')) {
-        return response({ accessToken: 'seller-token' });
-      }
-      return response({ labels: [{ _id: 'label-1' }] });
-    },
-  });
-
-  const result = await client.listLabels({ orderId: '7935614201' });
-  assert.deepEqual(result, { labels: [{ _id: 'label-1' }] });
-  assert.equal(calls[0].host, 'sellercenter.ripleylabs.com');
-  assert.equal(calls[0].path, '/api/current/auth/login/vendor');
-  assert.equal(calls[0].init.headers['X-Country'], 'PE');
-  assert.ok(calls.some((call) => call.path === '/api/auth/callback/custom-provider'));
-  const labelsCall = calls.find((call) => call.path === '/api/v7/label/labels');
-  assert.equal(labelsCall.init.headers.Authorization, 'Bearer seller-token');
-});
-
-test('si vendor y la sesión fallan, el error trae lo que Ripley respondió y lo que se envió', async () => {
-  const client = new RipleySvcClient({
-    baseUrl: 'https://sellercenter.ripleylabs.com',
-    username: 'seller_limbo',
-    password: 'clave-invalida',
-    country: 'PE',
-    fetchImpl: async (url) => {
-      const path = new URL(url).pathname;
-      if (path.endsWith('/auth/login/vendor')) {
+        assert.equal(parsed.host, 'sellercenter.ripleylabs.com');
+        assert.equal(init.headers['X-Country'], 'PE');
+        assert.equal(init.headers.Authorization, `Basic ${btoa('seller_limbo:clave-invalida')}`);
+        assert.equal(init.body, undefined);
         return response({ message: 'Invalid authentication credentials' }, 403);
       }
-      if (path.endsWith('/api/auth/csrf')) return response({ csrfToken: 'csrf-1' });
-      if (path.endsWith('/api/auth/verify-user')) return response({ provider: 'custom-provider' });
-      if (path.endsWith('/api/auth/callback/custom-provider')) {
-        return response({
-          url: 'https://sellercenter.ripleylabs.com/api/auth/error?error=CredentialsSignin&provider=custom-provider',
-        }, 401);
-      }
-      return response({ message: 'should not list labels' }, 500);
+      return response({ message: 'no debe llamarse el login web' }, 500);
     },
   });
 
   await assert.rejects(
     () => client.listLabels({ orderId: '7935614201' }),
     (error) => {
+      assert.deepEqual(paths, ['/api/current/auth/login/vendor']);
       assert.match(error.message, /HTTP 403: Invalid authentication credentials/);
-      assert.match(error.message, /HTTP 401: CredentialsSignin/);
+      assert.match(error.message, /POST \/api\/current\/auth\/login\/vendor \(sellercenter.ripleylabs.com\)/);
       assert.match(error.message, /Authorization Basic \(usuario seller_limbo, clave de 14 caracteres\)/);
       assert.match(error.message, /X-Country PE/);
+      assert.match(error.message, /no la API key de Mirakl ni el login web/);
       assert.equal(error.details.ripleyAuth.username, 'seller_limbo');
       assert.equal(error.details.ripleyAuth.passwordLength, 14);
       assert.equal(error.details.ripleyAuth.sent.officialApi.path, '/api/current/auth/login/vendor');
       assert.equal(error.details.ripleyAuth.sent.officialApi.body, null);
-      assert.deepEqual(error.details.ripleyAuth.attempts.map((row) => [row.step, row.status, row.ripley]), [
-        ['vendor', 403, 'Invalid authentication credentials'],
-        ['csrf', 200, null],
-        ['verify-user', 200, 'custom-provider'],
-        ['web-callback', 401, 'CredentialsSignin'],
-      ]);
+      assert.equal(error.details.ripleyAuth.sent.webFallback, undefined);
+      assert.deepEqual(error.details.ripleyAuth.attempts, [{
+        step: 'vendor',
+        method: 'POST',
+        path: '/api/current/auth/login/vendor',
+        host: 'sellercenter.ripleylabs.com',
+        status: 403,
+        ripley: 'Invalid authentication credentials',
+      }]);
       return true;
     },
   );

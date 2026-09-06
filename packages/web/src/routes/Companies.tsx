@@ -783,7 +783,7 @@ export default function Companies() {
                 </div>
                 <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Ej. seller_limbo — lo entrega el KAM de Ripley')}
                   {field(
                     'Contraseña SVC',
                     'ripleySvcPassword',
@@ -800,8 +800,9 @@ export default function Companies() {
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  SVC usa usuario y contraseña de Seller Center, no la API key de Mirakl.
-                  Si dejas la URL vacía o pegas ripleyperu-prod.mirakl.net, se usa Seller Center.
+                  Etiquetas usan POST /api/current/auth/login/vendor con Basic (usuario:contraseña).
+                  No es la API key de Mirakl ni el login del sitio (a veces Keycloak).
+                  Si la URL está vacía o es Mirakl, se usa sellercenter.ripleylabs.com.
                 </p>
               </div>
 

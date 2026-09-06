@@ -159,7 +159,6 @@ export class RipleySvcClient {
   private readonly country: string;
   private readonly fetchImpl: typeof fetch;
   private accessToken = '';
-  private sessionCookies: Record<string, string> = {};
 
   constructor(options: RipleySvcClientOptions) {
     this.baseUrl = new URL(resolveRipleySvcBaseUrl(options.baseUrl));
@@ -262,12 +261,7 @@ export class RipleySvcClient {
     try {
       await this.loginVendor(attempts);
     } catch (error) {
-      if (!isAuthFailure(error)) throw withAuthDetails(error, this.authDetails(attempts));
-      try {
-        await this.loginSellerSession(attempts);
-      } catch (sessionError) {
-        throw withAuthDetails(combineAuthErrors(error, sessionError, this.authDetails(attempts)), this.authDetails(attempts));
-      }
+      throw withAuthDetails(error, this.authDetails(attempts));
     }
   }
 
@@ -287,12 +281,6 @@ export class RipleySvcClient {
             'X-Country': this.country,
           },
           body: null,
-        },
-        webFallback: {
-          method: 'POST',
-          path: '/api/auth/callback/custom-provider',
-          contentType: 'application/x-www-form-urlencoded',
-          fields: ['csrfToken', 'username', 'password', 'country', 'json', 'redirect'],
         },
       },
       attempts,
@@ -320,104 +308,10 @@ export class RipleySvcClient {
       status: response.status,
       ripley: ripleyMessage(body),
     });
-    if (!response.ok) throw providerError(response.status, body, url);
+    if (!response.ok) throw vendorLoginError(response.status, body, url, this.username, this.password.length, this.country);
     const token = extractAccessToken(body);
     if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
     this.accessToken = token;
-  }
-
-  private async loginSellerSession(attempts: Record<string, unknown>[] = []) {
-    const csrfUrl = this.url('/api/auth/csrf');
-    const csrfResponse = await this.fetchImpl(csrfUrl, {
-      headers: { Accept: 'application/json' },
-    });
-    this.rememberCookies(csrfResponse);
-    const csrfBody = objectRecord(await readJson(csrfResponse));
-    const csrfToken = nonEmptyText(csrfBody?.csrfToken);
-    attempts.push({
-      step: 'csrf',
-      method: 'GET',
-      path: csrfUrl.pathname,
-      host: csrfUrl.host,
-      status: csrfResponse.status,
-      ripley: ripleyMessage(csrfBody),
-    });
-    if (!csrfResponse.ok || !csrfToken) {
-      throw providerError(csrfResponse.status || 401, csrfBody || { message: 'Unauthorized' }, csrfUrl);
-    }
-
-    const verifyUrl = this.url('/api/auth/verify-user');
-    const verifyResponse = await this.fetchImpl(verifyUrl, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Cookie: cookieHeader(this.sessionCookies),
-      },
-      body: JSON.stringify({ username: this.username, country: this.country }),
-    });
-    this.rememberCookies(verifyResponse);
-    const verifyBody = await readJson(verifyResponse);
-    attempts.push({
-      step: 'verify-user',
-      method: 'POST',
-      path: verifyUrl.pathname,
-      host: verifyUrl.host,
-      status: verifyResponse.status,
-      ripley: ripleyMessage(verifyBody),
-    });
-    if (!verifyResponse.ok) throw providerError(verifyResponse.status, verifyBody, verifyUrl);
-
-    const callbackUrl = this.url('/api/auth/callback/custom-provider');
-    const callbackResponse = await this.fetchImpl(callbackUrl, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Cookie: cookieHeader(this.sessionCookies),
-      },
-      body: new URLSearchParams({
-        csrfToken,
-        username: this.username,
-        password: this.password,
-        country: this.country,
-        json: 'true',
-        redirect: 'false',
-      }).toString(),
-    });
-    this.rememberCookies(callbackResponse);
-    const callbackBody = await readJson(callbackResponse);
-    attempts.push({
-      step: 'web-callback',
-      method: 'POST',
-      path: callbackUrl.pathname,
-      host: callbackUrl.host,
-      status: callbackResponse.status,
-      ripley: ripleyMessage(callbackBody),
-    });
-    const redirected = callbackResponse.status >= 300 && callbackResponse.status < 400;
-    if (!callbackResponse.ok && !redirected) {
-      throw providerError(callbackResponse.status, callbackBody, callbackUrl);
-    }
-
-    const sessionUrl = this.url('/api/auth/session');
-    const sessionResponse = await this.fetchImpl(sessionUrl, {
-      headers: {
-        Accept: 'application/json',
-        Cookie: cookieHeader(this.sessionCookies),
-      },
-    });
-    this.rememberCookies(sessionResponse);
-    const sessionBody = await readJson(sessionResponse);
-    const token = extractAccessToken(sessionBody)
-      || sessionCookieToken(this.sessionCookies);
-    if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
-    this.accessToken = token;
-  }
-
-  private rememberCookies(response: Response) {
-    this.sessionCookies = mergeCookies(this.sessionCookies, response);
   }
 
   private async authorizedJson(url: URL, init: RequestInit = {}): Promise<unknown> {
@@ -425,7 +319,6 @@ export class RipleySvcClient {
     let response = await this.fetchImpl(url, this.authorizedInit(init));
     if (response.status === 401) {
       this.accessToken = '';
-      this.sessionCookies = {};
       await this.login();
       response = await this.fetchImpl(url, this.authorizedInit(init));
     }
@@ -435,13 +328,11 @@ export class RipleySvcClient {
   }
 
   private authorizedInit(init: RequestInit): RequestInit {
-    const cookies = cookieHeader(this.sessionCookies);
     return {
       ...init,
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${this.accessToken}`,
-        ...(cookies ? { Cookie: cookies } : {}),
         ...(init.body != null ? { 'Content-Type': 'application/json' } : {}),
       },
     };
@@ -578,6 +469,22 @@ function providerError(status: number, body: unknown, url?: URL) {
   return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}${path}${host}`);
 }
 
+function vendorLoginError(
+  status: number,
+  body: unknown,
+  url: URL,
+  username: string,
+  passwordLength: number,
+  country: string,
+) {
+  const message = ripleyMessage(body);
+  return new Error(
+    `Ripley respondió HTTP ${status}${message ? `: ${message}` : ''} en POST /api/current/auth/login/vendor (${url.host}). `
+    + `Enviamos Authorization Basic (usuario ${username}, clave de ${passwordLength} caracteres) y X-Country ${country}, sin body. `
+    + 'Kong espera el usuario y contraseña de API de Seller Center, no la API key de Mirakl ni el login web (Keycloak / NextAuth).',
+  );
+}
+
 function ripleyMessage(body: unknown) {
   const record = objectRecord(body);
   const direct = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
@@ -601,17 +508,6 @@ function withAuthDetails(error: unknown, details: Record<string, unknown>) {
   return next;
 }
 
-function combineAuthErrors(vendorError: unknown, sessionError: unknown, details: Record<string, unknown>) {
-  const vendor = vendorError instanceof Error ? vendorError.message : String(vendorError);
-  const session = sessionError instanceof Error ? sessionError.message : String(sessionError);
-  const username = String(details.username || '');
-  const passwordLength = Number(details.passwordLength || 0);
-  const country = String(details.country || '');
-  return new Error(
-    `${vendor} Luego ${session}. Enviamos POST /api/current/auth/login/vendor con Authorization Basic (usuario ${username}, clave de ${passwordLength} caracteres) y X-Country ${country}. La API oficial no recibe JSON de usuario/contraseña.`,
-  );
-}
-
 function extractAccessToken(value: unknown): string | null {
   const record = objectRecord(value);
   if (!record) return null;
@@ -626,40 +522,3 @@ function extractAccessToken(value: unknown): string | null {
   );
 }
 
-function isAuthFailure(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /HTTP 401|HTTP 403|HTTP 30[0-9]|Unauthorized|Invalid authentication credentials|CredentialsSignin/i.test(message);
-}
-
-function setCookieHeaders(response: Response): string[] {
-  if (typeof response.headers.getSetCookie === 'function') {
-    return response.headers.getSetCookie();
-  }
-  const header = response.headers.get('set-cookie');
-  return header ? [header] : [];
-}
-
-function mergeCookies(current: Record<string, string>, response: Response) {
-  const next = { ...current };
-  for (const header of setCookieHeaders(response)) {
-    const pair = header.split(';', 1)[0] || '';
-    const eq = pair.indexOf('=');
-    if (eq <= 0) continue;
-    next[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
-  }
-  return next;
-}
-
-function cookieHeader(cookies: Record<string, string>) {
-  return Object.entries(cookies)
-    .filter(([, value]) => value)
-    .map(([name, value]) => `${name}=${value}`)
-    .join('; ');
-}
-
-function sessionCookieToken(cookies: Record<string, string>) {
-  for (const name of Object.keys(cookies)) {
-    if (/session-token$/i.test(name) && cookies[name]) return cookies[name];
-  }
-  return null;
-}
