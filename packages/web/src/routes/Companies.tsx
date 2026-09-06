@@ -796,10 +796,13 @@ export default function Companies() {
                     },
                   )}
                   <div className="md:col-span-2">
-                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'La URL se entrega de manera privada por país')}
+                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">SVC usa credenciales distintas de Mirakl para etiquetas y manifiestos. No uses el host de laboratorio en producción.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  SVC usa usuario y contraseña de Seller Center, no la API key de Mirakl.
+                  Si dejas la URL vacía o pegas ripleyperu-prod.mirakl.net, se usa Seller Center.
+                </p>
               </div>
 
               <div className="mt-4 border-t border-border pt-4">

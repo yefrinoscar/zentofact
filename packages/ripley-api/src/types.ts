@@ -71,10 +71,13 @@ export interface RipleyOrderPage {
   max: number;
 }
 
+export type RipleySvcCountry = 'PE' | 'CL';
+
 export interface RipleySvcClientOptions {
   baseUrl: string;
   username: string;
   password: string;
+  country?: RipleySvcCountry;
   fetchImpl?: typeof fetch;
 }
 
