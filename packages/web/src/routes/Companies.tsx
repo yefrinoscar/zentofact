@@ -51,7 +51,6 @@ type CompanyForm = {
   ripleyShopId: string;
   ripleySvcUsername: string;
   ripleySvcPassword: string;
-  ripleySvcBaseUrl: string;
 };
 
 type CompanyRow = {
@@ -107,7 +106,6 @@ const initialForm: CompanyForm = {
   ripleyShopId: '',
   ripleySvcUsername: '',
   ripleySvcPassword: '',
-  ripleySvcBaseUrl: '',
 };
 
 function hasFalabellaApi(c: CompanyRow) {
@@ -414,7 +412,6 @@ export default function Companies() {
         falabellaApiUserId: nextForm.falabellaApiUserId,
         ripleyShopId: nextForm.ripleyShopId,
         ripleySvcUsername: nextForm.ripleySvcUsername,
-        ripleySvcBaseUrl: nextForm.ripleySvcBaseUrl,
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
@@ -587,7 +584,6 @@ export default function Companies() {
       ripleyShopId: company.ripleyShopId || '',
       ripleySvcUsername: company.ripleySvcUsername || '',
       ripleySvcPassword: '',
-      ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
     setLoadingBilling(true);
     void Promise.all([
@@ -795,13 +791,9 @@ export default function Companies() {
                       onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
                     },
                   )}
-                  <div className="md:col-span-2">
-                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'Déjala vacía')}
-                  </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  El de Seller Center, tal cual (svc_limbo u otro).
-                  No es la API key ni el usuario de Mirakl. URL vacía.
+                  Usuario y clave de Seller Center. Nada más.
                 </p>
               </div>
 
