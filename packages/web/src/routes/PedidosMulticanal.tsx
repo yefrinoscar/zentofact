@@ -1017,7 +1017,7 @@ export default function PedidosMulticanal() {
     {
       id: 'seller',
       header: 'Seller',
-      size: 132,
+      size: 156,
       cell: ({ row }) => {
         const seller = sellerCellLabel(row.original, companyById);
         if (!seller) return null;
