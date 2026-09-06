@@ -4,8 +4,10 @@ import {
   isListableStockJob,
   shouldShowStockJobAttempts,
   stockItemReason,
+  stockJobChannelLabel,
   stockJobDetail,
   stockJobFilterBucket,
+  stockJobSourceLabel,
   stockOrderStatusLabel,
   stockPreviewFooter,
   visibleStockJobStatus,
@@ -137,4 +139,13 @@ test('el contador de intentos solo acompaña trabajos que aún requieren seguimi
   assert.equal(shouldShowStockJobAttempts({ status: 'failed', attempts: 3 }), true);
   assert.equal(shouldShowStockJobAttempts({ status: 'pending', attempts: 2 }), true);
   assert.equal(shouldShowStockJobAttempts({ status: 'pending', attempts: 1 }), false);
+});
+
+test('el canal del pedido se lee como Falabella, Ripley o Manual', () => {
+  assert.equal(stockJobChannelLabel('falabella'), 'Falabella');
+  assert.equal(stockJobChannelLabel('ripley'), 'Ripley');
+  assert.equal(stockJobChannelLabel('manual'), 'Manual');
+  assert.equal(stockJobChannelLabel(null), '');
+  assert.equal(stockJobSourceLabel('webhook'), 'Webhook');
+  assert.equal(stockJobSourceLabel('cron'), 'Cron');
 });

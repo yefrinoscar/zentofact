@@ -17,7 +17,8 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
         rows: [{
           order_item_id: '91', company_id: 4, company: 'LIMBO', channel_code: 'falabella',
           channel_account_id: '12', seller_sku: 'S126695', shop_sku: 'PMP20000722586-1',
-          title: 'Camiseta reductora', line_count: 2, quantity: '2',
+          title: 'Camiseta reductora', image_url: 'https://media.falabella.com/falabellaPE/PMP20000722586-1_01',
+          line_count: 2, quantity: '2',
           order_numbers: ['7934119901', '7934178001'],
         }],
       };
@@ -27,6 +28,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
   assert.equal(params[0], INVENTORY_LISTEN_FROM_AT);
   assert.doesNotMatch(sql, /where\s+oi\.stock_state='skipped_unmapped'/i);
   assert.match(sql, /product_id is null/i);
+  assert.match(sql, /image_url/i);
   assert.deepEqual(rows, [{
     orderItemId: 91,
     companyId: 4,
@@ -36,6 +38,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
     sellerSku: 'S126695',
     shopSku: 'PMP20000722586-1',
     title: 'Camiseta reductora',
+    imageUrl: 'https://media.falabella.com/falabellaPE/PMP20000722586-1_01',
     lineCount: 2,
     quantity: 2,
     orderNumbers: ['7934119901', '7934178001'],

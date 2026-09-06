@@ -305,6 +305,7 @@ export async function recentJobs(limit = 60, db) {
             order_row.ordered_at,
             order_row.order_status,
             order_row.fulfillment_status,
+            order_row.channel_code,
             coalesce(item_summary.items, '[]'::jsonb) as items,
             coalesce(item_summary.reserved_units, 0) as reserved_units,
             coalesce(item_summary.applied_units, 0) as applied_units,
@@ -401,16 +402,19 @@ export async function jobOrderPreview(id, db) {
     `select o.id, o.external_order_number, o.order_status, o.fulfillment_status,
             o.items_status, o.items_error, o.total,
             o.ordered_at, o.promised_shipping_at,
+            channel.code as channel_code,
             count(oi.id)::int as items_count,
             coalesce(sum(oi.stock_applied_quantity), 0)::int as stock_applied
      from orders o
+     left join order_channel_accounts account on account.id=o.channel_account_id
+     left join order_channels channel on channel.id=account.channel_id
      left join order_items oi on oi.order_id=o.id
      where o.id=coalesce($3::bigint, (
        select id from orders
        where company_id=$1 and external_order_id=$2
        order by id limit 1
      ))
-     group by o.id
+     group by o.id, channel.code
      limit 1`,
     [job.company_id, job.external_order_id, job.order_id],
   );
@@ -444,6 +448,7 @@ export async function jobOrderPreview(id, db) {
   const result = job.result || {};
   return {
     source: job.source,
+    channelCode: order?.channel_code || null,
     order: order ? {
       orderNumber: order.external_order_number || job.order_number,
       status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),

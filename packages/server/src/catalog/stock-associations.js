@@ -21,6 +21,7 @@ function mapUnmatched(row) {
     sellerSku: row.seller_sku,
     shopSku: row.shop_sku || null,
     title: row.title,
+    imageUrl: row.image_url || null,
     lineCount: Number(row.line_count || 0),
     quantity: Number(row.quantity || 0),
     orderNumbers: row.order_numbers || [],
@@ -38,6 +39,23 @@ export async function listUnmatchedStockItems(db) {
             coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), '')) as seller_sku,
             max(nullif(trim(oi.provider_sku), '')) as shop_sku,
             max(nullif(trim(oi.description), '')) as title,
+            max(coalesce(
+              nullif(listing.metadata->'images'->>0, ''),
+              nullif(listing.metadata->'images'->0->>'Url', ''),
+              nullif(listing.metadata->'images'->0->>'url', ''),
+              nullif(listing.metadata->>'imageUrl', ''),
+              nullif(oi.raw_data->>'Image', ''),
+              nullif(oi.raw_data->>'ImageUrl', ''),
+              nullif(oi.raw_data->>'ImageURL', ''),
+              nullif(oi.raw_data->>'ProductImage', ''),
+              nullif(oi.raw_data->>'MainImage', ''),
+              nullif(psku.image_url, ''),
+              case when channel.code='falabella'
+                and coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'
+              then 'https://media.falabella.com/falabellaPE/'
+                || coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) || '_01'
+              end
+            )) as image_url,
             count(*)::int as line_count,
             coalesce(sum(oi.quantity), 0) as quantity,
             array_agg(distinct o.external_order_number order by o.external_order_number) as order_numbers
@@ -46,6 +64,9 @@ export async function listUnmatchedStockItems(db) {
        join companies c on c.id=o.company_id
        join order_channel_accounts account on account.id=o.channel_account_id
        join order_channels channel on channel.id=account.channel_id
+       left join product_listings listing on listing.id=oi.listing_id
+       left join products psku
+         on psku.main_sku = coalesce(nullif(trim(oi.sku), ''), nullif(trim(oi.provider_sku), ''))
       where oi.product_id is null
         and o.order_status not in ('cancelled','failed')
         and o.fulfillment_status in ('pending','preparing','ready_to_ship','shipped','delivered')

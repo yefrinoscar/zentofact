@@ -232,3 +232,29 @@ export function stockItemReason(
   };
   return labels[item.stockState] || 'Estado de stock no reconocido.';
 }
+
+const CHANNEL_LABELS: Record<string, string> = {
+  falabella: 'Falabella',
+  ripley: 'Ripley',
+  manual: 'Manual',
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  webhook: 'Webhook',
+  cron: 'Cron',
+  catchup: 'Recuperación',
+  listen: 'Escucha',
+  association: 'Asociación',
+  manual: 'Venta manual',
+  system: 'Sistema',
+};
+
+export function stockJobChannelLabel(code?: string | null) {
+  const value = String(code || '').trim().toLowerCase();
+  return value ? (CHANNEL_LABELS[value] || value) : '';
+}
+
+export function stockJobSourceLabel(source?: string | null) {
+  const value = String(source || '').trim().toLowerCase();
+  return SOURCE_LABELS[value] || String(source || '').trim() || 'Sistema';
+}

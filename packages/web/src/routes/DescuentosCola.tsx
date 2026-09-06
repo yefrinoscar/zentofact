@@ -8,15 +8,21 @@ import {
 } from 'lucide-react';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
+import falabellaLogo from '../assets/falabella.png';
+import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { logisticsChannelClass } from '../lib/logistics-inbox';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
+import { sellerShortName } from '../lib/seller-name';
 import {
   isListableStockJob,
   shouldShowStockJobAttempts,
   stockItemReason,
+  stockJobChannelLabel,
   stockJobDetail,
   stockJobFilterBucket,
+  stockJobSourceLabel,
   stockOrderStatusLabel,
   stockPreviewFooter,
   visibleStockJobStatus,
@@ -47,6 +53,7 @@ type UnmatchedStockItem = {
   sellerSku: string;
   shopSku: string | null;
   title: string;
+  imageUrl?: string | null;
   lineCount: number;
   quantity: number;
   orderNumbers: string[];
@@ -55,6 +62,7 @@ type UnmatchedStockItem = {
 type Job = {
   id: number;
   company: string;
+  channel_code?: string | null;
   order_number: string;
   order_id: string | null;
   status: string;
@@ -84,6 +92,7 @@ type Job = {
 type OrderPreview = {
   error?: string;
   company?: string;
+  channelCode?: string | null;
   order?: {
     orderNumber?: string;
     status?: string;
@@ -153,29 +162,59 @@ function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | 
   );
 }
 
-function SourceBadge({ source }: { source: string }) {
-  const labels: Record<string, string> = {
-    webhook: 'Webhook',
-    cron: 'Cron',
-    catchup: 'Recuperación',
-    listen: 'Escucha',
-    association: 'Asociación',
-    manual: 'Venta manual',
-    system: 'Sistema',
-  };
-  const label = labels[source] || source || 'Sistema';
-  const fromWebhook = source === 'webhook';
+function ChannelBadge({ code }: { code?: string | null }) {
+  const label = stockJobChannelLabel(code);
+  if (!label) return null;
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') {
+    return <img src={falabellaLogo} alt="Falabella" title="Falabella" className="size-5 shrink-0 rounded-sm object-contain" />;
+  }
+  if (value === 'ripley') {
+    return (
+      <span className="grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950" title="Ripley" aria-label="Ripley">
+        <img src={ripleyLogo} alt="" className="h-4 w-auto" />
+      </span>
+    );
+  }
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
-        fromWebhook
-          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-          : 'border-slate-200 bg-slate-50 text-slate-600',
-      )}
-      title={fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo'}
-    >
+    <span className={cn(
+      'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+      logisticsChannelClass(code),
+    )}>
       {label}
+    </span>
+  );
+}
+
+function SellerCell({ company, channelCode }: { company?: string | null; channelCode?: string | null }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate font-medium text-foreground">{sellerShortName(company)}</p>
+      <div className="mt-1"><ChannelBadge code={channelCode} /></div>
+    </div>
+  );
+}
+
+function SourceBadge({ source, channelCode }: { source: string; channelCode?: string | null }) {
+  const sourceLabel = stockJobSourceLabel(source);
+  const channelLabel = stockJobChannelLabel(channelCode);
+  const fromWebhook = source === 'webhook';
+  const title = channelLabel
+    ? (fromWebhook ? `Pedido ${channelLabel} encolado al entrar` : `Pedido ${channelLabel} encolado por ${sourceLabel.toLowerCase()}`)
+    : (fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo');
+  return (
+    <span className="flex flex-col items-start gap-1" title={title}>
+      {channelLabel ? <ChannelBadge code={channelCode} /> : null}
+      <span
+        className={cn(
+          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+          fromWebhook
+            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+            : 'border-slate-200 bg-slate-50 text-slate-600',
+        )}
+      >
+        {sourceLabel}
+      </span>
     </span>
   );
 }
@@ -258,7 +297,10 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
         <div className="space-y-3">
           <div>
             <p className="font-mono text-sm font-semibold text-foreground">{order.orderNumber || '-'}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{preview?.company || 'Empresa'}</p>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              <p className="truncate text-xs text-muted-foreground">{sellerShortName(preview?.company) || 'Empresa'}</p>
+              <ChannelBadge code={preview?.channelCode} />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
             <span className="text-muted-foreground">Estado</span>
@@ -655,13 +697,19 @@ export default function DescuentosCola() {
           <div className="divide-y divide-border">
             {unmatched.map((item) => (
               <div key={`${item.companyId}-${item.channelCode}-${item.sellerSku}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <StockProductImage
+                  imageUrl={item.imageUrl}
+                  title={item.title || 'Producto sin nombre'}
+                  size="h-12 w-12"
+                />
                 <div className="min-w-[16rem] flex-1">
                   <p className="line-clamp-2 text-sm font-medium text-foreground">{item.title || 'Producto sin nombre'}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{item.company}</span>
-                    {' · '}Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span>
-                    {item.shopSku ? <> · Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></> : null}
-                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{sellerShortName(item.company)}</span>
+                    <ChannelBadge code={item.channelCode} />
+                    <span>Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></span>
+                    {item.shopSku ? <span>Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></span> : null}
+                  </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {item.quantity} u sin descontar · pedidos {item.orderNumbers.join(', ')}
                   </p>
@@ -776,11 +824,11 @@ export default function DescuentosCola() {
                   const shownAttempts = Math.min(job.attempts, config.maxAttempts || 3);
                   return (
                     <tr key={job.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
-                      <td className="px-5 py-2.5 text-foreground">{job.company}</td>
+                      <td className="px-5 py-2.5"><SellerCell company={job.company} channelCode={job.channel_code} /></td>
                       <td className="px-5 py-2.5"><SearchableOrderNumber job={job} /></td>
                       <td className="px-5 py-2.5"><JobProducts job={job} /></td>
                       <td className="px-5 py-2.5"><StatusBadge job={job} listenFromAt={config.listenFromAt} /></td>
-                      <td className="px-5 py-2.5"><SourceBadge source={job.source} /></td>
+                      <td className="px-5 py-2.5"><SourceBadge source={job.source} channelCode={job.channel_code} /></td>
                       <td className="px-5 py-2.5 text-xs">
                         <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>
                           {stockJobDetail(job, config.listenFromAt)}

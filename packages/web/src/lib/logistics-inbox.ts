@@ -105,14 +105,27 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
   return '—';
 }
 
-export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
-  const channel = String(order.channelCode || '');
+export const RIPLEY_LABEL_SOON_COPY = 'Muy pronto.';
+
+function logisticsPrintableStatus(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'cancelled' || status === 'failed' || status === 'returned') return false;
   if (status === 'shipped' || status === 'delivered') return false;
+  return true;
+}
+
+export function logisticsRipleyLabelSoon(order: LogisticsOrderLike) {
+  if (String(order.channelCode || '') !== 'ripley') return false;
+  if (!logisticsPrintableStatus(order)) return false;
+  return order.companyId != null;
+}
+
+export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
+  const channel = String(order.channelCode || '');
+  const status = String(order.fulfillmentStatus || '');
+  if (!logisticsPrintableStatus(order)) return false;
   if (channel === 'manual') return true;
   if (channel === 'falabella') return status === 'ready_to_ship' && order.companyId != null;
-  if (channel === 'ripley') return order.companyId != null && (status === 'ready_to_ship' || status === 'preparing' || status === 'pending');
   return false;
 }
 
@@ -213,6 +226,7 @@ export function logisticsUrgencyMeta(urgency: LogisticsUrgency) {
 
 export type LogisticsNextStep =
   | { kind: 'print'; label: 'Imprimir' | 'Reimprimir' }
+  | { kind: 'soon'; label: 'Imprimir' }
   | { kind: 'ready'; label: 'Marcar listo' }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
@@ -220,6 +234,7 @@ export type LogisticsNextStep =
 export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
+  if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
   if (canMarkFalabellaReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
@@ -257,7 +272,7 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
-    return 'Ripley genera la etiqueta desde Seller Center. Si aún no existe, la impresión avisará.';
+    return RIPLEY_LABEL_SOON_COPY;
   }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
   return 'Empaca los productos e imprime la etiqueta ZentoFact con la guía de armado.';
