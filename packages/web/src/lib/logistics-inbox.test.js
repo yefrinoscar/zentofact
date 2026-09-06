@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   canMarkFalabellaReady,
   canPrintLogisticsLabel,
+  logisticsRipleyLabelSoon,
+  RIPLEY_LABEL_SOON_COPY,
   groupLogisticsByUrgency,
   labelWasPrinted,
   logisticsBulkReadySummary,
@@ -42,11 +44,15 @@ test('la entrega propia usa Express, no nosotros', () => {
   assert.equal(logisticsDeliveryLabel({ channelCode: 'falabella', shipping: {} }), 'Marketplace');
 });
 
-test('manual imprime siempre; Falabella solo si está listo; enviados no imprimen', () => {
+test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausado; enviados no imprimen', () => {
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
+  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'shipped', companyId: 1 }), false);
+  assert.equal(RIPLEY_LABEL_SOON_COPY, 'Muy pronto.');
   assert.equal(canMarkFalabellaReady({
     channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 3, externalOrderId: 'F-1',
   }), true);
@@ -89,6 +95,10 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
     { kind: 'ready', label: 'Marcar listo' },
   );
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
+  assert.deepEqual(
+    logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
+    { kind: 'soon', label: 'Imprimir' },
+  );
   assert.equal(labelWasPrinted({ labelPrint: { printCount: 1 } }), true);
   assert.equal(labelWasPrinted({ labelPrint: null }), false);
 });

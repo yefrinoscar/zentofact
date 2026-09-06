@@ -32,6 +32,7 @@ import {
   pendingDeadlineHelper,
   productImageSrc,
   readyPrintHelper,
+  RIPLEY_LABEL_SOON_COPY,
   LOGISTICS_CHANNELS,
   LOGISTICS_URGENCIES,
   type LogisticsChannel,
@@ -39,6 +40,7 @@ import {
   type LogisticsUrgency,
 } from '../../lib/logistics-inbox';
 import type { InboxNotice } from '../../lib/inbox-notice';
+import { useOperatorSnackbar } from '../../components/OperatorSnackbar';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
@@ -304,6 +306,25 @@ export function ActionButton({
   const step = logisticsNextStep(order);
   const busy = view.busyOrderId === order.id && view.printing;
   const width = full ? 'w-full' : '';
+  const { showSnackbar } = useOperatorSnackbar();
+  if (step.kind === 'soon') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn('inline-flex', full && 'w-full')}
+            onClick={() => showSnackbar({ message: RIPLEY_LABEL_SOON_COPY })}
+          >
+            <Button size={size} variant="outline" className={width} disabled>
+              <Printer />
+              {step.label}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{RIPLEY_LABEL_SOON_COPY}</TooltipContent>
+      </Tooltip>
+    );
+  }
   if (step.kind === 'print') {
     const printed = labelWasPrinted(order);
     return (

@@ -10,12 +10,16 @@ import {
 import api from '../lib/api';
 import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
+import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import {
+  canPrintLogisticsLabel,
   logisticsBulkReadySummary,
   logisticsEmptyCopy,
   logisticsPrintSuccessCopy,
+  logisticsRipleyLabelSoon,
   logisticsSkippedNotice,
   openPdfFromBase64,
+  RIPLEY_LABEL_SOON_COPY,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -96,6 +100,7 @@ function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
 
 export default function BandejaLogistica() {
   const queryClient = useQueryClient();
+  const { showSnackbar } = useOperatorSnackbar();
   const [params] = useSearchParams();
   const variant = (params.get('variant') || 'B').toUpperCase();
   const filtro = params.get('filtro') === '2' || params.get('filtro') === '3' ? params.get('filtro')! : '1';
@@ -166,10 +171,15 @@ export default function BandejaLogistica() {
   });
 
   const printOrders = (targets: LogisticsOrder[]) => {
-    if (!targets.length || printMutation.isPending) return;
-    setBusyOrderId(targets.length === 1 ? targets[0].id : null);
+    if (printMutation.isPending) return;
+    const printable = targets.filter(canPrintLogisticsLabel);
+    if (!printable.length) {
+      if (targets.some(logisticsRipleyLabelSoon)) showSnackbar({ message: RIPLEY_LABEL_SOON_COPY });
+      return;
+    }
+    setBusyOrderId(printable.length === 1 ? printable[0].id : null);
     setNotice(null);
-    printMutation.mutate(targets.map((order) => order.id));
+    printMutation.mutate(printable.map((order) => order.id));
   };
 
   const readyMutation = useMutation({
@@ -238,6 +248,10 @@ export default function BandejaLogistica() {
   };
 
   const toggleLabel = (order: LogisticsOrder) => {
+    if (logisticsRipleyLabelSoon(order)) {
+      showSnackbar({ message: RIPLEY_LABEL_SOON_COPY });
+      return;
+    }
     setLabelSelection((current) => {
       const next = new Set(current || []);
       if (next.has(order.id)) next.delete(order.id);

@@ -651,29 +651,8 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   }
 
   const ripley = orders.filter((order) => order.channelCode === 'ripley');
-  if (ripley.length) {
-    const listLabels = dependencies.listRipleyLabels;
-    const downloadLabels = dependencies.downloadRipleyLabels;
-    if (!listLabels || !downloadLabels) throw new Error('No hay generador de etiquetas Ripley.');
-    for (const order of ripley) {
-      if (!order.companyId) {
-        skipped.push({ id: order.id, reason: 'El pedido Ripley no tiene seller.' });
-        continue;
-      }
-      try {
-        const downloaded = await downloadRipleyOrderLabel(order, listLabels, downloadLabels);
-        pdfParts.push(downloaded.buffer);
-        labelCount += downloaded.labelCount;
-      } catch (error) {
-        skipped.push({
-          id: order.id,
-          reason: error.message || 'No se pudo bajar la etiqueta Ripley.',
-          lookupIds: error.details?.lookupIds,
-          attempts: error.details?.attempts,
-          ripleyAuth: error.details?.ripleyAuth,
-        });
-      }
-    }
+  for (const order of ripley) {
+    skipped.push({ id: order.id, reason: 'Muy pronto.' });
   }
 
   const manual = orders.filter((order) => order.channelCode === 'manual');
