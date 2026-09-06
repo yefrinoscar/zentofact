@@ -30,6 +30,7 @@ import {
   Store,
   Tag,
   UserRound,
+  Wallet,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -117,6 +118,7 @@ type Product = {
   status: 'active' | 'inactive' | 'archived';
   imageUrl?: string | null;
   referencePrice?: number | null;
+  wholesalePrice?: number | null;
   commissionAmount?: number | null;
   profitOwner?: string | null;
   sellerPriceMin?: number | null;
@@ -251,6 +253,7 @@ const initialCreate = {
   brand: '',
   description: '',
   referencePrice: '',
+  wholesalePrice: '',
   commissionAmount: '',
   profitOwner: '',
   imageUrl: '',
@@ -317,6 +320,21 @@ function formatBasePrice(product: Product) {
     return `${formatMoney(product.sellerPriceMin)} – ${formatMoney(product.sellerPriceMax)}`;
   }
   return formatMoney(product.sellerPriceMin);
+}
+
+function CatalogPriceCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  return (
+    <span className="block min-w-0">
+      <span className={cn(compact ? 'mt-1 block truncate text-xs font-semibold' : 'block text-sm font-medium tabular-nums')}>
+        {formatBasePrice(product)}
+      </span>
+      {product.wholesalePrice != null ? (
+        <span className={cn('block tabular-nums text-muted-foreground', compact ? 'mt-0.5 truncate text-[11px]' : 'mt-0.5 text-[11px]')}>
+          Por mayor {formatMoney(product.wholesalePrice)}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function formatDate(value?: string | null) {
@@ -390,8 +408,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name'>>;
+type ProductEditableField = 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'wholesalePrice' | 'name';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'wholesalePrice' | 'name'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -795,6 +813,7 @@ export default function Productos() {
     const created = await runAction(() => api.createCatalogProduct({
       ...createForm,
       referencePrice: createForm.referencePrice || null,
+      wholesalePrice: createForm.wholesalePrice || null,
       commissionAmount: createForm.commissionAmount || null,
       profitOwner: createForm.profitOwner || null,
     }), (result) => `Producto ${result.mainSku} creado con stock inicial 0.`);
@@ -1087,6 +1106,23 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveWholesalePrice = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const trimmed = raw.trim();
+    const current = selectedProduct.wholesalePrice == null ? '' : String(selectedProduct.wholesalePrice);
+    if (trimmed === current) return;
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && (parsed == null || !Number.isFinite(parsed) || parsed < 0)) {
+      setFieldError('El precio por mayor debe ser un número válido.');
+      return;
+    }
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { wholesalePrice: parsed },
+      optimistic: { field: 'wholesalePrice', patch: { wholesalePrice: parsed } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   const saveName = useCallback((raw: string) => {
     if (!selectedId || !selectedProduct) return;
     const trimmed = raw.trim();
@@ -1227,6 +1263,7 @@ export default function Productos() {
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
+        onSaveWholesalePrice={saveWholesalePrice}
         onSaveName={saveName}
         onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
@@ -1237,7 +1274,7 @@ export default function Productos() {
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
-      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
+      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Precio por mayor" type="number" value={createForm.wholesalePrice} onChange={(value) => setCreateForm({ ...createForm, wholesalePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
 
       {modal === 'adjust' && selectedProduct && (
         <Modal
@@ -1515,7 +1552,7 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
       <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
         <span className="min-w-0">
           <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
-          <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
+          <CatalogPriceCell product={product} compact />
         </span>
         <span className="min-w-0">
           <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock maestro</span>
@@ -1586,7 +1623,7 @@ const CatalogTable = memo(function CatalogTable({
     {
       id: 'price',
       header: 'Precio',
-      cell: ({ row }) => <span className="text-sm font-medium">{formatBasePrice(row.original)}</span>,
+      cell: ({ row }) => <CatalogPriceCell product={row.original} />,
     },
     {
       id: 'stock',
@@ -1797,7 +1834,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName,
+  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
   onSaveDescription,
 }: {
   open: boolean;
@@ -1836,6 +1873,7 @@ function ProductDrawer({
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
+  onSaveWholesalePrice: (value: string) => void;
   onSaveName: (value: string) => void;
   onSaveDescription: (value: string) => void;
 }) {
@@ -1974,6 +2012,7 @@ function ProductDrawer({
               profitOwners={profitOwners}
               savingField={savingField}
               onSavePrice={onSavePrice}
+              onSaveWholesalePrice={onSaveWholesalePrice}
               onAdjust={onAdjust}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
@@ -2315,6 +2354,7 @@ function ProductProperties({
   profitOwners,
   savingField,
   onSavePrice,
+  onSaveWholesalePrice,
   onAdjust,
   onSaveCommission,
   onSaveProfitOwner,
@@ -2324,6 +2364,7 @@ function ProductProperties({
   profitOwners: string[];
   savingField: ProductEditableField | null;
   onSavePrice: (value: string) => void;
+  onSaveWholesalePrice: (value: string) => void;
   onAdjust: () => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
@@ -2369,6 +2410,18 @@ function ProductProperties({
             placeholder="Sin precio"
             saving={savingField === 'referencePrice'}
             onSave={onSavePrice}
+          />
+          <OverviewField
+            icon={<Wallet />}
+            label="Por mayor"
+            productId={product.id}
+            field="wholesalePrice"
+            value={product.wholesalePrice == null ? '' : String(product.wholesalePrice)}
+            display={product.wholesalePrice == null ? '' : formatMoney(product.wholesalePrice)}
+            type="number"
+            placeholder="Sin precio"
+            saving={savingField === 'wholesalePrice'}
+            onSave={onSaveWholesalePrice}
           />
           <OverviewField
             icon={<CircleDollarSign />}

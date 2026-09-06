@@ -68,6 +68,10 @@ _Avoid_: Bitácora, kardex
 Monto fijo configurado en el Producto para calcular la ganancia al venderlo.
 _Avoid_: Margen, fee, comisión del marketplace
 
+**Precio por mayor**:
+Precio del Producto para venta al por mayor. Es distinto del precio de catálogo.
+_Avoid_: wholesale, precio mayorista
+
 **Beneficiario**:
 Persona a la que se atribuye la ganancia del Producto al filtrar o exportar reportes.
 _Avoid_: Flag, tag, dueño, owner, seller

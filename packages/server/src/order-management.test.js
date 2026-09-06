@@ -5,6 +5,7 @@ import {
   fillDailySales,
   getSalesPulse,
   getSalespersonHome,
+  getOrder,
   ingestOrder,
   listCanceledOrders,
   listOrders,
@@ -504,6 +505,108 @@ test('la vista por defecto limita marketplaces a sellers activos y conectados', 
     },
   };
   await listOrders({ connectedOnly: true }, db);
+});
+
+test('lista pedidos con el nombre del vendedor que registró la venta', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /left join "user" creator on creator\.id = o\.created_by/i);
+      assert.match(sql, /created_by_name/i);
+      assert.match(sql, /created_by_role/i);
+      if (sql.includes('ilike')) assert.match(sql, /coalesce\(creator\.name, ''\) ilike/i);
+      return {
+        rows: [{
+          id: 88,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: 'VTA-88',
+          external_order_number: 'VTA-88',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'disabled',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 50,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 50,
+          customer: { name: 'Ana' },
+          shipping: { type: 'recojo' },
+          metadata: { origin: 'manual_ui' },
+          ordered_at: '2026-09-05T15:00:00.000Z',
+          promised_shipping_at: null,
+          provider_updated_at: null,
+          items_status: 'complete',
+          items_error: null,
+          first_seen_at: '2026-09-05T15:00:00.000Z',
+          last_seen_at: '2026-09-05T15:00:00.000Z',
+          created_at: '2026-09-05T15:00:00.000Z',
+          updated_at: '2026-09-05T15:00:00.000Z',
+          created_by: 'seller-9',
+          created_by_name: 'Vendedor Preview',
+          created_by_role: 'vendedor',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ search: 'Vendedor', limit: 20 }, db);
+  assert.equal(result.orders[0].createdBy, 'seller-9');
+  assert.equal(result.orders[0].createdByName, 'Vendedor Preview');
+  assert.equal(result.orders[0].createdByRole, 'vendedor');
+});
+
+test('el detalle del pedido incluye el nombre del vendedor', async () => {
+  const db = {
+    async query(sql) {
+      if (sql.includes('from orders o')) {
+        assert.match(sql, /left join "user" creator on creator\.id = o\.created_by/i);
+        return {
+          rows: [{
+            id: 88,
+            company_id: 7,
+            channel_account_id: 22,
+            external_order_id: 'VTA-88',
+            external_order_number: 'VTA-88',
+            order_status: 'confirmed',
+            payment_status: 'paid',
+            fulfillment_status: 'pending',
+            document_status: 'pending',
+            provider_status: null,
+            document_requirement: 'disabled',
+            document_type_policy: 'automatic',
+            requested_document_type: 'boleta',
+            currency: 'PEN',
+            subtotal: 50,
+            shipping_amount: null,
+            discount_amount: null,
+            total: 50,
+            customer: { name: 'Ana' },
+            shipping: { type: 'recojo' },
+            metadata: {},
+            ordered_at: '2026-09-05T15:00:00.000Z',
+            created_by: 'seller-9',
+            created_by_name: 'Vendedor Preview',
+            created_by_role: 'vendedor',
+            channel_code: 'manual',
+            channel_name: 'Venta manual',
+            channel_account_name: 'Mostrador',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const order = await getOrder(88, db);
+  assert.equal(order.createdByName, 'Vendedor Preview');
+  assert.equal(order.createdByRole, 'vendedor');
 });
 
 test('regresión: lista ventas manuales aunque no tengan seller (company_id null)', async () => {

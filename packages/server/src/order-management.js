@@ -574,6 +574,8 @@ function normalizeOrderRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by || null,
+    createdByName: String(row.created_by_name || '').trim() || null,
+    createdByRole: String(row.created_by_role || '').trim() || null,
   };
   normalized.documentDecision = resolveDocumentDecision(normalized);
   const items = normalizeOrderListItems(row.items);
@@ -916,6 +918,9 @@ const SALESPERSON_COMMISSION_SQL = `coalesce(
   ) / 100, 2)
 )`;
 
+const ORDER_CREATOR_SELECT = `nullif(trim(creator.name), '') as created_by_name, creator.role as created_by_role`;
+const ORDER_CREATOR_JOIN = 'left join "user" creator on creator.id = o.created_by';
+
 const ORDER_LIST_ITEMS_JOIN = `
      left join lateral (
        select coalesce(json_agg(json_build_object(
@@ -1036,6 +1041,7 @@ export async function listOrders(filters = {}, db) {
       or o.external_order_number ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'name', '') ilike '%' || $${values.length} || '%'
       or coalesce(o.customer->>'documentNumber', '') ilike '%' || $${values.length} || '%'
+      or coalesce(creator.name, '') ilike '%' || $${values.length} || '%'
     )`);
   }
   if (filters.createdBy) {
@@ -1062,6 +1068,7 @@ export async function listOrders(filters = {}, db) {
   const result = await target.query(
     `select o.*, ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
+       ${ORDER_CREATOR_SELECT},
        ${salesOnly ? `${SALESPERSON_COMMISSION_SQL} as commission,` : ''}
        ${salesOnly ? 'lines.items,' : ''}
        count(*) over()::int as total_count
@@ -1069,6 +1076,7 @@ export async function listOrders(filters = {}, db) {
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
      left join companies c on c.id=o.company_id
+     ${ORDER_CREATOR_JOIN}
      ${salesOnly ? ORDER_LIST_ITEMS_JOIN : ''}
      ${where.length ? `where ${where.join(' and ')}` : ''}
      order by ${orderBy}
@@ -1769,10 +1777,12 @@ export async function getOrder(orderId, db) {
   const [orderResult, itemsResult, eventsResult, documentsResult, snapshotsResult] = await Promise.all([
     target.query(
       `select o.*, ch.code as channel_code, ch.name as channel_name,
-         a.display_name as channel_account_name
+         a.display_name as channel_account_name,
+         ${ORDER_CREATOR_SELECT}
        from orders o
        join order_channel_accounts a on a.id=o.channel_account_id
        join order_channels ch on ch.id=a.channel_id
+       ${ORDER_CREATOR_JOIN}
        where o.id=$1`,
       [id],
     ),

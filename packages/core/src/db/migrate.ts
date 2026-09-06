@@ -1161,6 +1161,7 @@ const DDL = `
     barcode TEXT,
     image_url TEXT,
     reference_price NUMERIC(14,2),
+    wholesale_price NUMERIC(14,2),
     commission_amount NUMERIC(14,2),
     profit_owner TEXT,
     unit TEXT NOT NULL DEFAULT 'each',
@@ -1172,20 +1173,29 @@ const DDL = `
     CHECK (status IN ('active', 'inactive', 'archived')),
     CHECK (unit IN ('each')),
     CHECK (commission_amount IS NULL OR commission_amount >= 0),
+    CHECK (wholesale_price IS NULL OR wholesale_price >= 0),
     CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80)
   );
   CREATE INDEX IF NOT EXISTS idx_products_status_updated
     ON products(status, updated_at DESC, id DESC);
 
-  -- Comisión y beneficiario en productos existentes.
+  -- Comisión, precio por mayor y beneficiario en productos existentes.
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(14,2);
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS profit_owner TEXT;
   DO $$ BEGIN
     ALTER TABLE products
       ADD CONSTRAINT products_commission_amount_nonnegative
       CHECK (commission_amount IS NULL OR commission_amount >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_wholesale_price_nonnegative
+      CHECK (wholesale_price IS NULL OR wholesale_price >= 0);
   EXCEPTION WHEN duplicate_object THEN NULL;
   END $$;
   DO $$ BEGIN
