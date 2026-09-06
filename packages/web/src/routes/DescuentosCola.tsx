@@ -203,18 +203,16 @@ function SourceBadge({ source, channelCode }: { source: string; channelCode?: st
     ? (fromWebhook ? `Pedido ${channelLabel} encolado al entrar` : `Pedido ${channelLabel} encolado por ${sourceLabel.toLowerCase()}`)
     : (fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo');
   return (
-    <span className="flex flex-col items-start gap-1" title={title}>
-      {channelLabel ? <ChannelBadge code={channelCode} /> : null}
-      <span
-        className={cn(
-          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
-          fromWebhook
-            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-            : 'border-slate-200 bg-slate-50 text-slate-600',
-        )}
-      >
-        {sourceLabel}
-      </span>
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        fromWebhook
+          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+      title={title}
+    >
+      {sourceLabel}
     </span>
   );
 }
