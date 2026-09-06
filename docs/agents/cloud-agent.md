@@ -29,7 +29,7 @@ Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login <e
 | `admin@zentofact.local` | superadmin | catalog, users, companies, dashboard, anything |
 | `admin@preview.zentofact.local` | admin | same modules without the superadmin seat |
 | `operator@preview.zentofact.local` | operator | `#/pedidos`, `#/scanner`, `#/insumos`, `#/orders` |
-| `vendedor@preview.zentofact.local` | vendedor | `#/mis-ventas` |
+| `vendedor@preview.zentofact.local` | vendedor | `#/mis-ventas` · VTA-10012 is a Yape sale to the seller with AG301, HOG025 ×2 and BB110, no constancia |
 | `billing@preview.zentofact.local` | billing | `#/boletas`, `#/facturas`, `#/credit-notes` |
 
 Default `login` without an email uses `ADMIN_EMAIL` (`admin@zentofact.local`).

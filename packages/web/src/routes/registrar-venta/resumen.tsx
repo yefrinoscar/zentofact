@@ -77,6 +77,7 @@ export function ResumenStep({
     saleSource: view.saleSource,
     paymentMethod: view.paymentMethod,
     receivedBy: view.receivedBy,
+    paidTo: view.paidTo,
     paymentProof: view.paymentProof,
     documentRequest: view.documentRequest,
     boletaIdentity: view.boletaIdentity,

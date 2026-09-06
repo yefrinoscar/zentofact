@@ -319,6 +319,7 @@ const apiHttp = {
     paymentMethod: string;
     paymentStatus?: string;
     receivedBy?: string;
+    paidTo?: string;
     paymentProof?: { name: string; type: string; dataUrl: string } | null;
   }) => req(`/order-management/orders/${id}/payment`, {
     method: 'PATCH',

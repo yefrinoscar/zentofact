@@ -26,6 +26,20 @@ export const PAYMENT_METHODS = [
   { value: 'transferencia', label: 'Transferencia' },
 ] as const;
 
+export const PAYMENT_RECIPIENTS = [
+  { value: 'empresa', label: 'Empresa' },
+  { value: 'vendedor', label: 'Vendedor' },
+] as const;
+
+export function needsDigitalPayment(method?: string | null) {
+  return method === 'yape_plin' || method === 'transferencia';
+}
+
+export function paymentRecipientLabel(value?: string | null) {
+  const key = String(value || '').trim();
+  return PAYMENT_RECIPIENTS.find((option) => option.value === key)?.label || '';
+}
+
 export const PICKUP_ADDRESS: string = OWN_FLEET_ORIGIN.address;
 
 export const DOCUMENT_REQUESTS = [
@@ -52,6 +66,7 @@ export type SaleStepId = (typeof SALE_STEPS)[number]['id'];
 
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
+export type PaymentRecipient = (typeof PAYMENT_RECIPIENTS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
 export type DocumentRequest = (typeof DOCUMENT_REQUESTS)[number]['value'];
 export type BoletaIdentity = (typeof BOLETA_IDENTITIES)[number]['value'];
@@ -107,6 +122,7 @@ export type ManualSaleInput = {
   saleSource: SaleSource;
   paymentMethod: PaymentMethod;
   receivedBy?: string;
+  paidTo?: PaymentRecipient | '';
   paymentProof?: { name: string; type: string; dataUrl: string } | null;
   documentRequest?: DocumentRequest;
   boletaIdentity?: BoletaIdentity;
@@ -454,6 +470,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       shippingCarrier: input.delivery === 'envio' ? input.shippingCarrier : '',
       paymentMethod: input.paymentMethod,
       receivedBy: input.paymentMethod === 'efectivo' ? String(input.receivedBy || '').trim() : '',
+      paidTo: needsDigitalPayment(input.paymentMethod)
+        ? (input.paidTo === 'vendedor' ? 'vendedor' : 'empresa')
+        : '',
       paymentProof: input.paymentProof || null,
       catalog: 'real',
     },

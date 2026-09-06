@@ -718,15 +718,78 @@ test('registra el pago de un pedido pendiente y deja el método en metadata', as
   const result = await updateOrderPayment(91, {
     paymentMethod: 'yape_plin',
     receivedBy: '',
+    paidTo: 'vendedor',
+    paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
     actorUserId: 'user-1',
   }, db);
 
   assert.equal(result.paymentStatus, 'paid');
   assert.equal(result.metadata.paymentMethod, 'yape_plin');
+  assert.equal(result.metadata.paidTo, 'vendedor');
+  assert.equal(result.metadata.paymentProof.name, 'yape.jpg');
   assert.equal(result.metadata.paymentMethod === 'despues', false);
   assert.match(queries[1].sql, /payment_status/);
   assert.equal(queries[2].params[1], 'order.payment_recorded');
   assert.equal(queries[2].params[3], 'user-1');
+});
+
+test('rechaza un destinatario de pago que no existe', async () => {
+  await assert.rejects(
+    () => updateOrderPayment(91, { paymentMethod: 'yape_plin', paidTo: 'cliente' }, { query: async () => ({ rows: [] }) }),
+    /paidTo inválido/,
+  );
+});
+
+test('la lista de ventas oculta la foto de la constancia', async () => {
+  const db = {
+    async query() {
+      return {
+        rows: [{
+          id: 91,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: '2609050246',
+          external_order_number: '2609050246',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'optional',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 25,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 25,
+          customer: { name: 'Alexander' },
+          shipping: { type: 'recojo' },
+          metadata: {
+            paymentMethod: 'yape_plin',
+            paidTo: 'vendedor',
+            paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
+          },
+          ordered_at: '2026-09-05T15:15:00Z',
+          promised_shipping_at: null,
+          first_seen_at: '2026-09-05T15:15:00Z',
+          last_seen_at: '2026-09-05T15:15:00Z',
+          created_at: '2026-09-05T15:15:00Z',
+          updated_at: '2026-09-05T15:15:00Z',
+          created_by: 'seller-9',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          items: [],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ createdBy: 'seller-9', salesOnly: true, limit: 10 }, db);
+  assert.equal(result.orders[0].metadata.paidTo, 'vendedor');
+  assert.equal(result.orders[0].metadata.paymentProof.hasData, true);
+  assert.equal(result.orders[0].metadata.paymentProof.dataUrl, undefined);
 });
 
 test('rechaza un método de pago que no se puede registrar después', async () => {

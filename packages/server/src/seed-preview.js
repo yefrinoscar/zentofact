@@ -115,6 +115,31 @@ const SEED_LOGISTICS_ORDERS = [
     stockApplied: 0,
   },
   {
+    key: 'manual-yape-multi',
+    orderNumber: 'VTA-10012',
+    channel: 'manual',
+    customer: {
+      name: 'Alexander Preview',
+      firstName: 'Alexander',
+      lastName: 'Preview',
+      phone: '999222333',
+      documentNumber: '22334455',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'ready_to_ship',
+    payment: {
+      method: 'yape_plin',
+      paidTo: 'vendedor',
+    },
+    items: [
+      { sku: 'AG301', quantity: 1 },
+      { sku: 'HOG025', quantity: 2 },
+      { sku: 'BB110', quantity: 1 },
+    ],
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
     key: 'ripley-pending',
     orderNumber: 'RP-10020',
     channel: 'ripley',
@@ -730,6 +755,13 @@ async function ensureSampleOrders(companiesByRuc, products) {
     const channelAccount = await ensureChannelAccount(company, spec.channel || 'falabella');
     if (!channelAccount) continue;
     const externalOrderId = previewOrderId(spec.key);
+    const lineSpecs = Array.isArray(spec.items) && spec.items.length
+      ? spec.items
+      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
+    const orderTotal = lineSpecs.reduce((sum, lineSpec) => {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      return sum + (Number(lineProduct.referencePrice) || 100) * Math.max(1, Number(lineSpec.quantity || 1));
+    }, 0);
     const orderResult = await pool.query(
       `INSERT INTO orders (
          company_id, channel_account_id, external_order_id, external_order_number,
@@ -762,18 +794,23 @@ async function ensureSampleOrders(companiesByRuc, products) {
         spec.orderNumber,
         spec.orderStatus,
         spec.fulfillmentStatus,
-        product.referencePrice || 100,
+        orderTotal,
         JSON.stringify(spec.customer),
         JSON.stringify(spec.shipping || {}),
-        JSON.stringify({ origin: SEED_MARKER }),
+        JSON.stringify({
+          origin: SEED_MARKER,
+          ...(spec.payment ? {
+            paymentMethod: spec.payment.method,
+            paidTo: spec.payment.paidTo || '',
+            receivedBy: spec.payment.receivedBy || '',
+            paymentProof: spec.payment.proof || null,
+          } : {}),
+        }),
         new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
         spec.channel === 'manual' && vendedor?.id ? vendedor.id : 'preview-seed',
       ],
     );
     const orderId = Number(orderResult.rows[0].id);
-    const lineSpecs = Array.isArray(spec.items) && spec.items.length
-      ? spec.items
-      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
     const insertedItems = [];
     let line = 0;
     for (const lineSpec of lineSpecs) {

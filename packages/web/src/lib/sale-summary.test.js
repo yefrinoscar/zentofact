@@ -130,7 +130,11 @@ test('el resumen de pago solo muestra cobrador y constancia cuando aplican', () 
   assert.equal(valueOf(sinCobrador, 'Cobró'), undefined);
 
   const yape = paymentSummaryRows(validSale({ paymentMethod: 'yape_plin' }));
-  assert.equal(valueOf(yape, 'Constancia'), 'Sin adjuntar');
+  assert.equal(valueOf(yape, 'Pagaron a'), 'Empresa');
+  assert.equal(valueOf(yape, 'Constancia'), 'Sin constancia');
+
+  const alVendedor = paymentSummaryRows(validSale({ paymentMethod: 'yape_plin', paidTo: 'vendedor' }));
+  assert.equal(valueOf(alVendedor, 'Pagaron a'), 'Vendedor');
 
   const conFoto = paymentSummaryRows(validSale({
     paymentMethod: 'transferencia',
