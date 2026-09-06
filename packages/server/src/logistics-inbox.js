@@ -451,8 +451,28 @@ function svcPayload(value) {
   return root.data && typeof root.data === 'object' && !Array.isArray(root.data) ? root.data : root;
 }
 
-function svcLabelId(label) {
-  return String(label?.document_id || label?.documentId || label?._id || label?.id || '').trim();
+function uniqueTexts(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function objectMetadata(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function svcDownloadIdBatches(labels) {
+  const documentIds = uniqueTexts(labels.map((label) => label?.document_id || label?.documentId));
+  const internalIds = uniqueTexts(labels.map((label) => label?._id || label?.id));
+  const batches = [];
+  if (documentIds.length) batches.push(documentIds);
+  if (internalIds.length && internalIds.join('\0') !== documentIds.join('\0')) batches.push(internalIds);
+  return batches;
 }
 
 function svcLabels(payload) {
@@ -487,12 +507,13 @@ function svcPdfValue(value, keys = ['labels_generated', 'pdf', 'base64', 'docume
 }
 
 export function ripleyOrderLookupIds(order = {}) {
-  return [...new Set([
+  const metadata = objectMetadata(order.metadata);
+  return uniqueTexts([
     order.externalOrderId,
     order.externalOrderNumber,
-    order.metadata?.commercialId,
-    order.metadata?.ripleySvc?.orderId,
-  ].map((value) => String(value || '').trim()).filter(Boolean))];
+    metadata.commercialId,
+    metadata.ripleySvc?.orderId,
+  ]);
 }
 
 function printFailureMessage(skipped) {
@@ -523,33 +544,70 @@ function throwPrintFailure(skipped, extra = {}, dependencies = {}) {
   throw error;
 }
 
+async function listRipleyLabelsForId(order, orderId, listLabels) {
+  const listed = await listLabels({
+    companyId: order.companyId,
+    orderId,
+  });
+  const labels = labelsForOrder(listed, orderId);
+  if (labels.length) return labels;
+  const found = await listLabels({
+    companyId: order.companyId,
+    find: orderId,
+  });
+  return labelsForOrder(found, orderId);
+}
+
 async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
   const lookupIds = ripleyOrderLookupIds(order);
-  if (!lookupIds.length) throw new Error('El pedido Ripley no tiene número para buscar la etiqueta.');
-  let lastEmpty = 'Ripley aún no tiene etiqueta.';
+  if (!lookupIds.length) {
+    const error = new Error('El pedido Ripley no tiene número para buscar la etiqueta.');
+    error.details = { lookupIds };
+    throw error;
+  }
+  const attempts = [];
+  let lastEmpty = `Ripley no tiene etiqueta oficial para ${lookupIds[0]} (busqué ${lookupIds.join(', ')}).`;
   for (const orderId of lookupIds) {
     try {
-      const listed = await listLabels({
-        companyId: order.companyId,
-        orderId,
-      });
-      const documentIds = labelsForOrder(listed, orderId).map(svcLabelId).filter(Boolean);
-      if (!documentIds.length) continue;
-      const downloaded = await downloadLabels({
-        companyId: order.companyId,
-        documentIds,
-        orderId,
-      });
-      const buffer = decodePdf(svcPdfValue(downloaded));
-      if (!buffer?.length) throw new Error('La etiqueta Ripley llegó vacía.');
-      return { buffer, labelCount: documentIds.length };
+      const labels = await listRipleyLabelsForId(order, orderId, listLabels);
+      const batches = svcDownloadIdBatches(labels);
+      if (!batches.length) {
+        attempts.push({ orderId, labels: 0, reason: 'lista vacía' });
+        continue;
+      }
+      for (const documentIds of batches) {
+        try {
+          const downloaded = await downloadLabels({
+            companyId: order.companyId,
+            documentIds,
+            orderId,
+          });
+          const buffer = decodePdf(svcPdfValue(downloaded));
+          if (buffer?.length) return { buffer, labelCount: documentIds.length };
+          attempts.push({ orderId, documentIds, reason: 'La etiqueta Ripley llegó vacía.' });
+        } catch (error) {
+          const reason = error.message || 'No se pudo bajar la etiqueta Ripley.';
+          attempts.push({ orderId, documentIds, reason });
+          if (/credenciales/i.test(reason)) {
+            error.details = { ...(error.details || {}), lookupIds, attempts };
+            throw error;
+          }
+          lastEmpty = reason;
+        }
+      }
     } catch (error) {
       const reason = error.message || lastEmpty;
-      if (/credenciales|llegó vacía/i.test(reason)) throw error;
+      if (!error.details?.attempts) attempts.push({ orderId, reason });
+      if (/credenciales/i.test(reason)) {
+        error.details = { ...(error.details || {}), lookupIds, attempts };
+        throw error;
+      }
       lastEmpty = reason;
     }
   }
-  throw new Error(lastEmpty);
+  const error = new Error(lastEmpty);
+  error.details = { lookupIds, attempts };
+  throw error;
 }
 
 export async function printLogisticsPack(input = {}, dependencies = {}) {
@@ -603,24 +661,12 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
         pdfParts.push(downloaded.buffer);
         labelCount += downloaded.labelCount;
       } catch (error) {
-        const reason = error.message || 'No se pudo bajar la etiqueta Ripley.';
-        console.warn(JSON.stringify({
-          event: 'logistics.print.ripley_skipped',
-          orderId: order.id,
-          externalOrderId: order.externalOrderId,
-          reason,
-        }));
-        try {
-          pdfParts.push(await buildManualLabelSheet([order]));
-          labelCount += 1;
-          skipped.push({
-            id: order.id,
-            reason: `${reason} Se imprimió una etiqueta ZentoFact.`,
-            printed: true,
-          });
-        } catch {
-          skipped.push({ id: order.id, reason });
-        }
+        skipped.push({
+          id: order.id,
+          reason: error.message || 'No se pudo bajar la etiqueta Ripley.',
+          lookupIds: error.details?.lookupIds,
+          attempts: error.details?.attempts,
+        });
       }
     }
   }
@@ -697,8 +743,8 @@ export async function printLogisticsPackWithDefaults(input = {}, dependencies = 
     getFalabellaLabel: dependencies.getFalabellaLabel || (({ companyId, orderId }) => (
       core.falabellaGetShippingLabel({ companyId, orderId, recordPrint: false })
     )),
-    listRipleyLabels: dependencies.listRipleyLabels || (({ companyId, orderId }) => (
-      ripleyLogistics.listRipleySvcLabels(companyId, { orderId, limit: 25 })
+    listRipleyLabels: dependencies.listRipleyLabels || (({ companyId, orderId, find }) => (
+      ripleyLogistics.listRipleySvcLabels(companyId, { orderId, find, limit: 25 })
     )),
     downloadRipleyLabels: dependencies.downloadRipleyLabels || (({ companyId, documentIds, orderId }) => (
       ripleyLogistics.downloadRipleySvcLabels(companyId, { documentIds, orderId })
