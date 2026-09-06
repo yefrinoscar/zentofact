@@ -18,7 +18,12 @@ export type OptimisticSale = {
   customer?: { name?: string | null } | null;
   total?: number | null;
   commission?: number | null;
-  metadata?: { paymentMethod?: string | null } | null;
+  metadata?: {
+    paymentMethod?: string | null;
+    paidTo?: string | null;
+    paymentProof?: { name?: string | null; hasData?: boolean | null } | null;
+  } | null;
+  items?: Array<{ name?: string | null; sku?: string | null; quantity?: number | null; imageUrl?: string | null }> | null;
   orderedAt?: string | null;
   createdAt?: string | null;
 };
@@ -129,6 +134,9 @@ export function buildOptimisticSale(input: {
   total: number;
   commission?: number;
   paymentMethod?: string;
+  paidTo?: string;
+  paymentProof?: { name?: string | null } | null;
+  items?: Array<{ name?: string | null; sku?: string | null; quantity?: number | null; imageUrl?: string | null }>;
   orderedAt?: string;
 }): OptimisticSale {
   const orderedAt = input.orderedAt || new Date().toISOString();
@@ -137,7 +145,14 @@ export function buildOptimisticSale(input: {
     customer: { name: String(input.customerName || '').trim() },
     total: Number(input.total) || 0,
     commission: input.commission,
-    metadata: { paymentMethod: input.paymentMethod || 'despues' },
+    metadata: {
+      paymentMethod: input.paymentMethod || 'despues',
+      paidTo: input.paidTo || '',
+      paymentProof: input.paymentProof?.name
+        ? { name: input.paymentProof.name, hasData: true }
+        : null,
+    },
+    items: input.items || [],
     orderedAt,
     createdAt: orderedAt,
   };

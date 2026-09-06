@@ -19,7 +19,9 @@ import {
   BOLETA_IDENTITIES,
   DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
+  PAYMENT_RECIPIENTS,
   SALE_SOURCES,
+  needsDigitalPayment,
   clampSaleQuantity,
   limaTodayKey,
   saleLineProfit,
@@ -456,6 +458,7 @@ export function PagoStep({ view }: { view: SaleFormView }) {
             view.setPaymentMethod(value);
             if (value === 'efectivo' || value === 'despues') view.setPaymentProof(null);
             if (value !== 'efectivo') view.setReceivedBy('');
+            view.setPaidTo(needsDigitalPayment(value) ? (view.paidTo || 'empresa') : '');
           }}
           ariaLabel="Método de pago"
         />
@@ -475,7 +478,19 @@ export function PagoStep({ view }: { view: SaleFormView }) {
         </FieldRow>
       )}
 
-      {(view.paymentMethod === 'yape_plin' || view.paymentMethod === 'transferencia') && (
+      {needsDigitalPayment(view.paymentMethod) && (
+        <FieldRow label="Pagaron a">
+          <Choice
+            value={view.paidTo || 'empresa'}
+            options={PAYMENT_RECIPIENTS}
+            onChange={view.setPaidTo}
+            ariaLabel="A quién pagaron"
+          />
+          <p className="mt-1.5 text-xs text-muted-foreground">A veces pagan al vendedor.</p>
+        </FieldRow>
+      )}
+
+      {needsDigitalPayment(view.paymentMethod) && (
         <FieldRow label="Constancia">
           {view.paymentProof ? (
             <div className="flex items-center gap-2">

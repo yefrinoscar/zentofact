@@ -43,19 +43,45 @@ test('la fila de venta muestra número, cliente, total, comisión, pago y fecha'
 
 test('la fila de venta toma el producto y la foto del primer ítem', () => {
   const row = saleListRow({
+    id: 91,
     externalOrderNumber: '2609050246',
     customer: { name: 'Alexander' },
     total: 25,
     items: [
       { name: 'Manta térmica AG301', sku: 'AG301', quantity: 1, imageUrl: '/seed/ag301.svg' },
-      { name: 'Bolso HOG025', sku: 'HOG025', quantity: 1, imageUrl: '/seed/hog025.svg' },
+      { name: 'Bolso HOG025', sku: 'HOG025', quantity: 2, imageUrl: '/seed/hog025.svg' },
     ],
   });
+  assert.equal(row.id, 91);
   assert.equal(row.product, 'Manta térmica AG301');
   assert.equal(row.productTitle, 'Manta térmica AG301 y 1 más');
   assert.equal(row.sku, 'AG301');
   assert.equal(row.imageUrl, '/seed/ag301.svg');
   assert.equal(row.extraCount, 1);
+  assert.deepEqual(row.products.map((item) => item.sku), ['AG301', 'HOG025']);
+  assert.equal(row.products[1].quantity, 2);
+});
+
+test('la fila de Yape muestra destinatario y si falta la constancia', () => {
+  const sinConstancia = saleListRow({
+    metadata: { paymentMethod: 'yape_plin', paidTo: 'vendedor' },
+  });
+  assert.equal(sinConstancia.payment, 'Yape / Plin');
+  assert.equal(sinConstancia.paidTo, 'Vendedor');
+  assert.equal(sinConstancia.paidToValue, 'vendedor');
+  assert.equal(sinConstancia.needsProof, true);
+  assert.equal(sinConstancia.hasProof, false);
+
+  const conConstancia = saleListRow({
+    metadata: {
+      paymentMethod: 'yape_plin',
+      paidTo: 'empresa',
+      paymentProof: { name: 'yape.jpg', hasData: true },
+    },
+  });
+  assert.equal(conConstancia.paidTo, 'Empresa');
+  assert.equal(conConstancia.hasProof, true);
+  assert.equal(conConstancia.proofName, 'yape.jpg');
 });
 
 test('el título del producto nombra las líneas extra en palabras del vendedor', () => {

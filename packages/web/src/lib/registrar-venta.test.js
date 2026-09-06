@@ -387,6 +387,21 @@ test('buildManualSaleOrderPayload marca pagado cuando el cobro no es después', 
 
   assert.equal(payload.paymentStatus, 'paid');
   assert.equal(payload.metadata.receivedBy, 'Luis');
+  assert.equal(payload.metadata.paidTo, '');
+});
+
+test('Yape / Plin guarda a quién pagaron y deja la constancia opcional', () => {
+  const empresa = buildManualSaleOrderPayload(validSale({ paymentMethod: 'yape_plin' }));
+  assert.equal(empresa.metadata.paidTo, 'empresa');
+  assert.equal(empresa.metadata.paymentProof, null);
+
+  const vendedor = buildManualSaleOrderPayload(validSale({
+    paymentMethod: 'yape_plin',
+    paidTo: 'vendedor',
+    paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
+  }));
+  assert.equal(vendedor.metadata.paidTo, 'vendedor');
+  assert.equal(vendedor.metadata.paymentProof.name, 'yape.jpg');
 });
 
 test('regresión: la venta manual siempre envía fecha de entrega al backend', () => {

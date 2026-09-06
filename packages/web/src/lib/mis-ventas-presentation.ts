@@ -1,3 +1,6 @@
+import { needsDigitalPayment, paymentRecipientLabel } from './registrar-venta.ts';
+import { paymentProofPreview } from './payment-proof.ts';
+
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   despues: 'Después',
   efectivo: 'Efectivo',
@@ -57,11 +60,22 @@ export type SalespersonSaleItem = {
 };
 
 export type SalespersonSale = {
+  id?: number | null;
   externalOrderNumber?: string | null;
   customer?: { name?: string | null } | null;
   total?: number | null;
   commission?: number | null;
-  metadata?: { paymentMethod?: string | null } | null;
+  metadata?: {
+    paymentMethod?: string | null;
+    receivedBy?: string | null;
+    paidTo?: string | null;
+    paymentProof?: {
+      name?: string | null;
+      type?: string | null;
+      dataUrl?: string | null;
+      hasData?: boolean | null;
+    } | null;
+  } | null;
   orderedAt?: string | null;
   createdAt?: string | null;
   items?: SalespersonSaleItem[] | null;
@@ -220,19 +234,29 @@ export function dayKeyLabel(dateKey?: string | null) {
   return DAY_LABEL.format(new Date(`${key}T12:00:00.000Z`)).replace('.', '');
 }
 
+export function saleProducts(items?: SalespersonSaleItem[] | null) {
+  return (items || [])
+    .map((item) => ({
+      name: String(item?.name || '').trim() || String(item?.sku || '').trim(),
+      sku: String(item?.sku || '').trim(),
+      quantity: Math.max(1, Math.floor(Number(item?.quantity) || 1)),
+      imageUrl: String(item?.imageUrl || '').trim() || null,
+      shopSku: String(item?.shopSku || '').trim() || null,
+    }))
+    .filter((item) => item.name || item.sku);
+}
+
 export function saleProductSummary(items?: SalespersonSaleItem[] | null) {
-  const lines = (items || []).filter((item) => (
-    String(item?.name || '').trim() || String(item?.sku || '').trim()
-  ));
+  const lines = saleProducts(items);
   const first = lines[0];
   if (!first) {
     return { name: '', sku: '', imageUrl: null as string | null, shopSku: null as string | null, extraCount: 0 };
   }
   return {
-    name: String(first.name || '').trim() || String(first.sku || '').trim(),
-    sku: String(first.sku || '').trim(),
-    imageUrl: String(first.imageUrl || '').trim() || null,
-    shopSku: String(first.shopSku || '').trim() || null,
+    name: first.name,
+    sku: first.sku,
+    imageUrl: first.imageUrl,
+    shopSku: first.shopSku,
     extraCount: Math.max(lines.length - 1, 0),
   };
 }
@@ -246,10 +270,15 @@ export function saleProductTitle(product: string, extraCount = 0) {
 
 export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
   const total = Number(order.total) || 0;
-  const product = saleProductSummary(order.items);
+  const products = saleProducts(order.items);
+  const product = saleProductSummary(products);
+  const method = String(order.metadata?.paymentMethod || '').trim();
+  const proof = paymentProofPreview(order.metadata?.paymentProof);
   return {
+    id: Number(order.id) || 0,
     number: String(order.externalOrderNumber || '').trim() || '—',
     customer: String(order.customer?.name || '').trim() || 'Sin nombre',
+    products,
     product: product.name,
     productTitle: saleProductTitle(product.name, product.extraCount),
     sku: product.sku,
@@ -258,7 +287,15 @@ export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
     extraCount: product.extraCount,
     total,
     commission: order.commission ?? estimateCommission(total, commissionPercent),
-    payment: paymentMethodLabel(order.metadata?.paymentMethod),
+    payment: paymentMethodLabel(method),
+    paymentMethod: method,
+    receivedBy: String(order.metadata?.receivedBy || '').trim(),
+    paidTo: paymentRecipientLabel(order.metadata?.paidTo),
+    paidToValue: String(order.metadata?.paidTo || '').trim(),
+    needsProof: needsDigitalPayment(method),
+    hasProof: proof.hasProof,
+    proofName: proof.name,
+    proofUrl: proof.dataUrl,
     date: saleDateLabel(order.orderedAt || order.createdAt),
   };
 }
