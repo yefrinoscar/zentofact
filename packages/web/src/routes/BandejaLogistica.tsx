@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { BandejaOperativa } from './BandejaOperativa';
+import { operationalLayout, VISUAL_VARIANTS } from './bandeja-variants';
+import { BandejaVersionPicker } from './BandejaVersionPicker';
 import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
@@ -104,7 +106,8 @@ export default function BandejaLogistica() {
   const { showSnackbar } = useOperatorSnackbar();
   const [params] = useSearchParams();
   const variant = (params.get('variant') || '1').toUpperCase();
-  const layout = variant === '2' || variant === '3' || variant === '4' || variant === '5' ? variant : '1';
+  const layout = operationalLayout(variant);
+  const visualVariant = VISUAL_VARIANTS.find((entry) => entry.key === variant);
   const filtro = params.get('filtro') === '2' || params.get('filtro') === '3' ? params.get('filtro')! : '1';
   const { role, can, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && role !== 'viewer';
@@ -302,7 +305,7 @@ export default function BandejaLogistica() {
     emptyCopy: logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency),
   };
 
-  const body = variant === '6' ? <figure className="pb-24"><figcaption className="mb-3 text-sm text-muted-foreground">Versión 6 · Propuesta visual. Los controles de esta imagen no son interactivos.</figcaption><img src="/design/bandeja-v6.png" alt="Propuesta de bandeja con pedidos agrupados por entrega y resumen del lote seleccionado a la derecha" className="h-auto w-full rounded-lg border" /></figure>
+  const body = visualVariant ? <figure className="pb-24"><figcaption className="mb-3 text-sm text-muted-foreground">{visualVariant.name} · Propuesta visual con datos ilustrativos. Los controles de la imagen no son interactivos.</figcaption><img src={visualVariant.src} alt={visualVariant.name} className="h-auto w-full rounded-lg border" /></figure>
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
@@ -316,14 +319,7 @@ export default function BandejaLogistica() {
       )}
       {body}
       {import.meta.env.DEV && !['A', 'B', 'C'].includes(variant) && (
-        <PrototypeSwitcherGroup groups={[{ param: 'variant', current: variant === '6' ? '6' : layout, listenKeys: false, prefix: 'Versión', variants: [
-          { key: '1', name: 'Lista operativa' },
-          { key: '2', name: 'Mosaico visual' },
-          { key: '3', name: 'Por tienda' },
-          { key: '4', name: 'Puesto de preparación' },
-          { key: '5', name: 'Mesa de lotes' },
-          { key: '6', name: 'Concepto visual' },
-        ] }]} />
+        <BandejaVersionPicker current={visualVariant?.key || layout} />
       )}
       {import.meta.env.DEV && ['A', 'B', 'C'].includes(variant) && (
         <PrototypeSwitcherGroup
