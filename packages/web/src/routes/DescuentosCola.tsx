@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
+import falabellaLogo from '../assets/falabella.png';
+import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { logisticsChannelClass } from '../lib/logistics-inbox';
@@ -159,14 +161,30 @@ function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | 
   );
 }
 
+function ChannelMark({ code }: { code?: string | null }) {
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') {
+    return <img src={falabellaLogo} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[3px] object-contain" />;
+  }
+  if (value === 'ripley') {
+    return (
+      <span className="grid size-3.5 shrink-0 place-items-center overflow-hidden rounded-[3px] border border-zinc-700 bg-zinc-950" aria-hidden="true">
+        <img src={ripleyLogo} alt="" className="h-2.5 w-auto" />
+      </span>
+    );
+  }
+  return null;
+}
+
 function ChannelBadge({ code }: { code?: string | null }) {
   const label = stockJobChannelLabel(code);
   if (!label) return null;
   return (
     <span className={cn(
-      'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium',
       logisticsChannelClass(code),
     )}>
+      <ChannelMark code={code} />
       {label}
     </span>
   );
