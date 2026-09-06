@@ -84,6 +84,20 @@ export interface TestSunatConnectionResult {
 const SUNAT_BETA_ENDPOINT = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
 const SUNAT_PROD_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
 const PRODUCTION_DUMMY_TICKETS = ['202620699999999', '202600000000001'];
+const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';
+
+function normalizeRipleySvcBaseUrl(value?: string | null): string | undefined {
+  if (value == null) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.hostname.toLowerCase().endsWith('mirakl.net')) return RIPLEY_SVC_DEFAULT_BASE_URL;
+    return parsed.origin;
+  } catch {
+    return raw;
+  }
+}
 
 function hasText(value: unknown): boolean {
   return String(value ?? '').trim().length > 0;
@@ -131,7 +145,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     hasSellerPassword,
     hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
     hasRipleyCredentials: hasRipleyApiKey,
-    hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword && hasText(row.ripleySvcBaseUrl),
+    hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword,
   };
 }
 
@@ -182,7 +196,7 @@ export async function createCompany(data: CreateCompanyInput): Promise<PublicCom
     ripleyShopId: data.ripleyShopId,
     ripleySvcUsername: data.ripleySvcUsername,
     ripleySvcPassword: data.ripleySvcPassword,
-    ripleySvcBaseUrl: data.ripleySvcBaseUrl,
+    ripleySvcBaseUrl: normalizeRipleySvcBaseUrl(data.ripleySvcBaseUrl),
     activo: true,
     createdAt: now,
     updatedAt: now,
@@ -235,7 +249,7 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
   if (falabellaApiKey !== undefined) updates.falabellaApiKey = falabellaApiKey;
   if (data.ripleyShopId !== undefined) updates.ripleyShopId = data.ripleyShopId;
   if (data.ripleySvcUsername !== undefined) updates.ripleySvcUsername = data.ripleySvcUsername;
-  if (data.ripleySvcBaseUrl !== undefined) updates.ripleySvcBaseUrl = data.ripleySvcBaseUrl;
+  if (data.ripleySvcBaseUrl !== undefined) updates.ripleySvcBaseUrl = normalizeRipleySvcBaseUrl(data.ripleySvcBaseUrl);
   const ripleyApiKey = nonEmptySecret(data.ripleyApiKey);
   if (ripleyApiKey !== undefined) updates.ripleyApiKey = ripleyApiKey;
   const ripleySvcPassword = nonEmptySecret(data.ripleySvcPassword);

@@ -13,6 +13,7 @@ import {
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
   sellerCellLabel,
+  sellerCellShowsPerson,
 } from './managed-orders-presentation.ts';
 
 test('la bandeja de pedidos no muestra columna de teléfono', () => {
@@ -100,6 +101,14 @@ test('la columna Seller muestra el nombre del vendedor en ventas manuales', () =
     companyId: 9,
     channelCode: 'ripley',
   }, companyById), 'Empresa 9');
+  assert.equal(sellerCellShowsPerson({
+    channelCode: 'manual',
+    createdByName: 'Cesar Alfaro',
+  }), true);
+  assert.equal(sellerCellShowsPerson({
+    channelCode: 'falabella',
+    createdByName: 'Cesar Alfaro',
+  }), false);
 });
 
 test('regresión: etiquetas de reparto alineadas con shipping-carrier', async () => {

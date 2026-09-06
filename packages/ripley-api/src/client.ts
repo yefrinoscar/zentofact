@@ -134,17 +134,39 @@ export class RipleyApiClient {
   }
 }
 
+export const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';
+
+/** Mirakl is the commercial API. Seller Center rejects those hosts with HTTP 401 Unauthorized. */
+export function resolveRipleySvcBaseUrl(value?: string | null): string {
+  const raw = String(value || '').trim();
+  if (!raw) return RIPLEY_SVC_DEFAULT_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('La URL de SVC Ripley es inválida.');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
+  if (parsed.hostname.toLowerCase().endsWith('mirakl.net')) return RIPLEY_SVC_DEFAULT_BASE_URL;
+  return parsed.origin;
+}
+
 /** Client for Ripley's separate Seller Vendor Center logistics API. */
 export class RipleySvcClient {
   private readonly baseUrl: URL;
+  private readonly username: string;
+  private readonly password: string;
+  private readonly country: string;
   private readonly fetchImpl: typeof fetch;
   private accessToken = '';
+  private sessionCookies: Record<string, string> = {};
 
-  constructor(private readonly options: RipleySvcClientOptions) {
-    const baseUrl = new URL(options.baseUrl.trim());
-    if (baseUrl.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
-    if (!options.username.trim() || !options.password) throw new Error('Faltan las credenciales de SVC Ripley.');
-    this.baseUrl = baseUrl;
+  constructor(options: RipleySvcClientOptions) {
+    this.baseUrl = new URL(resolveRipleySvcBaseUrl(options.baseUrl));
+    this.username = options.username.trim();
+    this.password = String(options.password ?? '').trim();
+    this.country = (options.country || 'PE').toUpperCase();
+    if (!this.username || !this.password) throw new Error('Faltan las credenciales de SVC Ripley.');
     this.fetchImpl = options.fetchImpl || fetch;
   }
 
@@ -236,18 +258,103 @@ export class RipleySvcClient {
   }
 
   private async login() {
+    try {
+      await this.loginVendor();
+    } catch (error) {
+      if (!isAuthFailure(error)) throw error;
+      await this.loginSellerSession();
+    }
+  }
+
+  private async loginVendor() {
     const url = this.url('/api/current/auth/login/vendor');
-    const credentials = encodeBasicCredentials(this.options.username, this.options.password);
+    const credentials = encodeBasicCredentials(this.username, this.password);
     const response = await this.fetchImpl(url, {
       method: 'POST',
-      headers: { Accept: 'application/json', Authorization: `Basic ${credentials}` },
+      redirect: 'manual',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${credentials}`,
+        'X-Country': this.country,
+      },
     });
     const body = await readJson(response);
-    if (!response.ok) throw providerError(response.status, body);
-    const record = objectRecord(body);
-    const token = nonEmptyText(record?.access_token ?? record?.accessToken ?? record?.token);
+    if (!response.ok) throw providerError(response.status, body, url);
+    const token = extractAccessToken(body);
     if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
     this.accessToken = token;
+  }
+
+  private async loginSellerSession() {
+    const csrfUrl = this.url('/api/auth/csrf');
+    const csrfResponse = await this.fetchImpl(csrfUrl, {
+      headers: { Accept: 'application/json' },
+    });
+    this.rememberCookies(csrfResponse);
+    const csrfBody = objectRecord(await readJson(csrfResponse));
+    const csrfToken = nonEmptyText(csrfBody?.csrfToken);
+    if (!csrfResponse.ok || !csrfToken) {
+      throw providerError(csrfResponse.status || 401, csrfBody || { message: 'Unauthorized' }, csrfUrl);
+    }
+
+    const verifyUrl = this.url('/api/auth/verify-user');
+    const verifyResponse = await this.fetchImpl(verifyUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Cookie: cookieHeader(this.sessionCookies),
+      },
+      body: JSON.stringify({ username: this.username, country: this.country }),
+    });
+    this.rememberCookies(verifyResponse);
+    const verifyBody = await readJson(verifyResponse);
+    if (!verifyResponse.ok) throw providerError(verifyResponse.status, verifyBody, verifyUrl);
+
+    const callbackUrl = this.url('/api/auth/callback/custom-provider');
+    const callbackResponse = await this.fetchImpl(callbackUrl, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookieHeader(this.sessionCookies),
+      },
+      body: new URLSearchParams({
+        csrfToken,
+        username: this.username,
+        password: this.password,
+        country: this.country,
+        json: 'true',
+        redirect: 'false',
+      }).toString(),
+    });
+    this.rememberCookies(callbackResponse);
+    await readJson(callbackResponse);
+    const redirected = callbackResponse.status >= 300 && callbackResponse.status < 400;
+    if (!callbackResponse.ok && !redirected) {
+      throw new Error(
+        `Seller Center rechazó el usuario o la contraseña (${this.baseUrl.host}).`,
+      );
+    }
+
+    const sessionUrl = this.url('/api/auth/session');
+    const sessionResponse = await this.fetchImpl(sessionUrl, {
+      headers: {
+        Accept: 'application/json',
+        Cookie: cookieHeader(this.sessionCookies),
+      },
+    });
+    this.rememberCookies(sessionResponse);
+    const sessionBody = await readJson(sessionResponse);
+    const token = extractAccessToken(sessionBody)
+      || sessionCookieToken(this.sessionCookies);
+    if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
+    this.accessToken = token;
+  }
+
+  private rememberCookies(response: Response) {
+    this.sessionCookies = mergeCookies(this.sessionCookies, response);
   }
 
   private async authorizedJson(url: URL, init: RequestInit = {}): Promise<unknown> {
@@ -255,20 +362,23 @@ export class RipleySvcClient {
     let response = await this.fetchImpl(url, this.authorizedInit(init));
     if (response.status === 401) {
       this.accessToken = '';
+      this.sessionCookies = {};
       await this.login();
       response = await this.fetchImpl(url, this.authorizedInit(init));
     }
     const body = await readJson(response);
-    if (!response.ok) throw providerError(response.status, body);
+    if (!response.ok) throw providerError(response.status, body, url);
     return body;
   }
 
   private authorizedInit(init: RequestInit): RequestInit {
+    const cookies = cookieHeader(this.sessionCookies);
     return {
       ...init,
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${this.accessToken}`,
+        ...(cookies ? { Cookie: cookies } : {}),
         ...(init.body != null ? { 'Content-Type': 'application/json' } : {}),
       },
     };
@@ -398,8 +508,61 @@ async function readJson(response: Response): Promise<unknown> {
   catch { return { message: text }; }
 }
 
-function providerError(status: number, body: unknown) {
+function providerError(status: number, body: unknown, url?: URL) {
   const record = objectRecord(body);
   const message = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
-  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}`);
+  const host = url?.host ? ` (${url.host})` : '';
+  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}${host}`);
+}
+
+function extractAccessToken(value: unknown): string | null {
+  const record = objectRecord(value);
+  if (!record) return null;
+  const nested = objectRecord(record.data) || objectRecord(record.user);
+  return nonEmptyText(
+    record.access_token
+    ?? record.accessToken
+    ?? record.token
+    ?? nested?.access_token
+    ?? nested?.accessToken
+    ?? nested?.token,
+  );
+}
+
+function isAuthFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP 401|HTTP 403|HTTP 30[0-9]|Unauthorized|Invalid authentication credentials|CredentialsSignin/i.test(message);
+}
+
+function setCookieHeaders(response: Response): string[] {
+  if (typeof response.headers.getSetCookie === 'function') {
+    return response.headers.getSetCookie();
+  }
+  const header = response.headers.get('set-cookie');
+  return header ? [header] : [];
+}
+
+function mergeCookies(current: Record<string, string>, response: Response) {
+  const next = { ...current };
+  for (const header of setCookieHeaders(response)) {
+    const pair = header.split(';', 1)[0] || '';
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    next[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+  return next;
+}
+
+function cookieHeader(cookies: Record<string, string>) {
+  return Object.entries(cookies)
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
+}
+
+function sessionCookieToken(cookies: Record<string, string>) {
+  for (const name of Object.keys(cookies)) {
+    if (/session-token$/i.test(name) && cookies[name]) return cookies[name];
+  }
+  return null;
 }

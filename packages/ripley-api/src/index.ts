@@ -1,4 +1,9 @@
-export { RipleyApiClient, RipleySvcClient } from './client.js';
+export {
+  RIPLEY_SVC_DEFAULT_BASE_URL,
+  resolveRipleySvcBaseUrl,
+  RipleyApiClient,
+  RipleySvcClient,
+} from './client.js';
 export type {
   ListOffersOptions,
   ListOrdersOptions,
@@ -9,6 +14,7 @@ export type {
   RipleyOrder,
   RipleyOrderPage,
   RipleySvcClientOptions,
+  RipleySvcCountry,
   RipleySvcLabelOptions,
   RipleySvcLogisticsOrderOptions,
   RipleySvcManifestLabel,
