@@ -2,6 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } from './shipping-label-sheet.js';
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 import { createLogId } from './error-log.js';
+import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -65,13 +66,10 @@ function fulfillmentFilter(stage) {
 }
 
 function itemImage(row) {
-  const raw = row.raw_data || {};
-  const meta = row.metadata || {};
-  return String(
-    row.image_url
-    || raw.Image || raw.ImageUrl || raw.ImageURL || raw.ProductImage || raw.MainImage
-    || meta.imageUrl || '',
-  ).trim();
+  return marketplaceItemImageUrl(row.raw_data || {}, {
+    imageUrl: row.image_url,
+    metaImageUrl: row.metadata?.imageUrl,
+  });
 }
 
 function normalizeItem(row) {
@@ -245,7 +243,8 @@ const ITEMS_SQL = `coalesce((
       nullif(listing.metadata->'images'->>0, ''),
       nullif(listing.metadata->'images'->0->>'Url', ''),
       nullif(listing.metadata->'images'->0->>'url', ''),
-      nullif(listing.metadata->>'imageUrl', '')
+      nullif(listing.metadata->>'imageUrl', ''),
+      ${MARKETPLACE_RAW_IMAGE_SQL}
     ),
     'raw_data', oi.raw_data,
     'metadata', oi.metadata

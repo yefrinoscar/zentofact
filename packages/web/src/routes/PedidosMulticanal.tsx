@@ -197,6 +197,8 @@ type ManagedOrder = {
     delivery?: string;
     shippingCarrier?: string;
     receivedBy?: string;
+    paidTo?: string;
+    paymentProof?: { name?: string; type?: string; dataUrl?: string; hasData?: boolean } | null;
     ripleySvc?: {
       orderId?: string;
       statusManagement?: string;
@@ -992,10 +994,12 @@ export default function PedidosMulticanal() {
       order: ManagedOrder;
       paymentMethod: string;
       receivedBy: string;
+      paidTo?: string;
       paymentProof: { name: string; type: string; dataUrl: string } | null;
     }) => api.updateManagedOrderPayment(input.order.id, {
       paymentMethod: input.paymentMethod,
       receivedBy: input.receivedBy || undefined,
+      paidTo: input.paidTo || undefined,
       paymentProof: input.paymentProof,
     }),
     onSuccess: (updated, input) => {
@@ -1764,11 +1768,13 @@ function RegisterPaymentDialog({
   onSubmit: (input: {
     paymentMethod: string;
     receivedBy: string;
+    paidTo?: string;
     paymentProof: { name: string; type: string; dataUrl: string } | null;
   }) => void;
 }) {
   const [paymentMethod, setPaymentMethod] = useState<(typeof RECORD_PAYMENT_METHODS)[number]['value']>('efectivo');
   const [receivedBy, setReceivedBy] = useState('');
+  const [paidTo, setPaidTo] = useState<'empresa' | 'vendedor'>('empresa');
   const [paymentProof, setPaymentProof] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
   const [localError, setLocalError] = useState('');
 
@@ -1776,6 +1782,7 @@ function RegisterPaymentDialog({
     if (!order) return;
     setPaymentMethod('efectivo');
     setReceivedBy('');
+    setPaidTo('empresa');
     setPaymentProof(null);
     setLocalError('');
   }, [order]);
@@ -1821,6 +1828,7 @@ function RegisterPaymentDialog({
                 setPaymentMethod(method.value);
                 if (method.value === 'efectivo') setPaymentProof(null);
                 if (method.value !== 'efectivo') setReceivedBy('');
+                if (method.value !== 'yape_plin' && method.value !== 'transferencia') setPaidTo('empresa');
               }}
               className={cn(
                 'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
@@ -1835,6 +1843,27 @@ function RegisterPaymentDialog({
           <div className="space-y-1.5">
             <Label htmlFor="pay-received-by">¿Quién cobró?</Label>
             <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
+          </div>
+        )}
+        {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
+          <div className="space-y-1.5">
+            <Label>Pagaron a</Label>
+            <div className="flex flex-wrap gap-2">
+              {[{ value: 'empresa', label: 'Empresa' }, { value: 'vendedor', label: 'Vendedor' }].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPaidTo(option.value as 'empresa' | 'vendedor')}
+                  className={cn(
+                    'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
+                    paidTo === option.value ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">A veces pagan al vendedor.</p>
           </div>
         )}
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
@@ -1863,7 +1892,12 @@ function RegisterPaymentDialog({
             type="button"
             className="cursor-pointer"
             disabled={busy}
-            onClick={() => onSubmit({ paymentMethod, receivedBy, paymentProof })}
+            onClick={() => onSubmit({
+              paymentMethod,
+              receivedBy,
+              paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
+              paymentProof,
+            })}
           >
             {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {busy ? 'Guardando…' : 'Registrar pago'}

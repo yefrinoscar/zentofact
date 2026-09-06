@@ -1,3 +1,4 @@
+import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import { enqueueStockJob } from './stock-jobs.js';
 import { INVENTORY_LISTEN_FROM_AT } from './stock-commitment.js';
 import { upsertListing } from './listing-service.js';
@@ -44,11 +45,7 @@ export async function listUnmatchedStockItems(db) {
               nullif(listing.metadata->'images'->0->>'Url', ''),
               nullif(listing.metadata->'images'->0->>'url', ''),
               nullif(listing.metadata->>'imageUrl', ''),
-              nullif(oi.raw_data->>'Image', ''),
-              nullif(oi.raw_data->>'ImageUrl', ''),
-              nullif(oi.raw_data->>'ImageURL', ''),
-              nullif(oi.raw_data->>'ProductImage', ''),
-              nullif(oi.raw_data->>'MainImage', ''),
+              ${MARKETPLACE_RAW_IMAGE_SQL},
               nullif(psku.image_url, ''),
               case when channel.code='falabella'
                 and coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'

@@ -12,7 +12,7 @@ import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { logisticsChannelClass } from '../lib/logistics-inbox';
+import { logisticsChannelClass, productImageSrc } from '../lib/logistics-inbox';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
 import { sellerShortName } from '../lib/seller-name';
 import {
@@ -203,18 +203,16 @@ function SourceBadge({ source, channelCode }: { source: string; channelCode?: st
     ? (fromWebhook ? `Pedido ${channelLabel} encolado al entrar` : `Pedido ${channelLabel} encolado por ${sourceLabel.toLowerCase()}`)
     : (fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo');
   return (
-    <span className="flex flex-col items-start gap-1" title={title}>
-      {channelLabel ? <ChannelBadge code={channelCode} /> : null}
-      <span
-        className={cn(
-          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
-          fromWebhook
-            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-            : 'border-slate-200 bg-slate-50 text-slate-600',
-        )}
-      >
-        {sourceLabel}
-      </span>
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
+        fromWebhook
+          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+      title={title}
+    >
+      {sourceLabel}
     </span>
   );
 }
@@ -253,13 +251,14 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
   size?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const canShowImage = Boolean(imageUrl) && !failed;
+  const src = productImageSrc(imageUrl);
+  const canShowImage = Boolean(src) && !failed;
   return (
     <div className={cn('daisy-avatar relative z-0 shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
       <div className={cn(size, 'overflow-hidden rounded-md bg-muted text-muted-foreground')}>
         {canShowImage ? (
           <img
-            src={imageUrl || undefined}
+            src={src || undefined}
             alt={`Foto de ${title}`}
             className="h-full w-full object-cover"
             loading="lazy"

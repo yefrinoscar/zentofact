@@ -43,6 +43,21 @@ test('obtiene imágenes con P11 y prefiere dam_url', async () => {
   assert.equal(products[0].imageUrl, 'https://dam.ripley.test/p-1.jpg');
 });
 
+test('lee product_medias cuando P11 devuelve un arreglo', async () => {
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret',
+    fetchImpl: async () => response({
+      products: [{
+        product_sku: 'P-2',
+        product_title: 'Escritorio',
+        product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg', type: 'SMALL' }],
+      }],
+    }),
+  });
+  const products = await client.listProductContents(['P-2']);
+  assert.equal(products[0].imageUrl, 'https://home.ripley.com.pe/desk.jpg');
+});
+
 test('trae todas las páginas de ofertas', async () => {
   const calls = [];
   const client = new RipleyApiClient({

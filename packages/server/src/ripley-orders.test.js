@@ -44,8 +44,20 @@ test('normaliza líneas, dirección y tracking de una orden Ripley', () => {
   assert.deepEqual(mapRipleyOrderItems(raw)[0], {
     externalItemId: 'L-1', sku: 'SELLER-1', providerSku: 'RIP-1', description: 'Producto',
     quantity: 2, unitPrice: 10.5, discountAmount: null, total: 21, providerStatus: 'SHIPPING',
-    metadata: { categoryCode: '', categoryLabel: '' }, rawData: raw.order_lines[0],
+    metadata: { categoryCode: '', categoryLabel: '', imageUrl: null }, rawData: raw.order_lines[0],
   });
+});
+
+test('toma la foto Ripley de product_medias', () => {
+  const items = mapRipleyOrderItems({
+    order_lines: [{
+      order_line_id: 'L-2', offer_sku: 'S793615', product_sku: 'P-99',
+      product_title: 'Escritorio gamer', quantity: 1, price_unit: '399', total_price: '399',
+      order_line_state: 'SHIPPING',
+      product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg', type: 'SMALL' }],
+    }],
+  });
+  assert.equal(items[0].metadata.imageUrl, 'https://home.ripley.com.pe/desk.jpg');
 });
 
 test('encola descuento de Ripley desde el corte y no marca vacío como completo', async () => {

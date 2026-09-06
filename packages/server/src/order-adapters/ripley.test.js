@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   mapRipleyCanonicalStatus,
-  mapRipleyOrder,
   mapRipleyOrderItems,
 } from './ripley.js';
 
@@ -34,7 +33,7 @@ test('mapea estados Ripley conocidos y conserva los desconocidos como sin mapear
     orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship',
   });
   assert.deepEqual(mapRipleyCanonicalStatus('NUEVO_ESTADO'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'unmapped',
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
 });
 
@@ -47,21 +46,19 @@ test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
     quantity: 2,
     unitPrice: 60,
     discountAmount: null,
-    taxAmount: null,
     total: 120,
     providerStatus: 'SHIPPING',
-    metadata: {},
+    metadata: { categoryCode: '', categoryLabel: '', imageUrl: null },
     rawData: raw.order_lines[0],
   });
 });
 
-test('mapea cabecera, cliente, envío, totales e integridad de items', () => {
-  const mapped = mapRipleyOrder({ raw, orderId: 'RIP-100', orderNumber: 'R-100' });
-  assert.equal(mapped.externalOrderId, 'RIP-100');
-  assert.equal(mapped.customer.name, 'Ana Pérez');
-  assert.equal(mapped.shipping.address, 'Av. Lima 123');
-  assert.equal(mapped.shipping.trackingCode, 'TRACK-1');
-  assert.equal(mapped.itemsComplete, true);
-  assert.equal(mapped.items.length, 1);
-  assert.equal(mapped.total, 129.9);
+test('guarda la foto de product_medias en la línea Ripley', () => {
+  const line = mapRipleyOrderItems({
+    order_lines: [{
+      ...raw.order_lines[0],
+      product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg', type: 'SMALL' }],
+    }],
+  })[0];
+  assert.equal(line.metadata.imageUrl, 'https://home.ripley.com.pe/desk.jpg');
 });

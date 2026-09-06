@@ -1,6 +1,7 @@
 import { loadOwnFleetConfig } from './own-fleet-config.js';
 import { applyOwnFleetShipping, isInPeru, OUT_OF_PERU_MESSAGE } from './own-fleet-shipping.js';
 import { createHash } from 'node:crypto';
+import { MARKETPLACE_RAW_IMAGE_SQL } from './catalog/item-image.js';
 import { stockPhase } from './catalog/stock-phase.js';
 import { applyInventoryMovement, applyInventoryPendingReturn } from './catalog/inventory-service.js';
 
@@ -14,6 +15,7 @@ export const FULFILLMENT_STATUSES = [
 export const ORDER_ITEMS_STATUSES = ['pending', 'complete', 'error'];
 export const DOCUMENT_STATUSES = ['not_requested', 'pending', 'issued', 'accepted', 'rejected', 'cancelled'];
 export const MANUAL_SHIPPING_CARRIERS = ['marvisuar', 'shaloom', 'dinsides', 'nosotros'];
+const PAYMENT_RECIPIENTS = ['empresa', 'vendedor'];
 
 let corePromise;
 
@@ -934,11 +936,7 @@ const ORDER_LIST_ITEMS_JOIN = `
            nullif(listing.metadata->'images'->0->>'Url', ''),
            nullif(listing.metadata->'images'->0->>'url', ''),
            nullif(listing.metadata->>'imageUrl', ''),
-           nullif(oi.raw_data->>'Image', ''),
-           nullif(oi.raw_data->>'ImageUrl', ''),
-           nullif(oi.raw_data->>'ImageURL', ''),
-           nullif(oi.raw_data->>'ProductImage', ''),
-           nullif(oi.raw_data->>'MainImage', '')
+           ${MARKETPLACE_RAW_IMAGE_SQL}
          ),
          'shopSku', coalesce(
            nullif(trim(listing.shop_sku), ''),
@@ -966,6 +964,21 @@ function parseJsonArray(value) {
     }
   }
   return [];
+}
+
+function redactListPaymentProof(metadata) {
+  const current = metadata && typeof metadata === 'object' ? metadata : {};
+  const proof = current.paymentProof;
+  if (!proof || typeof proof !== 'object') return current;
+  const dataUrl = String(proof.dataUrl || '').trim();
+  const { dataUrl: _dataUrl, ...rest } = proof;
+  return {
+    ...current,
+    paymentProof: {
+      ...rest,
+      hasData: Boolean(dataUrl) || proof.hasData === true,
+    },
+  };
 }
 
 function normalizeOrderListItems(value) {
@@ -1084,7 +1097,11 @@ export async function listOrders(filters = {}, db) {
     values,
   );
   return {
-    orders: result.rows.map(normalizeOrderRow),
+    orders: result.rows.map((row) => {
+      const order = normalizeOrderRow(row);
+      if (!order) return order;
+      return { ...order, metadata: redactListPaymentProof(order.metadata) };
+    }),
     totalCount: Number(result.rows[0]?.total_count || 0),
     limit,
     offset,
@@ -1289,11 +1306,7 @@ export async function listCanceledOrders(filters = {}, db) {
            nullif(listing.metadata->'images'->0->>'Url', ''),
            nullif(listing.metadata->'images'->0->>'url', ''),
            nullif(listing.metadata->>'imageUrl', ''),
-           nullif(oi.raw_data->>'Image', ''),
-           nullif(oi.raw_data->>'ImageUrl', ''),
-           nullif(oi.raw_data->>'ImageURL', ''),
-           nullif(oi.raw_data->>'ProductImage', ''),
-           nullif(oi.raw_data->>'MainImage', '')
+           ${MARKETPLACE_RAW_IMAGE_SQL}
          ),
          'shopSku', coalesce(
            nullif(trim(listing.shop_sku), ''),
@@ -1510,11 +1523,7 @@ export async function getSalesPulse(filters = {}, db) {
            nullif(listing.metadata->'images'->0->>'Url', ''),
            nullif(listing.metadata->'images'->0->>'url', ''),
            nullif(listing.metadata->>'imageUrl', ''),
-           nullif(oi.raw_data->>'Image', ''),
-           nullif(oi.raw_data->>'ImageUrl', ''),
-           nullif(oi.raw_data->>'ImageURL', ''),
-           nullif(oi.raw_data->>'ProductImage', ''),
-           nullif(oi.raw_data->>'MainImage', '')
+           ${MARKETPLACE_RAW_IMAGE_SQL}
          )) as image_url,
          min(coalesce(
            nullif(trim(listing.shop_sku), ''),
@@ -1891,6 +1900,10 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     throw new Error('paymentMethod inválido.');
   }
   const receivedBy = optionalText(input.receivedBy, 200);
+  const paidTo = optionalText(input.paidTo, 50);
+  if (paidTo && !PAYMENT_RECIPIENTS.includes(paidTo)) {
+    throw new Error('paidTo inválido.');
+  }
   const paymentProof = input.paymentProof && typeof input.paymentProof === 'object'
     ? input.paymentProof
     : null;
@@ -1912,6 +1925,7 @@ export async function updateOrderPayment(orderId, input = {}, db) {
     paidAt: new Date().toISOString(),
   };
   if (receivedBy) patch.receivedBy = receivedBy;
+  if (paidTo) patch.paidTo = paidTo;
   if (paymentProof) patch.paymentProof = paymentProof;
 
   const updated = await target.query(
@@ -1939,7 +1953,7 @@ export async function updateOrderPayment(orderId, input = {}, db) {
       `order.payment_recorded:${id}:${persisted.updated_at}`,
       JSON.stringify({ paymentStatus: existing.payment_status }),
       JSON.stringify({ paymentStatus, paymentMethod }),
-      JSON.stringify({ paymentMethod, receivedBy: receivedBy || null }),
+      JSON.stringify({ paymentMethod, receivedBy: receivedBy || null, paidTo: paidTo || null }),
     ],
   );
 

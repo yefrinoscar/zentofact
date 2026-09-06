@@ -4,6 +4,8 @@ import {
   PICKUP_ADDRESS,
   SALE_SOURCES,
   limaTodayKey,
+  needsDigitalPayment,
+  paymentRecipientLabel,
   type ManualSaleInput,
   type SaleStepId,
 } from './registrar-venta.ts';
@@ -109,8 +111,9 @@ export function paymentSummaryRows(input: ManualSaleInput): SummaryRow[] {
   if (input.paymentMethod === 'efectivo' && receivedBy) {
     rows.push({ label: 'Cobró', value: receivedBy });
   }
-  if (input.paymentMethod === 'yape_plin' || input.paymentMethod === 'transferencia') {
-    rows.push({ label: 'Constancia', value: input.paymentProof?.name || 'Sin adjuntar' });
+  if (needsDigitalPayment(input.paymentMethod)) {
+    rows.push({ label: 'Pagaron a', value: paymentRecipientLabel(input.paidTo) || 'Empresa' });
+    rows.push({ label: 'Constancia', value: input.paymentProof?.name || 'Sin constancia' });
   }
   return rows;
 }

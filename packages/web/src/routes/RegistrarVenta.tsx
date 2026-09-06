@@ -23,6 +23,7 @@ import {
   type DocumentRequest,
   type ManualSaleInput,
   type PaymentMethod,
+  type PaymentRecipient,
   type SaleLine,
   type SaleSource,
   type SaleStepId,
@@ -42,6 +43,7 @@ import {
   showsNewestSaleFirst,
   type MisVentasQuery,
 } from '../lib/mis-ventas-presentation';
+import { readPaymentProof } from '../lib/payment-proof';
 import { isSellerPricedShipping, type ShippingCarrier } from '../lib/shipping-carrier';
 import type { MapPlace } from '../components/PlacePicker';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
@@ -58,48 +60,6 @@ type ChannelAccount = {
   channelCode: string;
   active: boolean;
 };
-
-const PROOF_MAX_BYTES = 1_500_000;
-
-async function readPaymentProof(file: File): Promise<PaymentProof> {
-  if (file.size <= PROOF_MAX_BYTES) {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('No se pudo leer la constancia.'));
-      reader.readAsDataURL(file);
-    });
-    return { name: file.name, type: file.type || 'image/jpeg', dataUrl };
-  }
-
-  const bitmap = await createImageBitmap(file);
-  const maxEdge = 1600;
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    bitmap.close();
-    throw new Error('No se pudo comprimir la constancia en este dispositivo.');
-  }
-  context.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
-
-  let quality = 0.82;
-  let dataUrl = canvas.toDataURL('image/jpeg', quality);
-  while (dataUrl.length * 0.75 > PROOF_MAX_BYTES && quality > 0.45) {
-    quality -= 0.12;
-    dataUrl = canvas.toDataURL('image/jpeg', quality);
-  }
-  if (dataUrl.length * 0.75 > PROOF_MAX_BYTES) {
-    throw new Error('La constancia sigue pesando demasiado. Usa una foto más liviana.');
-  }
-  const baseName = file.name.replace(/\.[^.]+$/, '') || 'constancia';
-  return { name: `${baseName}.jpg`, type: 'image/jpeg', dataUrl };
-}
 
 export default function RegistrarVenta() {
   const navigate = useNavigate();
@@ -131,6 +91,7 @@ export default function RegistrarVenta() {
   const [shippingNote, setShippingNote] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('despues');
   const [receivedBy, setReceivedBy] = useState('');
+  const [paidTo, setPaidTo] = useState<PaymentRecipient | ''>('');
   const [paymentProof, setPaymentProof] = useState<PaymentProof | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -201,6 +162,7 @@ export default function RegistrarVenta() {
     saleSource,
     paymentMethod,
     receivedBy,
+    paidTo,
     paymentProof,
     documentRequest,
     boletaIdentity,
@@ -316,6 +278,14 @@ export default function RegistrarVenta() {
       total: registered.total,
       commission: saleProductCommission(lines),
       paymentMethod,
+      paidTo,
+      paymentProof,
+      items: lines.map((line) => ({
+        name: line.name,
+        sku: line.sku,
+        quantity: line.quantity,
+        imageUrl: line.imageUrl,
+      })),
       orderedAt: payload.orderedAt,
     });
     // Every cached Mis ventas page gets the new numbers; only pages that list newest-first get the row.
@@ -429,6 +399,8 @@ export default function RegistrarVenta() {
     setPaymentMethod,
     receivedBy,
     setReceivedBy,
+    paidTo,
+    setPaidTo,
     paymentProof,
     setPaymentProof,
     attachProof,

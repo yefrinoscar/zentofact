@@ -1,3 +1,4 @@
+import { marketplaceItemImageUrl } from '../catalog/item-image.js';
 import { enqueueStockJob } from '../catalog/stock-jobs.js';
 import { shouldListenStockOrder } from '../catalog/stock-commitment.js';
 import { ensureOrderChannelAccount, ingestOrder } from '../order-management.js';
@@ -90,6 +91,7 @@ export function mapRipleyOrderItems(raw) {
     metadata: {
       categoryCode: text(line?.category_code),
       categoryLabel: text(line?.category_label),
+      imageUrl: marketplaceItemImageUrl(line) || null,
     },
     rawData: line,
   }));

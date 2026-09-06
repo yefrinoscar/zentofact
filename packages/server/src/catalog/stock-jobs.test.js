@@ -429,6 +429,7 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
   assert.match(query, /'imageUrl'/i);
+  assert.match(query, /product_medias/i);
   assert.match(query, /order_row\.ordered_at >= \$2::timestamptz/i);
   assert.equal(/ordered_at is null/i.test(query), false);
   assert.equal(params[1], INVENTORY_LISTEN_FROM_AT);
