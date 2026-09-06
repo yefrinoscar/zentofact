@@ -1,3 +1,4 @@
+import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import {
   finiteNumber,
   httpError,
@@ -832,13 +833,7 @@ export async function listTodayProductSales(filters = {}, db) {
           nullif(linked.metadata->'images'->>0, ''),
           nullif(linked.metadata->'images'->0->>'Url', ''),
           nullif(linked.metadata->>'imageUrl', ''),
-          nullif(oi.raw_data->>'Image', ''),
-          nullif(oi.raw_data->>'ImageUrl', ''),
-          nullif(oi.raw_data->>'ImageURL', ''),
-          nullif(oi.raw_data->>'ProductImage', ''),
-          nullif(oi.raw_data->>'MainImage', ''),
-          nullif(oi.raw_data#>>'{Images,Image,0}', ''),
-          nullif(oi.raw_data#>>'{Images,0}', ''),
+          ${MARKETPLACE_RAW_IMAGE_SQL},
           (
             select coalesce(
               nullif(photo.metadata->'images'->>0, ''),

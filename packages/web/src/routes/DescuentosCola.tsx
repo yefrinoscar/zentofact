@@ -12,7 +12,7 @@ import falabellaLogo from '../assets/falabella.png';
 import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { logisticsChannelClass } from '../lib/logistics-inbox';
+import { logisticsChannelClass, productImageSrc } from '../lib/logistics-inbox';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
 import { sellerShortName } from '../lib/seller-name';
 import {
@@ -253,13 +253,14 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
   size?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const canShowImage = Boolean(imageUrl) && !failed;
+  const src = productImageSrc(imageUrl);
+  const canShowImage = Boolean(src) && !failed;
   return (
     <div className={cn('daisy-avatar relative z-0 shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
       <div className={cn(size, 'overflow-hidden rounded-md bg-muted text-muted-foreground')}>
         {canShowImage ? (
           <img
-            src={imageUrl || undefined}
+            src={src || undefined}
             alt={`Foto de ${title}`}
             className="h-full w-full object-cover"
             loading="lazy"
