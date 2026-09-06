@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
+import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { Check, ChevronLeft, ChevronRight, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -23,7 +25,7 @@ function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
 }
 
 export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, layout = '1' }: {
-  view: BandejaView; offset: number; pageSize: number; onPage: (offset: number) => void; error: boolean; busy: boolean; layout?: '1' | '2' | '3' | '4' | '5';
+  view: BandejaView; offset: number; pageSize: number; onPage: (offset: number) => void; error: boolean; busy: boolean; layout?: OperationalLayout;
 }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [focusedId, setFocusedId] = useState<number | null>(null);
@@ -38,16 +40,12 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const targets = selectedOrders.length ? selectedOrders : isPending ? eligible : unprinted;
   const groups = groupLogisticsByUrgency(view.orders, view.now);
   const focused = view.orders.find((order) => order.id === focusedId) || groups[0]?.orders[0];
-  const stores = new Map<string, LogisticsOrder[]>();
-  for (const group of groups) for (const order of group.orders) {
-    const key = `${order.companyId ?? 'none'}|${order.companyName}`;
-    stores.set(key, [...(stores.get(key) || []), order]);
-  }
   const displayGroups = view.stage === 'shipped'
     ? [{ key: 'shipped', label: 'Enviados', urgency: 'later', orders: view.orders }]
-    : layout === '3'
-      ? [...stores].map(([key, orders]) => ({ key, label: sellerShortName(orders[0].companyName), urgency: orders[0].urgency, orders }))
-      : groups.map((group) => ({ ...group, key: group.urgency, label: LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency)?.label }));
+    : operationalGroups(view.orders, view.now, layout);
+  const isCard = ['2', '9', '10', '13', '16'].includes(layout);
+  const isChecklist = layout === '13' && isPending;
+  const isColumns = ['9', '10', '16'].includes(layout);
   const action = () => {
     if (locked || !targets.length) return;
     if (isPending) view.requestBulkReady(targets);
@@ -63,25 +61,31 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
                       const selectable = isPending ? canMarkFalabellaReady(order) : canPrintLogisticsLabel(order);
                       const printed = labelWasPrinted(order);
-                      return <li key={order.id} className={cn('grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-3 hover:bg-muted/30', layout === '2' ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5')}>
-                        <div>{view.stage !== 'shipped' && <SelectionBox checked={selectable && selected.has(order.id)} disabled={locked || !selectable || (isPending && !view.canDispatch)} label={`Seleccionar pedido ${order.externalOrderNumber}`} onChange={() => toggle(order)} />}</div>
+                      const rowClass = cn('grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-3 hover:bg-muted/30', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
+                      const content = <>
+                        <div>{view.stage !== 'shipped' && !isChecklist && <SelectionBox checked={selectable && selected.has(order.id)} disabled={locked || !selectable || (isPending && !view.canDispatch)} label={`Seleccionar pedido ${order.externalOrderNumber}`} onChange={() => toggle(order)} />}</div>
                         <div className="min-w-0 self-start pt-1">
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
                         </div>
-                        <div className={cn("col-start-2 min-w-0 space-y-2", layout !== '2' && "md:col-start-auto")}>
+                        <div className={cn(isChecklist && canMarkFalabellaReady(order) && 'hidden', "col-start-2 min-w-0 space-y-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
-                            <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? "size-24" : "size-12")} onOpen={setPreview} />
+                            <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? 'size-24' : isCard ? 'size-20' : layout === '7' ? 'size-8' : 'size-12')} onOpen={setPreview} />
                             <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{(item.sku || item.shopSku) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{item.sku || item.shopSku}</p>}</div>
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                         </div>
-                        <div className={cn("col-start-2 flex items-center justify-between gap-2", layout === '2' ? "mt-2 border-t pt-3" : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
+                        <div className={cn("col-start-2 flex items-center justify-between gap-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
-                          {canMarkFalabellaReady(order) ? <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>
+                          {canMarkFalabellaReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span> : canMarkFalabellaReady(order) ? <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>
                             : canPrintLogisticsLabel(order) ? <Button size="sm" variant="outline" disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>
                               : view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
                         </div>
+                        {layout === '12' && <p className="col-start-2 text-sm font-semibold tabular-nums md:col-start-3">{orderUnits(order)} {orderUnits(order) === 1 ? 'unidad para empacar' : 'unidades para empacar'}</p>}
+                        {isChecklist && canMarkFalabellaReady(order) && <BandejaPackingChecklist key={order.items.map((item) => `${item.id}:${item.quantity}`).join('|')} order={order} disabled={locked || !view.canDispatch} onReady={() => view.requestReady(order)} />}
+                      </>;
+                      return <li key={order.id} className={layout === '15' ? 'border-b' : rowClass}>
+                        {layout === '15' ? <details className="group"><summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-3 py-4 hover:bg-muted"><ChevronRight className="size-4 transition-transform group-open:rotate-90" />{order.items[0] && <ProductThumb item={order.items[0]} className="size-10 rounded bg-white" />}<span className="font-mono text-sm font-semibold">{order.externalOrderNumber}</span><span className="text-xs text-muted-foreground">{sellerShortName(order.companyName)}</span><span className="ml-auto text-xs">{orderUnits(order)} unidades · {logisticsDeadlineLabel(order, view.now)}</span></summary><div className={rowClass}>{content}</div></details> : content}
                       </li>;
   };
 
@@ -124,14 +128,14 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
       <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-y bg-background px-2 py-3 sm:px-3">
         <div className="flex min-h-9 items-center gap-3">
-          {view.stage !== 'shipped' && layout !== '4' && <SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} />}
+          {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} />}
           <div>
             <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} pedidos`}</p>
             <p className="text-xs text-muted-foreground">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo.' : 'Prepara, selecciona y marca listo.' : isReady ? 'Etiquetas y detalle de productos en un PDF.' : 'Pedidos enviados.'}</p>
           </div>
           {selectedOrders.length > 0 && <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Quitar selección</Button>}
         </div>
-        {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && <Button onClick={action} disabled={locked || !targets.length || (isPending && !view.canDispatch)}>
+        {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && layout !== '14' && !isChecklist && <Button onClick={action} disabled={locked || !targets.length || (isPending && !view.canDispatch)}>
           {view.printing ? <Loader2 className="animate-spin" /> : isPending ? <PackageCheck /> : <Printer />}
           {view.printing ? 'Generando PDF…' : isPending ? `Marcar ${targets.length} listos` : selectedOrders.length ? `Imprimir ${targets.length} seleccionados` : `Imprimir ${targets.length} sin imprimir`}
         </Button>}
@@ -158,12 +162,12 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
           : !view.orders.length ? <div className="py-16 text-center"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
-            : <div aria-busy={view.fetching} className={cn(view.fetching && 'opacity-60')}>
+            : <div aria-busy={view.fetching} className={cn('min-w-0', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);
-                return <section key={group.key} aria-label={group.label} className="mb-4">
-                  {view.stage !== 'shipped' && <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs font-semibold"><span className={cn('size-2 rounded-full', meta?.dotClass)} />{group.label}<span className="font-normal text-muted-foreground">{group.orders.length}</span></div>}
-                  <ul className={layout === '2' ? "grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-3" : "divide-y"}>
+                return <section key={group.key} aria-label={group.label} className={cn("mb-4 min-w-0", layout === '8' && "ml-2 border-l-2 border-l-primary/20 pl-4")}>
+                  {view.stage !== 'shipped' && <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs font-semibold"><span className={cn('size-2 rounded-full', meta?.dotClass)} />{group.label}<span className="font-normal text-muted-foreground">{group.orders.length}</span>{(layout === '11' || layout === '12') && <span className="ml-auto text-muted-foreground">{group.orders.reduce((sum, order) => sum + orderUnits(order), 0)} unidades</span>}</div>}
+                  <ul className={isColumns ? 'space-y-3 pt-3' : isCard ? 'grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y'}>
 {group.orders.map((order) => renderOrder(order, meta?.textClass))}
                   </ul>
                 </section>;
@@ -183,6 +187,10 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <span>{view.totalCount ? `${offset + 1}–${Math.min(offset + view.orders.length, view.totalCount)} de ${view.totalCount}` : '0 pedidos'}</span>
         <div className="flex gap-2"><Button size="sm" variant="outline" disabled={locked || offset === 0} onClick={() => onPage(Math.max(0, offset - pageSize))}><ChevronLeft />Anterior</Button><Button size="sm" variant="outline" disabled={locked || offset + pageSize >= view.totalCount} onClick={() => onPage(offset + pageSize)}>Siguiente<ChevronRight /></Button></div>
       </div>
+      {layout === '14' && view.stage !== 'shipped' && <div className="fixed inset-x-4 bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4 shadow-lg xl:left-72">
+        <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${targets.length} pedidos disponibles en esta página`}</p><p className="text-xs text-muted-foreground">{targets.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma que están empacados.' : 'Etiquetas y productos en un PDF.'}</p></div>
+        <Button disabled={locked || !targets.length || (isPending && !view.canDispatch)} onClick={action}>{view.printing ? <Loader2 className="animate-spin" /> : isPending ? <PackageCheck /> : <Printer />}{isPending ? `Marcar ${targets.length} listos` : `Imprimir ${targets.length} pedidos`}</Button>
+      </div>}
       <ProductImageLightbox preview={preview} onClose={() => setPreview(null)} />
     </div>
   );
