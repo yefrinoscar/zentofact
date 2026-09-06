@@ -165,7 +165,8 @@ const SEED_LOGISTICS_ORDERS = [
     orderNumber: 'RP-10021',
     channel: 'ripley',
     companyRuc: '20990001002',
-    sku: 'HOG025',
+    sku: 'HOG099',
+    productMediaUrl: '/seed/hog099.svg',
     customer: { name: 'Pilar Preview', firstName: 'Pilar', lastName: 'Preview', documentNumber: '44556677' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
@@ -298,6 +299,17 @@ const SEED_PRODUCTS = [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
       { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S166285', title: 'Silla evolutiva gris · Ripley' },
+    ],
+  },
+  {
+    mainSku: 'HOG099',
+    name: 'Escritorio gamer negro diseño ergonómico oficina',
+    brand: 'Zento',
+    referencePrice: 399,
+    wholesalePrice: 340,
+    stock: 6,
+    listings: [
+      { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S793615', title: 'Escritorio gamer negro · Ripley' },
     ],
   },
   {
@@ -769,11 +781,20 @@ async function ensureSampleOrders(companiesByRuc, products) {
       const quantity = Math.max(1, Number(lineSpec.quantity || 1));
       const unitPrice = lineProduct.referencePrice || 100;
       line += 1;
+      const ripleyImage = spec.productMediaUrl || lineProduct.imageUrl || null;
+      const rawData = spec.channel === 'ripley' && ripleyImage
+        ? {
+            offer_sku: lineProduct.mainSku,
+            product_sku: lineProduct.mainSku,
+            product_title: lineProduct.name,
+            product_medias: [{ media_url: ripleyImage, type: 'SMALL', mime_type: 'image/svg+xml' }],
+          }
+        : {};
       const itemResult = await pool.query(
         `INSERT INTO order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
-           unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
-         ) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11::jsonb)
+           unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata, raw_data
+         ) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11::jsonb,$12::jsonb)
          ON CONFLICT (order_id, external_item_id) DO NOTHING
          RETURNING id, product_id, quantity`,
         [
@@ -787,7 +808,8 @@ async function ensureSampleOrders(companiesByRuc, products) {
           lineProduct.productId,
           spec.stockState,
           spec.stockApplied,
-          JSON.stringify({ origin: SEED_MARKER }),
+          JSON.stringify({ origin: SEED_MARKER, imageUrl: ripleyImage }),
+          JSON.stringify(rawData),
         ],
       );
       if (itemResult.rows[0]) insertedItems.push(itemResult.rows[0]);
@@ -904,6 +926,16 @@ async function ensurePreviewFixtures() {
     name: row.name,
     referencePrice: Number(row.reference_price || 100),
   }));
+  for (const spec of SEED_PRODUCTS) {
+    if (products.some((row) => row.mainSku === spec.mainSku)) continue;
+    const created = await ensureProduct(spec, admin.id, companiesByRuc);
+    products.push({
+      productId: created.productId,
+      mainSku: spec.mainSku,
+      name: spec.name,
+      referencePrice: spec.referencePrice || 100,
+    });
+  }
   const limbo = companiesByRuc.get('20990001001');
   if (limbo && products[0]) {
     await ensureSampleOrders(companiesByRuc, products);

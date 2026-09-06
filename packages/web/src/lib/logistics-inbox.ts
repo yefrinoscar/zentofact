@@ -349,6 +349,12 @@ export function logisticsBulkReadySummary(total: number, failed: number) {
   return `${ok} marcado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
 }
 
+const MARKETPLACE_IMAGE_HOST = /(^|\.)(falabella\.com|ripley\.com(\.pe)?|mirakl\.net|mirakl\.com)$/i;
+
+export function isMarketplaceImageHost(hostname: string) {
+  return MARKETPLACE_IMAGE_HOST.test(hostname);
+}
+
 export function productImageSrc(url?: string | null, shopSku?: string | null) {
   const sku = String(shopSku || '').trim();
   const fallback = sku && /^[A-Za-z0-9_-]+$/.test(sku) ? `https://media.falabella.com/falabellaPE/${sku}_01` : '';
@@ -356,7 +362,7 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
   if (!value) return '';
   try {
     const parsed = new URL(value);
-    if (parsed.protocol === 'https:' && /(^|\.)falabella\.com$/i.test(parsed.hostname)) {
+    if (parsed.protocol === 'https:' && isMarketplaceImageHost(parsed.hostname)) {
       return `/catalog/image?url=${encodeURIComponent(value)}`;
     }
   } catch {

@@ -29,6 +29,7 @@ test('lista seller SKUs sin producto maestro desde el corte operativo', async ()
   assert.doesNotMatch(sql, /where\s+oi\.stock_state='skipped_unmapped'/i);
   assert.match(sql, /product_id is null/i);
   assert.match(sql, /image_url/i);
+  assert.match(sql, /product_medias/i);
   assert.deepEqual(rows, [{
     orderItemId: 91,
     companyId: 4,

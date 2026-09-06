@@ -749,8 +749,8 @@ app.get('/catalog/unmapped-skus', async (c) => {
 app.get('/catalog/image', async (c) => {
   try {
     const imageUrl = new URL(c.req.query('url') || '');
-    if (imageUrl.protocol !== 'https:' || !/(^|\.)falabella\.com$/i.test(imageUrl.hostname)) {
-      return c.json({ error: 'La imagen solicitada no pertenece a Falabella.' }, 400);
+    if (imageUrl.protocol !== 'https:' || !/(^|\.)(falabella\.com|ripley\.com(\.pe)?|mirakl\.net|mirakl\.com)$/i.test(imageUrl.hostname)) {
+      return c.json({ error: 'La imagen solicitada no pertenece a un marketplace permitido.' }, 400);
     }
     const response = await fetch(imageUrl, {
       headers: { accept: 'image/png,image/jpeg,image/webp;q=0.9,*/*;q=0.1' },

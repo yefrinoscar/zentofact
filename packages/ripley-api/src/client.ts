@@ -412,16 +412,26 @@ function normalizeOffer(value: unknown): RipleyOffer | null {
   };
 }
 
+function productContentImageUrl(product: Record<string, unknown>): string | null {
+  const media = product.product_media ?? product.productMedia ?? product.product_medias ?? product.productMedias;
+  const entries = Array.isArray(media) ? media : [media];
+  for (const entry of entries) {
+    const record = objectRecord(entry);
+    const url = httpsUrl(record?.dam_url ?? record?.damUrl) ?? httpsUrl(record?.media_url ?? record?.mediaUrl);
+    if (url) return url;
+  }
+  return null;
+}
+
 function normalizeProductContent(value: unknown): RipleyProductContent | null {
   const product = objectRecord(value);
   if (!product) return null;
   const productSku = nonEmptyText(product.product_sku ?? product.productSku);
   if (!productSku) return null;
-  const media = objectRecord(product.product_media ?? product.productMedia);
   return {
     productSku,
     productTitle: nonEmptyText(product.product_title ?? product.productTitle),
-    imageUrl: httpsUrl(media?.dam_url ?? media?.damUrl) ?? httpsUrl(media?.media_url ?? media?.mediaUrl),
+    imageUrl: productContentImageUrl(product),
     raw: value,
   };
 }

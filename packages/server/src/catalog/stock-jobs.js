@@ -1,3 +1,4 @@
+import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import { applyReadyOrderStock } from './catalog-operations.js';
 import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
@@ -341,8 +342,7 @@ export async function recentJobs(limit = 60, db) {
                   nullif(listing.metadata->'images'->0->>'Url', ''),
                   nullif(listing.metadata->'images'->0->>'url', ''),
                   nullif(listing.metadata->>'imageUrl', ''),
-                  nullif(oi.raw_data->>'ImageUrl', ''),
-                  nullif(oi.raw_data->>'ImageURL', ''),
+                  ${MARKETPLACE_RAW_IMAGE_SQL},
                   case when order_row.channel_code='falabella'
                     and coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'
                   then 'https://media.falabella.com/falabellaPE/'
@@ -434,8 +434,7 @@ export async function jobOrderPreview(id, db) {
               nullif(listing.metadata->'images'->0->>'Url', ''),
               nullif(listing.metadata->'images'->0->>'url', ''),
               nullif(listing.metadata->>'imageUrl', ''),
-              nullif(oi.raw_data->>'ImageUrl', ''),
-              nullif(oi.raw_data->>'ImageURL', '')
+              ${MARKETPLACE_RAW_IMAGE_SQL}
             ) as image_url,
             oi.stock_state
        from order_items oi

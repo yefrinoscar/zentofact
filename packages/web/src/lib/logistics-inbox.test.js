@@ -149,8 +149,12 @@ test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
   assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
 });
 
-test('las imágenes de Falabella pasan por el proxy del catálogo', () => {
+test('las imágenes de Falabella y Ripley pasan por el proxy del catálogo', () => {
   assert.equal(productImageSrc('https://cdn.example/p.jpg'), 'https://cdn.example/p.jpg');
   assert.match(productImageSrc('', 'ABC123'), /^\/catalog\/image\?url=https%3A%2F%2Fmedia\.falabella\.com/);
+  assert.match(
+    productImageSrc('https://home.ripley.com.pe/desk.jpg'),
+    /^\/catalog\/image\?url=https%3A%2F%2Fhome\.ripley\.com\.pe/,
+  );
   assert.equal(productImageSrc('', ''), '');
 });

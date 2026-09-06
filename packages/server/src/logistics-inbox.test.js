@@ -169,6 +169,37 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
   assert.equal(record.params[1], 'operator@zentofact.local');
 });
 
+test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
+  const db = new InboxDb();
+  await listLogisticsInbox({ stage: 'pending' }, db);
+  const listSql = db.queries.find((query) => query.sql.includes('image_url'))?.sql || '';
+  assert.match(listSql, /product_medias/);
+  assert.match(listSql, /media_url/);
+});
+
+test('usa product_medias de Ripley cuando el catálogo no trae foto', async () => {
+  const db = new InboxDb();
+  db.queries = [];
+  const original = db.query.bind(db);
+  db.query = async (sql, params = []) => {
+    const result = await original(sql, params);
+    if (result.rows[0]?.items) {
+      result.rows[0].items = [{
+        id: 9,
+        sku: 'S793615',
+        description: 'Escritorio gamer negro',
+        quantity: 1,
+        image_url: '',
+        raw_data: { product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg' }] },
+        metadata: {},
+      }];
+    }
+    return result;
+  };
+  const result = await listLogisticsInbox({ stage: 'pending' }, db);
+  assert.equal(result.orders[0].items[0].imageUrl, 'https://home.ripley.com.pe/desk.jpg');
+});
+
 test('agrupa líneas repetidas del mismo producto como una sola con cantidad', () => {
   const grouped = groupLogisticsItems([
     { id: 1, sku: 'BT-1', description: 'Bastón', quantity: 1, imageUrl: '' },
