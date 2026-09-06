@@ -516,6 +516,10 @@ export function ripleyOrderLookupIds(order = {}) {
   ]);
 }
 
+function isRipleyAuthFailure(reason) {
+  return /credenciales|HTTP 401|HTTP 403|Authorization Basic|Invalid authentication|CredentialsSignin/i.test(String(reason || ''));
+}
+
 function printFailureMessage(skipped) {
   if (skipped.length === 1) return skipped[0].reason;
   if (skipped.length) return skipped.map((entry) => entry.reason).filter(Boolean).join(' ');
@@ -587,8 +591,8 @@ async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
           attempts.push({ orderId, documentIds, reason: 'La etiqueta Ripley llegó vacía.' });
         } catch (error) {
           const reason = error.message || 'No se pudo bajar la etiqueta Ripley.';
-          attempts.push({ orderId, documentIds, reason });
-          if (/credenciales/i.test(reason)) {
+          attempts.push({ orderId, documentIds, reason, ripleyAuth: error.details?.ripleyAuth });
+          if (isRipleyAuthFailure(reason)) {
             error.details = { ...(error.details || {}), lookupIds, attempts };
             throw error;
           }
@@ -597,8 +601,8 @@ async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
       }
     } catch (error) {
       const reason = error.message || lastEmpty;
-      if (!error.details?.attempts) attempts.push({ orderId, reason });
-      if (/credenciales/i.test(reason)) {
+      if (!error.details?.attempts) attempts.push({ orderId, reason, ripleyAuth: error.details?.ripleyAuth });
+      if (isRipleyAuthFailure(reason)) {
         error.details = { ...(error.details || {}), lookupIds, attempts };
         throw error;
       }
@@ -666,6 +670,7 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
           reason: error.message || 'No se pudo bajar la etiqueta Ripley.',
           lookupIds: error.details?.lookupIds,
           attempts: error.details?.attempts,
+          ripleyAuth: error.details?.ripleyAuth,
         });
       }
     }
