@@ -280,6 +280,7 @@ test('una cabecera sin artículos completos no puede quedar como descontada', as
 });
 
 test('el detalle del job identifica cada línea y su producto maestro', async () => {
+  let orderSql = '';
   const db = {
     async query(sql) {
       const compact = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -296,6 +297,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
         }] };
       }
       if (compact.includes('from orders o') && compact.includes('items_count')) {
+        orderSql = String(sql);
         return { rows: [{
           id: '186824',
           external_order_number: '3250692389',
@@ -306,6 +308,7 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
           total: '34.99',
           items_count: 1,
           stock_applied: 0,
+          channel_code: 'falabella',
         }] };
       }
       if (compact.includes('from order_items oi')) {
@@ -327,10 +330,12 @@ test('el detalle del job identifica cada línea y su producto maestro', async ()
   };
 
   const preview = await jobOrderPreview(12, db);
+  assert.match(orderSql, /channel\.code as channel_code/i);
   assert.equal(preview.order.itemsStatus, 'complete');
   assert.equal(preview.order.itemsError, null);
   assert.equal(preview.order.orderStatus, 'confirmed');
   assert.equal(preview.order.fulfillmentStatus, 'pending');
+  assert.equal(preview.channelCode, 'falabella');
   assert.deepEqual(preview.items, [{
     id: 991,
     title: 'Camiseta reductora',
@@ -419,6 +424,7 @@ test('la tabla de jobs incluye productos y estado actual del stock', async () =>
   assert.match(query, /reserved_units/i);
   assert.match(query, /order_row\.order_status/i);
   assert.match(query, /order_row\.fulfillment_status/i);
+  assert.match(query, /order_row\.channel_code/i);
   assert.match(query, /unmatched_items/i);
   assert.match(query, /product_id is null/i);
   assert.match(query, /order_row\.ordered_at/i);
