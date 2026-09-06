@@ -783,12 +783,12 @@ export default function Companies() {
                 </div>
                 <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Ej. seller_limbo — lo entrega el KAM de Ripley')}
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'seller_limbo')}
                   {field(
                     'Contraseña SVC',
                     'ripleySvcPassword',
                     'password',
-                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : 'La del mismo correo',
                     {
                       revealable: true,
                       revealed: showRipleySvcPassword,
@@ -796,13 +796,13 @@ export default function Companies() {
                     },
                   )}
                   <div className="md:col-span-2">
-                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
+                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'Déjala vacía')}
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Etiquetas usan POST /api/current/auth/login/vendor con Basic (usuario:contraseña).
-                  No es la API key de Mirakl ni el login del sitio (a veces Keycloak).
-                  Si la URL está vacía o es Mirakl, se usa sellercenter.ripleylabs.com.
+                  Es el usuario y la clave del correo de bienvenida de Ripley.
+                  Empieza con seller_. No es la API key ni el usuario de Mirakl.
+                  Si no lo tienes, pídelo al KAM o restablécelo en sellercenter.ripleylabs.com.
                 </p>
               </div>
 
