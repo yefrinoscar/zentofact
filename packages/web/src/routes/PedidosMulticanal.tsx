@@ -27,6 +27,7 @@ import {
   Store,
   Tags,
   Truck,
+  UserRound,
   X,
 } from 'lucide-react';
 import falabellaLogo from '../assets/falabella.png';
@@ -43,6 +44,7 @@ import {
   managedOrdersSearchHelper,
   managedOrdersTableLabel,
   sellerCellLabel,
+  sellerCellShowsPerson,
   MANAGED_ORDER_TABLE_COLUMNS,
 } from '../lib/managed-orders-presentation';
 import {
@@ -1015,14 +1017,20 @@ export default function PedidosMulticanal() {
     {
       id: 'seller',
       header: 'Seller',
-      size: 132,
+      size: 156,
       cell: ({ row }) => {
         const seller = sellerCellLabel(row.original, companyById);
         if (!seller) return null;
+        const person = sellerCellShowsPerson(row.original);
+        const Icon = person ? UserRound : Store;
         return (
-          <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={seller}>
-            {seller}
-          </Badge>
+          <span
+            className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border bg-muted/45 px-2 py-0.5 text-xs font-medium text-foreground"
+            title={seller}
+          >
+            <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">{seller}</span>
+          </span>
         );
       },
     },

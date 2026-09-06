@@ -122,12 +122,16 @@ export function isSalespersonOrder(order: ManagedOrderSellerInput) {
   return order.channelCode === 'manual' || order.createdByRole === 'vendedor';
 }
 
+export function sellerCellShowsPerson(order: ManagedOrderSellerInput) {
+  return isSalespersonOrder(order) && Boolean(salespersonName(order));
+}
+
 export function sellerCellLabel(
   order: ManagedOrderSellerInput,
   companyById: Map<number, string>,
 ) {
   const name = salespersonName(order);
-  if (isSalespersonOrder(order) && name) return name;
+  if (sellerCellShowsPerson(order)) return name;
   if (order.companyId == null) return '';
   return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
 }
