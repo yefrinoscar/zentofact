@@ -688,6 +688,10 @@ async function ensureSampleOrders(companiesByRuc, products) {
   if (!limbo || !products[0]) return { orders: 0 };
 
   await replacePreviewOrders(limbo.id);
+  const vendedorEmail = SEED_USERS.find((user) => user.role === 'vendedor')?.email;
+  const vendedor = vendedorEmail
+    ? (await pool.query('SELECT id FROM "user" WHERE lower(email)=lower($1) LIMIT 1', [vendedorEmail])).rows[0]
+    : null;
   const promisedAt = limaNoonToday();
   const specs = [
     ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
@@ -738,7 +742,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
         JSON.stringify(spec.shipping || {}),
         JSON.stringify({ origin: SEED_MARKER }),
         new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
-        'preview-seed',
+        spec.channel === 'manual' && vendedor?.id ? vendedor.id : 'preview-seed',
       ],
     );
     const orderId = Number(orderResult.rows[0].id);
