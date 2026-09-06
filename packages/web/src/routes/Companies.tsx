@@ -51,7 +51,6 @@ type CompanyForm = {
   ripleyShopId: string;
   ripleySvcUsername: string;
   ripleySvcPassword: string;
-  ripleySvcBaseUrl: string;
 };
 
 type CompanyRow = {
@@ -107,7 +106,6 @@ const initialForm: CompanyForm = {
   ripleyShopId: '',
   ripleySvcUsername: '',
   ripleySvcPassword: '',
-  ripleySvcBaseUrl: '',
 };
 
 function hasFalabellaApi(c: CompanyRow) {
@@ -414,7 +412,6 @@ export default function Companies() {
         falabellaApiUserId: nextForm.falabellaApiUserId,
         ripleyShopId: nextForm.ripleyShopId,
         ripleySvcUsername: nextForm.ripleySvcUsername,
-        ripleySvcBaseUrl: nextForm.ripleySvcBaseUrl,
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
@@ -587,7 +584,6 @@ export default function Companies() {
       ripleyShopId: company.ripleyShopId || '',
       ripleySvcUsername: company.ripleySvcUsername || '',
       ripleySvcPassword: '',
-      ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
     });
     setLoadingBilling(true);
     void Promise.all([
@@ -783,25 +779,21 @@ export default function Companies() {
                 </div>
                 <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'Credencial entregada por Ripley')}
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'svc_limbo')}
                   {field(
                     'Contraseña SVC',
                     'ripleySvcPassword',
                     'password',
-                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : '',
+                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : 'La del mismo correo',
                     {
                       revealable: true,
                       revealed: showRipleySvcPassword,
                       onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
                     },
                   )}
-                  <div className="md:col-span-2">
-                    {field('URL productiva SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
-                  </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  SVC usa usuario y contraseña de Seller Center, no la API key de Mirakl.
-                  Si dejas la URL vacía o pegas ripleyperu-prod.mirakl.net, se usa Seller Center.
+                  Usuario y clave de Seller Center. Nada más.
                 </p>
               </div>
 
