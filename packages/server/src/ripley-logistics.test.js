@@ -37,6 +37,33 @@ test('el sandbox logístico inicia con una etiqueta elegible y sin manifiesto', 
   assert.equal(labels.environment, 'simulated');
 });
 
+test('si la empresa guardó Mirakl como URL SVC, autentica en Seller Center', async () => {
+  const hosts = [];
+  await listRipleySvcLabels(7, { orderId: '7935614201', limit: 25 }, {
+    getCompany: async () => ({
+      id: 7,
+      activo: true,
+      ripley_svc_base_url: 'https://ripleyperu-prod.mirakl.net',
+      ripley_svc_username: 'seller_limbo',
+      ripley_svc_password: 'clave',
+    }),
+    fetchImpl: async (url) => {
+      hosts.push(new URL(url).host);
+      if (String(url).includes('/auth/login/vendor')) {
+        return new Response(JSON.stringify({ access_token: 'token-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ labels: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.deepEqual([...new Set(hosts)], ['sellercenter.ripleylabs.com']);
+});
+
 test('acepta credenciales SVC guardadas en snake_case', async () => {
   const paths = [];
   const result = await listRipleySvcLabels(7, { orderId: 'R-1', limit: 25 }, {

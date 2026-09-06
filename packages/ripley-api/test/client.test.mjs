@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { RipleyApiClient, RipleySvcClient } from '../dist/index.js';
+import { resolveRipleySvcBaseUrl, RIPLEY_SVC_DEFAULT_BASE_URL, RipleyApiClient, RipleySvcClient } from '../dist/index.js';
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -110,6 +110,75 @@ test('trae todas las páginas de pedidos', async () => {
   const orders = await client.listAllOrders({ startDate: '2026-08-01T00:00:00Z' });
   assert.equal(orders.length, 101);
   assert.deepEqual(calls, [0, 100]);
+});
+
+test('no usa el host de Mirakl como Seller Center', () => {
+  assert.equal(resolveRipleySvcBaseUrl(''), RIPLEY_SVC_DEFAULT_BASE_URL);
+  assert.equal(resolveRipleySvcBaseUrl('   '), RIPLEY_SVC_DEFAULT_BASE_URL);
+  assert.equal(resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net'), RIPLEY_SVC_DEFAULT_BASE_URL);
+  assert.equal(resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net/login'), RIPLEY_SVC_DEFAULT_BASE_URL);
+  assert.equal(resolveRipleySvcBaseUrl('https://sellercenter.ripleylabs.com/login'), 'https://sellercenter.ripleylabs.com');
+});
+
+test('sin URL SVC usa Seller Center y no Mirakl', async () => {
+  const hosts = [];
+  const client = new RipleySvcClient({
+    baseUrl: '',
+    username: 'seller',
+    password: 'clave',
+    fetchImpl: async (url) => {
+      hosts.push(new URL(url).host);
+      if (String(url).includes('/auth/login/vendor')) return response({ access_token: 'token-1' });
+      return response({ labels: [] });
+    },
+  });
+  await client.listLabels({ orderId: '7935614201' });
+  assert.deepEqual([...new Set(hosts)], ['sellercenter.ripleylabs.com']);
+});
+
+test('si el login vendor responde 401, entra con la sesión de Seller Center', async () => {
+  const calls = [];
+  const client = new RipleySvcClient({
+    baseUrl: 'https://ripleyperu-prod.mirakl.net',
+    username: 'seller_limbo',
+    password: 'clave',
+    country: 'PE',
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url);
+      calls.push({ path: parsed.pathname, host: parsed.host, init });
+      if (parsed.pathname.endsWith('/auth/login/vendor')) {
+        return response({ message: 'Unauthorized' }, 401);
+      }
+      if (parsed.pathname.endsWith('/api/auth/csrf')) {
+        return new Response(JSON.stringify({ csrfToken: 'csrf-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'set-cookie': '__Host-next-auth.csrf-token=csrf-cookie' },
+        });
+      }
+      if (parsed.pathname.endsWith('/api/auth/verify-user')) {
+        return response({ provider: 'custom-provider' });
+      }
+      if (parsed.pathname.endsWith('/api/auth/callback/custom-provider')) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'set-cookie': '__Secure-next-auth.session-token=session-jwt' },
+        });
+      }
+      if (parsed.pathname.endsWith('/api/auth/session')) {
+        return response({ accessToken: 'seller-token' });
+      }
+      return response({ labels: [{ _id: 'label-1' }] });
+    },
+  });
+
+  const result = await client.listLabels({ orderId: '7935614201' });
+  assert.deepEqual(result, { labels: [{ _id: 'label-1' }] });
+  assert.equal(calls[0].host, 'sellercenter.ripleylabs.com');
+  assert.equal(calls[0].path, '/api/current/auth/login/vendor');
+  assert.equal(calls[0].init.headers['X-Country'], 'PE');
+  assert.ok(calls.some((call) => call.path === '/api/auth/callback/custom-provider'));
+  const labelsCall = calls.find((call) => call.path === '/api/v7/label/labels');
+  assert.equal(labelsCall.init.headers.Authorization, 'Bearer seller-token');
 });
 
 test('autentica SVC y lista la bandeja logística Fast Management', async () => {

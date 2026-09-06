@@ -1,4 +1,4 @@
-import { RipleySvcClient } from '@zentofact/ripley-api';
+import { resolveRipleySvcBaseUrl, RipleySvcClient } from '@zentofact/ripley-api';
 
 let corePromise;
 const sandboxStates = new Map();
@@ -20,16 +20,16 @@ function companyField(company, camel, snake) {
 }
 
 function svcClientFor(company, fetchImpl) {
-  const baseUrl = companyField(company, 'ripleySvcBaseUrl', 'ripley_svc_base_url');
   const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
-  const password = company?.ripleySvcPassword || company?.ripley_svc_password;
-  if (!baseUrl || !username || !password) {
+  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '').trim();
+  if (!username || !password) {
     throw new Error('La empresa no tiene configuradas las credenciales productivas de Seller Center Ripley.');
   }
   return new RipleySvcClient({
-    baseUrl,
+    baseUrl: resolveRipleySvcBaseUrl(companyField(company, 'ripleySvcBaseUrl', 'ripley_svc_base_url')),
     username,
     password,
+    country: 'PE',
     fetchImpl,
   });
 }
