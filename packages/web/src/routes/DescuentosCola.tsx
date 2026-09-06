@@ -53,6 +53,7 @@ type UnmatchedStockItem = {
   sellerSku: string;
   shopSku: string | null;
   title: string;
+  imageUrl?: string | null;
   lineCount: number;
   quantity: number;
   orderNumbers: string[];
@@ -696,6 +697,11 @@ export default function DescuentosCola() {
           <div className="divide-y divide-border">
             {unmatched.map((item) => (
               <div key={`${item.companyId}-${item.channelCode}-${item.sellerSku}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <StockProductImage
+                  imageUrl={item.imageUrl}
+                  title={item.title || 'Producto sin nombre'}
+                  size="h-12 w-12"
+                />
                 <div className="min-w-[16rem] flex-1">
                   <p className="line-clamp-2 text-sm font-medium text-foreground">{item.title || 'Producto sin nombre'}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
