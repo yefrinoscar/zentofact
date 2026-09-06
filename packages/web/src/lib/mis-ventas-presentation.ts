@@ -268,6 +268,13 @@ export function saleProductTitle(product: string, extraCount = 0) {
   return `${name} y ${extraCount} más`;
 }
 
+export function saleMoreProductsLabel(extraCount: number, expanded = false) {
+  if (expanded) return 'Ver menos';
+  const extra = Math.max(0, Math.floor(Number(extraCount) || 0));
+  if (extra <= 0) return '';
+  return extra === 1 ? 'Ver 1 más' : `Ver ${extra} más`;
+}
+
 export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
   const total = Number(order.total) || 0;
   const products = saleProducts(order.items);

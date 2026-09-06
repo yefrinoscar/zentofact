@@ -8,6 +8,7 @@ import {
   paymentMixSlices,
   productivityStats,
   saleListRow,
+  saleMoreProductsLabel,
   saleProductTitle,
   salespersonKpis,
 } from './mis-ventas-presentation.ts';
@@ -88,6 +89,13 @@ test('el título del producto nombra las líneas extra en palabras del vendedor'
   assert.equal(saleProductTitle('Manta térmica'), 'Manta térmica');
   assert.equal(saleProductTitle('Manta térmica', 2), 'Manta térmica y 2 más');
   assert.equal(saleProductTitle(''), '');
+});
+
+test('Ver más nombra cuántos productos quedan ocultos', () => {
+  assert.equal(saleMoreProductsLabel(0), '');
+  assert.equal(saleMoreProductsLabel(1), 'Ver 1 más');
+  assert.equal(saleMoreProductsLabel(5), 'Ver 5 más');
+  assert.equal(saleMoreProductsLabel(5, true), 'Ver menos');
 });
 
 test('un método de pago desconocido queda como Sin dato', () => {

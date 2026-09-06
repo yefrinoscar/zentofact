@@ -11,6 +11,7 @@ import {
   formatSaleMoney,
   misVentasHomeKey,
   saleListRow,
+  saleMoreProductsLabel,
   type MisVentasQuery,
   type SalesSortBy,
   type SalespersonHome,
@@ -44,32 +45,72 @@ function sortToQuery(sorting: SortingState): Pick<MisVentasQuery, 'sortBy' | 'so
   return { sortBy, sortDir: sort.desc ? 'desc' : 'asc' };
 }
 
+function SaleProductLine({
+  product,
+  fallback,
+}: {
+  product: SaleRow['products'][number];
+  fallback: string;
+}) {
+  return (
+    <li className="min-w-0">
+      <p className="line-clamp-2 font-medium leading-5">
+        {product.name || product.sku || fallback}
+        {product.quantity > 1 ? (
+          <span className="ml-1 font-normal text-muted-foreground">×{product.quantity}</span>
+        ) : null}
+      </p>
+      {product.sku ? <CopyableSku sku={product.sku} /> : (
+        <p className="text-xs text-muted-foreground">Sin SKU</p>
+      )}
+    </li>
+  );
+}
+
 function SaleProducts({
   products,
   fallback,
+  saleNumber,
 }: {
   products: SaleRow['products'];
   fallback: string;
+  saleNumber: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (products.length === 0) {
     return <p className="font-medium leading-5">{fallback}</p>;
   }
+  const extraCount = products.length - 1;
+  const visible = expanded || extraCount <= 0 ? products : products.slice(0, 1);
+  const moreLabel = saleMoreProductsLabel(extraCount, expanded);
   return (
-    <ul className="space-y-1.5">
-      {products.map((product, index) => (
-        <li key={`${product.sku || product.name}-${index}`} className="min-w-0">
-          <p className="line-clamp-2 font-medium leading-5">
-            {product.name || product.sku || fallback}
-            {product.quantity > 1 ? (
-              <span className="ml-1 font-normal text-muted-foreground">×{product.quantity}</span>
-            ) : null}
-          </p>
-          {product.sku ? <CopyableSku sku={product.sku} /> : (
-            <p className="text-xs text-muted-foreground">Sin SKU</p>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="min-w-0">
+      <ul className="space-y-1.5">
+        {visible.map((product, index) => (
+          <SaleProductLine
+            key={`${product.sku || product.name}-${index}`}
+            product={product}
+            fallback={fallback}
+          />
+        ))}
+      </ul>
+      {moreLabel ? (
+        <button
+          type="button"
+          className="mt-1 cursor-pointer text-xs font-medium text-primary hover:underline"
+          aria-expanded={expanded}
+          aria-label={expanded
+            ? `Ocultar productos de ${saleNumber}`
+            : `Ver los ${products.length} productos de ${saleNumber}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((current) => !current);
+          }}
+        >
+          {moreLabel}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -170,7 +211,7 @@ function MobileSalesList({
             <div className="flex min-w-0 items-start gap-2.5">
               <ProductPhoto url={row.imageUrl} shopSku={row.shopSku} sku={row.sku} name={row.product || row.number} size="sm" />
               <div className="min-w-0">
-                <SaleProducts products={row.products} fallback={row.number} />
+                <SaleProducts products={row.products} fallback={row.number} saleNumber={row.number} />
                 <p className="mt-1 truncate text-sm text-muted-foreground">
                   {row.customer} · {row.number}
                 </p>
@@ -290,7 +331,7 @@ export default function MisVentas() {
             <div className="min-w-0">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <SaleProducts products={sale.products} fallback={sale.number} />
+                  <SaleProducts products={sale.products} fallback={sale.number} saleNumber={sale.number} />
                 </div>
                 {highlighted ? <Badge variant="secondary" className="shrink-0">Nueva</Badge> : null}
               </div>
