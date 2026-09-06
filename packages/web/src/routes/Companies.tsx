@@ -783,7 +783,7 @@ export default function Companies() {
                 </div>
                 <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'seller_limbo')}
+                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'svc_limbo')}
                   {field(
                     'Contraseña SVC',
                     'ripleySvcPassword',
@@ -800,9 +800,8 @@ export default function Companies() {
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Es el usuario y la clave del correo de bienvenida de Ripley.
-                  Empieza con seller_. No es la API key ni el usuario de Mirakl.
-                  Si no lo tienes, pídelo al KAM o restablécelo en sellercenter.ripleylabs.com.
+                  El de Seller Center, tal cual (svc_limbo u otro).
+                  No es la API key ni el usuario de Mirakl. URL vacía.
                 </p>
               </div>
 
