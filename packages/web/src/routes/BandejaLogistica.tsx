@@ -8,6 +8,9 @@ import {
   PackageCheck,
 } from 'lucide-react';
 import api from '../lib/api';
+import { BandejaOperativa } from './BandejaOperativa';
+import { operationalLayout, VISUAL_VARIANTS } from './bandeja-variants';
+import { BandejaVersionPicker } from './BandejaVersionPicker';
 import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
@@ -102,7 +105,9 @@ export default function BandejaLogistica() {
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
   const [params] = useSearchParams();
-  const variant = (params.get('variant') || 'B').toUpperCase();
+  const variant = (params.get('variant') || '1').toUpperCase();
+  const layout = operationalLayout(variant);
+  const visualVariant = VISUAL_VARIANTS.find((entry) => entry.key === variant);
   const filtro = params.get('filtro') === '2' || params.get('filtro') === '3' ? params.get('filtro')! : '1';
   const { role, can, loading: permissionsLoading } = usePermissions();
   const canDispatch = !permissionsLoading && role !== 'viewer';
@@ -118,6 +123,7 @@ export default function BandejaLogistica() {
   const [readyOrder, setReadyOrder] = useState<LogisticsOrder | null>(null);
   const [bulkReady, setBulkReady] = useState<LogisticsOrder[] | null>(null);
   const [notice, setNotice] = useState<InboxNotice | null>(null);
+  const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
 
   const filterKey = [stage, channelCode, urgency || '', search].join('|');
@@ -202,12 +208,14 @@ export default function BandejaLogistica() {
 
   const bulkReadyMutation = useMutation({
     mutationFn: async (targets: LogisticsOrder[]) => {
+      setBulkProgress(0);
       const failed: Array<{ orderNumber: string; logId?: string }> = [];
       for (let index = 0; index < targets.length; index += 4) {
         const chunk = targets.slice(index, index + 4);
         const results = await Promise.allSettled(chunk.map((order) => (
           api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId)
         )));
+        setBulkProgress(Math.min(index + chunk.length, targets.length));
         results.forEach((result, resultIndex) => {
           if (result.status === 'rejected') {
             failed.push({ orderNumber: chunk[resultIndex].externalOrderNumber, logId: logIdFromUnknown(result.reason) });
@@ -297,15 +305,23 @@ export default function BandejaLogistica() {
     emptyCopy: logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency),
   };
 
-  const body = variant === 'A' ? <VariantA view={view} />
+  const body = visualVariant ? <figure className="pb-24"><figcaption className="mb-3 text-sm text-muted-foreground">{visualVariant.name} · Propuesta visual con datos ilustrativos. Los controles de la imagen no son interactivos.</figcaption><img src={visualVariant.src} alt={visualVariant.name} className="h-auto w-full rounded-lg border" /></figure>
+    : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
-      : <VariantB view={view} />;
+      : variant === 'B' ? <VariantB view={view} />
+        : <BandejaOperativa key={`${layout}|${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
 
   return (
     <div>
       {notice && <InboxStatusNotice notice={notice} />}
+      {notice?.tone === 'success' && stage === 'pending' && counts.ready > 0 && (
+        <Button className="mb-3" variant="outline" onClick={() => changeStage('ready')}>Ir a imprimir {counts.ready} pedidos</Button>
+      )}
       {body}
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV && !['A', 'B', 'C'].includes(variant) && (
+        <BandejaVersionPicker current={visualVariant?.key || layout} />
+      )}
+      {import.meta.env.DEV && ['A', 'B', 'C'].includes(variant) && (
         <PrototypeSwitcherGroup
           groups={[
             { param: 'variant', current: variant, variants: [...BANDEJA_PROTOTYPE_VARIANTS], listenKeys: false, prefix: 'Tablero' },
@@ -317,19 +333,19 @@ export default function BandejaLogistica() {
       <Dialog open={Boolean(bulkReady)} onOpenChange={(open) => !open && !bulkReadyMutation.isPending && setBulkReady(null)}>
         <DialogContent className="sm:max-w-md" showCloseButton={!bulkReadyMutation.isPending}>
           <DialogHeader>
-            <DialogTitle>Marcar todos listos para enviar</DialogTitle>
+            <DialogTitle>Marcar {bulkReady?.length} pedidos listos</DialogTitle>
             <DialogDescription>
-              {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} Falabella visible${bulkReady.length === 1 ? '' : 's'} en Pendientes.` : ''}
+              {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} Falabella seleccionado${bulkReady.length === 1 ? '' : 's'}.` : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-md bg-orange-50 px-3 py-2.5 text-sm text-orange-900">
-            Confirma que todos estos pedidos ya están empacados. Falabella habilitará sus etiquetas de envío.
+            Confirma que estos pedidos están empacados. Falabella descontará el stock y habilitará las etiquetas.
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBulkReady(null)} disabled={bulkReadyMutation.isPending}>Cancelar</Button>
             <Button onClick={() => bulkReady && bulkReadyMutation.mutate(bulkReady)} disabled={bulkReadyMutation.isPending}>
               {bulkReadyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-              {bulkReadyMutation.isPending ? 'Actualizando pedidos…' : 'Marcar todos listos para enviar'}
+              {bulkReadyMutation.isPending ? `Actualizando ${bulkProgress} de ${bulkReady?.length}…` : `Marcar ${bulkReady?.length} listos`}
             </Button>
           </DialogFooter>
         </DialogContent>
