@@ -2,6 +2,7 @@ import { RipleyApiClient } from '@zentofact/ripley-api';
 import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
+import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { RIPLEY_PERU_API_URL } from './ripley-api-url.js';
 
 let corePromise;
@@ -112,6 +113,7 @@ export function startRipleySyncScheduler() {
     running = true;
     try {
       const core = await loadCore();
+      const settings = await loadOrderSyncSettings();
       const due = await core.pool.query(
         `select c.id
          from companies c
@@ -120,9 +122,10 @@ export function startRipleySyncScheduler() {
            and coalesce(state.enabled, true) is true
            and (
              state.last_attempt_at is null
-             or state.last_attempt_at <= now() - make_interval(mins => coalesce(state.sync_interval_minutes, 5))
+             or state.last_attempt_at <= now() - make_interval(mins => $1)
            )
          order by c.id`,
+        [settings.intervalMinutes],
       );
       for (const row of due.rows) {
         await syncRipleyOrders(row.id).catch((error) => console.error('[RIPLEY SYNC]', row.id, error.message));

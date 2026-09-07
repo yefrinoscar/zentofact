@@ -109,7 +109,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
             {channel.label}
           </Button>)}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <span className="hidden text-xs text-muted-foreground xl:inline">{view.updatedAt ? `Actualizado ${logisticsUpdatedClock(view.updatedAt)}` : ''}</span>
           <Button size="sm" variant="outline" disabled={view.refreshing} onClick={view.refresh}>
             <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} />{view.canSync ? 'Sincronizar' : 'Actualizar'}

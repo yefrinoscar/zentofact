@@ -62,14 +62,17 @@ test('Ripley aísla el pedido fallido y continúa la página', async () => {
         max: 100,
       }),
     },
-    ingestRipleyOrder: async ({ normalized }) => {
+    ingestRipleyOrder: async ({ normalized, remapFromProvider }) => {
       if (normalized.orderId === 'FAIL-2') throw new Error('línea inválida');
-      ingested.push(normalized.orderId);
+      ingested.push({ orderId: normalized.orderId, remapFromProvider });
       return { order: { id: ingested.length } };
     },
   });
 
-  assert.deepEqual(ingested, ['OK-1', 'OK-3']);
+  assert.deepEqual(ingested, [
+    { orderId: 'OK-1', remapFromProvider: false },
+    { orderId: 'OK-3', remapFromProvider: false },
+  ]);
   assert.deepEqual({
     pages: result.pages,
     received: result.received,
@@ -118,6 +121,71 @@ test('Ripley conserva la cabecera sin items y deja la ventana pendiente de reint
   assert.equal(typeof result.lastLogId, 'string');
   assert.equal(transactions.filter((sql) => sql === 'commit').length, 1);
   assert.equal(transactions.filter((sql) => sql === 'rollback').length, 0);
+});
+
+test('el backfill pide a Ripley remapear el estado desde Mirakl', async () => {
+  const remaps = [];
+  await syncRipleyPages({
+    async query() { return { rows: [] }; },
+  }, {
+    channelAccountId: 12,
+    companyId: 4,
+    channelCode: 'ripley',
+    displayName: 'Seller Ripley',
+  }, {
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-08T04:59:59.999Z',
+    creationRange: true,
+    remapFromProvider: true,
+  }, 101, {
+    ripleyClient: {
+      listOrders: async () => ({
+        orders: [{
+          orderId: 'R-SEP',
+          createdAt: '2026-09-02T12:00:00Z',
+          updatedAt: '2026-09-02T12:00:00Z',
+        }],
+        totalCount: 1,
+        max: 100,
+      }),
+    },
+    ingestRipleyOrder: async (input) => {
+      remaps.push(input.remapFromProvider);
+      return { order: { id: 1 } };
+    },
+  });
+  assert.deepEqual(remaps, [true]);
+});
+
+test('un backfill sin fechas usa la ventana compartida', async () => {
+  const windows = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 1, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T12:00:00Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  await syncOrderAccount(7, { mode: 'backfill', now: '2026-09-07T18:00:00.000Z', lookbackDays: 7 }, {
+    pool: { connect: async () => db },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    syncFalabellaOrders: async (_companyId, options) => {
+      windows.push(options);
+      return { status: 'success', received: 0 };
+    },
+  });
+  assert.deepEqual(windows, [{
+    mode: 'range_created',
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-08T04:59:59.999Z',
+  }]);
 });
 
 test('al retomar una cuenta cierra las ejecuciones que quedaron running', async () => {

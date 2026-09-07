@@ -61,6 +61,7 @@ const logisticsInbox = await import('./logistics-inbox.js');
 const orderManagement = await import('./order-management.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
+const orderSyncSettings = await import('./order-sync-settings.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
 const associationCandidateService = await import('./catalog/association-candidate-service.js');
@@ -425,6 +426,15 @@ app.get('/order-management/accounts', async (c) => {
 app.get('/order-management/sync-status', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/sync-settings', requireSuperadmin(), async (c) => {
+  try { return ok(c, await orderSyncSettings.loadOrderSyncSettings()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.put('/order-management/sync-settings', requireSuperadmin(), async (c) => {
+  try {
+    return ok(c, await orderSyncSettings.saveOrderSyncSettings(null, await c.req.json().catch(() => ({})), c.get('user')?.id));
+  } catch (e) { return fail(c, e, 400); }
 });
 app.post('/order-management/accounts', requirePermission('companies'), async (c) => {
   try { return ok(c, await orderManagement.configureOrderChannelAccount(await c.req.json()), 201); }

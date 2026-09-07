@@ -9,6 +9,7 @@ import {
 } from './order-adapters/falabella.js';
 import { providerFetch } from './provider-request.js';
 import { resolveIncrementalOrderWindow } from './order-sync-policy.js';
+import { loadOrderSyncSettings } from './order-sync-settings.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -706,7 +707,12 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         ? { createdAfter: windowFrom.toISOString(), createdBefore: windowTo.toISOString(), sortDirection: 'ASC' }
         : { updatedAfter: windowFrom.toISOString(), updatedBefore: windowTo.toISOString(), sortDirection: 'ASC' };
     } else {
-      const window = resolveIncrementalOrderWindow({ now, cursor: state.cursor_updated_at });
+      const settings = await loadOrderSyncSettings(db);
+      const window = resolveIncrementalOrderWindow({
+        now,
+        cursor: state.cursor_updated_at,
+        lookbackDays: settings.lookbackDays,
+      });
       windowFrom = new Date(window.from);
       windowTo = new Date(window.to);
       if (windowFrom >= windowTo) {
@@ -1069,7 +1075,8 @@ export function startFalabellaSyncScheduler() {
         if (!state?.enabled) continue;
         const lastReference = state.lastAttemptAt || state.lastSuccessfulSyncAt;
         const last = lastReference ? new Date(lastReference).getTime() : 0;
-        const interval = Math.max(1, Number(state.syncIntervalMinutes || 15)) * 60_000;
+        const settings = await loadOrderSyncSettings();
+        const interval = Math.max(1, Number(settings.intervalMinutes || 15)) * 60_000;
         if (Date.now() - last >= interval) await syncFalabellaOrders(company.id).catch((error) => console.error('[FALABELLA SYNC]', company.id, error.message));
       }
     } finally { running = false; }

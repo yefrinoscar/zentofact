@@ -969,7 +969,7 @@ export default function PedidosMulticanal() {
   };
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders(),
+    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onMutate: () => {
       setSyncNote('');
     },
@@ -1209,7 +1209,7 @@ export default function PedidosMulticanal() {
             </Button>
           )}
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:items-center">
           <Button
             type="button"
             variant="outline"

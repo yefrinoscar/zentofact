@@ -245,7 +245,7 @@ export default function BandejaLogistica() {
   });
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
+    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onSuccess: (result) => {
       const rows = Array.isArray(result?.results) ? result.results : [];
       const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));

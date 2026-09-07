@@ -432,7 +432,7 @@ function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): Stage
 
 function StageTools({ view, tools }: { view: BandejaView; tools?: ReactNode }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-1">
       {tools}
       <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
         <RefreshCw className={cn(view.refreshing && 'animate-spin')} />

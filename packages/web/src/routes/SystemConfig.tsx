@@ -16,6 +16,12 @@ import {
 } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Switch } from '../components/ui/switch';
+import { OrderSyncWindowControls } from '../components/OrderSyncWindowControls';
+import type { OrderSyncSettings } from '../lib/apiHttp';
+import {
+  DEFAULT_ORDER_SYNC_INTERVAL_MINUTES,
+  DEFAULT_ORDER_SYNC_LOOKBACK_DAYS,
+} from '../lib/order-sync-presentation';
 
 type ReadinessStep = {
   id: string;
@@ -105,12 +111,22 @@ export default function SystemConfig() {
   const [confirmText, setConfirmText] = useState('');
   const [ripleyReport, setRipleyReport] = useState<RipleyCatalogReport | null>(null);
   const [ripleySyncing, setRipleySyncing] = useState(false);
+  const [orderSync, setOrderSync] = useState<OrderSyncSettings>({
+    intervalMinutes: DEFAULT_ORDER_SYNC_INTERVAL_MINUTES,
+    lookbackDays: DEFAULT_ORDER_SYNC_LOOKBACK_DAYS,
+  });
+  const [savingSync, setSavingSync] = useState(false);
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      setConfig(await api.getSystemConfig());
+      const [nextConfig, nextSync] = await Promise.all([
+        api.getSystemConfig() as Promise<SystemConfigResponse>,
+        api.getOrderSyncSettings(),
+      ]);
+      setConfig(nextConfig);
+      setOrderSync(nextSync);
     } catch (loadError: any) {
       setError(loadError?.message || 'No se pudo cargar la configuración.');
     } finally {
@@ -155,6 +171,19 @@ export default function SystemConfig() {
     await applyFlag(confirmTarget, true, { confirm: confirmText.trim().toUpperCase() });
     setConfirmTarget(null);
     setConfirmText('');
+  };
+
+  const saveOrderSync = async (next: Partial<OrderSyncSettings>) => {
+    setSavingSync(true);
+    setError('');
+    try {
+      const saved = await api.updateOrderSyncSettings({ ...orderSync, ...next });
+      setOrderSync(saved);
+    } catch (saveError: unknown) {
+      setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar el intervalo.');
+    } finally {
+      setSavingSync(false);
+    }
   };
 
   const syncRipleyCatalog = async (dryRun: boolean) => {
@@ -286,6 +315,26 @@ export default function SystemConfig() {
                 </div>
               );
             })}
+
+            <div className="rounded-xl border border-border p-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">Sincronización de pedidos</p>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  El mismo ritmo para Falabella y Ripley.
+                </p>
+              </div>
+              <div className="mt-3">
+                <OrderSyncWindowControls
+                  intervalMinutes={orderSync.intervalMinutes}
+                  lookbackDays={orderSync.lookbackDays}
+                  onIntervalMinutes={(intervalMinutes) => void saveOrderSync({ intervalMinutes })}
+                  onLookbackDays={(lookbackDays) => void saveOrderSync({ lookbackDays })}
+                  disabled={savingSync || loading}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </section>
