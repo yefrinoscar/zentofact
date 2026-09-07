@@ -247,6 +247,7 @@ const apiHttp = {
     channelCode?: string;
     stage?: 'pending' | 'ready' | 'shipped';
     urgency?: 'overdue' | 'today' | 'tomorrow' | 'later';
+    deadline?: string;
     search?: string;
     limit?: number;
     offset?: number;

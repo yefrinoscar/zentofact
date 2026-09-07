@@ -1,5 +1,5 @@
 import type { LogisticsOrder } from './bandeja-prototype/shared';
-import { groupLogisticsByUrgency, canMarkFalabellaReady, canPrintLogisticsLabel, logisticsChannelLabel, logisticsUrgency, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
+import { groupLogisticsByUrgency, canMarkFalabellaReady, canPrintLogisticsLabel, formatBandejaDeadlineDate, limaDeadlineKey, logisticsChannelLabel, logisticsUrgency, parseLogisticsDate, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
 import { sellerShortName } from '../lib/seller-name';
 
 export const OPERATIONAL_VARIANTS = [
@@ -35,6 +35,13 @@ export function operationalGroups(orders: LogisticsOrder[], now: Date, layout: O
   for (const order of ordered) {
     let key: string = logisticsUrgency(order, now);
     let label = LOGISTICS_URGENCIES.find((entry) => entry.value === key)?.label || 'Pedidos';
+    if (key === 'later') {
+      const deadline = parseLogisticsDate(order.promisedShippingAt);
+      if (deadline) {
+        key = limaDeadlineKey(deadline);
+        label = formatBandejaDeadlineDate(key, now);
+      }
+    }
     if (layout === '3') {
       key = `${order.companyId}|${order.companyName}`;
       label = sellerShortName(order.companyName);

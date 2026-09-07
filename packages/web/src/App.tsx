@@ -54,7 +54,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/bandeja': {
     title: 'Bandeja',
-    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley y manuales.',
+    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley y propios.',
   },
   '/pedidos': {
     title: 'Bandeja Falabella',

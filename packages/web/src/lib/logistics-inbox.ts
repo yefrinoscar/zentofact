@@ -17,7 +17,7 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'all', label: 'Todos' },
   { value: 'falabella', label: 'Falabella' },
   { value: 'ripley', label: 'Ripley' },
-  { value: 'manual', label: 'Manual' },
+  { value: 'manual', label: 'Propios' },
 ];
 
 export const LOGISTICS_STAGES: Array<{
@@ -46,6 +46,44 @@ export const LOGISTICS_URGENCIES: Array<{
   { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', railClass: 'border-l-slate-300', textClass: 'text-slate-600', pillClass: 'bg-slate-100 text-slate-600' },
 ];
 
+// La bandeja operativa no ofrece vencidos: hoy, mañana y cada fecha posterior con pedidos.
+export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => item.value === 'today' || item.value === 'tomorrow');
+
+export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'today' | 'tomorrow' | null {
+  if (urgency === 'today' || urgency === 'tomorrow') return urgency;
+  return null;
+}
+
+export type BandejaDeadlineDateCount = { date: string; count: number };
+
+export function limaDeadlineKey(date: Date) {
+  return limaDateKey(date);
+}
+
+export function formatBandejaDeadlineDate(key: string, now: Date) {
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return key;
+  const label = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+  return label.replace('septiembre', 'setiembre');
+}
+
+export function laterBandejaDeadlineDates(dates: BandejaDeadlineDateCount[], now: Date) {
+  const today = limaDateKey(now);
+  const tomorrow = limaDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  return dates
+    .filter((item) => item.count > 0 && item.date !== today && item.date !== tomorrow)
+    .sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function bandejaDeadlineDateCount(dates: BandejaDeadlineDateCount[], key: string) {
+  return dates.find((item) => item.date === key)?.count || 0;
+}
+
 // Agrupa la página visible por urgencia en el orden operativo (vencidos primero).
 export function groupLogisticsByUrgency<T extends LogisticsOrderLike>(orders: T[], now: Date) {
   const buckets = new Map<LogisticsUrgency, T[]>(LOGISTICS_URGENCIES.map((item) => [item.value, []]));
@@ -60,7 +98,7 @@ const LIMA = 'America/Lima';
 const CHANNEL_LABELS: Record<string, string> = {
   falabella: 'Falabella',
   ripley: 'Ripley',
-  manual: 'Manual',
+  manual: 'Propios',
 };
 
 const CARRIER_LABELS: Record<string, string> = {
@@ -319,7 +357,10 @@ export function logisticsUpdatedClock(updatedAt?: Date | null) {
   }).format(updatedAt);
 }
 
-export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null) {
+export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null, deadlineLabel?: string | null) {
+  if (deadlineLabel && stage !== 'shipped') {
+    return `Ningún pedido el ${deadlineLabel}. Quita el filtro de fecha para ver el resto.`;
+  }
   if (urgency && stage !== 'shipped') {
     const meta = logisticsUrgencyMeta(urgency);
     return `Ningún pedido en “${meta.label}”. Quita el filtro de prioridad para ver el resto.`;
