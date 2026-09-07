@@ -53,6 +53,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const isCard = ['2', '9', '10', '13', '16'].includes(layout);
   const isChecklist = layout === '13' && isPending;
   const isColumns = ['9', '10', '16'].includes(layout);
+  const showPlazoHeading = view.stage !== 'shipped' && !((view.urgency || view.deadlineDate) && !['3', '8', '10', '11', '12', '16'].includes(layout));
   const action = () => {
     if (locked || !targets.length) return;
     if (isPending) view.requestBulkReady(targets);
@@ -100,7 +101,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
     <div className="min-w-0 pb-24">
       <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-48 flex-1 sm:max-w-sm">
+        <div className="relative w-52 shrink-0 sm:w-56">
           <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
           <Input aria-label="Buscar pedido o producto" placeholder="Buscar pedido o producto" className="pl-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
@@ -168,10 +169,6 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           {view.printing ? 'Generando PDF…' : isPending ? `Marcar ${targets.length} listos` : selectedOrders.length ? `Imprimir ${targets.length} seleccionados` : `Imprimir ${targets.length} sin imprimir`}
         </Button>}
         </div>
-        {view.stage !== 'shipped' && <p className="px-3 pb-2 pt-2 text-xs text-muted-foreground">
-          {layout === '4' ? 'Elige un pedido de la cola para revisar sus productos.' : isPending ? 'La acción en lote incluye solo Falabella. Propios y Ripley se gestionan en su fila.' : 'Las etiquetas ya generadas solo se incluyen si las seleccionas.'}
-          {view.totalCount > pageSize && ' Las acciones incluyen solo esta página.'}
-        </p>}
       </div>
 
       <div className={cn('mt-4', (layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
@@ -195,7 +192,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);
                 return <section key={group.key} aria-label={group.label} className={cn("mb-4 min-w-0", layout === '8' && "ml-2 border-l-2 border-l-primary/20 pl-4")}>
-                  {view.stage !== 'shipped' && <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs font-semibold"><span className={cn('size-2 rounded-full', meta?.dotClass)} />{group.label}<span className="font-normal text-muted-foreground">{group.orders.length}</span>{(layout === '11' || layout === '12') && <span className="ml-auto text-muted-foreground">{group.orders.reduce((sum, order) => sum + orderUnits(order), 0)} unidades</span>}</div>}
+                  {showPlazoHeading && <div className="flex items-center gap-2 bg-muted/50 px-3 py-2 text-xs font-semibold"><span className={cn('size-2 rounded-full', meta?.dotClass)} />{group.label}<span className="font-normal text-muted-foreground">{group.orders.length}</span>{(layout === '11' || layout === '12') && <span className="ml-auto text-muted-foreground">{group.orders.reduce((sum, order) => sum + orderUnits(order), 0)} unidades</span>}</div>}
                   <ul className={isColumns ? 'space-y-3 pt-3' : isCard ? 'grid gap-3 pt-3 sm:grid-cols-2 xl:grid-cols-3' : 'divide-y'}>
 {group.orders.map((order) => renderOrder(order, meta?.textClass))}
                   </ul>
