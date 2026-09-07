@@ -420,6 +420,48 @@ export function logisticsBulkReadySummary(total: number, failed: number) {
   return `${ok} marcado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
 }
 
+export type LogisticsInboxSnapshot = {
+  orders: Array<{ id: number; promisedShippingAt?: string | null }>;
+  counts: {
+    pending: number;
+    ready: number;
+    shipped: number;
+    dates?: BandejaDeadlineDateCount[];
+  };
+  totalCount: number;
+};
+
+// Quita de pendientes los pedidos que ya se marcaron listos, como en la bandeja Falabella.
+export function applyLogisticsReadyToInbox<T extends LogisticsInboxSnapshot>(
+  inbox: T | undefined,
+  orderIds: Iterable<number>,
+): T | undefined {
+  if (!inbox) return inbox;
+  const ids = new Set(orderIds);
+  if (!ids.size) return inbox;
+  const remaining = inbox.orders.filter((order) => !ids.has(order.id));
+  const removed = inbox.orders.filter((order) => ids.has(order.id));
+  if (!removed.length) return inbox;
+  const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
+  for (const order of removed) {
+    const deadline = parseLogisticsDate(order.promisedShippingAt);
+    if (!deadline) continue;
+    const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
+    if (item) item.count = Math.max(0, item.count - 1);
+  }
+  return {
+    ...inbox,
+    orders: remaining,
+    totalCount: Math.max(0, Number(inbox.totalCount) - removed.length),
+    counts: {
+      ...inbox.counts,
+      pending: Math.max(0, Number(inbox.counts.pending) - removed.length),
+      ready: Number(inbox.counts.ready) + removed.length,
+      dates: dates.filter((item) => item.count > 0),
+    },
+  };
+}
+
 export function logisticsReadyConfirmCopy(order: LogisticsOrderLike, pickupDate = ripleyDefaultPickupDate()) {
   if (order.channelCode === 'ripley') {
     return `Ripley agenda el recojo para ${pickupDate} y pasa el pedido a listo.`;

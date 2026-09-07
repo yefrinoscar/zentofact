@@ -15,6 +15,7 @@ import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import {
+  applyLogisticsReadyToInbox,
   bandejaDeadlineFilter,
   canPrintLogisticsLabel,
   formatBandejaDeadlineDate,
@@ -160,6 +161,15 @@ export default function BandejaLogistica() {
   const loading = inboxQuery.isPending && !inboxQuery.data;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
+  const revealReadyOrders = (orderIds: Iterable<number>) => {
+    const ids = [...orderIds];
+    if (ids.length) {
+      queryClient.setQueriesData<InboxResponse>({ queryKey: ['logistics-inbox'] }, (current) => (
+        applyLogisticsReadyToInbox(current, ids)
+      ));
+    }
+    void invalidate();
+  };
   const announce = (next: InboxNotice) => {
     if (next.refs.length) {
       setNotice(next);
@@ -228,7 +238,7 @@ export default function BandejaLogistica() {
     onSuccess: (_result, order) => {
       setReadyOrder(null);
       announce({ tone: 'success', message: logisticsReadySuccessCopy(order), refs: [] });
-      void invalidate();
+      revealReadyOrders([order.id]);
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
     onSettled: () => setBusyOrderId(null),
@@ -245,6 +255,7 @@ export default function BandejaLogistica() {
     mutationFn: async (targets: LogisticsOrder[]) => {
       setBulkProgress(0);
       const failed: Array<{ orderNumber: string; logId?: string }> = [];
+      const succeeded: number[] = [];
       for (let index = 0; index < targets.length; index += 4) {
         const chunk = targets.slice(index, index + 4);
         const results = await Promise.allSettled(chunk.map((order) => markOrderReady(order)));
@@ -252,19 +263,21 @@ export default function BandejaLogistica() {
         results.forEach((result, resultIndex) => {
           if (result.status === 'rejected') {
             failed.push({ orderNumber: chunk[resultIndex].externalOrderNumber, logId: logIdFromUnknown(result.reason) });
+          } else {
+            succeeded.push(chunk[resultIndex].id);
           }
         });
       }
-      return { total: targets.length, failed };
+      return { total: targets.length, failed, succeeded };
     },
-    onSuccess: ({ total, failed }) => {
+    onSuccess: ({ total, failed, succeeded }) => {
       setBulkReady(null);
       announce({
         tone: failed.length ? (failed.length === total ? 'error' : 'warning') : 'success',
         message: logisticsBulkReadySummary(total, failed.length),
         refs: failed.map((row) => ({ label: row.orderNumber, logId: row.logId })),
       });
-      void invalidate();
+      revealReadyOrders(succeeded);
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
   });

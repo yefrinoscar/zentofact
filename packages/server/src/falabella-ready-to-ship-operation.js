@@ -41,6 +41,40 @@ function readyToShipReachedOrderStatus(status) {
   return /(^|\|)(ready_to_ship|shipped|delivered)(\||$)/i.test(String(status || ''));
 }
 
+export function unifiedReadyFulfillment(providerStatus) {
+  const status = String(providerStatus || '');
+  if (/(^|\|)delivered(\||$)/i.test(status)) {
+    return { fulfillmentStatus: 'delivered', orderStatus: 'completed', providerStatus: 'delivered' };
+  }
+  if (/(^|\|)shipped(\||$)/i.test(status)) {
+    return { fulfillmentStatus: 'shipped', orderStatus: 'confirmed', providerStatus: 'shipped' };
+  }
+  return { fulfillmentStatus: 'ready_to_ship', orderStatus: 'confirmed', providerStatus: 'ready_to_ship' };
+}
+
+export async function syncUnifiedReadyFulfillment(pool, companyId, orderId, providerStatus) {
+  const mapped = unifiedReadyFulfillment(providerStatus);
+  const result = await pool.query(
+    `/* ready-to-ship:unified */
+     update orders
+        set fulfillment_status = $3,
+            order_status = case
+              when order_status in ('completed', 'cancelled', 'failed') then order_status
+              else $4::text
+            end,
+            provider_status = $5,
+            provider_updated_at = now(),
+            last_seen_at = now(),
+            updated_at = now()
+      where company_id = $1
+        and external_order_id = $2
+        and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+     returning id, fulfillment_status`,
+    [companyId, String(orderId), mapped.fulfillmentStatus, mapped.orderStatus, mapped.providerStatus],
+  );
+  return result.rows;
+}
+
 async function withTimeout(operation, parentSignal, timeoutMs) {
   const controller = new AbortController();
   const abortWith = (reason) => {
@@ -219,6 +253,7 @@ async function markCompleted(pool, companyId, orderId, result) {
      returning state`,
     [companyId, orderId, JSON.stringify(result || {}), providerStatus],
   );
+  await syncUnifiedReadyFulfillment(pool, companyId, orderId, providerStatus);
 }
 
 function inProgress(state = 'processing') {
@@ -303,6 +338,7 @@ export async function markFalabellaOrderReadyToShip({
       };
     }
     if (state.operation_state === 'succeeded' && readyToShipReachedOrderStatus(state.order_status)) {
+      await syncUnifiedReadyFulfillment(pool, normalizedCompanyId, normalizedOrderId, state.order_status);
       await enqueueReadyOrderStock(normalizedCompanyId, normalizedOrderId, pool);
       return { kind: 'success', result: { ok: true, alreadyReady: true } };
     }

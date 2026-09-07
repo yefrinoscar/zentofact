@@ -13,6 +13,7 @@ import {
   groupLogisticsByUrgency,
   labelWasPrinted,
   logisticsBulkReadyConfirmCopy,
+  applyLogisticsReadyToInbox,
   logisticsBulkReadySummary,
   logisticsChannelClass,
   logisticsChannelLabel,
@@ -196,6 +197,29 @@ test('copy operativa de bandeja', () => {
     logisticsReadySuccessCopy({ channelCode: 'falabella', externalOrderNumber: 'PV-10001' }),
     /imprimir la etiqueta/,
   );
+});
+
+test('marcar listo saca el pedido de pendientes y lo cuenta en listos', () => {
+  const inbox = {
+    orders: [
+      { id: 10, promisedShippingAt: '2026-09-08T21:00:00.000Z' },
+      { id: 11, promisedShippingAt: '2026-09-08T22:00:00.000Z' },
+    ],
+    counts: {
+      pending: 52,
+      ready: 3,
+      shipped: 10,
+      dates: [{ date: '2026-09-08', count: 2 }],
+    },
+    totalCount: 52,
+  };
+  const next = applyLogisticsReadyToInbox(inbox, [10]);
+  assert.deepEqual(next.orders.map((order) => order.id), [11]);
+  assert.equal(next.counts.pending, 51);
+  assert.equal(next.counts.ready, 4);
+  assert.equal(next.totalCount, 51);
+  assert.deepEqual(next.counts.dates, [{ date: '2026-09-08', count: 1 }]);
+  assert.equal(applyLogisticsReadyToInbox(inbox, [99]), inbox);
 });
 
 test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
