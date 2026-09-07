@@ -145,6 +145,15 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
 
 export const RIPLEY_LABEL_SOON_COPY = 'Muy pronto.';
 
+export function ripleyDefaultPickupDate(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: LIMA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+}
+
 function logisticsPrintableStatus(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'cancelled' || status === 'failed' || status === 'returned') return false;
@@ -155,6 +164,7 @@ function logisticsPrintableStatus(order: LogisticsOrderLike) {
 export function logisticsRipleyLabelSoon(order: LogisticsOrderLike) {
   if (String(order.channelCode || '') !== 'ripley') return false;
   if (!logisticsPrintableStatus(order)) return false;
+  if (canMarkLogisticsReady(order)) return false;
   return order.companyId != null;
 }
 
@@ -167,11 +177,20 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
   return false;
 }
 
-export function canMarkFalabellaReady(order: LogisticsOrderLike) {
-  return order.channelCode === 'falabella'
-    && order.companyId != null
+export function canMarkLogisticsReady(order: LogisticsOrderLike) {
+  const channel = String(order.channelCode || '');
+  if (channel !== 'falabella' && channel !== 'ripley') return false;
+  return order.companyId != null
     && Boolean(order.externalOrderId)
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
+}
+
+export function canMarkFalabellaReady(order: LogisticsOrderLike) {
+  return order.channelCode === 'falabella' && canMarkLogisticsReady(order);
+}
+
+export function logisticsItemSku(item: { mainSku?: string | null; sku?: string | null }) {
+  return String(item.mainSku || item.sku || '').trim() || null;
 }
 
 export function labelWasPrinted(order: LogisticsOrderLike) {
@@ -272,9 +291,9 @@ export type LogisticsNextStep =
 export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
+  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
-  if (canMarkFalabellaReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
   if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Sin seller' };
   return { kind: 'view', label: 'Ver detalle' };
@@ -291,6 +310,14 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Empacar', state: ready ? 'done' : 'current' },
       { label: 'Marcar listo', state: ready ? 'done' : 'todo' },
       { label: 'Etiqueta', state: shipped ? 'done' : ready ? 'current' : 'todo' },
+    ];
+  }
+  if (order.channelCode === 'ripley') {
+    const ready = status === 'ready_to_ship' || shipped;
+    return [
+      { label: 'Empacar', state: ready ? 'done' : 'current' },
+      { label: 'Agendar recojo', state: ready ? 'done' : 'todo' },
+      { label: 'Etiqueta', state: shipped ? 'done' : 'todo' },
     ];
   }
   const printed = labelWasPrinted(order);
@@ -310,6 +337,9 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
+    if (canMarkLogisticsReady(order)) {
+      return 'Empaca el pedido y agenda el recojo en Ripley para pasarlo a listo para enviar.';
+    }
     return RIPLEY_LABEL_SOON_COPY;
   }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
@@ -388,6 +418,71 @@ export function logisticsBulkReadySummary(total: number, failed: number) {
   if (!failed) return `${total} pedido${total === 1 ? '' : 's'} marcado${total === 1 ? '' : 's'} listo${total === 1 ? '' : 's'} para enviar.`;
   const ok = total - failed;
   return `${ok} marcado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
+}
+
+export type LogisticsInboxSnapshot = {
+  orders: Array<{ id: number; promisedShippingAt?: string | null }>;
+  counts: {
+    pending: number;
+    ready: number;
+    shipped: number;
+    dates?: BandejaDeadlineDateCount[];
+  };
+  totalCount: number;
+};
+
+// Quita de pendientes los pedidos que ya se marcaron listos, como en la bandeja Falabella.
+export function applyLogisticsReadyToInbox<T extends LogisticsInboxSnapshot>(
+  inbox: T | undefined,
+  orderIds: Iterable<number>,
+): T | undefined {
+  if (!inbox) return inbox;
+  const ids = new Set(orderIds);
+  if (!ids.size) return inbox;
+  const remaining = inbox.orders.filter((order) => !ids.has(order.id));
+  const removed = inbox.orders.filter((order) => ids.has(order.id));
+  if (!removed.length) return inbox;
+  const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
+  for (const order of removed) {
+    const deadline = parseLogisticsDate(order.promisedShippingAt);
+    if (!deadline) continue;
+    const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
+    if (item) item.count = Math.max(0, item.count - 1);
+  }
+  return {
+    ...inbox,
+    orders: remaining,
+    totalCount: Math.max(0, Number(inbox.totalCount) - removed.length),
+    counts: {
+      ...inbox.counts,
+      pending: Math.max(0, Number(inbox.counts.pending) - removed.length),
+      ready: Number(inbox.counts.ready) + removed.length,
+      dates: dates.filter((item) => item.count > 0),
+    },
+  };
+}
+
+export function logisticsReadyConfirmCopy(order: LogisticsOrderLike, pickupDate = ripleyDefaultPickupDate()) {
+  if (order.channelCode === 'ripley') {
+    return `Ripley agenda el recojo para ${pickupDate} y pasa el pedido a listo.`;
+  }
+  return 'Falabella dejará este pedido en listo para enviar y descontará el stock.';
+}
+
+export function logisticsReadySuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }, pickupDate = ripleyDefaultPickupDate()) {
+  const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
+  if (order.channelCode === 'ripley') {
+    return `${number} quedó listo para enviar. El recojo quedó agendado para ${pickupDate}.`;
+  }
+  return `${number} quedó listo para enviar. Ya puedes imprimir la etiqueta.`;
+}
+
+export function logisticsBulkReadyConfirmCopy(orders: LogisticsOrderLike[]) {
+  const ripley = orders.filter((order) => order.channelCode === 'ripley').length;
+  const falabella = orders.filter((order) => order.channelCode === 'falabella').length;
+  if (ripley && falabella) return 'Falabella confirma listo. Ripley agenda el recojo de mañana.';
+  if (ripley) return 'Ripley agenda el recojo de mañana y pasa estos pedidos a listo.';
+  return 'Falabella descontará el stock y habilitará las etiquetas.';
 }
 
 const MARKETPLACE_IMAGE_HOST = /(^|\.)(falabella\.com|ripley\.com(\.pe)?|mirakl\.net|mirakl\.com)$/i;

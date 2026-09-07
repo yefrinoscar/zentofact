@@ -2,11 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canMarkFalabellaReady,
+  canMarkLogisticsReady,
   canPrintLogisticsLabel,
+  logisticsItemSku,
+  logisticsReadyConfirmCopy,
+  logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
+  ripleyDefaultPickupDate,
   RIPLEY_LABEL_SOON_COPY,
   groupLogisticsByUrgency,
   labelWasPrinted,
+  logisticsBulkReadyConfirmCopy,
+  applyLogisticsReadyToInbox,
   logisticsBulkReadySummary,
   logisticsChannelClass,
   logisticsChannelLabel,
@@ -63,6 +70,17 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausad
   assert.equal(canMarkFalabellaReady({
     channelCode: 'manual', fulfillmentStatus: 'pending', companyId: 3, externalOrderId: 'M-1',
   }), false);
+  assert.equal(canMarkLogisticsReady({
+    channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
+  }), true);
+  assert.equal(canMarkLogisticsReady({
+    channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 2, externalOrderId: 'R-1',
+  }), false);
+  assert.equal(logisticsRipleyLabelSoon({
+    channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
+  }), false);
+  assert.equal(logisticsItemSku({ mainSku: 'HOG025', sku: 'S126718' }), 'HOG025');
+  assert.equal(logisticsItemSku({ sku: 'HOG025', shopSku: 'S126718' }), 'HOG025');
 });
 
 test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
@@ -116,6 +134,10 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   );
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
+    logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
+    { kind: 'ready', label: 'Marcar listo' },
+  );
+  assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
     { kind: 'soon', label: 'Imprimir' },
   );
@@ -136,6 +158,14 @@ test('el flujo de despacho marca los pasos completados', () => {
     logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'shipped' }).map((step) => step.state),
     ['done', 'done', 'done'],
   );
+  assert.deepEqual(
+    logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }).map((step) => [step.label, step.state]),
+    [['Empacar', 'current'], ['Agendar recojo', 'todo'], ['Etiqueta', 'todo']],
+  );
+  assert.deepEqual(
+    logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => [step.label, step.state]),
+    [['Empacar', 'done'], ['Agendar recojo', 'done'], ['Etiqueta', 'todo']],
+  );
 });
 
 test('copy operativa de bandeja', () => {
@@ -149,6 +179,47 @@ test('copy operativa de bandeja', () => {
   assert.equal(logisticsPrintSuccessCopy({ labelCount: 3, packingPageCount: 0 }), 'Listo. 3 etiquetas.');
   assert.equal(logisticsBulkReadySummary(3, 0), '3 pedidos marcados listos para enviar.');
   assert.equal(logisticsBulkReadySummary(3, 1), '2 marcados; 1 no pudo actualizarse.');
+  assert.match(logisticsBulkReadyConfirmCopy([
+    { channelCode: 'falabella' },
+    { channelCode: 'ripley' },
+  ]), /Falabella confirma listo/);
+  assert.match(logisticsBulkReadyConfirmCopy([{ channelCode: 'ripley' }]), /recojo de mañana/);
+  assert.equal(ripleyDefaultPickupDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
+  assert.match(
+    logisticsReadyConfirmCopy({ channelCode: 'ripley' }, '2026-09-08'),
+    /2026-09-08/,
+  );
+  assert.match(
+    logisticsReadySuccessCopy({ channelCode: 'ripley', externalOrderNumber: 'RP-10020' }, '2026-09-08'),
+    /RP-10020.*2026-09-08/,
+  );
+  assert.match(
+    logisticsReadySuccessCopy({ channelCode: 'falabella', externalOrderNumber: 'PV-10001' }),
+    /imprimir la etiqueta/,
+  );
+});
+
+test('marcar listo saca el pedido de pendientes y lo cuenta en listos', () => {
+  const inbox = {
+    orders: [
+      { id: 10, promisedShippingAt: '2026-09-08T21:00:00.000Z' },
+      { id: 11, promisedShippingAt: '2026-09-08T22:00:00.000Z' },
+    ],
+    counts: {
+      pending: 52,
+      ready: 3,
+      shipped: 10,
+      dates: [{ date: '2026-09-08', count: 2 }],
+    },
+    totalCount: 52,
+  };
+  const next = applyLogisticsReadyToInbox(inbox, [10]);
+  assert.deepEqual(next.orders.map((order) => order.id), [11]);
+  assert.equal(next.counts.pending, 51);
+  assert.equal(next.counts.ready, 4);
+  assert.equal(next.totalCount, 51);
+  assert.deepEqual(next.counts.dates, [{ date: '2026-09-08', count: 1 }]);
+  assert.equal(applyLogisticsReadyToInbox(inbox, [99]), inbox);
 });
 
 test('el filtro de etapa resume plazo y lo que falta imprimir', () => {

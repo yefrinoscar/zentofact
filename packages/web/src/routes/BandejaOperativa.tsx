@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
-import { Check, ChevronLeft, ChevronRight, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
+import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
+import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkFalabellaReady, canPrintLogisticsLabel,
+  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
-  limaDeadlineKey, logisticsDeadlineLabel, logisticsUpdatedClock,
+  limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
   LOGISTICS_CHANNELS, LOGISTICS_URGENCIES,
 } from '../lib/logistics-inbox';
 import {
@@ -34,7 +35,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const isPending = view.stage === 'pending';
   const isReady = view.stage === 'ready';
   const locked = busy || error || view.fetching || view.printing || view.busyOrderId !== null;
-  const eligible = view.orders.filter(isPending ? canMarkFalabellaReady : canPrintLogisticsLabel);
+  const eligible = view.orders.filter(isPending ? canMarkLogisticsReady : canPrintLogisticsLabel);
   const selectedOrders = eligible.filter((order) => selected.has(order.id));
   const allSelected = eligible.length > 0 && selectedOrders.length === eligible.length;
   const unprinted = eligible.filter((order) => !labelWasPrinted(order));
@@ -67,7 +68,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   });
 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
-                      const selectable = isPending ? canMarkFalabellaReady(order) : canPrintLogisticsLabel(order);
+                      const selectable = isPending ? canMarkLogisticsReady(order) : canPrintLogisticsLabel(order);
                       const printed = labelWasPrinted(order);
                       const rowClass = cn('grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-3 hover:bg-muted/30', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
                       const content = <>
@@ -76,21 +77,21 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
                         </div>
-                        <div className={cn(isChecklist && canMarkFalabellaReady(order) && 'hidden', "col-start-2 min-w-0 space-y-2", !isCard && "md:col-start-auto")}>
+                        <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "col-start-2 min-w-0 space-y-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
                             <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? 'size-24' : isCard ? 'size-20' : layout === '7' ? 'size-8' : 'size-12')} onOpen={setPreview} />
-                            <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{(item.sku || item.shopSku) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{item.sku || item.shopSku}</p>}</div>
+                            <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{logisticsItemSku(item) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{logisticsItemSku(item)}</p>}</div>
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                         </div>
                         <div className={cn("col-start-2 flex items-center justify-between gap-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
-                          {canMarkFalabellaReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span> : canMarkFalabellaReady(order) ? <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>
+                          {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span> : canMarkLogisticsReady(order) ? <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>
                             : canPrintLogisticsLabel(order) ? <Button size="sm" variant="outline" disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>
                               : view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
                         </div>
                         {layout === '12' && <p className="col-start-2 text-sm font-semibold tabular-nums md:col-start-3">{orderUnits(order)} {orderUnits(order) === 1 ? 'unidad para empacar' : 'unidades para empacar'}</p>}
-                        {isChecklist && canMarkFalabellaReady(order) && <BandejaPackingChecklist key={order.items.map((item) => `${item.id}:${item.quantity}`).join('|')} order={order} disabled={locked || !view.canDispatch} onReady={() => view.requestReady(order)} />}
+                        {isChecklist && canMarkLogisticsReady(order) && <BandejaPackingChecklist key={order.items.map((item) => `${item.id}:${item.quantity}`).join('|')} order={order} disabled={locked || !view.canDispatch} onReady={() => view.requestReady(order)} />}
                       </>;
                       return <li key={order.id} className={layout === '15' ? 'border-b' : rowClass}>
                         {layout === '15' ? <details className="group"><summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-3 py-4 hover:bg-muted"><ChevronRight className="size-4 transition-transform group-open:rotate-90" />{order.items[0] && <ProductThumb item={order.items[0]} className="size-10 rounded bg-white" />}<span className="font-mono text-sm font-semibold">{order.externalOrderNumber}</span><span className="text-xs text-muted-foreground">{sellerShortName(order.companyName)}</span><span className="ml-auto text-xs">{orderUnits(order)} unidades · {logisticsDeadlineLabel(order, view.now)}</span></summary><div className={rowClass}>{content}</div></details> : content}
@@ -101,36 +102,54 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
     <div className="min-w-0 pb-24">
       <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-52 shrink-0 sm:w-56">
-          <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
-          <Input aria-label="Buscar pedido o producto" placeholder="Buscar pedido o producto" className="pl-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
+        <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input aria-label="Buscar pedido o producto" placeholder="Pedido o producto" className="h-11 pl-9 sm:h-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
-        <div className="flex flex-wrap gap-1" aria-label="Filtrar por canal">
-          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
-            {channel.value !== 'all' && <ChannelMark code={channel.value} className="size-4" />}
+        <div className="order-last grid w-full grid-cols-4 gap-1 sm:order-none sm:flex sm:w-auto sm:flex-wrap" aria-label="Filtrar por canal">
+          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" className={cn('h-14 min-w-0 flex-col gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
+            {channel.value === 'all' ? <Layers3 aria-hidden="true" className="size-4 sm:hidden" /> : <ChannelMark code={channel.value} className="size-4" />}
             {channel.label}
           </Button>)}
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <span className="hidden text-xs text-muted-foreground xl:inline">{view.updatedAt ? `Actualizado ${logisticsUpdatedClock(view.updatedAt)}` : ''}</span>
-          <Button size="sm" variant="outline" disabled={view.refreshing} onClick={view.refresh}>
-            <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} />{view.canSync ? 'Sincronizar' : 'Actualizar'}
+          <Button size="sm" variant="outline" className="size-11 p-0 sm:h-8 sm:w-auto sm:px-3" aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'} disabled={view.refreshing} onClick={view.refresh}>
+            <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} /><span className="hidden sm:inline">{view.canSync ? 'Sincronizar' : 'Actualizar'}</span>
           </Button>
         </div>
       </div>
 
-      <div className="flex items-stretch gap-1 border-b" aria-label="Etapa del pedido">
+      <BandejaDeadlineSummary view={view} error={error} />
+
+      <div className="grid grid-cols-2 items-stretch gap-1 border-b sm:flex" aria-label="Etapa del pedido">
         {([
-          { stage: 'pending', label: 'Por preparar', icon: PackageCheck },
-          { stage: 'ready', label: 'Listos para imprimir', icon: Printer },
-        ] as const).map(({ stage, label, icon: Icon }) => <button key={stage} type="button" aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
+          { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
+          { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
+        ] as const).map(({ stage, label, mobileLabel, icon: Icon }) => <button key={stage} type="button" aria-label={`${label}: ${view.counts[stage]}`} aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
           className={cn('flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-4 text-sm font-semibold outline-offset-4 sm:flex-none sm:justify-start sm:px-5', view.stage === stage ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:bg-muted/50')}>
-          <Icon className="hidden size-4 lg:block" />{label}<span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
+          <Icon className="hidden size-4 lg:block" /><span className="sm:hidden">{mobileLabel}</span><span className="hidden sm:inline">{label}</span><span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
         </button>)}
-        <button type="button" aria-pressed={view.stage === 'shipped'} onClick={() => view.setStage('shipped')} className={cn('ml-auto border-b-2 px-2 text-xs sm:px-4 sm:text-sm', view.stage === 'shipped' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')}>Enviados <span className="hidden tabular-nums sm:inline">{view.counts.shipped}</span></button>
       </div>
 
-      {view.stage !== 'shipped' && <div className="flex flex-wrap items-center gap-1.5" aria-label="Filtrar por entrega">
+      {view.stage !== 'shipped' && <label className="flex items-center gap-3 sm:hidden">
+        <span className="shrink-0 text-sm font-medium">Plazo</span>
+        <select aria-label="Filtrar por entrega" className="daisy-select h-11 min-w-0 flex-1 rounded-lg border border-solid border-border bg-background text-sm text-foreground shadow-none focus-visible:outline-ring"
+          value={view.deadlineDate || view.urgency || 'all'} onChange={(event) => {
+            const value = event.target.value;
+            if (value === 'all') { view.setUrgency(null); view.setDeadlineDate(null); }
+            else if (value === 'today' || value === 'tomorrow') view.setUrgency(value);
+            else view.setDeadlineDate(value);
+          }}>
+          <option value="all">Todos los plazos</option>
+          {BANDEJA_DEADLINE_FILTERS.map((urgency) => <option key={urgency.value} value={urgency.value}>
+            {urgency.label} · {bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
+          </option>)}
+          {laterDates.map((item) => <option key={item.date} value={item.date}>{formatBandejaDeadlineDate(item.date, view.now)} · {item.count}</option>)}
+        </select>
+      </label>}
+
+      {view.stage !== 'shipped' && <div className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label="Filtrar por entrega">
         <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
           const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
@@ -182,8 +201,8 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </div>
         <section className="min-w-0">
           <div className="mb-5 flex flex-wrap justify-between gap-3 border-b pb-4"><div><p className="mb-1 text-xs text-muted-foreground">{isPending ? 'PEDIDO EN PREPARACIÓN' : isReady ? 'PEDIDO PARA IMPRIMIR' : 'PEDIDO ENVIADO'}</p><CopyableOrderNumber value={focused.externalOrderNumber} /><p className="mt-1 text-sm text-muted-foreground">{sellerShortName(focused.companyName)}</p></div><p className="text-sm font-medium">{logisticsDeadlineLabel(focused, view.now)}</p></div>
-          <div className="space-y-5">{focused.items.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-5 border-b pb-5"><ProductThumb item={item} className="size-36 rounded-lg bg-white sm:size-44" onOpen={setPreview} /><div className="min-w-0 flex-1"><p className="text-lg font-semibold">{item.description}</p><p className="my-2 font-mono text-sm text-muted-foreground">{item.sku || item.shopSku}</p><QuantityTag item={item} /></div></div>)}</div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkFalabellaReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />Marcar pedido listo</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
+          <div className="space-y-5">{focused.items.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-5 border-b pb-5"><ProductThumb item={item} className="size-36 rounded-lg bg-white sm:size-44" onOpen={setPreview} /><div className="min-w-0 flex-1"><p className="text-lg font-semibold">{item.description}</p>{logisticsItemSku(item) && <p className="my-2 font-mono text-sm text-muted-foreground">{logisticsItemSku(item)}</p>}<QuantityTag item={item} /></div></div>)}</div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />Marcar pedido listo</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>

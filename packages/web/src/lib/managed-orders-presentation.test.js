@@ -8,6 +8,7 @@ import {
   deliveryShowsAsTag,
   isSalespersonOrder,
   managedOrderSearchIgnoresDate,
+  managedOrdersDateAfterDayChange,
   managedOrdersEmptyHint,
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
@@ -15,6 +16,20 @@ import {
   sellerCellLabel,
   sellerCellShowsPerson,
 } from './managed-orders-presentation.ts';
+
+test('la bandeja avanza a hoy si permaneció abierta durante la medianoche', () => {
+  assert.equal(managedOrdersDateAfterDayChange({
+    selectedDate: '2026-09-06',
+    previousToday: '2026-09-06',
+    currentToday: '2026-09-07',
+  }), '2026-09-07');
+
+  assert.equal(managedOrdersDateAfterDayChange({
+    selectedDate: '2026-09-05',
+    previousToday: '2026-09-06',
+    currentToday: '2026-09-07',
+  }), '2026-09-05');
+});
 
 test('la bandeja de pedidos no muestra columna de teléfono', () => {
   assert.equal(MANAGED_ORDER_TABLE_COLUMNS.includes('phone'), false);
