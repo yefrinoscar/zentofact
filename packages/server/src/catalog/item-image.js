@@ -1,3 +1,7 @@
+import { RIPLEY_PERU_API_URL } from '../ripley-api-url.js';
+
+const RIPLEY_IMAGE_PATH = '/media/product/image/';
+
 function firstMediaUrl(value) {
   const entries = Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : [];
   for (const entry of entries) {
@@ -18,7 +22,7 @@ function firstNestedImage(value) {
 
 /** Falabella usa Image/ImageUrl. Ripley/Mirakl OR11 guarda product_medias[].media_url. */
 export function marketplaceItemImageUrl(raw = {}, extra = {}) {
-  return String(
+  const url = String(
     extra.imageUrl
     || raw.Image
     || raw.ImageUrl
@@ -33,7 +37,19 @@ export function marketplaceItemImageUrl(raw = {}, extra = {}) {
     || firstMediaUrl(raw.productMedia)
     || '',
   ).trim();
+  return url.startsWith(RIPLEY_IMAGE_PATH) ? `${RIPLEY_PERU_API_URL}${url}` : url;
 }
+
+const RIPLEY_RAW_IMAGE_SQL = [
+  "oi.raw_data->'product_medias'->0->>'dam_url'",
+  "oi.raw_data->'product_medias'->0->>'media_url'",
+  "oi.raw_data->'product_media'->>'dam_url'",
+  "oi.raw_data->'product_media'->>'media_url'",
+].map((expression) => `case
+  when starts_with(trim(${expression}), '${RIPLEY_IMAGE_PATH}')
+    then '${RIPLEY_PERU_API_URL}' || trim(${expression})
+  else nullif(trim(${expression}), '')
+end`).join(',\n');
 
 export const MARKETPLACE_RAW_IMAGE_SQL = `
   nullif(oi.raw_data->>'Image', ''),
@@ -43,8 +59,5 @@ export const MARKETPLACE_RAW_IMAGE_SQL = `
   nullif(oi.raw_data->>'MainImage', ''),
   nullif(oi.raw_data#>>'{Images,Image,0}', ''),
   nullif(oi.raw_data#>>'{Images,0}', ''),
-  nullif(oi.raw_data->'product_medias'->0->>'dam_url', ''),
-  nullif(oi.raw_data->'product_medias'->0->>'media_url', ''),
-  nullif(oi.raw_data->'product_media'->>'dam_url', ''),
-  nullif(oi.raw_data->'product_media'->>'media_url', '')
+  ${RIPLEY_RAW_IMAGE_SQL}
 `;
