@@ -907,6 +907,107 @@ async function ensureSampleOrders(companiesByRuc, products) {
   return { orders: inserted };
 }
 
+function previewSettlementAmounts(bruto) {
+  const sold = Math.round((Number(bruto) || 0) * 100) / 100;
+  const commission = Math.round(sold * 0.14 * 100) / 100;
+  const otherFees = Math.round(sold * 0.12 * 100) / 100;
+  return {
+    bruto: sold,
+    commission,
+    otherFees,
+    neto: Math.round((sold - commission - otherFees) * 100) / 100,
+  };
+}
+
+async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
+  const promised = limaNoonToday().toISOString();
+  const specs = [
+    ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
+    ...SEED_LOGISTICS_ORDERS.filter((spec) => (spec.channel || 'falabella') === 'falabella'),
+  ];
+  let inserted = 0;
+  for (const spec of specs) {
+    const company = companiesByRuc.get(spec.companyRuc || '20990001001');
+    const product = products.find((row) => row.mainSku === spec.sku) || products[0];
+    if (!company || !product) continue;
+    const orderId = previewOrderId(spec.key);
+    const raw = {
+      OrderId: orderId,
+      OrderNumber: spec.orderNumber,
+      CustomerFirstName: spec.customer.firstName,
+      CustomerLastName: spec.customer.lastName,
+      PromisedShippingTime: promised,
+      ItemsCount: String(spec.itemLines || spec.items?.length || 1),
+      Statuses: spec.falabellaStatus || spec.fulfillmentStatus,
+    };
+    await pool.query(
+      `INSERT INTO falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, invoice_required, grand_total, currency, raw_data
+       ) VALUES ($1,$2,$3,NOW(),NOW(),$4,false,$5,'PEN',$6::jsonb)
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         order_number = EXCLUDED.order_number,
+         grand_total = EXCLUDED.grand_total,
+         raw_data = EXCLUDED.raw_data,
+         last_seen_at = NOW()`,
+      [
+        company.id,
+        orderId,
+        spec.orderNumber,
+        spec.falabellaStatus || spec.fulfillmentStatus,
+        product.referencePrice || 100,
+        JSON.stringify(raw),
+      ],
+    );
+    inserted += 1;
+  }
+  return { falabellaOrders: inserted };
+}
+
+async function ensurePreviewSettlements() {
+  const { rows } = await pool.query(
+    `SELECT fo.id, fo.grand_total, fo.status, o.order_status, o.fulfillment_status
+       FROM falabella_orders fo
+       JOIN orders o
+         ON o.company_id = fo.company_id
+        AND o.external_order_id = fo.order_id
+      WHERE fo.order_id LIKE $1
+        AND o.order_status IN ('confirmed', 'completed')
+        AND coalesce(o.fulfillment_status, '') NOT IN ('returned', 'cancelled', 'failed')
+        AND lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'`,
+    [`${SEED_MARKER}-%`],
+  );
+  for (const row of rows) {
+    const amounts = previewSettlementAmounts(row.grand_total);
+    const paid = row.fulfillment_status === 'shipped' || row.order_status === 'completed';
+    await pool.query(
+      `INSERT INTO sale_settlements (
+         sale_source, sale_id, status, bruto, commission, other_fees, neto, match_method, paid_at
+       ) VALUES ('falabella_order', $1, $2, $3, $4, $5, $6, 'order_id', $7)
+       ON CONFLICT (sale_source, sale_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         bruto = EXCLUDED.bruto,
+         commission = EXCLUDED.commission,
+         other_fees = EXCLUDED.other_fees,
+         neto = EXCLUDED.neto,
+         match_method = EXCLUDED.match_method,
+         paid_at = EXCLUDED.paid_at,
+         updated_at = now()`,
+      [
+        row.id,
+        paid ? 'paid' : 'pending',
+        amounts.bruto,
+        amounts.commission,
+        amounts.otherFees,
+        amounts.neto,
+        paid ? new Date() : null,
+      ],
+    );
+  }
+  return { settlements: rows.length };
+}
+
 async function ensureFalabellaInboxOrders(limbo, product) {
   if (!limbo || !product) return { falabellaOrders: 0 };
   const promised = limaNoonToday().toISOString();
@@ -1000,6 +1101,8 @@ async function ensurePreviewFixtures() {
   if (limbo && products[0]) {
     await ensureSampleOrders(companiesByRuc, products);
     await ensureFalabellaInboxOrders(limbo, products[0]);
+    await ensurePreviewFalabellaOrders(companiesByRuc, products);
+    await ensurePreviewSettlements();
   }
   return admin;
 }
@@ -1068,6 +1171,8 @@ export async function seedPreviewData({ force = false } = {}) {
   const clientsCreated = await ensureClients(companies);
   const orders = await ensureSampleOrders(companiesByRuc, products);
   const inbox = await ensureFalabellaInboxOrders(companiesByRuc.get('20990001001'), products[0]);
+  const previewInbox = await ensurePreviewFalabellaOrders(companiesByRuc, products);
+  const settlements = await ensurePreviewSettlements();
   const insumosModule = await import('./insumos.js');
   await insumosModule.ensureTables();
   await bumpInsumosStock();

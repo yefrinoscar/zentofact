@@ -17,6 +17,9 @@ import {
   buyerIdentity,
   formatSalesCount,
   formatSalesMoney,
+  arrivesMoneyHint,
+  falabellaMoneyHint,
+  formatSalesMoneyOrDash,
   formatVisits,
   productSalesKpis,
   publishedLabel,
@@ -53,12 +56,14 @@ type ProductSalesResponse = {
 type SortBy = 'product' | 'units' | 'orders' | 'grossSales' | 'sellers';
 
 const COLUMN_CLASS = {
-  product: 'w-full sm:w-[36%]',
-  published: 'hidden sm:table-cell sm:w-[10%]',
-  grossSales: 'w-[22%] sm:w-[16%]',
-  units: 'w-[16%] sm:w-[12%]',
-  orders: 'hidden sm:table-cell sm:w-[12%]',
-  visits: 'hidden md:table-cell md:w-[14%]',
+  product: 'w-full sm:w-[30%]',
+  published: 'hidden xl:table-cell xl:w-[8%]',
+  grossSales: 'w-[23%] sm:w-[14%]',
+  falabella: 'w-[23%] sm:w-[14%]',
+  arrives: 'w-[24%] sm:w-[14%]',
+  units: 'hidden sm:table-cell sm:w-[10%]',
+  orders: 'hidden md:table-cell md:w-[10%]',
+  visits: 'hidden lg:table-cell lg:w-[10%]',
 } as const;
 
 function companyLabel(company: Company) {
@@ -168,6 +173,26 @@ export default function VentasProductos() {
       accessorKey: 'grossSales',
       header: () => <SortHeader label="Ventas brutas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />,
       cell: ({ row }) => <span className="tabular-nums">{formatSalesMoney(row.original.grossSales)}</span>,
+    },
+    {
+      id: 'falabella',
+      accessorKey: 'falabellaTake',
+      header: 'Falabella',
+      cell: ({ row }) => (
+        <span className="tabular-nums" title={falabellaMoneyHint(row.original)}>
+          {formatSalesMoneyOrDash(row.original.falabellaTake)}
+        </span>
+      ),
+    },
+    {
+      id: 'arrives',
+      accessorKey: 'arrives',
+      header: 'Te llega',
+      cell: ({ row }) => (
+        <span className="tabular-nums" title={arrivesMoneyHint(row.original)}>
+          {formatSalesMoneyOrDash(row.original.arrives)}
+        </span>
+      ),
     },
     {
       id: 'units',
@@ -366,8 +391,8 @@ function ProductCell({ product }: { product: ProductSaleRow }) {
         <CopyableSku sku={product.sku} />
         <span className="mt-2 grid grid-cols-2 gap-3 border-t border-border/60 pt-2 sm:hidden">
           <span>
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Publicado</span>
-            <PublishedBadge published={product.published} />
+            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Unidades</span>
+            <span className="tabular-nums">{formatSalesCount(product.unitsSold)}</span>
           </span>
           <span>
             <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Pedidos</span>
@@ -398,7 +423,7 @@ function SalesKpis({
   loading: boolean;
 }) {
   const groups = [
-    { title: 'Periodo', rows: items.filter((item) => item.group === 'Periodo') },
+    { title: 'Dinero', rows: items.filter((item) => item.group === 'Dinero') },
     { title: 'Ritmo', rows: items.filter((item) => item.group === 'Ritmo') },
   ];
   return (
@@ -506,8 +531,18 @@ function SellerSalesDrawer({
         </SheetHeader>
         {product ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <Metric label="Ventas brutas" value={formatSalesMoney(product.grossSales)} />
+              <Metric
+                label="Falabella"
+                value={formatSalesMoneyOrDash(product.falabellaTake)}
+                hint={falabellaMoneyHint(product)}
+              />
+              <Metric
+                label="Te llega"
+                value={formatSalesMoneyOrDash(product.arrives)}
+                hint={arrivesMoneyHint(product)}
+              />
               <Metric label="Unidades" value={`${formatSalesCount(product.unitsSold)} u`} />
               <Metric label="Pedidos" value={formatSalesCount(product.ordersCount)} />
               <Metric label="Visitas" value={formatVisits(product.visits)} hint={visitsHint()} />
@@ -527,18 +562,26 @@ function SellerSalesDrawer({
                       </div>
                       <PublishedBadge published={seller.published} />
                     </div>
-                    <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                       <div>
                         <dt className="text-xs text-muted-foreground">Ventas brutas</dt>
                         <dd className="mt-0.5 tabular-nums">{formatSalesMoney(seller.grossSales)}</dd>
                       </div>
                       <div>
-                        <dt className="text-xs text-muted-foreground">Unidades</dt>
-                        <dd className="mt-0.5 tabular-nums">{formatSalesCount(seller.unitsSold)} u</dd>
+                        <dt className="text-xs text-muted-foreground">Falabella</dt>
+                        <dd className="mt-0.5 tabular-nums" title={falabellaMoneyHint(seller)}>
+                          {formatSalesMoneyOrDash(seller.falabellaTake)}
+                        </dd>
                       </div>
                       <div>
-                        <dt className="text-xs text-muted-foreground">Visitas</dt>
-                        <dd className="mt-0.5 tabular-nums text-muted-foreground" title={visitsHint()}>{formatVisits(seller.visits)}</dd>
+                        <dt className="text-xs text-muted-foreground">Te llega</dt>
+                        <dd className="mt-0.5 tabular-nums" title={arrivesMoneyHint(seller)}>
+                          {formatSalesMoneyOrDash(seller.arrives)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">Unidades</dt>
+                        <dd className="mt-0.5 tabular-nums">{formatSalesCount(seller.unitsSold)} u</dd>
                       </div>
                     </dl>
                   </article>
@@ -569,11 +612,13 @@ function SalesTableSkeleton() {
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead><Skeleton className="h-4 w-20" /></TableHead>
-            <TableHead className="hidden sm:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
+            <TableHead className="hidden xl:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead><Skeleton className="h-4 w-14" /></TableHead>
+            <TableHead><Skeleton className="h-4 w-16" /></TableHead>
+            <TableHead><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead className="hidden sm:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
             <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
+            <TableHead className="hidden lg:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -585,11 +630,13 @@ function SalesTableSkeleton() {
                   <div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-20" /></div>
                 </div>
               </TableCell>
-              <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
+              <TableCell className="hidden xl:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
               <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell><Skeleton className="h-5 w-10" /></TableCell>
+              <TableCell><Skeleton className="h-5 w-16" /></TableCell>
+              <TableCell><Skeleton className="h-5 w-16" /></TableCell>
               <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-8" /></TableCell>
+              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
+              <TableCell className="hidden lg:table-cell"><Skeleton className="h-5 w-8" /></TableCell>
             </TableRow>
           ))}
         </TableBody>

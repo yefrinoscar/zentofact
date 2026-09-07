@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import {
   buyerIdentity,
   channelLabel,
+  arrivesMoneyHint,
+  falabellaMoneyHint,
+  formatSalesMoneyOrDash,
   formatVisits,
+  pagosHint,
   sellerChannelLabel,
   productSalesKpis,
   publishedLabel,
@@ -11,7 +15,7 @@ import {
   visitsHint,
 } from './product-sales-presentation.ts';
 
-test('los kpis de ventas cubren el periodo y el ritmo', () => {
+test('los kpis de ventas ponen Falabella y te llega al lado de la venta bruta', () => {
   const kpis = productSalesKpis({
     productsCount: 4,
     unitsSold: 18,
@@ -19,16 +23,49 @@ test('los kpis de ventas cubren el periodo y el ritmo', () => {
     sellersCount: 3,
     buyersCount: 9,
     grossSales: 2410.5,
+    falabellaTake: 626.73,
+    arrives: 1783.77,
+    paidArrives: 421.56,
+    pendingArrives: 1362.21,
+    settlementOrders: 3,
     averageTicket: 200.875,
     visits: null,
   });
   assert.deepEqual(kpis.map((item) => item.label), [
-    'Ventas brutas', 'Unidades', 'Pedidos', 'Ticket', 'Productos', 'Compradores',
+    'Ventas brutas', 'Falabella', 'Te llega', 'Unidades', 'Pedidos', 'Ticket',
   ]);
   assert.equal(String(kpis[0].display).replace(/\u00a0/g, ' '), 'S/ 2,410.50');
-  assert.equal(kpis[1].display, '18 u');
-  assert.equal(kpis[1].why, 'Piezas que salieron.');
-  assert.equal(kpis[4].why, 'SKUs que vendieron.');
+  assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 626.73');
+  assert.equal(kpis[1].why, 'Comisión y logística.');
+  assert.equal(kpis[2].why, 'Pagado y pendiente.');
+  assert.equal(kpis[3].display, '18 u');
+});
+
+test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
+  const kpis = productSalesKpis({
+    productsCount: 1,
+    unitsSold: 2,
+    ordersCount: 1,
+    sellersCount: 1,
+    buyersCount: 1,
+    grossSales: 100,
+    falabellaTake: null,
+    arrives: null,
+    paidArrives: null,
+    pendingArrives: null,
+    settlementOrders: 0,
+    averageTicket: 100,
+    visits: null,
+  });
+  assert.equal(kpis[1].display, '—');
+  assert.equal(kpis[2].display, '—');
+  assert.equal(kpis[1].why, pagosHint());
+  assert.equal(formatSalesMoneyOrDash(null), '—');
+  assert.equal(falabellaMoneyHint({
+    falabellaTake: null,
+    sellers: [{ channelCode: 'manual', channelCodes: ['manual'] }],
+  }), 'Sin cobro de Falabella.');
+  assert.equal(arrivesMoneyHint({ arrives: 140.52 }), 'Lo que te depositan.');
 });
 
 test('sin visitas el dato queda vacío y el seller usa el nombre corto', () => {

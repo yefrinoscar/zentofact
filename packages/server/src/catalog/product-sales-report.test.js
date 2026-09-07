@@ -42,6 +42,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
             orders_count: 4,
             sellers_count: 2,
             revenue: 1139.4,
+            falabella_take: 296.24,
+            arrives: 842.16,
             visits: null,
             sellers: [
               {
@@ -54,6 +56,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
                 unitsSold: 4,
                 ordersCount: 3,
                 grossSales: 759.6,
+                falabellaTake: 197.5,
+                arrives: 561.2,
                 visits: null,
               },
               {
@@ -65,6 +69,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
                 unitsSold: 2,
                 ordersCount: 1,
                 grossSales: 379.8,
+                falabellaTake: 98.74,
+                arrives: 280.96,
                 visits: null,
               },
             ],
@@ -80,6 +86,11 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
             sellers_count: 3,
             buyers_count: 9,
             gross_sales: 2410.5,
+            falabella_take: 626.73,
+            arrives: 1783.77,
+            paid_arrives: 421.56,
+            pending_arrives: 1362.21,
+            settlement_orders: 3,
           }],
         };
       }
@@ -133,13 +144,19 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.products[0].sku, 'AG301');
   assert.equal(result.products[0].unitsSold, 6);
   assert.equal(result.products[0].grossSales, 1139.4);
+  assert.equal(result.products[0].falabellaTake, 296.24);
+  assert.equal(result.products[0].arrives, 842.16);
   assert.equal(result.products[0].sellersCount, 2);
+  assert.equal(result.products[0].sellers[0].falabellaTake, 197.5);
   assert.equal(result.products[0].sellers[0].companyName, 'LIMBO');
   assert.deepEqual(result.products[0].sellers[0].channelCodes, ['falabella', 'manual']);
   assert.equal(result.products[0].sellers[1].unitsSold, 2);
   assert.equal(result.products[0].visits, null);
   assert.equal(result.totals.productsCount, 4);
   assert.equal(result.totals.buyersCount, 9);
+  assert.equal(result.totals.falabellaTake, 626.73);
+  assert.equal(result.totals.arrives, 1783.77);
+  assert.equal(result.totals.settlementOrders, 3);
   assert.equal(result.totals.averageTicket, 2410.5 / 12);
   assert.equal(result.totalCount, 1);
   assert.equal(result.topProducts[0].sku, 'AG301');
@@ -149,6 +166,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   const pageSql = statements.find((statement) => compact(statement.sql).includes('seller_rows as'))?.sql || '';
   assert.match(pageSql, /ordered_at at time zone 'America\/Lima'\)::date between \$1::date and \$2::date/i);
   assert.match(pageSql, /o\.company_id=\$3/);
+  assert.match(pageSql, /left join sale_settlements ss/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(pageSql, /left join order_channels ch/);
   assert.match(pageSql, /array_agg\(distinct channel_code\)/);

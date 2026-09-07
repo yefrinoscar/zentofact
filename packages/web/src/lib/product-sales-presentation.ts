@@ -12,6 +12,8 @@ export type ProductSaleSeller = {
   unitsSold: number;
   ordersCount: number;
   grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
   visits: number | null;
 };
 
@@ -28,6 +30,8 @@ export type ProductSaleRow = {
   ordersCount: number;
   sellersCount: number;
   grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
   visits: number | null;
   sellers: ProductSaleSeller[];
 };
@@ -50,6 +54,11 @@ export type ProductSalesTotals = {
   sellersCount: number;
   buyersCount: number;
   grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
+  settlementOrders: number;
   averageTicket: number;
   visits: number | null;
 };
@@ -64,6 +73,48 @@ const integer = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 0 });
 
 export function formatSalesMoney(value: number | null | undefined) {
   return money.format(Number(value || 0));
+}
+
+export function formatSalesMoneyOrDash(value: number | null | undefined) {
+  return value == null ? '—' : formatSalesMoney(value);
+}
+
+export function pagosHint() {
+  return 'Cruza Pagos para verlo.';
+}
+
+function channelCodesOf(row?: {
+  channelCode?: string | null;
+  channelCodes?: string[] | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  const own = row?.channelCodes?.length ? row.channelCodes : row?.channelCode ? [row.channelCode] : [];
+  const nested = (row?.sellers || []).flatMap((seller) => (
+    seller.channelCodes?.length ? seller.channelCodes : seller.channelCode ? [seller.channelCode] : []
+  ));
+  return [...own, ...nested];
+}
+
+export function falabellaMoneyHint(row?: {
+  falabellaTake?: number | null;
+  channelCode?: string | null;
+  channelCodes?: string[] | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  if (row?.falabellaTake != null) return 'Comisión y logística.';
+  const channels = channelCodesOf(row);
+  if (channels.length && channels.every((code) => String(code || '').toLowerCase() !== 'falabella')) {
+    return 'Sin cobro de Falabella.';
+  }
+  return pagosHint();
+}
+
+export function arrivesMoneyHint(row?: {
+  arrives?: number | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  if (row?.arrives != null) return 'Lo que te depositan.';
+  return falabellaMoneyHint({ falabellaTake: null, sellers: row?.sellers });
 }
 
 export function formatSalesCount(value: number | null | undefined) {
@@ -103,32 +154,56 @@ export function sellerSalesLabel(seller: Pick<ProductSaleSeller, 'companyName'>)
   return sellerShortName(seller.companyName);
 }
 
+function arrivesWhy(totals?: ProductSalesTotals | null) {
+  const paid = totals?.paidArrives;
+  const pending = totals?.pendingArrives;
+  if (totals?.arrives == null) return pagosHint();
+  if (paid != null && pending != null && pending > 0 && paid > 0) return 'Pagado y pendiente.';
+  if (pending != null && pending > 0 && !(paid && paid > 0)) return 'Aún no depositan.';
+  if (paid != null && paid > 0) return 'Ya está en tu cuenta.';
+  return 'Lo que te depositan.';
+}
+
 export function productSalesKpis(totals?: ProductSalesTotals | null) {
   const grossSales = Number(totals?.grossSales || 0);
   const unitsSold = Number(totals?.unitsSold || 0);
   const ordersCount = Number(totals?.ordersCount || 0);
   const averageTicket = Number(totals?.averageTicket || 0);
-  const productsCount = Number(totals?.productsCount || 0);
-  const buyersCount = Number(totals?.buyersCount || 0);
+  const falabellaTake = totals?.falabellaTake ?? null;
+  const arrives = totals?.arrives ?? null;
 
   return [
     {
       key: 'grossSales' as const,
-      group: 'Periodo',
+      group: 'Dinero',
       label: 'Ventas brutas',
       why: 'Lo vendido en el periodo.',
       display: formatSalesMoney(grossSales),
     },
     {
+      key: 'falabella' as const,
+      group: 'Dinero',
+      label: 'Falabella',
+      why: falabellaTake == null ? pagosHint() : 'Comisión y logística.',
+      display: formatSalesMoneyOrDash(falabellaTake),
+    },
+    {
+      key: 'arrives' as const,
+      group: 'Dinero',
+      label: 'Te llega',
+      why: arrivesWhy(totals),
+      display: formatSalesMoneyOrDash(arrives),
+    },
+    {
       key: 'units' as const,
-      group: 'Periodo',
+      group: 'Ritmo',
       label: 'Unidades',
       why: 'Piezas que salieron.',
       display: `${formatSalesCount(unitsSold)} u`,
     },
     {
       key: 'orders' as const,
-      group: 'Periodo',
+      group: 'Ritmo',
       label: 'Pedidos',
       why: 'Pedidos con venta.',
       display: formatSalesCount(ordersCount),
@@ -139,20 +214,6 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
       label: 'Ticket',
       why: 'Promedio por pedido.',
       display: formatSalesMoney(averageTicket),
-    },
-    {
-      key: 'products' as const,
-      group: 'Ritmo',
-      label: 'Productos',
-      why: 'SKUs que vendieron.',
-      display: formatSalesCount(productsCount),
-    },
-    {
-      key: 'buyers' as const,
-      group: 'Ritmo',
-      label: 'Compradores',
-      why: 'Clientes que compraron.',
-      display: formatSalesCount(buyersCount),
     },
   ];
 }
