@@ -3,6 +3,7 @@ import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } f
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 import { createLogId } from './error-log.js';
 import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
+import { remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -289,6 +290,7 @@ const LABEL_PRINT_SQL = `(
 export async function listLogisticsInbox(filtersInput = {}, db) {
   const filters = parseLogisticsInboxFilters(filtersInput);
   const target = db || (await loadCore()).pool;
+  await remapPersistedRipleyReadyOrders(target);
 
   const countValues = [];
   const countWhere = whereClause(filters, countValues);

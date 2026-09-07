@@ -249,3 +249,33 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
   await enqueueRipleyStockJob(ingested.order, input, db, enqueue);
   return ingested;
 }
+
+const RIPLEY_READY_DEMOTE = new Set(['pending', 'preparing']);
+
+export async function remapPersistedRipleyReadyOrders(db, accountId = null) {
+  if (!db?.query) return { updated: 0 };
+  const found = await db.query(
+    `select o.id, o.provider_status, o.fulfillment_status, o.metadata
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where ch.code = 'ripley'
+       and o.fulfillment_status = 'ready_to_ship'
+       and o.order_status not in ('cancelled', 'failed')
+       and ($1::int is null or o.channel_account_id = $1)`,
+    [accountId],
+  );
+  let updated = 0;
+  for (const row of found.rows || []) {
+    const next = resolveRipleyIngestStatuses(row.provider_status, row);
+    if (!RIPLEY_READY_DEMOTE.has(next.fulfillmentStatus)) continue;
+    const result = await db.query(
+      `update orders
+       set fulfillment_status = $2, updated_at = now()
+       where id = $1 and fulfillment_status = 'ready_to_ship'`,
+      [row.id, next.fulfillmentStatus],
+    );
+    updated += Number(result.rowCount || 0);
+  }
+  return { updated };
+}

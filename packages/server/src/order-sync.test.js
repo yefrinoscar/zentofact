@@ -157,6 +157,36 @@ test('el backfill pide a Ripley remapear el estado desde Mirakl', async () => {
   assert.deepEqual(remaps, [true]);
 });
 
+test('Ripley reubica listos persistidos aunque Mirakl no los vuelva a mandar', async () => {
+  const remapped = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 12, company_id: 4, channel_code: 'ripley',
+        active: true, company_active: true, auto_create_orders: true,
+        ripley_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T12:00:00Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 22 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  await syncOrderAccount(12, { now: '2026-09-07T18:00:00.000Z' }, {
+    pool: { connect: async () => db },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    remapPersistedRipleyReadyOrders: async (_db, accountId) => {
+      remapped.push(accountId);
+      return { updated: 2 };
+    },
+    ripleyClient: {
+      listOrders: async () => ({ orders: [], totalCount: 0, max: 100 }),
+    },
+  });
+  assert.deepEqual(remapped, [12]);
+});
+
 test('un backfill sin fechas usa la ventana compartida', async () => {
   const windows = [];
   const db = {
