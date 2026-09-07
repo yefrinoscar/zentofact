@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listProductSalesReport, parseProductSalesFilters } from './product-sales-report.js';
+import { lineSaleMoney, listProductSalesReport, parseProductSalesFilters, takeRateFromSamples } from './product-sales-report.js';
 
 function compact(sql) {
   return String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -179,8 +179,11 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /ordered_at at time zone 'America\/Lima'\)::date between \$1::date and \$2::date/i);
   assert.match(pageSql, /o\.company_id=\$3/);
   assert.match(pageSql, /left join sale_settlements ss/);
+  assert.match(pageSql, /priced as/);
+  assert.match(pageSql, /allocated_take/);
+  assert.match(pageSql, /settlement_sale_id is null/);
+  assert.match(pageSql, /matched_gross >= pr.gross \* 0.1/);
   assert.match(pageSql, /settlement_status = 'paid'/);
-  assert.match(pageSql, /settlement_status = 'pending'/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(pageSql, /l\.channel_code='falabella'/);
   assert.match(pageSql, /coalesce\(linked\.channel_code, listing\.channel_code, ch\.code\) = 'falabella'/);
@@ -195,3 +198,44 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(statements[0].params[1], '2026-09-07');
   assert.equal(statements[0].params.includes(8), true);
 });
+
+test('una venta sin cruce usa la tasa de Pagos y suma bruto = Falabella + te llega', () => {
+  const rate = takeRateFromSamples({
+    productGross: 11479.86,
+    productMatchedGross: 1679.99,
+    productMatchedTake: 341.4,
+  });
+  assert.ok(rate > 0.2 && rate < 0.21);
+  const crossed = lineSaleMoney({
+    lineTotal: 1679.99,
+    allocatedTake: 341.4,
+    allocatedNeto: 1338.59,
+    paid: true,
+    rate,
+  });
+  const open = lineSaleMoney({
+    lineTotal: 9799.87,
+    allocatedTake: null,
+    allocatedNeto: null,
+    paid: false,
+    rate,
+  });
+  const take = crossed.falabellaTake + open.falabellaTake;
+  const arrives = crossed.arrives + open.arrives;
+  assert.equal((take + arrives).toFixed(2), '11479.86');
+  assert.ok(arrives > 8000);
+  assert.equal(open.paidArrives, 0);
+  assert.equal(open.pendingArrives, open.arrives);
+});
+
+test('si el cruce del producto es poco, usa la tasa del seller', () => {
+  const rate = takeRateFromSamples({
+    productGross: 11105.12,
+    productMatchedGross: 606,
+    productMatchedTake: 414.16,
+    companyMatchedGross: 20000,
+    companyMatchedTake: 4000,
+  });
+  assert.equal(rate, 0.2);
+});
+

@@ -9,8 +9,8 @@ const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-const SETTLEMENT_SHARE = (field) => `case
-          when settlement_sale_id is null then null
+const SETTLEMENT_SHARE = (field, saleId = 'settlement_sale_id') => `case
+          when ${saleId} is null then null
           when coalesce(order_gross, 0) = 0 then 0
           else ${field} * (line_total / order_gross)
         end`;
@@ -93,6 +93,97 @@ function productOrderSql(filters) {
   return `${PRODUCT_SORTS[filters.sortBy]} ${filters.sortDir} nulls last, min(name), min(sku)`;
 }
 
+const TAKE_RATE_SQL = `coalesce(
+                 case
+                   when pr.matched_gross > 0 and pr.matched_gross >= pr.gross * 0.1
+                     then pr.matched_take / pr.matched_gross
+                 end,
+                 case when cr.matched_gross > 0 then cr.matched_take / cr.matched_gross end,
+                 case when ovr.matched_gross > 0 then ovr.matched_take / ovr.matched_gross end,
+                 0
+               )`;
+
+function moneyCtes() {
+  return `product_rates as (
+         select product_key,
+           sum(line_total) as gross,
+           coalesce(sum(line_total) filter (where settlement_sale_id is not null), 0) as matched_gross,
+           coalesce(sum(allocated_take), 0) as matched_take
+         from eligible
+         group by 1
+       ),
+       company_rates as (
+         select company_id,
+           coalesce(sum(line_total) filter (where settlement_sale_id is not null), 0) as matched_gross,
+           coalesce(sum(allocated_take), 0) as matched_take
+         from eligible
+         group by 1
+       ),
+       overall_rate as (
+         select
+           coalesce(sum(line_total) filter (where settlement_sale_id is not null), 0) as matched_gross,
+           coalesce(sum(allocated_take), 0) as matched_take
+         from eligible
+       ),
+       priced as (
+         select
+           base.*,
+           base.line_take as falabella_take,
+           base.line_arrives as arrives,
+           case when base.settlement_status = 'paid' then coalesce(base.allocated_neto, 0) else 0 end as paid_arrives,
+           base.line_arrives
+             - case when base.settlement_status = 'paid' then coalesce(base.allocated_neto, 0) else 0 end
+             as pending_arrives
+         from (
+           select e.*,
+             coalesce(e.allocated_take, e.line_total * ${TAKE_RATE_SQL}) as line_take,
+             coalesce(
+               e.allocated_neto,
+               e.line_total - coalesce(e.allocated_take, e.line_total * ${TAKE_RATE_SQL})
+             ) as line_arrives
+           from eligible e
+           left join product_rates pr on pr.product_key = e.product_key
+           left join company_rates cr on cr.company_id = e.company_id
+           cross join overall_rate ovr
+         ) base
+       )`;
+}
+
+export function takeRateFromSamples({
+  productGross = 0,
+  productMatchedGross = 0,
+  productMatchedTake = 0,
+  companyMatchedGross = 0,
+  companyMatchedTake = 0,
+  overallMatchedGross = 0,
+  overallMatchedTake = 0,
+} = {}) {
+  if (productMatchedGross > 0 && productMatchedGross >= productGross * 0.1) {
+    return productMatchedTake / productMatchedGross;
+  }
+  if (companyMatchedGross > 0) return companyMatchedTake / companyMatchedGross;
+  if (overallMatchedGross > 0) return overallMatchedTake / overallMatchedGross;
+  return 0;
+}
+
+export function lineSaleMoney({
+  lineTotal = 0,
+  allocatedTake = null,
+  allocatedNeto = null,
+  paid = false,
+  rate = 0,
+} = {}) {
+  const take = allocatedTake == null ? Number(lineTotal) * Number(rate || 0) : Number(allocatedTake);
+  const arrives = allocatedNeto == null ? Number(lineTotal) - take : Number(allocatedNeto);
+  const paidArrives = paid ? Number(allocatedNeto || 0) : 0;
+  return {
+    falabellaTake: take,
+    arrives,
+    paidArrives,
+    pendingArrives: arrives - paidArrives,
+  };
+}
+
 function eligibleCte(filters, values, { includeSearch = false } = {}) {
   const where = [
     ELIGIBLE_SALE,
@@ -128,6 +219,11 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
     )`);
   }
   return `eligible as (
+      select
+        raw.*,
+        ${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')} as allocated_take,
+        ${SETTLEMENT_SHARE('settlement_neto')} as allocated_neto
+      from (
       select
         case
           when coalesce(oi.product_id, linked.product_id, listing.product_id) is not null
@@ -206,6 +302,7 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
       ) listing on true
       left join products p on p.id=coalesce(oi.product_id, linked.product_id, listing.product_id)
       where ${where.join(' and ')}
+      ) raw
     )`;
 }
 
@@ -288,30 +385,31 @@ export async function listProductSalesReport(input = {}, db) {
 
   const sellerPublishedSql = `bool_or(exists (
            select 1 from product_listings pub
-           where pub.product_id=eligible.product_id
-             and pub.company_id=eligible.company_id
+           where pub.product_id=priced.product_id
+             and pub.company_id=priced.company_id
              and ${publishedListingCondition('pub')}
          ))`;
 
   const [pageResult, pageCountResult, totalsResult, topProductsResult, topBuyersResult] = await Promise.all([
     target.query(
       `with ${pageCte},
+       ${moneyCtes()},
        seller_rows as (
          select product_key, product_id, sku, name, image_url, brand,
            company_id, company_name,
            sum(quantity) as units_sold,
            count(distinct order_id) as orders_count,
            sum(line_total) as revenue,
-           sum(${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')}) as falabella_take,
-           sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives,
-           sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'paid') as paid_arrives,
-           sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'pending') as pending_arrives,
+           sum(falabella_take) as falabella_take,
+           sum(arrives) as arrives,
+           sum(paid_arrives) as paid_arrives,
+           sum(pending_arrives) as pending_arrives,
            ${sellerPublishedSql} as published,
            array_agg(distinct channel_code) filter (where channel_code is not null) as channel_codes,
            min(seller_title) as seller_title,
            min(seller_sku) as seller_sku,
            min(shop_sku) as shop_sku
-         from eligible
+         from priced
          group by 1,2,3,4,5,6,7,8
        )
        select
@@ -361,7 +459,8 @@ export async function listProductSalesReport(input = {}, db) {
       pageFilterValues,
     ),
     target.query(
-      `with ${overviewCte}
+      `with ${overviewCte},
+       ${moneyCtes()}
        select
          count(distinct product_key)::int as products_count,
          coalesce(sum(quantity), 0) as units_sold,
@@ -369,16 +468,17 @@ export async function listProductSalesReport(input = {}, db) {
          count(distinct company_id)::int as sellers_count,
          count(distinct buyer_key)::int as buyers_count,
          coalesce(sum(line_total), 0) as gross_sales,
-         sum(${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')}) as falabella_take,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'paid') as paid_arrives,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'pending') as pending_arrives,
+         coalesce(sum(falabella_take), 0) as falabella_take,
+         coalesce(sum(arrives), 0) as arrives,
+         coalesce(sum(paid_arrives), 0) as paid_arrives,
+         coalesce(sum(pending_arrives), 0) as pending_arrives,
          count(distinct settlement_sale_id)::int as settlement_orders
-       from eligible`,
+       from priced`,
       overviewValues,
     ),
     target.query(
-      `with ${overviewCte}
+      `with ${overviewCte},
+       ${moneyCtes()}
        select
          product_key,
          min(product_id) as product_id,
@@ -389,11 +489,11 @@ export async function listProductSalesReport(input = {}, db) {
          count(distinct order_id)::int as orders_count,
          count(distinct company_id)::int as sellers_count,
          coalesce(sum(line_total), 0) as revenue,
-         sum(${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')}) as falabella_take,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'paid') as paid_arrives,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'pending') as pending_arrives
-       from eligible
+         coalesce(sum(falabella_take), 0) as falabella_take,
+         coalesce(sum(arrives), 0) as arrives,
+         coalesce(sum(paid_arrives), 0) as paid_arrives,
+         coalesce(sum(pending_arrives), 0) as pending_arrives
+       from priced
        group by product_key
        order by revenue desc nulls last, min(name), min(sku)
        limit 5`,
@@ -436,10 +536,10 @@ export async function listProductSalesReport(input = {}, db) {
       sellersCount: Number(totals.sellers_count || 0),
       buyersCount: Number(totals.buyers_count || 0),
       grossSales,
-      falabellaTake: settlementOrders > 0 && totals.falabella_take != null ? Number(totals.falabella_take) : null,
-      arrives: settlementOrders > 0 && totals.arrives != null ? Number(totals.arrives) : null,
-      paidArrives: settlementOrders > 0 ? Number(totals.paid_arrives || 0) : null,
-      pendingArrives: settlementOrders > 0 ? Number(totals.pending_arrives || 0) : null,
+      falabellaTake: Number(totals.falabella_take || 0),
+      arrives: Number(totals.arrives || 0),
+      paidArrives: Number(totals.paid_arrives || 0),
+      pendingArrives: Number(totals.pending_arrives || 0),
       settlementOrders,
       averageTicket: ordersCount > 0 ? grossSales / ordersCount : 0,
       visits: null,
