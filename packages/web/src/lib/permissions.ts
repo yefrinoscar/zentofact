@@ -235,6 +235,7 @@ export function userHasPermission(user: AppUser | null | undefined, key: Permiss
 
 export function pathPermission(pathname: string): PermissionKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/ventas')) return 'dashboard';
   if (pathname.startsWith('/pagos')) return 'pagos';
   if (pathname.startsWith('/mis-ventas')) return 'salesperson';
   if (pathname.startsWith('/envio-propio') || pathname.startsWith('/orders/envio')) return 'settings';
