@@ -13,13 +13,32 @@ test('el filtro de ventas de productos usa el periodo de Lima y ordena por venta
   assert.equal(filters.sortBy, 'grossSales');
   assert.equal(filters.sortDir, 'desc');
   assert.equal(filters.search, 'AG301');
+  assert.equal(filters.minGrossSales, null);
+  assert.equal(filters.payout, 'all');
   assert.equal(filters.limit, 20);
+});
+
+test('el reporte acepta filtros de columna de dinero y pago', () => {
+  const filters = parseProductSalesFilters({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    minGrossSales: '500.5',
+    minFalabellaTake: '10',
+    minArrives: '200',
+    payout: 'pending',
+  });
+  assert.equal(filters.minGrossSales, 500.5);
+  assert.equal(filters.minFalabellaTake, 10);
+  assert.equal(filters.minArrives, 200);
+  assert.equal(filters.payout, 'pending');
 });
 
 test('el reporte rechaza un rango invertido o un sort inválido', () => {
   assert.throws(() => parseProductSalesFilters({ from: '2026-08-31', to: '2026-08-01' }), /fecha inicial/i);
   assert.throws(() => parseProductSalesFilters({ sortBy: 'visits' }), /sortBy inválido/);
   assert.throws(() => parseProductSalesFilters({ from: 'no-es-fecha' }), /Fecha inválida/);
+  assert.throws(() => parseProductSalesFilters({ payout: 'otro' }), /pago inválido/i);
+  assert.throws(() => parseProductSalesFilters({ minGrossSales: '-1' }), /minGrossSales inválido/);
 });
 
 test('las ventas de productos suman asociaciones y detallan cada seller', async () => {
@@ -28,7 +47,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
     query: async (sql, params) => {
       statements.push({ sql, params });
       const text = compact(sql);
-      if (text.includes('seller_rows as')) {
+      if (text.includes('seller_rows as') && text.includes('jsonb_agg')) {
         return {
           rows: [{
             product_key: 'p:5',
@@ -100,17 +119,64 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
           }],
         };
       }
-      if (text.includes('buyer_key') && text.includes('limit 8')) {
+      if (text.includes('units_bought > 5')) {
+        return {
+          rows: [{
+            buyer_key: '74561743',
+            buyer_name: 'Max Preview',
+            buyer_document: '74561743',
+            buyer_email: 'max@preview.zentofact.local',
+            buyer_phone: '987654321',
+            orders_count: 2,
+            units_bought: 7,
+            revenue: 318.5,
+            last_ordered_at: '2026-09-07T17:00:00.000Z',
+            companies: [
+              {
+                companyId: 8,
+                companyName: 'LIMBO',
+                unitsBought: 4,
+                ordersCount: 1,
+                grossSales: 182,
+              },
+              {
+                companyId: 9,
+                companyName: 'MANTA RAYA',
+                unitsBought: 3,
+                ordersCount: 1,
+                grossSales: 136.5,
+              },
+            ],
+            products: [{
+              productKey: 'p:9',
+              sku: 'BB220',
+              name: 'Set platos',
+              unitsBought: 7,
+              grossSales: 318.5,
+            }],
+          }],
+        };
+      }
+      if (text.includes('units_bought <= 5')) {
         return {
           rows: [{
             buyer_key: '22334455',
             buyer_name: 'Alexander Preview',
             buyer_document: '22334455',
             buyer_email: null,
+            buyer_phone: '999222333',
             orders_count: 2,
             units_bought: 5,
             revenue: 720,
             last_ordered_at: '2026-09-07T17:00:00.000Z',
+            companies: [{
+              companyId: 8,
+              companyName: 'LIMBO',
+              unitsBought: 5,
+              ordersCount: 2,
+              grossSales: 720,
+            }],
+            products: [],
           }],
         };
       }
@@ -129,7 +195,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
           }],
         };
       }
-      if (text.includes('count(distinct product_key)')) {
+      if (text.includes('as products_count')) {
         return { rows: [{ products_count: 1 }] };
       }
       return { rows: [] };
@@ -142,6 +208,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
     search: 'AG3',
     companyId: 8,
     sortBy: 'units',
+    minGrossSales: 100,
+    payout: 'pending',
   }, db);
 
   assert.equal(result.timezone, 'America/Lima');
@@ -172,8 +240,16 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.totals.averageTicket, 2410.5 / 12);
   assert.equal(result.totalCount, 1);
   assert.equal(result.topProducts[0].sku, 'AG301');
+  assert.equal(result.trackedBuyers[0].name, 'Max Preview');
+  assert.equal(result.trackedBuyers[0].tracked, true);
+  assert.equal(result.trackedBuyers[0].phone, '987654321');
+  assert.equal(result.trackedBuyers[0].unitsBought, 7);
+  assert.equal(result.trackedBuyers[0].companies[0].companyName, 'LIMBO');
+  assert.equal(result.trackedBuyers[0].products[0].sku, 'BB220');
   assert.equal(result.topBuyers[0].name, 'Alexander Preview');
   assert.equal(result.topBuyers[0].unitsBought, 5);
+  assert.equal(result.topBuyers[0].tracked, false);
+  assert.equal(result.topBuyers[0].phone, '999222333');
 
   const pageSql = statements.find((statement) => compact(statement.sql).includes('seller_rows as'))?.sql || '';
   assert.match(pageSql, /ordered_at at time zone 'America\/Lima'\)::date between \$1::date and \$2::date/i);
@@ -193,10 +269,18 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
   assert.match(pageSql, /order by sum\(units_sold\) desc nulls last/);
   assert.match(pageSql, /customer->>'documentNumber'/);
+  assert.match(pageSql, /customer->>'phone'/);
+  assert.match(pageSql, /having true and sum\(revenue\) >= \$/);
+  assert.match(pageSql, /coalesce\(sum\(pending_arrives\), 0\) > 0/);
   assert.doesNotMatch(pageSql, /promised_shipping_at/);
+  const buyerSql = statements.find((statement) => compact(statement.sql).includes('units_bought > 5'))?.sql || '';
+  assert.match(buyerSql, /buyer_phone/);
+  assert.match(buyerSql, /buyer_companies as/);
+  assert.match(buyerSql, /buyer_products as/);
   assert.equal(statements[0].params[0], '2026-08-09');
   assert.equal(statements[0].params[1], '2026-09-07');
   assert.equal(statements[0].params.includes(8), true);
+  assert.equal(statements[0].params.includes(100), true);
 });
 
 test('una venta sin cruce usa la tasa de Pagos y suma bruto = Falabella + te llega', () => {

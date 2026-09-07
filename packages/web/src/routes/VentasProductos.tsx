@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { BarChart3, Search, X } from 'lucide-react';
@@ -14,20 +14,34 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
 import { documentDateRangeForLastDays, type DocumentDateRange } from '../lib/documentDateRange';
 import {
+  buyerCompaniesLabel,
   buyerIdentity,
+  buyerPhoneDigits,
+  buyerPhoneLabel,
+  buyerProductsLabel,
+  formatBuyerLastOrder,
   formatSalesCount,
   formatSalesMoney,
   arrivesMoneyHint,
+  EMPTY_BUYER_COLUMN_FILTERS,
+  EMPTY_PRODUCT_COLUMN_FILTERS,
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
+  hasBuyerColumnFilters,
+  hasProductColumnFilters,
+  matchesBuyerColumnFilters,
   paidMoneyHint,
   paidShare,
+  parseMinAmount,
   pendingMoneyHint,
   productSalesKpis,
   publishedLabel,
   sellerChannelLabel,
   sellerSalesLabel,
+  type BuyerColumnFilters,
+  type ProductColumnFilters,
   type ProductSaleBuyer,
+  type ProductSaleBuyerCompany,
   type ProductSaleRow,
   type ProductSalesTotals,
 } from '../lib/product-sales-presentation';
@@ -49,6 +63,7 @@ type ProductSalesResponse = {
   totalCount: number;
   totals: ProductSalesTotals;
   topProducts: ProductSaleRow[];
+  trackedBuyers: ProductSaleBuyer[];
   topBuyers: ProductSaleBuyer[];
   limit: number;
   offset: number;
@@ -83,6 +98,9 @@ export default function VentasProductos() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [offset, setOffset] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [productFilters, setProductFilters] = useState<ProductColumnFilters>(EMPTY_PRODUCT_COLUMN_FILTERS);
+  const [submittedProductFilters, setSubmittedProductFilters] = useState<ProductColumnFilters>(EMPTY_PRODUCT_COLUMN_FILTERS);
+  const [buyerFilters, setBuyerFilters] = useState<BuyerColumnFilters>(EMPTY_BUYER_COLUMN_FILTERS);
 
   const applySearch = (value: string, submit = false) => {
     setSearch(value);
@@ -102,6 +120,22 @@ export default function VentasProductos() {
     setOffset(0);
   };
 
+  const applyProductFilters = (next: ProductColumnFilters, submit = false) => {
+    setProductFilters(next);
+    if (submit) {
+      setSubmittedProductFilters(next);
+      setOffset(0);
+    }
+  };
+
+  const applyProductFilter = <K extends keyof ProductColumnFilters>(key: K, value: ProductColumnFilters[K], submit = false) => {
+    applyProductFilters({ ...productFilters, [key]: value }, submit);
+  };
+
+  const clearProductFilters = () => {
+    applyProductFilters(EMPTY_PRODUCT_COLUMN_FILTERS, true);
+  };
+
   const applySort = (column: SortBy) => {
     if (sortBy === column) {
       setSortDir((current) => (current === 'desc' ? 'asc' : 'desc'));
@@ -117,6 +151,10 @@ export default function VentasProductos() {
     to: range.to,
     search: submittedSearch || undefined,
     companyId,
+    minGrossSales: parseMinAmount(submittedProductFilters.minGrossSales) ?? undefined,
+    minFalabellaTake: parseMinAmount(submittedProductFilters.minFalabellaTake) ?? undefined,
+    minArrives: parseMinAmount(submittedProductFilters.minArrives) ?? undefined,
+    payout: submittedProductFilters.payout === 'all' ? undefined : submittedProductFilters.payout,
     sortBy,
     sortDir,
     limit: PAGE_SIZE,
@@ -140,8 +178,14 @@ export default function VentasProductos() {
 
   const products = salesQuery.data?.products || [];
   const totals = salesQuery.data?.totals;
-  const topProducts = salesQuery.data?.topProducts || [];
-  const topBuyers = salesQuery.data?.topBuyers || [];
+  const trackedBuyers = useMemo(
+    () => (salesQuery.data?.trackedBuyers || []).filter((buyer) => matchesBuyerColumnFilters(buyer, buyerFilters)),
+    [buyerFilters, salesQuery.data?.trackedBuyers],
+  );
+  const topBuyers = useMemo(
+    () => (salesQuery.data?.topBuyers || []).filter((buyer) => matchesBuyerColumnFilters(buyer, buyerFilters)),
+    [buyerFilters, salesQuery.data?.topBuyers],
+  );
   const totalCount = salesQuery.data?.totalCount || 0;
   const selected = products.find((product) => product.productKey === selectedKey) || null;
   const loading = salesQuery.isPending && !salesQuery.data;
@@ -159,16 +203,42 @@ export default function VentasProductos() {
       id: 'product',
       accessorKey: 'name',
       header: () => (
-        <button type="button" className="text-left font-medium text-muted-foreground hover:text-foreground" onClick={() => applySort('product')}>
-          Producto
-        </button>
+        <ColumnFilter
+          control={(
+            <button type="button" className="text-left font-medium text-muted-foreground hover:text-foreground" onClick={() => applySort('product')}>
+              Producto
+            </button>
+          )}
+        >
+          <ColumnFilterInput
+            value={search}
+            onChange={(value) => applySearch(value)}
+            onSubmit={(value) => applySearch(value, true)}
+            placeholder="Nombre o SKU"
+            aria-label="Filtrar producto"
+          />
+        </ColumnFilter>
       ),
       cell: ({ row }) => <ProductCell product={row.original} />,
     },
     {
       id: 'grossSales',
       accessorKey: 'grossSales',
-      header: () => <SortHeader label="Ventas brutas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />,
+      header: () => (
+        <ColumnFilter
+          align="right"
+          control={<SortHeader label="Ventas brutas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />}
+        >
+          <ColumnFilterInput
+            value={productFilters.minGrossSales}
+            onChange={(value) => applyProductFilter('minGrossSales', value)}
+            onSubmit={(value) => applyProductFilters({ ...productFilters, minGrossSales: value }, true)}
+            placeholder="Mín."
+            inputMode="decimal"
+            aria-label="Mínimo ventas brutas"
+          />
+        </ColumnFilter>
+      ),
       cell: ({ row }) => (
         <MoneySplit
           value={row.original.grossSales}
@@ -182,7 +252,21 @@ export default function VentasProductos() {
     {
       id: 'falabella',
       accessorKey: 'falabellaTake',
-      header: () => <span className={TONE.take}>Falabella</span>,
+      header: () => (
+        <ColumnFilter
+          align="right"
+          control={<span className={TONE.take}>Falabella</span>}
+        >
+          <ColumnFilterInput
+            value={productFilters.minFalabellaTake}
+            onChange={(value) => applyProductFilter('minFalabellaTake', value)}
+            onSubmit={(value) => applyProductFilters({ ...productFilters, minFalabellaTake: value }, true)}
+            placeholder="Mín."
+            inputMode="decimal"
+            aria-label="Mínimo Falabella"
+          />
+        </ColumnFilter>
+      ),
       cell: ({ row }) => (
         <span className={cn('tabular-nums', TONE.take)} title={falabellaMoneyHint(row.original)}>
           {formatSalesMoneyOrDash(row.original.falabellaTake)}
@@ -193,17 +277,45 @@ export default function VentasProductos() {
       id: 'arrives',
       accessorKey: 'arrives',
       header: () => (
-        <span className="flex w-full items-end justify-between gap-4">
-          <span className={TONE.receive}>Te llega</span>
-          <span className="hidden text-xs font-medium sm:flex sm:gap-4">
-            <span className={TONE.receive}>Pagado</span>
-            <span className={TONE.wait}>Pendiente</span>
-          </span>
-        </span>
+        <ColumnFilter
+          control={(
+            <span className="flex w-full items-end justify-between gap-4">
+              <span className={TONE.receive}>Te llega</span>
+              <span className="hidden text-xs font-medium sm:flex sm:gap-4">
+                <span className={TONE.receive}>Pagado</span>
+                <span className={TONE.wait}>Pendiente</span>
+              </span>
+            </span>
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <ColumnFilterInput
+              value={productFilters.minArrives}
+              onChange={(value) => applyProductFilter('minArrives', value)}
+              onSubmit={(value) => applyProductFilters({ ...productFilters, minArrives: value }, true)}
+              placeholder="Mín."
+              inputMode="decimal"
+              aria-label="Mínimo te llega"
+            />
+            <Select
+              value={productFilters.payout}
+              onValueChange={(value) => applyProductFilter('payout', value as ProductColumnFilters['payout'], true)}
+            >
+              <SelectTrigger className="h-8 w-[7.5rem] rounded-md px-2 text-xs" aria-label="Filtrar pagado o pendiente" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="paid">Pagado</SelectItem>
+                <SelectItem value="pending">Pendiente</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </ColumnFilter>
       ),
       cell: ({ row }) => <ArrivesCompare product={row.original} />,
     },
-  ], [sortBy, sortDir]);
+  ], [productFilters, search, sortBy, sortDir]);
 
   const table = useReactTable({
     data: products,
@@ -219,7 +331,6 @@ export default function VentasProductos() {
   return (
     <div className="space-y-5">
       <SalesKpis items={kpis} loading={loading} />
-      <TopProducts products={topProducts} loading={loading} />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative min-w-0 flex-1">
@@ -265,6 +376,13 @@ export default function VentasProductos() {
       </div>
 
       {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+      {hasProductColumnFilters(submittedProductFilters) ? (
+        <div className="flex items-center justify-end">
+          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={clearProductFilters}>
+            Quitar filtros de columna
+          </button>
+        </div>
+      ) : null}
 
       <TablePanel aria-label="Ventas de productos" aria-busy={loading || fetching}>
         {loading ? <SalesTableSkeleton /> : products.length === 0 ? (
@@ -280,7 +398,7 @@ export default function VentasProductos() {
                 {table.getHeaderGroups().map((headerGroup) => (
                   <TableRow key={headerGroup.id} className="hover:bg-transparent">
                     {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id} className={COLUMN_CLASS[header.column.id as keyof typeof COLUMN_CLASS]}>
+                      <TableHead key={header.id} className={cn('h-auto align-top whitespace-normal py-2', COLUMN_CLASS[header.column.id as keyof typeof COLUMN_CLASS])}>
                         {header.isPlaceholder ? null : header.column.columnDef.header instanceof Function
                           ? header.column.columnDef.header(header.getContext())
                           : header.column.columnDef.header}
@@ -335,7 +453,13 @@ export default function VentasProductos() {
         ) : null}
       </TablePanel>
 
-      <TopBuyers buyers={topBuyers} loading={loading} />
+      <BuyersBoard
+        tracked={trackedBuyers}
+        others={topBuyers}
+        filters={buyerFilters}
+        onFiltersChange={setBuyerFilters}
+        loading={loading}
+      />
 
       <SellerSalesDrawer
         product={selected}
@@ -437,66 +561,265 @@ function SalesKpis({
   );
 }
 
-function TopProducts({ products, loading }: { products: ProductSaleRow[]; loading: boolean }) {
+function ColumnFilter({
+  control,
+  children,
+  align = 'left',
+}: {
+  control: ReactNode;
+  children: ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
-    <section aria-label="Productos con más venta">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Más vendidos</p>
-      {loading ? (
-        <div className="mt-2 grid gap-4 sm:grid-cols-3">
-          {Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}
-        </div>
-      ) : products.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">Todavía no hay un producto líder en este periodo.</p>
-      ) : (
-        <div className="mt-2 grid gap-x-8 gap-y-4 sm:grid-cols-3">
-          {products.slice(0, 3).map((product) => (
-            <div key={product.productKey} className="min-w-0">
-              <p className="truncate text-sm font-medium">{product.name}</p>
-              <p className="mt-1 font-mono text-xs text-muted-foreground">{product.sku}</p>
-              <p className="mt-2 text-sm tabular-nums">{formatSalesMoney(product.grossSales)}</p>
-              <p className="text-xs text-muted-foreground">{formatSalesCount(product.unitsSold)} u · {sellerCountLabel(product.sellersCount)}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
+    <span className={cn('flex w-full flex-col gap-1.5', align === 'right' && 'items-end')}>
+      {control}
+      <span className="w-full font-normal">{children}</span>
+    </span>
   );
 }
 
-function TopBuyers({ buyers, loading }: { buyers: ProductSaleBuyer[]; loading: boolean }) {
+function ColumnFilterInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  inputMode,
+  'aria-label': ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit?: (value: string) => void;
+  placeholder: string;
+  inputMode?: HTMLAttributes<HTMLInputElement>['inputMode'];
+  'aria-label': string;
+}) {
   return (
-    <section aria-label="Compradores más importantes">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Compradores</p>
-      {loading ? <Skeleton className="mt-3 h-40 w-full" /> : buyers.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">Nadie compra todavía en este periodo.</p>
-      ) : (
-        <Table className="mt-2 table-fixed">
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>Comprador</TableHead>
-              <TableHead className="hidden sm:table-cell">Documento</TableHead>
-              <TableHead>Pedidos</TableHead>
-              <TableHead>Unidades</TableHead>
-              <TableHead>Ventas brutas</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {buyers.map((buyer) => (
-              <TableRow key={buyer.buyerKey}>
-                <TableCell className="whitespace-normal">
-                  <span className="block text-sm font-medium">{buyer.name}</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground sm:hidden">{buyerIdentity(buyer)}</span>
-                </TableCell>
-                <TableCell className="hidden font-mono text-xs sm:table-cell">{buyerIdentity(buyer)}</TableCell>
-                <TableCell className="tabular-nums">{formatSalesCount(buyer.ordersCount)}</TableCell>
-                <TableCell className="tabular-nums">{formatSalesCount(buyer.unitsBought)}</TableCell>
-                <TableCell className="tabular-nums">{formatSalesMoney(buyer.grossSales)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </section>
+    <Input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={() => onSubmit?.(value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          onSubmit?.(value);
+        }
+      }}
+      placeholder={placeholder}
+      inputMode={inputMode}
+      aria-label={ariaLabel}
+      className="h-8 px-2 text-xs"
+    />
+  );
+}
+
+function BuyersBoard({
+  tracked,
+  others,
+  filters,
+  onFiltersChange,
+  loading,
+}: {
+  tracked: ProductSaleBuyer[];
+  others: ProductSaleBuyer[];
+  filters: BuyerColumnFilters;
+  onFiltersChange: (filters: BuyerColumnFilters) => void;
+  loading: boolean;
+}) {
+  const patchFilter = <K extends keyof BuyerColumnFilters>(key: K, value: BuyerColumnFilters[K]) => {
+    onFiltersChange({ ...filters, [key]: value });
+  };
+  const filtering = hasBuyerColumnFilters(filters);
+  return (
+    <div className="space-y-8">
+      <section aria-label="Compradores de más de 5 unidades">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Más de 5 unidades</p>
+            <p className="mt-1 text-xs text-muted-foreground">Seguimiento. Teléfono y seller.</p>
+          </div>
+          {filtering ? (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => onFiltersChange(EMPTY_BUYER_COLUMN_FILTERS)}
+            >
+              Quitar filtros
+            </button>
+          ) : null}
+        </div>
+        {loading ? <Skeleton className="mt-3 h-40 w-full" /> : tracked.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            {filtering ? 'Ningún frecuente coincide con el filtro.' : 'Nadie pasó de 5 u en este periodo.'}
+          </p>
+        ) : (
+          <BuyersTable buyers={tracked} filters={filters} onFilter={patchFilter} detailed />
+        )}
+      </section>
+      <section aria-label="Compradores más importantes">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Otros compradores</p>
+        {loading ? <Skeleton className="mt-3 h-32 w-full" /> : others.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            {filtering ? 'Nadie más coincide con el filtro.' : 'Nadie más compra en este periodo.'}
+          </p>
+        ) : (
+          <BuyersTable buyers={others} filters={filters} onFilter={patchFilter} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function BuyersTable({
+  buyers,
+  filters,
+  onFilter,
+  detailed = false,
+}: {
+  buyers: ProductSaleBuyer[];
+  filters: BuyerColumnFilters;
+  onFilter: <K extends keyof BuyerColumnFilters>(key: K, value: BuyerColumnFilters[K]) => void;
+  detailed?: boolean;
+}) {
+  return (
+    <Table className="mt-2 table-fixed">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="h-auto w-[28%] whitespace-normal py-2 align-top">
+            <ColumnFilter
+              control="Comprador"
+            >
+              <div className="grid gap-1.5">
+                <ColumnFilterInput
+                  value={filters.name}
+                  onChange={(value) => onFilter('name', value)}
+                  placeholder="Nombre"
+                  aria-label="Filtrar comprador"
+                />
+                <ColumnFilterInput
+                  value={filters.document}
+                  onChange={(value) => onFilter('document', value)}
+                  placeholder="Documento"
+                  aria-label="Filtrar documento"
+                />
+              </div>
+            </ColumnFilter>
+          </TableHead>
+          <TableHead className="h-auto w-[16%] whitespace-normal py-2 align-top">
+            <ColumnFilter
+              control="Teléfono"
+            >
+              <ColumnFilterInput
+                value={filters.phone}
+                onChange={(value) => onFilter('phone', value)}
+                placeholder="Número"
+                aria-label="Filtrar teléfono"
+              />
+            </ColumnFilter>
+          </TableHead>
+          <TableHead className="h-auto w-[28%] whitespace-normal py-2 align-top">
+            <ColumnFilter
+              control="Empresa"
+            >
+              <ColumnFilterInput
+                value={filters.company}
+                onChange={(value) => onFilter('company', value)}
+                placeholder="Seller"
+                aria-label="Filtrar empresa"
+              />
+            </ColumnFilter>
+          </TableHead>
+          <TableHead className="hidden h-auto w-[10%] whitespace-normal py-2 align-top sm:table-cell">
+            <ColumnFilter
+              control="Unidades"
+            >
+              <ColumnFilterInput
+                value={filters.minUnits}
+                onChange={(value) => onFilter('minUnits', value)}
+                placeholder="Mín."
+                inputMode="numeric"
+                aria-label="Mínimo unidades"
+              />
+            </ColumnFilter>
+          </TableHead>
+          <TableHead className="h-auto w-[18%] whitespace-normal py-2 align-top">
+            <ColumnFilter
+              control="Ventas brutas"
+            >
+              <ColumnFilterInput
+                value={filters.minGrossSales}
+                onChange={(value) => onFilter('minGrossSales', value)}
+                placeholder="Mín."
+                inputMode="decimal"
+                aria-label="Mínimo ventas del comprador"
+              />
+            </ColumnFilter>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {buyers.map((buyer) => (
+          <TableRow key={buyer.buyerKey} className={cn(detailed && 'align-top')}>
+            <TableCell className="whitespace-normal">
+              <span className="block text-sm font-medium">{buyer.name}</span>
+              <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{buyerIdentity(buyer)}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {formatSalesCount(buyer.ordersCount)} {buyer.ordersCount === 1 ? 'pedido' : 'pedidos'}
+                {detailed && formatBuyerLastOrder(buyer.lastOrderedAt) ? ` · ${formatBuyerLastOrder(buyer.lastOrderedAt)}` : ''}
+              </span>
+            </TableCell>
+            <TableCell className="whitespace-normal">
+              <BuyerPhone phone={buyer.phone} />
+            </TableCell>
+            <TableCell className="whitespace-normal">
+              {detailed ? <BuyerCompanies buyer={buyer} /> : (
+                <span className="text-sm">{buyerCompaniesLabel(buyer)}</span>
+              )}
+            </TableCell>
+            <TableCell className="hidden tabular-nums sm:table-cell">{formatSalesCount(buyer.unitsBought)}</TableCell>
+            <TableCell className="tabular-nums">{formatSalesMoney(buyer.grossSales)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function BuyerPhone({ phone }: { phone?: string | null }) {
+  const label = buyerPhoneLabel({ phone });
+  const digits = buyerPhoneDigits(phone);
+  if (!digits) return <span className="text-xs text-muted-foreground">{label}</span>;
+  return (
+    <a href={`tel:${digits}`} className="font-mono text-xs tabular-nums hover:underline">
+      {label}
+    </a>
+  );
+}
+
+function BuyerCompanies({ buyer }: { buyer: ProductSaleBuyer }) {
+  const companies = buyer.companies || [];
+  if (companies.length === 0) {
+    return <span className="text-xs text-muted-foreground">Sin seller</span>;
+  }
+  return (
+    <div className="space-y-1.5">
+      {companies.map((company) => (
+        <BuyerCompanyLine key={`${company.companyId || company.companyName}`} company={company} />
+      ))}
+      {buyerProductsLabel(buyer) ? (
+        <p className="text-xs text-muted-foreground">{buyerProductsLabel(buyer)}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function BuyerCompanyLine({ company }: { company: ProductSaleBuyerCompany }) {
+  return (
+    <p className="text-sm leading-5">
+      <span className="font-medium">{sellerShortName(company.companyName)}</span>
+      <span className="mt-0.5 block text-xs text-muted-foreground">
+        {formatSalesCount(company.unitsBought)} u · {formatSalesCount(company.ordersCount)} {company.ordersCount === 1 ? 'pedido' : 'pedidos'} · {formatSalesMoney(company.grossSales)}
+      </span>
+    </p>
   );
 }
 

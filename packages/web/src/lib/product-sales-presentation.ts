@@ -40,15 +40,69 @@ export type ProductSaleRow = {
   sellers: ProductSaleSeller[];
 };
 
+export type ProductSaleBuyerCompany = {
+  companyId: number | null;
+  companyName?: string | null;
+  unitsBought: number;
+  ordersCount: number;
+  grossSales: number;
+};
+
+export type ProductSaleBuyerProduct = {
+  productKey?: string | null;
+  sku: string;
+  name: string;
+  unitsBought: number;
+  grossSales: number;
+};
+
 export type ProductSaleBuyer = {
   buyerKey: string;
   name: string;
   documentNumber?: string | null;
   email?: string | null;
+  phone?: string | null;
+  tracked?: boolean;
+  companies?: ProductSaleBuyerCompany[];
+  products?: ProductSaleBuyerProduct[];
   ordersCount: number;
   unitsBought: number;
   grossSales: number;
   lastOrderedAt?: string | null;
+};
+
+export const TRACKED_BUYER_MIN_UNITS = 5;
+
+export type ProductColumnFilters = {
+  minGrossSales: string;
+  minFalabellaTake: string;
+  minArrives: string;
+  payout: 'all' | 'paid' | 'pending';
+};
+
+export type BuyerColumnFilters = {
+  name: string;
+  document: string;
+  phone: string;
+  company: string;
+  minUnits: string;
+  minGrossSales: string;
+};
+
+export const EMPTY_PRODUCT_COLUMN_FILTERS: ProductColumnFilters = {
+  minGrossSales: '',
+  minFalabellaTake: '',
+  minArrives: '',
+  payout: 'all',
+};
+
+export const EMPTY_BUYER_COLUMN_FILTERS: BuyerColumnFilters = {
+  name: '',
+  document: '',
+  phone: '',
+  company: '',
+  minUnits: '',
+  minGrossSales: '',
 };
 
 export type ProductSalesTotals = {
@@ -215,4 +269,107 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
 
 export function buyerIdentity(buyer: ProductSaleBuyer) {
   return buyer.documentNumber || buyer.email || 'Sin documento';
+}
+
+export function isTrackedBuyer(buyer: Pick<ProductSaleBuyer, 'tracked' | 'unitsBought'>) {
+  if (buyer.tracked != null) return Boolean(buyer.tracked);
+  return Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS;
+}
+
+export function splitSalesBuyers(buyers: ProductSaleBuyer[]) {
+  const tracked: ProductSaleBuyer[] = [];
+  const others: ProductSaleBuyer[] = [];
+  for (const buyer of buyers) {
+    (isTrackedBuyer(buyer) ? tracked : others).push(buyer);
+  }
+  return { tracked, others };
+}
+
+export function formatBuyerPhone(phone?: string | null) {
+  const raw = String(phone || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  return raw;
+}
+
+export function buyerPhoneDigits(phone?: string | null) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+export function buyerPhoneLabel(buyer: Pick<ProductSaleBuyer, 'phone'>) {
+  return formatBuyerPhone(buyer.phone) || 'Sin teléfono';
+}
+
+export function buyerCompanyNames(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  return (buyer.companies || [])
+    .map((company) => sellerShortName(company.companyName))
+    .filter((name) => name && name !== 'Seller');
+}
+
+export function buyerCompaniesLabel(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  const names = buyerCompanyNames(buyer);
+  return names.length ? names.join(' · ') : 'Sin seller';
+}
+
+export function buyerProductsLabel(buyer: Pick<ProductSaleBuyer, 'products'>) {
+  return (buyer.products || [])
+    .map((product) => `${product.sku || product.name} · ${formatSalesCount(product.unitsBought)} u`)
+    .join(' · ');
+}
+
+export function formatBuyerLastOrder(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'America/Lima',
+  }).format(date);
+}
+
+export function parseMinAmount(value: string) {
+  const raw = String(value || '').trim().replace(',', '.');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export function matchesMinAmount(actual: number | null | undefined, min: string) {
+  const parsed = parseMinAmount(min);
+  return parsed == null || Number(actual || 0) >= parsed;
+}
+
+export function textIncludes(haystack: string | null | undefined, needle: string) {
+  const query = String(needle || '').trim().toLocaleLowerCase('es-PE');
+  if (!query) return true;
+  return String(haystack || '').toLocaleLowerCase('es-PE').includes(query);
+}
+
+export function hasProductColumnFilters(filters: ProductColumnFilters) {
+  return Boolean(
+    filters.minGrossSales.trim()
+    || filters.minFalabellaTake.trim()
+    || filters.minArrives.trim()
+    || filters.payout !== 'all',
+  );
+}
+
+export function hasBuyerColumnFilters(filters: BuyerColumnFilters) {
+  return Object.values(filters).some((value) => String(value || '').trim() !== '');
+}
+
+export function matchesBuyerColumnFilters(buyer: ProductSaleBuyer, filters: BuyerColumnFilters) {
+  const companyHaystack = [
+    buyerCompaniesLabel(buyer),
+    ...(buyer.companies || []).flatMap((company) => [company.companyName, sellerShortName(company.companyName)]),
+  ].join(' ');
+  return textIncludes(buyer.name, filters.name)
+    && textIncludes(buyerIdentity(buyer), filters.document)
+    && textIncludes([buyer.phone, formatBuyerPhone(buyer.phone)].filter(Boolean).join(' '), filters.phone)
+    && textIncludes(companyHaystack, filters.company)
+    && matchesMinAmount(buyer.unitsBought, filters.minUnits)
+    && matchesMinAmount(buyer.grossSales, filters.minGrossSales);
 }
