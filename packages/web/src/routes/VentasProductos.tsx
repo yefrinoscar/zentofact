@@ -279,8 +279,8 @@ export default function VentasProductos() {
         {loading ? <SalesTableSkeleton /> : products.length === 0 ? (
           <div className="px-5 py-12 text-center">
             <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">Sin ventas en este periodo</p>
-            <p className="mt-1 text-xs text-muted-foreground">Cambia el rango o el seller para ver otros productos.</p>
+            <p className="mt-3 text-sm font-medium">Sin ventas Falabella en este periodo</p>
+            <p className="mt-1 text-xs text-muted-foreground">Cambia el rango o el seller para ver otros maestros.</p>
           </div>
         ) : (
           <div className="min-w-0" aria-busy={fetching}>
@@ -389,6 +389,7 @@ function ProductCell({ product }: { product: ProductSaleRow }) {
       <span className="min-w-0">
         <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
         <CopyableSku sku={product.sku} />
+        <span className="mt-0.5 block text-xs text-muted-foreground">{sellerCountLabel(product.sellersCount)}</span>
         <span className="mt-2 grid grid-cols-2 gap-3 border-t border-border/60 pt-2 sm:hidden">
           <span>
             <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Unidades</span>

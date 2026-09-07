@@ -1,6 +1,6 @@
 # Product sales
 
-Admin sales table at `/ventas`. It sums every associated listing of a canonical product, shows seller breakdown in a drawer, and lists the period KPIs plus the buyers who spent the most. Marketplace visit counts are empty because Falabella does not send them.
+Admin sales table at `/ventas`. Each row is a master product. It sums only Falabella listings of that product across sellers, shows the seller breakdown in a drawer, and lists the period KPIs plus the Falabella buyers who spent the most. Marketplace visit counts are empty because Falabella does not send them. Manual and Ripley sales stay out.
 
 ## Sub-features
 
@@ -17,9 +17,9 @@ Admin sales table at `/ventas`. It sums every associated listing of a canonical 
 
 1. Sign in as `admin@zentofact.local`.
 2. Open `#/ventas` from the Operación sidebar item `Ventas`.
-3. Keep the default 30-day range. Seeded confirmed orders from today appear, including AG301 summed across LIMBO and MANTA RAYA.
-4. Search `AG301`, open that row, and confirm both sellers in the drawer.
-5. Read the Compradores section for Alexander Preview or another seeded buyer.
+3. Keep the default 30-day range. Seeded Falabella orders appear as master products, including AG301 summed across LIMBO and MANTA RAYA.
+4. Search `AG301`, open that row, and confirm both Falabella sellers in the drawer.
+5. Read the Compradores section for a seeded Falabella buyer such as Ana Preview.
 
 ## Driving it with control-zentofact
 

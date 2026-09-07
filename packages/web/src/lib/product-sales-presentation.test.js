@@ -36,6 +36,7 @@ test('los kpis de ventas ponen Falabella y te llega al lado de la venta bruta', 
   ]);
   assert.equal(String(kpis[0].display).replace(/\u00a0/g, ' '), 'S/ 2,410.50');
   assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 626.73');
+  assert.equal(kpis[0].why, 'Suma Falabella del maestro.');
   assert.equal(kpis[1].why, 'Comisión y logística.');
   assert.equal(kpis[2].why, 'Pagado y pendiente.');
   assert.equal(kpis[3].display, '18 u');

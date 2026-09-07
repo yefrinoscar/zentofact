@@ -177,7 +177,7 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
       key: 'grossSales' as const,
       group: 'Dinero',
       label: 'Ventas brutas',
-      why: 'Lo vendido en el periodo.',
+      why: 'Suma Falabella del maestro.',
       display: formatSalesMoney(grossSales),
     },
     {

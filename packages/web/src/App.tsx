@@ -47,7 +47,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/ventas': {
     title: 'Ventas',
-    subtitle: 'Productos, sellers y compradores del periodo.',
+    subtitle: 'Maestros de Falabella. Suma cada seller.',
   },
   '/pagos': {
     title: 'Pagos',

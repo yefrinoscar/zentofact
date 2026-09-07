@@ -26,7 +26,9 @@ const PRODUCT_SORTS = {
 const ELIGIBLE_SALE = `o.order_status in ('confirmed','completed')
     and coalesce(o.fulfillment_status, '') not in ('returned','cancelled','failed')
     and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
-    and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'`;
+    and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'
+    and coalesce(oi.product_id, linked.product_id, listing.product_id) is not null
+    and coalesce(linked.channel_code, listing.channel_code, ch.code) = 'falabella'`;
 
 function limaToday() {
   return LIMA_DATE.format(new Date());
@@ -182,6 +184,7 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         from product_listings l
         where l.company_id=o.company_id
           and l.status='active'
+          and l.channel_code='falabella'
           and (
             (nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku)
             or (nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku)
