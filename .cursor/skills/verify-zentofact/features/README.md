@@ -39,6 +39,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 - [Sign in](./sign-in.md) covers the login screen and the authenticated `/me` session.
 - [Catalog](./catalog.md) covers the product table, search, and stock visible on `/productos`.
-- [Product sales](./product-sales.md) covers `#/ventas`: product totals, column filters, seller breakdown, and buyers over 5 units.
+- [Product sales](./product-sales.md) covers `#/ventas`: product totals, column sort, seller breakdown, and buyers over 5 units.
 - [Falabella inbox](./falabella-inbox.md) covers pending vs listo-para-enviar tabs without mutating orders.
 - [Logistics inbox](./logistics-inbox.md) covers the all-channel warehouse tray at `/bandeja` without printing or marking ready.

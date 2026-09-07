@@ -10,10 +10,9 @@ import {
   falabellaMoneyHint,
   formatBuyerPhone,
   formatSalesMoneyOrDash,
-  hasBuyerColumnFilters,
   isTrackedBuyer,
-  matchesBuyerColumnFilters,
   paidMoneyHint,
+  sortSalesBuyers,
   paidShare,
   pagosHint,
   pendingMoneyHint,
@@ -133,28 +132,6 @@ test('agrupa compradores de más de 5 unidades y arma el detalle', () => {
   assert.equal(buyerPhoneLabel(tracked), '987 654 321');
   assert.equal(buyerCompaniesLabel(tracked), 'Limbo · Manta raya');
   assert.equal(buyerProductsLabel(tracked), 'BB220 · 7 u');
-  assert.equal(hasBuyerColumnFilters({
-    name: '',
-    document: '',
-    phone: '',
-    company: 'manta',
-    minUnits: '',
-    minGrossSales: '',
-  }), true);
-  assert.equal(matchesBuyerColumnFilters(tracked, {
-    name: 'max',
-    document: '7456',
-    phone: '987',
-    company: 'manta',
-    minUnits: '6',
-    minGrossSales: '300',
-  }), true);
-  assert.equal(matchesBuyerColumnFilters(other, {
-    name: '',
-    document: '',
-    phone: '',
-    company: 'manta',
-    minUnits: '',
-    minGrossSales: '',
-  }), false);
+  assert.deepEqual(sortSalesBuyers([other, tracked], 'units', 'desc').map((buyer) => buyer.name), ['Max Preview', 'Ana Preview']);
+  assert.deepEqual(sortSalesBuyers([other, tracked], 'name', 'asc').map((buyer) => buyer.name), ['Ana Preview', 'Max Preview']);
 });

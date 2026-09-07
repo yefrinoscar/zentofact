@@ -11,6 +11,8 @@ test('el filtro de ventas de productos usa el periodo de Lima y ordena por venta
   assert.equal(filters.from, '2026-08-01');
   assert.equal(filters.to, '2026-08-31');
   assert.equal(filters.sortBy, 'grossSales');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'falabellaTake' }).sortBy, 'falabellaTake');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'arrives' }).sortBy, 'arrives');
   assert.equal(filters.sortDir, 'desc');
   assert.equal(filters.search, 'AG301');
   assert.equal(filters.minGrossSales, null);

@@ -7,9 +7,9 @@ Admin sales table at `/ventas`. Each row is a master product. It sums only Falab
 - Header `h1` `Ventas` with toolbar search `Buscar por nombre, SKU u otros criterios`, period chips, and seller filter.
 - KPI strip `Indicadores de ventas` with Ventas brutas and Te llega. Te llega shows the total, then Pagado vs Pendiente beside it.
 - Falabella + Te llega cover the same sales as Ventas brutas. Lines without a Pagos cruce inherit the take rate from crossed sales of that product or seller. Uncrossed Te llega stays pendiente.
-- Table `Ventas de productos` lists product, gross sales (with a Falabella/Te llega bar), Falabella, Te llega, and a Pagado/Pendiente compare bar. Each column has its own filter.
+- Table `Ventas de productos` lists product, gross sales (with a Falabella/Te llega bar), Falabella, Te llega, and a Pagado/Pendiente compare bar. Click a column header to sort.
 - Row click opens the product drawer with the same money split per seller.
-- `Compradores de más de 5 unidades` tracks buyers over 5 units with phone, seller companies, products, orders, and sales. `Compradores más importantes` lists the rest. Both tables have column filters.
+- `Compradores de más de 5 unidades` tracks buyers over 5 units with phone, seller companies, products, orders, and sales. `Compradores más importantes` lists the rest. Click a column header to sort.
 - Operator and vendedor cannot open `/ventas`.
 
 ## How to get to it (user POV)
@@ -36,4 +36,4 @@ Browser: `http://127.0.0.1:3011/#/ventas`. Handles: header `h1` `Ventas`; search
 - The page uses `ordered_at`, not promised shipping. Cancelled and returned seed orders stay out.
 - Do not call Falabella seller APIs for visits. The column is gone.
 - Dashboard permission only. `operator@preview.zentofact.local` is redirected away.
-- Search and column filters apply to the product table. KPIs and buyers stay on the whole period. Buyer column filters are client-side.
+- Search applies to the product table. KPIs and buyers stay on the whole period. Column headers sort the table.

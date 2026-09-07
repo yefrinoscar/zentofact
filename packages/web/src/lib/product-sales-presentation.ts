@@ -73,37 +73,7 @@ export type ProductSaleBuyer = {
 
 export const TRACKED_BUYER_MIN_UNITS = 5;
 
-export type ProductColumnFilters = {
-  minGrossSales: string;
-  minFalabellaTake: string;
-  minArrives: string;
-  payout: 'all' | 'paid' | 'pending';
-};
-
-export type BuyerColumnFilters = {
-  name: string;
-  document: string;
-  phone: string;
-  company: string;
-  minUnits: string;
-  minGrossSales: string;
-};
-
-export const EMPTY_PRODUCT_COLUMN_FILTERS: ProductColumnFilters = {
-  minGrossSales: '',
-  minFalabellaTake: '',
-  minArrives: '',
-  payout: 'all',
-};
-
-export const EMPTY_BUYER_COLUMN_FILTERS: BuyerColumnFilters = {
-  name: '',
-  document: '',
-  phone: '',
-  company: '',
-  minUnits: '',
-  minGrossSales: '',
-};
+export type BuyerSortBy = 'name' | 'phone' | 'company' | 'units' | 'grossSales';
 
 export type ProductSalesTotals = {
   productsCount: number;
@@ -330,46 +300,26 @@ export function formatBuyerLastOrder(value?: string | null) {
   }).format(date);
 }
 
-export function parseMinAmount(value: string) {
-  const raw = String(value || '').trim().replace(',', '.');
-  if (!raw) return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+export function buyerSortValue(buyer: ProductSaleBuyer, sortBy: BuyerSortBy) {
+  if (sortBy === 'name') return buyer.name || '';
+  if (sortBy === 'phone') return buyerPhoneDigits(buyer.phone);
+  if (sortBy === 'company') return buyerCompaniesLabel(buyer);
+  if (sortBy === 'units') return Number(buyer.unitsBought || 0);
+  return Number(buyer.grossSales || 0);
 }
 
-export function matchesMinAmount(actual: number | null | undefined, min: string) {
-  const parsed = parseMinAmount(min);
-  return parsed == null || Number(actual || 0) >= parsed;
-}
-
-export function textIncludes(haystack: string | null | undefined, needle: string) {
-  const query = String(needle || '').trim().toLocaleLowerCase('es-PE');
-  if (!query) return true;
-  return String(haystack || '').toLocaleLowerCase('es-PE').includes(query);
-}
-
-export function hasProductColumnFilters(filters: ProductColumnFilters) {
-  return Boolean(
-    filters.minGrossSales.trim()
-    || filters.minFalabellaTake.trim()
-    || filters.minArrives.trim()
-    || filters.payout !== 'all',
-  );
-}
-
-export function hasBuyerColumnFilters(filters: BuyerColumnFilters) {
-  return Object.values(filters).some((value) => String(value || '').trim() !== '');
-}
-
-export function matchesBuyerColumnFilters(buyer: ProductSaleBuyer, filters: BuyerColumnFilters) {
-  const companyHaystack = [
-    buyerCompaniesLabel(buyer),
-    ...(buyer.companies || []).flatMap((company) => [company.companyName, sellerShortName(company.companyName)]),
-  ].join(' ');
-  return textIncludes(buyer.name, filters.name)
-    && textIncludes(buyerIdentity(buyer), filters.document)
-    && textIncludes([buyer.phone, formatBuyerPhone(buyer.phone)].filter(Boolean).join(' '), filters.phone)
-    && textIncludes(companyHaystack, filters.company)
-    && matchesMinAmount(buyer.unitsBought, filters.minUnits)
-    && matchesMinAmount(buyer.grossSales, filters.minGrossSales);
+export function sortSalesBuyers(
+  buyers: ProductSaleBuyer[],
+  sortBy: BuyerSortBy,
+  sortDir: 'asc' | 'desc',
+) {
+  const direction = sortDir === 'asc' ? 1 : -1;
+  return buyers.slice().sort((left, right) => {
+    const a = buyerSortValue(left, sortBy);
+    const b = buyerSortValue(right, sortBy);
+    const cmp = typeof a === 'number' && typeof b === 'number'
+      ? a - b
+      : String(a).localeCompare(String(b), 'es');
+    return (cmp || left.name.localeCompare(right.name, 'es')) * direction;
+  });
 }

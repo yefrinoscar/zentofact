@@ -20,6 +20,8 @@ const PRODUCT_SORTS = {
   units: 'sum(units_sold)',
   orders: 'sum(orders_count)',
   grossSales: 'sum(revenue)',
+  falabellaTake: 'sum(falabella_take)',
+  arrives: 'sum(arrives)',
   sellers: 'count(distinct company_id)',
 };
 
