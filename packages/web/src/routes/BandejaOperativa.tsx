@@ -97,7 +97,8 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   };
 
   return (
-    <div className="min-w-0 space-y-4 pb-24">
+    <div className="min-w-0 pb-24">
+      <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-48 flex-1 sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
@@ -143,8 +144,17 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           <span className="tabular-nums text-muted-foreground">{item.count}</span>
         </Button>)}
       </div>}
+      </div>
 
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-y bg-background px-2 py-3 sm:px-3">
+      {/*
+        Se pega bajo el header y tapa el padding de main (`p-4 md:p-6 lg:p-8`)
+        para que los pedidos no se vean detrás al hacer scroll.
+      */}
+      <div
+        data-bandeja-action-bar
+        className="relative isolate sticky top-[-1rem] z-30 -mx-4 mt-4 bg-background px-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-background md:top-[-1.5rem] md:-mx-6 md:px-6 lg:top-[-2rem] lg:-mx-8 lg:px-8"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 border-y px-2 py-3 sm:px-3">
         <div className="flex min-h-9 items-center gap-3">
           {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} />}
           <div>
@@ -157,13 +167,14 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           {view.printing ? <Loader2 className="animate-spin" /> : isPending ? <PackageCheck /> : <Printer />}
           {view.printing ? 'Generando PDF…' : isPending ? `Marcar ${targets.length} listos` : selectedOrders.length ? `Imprimir ${targets.length} seleccionados` : `Imprimir ${targets.length} sin imprimir`}
         </Button>}
+        </div>
+        {view.stage !== 'shipped' && <p className="px-3 pb-2 pt-2 text-xs text-muted-foreground">
+          {layout === '4' ? 'Elige un pedido de la cola para revisar sus productos.' : isPending ? 'La acción en lote incluye solo Falabella. Propios y Ripley se gestionan en su fila.' : 'Las etiquetas ya generadas solo se incluyen si las seleccionas.'}
+          {view.totalCount > pageSize && ' Las acciones incluyen solo esta página.'}
+        </p>}
       </div>
-      {view.stage !== 'shipped' && <p className="-mt-2 px-3 text-xs text-muted-foreground">
-        {layout === '4' ? 'Elige un pedido de la cola para revisar sus productos.' : isPending ? 'La acción en lote incluye solo Falabella. Propios y Ripley se gestionan en su fila.' : 'Las etiquetas ya generadas solo se incluyen si las seleccionas.'}
-        {view.totalCount > pageSize && ' Las acciones incluyen solo esta página.'}
-      </p>}
 
-      <div className={cn((layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
+      <div className={cn('mt-4', (layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
       {layout === '4' && focused && !error && !view.loading ? <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)] xl:col-span-2">
         <div className="flex gap-2 overflow-x-auto border-b pb-3 lg:block lg:max-h-[65vh] lg:overflow-y-auto lg:border-r lg:border-b-0 lg:pr-3">
           <p className="mb-3 hidden text-xs font-semibold text-muted-foreground lg:block">{isPending ? 'COLA DE PREPARACIÓN' : 'PEDIDOS'} · {view.orders.length}</p>
@@ -201,7 +212,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         {isPending && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{view.counts.ready}</span></Button>}
       </aside>}
       </div>
-      <div className="flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
+      <div className="mt-4 flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
         <span>{view.totalCount ? `${offset + 1}–${Math.min(offset + view.orders.length, view.totalCount)} de ${view.totalCount}` : '0 pedidos'}</span>
         <div className="flex gap-2"><Button size="sm" variant="outline" disabled={locked || offset === 0} onClick={() => onPage(Math.max(0, offset - pageSize))}><ChevronLeft />Anterior</Button><Button size="sm" variant="outline" disabled={locked || offset + pageSize >= view.totalCount} onClick={() => onPage(offset + pageSize)}>Siguiente<ChevronRight /></Button></div>
       </div>
