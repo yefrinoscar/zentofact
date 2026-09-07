@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  healPersistedRipleyShippingOrders,
   ingestRipleyOrder,
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
+  nextHealedRipleyFulfillment,
   resolveRipleyIngestStatuses,
   shouldEnqueueRipleyStockJob,
   withRipleyOrderLines,
@@ -196,6 +198,60 @@ test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PI
     enqueue: async () => ({ enqueued: false }),
   });
   assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
+});
+
+test('repara pedidos Ripley ya sincronizados como listos si Mirakl sigue en SHIPPING', () => {
+  assert.equal(nextHealedRipleyFulfillment({
+    provider_status: 'SHIPPING',
+    fulfillment_status: 'ready_to_ship',
+    metadata: {},
+  }), 'pending');
+  assert.equal(nextHealedRipleyFulfillment({
+    provider_status: 'SHIPPING',
+    fulfillment_status: 'ready_to_ship',
+    metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
+  }), 'preparing');
+  assert.equal(nextHealedRipleyFulfillment({
+    provider_status: 'SHIPPING',
+    fulfillment_status: 'ready_to_ship',
+    metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
+  }), null);
+  assert.equal(nextHealedRipleyFulfillment({
+    provider_status: 'ready_to_ship',
+    fulfillment_status: 'ready_to_ship',
+    metadata: {},
+  }), null);
+  assert.equal(nextHealedRipleyFulfillment({
+    provider_status: 'SHIPPED',
+    fulfillment_status: 'ready_to_ship',
+    metadata: {},
+  }), null);
+});
+
+test('el heal persiste solo los Ripley SHIPPING mal marcados como listos', async () => {
+  const updates = [];
+  const result = await healPersistedRipleyShippingOrders({
+    async query(sql, params) {
+      if (String(sql).includes('select o.id')) {
+        assert.match(sql, /channel.code='ripley'/);
+        assert.match(sql, /company_id/);
+        assert.deepEqual(params, [7]);
+        return {
+          rows: [
+            { id: 11, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: {} },
+            { id: 12, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } } },
+            { id: 13, provider_status: 'SHIPPED', fulfillment_status: 'ready_to_ship', metadata: {} },
+          ],
+        };
+      }
+      updates.push([sql, params]);
+      return { rowCount: 1, rows: [{ id: params[0] }] };
+    },
+  }, 7);
+  assert.equal(result.scanned, 3);
+  assert.equal(result.healed, 1);
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0][1], [11, 'pending']);
 });
 
 test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', async () => {

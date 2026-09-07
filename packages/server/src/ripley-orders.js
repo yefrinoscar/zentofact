@@ -1,5 +1,10 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
-import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
+import {
+  ensureRipleyOrderAccount,
+  healPersistedRipleyShippingOrders,
+  ingestRipleyOrder,
+  withRipleyOrderLines,
+} from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
 import { RIPLEY_PERU_API_URL } from './ripley-api-url.js';
@@ -76,6 +81,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
     }
     const hasSvc = (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
       && (company.ripleySvcPassword || company.ripley_svc_password);
+    const healed = await (dependencies.healPersisted || healPersistedRipleyShippingOrders)(db, companyId);
     const logistics = hasSvc
       ? await (dependencies.syncLogistics || syncRipleyLogistics)(company, { db, fetchImpl: dependencies.fetchImpl })
       : { received: 0, matched: 0, status: 'not_configured' };
@@ -91,6 +97,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
       received: orders.length,
       ingested: results.length,
       orderIds: orders.map((order) => order.orderId),
+      healed: healed.healed,
       logistics,
     };
   } catch (error) {

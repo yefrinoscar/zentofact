@@ -26,6 +26,13 @@ function normalizedState(value) {
 }
 
 const TERMINAL_FULFILLMENT = new Set(['cancelled', 'returned', 'shipped', 'delivered', 'failed']);
+const MIRAKL_WAREHOUSE_PENDING = new Set([
+  'SHIPPING',
+  'WAITING_DEBIT',
+  'WAITING_DEBIT_PAYMENT',
+  'WAITING_ACCEPTANCE',
+  'STAGING',
+]);
 const FULFILLMENT_RANK = {
   pending: 1,
   preparing: 2,
@@ -69,6 +76,48 @@ export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
     return { ...mapped, fulfillmentStatus: fromSvc };
   }
   return mapped;
+}
+
+export function nextHealedRipleyFulfillment(row) {
+  const fulfillment = String(row?.fulfillment_status || row?.fulfillmentStatus || '').trim().toLowerCase();
+  if (fulfillment !== 'ready_to_ship') return null;
+  const provider = normalizedState(row?.provider_status || row?.providerStatus);
+  if (!MIRAKL_WAREHOUSE_PENDING.has(provider)) return null;
+  const next = resolveRipleyIngestStatuses(provider, row).fulfillmentStatus;
+  return next !== fulfillment ? next : null;
+}
+
+export async function healPersistedRipleyShippingOrders(db, companyId = null) {
+  if (!db?.query) return { scanned: 0, healed: 0 };
+  const values = [];
+  let companyFilter = '';
+  if (companyId != null) {
+    values.push(Number(companyId));
+    companyFilter = `and o.company_id=$${values.length}`;
+  }
+  const selected = await db.query(
+    `select o.id, o.provider_status, o.fulfillment_status, o.metadata
+     from orders o
+     join order_channel_accounts account on account.id=o.channel_account_id
+     join order_channels channel on channel.id=account.channel_id
+     where channel.code='ripley'
+       and o.fulfillment_status='ready_to_ship'
+       ${companyFilter}`,
+    values,
+  );
+  let healed = 0;
+  for (const row of selected.rows) {
+    const next = nextHealedRipleyFulfillment(row);
+    if (!next) continue;
+    const result = await db.query(
+      `update orders
+          set fulfillment_status=$2, updated_at=now()
+        where id=$1 and fulfillment_status='ready_to_ship'`,
+      [row.id, next],
+    );
+    healed += result.rowCount || result.rows?.length || 0;
+  }
+  return { scanned: selected.rows.length, healed };
 }
 
 async function existingRipleyOrder(db, accountId, externalOrderId) {
