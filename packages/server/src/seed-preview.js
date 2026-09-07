@@ -854,7 +854,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
            main_sku = EXCLUDED.main_sku,
            description = EXCLUDED.description,
            raw_data = EXCLUDED.raw_data
-         RETURNING id, product_id, quantity, (xmax = 0) AS inserted`
+         RETURNING id, product_id, quantity, (xmax = 0) AS inserted`,
         [
           orderId,
           `${externalOrderId}-item-${line}`,
