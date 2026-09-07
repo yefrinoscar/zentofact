@@ -1,7 +1,7 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
-import { ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
+import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
@@ -322,6 +322,12 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
     if (!locked) return { channelAccountId: accountId, status: 'already_running' };
     account = await loadAccount(db, accountId);
     assertEligible(account);
+    if (account.channelCode === 'ripley') {
+      await (dependencies.remapPersistedRipleyReadyOrders || remapPersistedRipleyReadyOrders)(
+        db,
+        account.channelAccountId,
+      );
+    }
     const state = await ensureState(db, accountId);
     await recoverInterruptedOrderSyncRuns(accountId, db);
     const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(db);
