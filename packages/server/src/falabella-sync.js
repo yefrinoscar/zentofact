@@ -182,11 +182,22 @@ export function catalogInventoryEnabledForSync(mode, restockNow) {
 }
 
 export async function fetchFalabellaPages(client, filters, onPage, pageSize = PAGE_SIZE) {
+  const providerFilters = { ...filters };
+  for (const field of ['createdAfter', 'createdBefore', 'updatedAfter', 'updatedBefore']) {
+    if (providerFilters[field] == null) continue;
+    const value = String(providerFilters[field]);
+    if (!/(Z|[+-]\d{2}:\d{2})$/i.test(value) || !Number.isFinite(Date.parse(value))) {
+      throw new Error(`Fecha de sincronización inválida: ${field} requiere zona horaria.`);
+    }
+    // GetOrders interpreta sus filtros como hora de Lima, sin zona ni formato ISO.
+    providerFilters[field] = new Date(Date.parse(value) - 5 * 60 * 60_000)
+      .toISOString().slice(0, 19).replace('T', ' ');
+  }
   let pages = 0;
   let received = 0;
   let completed = false;
   for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
-    const response = await client.getOrdersV2({ ...filters, limit: pageSize, offset });
+    const response = await client.getOrdersV2({ ...providerFilters, limit: pageSize, offset });
     const apiError = getFalabellaError(response.data);
     if (apiError) {
       throw new Error(apiError.Head?.ErrorMessage || apiError.Head?.ErrorCode || 'Falabella devolvió un error.');

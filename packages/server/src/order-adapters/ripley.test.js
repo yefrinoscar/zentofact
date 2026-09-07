@@ -45,14 +45,6 @@ test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
-  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
-    fulfillment_status: 'ready_to_ship',
-    metadata: {},
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
-  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
-    fulfillment_status: 'ready_to_ship',
-    metadata: {},
-  }, { remapFromProvider: true }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
 });
 
 test('mapea líneas Mirakl con los SKU del seller y del canal', () => {

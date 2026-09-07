@@ -26,13 +26,14 @@ function normalizedState(value) {
 }
 
 const TERMINAL_FULFILLMENT = new Set(['cancelled', 'returned', 'shipped', 'delivered', 'failed']);
-const MIRAKL_WAREHOUSE_PENDING = new Set([
-  'SHIPPING',
-  'WAITING_DEBIT',
-  'WAITING_DEBIT_PAYMENT',
-  'WAITING_ACCEPTANCE',
-  'STAGING',
-]);
+const FULFILLMENT_RANK = {
+  pending: 1,
+  preparing: 2,
+  ready_to_ship: 3,
+  shipped: 4,
+  delivered: 5,
+};
+
 export function mapRipleyCanonicalStatus(value) {
   const status = normalizedState(value);
   if (/(CANCEL|CANCELED|CANCELLED|REFUSED|REJECTED)/.test(status)) {
@@ -57,74 +58,17 @@ export function mapRipleyCanonicalStatus(value) {
   return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
 }
 
-export function resolveRipleyIngestStatuses(providerStatus, existing = null, options = {}) {
+export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
   if (TERMINAL_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
 
-  const existingFulfillment = String(
-    existing?.fulfillment_status || existing?.fulfillmentStatus || '',
-  ).trim().toLowerCase();
   const metadata = existing?.metadata || {};
   const svcStatus = metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement;
   const fromSvc = mapRipleySvcFulfillmentStatus(svcStatus);
-  if (fromSvc) {
+  if (fromSvc && (FULFILLMENT_RANK[fromSvc] || 0) > (FULFILLMENT_RANK[mapped.fulfillmentStatus] || 0)) {
     return { ...mapped, fulfillmentStatus: fromSvc };
   }
-  // Un backfill vuelve a leer Mirakl: SHIPPING se reescribe a pendiente.
-  // El incremental no inventa un pendiente sobre un listo ya persistido.
-  if (
-    options.remapFromProvider !== true
-    && mapped.fulfillmentStatus === 'pending'
-    && (existingFulfillment === 'ready_to_ship' || existingFulfillment === 'preparing')
-  ) {
-    return { ...mapped, fulfillmentStatus: existingFulfillment };
-  }
   return mapped;
-}
-
-export function nextHealedRipleyFulfillment(row) {
-  const fulfillment = String(row?.fulfillment_status || row?.fulfillmentStatus || '').trim().toLowerCase();
-  if (fulfillment !== 'ready_to_ship') return null;
-  const provider = normalizedState(row?.provider_status || row?.providerStatus);
-  if (!MIRAKL_WAREHOUSE_PENDING.has(provider)) return null;
-  const metadata = row?.metadata || {};
-  const fromSvc = mapRipleySvcFulfillmentStatus(
-    metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement,
-  );
-  return fromSvc === 'preparing' ? 'preparing' : null;
-}
-
-export async function healPersistedRipleyShippingOrders(db, companyId = null) {
-  if (!db?.query) return { scanned: 0, healed: 0 };
-  const values = [];
-  let companyFilter = '';
-  if (companyId != null) {
-    values.push(Number(companyId));
-    companyFilter = `and o.company_id=$${values.length}`;
-  }
-  const selected = await db.query(
-    `select o.id, o.provider_status, o.fulfillment_status, o.metadata
-     from orders o
-     join order_channel_accounts account on account.id=o.channel_account_id
-     join order_channels channel on channel.id=account.channel_id
-     where channel.code='ripley'
-       and o.fulfillment_status='ready_to_ship'
-       ${companyFilter}`,
-    values,
-  );
-  let healed = 0;
-  for (const row of selected.rows) {
-    const next = nextHealedRipleyFulfillment(row);
-    if (!next) continue;
-    const result = await db.query(
-      `update orders
-          set fulfillment_status=$2, updated_at=now()
-        where id=$1 and fulfillment_status='ready_to_ship'`,
-      [row.id, next],
-    );
-    healed += result.rowCount || result.rows?.length || 0;
-  }
-  return { scanned: selected.rows.length, healed };
 }
 
 async function existingRipleyOrder(db, accountId, externalOrderId) {
@@ -266,9 +210,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.shopId,
   );
   const existing = await existingRipleyOrder(db, account.id, normalized?.orderId);
-  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing, {
-    remapFromProvider: input.remapFromProvider === true,
-  });
+  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing);
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,

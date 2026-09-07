@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  healPersistedRipleyShippingOrders,
   ingestRipleyOrder,
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
-  nextHealedRipleyFulfillment,
   resolveRipleyIngestStatuses,
   shouldEnqueueRipleyStockJob,
   withRipleyOrderLines,
@@ -41,7 +39,7 @@ test('un SHIPPING de Mirakl no pisa el estado operativo que ya avanzó SVC', () 
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     fulfillment_status: 'ready_to_ship',
     metadata: {},
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
@@ -200,72 +198,12 @@ test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PI
   assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
 });
 
-test('sin Seller Center no se inventa un pendiente sobre un listo ya persistido', () => {
-  assert.equal(nextHealedRipleyFulfillment({
-    provider_status: 'SHIPPING',
-    fulfillment_status: 'ready_to_ship',
-    metadata: {},
-  }), null);
-  assert.equal(nextHealedRipleyFulfillment({
-    provider_status: 'SHIPPING',
-    fulfillment_status: 'ready_to_ship',
-    metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
-  }), 'preparing');
-  assert.equal(nextHealedRipleyFulfillment({
-    provider_status: 'SHIPPING',
-    fulfillment_status: 'ready_to_ship',
-    metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), null);
-});
-
-test('el heal no toca listos sin evidencia SVC', async () => {
-  const updates = [];
-  const result = await healPersistedRipleyShippingOrders({
-    async query(sql, params) {
-      if (String(sql).includes('select o.id')) {
-        return {
-          rows: [
-            { id: 11, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: {} },
-            { id: 14, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } } },
-          ],
-        };
-      }
-      updates.push(params);
-      return { rowCount: 1, rows: [{ id: params[0] }] };
-    },
-  }, 7);
-  assert.equal(result.scanned, 2);
-  assert.equal(result.healed, 1);
-  assert.deepEqual(updates, [[14, 'preparing']]);
-});
-
-test('el backfill remapea un SHIPPING persistido como listo a pendiente', async () => {
+test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', async () => {
   let ingestPayload = null;
   await ingestRipleyOrder({
     companyId: 2,
     account: { id: 9, channelCode: 'ripley' },
-    remapFromProvider: true,
-    normalized: { orderId: 'R-REMAP', orderNumber: 'RP-REMAP', status: 'SHIPPING', raw: {} },
-  }, {
-    async query() {
-      return { rows: [{ fulfillment_status: 'ready_to_ship', metadata: {} }] };
-    },
-  }, {
-    ingest: async (input) => {
-      ingestPayload = input;
-      return { order: { id: 11, fulfillmentStatus: input.fulfillmentStatus } };
-    },
-    enqueue: async () => ({ enqueued: false }),
-  });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
-});
-
-test('el ingest no pisa un listo persistido si no hay evidencia SVC', async () => {
-  let ingestPayload = null;
-  await ingestRipleyOrder({
-    companyId: 2,
-    account: { id: 9, channelCode: 'ripley' },
-    normalized: { orderId: 'R-KEEP-READY', orderNumber: 'RP-KEEP-READY', status: 'SHIPPING', raw: {} },
+    normalized: { orderId: 'R-FIX', orderNumber: 'RP-FIX', status: 'SHIPPING', raw: {} },
   }, {
     async query() {
       return { rows: [{ fulfillment_status: 'ready_to_ship', metadata: {} }] };
@@ -277,7 +215,7 @@ test('el ingest no pisa un listo persistido si no hay evidencia SVC', async () =
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
+  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {

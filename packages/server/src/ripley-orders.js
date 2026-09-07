@@ -1,10 +1,5 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
-import {
-  ensureRipleyOrderAccount,
-  healPersistedRipleyShippingOrders,
-  ingestRipleyOrder,
-  withRipleyOrderLines,
-} from './order-adapters/ripley.js';
+import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
 import { RIPLEY_PERU_API_URL } from './ripley-api-url.js';
@@ -77,17 +72,13 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         account,
         shopId: company.ripleyShopId,
         source: 'sync',
-        remapFromProvider: options.remapFromProvider === true,
       }, db));
     }
-    const hasSvc = Boolean(
-      (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
-      && (company.ripleySvcPassword || company.ripley_svc_password),
-    );
+    const hasSvc = (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
+      && (company.ripleySvcPassword || company.ripley_svc_password);
     const logistics = hasSvc
       ? await (dependencies.syncLogistics || syncRipleyLogistics)(company, { db, fetchImpl: dependencies.fetchImpl })
       : { received: 0, matched: 0, status: 'not_configured' };
-    const healed = await (dependencies.healPersisted || healPersistedRipleyShippingOrders)(db, companyId);
     await db.query(
       `update ripley_sync_state set status='success', last_finished_at=now(),
          last_successful_sync_at=now(), last_orders_received=$2, last_error=null, updated_at=now()
@@ -100,7 +91,6 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
       received: orders.length,
       ingested: results.length,
       orderIds: orders.map((order) => order.orderId),
-      healed: healed.healed,
       logistics,
     };
   } catch (error) {
