@@ -391,6 +391,33 @@ export async function listSettlementSales(filter = {}, db) {
   };
 }
 
+export async function loadSettlementSalesForOrders(orderIds, db) {
+  const refs = [...new Set((orderIds || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!refs.length) return [];
+  const target = await resolvePool(db);
+  const query = await target.query(
+    `select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
+            sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
+            sl.payment_status, sl.item_id,
+            sl.bruto, sl.commission, sl.other_fees, sl.neto, sl.raw,
+            fo.order_number as sale_order_number,
+            fo.company_id as match_company_id,
+            si.company_id as import_company_id
+       from settlement_lines sl
+       left join falabella_orders fo
+         on sl.sale_source = 'falabella_order' and sl.sale_id = fo.id
+       left join settlement_imports si
+         on si.id = sl.import_id
+      where sl.order_ref = any($1::text[])
+         or fo.order_number = any($1::text[])
+      order by sl.import_id desc, sl.row_number asc`,
+    [refs],
+  );
+  return aggregateSettlementSales(
+    await attachCompaniesToLines(query.rows.map(mapLine), target),
+  );
+}
+
 async function attachSaleDocuments(sales, db) {
   const refs = [...new Set(sales.flatMap((sale) => (
     [sale.orderId, ...(sale.orderNumbers || [])]

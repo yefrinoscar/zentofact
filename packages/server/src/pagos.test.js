@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { importSettlementCsv, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -229,4 +229,42 @@ test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async (
   assert.equal(calls.some((sql) => sql.includes('update settlement_imports')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into settlement_lines')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into sale_settlements')), true);
+});
+
+test('carga las ventas del estado de cuenta por pedido de la factura', async () => {
+  const sales = await loadSettlementSalesForOrders(['3249715842'], {
+    query: async (sql, params) => {
+      assert.match(sql, /order_ref = any/);
+      assert.deepEqual(params[0], ['3249715842']);
+      return {
+        rows: [{
+          id: 1,
+          import_id: 3,
+          row_number: 1,
+          match_status: 'matched',
+          match_method: 'order_id',
+          match_reason: null,
+          order_ref: '3249715842',
+          sku: 'MN1',
+          sale_date: '2026-08-22',
+          transaction_type: 'Cobro por comisión por venta',
+          kind: 'commission',
+          payment_status: 'Pagado',
+          item_id: 'item-1',
+          bruto: 0,
+          commission: 17.69,
+          other_fees: 0,
+          neto: -17.69,
+          raw: { 'Nombre del producto': 'Mesa de Noche' },
+          sale_order_number: '3249715842',
+          match_company_id: 1,
+          import_company_id: 1,
+        }],
+      };
+    },
+  });
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].orderId, '3249715842');
+  assert.equal(sales[0].commission, 17.69);
+  assert.deepEqual(await loadSettlementSalesForOrders([]), []);
 });

@@ -462,6 +462,151 @@ function mergeInvoiceCharges(refs, chargeMap) {
   return Object.keys(merged).length ? merged : null;
 }
 
+const DEDUCTED_CONCEPTS = new Set(['commission', 'logistics']);
+const PASS_THROUGH_CONCEPTS = new Set(['buyer_shipping', 'ads', 'other']);
+const CRUCE_TOLERANCE = 0.02;
+
+function billedLineAmount(kind, line) {
+  const signed = line?.gross != null && line.gross !== ''
+    ? Number(line.gross)
+    : Number(line?.net || 0);
+  return money(Math.abs(signed));
+}
+
+function deductedForConcept(sale, concept, kind) {
+  if (!sale) return 0;
+  if (kind === 'nota_credito') {
+    if (concept === 'commission') return money(Math.abs(Number(sale.commissionReversed || 0)));
+    if (concept === 'logistics') return money(Math.abs(Number(sale.shippingReversed || 0)));
+    return 0;
+  }
+  if (concept === 'commission') return money(sale.commission);
+  if (concept === 'logistics') return money(sale.shipping);
+  return 0;
+}
+
+function cruceStatus(billed, deducted, { passThrough, hasPago }) {
+  if (passThrough) return 'pass_through';
+  if (!hasPago) return 'no_pago';
+  return Math.abs(money(billed - deducted)) <= CRUCE_TOLERANCE ? 'match' : 'mismatch';
+}
+
+function orderCruceStatus(concepts) {
+  if (concepts.some((row) => row.status === 'mismatch')) return 'mismatch';
+  if (concepts.some((row) => row.status === 'no_pago')) return 'no_pago';
+  if (concepts.length && concepts.every((row) => row.status === 'pass_through')) return 'pass_through';
+  return 'match';
+}
+
+function indexSettlementSales(sales) {
+  const byOrder = new Map();
+  for (const sale of sales || []) {
+    for (const key of [sale.orderId, ...(sale.orderNumbers || [])]) {
+      const order = String(key || '').trim();
+      if (order && !byOrder.has(order)) byOrder.set(order, sale);
+    }
+  }
+  return byOrder;
+}
+
+export function compareInvoiceToSettlements(document, sales) {
+  const kind = document?.kind || 'factura';
+  const saleIndex = indexSettlementSales(sales);
+  const grouped = new Map();
+  let orphanPassThrough = 0;
+  for (const line of document?.lines || []) {
+    const orderNumber = String(line.orderNumber || '').trim();
+    const billed = billedLineAmount(kind, line);
+    if (!orderNumber) {
+      orphanPassThrough = money(orphanPassThrough + billed);
+      continue;
+    }
+    const current = grouped.get(orderNumber) || {
+      orderNumber,
+      productName: '',
+      sellerSku: '',
+      statementNumber: '',
+      lines: [],
+    };
+    current.lines.push(line);
+    if (!current.productName && line.productName) current.productName = line.productName;
+    if (!current.sellerSku && line.sellerSku) current.sellerSku = line.sellerSku;
+    if (!current.statementNumber && line.statementNumber) current.statementNumber = line.statementNumber;
+    grouped.set(orderNumber, current);
+  }
+
+  const orders = [...grouped.values()].map((group) => {
+    const sale = saleIndex.get(group.orderNumber) || null;
+    const billedByConcept = new Map();
+    for (const line of group.lines) {
+      const key = line.concept || 'other';
+      billedByConcept.set(key, money((billedByConcept.get(key) || 0) + billedLineAmount(kind, line)));
+    }
+    const concepts = CONCEPT_ORDER
+      .filter((key) => billedByConcept.has(key))
+      .map((key) => {
+        const billed = billedByConcept.get(key) || 0;
+        const passThrough = PASS_THROUGH_CONCEPTS.has(key);
+        const deducted = passThrough ? 0 : deductedForConcept(sale, key, kind);
+        return {
+          key,
+          billed,
+          deducted,
+          delta: money(billed - deducted),
+          status: cruceStatus(billed, deducted, { passThrough, hasPago: Boolean(sale) }),
+        };
+      });
+    const deductible = concepts.filter((row) => DEDUCTED_CONCEPTS.has(row.key));
+    const billed = money(deductible.reduce((sum, row) => sum + row.billed, 0));
+    const deducted = money(deductible.reduce((sum, row) => sum + row.deducted, 0));
+    return {
+      orderNumber: group.orderNumber,
+      productName: group.productName || sale?.productName || '',
+      sellerSku: group.sellerSku,
+      statementNumber: group.statementNumber,
+      paid: Boolean(sale?.paid),
+      paymentStatus: sale?.paymentStatus || '',
+      hasPago: Boolean(sale),
+      concepts,
+      billed,
+      deducted,
+      delta: money(billed - deducted),
+      status: orderCruceStatus(concepts),
+    };
+  });
+
+  const rank = { mismatch: 0, no_pago: 1, pass_through: 2, match: 3 };
+  orders.sort((left, right) => (
+    (rank[left.status] ?? 9) - (rank[right.status] ?? 9)
+    || String(left.orderNumber).localeCompare(String(right.orderNumber))
+  ));
+
+  const passThrough = money(
+    orphanPassThrough
+    + orders.reduce((sum, order) => (
+      sum + order.concepts
+        .filter((row) => row.status === 'pass_through')
+        .reduce((inner, row) => inner + row.billed, 0)
+    ), 0),
+  );
+  const billed = money(orders.reduce((sum, order) => sum + order.billed, 0));
+  const deducted = money(orders.reduce((sum, order) => sum + order.deducted, 0));
+  return {
+    orders,
+    summary: {
+      orderCount: orders.length,
+      matchCount: orders.filter((order) => order.status === 'match').length,
+      mismatchCount: orders.filter((order) => order.status === 'mismatch').length,
+      missingPagoCount: orders.filter((order) => order.status === 'no_pago').length,
+      passThroughCount: orders.filter((order) => order.status === 'pass_through').length,
+      billed,
+      deducted,
+      delta: money(billed - deducted),
+      passThrough,
+    },
+  };
+}
+
 function mapImport(row) {
   if (!row) return null;
   return {

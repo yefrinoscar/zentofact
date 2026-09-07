@@ -5,6 +5,7 @@ import {
   classifyInvoiceConcept,
   classifyInvoiceKind,
   cobroFromSigned,
+  compareInvoiceToSettlements,
   csvIsInvoiceReport,
   decodeInvoiceSpreadsheet,
   foldInvoiceCharges,
@@ -120,6 +121,66 @@ test('el pedido apunta a la factura de Falabella y también a la nota', () => {
   const [empty] = attachInvoicesToSales([{ orderId: 'no-existe' }], []);
   assert.equal(empty.falabellaInvoice, null);
   assert.equal(empty.invoiceCharges, null);
+});
+
+test('el cruce compara lo facturado con lo que descuenta el pago', () => {
+  const document = {
+    kind: 'factura',
+    lines: [
+      { orderNumber: '3249715842', concept: 'commission', gross: -17.69, productName: 'Mesa de Noche', sellerSku: 'MN1', statementNumber: 'FAPE-1' },
+      { orderNumber: '3249715842', concept: 'logistics', gross: -12.86, productName: 'Mesa de Noche', sellerSku: 'MN1', statementNumber: 'FAPE-1' },
+      { orderNumber: '3249725159', concept: 'buyer_shipping', gross: -15.22, productName: 'Mesa De Centro', sellerSku: 'MC1' },
+      { orderNumber: '3249990001', concept: 'commission', gross: -14.99, productName: 'Sin pago' },
+      { orderNumber: '3249880002', concept: 'commission', gross: -14.99, productName: 'No cuadra' },
+      { orderNumber: '3249880002', concept: 'logistics', gross: -10.90, productName: 'No cuadra' },
+      { concept: 'ads', gross: -2607.09 },
+    ],
+  };
+  const result = compareInvoiceToSettlements(document, [
+    { orderId: '3249715842', commission: 17.69, shipping: 12.86, paid: true, paymentStatus: 'Pagado' },
+    { orderId: '3249725159', commission: 0, shipping: 0, paid: true, paymentStatus: 'Pagado' },
+    { orderId: '3249880002', commission: 10, shipping: 10.90, paid: true, paymentStatus: 'Pagado' },
+  ]);
+  const byOrder = Object.fromEntries(result.orders.map((order) => [order.orderNumber, order]));
+  assert.equal(byOrder['3249715842'].status, 'match');
+  assert.equal(byOrder['3249715842'].billed, 30.55);
+  assert.equal(byOrder['3249715842'].deducted, 30.55);
+  assert.equal(byOrder['3249725159'].status, 'pass_through');
+  assert.equal(byOrder['3249725159'].concepts[0].status, 'pass_through');
+  assert.equal(byOrder['3249990001'].status, 'no_pago');
+  assert.equal(byOrder['3249880002'].status, 'mismatch');
+  assert.equal(byOrder['3249880002'].delta, 4.99);
+  assert.equal(result.summary.matchCount, 1);
+  assert.equal(result.summary.mismatchCount, 1);
+  assert.equal(result.summary.missingPagoCount, 1);
+  assert.equal(result.summary.passThroughCount, 1);
+  assert.equal(result.summary.passThrough, 2622.31);
+  assert.equal(result.orders[0].status, 'mismatch');
+});
+
+test('el cruce tolera dos céntimos de redondeo', () => {
+  const result = compareInvoiceToSettlements(
+    {
+      kind: 'factura',
+      lines: [{ orderNumber: '1', concept: 'commission', gross: -14.99 }],
+    },
+    [{ orderId: '1', commission: 14.97, shipping: 0 }],
+  );
+  assert.equal(result.orders[0].status, 'match');
+});
+
+test('la nota de crédito se cruza con la reversa del pago', () => {
+  const result = compareInvoiceToSettlements(
+    {
+      kind: 'nota_credito',
+      lines: [
+        { orderNumber: '3247518451', concept: 'commission', gross: 9 },
+      ],
+    },
+    [{ orderId: '3247518451', commission: 5.38, commissionReversed: -9, shipping: 0 }],
+  );
+  assert.equal(result.orders[0].status, 'match');
+  assert.equal(result.orders[0].deducted, 9);
 });
 
 test('los cobros de la factura Falabella se cruzan al pedido', () => {
