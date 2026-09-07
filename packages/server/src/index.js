@@ -328,8 +328,17 @@ app.get('/pagos/invoices', async (c) => {
   catch (e) { return fail(c, e, e.status || 400); }
 });
 app.get('/pagos/invoices/:id', async (c) => {
-  try { return ok(c, await invoiceReports.getInvoiceDocument(c.req.param('id'))); }
-  catch (e) { return fail(c, e, e.status || 400); }
+  try {
+    const document = await invoiceReports.getInvoiceDocument(c.req.param('id'));
+    const orderIds = [...new Set((document.lines || [])
+      .map((line) => String(line.orderNumber || '').trim())
+      .filter(Boolean))];
+    const sales = await pagos.loadSettlementSalesForOrders(orderIds);
+    return ok(c, {
+      ...document,
+      reconciliation: invoiceReports.compareInvoiceToSettlements(document, sales),
+    });
+  } catch (e) { return fail(c, e, e.status || 400); }
 });
 app.post('/pagos/invoices', async (c) => {
   try {
