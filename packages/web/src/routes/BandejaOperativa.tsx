@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { Check, ChevronLeft, ChevronRight, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
-import { OrderSyncWindowControls } from '../components/OrderSyncWindowControls';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
@@ -112,16 +111,6 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <span className="hidden text-xs text-muted-foreground xl:inline">{view.updatedAt ? `Actualizado ${logisticsUpdatedClock(view.updatedAt)}` : ''}</span>
-          {view.canSync && (
-            <OrderSyncWindowControls
-              compact
-              intervalMinutes={view.syncIntervalMinutes}
-              lookbackDays={view.syncLookbackDays}
-              onIntervalMinutes={view.setSyncIntervalMinutes}
-              onLookbackDays={view.setSyncLookbackDays}
-              disabled={view.refreshing}
-            />
-          )}
           <Button size="sm" variant="outline" disabled={view.refreshing} onClick={view.refresh}>
             <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} />{view.canSync ? 'Sincronizar' : 'Actualizar'}
           </Button>

@@ -32,10 +32,6 @@ import {
 import { noticeFromError, type InboxNotice } from '../lib/inbox-notice';
 import { CopyableLogId } from '../components/CopyableLogId';
 import { PrototypeSwitcherGroup } from '../components/PrototypeSwitcher';
-import {
-  DEFAULT_ORDER_SYNC_INTERVAL_MINUTES,
-  DEFAULT_ORDER_SYNC_LOOKBACK_DAYS,
-} from '../lib/order-sync-presentation';
 import { usePermissions } from '../hooks/usePermissions';
 import { Button } from '../components/ui/button';
 import {
@@ -133,8 +129,6 @@ export default function BandejaLogistica() {
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
-  const [intervalDraft, setIntervalDraft] = useState<number | null>(null);
-  const [lookbackDraft, setLookbackDraft] = useState<number | null>(null);
 
   const filterKey = [stage, channelCode, urgency || '', deadlineDate || '', search].join('|');
   const offset = page.key === filterKey ? page.offset : 0;
@@ -147,20 +141,6 @@ export default function BandejaLogistica() {
     limit: PAGE_SIZE,
     offset,
   };
-
-  const syncSettingsQuery = useQuery({
-    queryKey: ['order-sync-settings'],
-    queryFn: () => api.getOrderSyncSettings(),
-    enabled: canSync,
-    staleTime: 30_000,
-    refetchOnMount: 'always',
-  });
-  const syncIntervalMinutes = intervalDraft
-    ?? syncSettingsQuery.data?.intervalMinutes
-    ?? DEFAULT_ORDER_SYNC_INTERVAL_MINUTES;
-  const syncLookbackDays = lookbackDraft
-    ?? syncSettingsQuery.data?.lookbackDays
-    ?? DEFAULT_ORDER_SYNC_LOOKBACK_DAYS;
 
   const inboxQuery = useQuery({
     queryKey: ['logistics-inbox', filters],
@@ -264,22 +244,8 @@ export default function BandejaLogistica() {
     onError: (error) => setNotice(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
   });
 
-  const saveSyncSettings = useMutation({
-    mutationFn: (next: { intervalMinutes: number; lookbackDays: number }) => api.updateOrderSyncSettings(next),
-    onSuccess: (saved) => {
-      queryClient.setQueryData(['order-sync-settings'], saved);
-    },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudo guardar el intervalo.')),
-  });
-
   const syncMutation = useMutation({
-    mutationFn: async () => {
-      await api.updateOrderSyncSettings({
-        intervalMinutes: syncIntervalMinutes,
-        lookbackDays: syncLookbackDays,
-      });
-      return api.syncManagedOrders({ mode: 'backfill', lookbackDays: syncLookbackDays });
-    },
+    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onSuccess: (result) => {
       const rows = Array.isArray(result?.results) ? result.results : [];
       const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));
@@ -336,17 +302,7 @@ export default function BandejaLogistica() {
     notice,
     canDispatch,
     canSync,
-    syncIntervalMinutes,
-    syncLookbackDays,
-    setSyncIntervalMinutes: (minutes) => {
-      setIntervalDraft(minutes);
-      saveSyncSettings.mutate({ intervalMinutes: minutes, lookbackDays: syncLookbackDays });
-    },
-    setSyncLookbackDays: (days) => {
-      setLookbackDraft(days);
-      saveSyncSettings.mutate({ intervalMinutes: syncIntervalMinutes, lookbackDays: days });
-    },
-    refreshing: syncMutation.isPending || saveSyncSettings.isPending || inboxQuery.isFetching,
+    refreshing: syncMutation.isPending || inboxQuery.isFetching,
     refresh,
     printing: printMutation.isPending,
     busyOrderId,

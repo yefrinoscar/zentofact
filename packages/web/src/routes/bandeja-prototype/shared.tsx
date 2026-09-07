@@ -43,7 +43,6 @@ import {
 } from '../../lib/logistics-inbox';
 import type { InboxNotice } from '../../lib/inbox-notice';
 import { useOperatorSnackbar } from '../../components/OperatorSnackbar';
-import { OrderSyncWindowControls } from '../../components/OrderSyncWindowControls';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
@@ -110,10 +109,6 @@ export type BandejaView = {
   notice: InboxNotice | null;
   canDispatch: boolean;
   canSync: boolean;
-  syncIntervalMinutes: number;
-  syncLookbackDays: number;
-  setSyncIntervalMinutes: (minutes: number) => void;
-  setSyncLookbackDays: (days: number) => void;
   refreshing: boolean;
   refresh: () => void;
   printing: boolean;
@@ -439,16 +434,6 @@ function StageTools({ view, tools }: { view: BandejaView; tools?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">
       {tools}
-      {view.canSync && (
-        <OrderSyncWindowControls
-          compact
-          intervalMinutes={view.syncIntervalMinutes}
-          lookbackDays={view.syncLookbackDays}
-          onIntervalMinutes={view.setSyncIntervalMinutes}
-          onLookbackDays={view.setSyncLookbackDays}
-          disabled={view.refreshing}
-        />
-      )}
       <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
         <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
       </Button>

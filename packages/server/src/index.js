@@ -427,11 +427,11 @@ app.get('/order-management/sync-status', requirePermission('order_management'), 
   try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
-app.get('/order-management/sync-settings', requirePermission('order_management'), async (c) => {
+app.get('/order-management/sync-settings', requireSuperadmin(), async (c) => {
   try { return ok(c, await orderSyncSettings.loadOrderSyncSettings()); }
   catch (e) { return fail(c, e, 400); }
 });
-app.put('/order-management/sync-settings', requirePermission('order_management'), async (c) => {
+app.put('/order-management/sync-settings', requireSuperadmin(), async (c) => {
   try {
     return ok(c, await orderSyncSettings.saveOrderSyncSettings(null, await c.req.json().catch(() => ({})), c.get('user')?.id));
   } catch (e) { return fail(c, e, 400); }
