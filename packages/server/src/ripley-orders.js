@@ -77,6 +77,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         account,
         shopId: company.ripleyShopId,
         source: 'sync',
+        remapFromProvider: options.remapFromProvider === true,
       }, db));
     }
     const hasSvc = Boolean(

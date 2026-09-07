@@ -46,6 +46,7 @@ function restockReason(kind, persisted) {
   }
   if (kind === 'items_complete_delete') return `Línea eliminada del pedido ${pedido}`;
   if (kind === 'invalid_quantity') return `Cantidad inválida del pedido ${pedido}`;
+  if (kind === 'fulfillment_correction') return `Corrección de estado del pedido ${pedido}`;
   return `Reintegro de stock del pedido ${pedido}`;
 }
 
@@ -568,6 +569,15 @@ export async function stockPhase(input) {
     if (!await resolveItemProduct(db, item, itemInput)) continue;
 
     if (action === 'reserve') {
+      if (item.stock_state === 'applied') {
+        const reversed = await reverseItem(db, item, {
+          ...context,
+          reason: restockReason('fulfillment_correction', persisted),
+        });
+        if (reversed.applied) stats.reversed += 1;
+        item.stock_state = 'reversed';
+        item.stock_applied_quantity = 0;
+      }
       await reserveItem(db, item, itemInput);
       continue;
     }

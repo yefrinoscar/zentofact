@@ -521,6 +521,27 @@ test('un pedido pending anterior al corte no reserva ni descuenta', async () => 
   assert.equal(db.items.get(101).stock_state, 'skipped_policy');
 });
 
+test('bajar de listo a pendiente reintegra el almacén y vuelve a reservar', async () => {
+  const db = new InventoryDb(8);
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
+      external_order_number: '3999111222', ordered_at: INVENTORY_LISTEN_FROM_AT,
+    },
+  }));
+  assert.equal(result.reversed, 1);
+  assert.equal(result.reserved, 1);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.items.get(101).stock_state, 'pending');
+  assert.equal(db.items.get(101).stock_applied_quantity, 2);
+});
+
 test('al pasar a listo para enviar la reserva deja de estar reservada y descuenta el almacén', async () => {
   const db = new InventoryDb(10);
   db.reserved = 2;

@@ -129,6 +129,7 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   ];
   const companyId = positiveId(filters.companyId, 'companyId');
   const channelAccountId = positiveId(filters.channelAccountId, 'channelAccountId');
+  const channelCode = String(filters.channelCode || '').trim().toLowerCase();
   if (companyId) {
     values.push(companyId);
     where.push(`a.company_id=$${values.length}`);
@@ -136,6 +137,13 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   if (channelAccountId) {
     values.push(channelAccountId);
     where.push(`a.id=$${values.length}`);
+  }
+  if (channelCode) {
+    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+      throw new Error('channelCode inválido.');
+    }
+    values.push(channelCode);
+    where.push(`ch.code=$${values.length}`);
   }
   const result = await target.query(
     `select a.id as channel_account_id, a.company_id, a.display_name, a.auto_create_orders,
@@ -223,6 +231,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             displayName: account.displayName,
           },
           normalized,
+          remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
           eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}`,
           source: 'sync',
@@ -317,6 +326,7 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       : resolveIncrementalOrderWindow({ cursor: state.cursor_updated_at, now: options.now });
     window.initial = mode === 'incremental' && !state.cursor_updated_at;
     window.creationRange = mode === 'backfill';
+    window.remapFromProvider = mode === 'backfill';
     if (new Date(window.from) >= new Date(window.to)) {
       return { ...account, status: 'success', skipped: 'already_current' };
     }
@@ -422,6 +432,14 @@ async function eligibleAccountIds(filters = {}, db) {
     if (!id) continue;
     values.push(id);
     where.push(`${column}=$${values.length}`);
+  }
+  const channelCode = String(filters.channelCode || '').trim().toLowerCase();
+  if (channelCode) {
+    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+      throw new Error('channelCode inválido.');
+    }
+    values.push(channelCode);
+    where.push(`ch.code=$${values.length}`);
   }
   if (filters.due === true) {
     where.push(`(

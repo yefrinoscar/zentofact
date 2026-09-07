@@ -51,3 +51,14 @@ export function resolveOrderBackfillWindow(input = {}) {
     to: new Date(inclusiveTo.getTime() + 86_400_000 - 1).toISOString(),
   };
 }
+
+export function limaCalendarDay(now = new Date()) {
+  return limaCalendarDate(validDate(now, 'now'));
+}
+
+export function resolveRipleyOrderBackfillOptions(input = {}) {
+  const from = input.from || '2026-09-01';
+  const to = input.to || limaCalendarDay(input.now);
+  resolveOrderBackfillWindow({ from, to });
+  return { mode: 'backfill', channelCode: 'ripley', from, to };
+}

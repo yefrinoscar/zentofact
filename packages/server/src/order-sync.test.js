@@ -31,14 +31,17 @@ test('Ripley aísla el pedido fallido y continúa la página', async () => {
         max: 100,
       }),
     },
-    ingestRipleyOrder: async ({ normalized }) => {
+    ingestRipleyOrder: async ({ normalized, remapFromProvider }) => {
       if (normalized.orderId === 'FAIL-2') throw new Error('línea inválida');
-      ingested.push(normalized.orderId);
+      ingested.push({ orderId: normalized.orderId, remapFromProvider });
       return { order: { id: ingested.length } };
     },
   });
 
-  assert.deepEqual(ingested, ['OK-1', 'OK-3']);
+  assert.deepEqual(ingested, [
+    { orderId: 'OK-1', remapFromProvider: false },
+    { orderId: 'OK-3', remapFromProvider: false },
+  ]);
   assert.deepEqual({
     pages: result.pages,
     received: result.received,
@@ -87,6 +90,40 @@ test('Ripley conserva la cabecera sin items y deja la ventana pendiente de reint
   assert.equal(typeof result.lastLogId, 'string');
   assert.equal(transactions.filter((sql) => sql === 'commit').length, 1);
   assert.equal(transactions.filter((sql) => sql === 'rollback').length, 0);
+});
+
+test('el backfill pide a Ripley remapear el estado desde Mirakl', async () => {
+  const remaps = [];
+  await syncRipleyPages({
+    async query() { return { rows: [] }; },
+  }, {
+    channelAccountId: 12,
+    companyId: 4,
+    channelCode: 'ripley',
+    displayName: 'Seller Ripley',
+  }, {
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-08T04:59:59.999Z',
+    creationRange: true,
+    remapFromProvider: true,
+  }, 101, {
+    ripleyClient: {
+      listOrders: async () => ({
+        orders: [{
+          orderId: 'R-SEP',
+          createdAt: '2026-09-02T12:00:00Z',
+          updatedAt: '2026-09-02T12:00:00Z',
+        }],
+        totalCount: 1,
+        max: 100,
+      }),
+    },
+    ingestRipleyOrder: async (input) => {
+      remaps.push(input.remapFromProvider);
+      return { order: { id: 1 } };
+    },
+  });
+  assert.deepEqual(remaps, [true]);
 });
 
 test('al retomar una cuenta cierra las ejecuciones que quedaron running', async () => {

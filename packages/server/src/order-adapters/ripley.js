@@ -57,7 +57,7 @@ export function mapRipleyCanonicalStatus(value) {
   return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
 }
 
-export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
+export function resolveRipleyIngestStatuses(providerStatus, existing = null, options = {}) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
   if (TERMINAL_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
 
@@ -70,9 +70,11 @@ export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
   if (fromSvc) {
     return { ...mapped, fulfillmentStatus: fromSvc };
   }
-  // Sin señal de Seller Center no se inventa el estado: un listo persistido se deja.
+  // Un backfill vuelve a leer Mirakl: SHIPPING se reescribe a pendiente.
+  // El incremental no inventa un pendiente sobre un listo ya persistido.
   if (
-    mapped.fulfillmentStatus === 'pending'
+    options.remapFromProvider !== true
+    && mapped.fulfillmentStatus === 'pending'
     && (existingFulfillment === 'ready_to_ship' || existingFulfillment === 'preparing')
   ) {
     return { ...mapped, fulfillmentStatus: existingFulfillment };
@@ -264,7 +266,9 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.shopId,
   );
   const existing = await existingRipleyOrder(db, account.id, normalized?.orderId);
-  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing);
+  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing, {
+    remapFromProvider: input.remapFromProvider === true,
+  });
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,

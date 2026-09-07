@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
+import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow, resolveRipleyOrderBackfillOptions } from './order-sync-policy.js';
 
 test('la primera sincronización cubre los cinco días calendario de Lima', () => {
   assert.deepEqual(resolveIncrementalOrderWindow({
@@ -32,6 +32,19 @@ test('el backfill manual acepta un rango acotado de días de Lima', () => {
   });
   assert.throws(
     () => resolveOrderBackfillWindow({ from: '2026-01-01', to: '2026-08-01' }),
+    /máximo 31 días/,
+  );
+});
+
+test('el backfill Ripley por defecto empieza el 1 de septiembre y no toca Falabella', () => {
+  assert.deepEqual(resolveRipleyOrderBackfillOptions({ now: '2026-09-07T18:00:00.000Z' }), {
+    mode: 'backfill',
+    channelCode: 'ripley',
+    from: '2026-09-01',
+    to: '2026-09-07',
+  });
+  assert.throws(
+    () => resolveRipleyOrderBackfillOptions({ from: '2026-08-01', to: '2026-09-07' }),
     /máximo 31 días/,
   );
 });

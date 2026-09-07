@@ -239,6 +239,27 @@ test('el heal no toca listos sin evidencia SVC', async () => {
   assert.deepEqual(updates, [[14, 'preparing']]);
 });
 
+test('el backfill remapea un SHIPPING persistido como listo a pendiente', async () => {
+  let ingestPayload = null;
+  await ingestRipleyOrder({
+    companyId: 2,
+    account: { id: 9, channelCode: 'ripley' },
+    remapFromProvider: true,
+    normalized: { orderId: 'R-REMAP', orderNumber: 'RP-REMAP', status: 'SHIPPING', raw: {} },
+  }, {
+    async query() {
+      return { rows: [{ fulfillment_status: 'ready_to_ship', metadata: {} }] };
+    },
+  }, {
+    ingest: async (input) => {
+      ingestPayload = input;
+      return { order: { id: 11, fulfillmentStatus: input.fulfillmentStatus } };
+    },
+    enqueue: async () => ({ enqueued: false }),
+  });
+  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+});
+
 test('el ingest no pisa un listo persistido si no hay evidencia SVC', async () => {
   let ingestPayload = null;
   await ingestRipleyOrder({
