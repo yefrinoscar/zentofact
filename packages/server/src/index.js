@@ -77,6 +77,7 @@ const ripleyOrders = await import('./ripley-orders.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
+const productSalesReport = await import('./catalog/product-sales-report.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -292,6 +293,13 @@ app.get('/dashboard', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
+});
+app.get('/dashboard/product-sales', async (c) => {
+  try {
+    const data = await productSalesReport.listProductSalesReport(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/dashboard/refresh', async (c) => {
   try {

@@ -15,6 +15,12 @@ test('mobileNavPathname no reescribe Nueva venta si también gestiona pedidos', 
   assert.equal(isNavItemActive('/orders/nueva', '/orders'), true);
 });
 
+test('Ventas usa el permiso de dashboard', () => {
+  const ventas = { to: '/ventas', permission: 'dashboard' };
+  assert.equal(isNavItemVisible(ventas, (key) => key === 'dashboard', false), true);
+  assert.equal(isNavItemVisible(ventas, () => false, false), false);
+});
+
 test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   const can = () => true;
   const settings = { to: '/settings', permission: 'settings' };
