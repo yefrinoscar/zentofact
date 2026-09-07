@@ -330,6 +330,10 @@ export default function VentasProductos() {
   );
 }
 
+function sellerCountLabel(count: number) {
+  return `${formatSalesCount(count)} ${count === 1 ? 'seller' : 'sellers'}`;
+}
+
 function SortHeader({
   label,
   active,
@@ -436,7 +440,7 @@ function TopProducts({ products, loading }: { products: ProductSaleRow[]; loadin
               <p className="truncate text-sm font-medium">{product.name}</p>
               <p className="mt-1 font-mono text-xs text-muted-foreground">{product.sku}</p>
               <p className="mt-2 text-sm tabular-nums">{formatSalesMoney(product.grossSales)}</p>
-              <p className="text-xs text-muted-foreground">{formatSalesCount(product.unitsSold)} u · {formatSalesCount(product.sellersCount)} sellers</p>
+              <p className="text-xs text-muted-foreground">{formatSalesCount(product.unitsSold)} u · {sellerCountLabel(product.sellersCount)}</p>
             </div>
           ))}
         </div>
@@ -497,7 +501,7 @@ function SellerSalesDrawer({
         <SheetHeader className="px-6 pt-7 sm:px-8">
           <SheetTitle>{product?.name || 'Producto'}</SheetTitle>
           <SheetDescription>
-            {product ? `${product.sku} · ${formatSalesCount(product.sellersCount)} sellers` : 'Detalle por seller'}
+            {product ? `${product.sku} · ${sellerCountLabel(product.sellersCount)}` : 'Detalle por seller'}
           </SheetDescription>
         </SheetHeader>
         {product ? (
