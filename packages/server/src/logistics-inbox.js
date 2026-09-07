@@ -3,7 +3,7 @@ import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } f
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 import { createLogId } from './error-log.js';
 import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
-import { remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
+import { enqueueRipleyStockJob, remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -87,9 +87,11 @@ function itemImage(row) {
 }
 
 function normalizeItem(row) {
+  const mainSku = String(row.main_sku || '').trim() || null;
   return {
     id: Number(row.id),
-    sku: row.sku || row.provider_sku || null,
+    sku: mainSku || row.sku || row.provider_sku || null,
+    mainSku,
     providerSku: row.provider_sku || null,
     shopSku: row.shop_sku || null,
     description: row.description || row.product_name || 'Producto',
@@ -136,13 +138,14 @@ export function urgencyForDeadline(value, now = new Date()) {
 export function groupLogisticsItems(items) {
   const groups = new Map();
   for (const item of items) {
-    const key = String(item.sku || item.description || item.id).trim().toLowerCase();
+    const key = String(item.mainSku || item.sku || item.description || item.id).trim().toLowerCase();
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += item.quantity;
       existing.lineCount += 1;
       if (!existing.imageUrl && item.imageUrl) existing.imageUrl = item.imageUrl;
       if (!existing.shopSku && item.shopSku) existing.shopSku = item.shopSku;
+      if (!existing.mainSku && item.mainSku) existing.mainSku = item.mainSku;
       continue;
     }
     groups.set(key, { ...item, lineCount: 1 });
@@ -177,6 +180,8 @@ function normalizeInboxOrder(row) {
     updatedAt: row.updated_at,
     itemsCount: items.reduce((total, item) => total + item.quantity, 0),
     items,
+    warehouseAddress: String(row.warehouse_address || '').trim() || null,
+    hasRipleySvcCredentials: row.has_ripley_svc_credentials === true,
     labelPrints: Array.isArray(row.label_prints) ? row.label_prints : [],
     labelPrint: normalizeLabelPrint(row),
   };
@@ -220,6 +225,7 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
         where oi.order_id=o.id
           and (
             coalesce(oi.sku, '') ilike '%' || $${values.length} || '%'
+            or coalesce(oi.main_sku, '') ilike '%' || $${values.length} || '%'
             or coalesce(oi.description, '') ilike '%' || $${values.length} || '%'
           )
       )
@@ -248,7 +254,8 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
 const ITEMS_SQL = `coalesce((
   select jsonb_agg(jsonb_build_object(
     'id', oi.id,
-    'sku', oi.sku,
+    'sku', nullif(trim(coalesce(p.main_sku, psku.main_sku, oi.main_sku, oi.sku, oi.provider_sku, '')), ''),
+    'main_sku', nullif(trim(coalesce(p.main_sku, psku.main_sku, oi.main_sku, '')), ''),
     'provider_sku', oi.provider_sku,
     'shop_sku', coalesce(
       nullif(trim(listing.shop_sku), ''),
@@ -325,6 +332,9 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
+       nullif(trim(c.direccion), '') as warehouse_address,
+       (nullif(trim(c.ripley_svc_username), '') is not null
+         and nullif(trim(c.ripley_svc_password), '') is not null) as has_ripley_svc_credentials,
        ${ITEMS_SQL},
        coalesce((
          select jsonb_agg(jsonb_build_object(
@@ -431,7 +441,7 @@ function packingTicket(order, index) {
       items: (order.items || []).map((item) => ({
         name: item.description,
         sellerSku: item.sku,
-        sku: item.sku,
+        sku: item.mainSku || item.sku,
         quantity: item.quantity,
         imageUrl: item.imageUrl,
       })),
@@ -462,6 +472,9 @@ async function loadPrintOrders(orderIds, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
+       nullif(trim(c.direccion), '') as warehouse_address,
+       (nullif(trim(c.ripley_svc_username), '') is not null
+         and nullif(trim(c.ripley_svc_password), '') is not null) as has_ripley_svc_credentials,
        ${ITEMS_SQL}
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
@@ -761,6 +774,167 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     packingPageCount,
     skipped,
   };
+}
+
+export function limaTomorrowDate(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: LIMA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+}
+
+function manifestIdFrom(payload) {
+  const data = svcPayload(payload);
+  const manifests = Array.isArray(data.manifests) ? data.manifests : [];
+  return text(manifests[0]?._id || data._id || data.manifestId);
+}
+
+async function findRipleyEligibleLabels(order, listEligible, sandbox) {
+  const lookupIds = ripleyOrderLookupIds(order);
+  if (!lookupIds.length) throw new Error('El pedido Ripley no tiene número para agendar el recojo.');
+  for (const orderId of lookupIds) {
+    const listed = await listEligible({
+      companyId: order.companyId,
+      orderId,
+      sandbox,
+      page: 1,
+      limit: 200,
+    });
+    const labels = labelsForOrder(listed, orderId).filter((label) => text(label?._id));
+    if (labels.length) return { orderId, labels };
+  }
+  throw new Error('Ripley aún no tiene una etiqueta activa para agendar el recojo.');
+}
+
+async function persistRipleyScheduledReady(db, order, patch) {
+  const metadata = {
+    ...objectMetadata(order.metadata),
+    ripleySvc: {
+      ...objectMetadata(objectMetadata(order.metadata).ripleySvc || objectMetadata(order.metadata).ripley_svc),
+      statusManagement: 'TO_PICKUP',
+      scheduledAt: new Date().toISOString(),
+      pickupDate: patch.pickupDate,
+      warehouseAddress: patch.warehouseAddress,
+      manifestId: patch.manifestId || null,
+    },
+  };
+  const result = await db.query(
+    `update orders
+     set fulfillment_status = 'ready_to_ship',
+         metadata = $2::jsonb,
+         updated_at = now()
+     where id = $1
+       and fulfillment_status in ('pending', 'preparing')
+     returning id, fulfillment_status, metadata`,
+    [order.id, JSON.stringify(metadata)],
+  );
+  if (!result.rows[0]) throw new Error('El pedido ya no está en preparación.');
+  return result.rows[0];
+}
+
+export async function scheduleRipleyInboxReady(order, input = {}, dependencies = {}) {
+  if (!order?.companyId) throw new Error('El pedido Ripley no tiene seller.');
+  const pickupDate = isoPickupDate(input.pickupDate) || limaTomorrowDate();
+  const warehouseAddress = text(input.warehouseAddress || order.warehouseAddress);
+  if (!warehouseAddress) throw new Error('Falta la dirección de recojo del seller.');
+  const sandbox = order.hasRipleySvcCredentials !== true;
+  const ripleyLogistics = dependencies.ripleyLogistics || await import('./ripley-logistics.js');
+  const listEligible = dependencies.listEligible || ((filter) => (
+    ripleyLogistics.listRipleySvcEligibleLabels(filter.companyId, filter)
+  ));
+  const schedule = dependencies.schedule || ((companyId, data) => (
+    ripleyLogistics.scheduleRipleySvcManifest(companyId, data)
+  ));
+  const found = await findRipleyEligibleLabels(order, listEligible, sandbox);
+  const scheduled = await schedule(order.companyId, {
+    orderId: found.orderId,
+    labelIds: found.labels.map((label) => text(label._id)),
+    pickupDate,
+    warehouseAddress,
+    sandbox,
+  });
+  const persisted = await persistRipleyScheduledReady(dependencies.db, order, {
+    pickupDate,
+    warehouseAddress,
+    manifestId: manifestIdFrom(scheduled),
+  });
+  await enqueueRipleyStockJob({
+    id: order.id,
+    companyId: order.companyId,
+    externalOrderId: order.externalOrderId,
+    externalOrderNumber: order.externalOrderNumber,
+    fulfillmentStatus: 'ready_to_ship',
+    orderedAt: order.orderedAt,
+  }, { source: 'user' }, dependencies.db, dependencies.enqueue);
+  return {
+    ok: true,
+    alreadyReady: false,
+    orderId: Number(persisted.id),
+    pickupDate,
+    warehouseAddress,
+    sandbox,
+    manifestId: manifestIdFrom(scheduled) || null,
+  };
+}
+
+function isoPickupDate(value) {
+  const normalized = text(value);
+  if (!normalized) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00Z`))) {
+    throw new Error('La fecha de recojo es inválida.');
+  }
+  return normalized;
+}
+
+function text(value) {
+  return String(value ?? '').trim();
+}
+
+export async function markLogisticsOrderReady(input = {}, dependencies = {}) {
+  const orderId = Number(input.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
+  const core = dependencies.db ? null : await loadCore();
+  const db = dependencies.db || core.pool;
+  const result = await db.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+            o.fulfillment_status, o.ordered_at, o.metadata,
+            ch.code as channel_code,
+            nullif(trim(c.direccion), '') as warehouse_address,
+            (nullif(trim(c.ripley_svc_username), '') is not null
+              and nullif(trim(c.ripley_svc_password), '') is not null) as has_ripley_svc_credentials
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     left join companies c on c.id = o.company_id
+     where o.id = $1`,
+    [orderId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('Pedido no encontrado.');
+  if (row.channel_code !== 'ripley') {
+    throw new Error('Este pedido no se agenda en Ripley.');
+  }
+  const status = String(row.fulfillment_status || '');
+  if (status === 'ready_to_ship') {
+    return { ok: true, alreadyReady: true, orderId: Number(row.id) };
+  }
+  if (status !== 'pending' && status !== 'preparing') {
+    throw new Error('Este pedido ya no está en preparación.');
+  }
+  return scheduleRipleyInboxReady({
+    id: Number(row.id),
+    companyId: row.company_id == null ? null : Number(row.company_id),
+    channelCode: 'ripley',
+    fulfillmentStatus: row.fulfillment_status,
+    externalOrderId: row.external_order_id,
+    externalOrderNumber: row.external_order_number,
+    orderedAt: row.ordered_at,
+    metadata: row.metadata,
+    warehouseAddress: row.warehouse_address,
+    hasRipleySvcCredentials: row.has_ripley_svc_credentials === true,
+  }, input, { ...dependencies, db });
 }
 
 export async function printLogisticsPackWithDefaults(input = {}, dependencies = {}) {
