@@ -117,7 +117,7 @@ export function arrivesMoneyHint(row?: {
   arrives?: number | null;
   sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
 } | null) {
-  if (row?.arrives != null) return 'Lo que te depositan.';
+  if (row?.arrives != null) return 'Lo que entra a tu cuenta.';
   return falabellaMoneyHint({ falabellaTake: null, sellers: row?.sellers });
 }
 
@@ -176,80 +176,39 @@ export function sellerSalesLabel(seller: Pick<ProductSaleSeller, 'companyName'>)
   return sellerShortName(seller.companyName);
 }
 
-function arrivesWhy(totals?: ProductSalesTotals | null) {
-  const paid = totals?.paidArrives;
-  const pending = totals?.pendingArrives;
-  if (totals?.arrives == null) return pagosHint();
-  if (paid != null && pending != null && pending > 0 && paid > 0) return 'Pagado y pendiente.';
-  if (pending != null && pending > 0 && !(paid && paid > 0)) return 'Aún no depositan.';
-  if (paid != null && paid > 0) return 'Ya está en tu cuenta.';
-  return 'Lo que te depositan.';
+export function paidShare(paid?: number | null, pending?: number | null) {
+  const received = Number(paid || 0);
+  const waiting = Number(pending || 0);
+  const total = received + waiting;
+  return total > 0 ? received / total : 0;
 }
 
 export function productSalesKpis(totals?: ProductSalesTotals | null) {
   const grossSales = Number(totals?.grossSales || 0);
   const unitsSold = Number(totals?.unitsSold || 0);
   const ordersCount = Number(totals?.ordersCount || 0);
-  const averageTicket = Number(totals?.averageTicket || 0);
   const falabellaTake = totals?.falabellaTake ?? null;
   const arrives = totals?.arrives ?? null;
 
   return [
     {
       key: 'grossSales' as const,
-      group: 'Dinero',
       label: 'Ventas brutas',
-      why: 'Suma Falabella del maestro.',
+      why: `${formatSalesCount(unitsSold)} u · ${formatSalesCount(ordersCount)} pedidos.`,
       display: formatSalesMoney(grossSales),
-    },
-    {
-      key: 'falabella' as const,
-      group: 'Dinero',
-      label: 'Falabella',
-      why: falabellaTake == null ? pagosHint() : 'Comisión y logística.',
-      display: formatSalesMoneyOrDash(falabellaTake),
+      tone: 'neutral' as const,
+      paid: null,
+      pending: null,
     },
     {
       key: 'arrives' as const,
-      group: 'Dinero',
       label: 'Te llega',
-      why: arrivesWhy(totals),
+      why: arrives == null ? pagosHint() : 'Lo que entra a tu cuenta.',
       display: formatSalesMoneyOrDash(arrives),
-    },
-    {
-      key: 'paid' as const,
-      group: 'Dinero',
-      label: 'Pagado',
-      why: totals?.paidArrives == null ? pagosHint() : 'Ya está en tu cuenta.',
-      display: formatSalesMoneyOrDash(totals?.paidArrives ?? null),
-    },
-    {
-      key: 'pending' as const,
-      group: 'Dinero',
-      label: 'Pendiente',
-      why: totals?.pendingArrives == null ? pagosHint() : 'Aún no depositan.',
-      display: formatSalesMoneyOrDash(totals?.pendingArrives ?? null),
-    },
-    {
-      key: 'units' as const,
-      group: 'Ritmo',
-      label: 'Unidades',
-      why: 'Piezas que salieron.',
-      display: `${formatSalesCount(unitsSold)} u`,
-    },
-    {
-      key: 'orders' as const,
-      group: 'Ritmo',
-      label: 'Pedidos',
-      why: 'Pedidos con venta.',
-      display: formatSalesCount(ordersCount),
-    },
-    {
-      key: 'ticket' as const,
-      group: 'Ritmo',
-      label: 'Ticket',
-      why: 'Promedio por pedido.',
-      display: formatSalesMoney(averageTicket),
+      tone: 'receive' as const,
+      paid: totals?.paidArrives ?? null,
+      pending: totals?.pendingArrives ?? null,
+      take: falabellaTake,
     },
   ];
 }
