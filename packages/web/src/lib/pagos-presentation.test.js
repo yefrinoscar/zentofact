@@ -121,6 +121,33 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(invoiced.logisticsSplit.gross, 13.8);
   assert.equal(invoiced.factura.net, 23.88);
   assert.equal(invoiced.queda, 103.24);
+  const realOrder = saleIgvStory({
+    bruto: 99.9,
+    commission: 14.99,
+    shipping: 10.9,
+    invoiceCharges: {
+      commission: { net: 12.7, igv: 2.29, gross: 14.99 },
+      logistics: { net: 9.24, igv: 1.66, gross: 10.9 },
+    },
+  });
+  assert.equal(realOrder.commissionSplit.net, 12.7);
+  assert.equal(realOrder.commissionSplit.gross, 14.99);
+  assert.equal(realOrder.logisticsSplit.net, 9.24);
+  assert.equal(realOrder.logisticsSplit.gross, 10.9);
+  const charts = settlementCharts({
+    saleCount: 1,
+    bruto: 99.9,
+    neto: 74.01,
+    take: 25.89,
+    commission: 14.99,
+    shipping: 10.9,
+    paidNeto: 74.01,
+    paidCount: 1,
+    takeRate: 0.2592,
+  });
+  assert.equal(charts[1].hint, '25.9% del facturado');
+  assert.equal(charts[1].items[0].withoutIgv, 12.7);
+  assert.equal(charts[1].items[1].withoutIgv, 9.24);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });

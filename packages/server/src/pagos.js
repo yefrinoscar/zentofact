@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
 import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
-import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceChargesForOrders, loadInvoiceRefsForOrders } from './pagos-invoice.js';
+import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceChargesForOrders, loadInvoiceRefsForOrders, uniqueSaleRefs } from './pagos-invoice.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
@@ -375,7 +375,7 @@ export async function listSettlementSales(filter = {}, db) {
   const page = sales.slice(offset, offset + limit);
   const withDocuments = await attachSaleDocuments(page, target);
   const withShipping = await attachSaleOrderShipping(withDocuments, target);
-  const orderIds = withShipping.flatMap((sale) => [sale.orderId, ...(sale.orderNumbers || [])]);
+  const orderIds = withShipping.flatMap((sale) => uniqueSaleRefs(sale));
   const [refs, charges] = await Promise.all([
     loadInvoiceRefsForOrders(orderIds, target),
     loadInvoiceChargesForOrders(orderIds, target),
