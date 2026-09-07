@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
+  resolveRipleyIngestStatuses,
 } from './ripley.js';
 
 const raw = {
@@ -28,13 +29,22 @@ const raw = {
   }],
 };
 
-test('mapea estados Ripley conocidos y conserva los desconocidos como sin mapear', () => {
+test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship',
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+  });
+  assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+  });
+  assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT_PAYMENT'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
   assert.deepEqual(mapRipleyCanonicalStatus('NUEVO_ESTADO'), {
     orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
+    metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
 });
 
 test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
