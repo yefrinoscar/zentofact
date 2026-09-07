@@ -26,7 +26,7 @@ const SEED_ORDERS = [
   {
     key: 'pending',
     orderNumber: 'PV-10001',
-    customer: { name: 'Ana Preview', firstName: 'Ana', lastName: 'Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local' },
+    customer: { name: 'Ana Preview', firstName: 'Ana', lastName: 'Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local', phone: '999111001' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     falabellaStatus: 'pending',
@@ -36,7 +36,7 @@ const SEED_ORDERS = [
   {
     key: 'ready',
     orderNumber: 'PV-10003',
-    customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912' },
+    customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912', phone: '999111003' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'ready_to_ship',
     falabellaStatus: 'ready_to_ship',
@@ -46,7 +46,7 @@ const SEED_ORDERS = [
   {
     key: 'shipped',
     orderNumber: 'PV-10002',
-    customer: { name: 'Luis Preview', firstName: 'Luis', lastName: 'Preview', documentNumber: '87654321' },
+    customer: { name: 'Luis Preview', firstName: 'Luis', lastName: 'Preview', documentNumber: '87654321', phone: '999111002' },
     orderStatus: 'completed',
     fulfillmentStatus: 'shipped',
     falabellaStatus: 'shipped',
@@ -178,7 +178,7 @@ const SEED_LOGISTICS_ORDERS = [
     channel: 'falabella',
     companyRuc: '20990001002',
     sku: 'AG301',
-    customer: { name: 'Diego Preview', firstName: 'Diego', lastName: 'Preview', documentNumber: '33445566' },
+    customer: { name: 'Diego Preview', firstName: 'Diego', lastName: 'Preview', documentNumber: '33445566', phone: '999111011' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     promisedOffsetDays: 0,
@@ -222,10 +222,56 @@ const SEED_LOGISTICS_ORDERS = [
     channel: 'falabella',
     companyRuc: '20990001003',
     sku: 'BB110',
-    customer: { name: 'Inés Preview', firstName: 'Inés', lastName: 'Preview', documentNumber: '77889900' },
+    customer: { name: 'Inés Preview', firstName: 'Inés', lastName: 'Preview', documentNumber: '77889900', phone: '999111012' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     promisedOffsetDays: 4,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-max-limbo',
+    orderNumber: 'PV-10030',
+    channel: 'falabella',
+    companyRuc: '20990001001',
+    sku: 'BB220',
+    items: [{ sku: 'BB220', quantity: 4 }],
+    customer: {
+      name: 'Max Preview',
+      firstName: 'Max',
+      lastName: 'Preview',
+      documentNumber: '74561743',
+      phone: '987654321',
+      email: 'max@preview.zentofact.local',
+    },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'shipped',
+    falabellaStatus: 'shipped',
+    promisedOffsetDays: -2,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-max-manta',
+    orderNumber: 'PV-10031',
+    channel: 'falabella',
+    companyRuc: '20990001002',
+    sku: 'BB220',
+    items: [{ sku: 'BB220', quantity: 3 }],
+    customer: {
+      name: 'Max Preview',
+      firstName: 'Max',
+      lastName: 'Preview',
+      documentNumber: '74561743',
+      phone: '987654321',
+      email: 'max@preview.zentofact.local',
+    },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'shipped',
+    falabellaStatus: 'shipped',
+    promisedOffsetDays: -1,
     shipping: { type: 'envio' },
     stockState: 'none',
     stockApplied: 0,
@@ -931,13 +977,22 @@ async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
     const product = products.find((row) => row.mainSku === spec.sku) || products[0];
     if (!company || !product) continue;
     const orderId = previewOrderId(spec.key);
+    const lineSpecs = Array.isArray(spec.items) && spec.items.length
+      ? spec.items
+      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
+    const grandTotal = lineSpecs.reduce((sum, lineSpec) => {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      return sum + (Number(lineProduct.referencePrice) || 100) * Math.max(1, Number(lineSpec.quantity || 1));
+    }, 0);
     const raw = {
       OrderId: orderId,
       OrderNumber: spec.orderNumber,
       CustomerFirstName: spec.customer.firstName,
       CustomerLastName: spec.customer.lastName,
+      CustomerPhone: spec.customer.phone || '',
+      NationalRegistrationNumber: spec.customer.documentNumber || '',
       PromisedShippingTime: promised,
-      ItemsCount: String(spec.itemLines || spec.items?.length || 1),
+      ItemsCount: String(lineSpecs.reduce((sum, lineSpec) => sum + Math.max(1, Number(lineSpec.quantity || 1)), 0)),
       Statuses: spec.falabellaStatus || spec.fulfillmentStatus,
     };
     await pool.query(
@@ -956,7 +1011,7 @@ async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
         orderId,
         spec.orderNumber,
         spec.falabellaStatus || spec.fulfillmentStatus,
-        product.referencePrice || 100,
+        grandTotal,
         JSON.stringify(raw),
       ],
     );

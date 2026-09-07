@@ -40,16 +40,40 @@ export type ProductSaleRow = {
   sellers: ProductSaleSeller[];
 };
 
+export type ProductSaleBuyerCompany = {
+  companyId: number | null;
+  companyName?: string | null;
+  unitsBought: number;
+  ordersCount: number;
+  grossSales: number;
+};
+
+export type ProductSaleBuyerProduct = {
+  productKey?: string | null;
+  sku: string;
+  name: string;
+  unitsBought: number;
+  grossSales: number;
+};
+
 export type ProductSaleBuyer = {
   buyerKey: string;
   name: string;
   documentNumber?: string | null;
   email?: string | null;
+  phone?: string | null;
+  tracked?: boolean;
+  companies?: ProductSaleBuyerCompany[];
+  products?: ProductSaleBuyerProduct[];
   ordersCount: number;
   unitsBought: number;
   grossSales: number;
   lastOrderedAt?: string | null;
 };
+
+export const TRACKED_BUYER_MIN_UNITS = 5;
+
+export type BuyerSortBy = 'name' | 'phone' | 'company' | 'units' | 'grossSales';
 
 export type ProductSalesTotals = {
   productsCount: number;
@@ -215,4 +239,87 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
 
 export function buyerIdentity(buyer: ProductSaleBuyer) {
   return buyer.documentNumber || buyer.email || 'Sin documento';
+}
+
+export function isTrackedBuyer(buyer: Pick<ProductSaleBuyer, 'tracked' | 'unitsBought'>) {
+  if (buyer.tracked != null) return Boolean(buyer.tracked);
+  return Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS;
+}
+
+export function splitSalesBuyers(buyers: ProductSaleBuyer[]) {
+  const tracked: ProductSaleBuyer[] = [];
+  const others: ProductSaleBuyer[] = [];
+  for (const buyer of buyers) {
+    (isTrackedBuyer(buyer) ? tracked : others).push(buyer);
+  }
+  return { tracked, others };
+}
+
+export function formatBuyerPhone(phone?: string | null) {
+  const raw = String(phone || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  return raw;
+}
+
+export function buyerPhoneDigits(phone?: string | null) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+export function buyerPhoneLabel(buyer: Pick<ProductSaleBuyer, 'phone'>) {
+  return formatBuyerPhone(buyer.phone) || 'Sin teléfono';
+}
+
+export function buyerCompanyNames(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  return (buyer.companies || [])
+    .map((company) => sellerShortName(company.companyName))
+    .filter((name) => name && name !== 'Seller');
+}
+
+export function buyerCompaniesLabel(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  const names = buyerCompanyNames(buyer);
+  return names.length ? names.join(' · ') : 'Sin seller';
+}
+
+export function buyerProductsLabel(buyer: Pick<ProductSaleBuyer, 'products'>) {
+  return (buyer.products || [])
+    .map((product) => `${product.sku || product.name} · ${formatSalesCount(product.unitsBought)} u`)
+    .join(' · ');
+}
+
+export function formatBuyerLastOrder(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'America/Lima',
+  }).format(date);
+}
+
+export function buyerSortValue(buyer: ProductSaleBuyer, sortBy: BuyerSortBy) {
+  if (sortBy === 'name') return buyer.name || '';
+  if (sortBy === 'phone') return buyerPhoneDigits(buyer.phone);
+  if (sortBy === 'company') return buyerCompaniesLabel(buyer);
+  if (sortBy === 'units') return Number(buyer.unitsBought || 0);
+  return Number(buyer.grossSales || 0);
+}
+
+export function sortSalesBuyers(
+  buyers: ProductSaleBuyer[],
+  sortBy: BuyerSortBy,
+  sortDir: 'asc' | 'desc',
+) {
+  const direction = sortDir === 'asc' ? 1 : -1;
+  return buyers.slice().sort((left, right) => {
+    const a = buyerSortValue(left, sortBy);
+    const b = buyerSortValue(right, sortBy);
+    const cmp = typeof a === 'number' && typeof b === 'number'
+      ? a - b
+      : String(a).localeCompare(String(b), 'es');
+    return (cmp || left.name.localeCompare(right.name, 'es')) * direction;
+  });
 }

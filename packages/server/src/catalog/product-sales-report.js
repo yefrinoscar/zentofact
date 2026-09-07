@@ -20,8 +20,15 @@ const PRODUCT_SORTS = {
   units: 'sum(units_sold)',
   orders: 'sum(orders_count)',
   grossSales: 'sum(revenue)',
+  falabellaTake: 'sum(falabella_take)',
+  arrives: 'sum(arrives)',
   sellers: 'count(distinct company_id)',
 };
+
+const PAYOUT_FILTERS = new Set(['all', 'paid', 'pending']);
+export const TRACKED_BUYER_MIN_UNITS = 5;
+const TRACKED_BUYER_LIMIT = 100;
+const OTHER_BUYER_LIMIT = 20;
 
 const ELIGIBLE_SALE = `o.order_status in ('confirmed','completed')
     and coalesce(o.fulfillment_status, '') not in ('returned','cancelled','failed')
@@ -62,6 +69,19 @@ function optionalPositiveInt(value, label) {
   return positiveInt(value, label);
 }
 
+function optionalMoney(value, label) {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = Number(String(value).trim().replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed < 0) throw httpError(`${label} inválido.`);
+  return parsed;
+}
+
+function optionalPayout(value) {
+  const payout = String(value || 'all').trim().toLowerCase();
+  if (!PAYOUT_FILTERS.has(payout)) throw httpError('Filtro de pago inválido.');
+  return payout;
+}
+
 function limitOffset(input = {}) {
   const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 100);
   const offset = Math.max(Number(input.offset) || 0, 0);
@@ -83,10 +103,33 @@ export function parseProductSalesFilters(input = {}) {
     to,
     companyId: optionalPositiveInt(input.companyId, 'companyId'),
     search: String(input.search || '').trim(),
+    minGrossSales: optionalMoney(input.minGrossSales, 'minGrossSales'),
+    minFalabellaTake: optionalMoney(input.minFalabellaTake, 'minFalabellaTake'),
+    minArrives: optionalMoney(input.minArrives, 'minArrives'),
+    payout: optionalPayout(input.payout),
     sortBy,
     sortDir,
     ...limitOffset(input),
   };
+}
+
+function productHavingSql(filters, values) {
+  const having = ['true'];
+  if (filters.minGrossSales != null) {
+    values.push(filters.minGrossSales);
+    having.push(`sum(revenue) >= $${values.length}`);
+  }
+  if (filters.minFalabellaTake != null) {
+    values.push(filters.minFalabellaTake);
+    having.push(`coalesce(sum(falabella_take), 0) >= $${values.length}`);
+  }
+  if (filters.minArrives != null) {
+    values.push(filters.minArrives);
+    having.push(`coalesce(sum(arrives), 0) >= $${values.length}`);
+  }
+  if (filters.payout === 'paid') having.push('coalesce(sum(paid_arrives), 0) > 0');
+  if (filters.payout === 'pending') having.push('coalesce(sum(pending_arrives), 0) > 0');
+  return having.join(' and ');
 }
 
 function productOrderSql(filters) {
@@ -264,6 +307,11 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         coalesce(nullif(trim(o.customer->>'name'), ''), 'Comprador sin nombre') as buyer_name,
         nullif(trim(o.customer->>'documentNumber'), '') as buyer_document,
         nullif(trim(o.customer->>'email'), '') as buyer_email,
+        coalesce(
+          nullif(trim(o.customer->>'phone'), ''),
+          nullif(trim(fo.raw_data->>'CustomerPhone'), ''),
+          nullif(trim(fo.raw_data->>'Phone'), '')
+        ) as buyer_phone,
         o.ordered_at
       from order_items oi
       join orders o on o.id=oi.order_id
@@ -361,17 +409,123 @@ function mapProductRow(row = {}) {
   };
 }
 
+function mapBuyerCompany(company = {}) {
+  return {
+    companyId: company.companyId == null ? null : Number(company.companyId),
+    companyName: company.companyName || null,
+    unitsBought: Number(company.unitsBought || 0),
+    ordersCount: Number(company.ordersCount || 0),
+    grossSales: Number(company.grossSales || 0),
+  };
+}
+
+function mapBuyerProduct(product = {}) {
+  return {
+    productKey: product.productKey || null,
+    sku: product.sku || '',
+    name: product.name || '',
+    unitsBought: Number(product.unitsBought || 0),
+    grossSales: Number(product.grossSales || 0),
+  };
+}
+
 function mapBuyer(row = {}) {
   return {
     buyerKey: row.buyer_key,
     name: row.buyer_name,
     documentNumber: row.buyer_document || null,
     email: row.buyer_email || null,
+    phone: row.buyer_phone || null,
+    tracked: Number(row.units_bought || 0) > TRACKED_BUYER_MIN_UNITS,
+    companies: (Array.isArray(row.companies) ? row.companies : []).map(mapBuyerCompany),
+    products: (Array.isArray(row.products) ? row.products : []).map(mapBuyerProduct),
     ordersCount: Number(row.orders_count || 0),
     unitsBought: Number(row.units_bought || 0),
     grossSales: Number(row.revenue || 0),
     lastOrderedAt: row.last_ordered_at || null,
   };
+}
+
+function buyerDetailSql(eligibleCteSql, { tracked, limit }) {
+  const unitClause = tracked
+    ? `b.units_bought > ${TRACKED_BUYER_MIN_UNITS}`
+    : `b.units_bought <= ${TRACKED_BUYER_MIN_UNITS}`;
+  const orderSql = tracked
+    ? 'b.units_bought desc, b.revenue desc, b.buyer_name'
+    : 'b.revenue desc nulls last, b.buyer_name';
+  return `with ${eligibleCteSql},
+       buyer_stats as (
+         select
+           buyer_key,
+           min(buyer_name) as buyer_name,
+           min(buyer_document) as buyer_document,
+           min(buyer_email) as buyer_email,
+           min(buyer_phone) as buyer_phone,
+           count(distinct order_id)::int as orders_count,
+           coalesce(sum(quantity), 0) as units_bought,
+           coalesce(sum(line_total), 0) as revenue,
+           max(ordered_at) as last_ordered_at
+         from eligible
+         group by buyer_key
+       ),
+       buyer_companies as (
+         select
+           buyer_key,
+           company_id,
+           min(company_name) as company_name,
+           coalesce(sum(quantity), 0) as units_bought,
+           count(distinct order_id)::int as orders_count,
+           coalesce(sum(line_total), 0) as revenue
+         from eligible
+         group by buyer_key, company_id
+       ),
+       buyer_products as (
+         select
+           buyer_key,
+           product_key,
+           min(sku) as sku,
+           min(name) as name,
+           coalesce(sum(quantity), 0) as units_bought,
+           coalesce(sum(line_total), 0) as revenue
+         from eligible
+         group by buyer_key, product_key
+       )
+       select
+         b.buyer_key,
+         b.buyer_name,
+         b.buyer_document,
+         b.buyer_email,
+         b.buyer_phone,
+         b.orders_count,
+         b.units_bought,
+         b.revenue,
+         b.last_ordered_at,
+         coalesce((
+           select jsonb_agg(jsonb_build_object(
+             'companyId', company_id,
+             'companyName', company_name,
+             'unitsBought', units_bought,
+             'ordersCount', orders_count,
+             'grossSales', revenue
+           ) order by revenue desc, company_name)
+           from buyer_companies c
+           where c.buyer_key = b.buyer_key
+         ), '[]'::jsonb) as companies,
+         coalesce((
+           select jsonb_agg(jsonb_build_object(
+             'productKey', product_key,
+             'sku', sku,
+             'name', name,
+             'unitsBought', units_bought,
+             'grossSales', revenue
+           ) order by units_bought desc, name)
+           from buyer_products p
+           where p.buyer_key = b.buyer_key
+         ), '[]'::jsonb) as products
+       from buyer_stats b
+       where ${unitClause}
+       order by ${orderSql}
+       limit ${Number(limit)}`;
 }
 
 export async function listProductSalesReport(input = {}, db) {
@@ -381,7 +535,9 @@ export async function listProductSalesReport(input = {}, db) {
   const overviewCte = eligibleCte(filters, overviewValues);
   const pageFilterValues = [filters.from, filters.to];
   const pageCte = eligibleCte(filters, pageFilterValues, { includeSearch: true });
-  const pageValues = [...pageFilterValues, filters.limit, filters.offset];
+  const pageHavingValues = [...pageFilterValues];
+  const havingSql = productHavingSql(filters, pageHavingValues);
+  const pageValues = [...pageHavingValues, filters.limit, filters.offset];
 
   const sellerPublishedSql = `bool_or(exists (
            select 1 from product_listings pub
@@ -390,7 +546,7 @@ export async function listProductSalesReport(input = {}, db) {
              and ${publishedListingCondition('pub')}
          ))`;
 
-  const [pageResult, pageCountResult, totalsResult, topProductsResult, topBuyersResult] = await Promise.all([
+  const [pageResult, pageCountResult, totalsResult, topProductsResult, trackedBuyersResult, otherBuyersResult] = await Promise.all([
     target.query(
       `with ${pageCte},
        ${moneyCtes()},
@@ -449,14 +605,32 @@ export async function listProductSalesReport(input = {}, db) {
          ) order by revenue desc, company_name) as sellers
        from seller_rows
        group by product_key
+       having ${havingSql}
        order by ${productOrderSql(filters)}
        limit $${pageValues.length - 1} offset $${pageValues.length}`,
       pageValues,
     ),
     target.query(
-      `with ${pageCte}
-       select count(distinct product_key)::int as products_count from eligible`,
-      pageFilterValues,
+      `with ${pageCte},
+       ${moneyCtes()},
+       seller_rows as (
+         select product_key,
+           sum(line_total) as revenue,
+           sum(falabella_take) as falabella_take,
+           sum(arrives) as arrives,
+           sum(paid_arrives) as paid_arrives,
+           sum(pending_arrives) as pending_arrives
+         from priced
+         group by 1
+       )
+       select count(*)::int as products_count
+       from (
+         select product_key
+         from seller_rows
+         group by product_key
+         having ${havingSql}
+       ) counted`,
+      pageHavingValues,
     ),
     target.query(
       `with ${overviewCte},
@@ -499,23 +673,8 @@ export async function listProductSalesReport(input = {}, db) {
        limit 5`,
       overviewValues,
     ),
-    target.query(
-      `with ${overviewCte}
-       select
-         buyer_key,
-         min(buyer_name) as buyer_name,
-         min(buyer_document) as buyer_document,
-         min(buyer_email) as buyer_email,
-         count(distinct order_id)::int as orders_count,
-         coalesce(sum(quantity), 0) as units_bought,
-         coalesce(sum(line_total), 0) as revenue,
-         max(ordered_at) as last_ordered_at
-       from eligible
-       group by buyer_key
-       order by revenue desc nulls last, min(buyer_name)
-       limit 8`,
-      overviewValues,
-    ),
+    target.query(buyerDetailSql(overviewCte, { tracked: true, limit: TRACKED_BUYER_LIMIT }), overviewValues),
+    target.query(buyerDetailSql(overviewCte, { tracked: false, limit: OTHER_BUYER_LIMIT }), overviewValues),
   ]);
 
   const totals = totalsResult.rows[0] || {};
@@ -545,7 +704,8 @@ export async function listProductSalesReport(input = {}, db) {
       visits: null,
     },
     topProducts: topProductsResult.rows.map(mapProductRow),
-    topBuyers: topBuyersResult.rows.map(mapBuyer),
+    trackedBuyers: trackedBuyersResult.rows.map(mapBuyer),
+    topBuyers: otherBuyersResult.rows.map(mapBuyer),
     limit: filters.limit,
     offset: filters.offset,
   };
