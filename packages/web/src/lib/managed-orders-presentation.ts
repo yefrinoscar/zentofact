@@ -62,6 +62,16 @@ export type ManagedOrderListFilterInput = {
   search: string;
 };
 
+export function managedOrdersDateAfterDayChange(input: {
+  selectedDate: string;
+  previousToday: string;
+  currentToday: string;
+}) {
+  return input.selectedDate === input.previousToday
+    ? input.currentToday
+    : input.selectedDate;
+}
+
 function trimmedSearch(search: string) {
   return String(search || '').trim();
 }

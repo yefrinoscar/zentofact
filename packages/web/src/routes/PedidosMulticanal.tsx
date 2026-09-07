@@ -39,6 +39,7 @@ import {
   deliveryLabel,
   deliveryShowsAsTag,
   managedOrderSearchIgnoresDate,
+  managedOrdersDateAfterDayChange,
   managedOrdersEmptyHint,
   managedOrdersEmptyTitle,
   managedOrdersSearchHelper,
@@ -634,8 +635,8 @@ function productImageSrc(url?: string | null, shopSku?: string | null, sku?: str
   return value;
 }
 
-function dayLabel(date: string) {
-  if (date === todayInLima()) return 'hoy';
+function dayLabel(date: string, today = todayInLima()) {
+  if (date === today) return 'hoy';
   return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00`));
 }
 
@@ -643,8 +644,8 @@ function pedidoCountLabel(count: number) {
   return `${count} ${count === 1 ? 'pedido' : 'pedidos'}`;
 }
 
-function ordersHeading(count: number, date: string) {
-  const when = date === todayInLima() ? 'hoy' : `el ${dayLabel(date)}`;
+function ordersHeading(count: number, date: string, today = todayInLima()) {
+  const when = date === today ? 'hoy' : `el ${dayLabel(date, today)}`;
   return `${pedidoCountLabel(count)} ${when}`;
 }
 
@@ -663,6 +664,7 @@ export default function PedidosMulticanal() {
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
+  const [today, setToday] = useState(todayInLima);
   const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
@@ -681,10 +683,32 @@ export default function PedidosMulticanal() {
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
+  const todayRef = useRef(today);
 
-  useEffect(() => () => {
-    if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
-    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+  useEffect(() => {
+    const refreshToday = () => {
+      const currentToday = todayInLima();
+      const previousToday = todayRef.current;
+      if (currentToday === previousToday) return;
+      todayRef.current = currentToday;
+      setToday(currentToday);
+      setDate((selectedDate) => managedOrdersDateAfterDayChange({
+        selectedDate,
+        previousToday,
+        currentToday,
+      }));
+    };
+    const todayTimer = window.setInterval(refreshToday, 60_000);
+    window.addEventListener('focus', refreshToday);
+    document.addEventListener('visibilitychange', refreshToday);
+
+    return () => {
+      if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
+      if (searchTimer.current) window.clearTimeout(searchTimer.current);
+      window.clearInterval(todayTimer);
+      window.removeEventListener('focus', refreshToday);
+      document.removeEventListener('visibilitychange', refreshToday);
+    };
   }, []);
 
   const applySearch = (value: string) => {
@@ -1181,7 +1205,7 @@ export default function PedidosMulticanal() {
 
   return (
     <div className="space-y-4">
-      <DayStrip value={date} onChange={setDate} />
+      <DayStrip value={date} onChange={setDate} max={today} />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
@@ -1190,7 +1214,7 @@ export default function PedidosMulticanal() {
               <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
             ) : (
               <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
-                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date)}
+                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date, today)}
               </h2>
             )}
           </div>
@@ -1339,7 +1363,7 @@ export default function PedidosMulticanal() {
 
       <OrdersVirtualTable
         table={table}
-        aria-label={managedOrdersTableLabel(dayLabel(date), submittedSearch)}
+        aria-label={managedOrdersTableLabel(dayLabel(date, today), submittedSearch)}
         loading={loading}
         fetching={fetching}
         onRowClick={openDetail}
@@ -1364,7 +1388,7 @@ export default function PedidosMulticanal() {
           <SheetHeader className="border-b border-border px-5 py-4 pr-16">
             <SheetTitle>Productos vendidos</SheetTitle>
             <SheetDescription>
-              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date)}
+              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date, today)}
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto">
