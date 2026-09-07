@@ -13,6 +13,7 @@ import {
   isInvoiceReportFilename,
   parseInvoiceReportCsv,
   periodFromFilename,
+  uniqueSaleRefs,
 } from './pagos-invoice.js';
 import { importSettlementCsv } from './pagos.js';
 
@@ -136,6 +137,27 @@ test('los cobros de la factura Falabella se cruzan al pedido', () => {
   );
   assert.equal(sale.invoiceCharges.commission.gross, 5.38);
   assert.equal(sale.invoiceCharges.logistics.net, 6.69);
+});
+
+test('no dobla la factura cuando el pedido cruzado usa el mismo número de orden', () => {
+  assert.deepEqual(uniqueSaleRefs({
+    orderId: '3249715842',
+    orderNumbers: ['3249715842', '3249715842'],
+  }), ['3249715842']);
+  const invoiceLines = [
+    { orderNumber: '3249715842', concept: 'commission', net: -12.70, igv: -2.29, gross: -14.99 },
+    { orderNumber: '3249715842', concept: 'logistics', net: -9.24, igv: -1.66, gross: -10.90 },
+  ];
+  const [sale] = attachInvoicesToSales(
+    [{ orderId: '3249715842', orderNumbers: ['3249715842'] }],
+    [{ orderNumber: '3249715842', id: 11, number: '259810', kind: 'factura' }],
+    invoiceLines,
+  );
+  assert.equal(sale.falabellaInvoice.number, '259810');
+  assert.equal(sale.invoiceCharges.commission.net, 12.7);
+  assert.equal(sale.invoiceCharges.commission.gross, 14.99);
+  assert.equal(sale.invoiceCharges.logistics.net, 9.24);
+  assert.equal(sale.invoiceCharges.logistics.gross, 10.9);
 });
 
 test('lee líneas aunque la cabecera traiga espacios', () => {

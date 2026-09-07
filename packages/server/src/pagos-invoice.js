@@ -390,6 +390,14 @@ export function groupInvoiceDocuments(lines) {
   });
 }
 
+export function uniqueSaleRefs(sale) {
+  return [...new Set(
+    [sale?.orderId, ...(sale?.orderNumbers || [])]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  )];
+}
+
 export function attachInvoicesToSales(sales, invoices, charges) {
   const byRef = new Map();
   const chargeMap = charges instanceof Map ? charges : foldInvoiceCharges(charges);
@@ -407,9 +415,7 @@ export function attachInvoicesToSales(sales, invoices, charges) {
     byRef.set(key, list);
   }
   return (sales || []).map((sale) => {
-    const refs = [sale.orderId, ...(sale.orderNumbers || [])]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean);
+    const refs = uniqueSaleRefs(sale);
     const all = [];
     const seen = new Set();
     for (const ref of refs) {
@@ -448,7 +454,7 @@ export function foldInvoiceCharges(rows) {
 
 function mergeInvoiceCharges(refs, chargeMap) {
   const merged = {};
-  for (const ref of refs) {
+  for (const ref of uniqueSaleRefs({ orderId: null, orderNumbers: refs })) {
     const charges = chargeMap.get(ref);
     if (!charges) continue;
     for (const [concept, bucket] of Object.entries(charges)) {
