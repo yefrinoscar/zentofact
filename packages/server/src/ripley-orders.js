@@ -2,8 +2,7 @@ import { RipleyApiClient } from '@zentofact/ripley-api';
 import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
-
-const RIPLEY_PERU_API_URL = 'https://ripleyperu-prod.mirakl.net';
+import { RIPLEY_PERU_API_URL } from './ripley-api-url.js';
 
 let corePromise;
 function loadCore() {

@@ -181,28 +181,33 @@ test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   assert.match(listSql, /media_url/);
 });
 
-test('usa product_medias de Ripley cuando el catálogo no trae foto', async () => {
-  const db = new InboxDb();
-  db.queries = [];
-  const original = db.query.bind(db);
-  db.query = async (sql, params = []) => {
-    const result = await original(sql, params);
-    if (result.rows[0]?.items) {
-      result.rows[0].items = [{
-        id: 9,
-        sku: 'S793615',
-        description: 'Escritorio gamer negro',
-        quantity: 1,
-        image_url: '',
-        raw_data: { product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg' }] },
-        metadata: {},
-      }];
-    }
-    return result;
-  };
-  const result = await listLogisticsInbox({ stage: 'pending' }, db);
-  assert.equal(result.orders[0].items[0].imageUrl, 'https://home.ripley.com.pe/desk.jpg');
-});
+for (const mediaUrl of [
+  'https://home.ripley.com.pe/desk.jpg',
+  '/media/product/image/2bdc44c6-94f2-4927-8a86-6c199e72f2ff',
+]) {
+  test(`usa la foto Ripley sin asociación al catálogo: ${mediaUrl}`, async () => {
+    const db = new InboxDb();
+    db.queries = [];
+    const original = db.query.bind(db);
+    db.query = async (sql, params = []) => {
+      const result = await original(sql, params);
+      if (result.rows[0]?.items) {
+        result.rows[0].items = [{
+          id: 9,
+          sku: 'S215629',
+          description: 'Escritorio gamer negro',
+          quantity: 1,
+          image_url: mediaUrl.startsWith('/') ? mediaUrl : '',
+          raw_data: { product_medias: [{ media_url: mediaUrl }] },
+          metadata: {},
+        }];
+      }
+      return result;
+    };
+    const result = await listLogisticsInbox({ stage: 'pending' }, db);
+    assert.equal(result.orders[0].items[0].imageUrl, new URL(mediaUrl, 'https://ripleyperu-prod.mirakl.net').href);
+  });
+}
 
 test('agrupa líneas repetidas del mismo producto como una sola con cantidad', () => {
   const grouped = groupLogisticsItems([
@@ -346,5 +351,3 @@ test('arma los ids de búsqueda Ripley sin repetir', () => {
     metadata: '{"commercialId":"7935614201"}',
   }), ['7935614201-A', '7935614201']);
 });
-
-
