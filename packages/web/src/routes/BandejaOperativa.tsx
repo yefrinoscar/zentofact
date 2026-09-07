@@ -119,11 +119,10 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
       <div className="flex items-stretch gap-1 border-b" aria-label="Etapa del pedido">
         {([
-          { stage: 'pending', label: 'Por preparar', icon: PackageCheck, number: '1' },
-          { stage: 'ready', label: 'Listos para imprimir', icon: Printer, number: '2' },
-        ] as const).map(({ stage, label, icon: Icon, number }) => <button key={stage} type="button" aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
+          { stage: 'pending', label: 'Por preparar', icon: PackageCheck },
+          { stage: 'ready', label: 'Listos para imprimir', icon: Printer },
+        ] as const).map(({ stage, label, icon: Icon }) => <button key={stage} type="button" aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
           className={cn('flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-4 text-sm font-semibold outline-offset-4 sm:flex-none sm:justify-start sm:px-5', view.stage === stage ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:bg-muted/50')}>
-          <span className={cn('hidden size-6 items-center justify-center rounded-full text-xs sm:flex', view.stage === stage ? 'bg-primary text-primary-foreground' : 'bg-muted')}>{number}</span>
           <Icon className="hidden size-4 lg:block" />{label}<span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
         </button>)}
         <button type="button" aria-pressed={view.stage === 'shipped'} onClick={() => view.setStage('shipped')} className={cn('ml-auto border-b-2 px-2 text-xs sm:px-4 sm:text-sm', view.stage === 'shipped' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')}>Enviados <span className="hidden tabular-nums sm:inline">{view.counts.shipped}</span></button>
