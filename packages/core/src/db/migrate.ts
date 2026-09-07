@@ -1964,24 +1964,4 @@ export async function runMigrations(pool: Pool): Promise<void> {
   `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);
-  // Ripley SHIPPING se ingestó como listo para enviar. En Mirakl sigue pendiente
-  // de preparar salvo que SVC ya haya avanzado a recojo o despacho.
-  await pool.query(`
-    UPDATE orders o
-       SET fulfillment_status = CASE
-             WHEN upper(replace(replace(coalesce(o.metadata #>> '{ripleySvc,statusManagement}', ''), '-', '_'), ' ', '_'))
-               IN ('TO_PREPARE', 'WITH_ERROR') THEN 'preparing'
-             ELSE 'pending'
-           END,
-           updated_at = NOW()
-      FROM order_channel_accounts account
-      JOIN order_channels channel ON channel.id = account.channel_id
-     WHERE o.channel_account_id = account.id
-       AND channel.code = 'ripley'
-       AND o.fulfillment_status = 'ready_to_ship'
-       AND upper(replace(replace(coalesce(o.provider_status, ''), '-', '_'), ' ', '_'))
-           IN ('SHIPPING', 'WAITING_DEBIT', 'WAITING_DEBIT_PAYMENT', 'WAITING_ACCEPTANCE', 'STAGING')
-       AND upper(replace(replace(coalesce(o.metadata #>> '{ripleySvc,statusManagement}', ''), '-', '_'), ' ', '_'))
-           NOT IN ('TO_PICKUP', 'SHIPPED', 'RECEIVED', 'RETURN')
-  `);
 }

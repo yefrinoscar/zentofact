@@ -33,14 +33,6 @@ const MIRAKL_WAREHOUSE_PENDING = new Set([
   'WAITING_ACCEPTANCE',
   'STAGING',
 ]);
-const FULFILLMENT_RANK = {
-  pending: 1,
-  preparing: 2,
-  ready_to_ship: 3,
-  shipped: 4,
-  delivered: 5,
-};
-
 export function mapRipleyCanonicalStatus(value) {
   const status = normalizedState(value);
   if (/(CANCEL|CANCELED|CANCELLED|REFUSED|REJECTED)/.test(status)) {
@@ -69,11 +61,22 @@ export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
   if (TERMINAL_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
 
+  const existingFulfillment = String(
+    existing?.fulfillment_status || existing?.fulfillmentStatus || '',
+  ).trim().toLowerCase();
   const metadata = existing?.metadata || {};
   const svcStatus = metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement;
   const fromSvc = mapRipleySvcFulfillmentStatus(svcStatus);
-  if (fromSvc && (FULFILLMENT_RANK[fromSvc] || 0) > (FULFILLMENT_RANK[mapped.fulfillmentStatus] || 0)) {
+  if (fromSvc) {
     return { ...mapped, fulfillmentStatus: fromSvc };
+  }
+  // Sin evidencia SVC no se baja un listo ya persistido: Mirakl SHIPPING cubre
+  // tanto "para preparar" como "listo para recojo".
+  if (
+    mapped.fulfillmentStatus === 'pending'
+    && (existingFulfillment === 'ready_to_ship' || existingFulfillment === 'preparing')
+  ) {
+    return { ...mapped, fulfillmentStatus: existingFulfillment };
   }
   return mapped;
 }
@@ -83,8 +86,12 @@ export function nextHealedRipleyFulfillment(row) {
   if (fulfillment !== 'ready_to_ship') return null;
   const provider = normalizedState(row?.provider_status || row?.providerStatus);
   if (!MIRAKL_WAREHOUSE_PENDING.has(provider)) return null;
-  const next = resolveRipleyIngestStatuses(provider, row).fulfillmentStatus;
-  return next !== fulfillment ? next : null;
+  const metadata = row?.metadata || {};
+  const fromSvc = mapRipleySvcFulfillmentStatus(
+    metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement,
+  );
+  // Solo se mueve si Seller Center dice todavía para preparar. Sin SVC, se deja.
+  return fromSvc === 'preparing' ? 'preparing' : null;
 }
 
 export async function healPersistedRipleyShippingOrders(db, companyId = null) {
