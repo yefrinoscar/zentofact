@@ -4,6 +4,7 @@ import {
   buyerIdentity,
   channelLabel,
   formatVisits,
+  sellerChannelLabel,
   productSalesKpis,
   publishedLabel,
   sellerSalesLabel,
@@ -36,6 +37,7 @@ test('sin visitas el dato queda vacío y el seller usa el nombre corto', () => {
   assert.equal(publishedLabel(true), 'Sí');
   assert.equal(publishedLabel(false), 'No');
   assert.equal(channelLabel('falabella'), 'Falabella');
+  assert.equal(sellerChannelLabel({ channelCodes: ['falabella', 'manual'] }), 'Falabella · Manual');
   assert.equal(sellerSalesLabel({ companyName: 'INVERSIONES YAKURUNA S.A.C.' }), 'Yakuruna');
   assert.equal(buyerIdentity({
     buyerKey: '22334455',

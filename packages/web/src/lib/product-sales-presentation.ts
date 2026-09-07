@@ -4,6 +4,7 @@ export type ProductSaleSeller = {
   companyId: number | null;
   companyName?: string | null;
   channelCode?: string | null;
+  channelCodes?: string[] | null;
   title?: string | null;
   sellerSku?: string | null;
   shopSku?: string | null;
@@ -88,6 +89,14 @@ export function channelLabel(value?: string | null) {
   if (normalized === 'manual') return 'Manual';
   if (normalized === 'mercado_libre') return 'Mercado Libre';
   return normalized ? normalized : 'Canal';
+}
+
+export function sellerChannelLabel(seller: Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>) {
+  const codes = (seller.channelCodes && seller.channelCodes.length
+    ? seller.channelCodes
+    : seller.channelCode ? [seller.channelCode] : [])
+    .filter(Boolean);
+  return codes.map((code) => channelLabel(code)).join(' · ') || 'Canal';
 }
 
 export function sellerSalesLabel(seller: Pick<ProductSaleSeller, 'companyName'>) {

@@ -48,6 +48,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
                 companyId: 8,
                 companyName: 'LIMBO',
                 channelCode: 'falabella',
+                channelCodes: ['falabella', 'manual'],
                 sellerSku: 'LIMBO-AG301',
                 published: true,
                 unitsSold: 4,
@@ -134,6 +135,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.products[0].grossSales, 1139.4);
   assert.equal(result.products[0].sellersCount, 2);
   assert.equal(result.products[0].sellers[0].companyName, 'LIMBO');
+  assert.deepEqual(result.products[0].sellers[0].channelCodes, ['falabella', 'manual']);
   assert.equal(result.products[0].sellers[1].unitsSold, 2);
   assert.equal(result.products[0].visits, null);
   assert.equal(result.totals.productsCount, 4);
@@ -149,6 +151,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /o\.company_id=\$3/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(pageSql, /left join order_channels ch/);
+  assert.match(pageSql, /array_agg\(distinct channel_code\)/);
   assert.match(pageSql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
   assert.match(pageSql, /order by sum\(units_sold\) desc nulls last/);
   assert.match(pageSql, /customer->>'documentNumber'/);

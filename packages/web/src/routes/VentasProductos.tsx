@@ -15,12 +15,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableR
 import { documentDateRangeForLastDays, type DocumentDateRange } from '../lib/documentDateRange';
 import {
   buyerIdentity,
-  channelLabel,
   formatSalesCount,
   formatSalesMoney,
   formatVisits,
   productSalesKpis,
   publishedLabel,
+  sellerChannelLabel,
   sellerSalesLabel,
   visitsHint,
   type ProductSaleBuyer,
@@ -518,7 +518,7 @@ function SellerSalesDrawer({
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <p className="text-sm font-medium">{sellerSalesLabel(seller)}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{channelLabel(seller.channelCode)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{sellerChannelLabel(seller)}</p>
                         {seller.sellerSku ? <p className="mt-1 font-mono text-xs text-muted-foreground">{seller.sellerSku}</p> : null}
                       </div>
                       <PublishedBadge published={seller.published} />

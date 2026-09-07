@@ -193,10 +193,14 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
 }
 
 function mapSeller(seller = {}) {
+  const channelCodes = Array.isArray(seller.channelCodes)
+    ? seller.channelCodes.filter(Boolean)
+    : seller.channelCode ? [seller.channelCode] : [];
   return {
     companyId: seller.companyId == null ? null : Number(seller.companyId),
     companyName: seller.companyName || null,
-    channelCode: seller.channelCode || null,
+    channelCode: channelCodes[0] || null,
+    channelCodes,
     title: seller.title || null,
     sellerSku: seller.sellerSku || null,
     shopSku: seller.shopSku || null,
@@ -261,13 +265,17 @@ export async function listProductSalesReport(input = {}, db) {
       `with ${pageCte},
        seller_rows as (
          select product_key, product_id, sku, name, image_url, brand,
-           company_id, company_name, channel_code, seller_title, seller_sku, shop_sku,
+           company_id, company_name,
            sum(quantity) as units_sold,
            count(distinct order_id) as orders_count,
            sum(line_total) as revenue,
-           ${sellerPublishedSql} as published
+           ${sellerPublishedSql} as published,
+           array_agg(distinct channel_code) filter (where channel_code is not null) as channel_codes,
+           min(seller_title) as seller_title,
+           min(seller_sku) as seller_sku,
+           min(shop_sku) as shop_sku
          from eligible
-         group by 1,2,3,4,5,6,7,8,9,10,11,12
+         group by 1,2,3,4,5,6,7,8
        )
        select
          product_key,
@@ -285,7 +293,8 @@ export async function listProductSalesReport(input = {}, db) {
          jsonb_agg(jsonb_build_object(
            'companyId', company_id,
            'companyName', company_name,
-           'channelCode', channel_code,
+           'channelCode', channel_codes[1],
+           'channelCodes', to_jsonb(channel_codes),
            'title', seller_title,
            'sellerSku', seller_sku,
            'shopSku', shop_sku,
@@ -294,7 +303,7 @@ export async function listProductSalesReport(input = {}, db) {
            'ordersCount', orders_count,
            'grossSales', revenue,
            'visits', null
-         ) order by revenue desc, company_name, seller_title) as sellers
+         ) order by revenue desc, company_name) as sellers
        from seller_rows
        group by product_key
        order by ${productOrderSql(filters)}
