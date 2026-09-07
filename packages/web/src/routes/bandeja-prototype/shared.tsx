@@ -33,6 +33,8 @@ import {
   productImageSrc,
   readyPrintHelper,
   RIPLEY_LABEL_SOON_COPY,
+  BANDEJA_DEADLINE_FILTERS,
+  formatBandejaDeadlineDate,
   LOGISTICS_CHANNELS,
   LOGISTICS_URGENCIES,
   type LogisticsChannel,
@@ -88,10 +90,18 @@ export type BandejaView = {
   setChannelCode: (code: 'all' | LogisticsChannel) => void;
   urgency: LogisticsUrgency | null;
   setUrgency: (urgency: LogisticsUrgency | null) => void;
+  deadlineDate: string | null;
+  setDeadlineDate: (date: string | null) => void;
   searchInput: string;
   setSearchInput: (value: string) => void;
   orders: LogisticsOrder[];
-  counts: { pending: number; ready: number; shipped: number; urgency: Record<LogisticsUrgency, number> };
+  counts: {
+    pending: number;
+    ready: number;
+    shipped: number;
+    urgency: Record<LogisticsUrgency, number>;
+    dates: Array<{ date: string; count: number }>;
+  };
   totalCount: number;
   loading: boolean;
   fetching: boolean;
@@ -140,15 +150,7 @@ export function deadlineColumnLabel(key: string, now: Date) {
   if (key === 'today') return 'Vencen hoy';
   if (key === 'tomorrow') return 'Vencen mañana';
   if (key === 'no-date') return 'Sin fecha';
-  const [year, month, day] = key.split('-').map(Number);
-  if (!year || !month || !day) return key;
-  const label = new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'UTC',
-    day: 'numeric',
-    month: 'long',
-    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
-  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
-  return label.replace('septiembre', 'setiembre');
+  return formatBandejaDeadlineDate(key, now);
 }
 
 export function deadlineColumnTone(key: string): LogisticsUrgency {
@@ -369,8 +371,8 @@ export function ChannelMark({ code, className }: { code?: string | null; classNa
     );
   }
   return (
-    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Manual" aria-label="Manual">
-      M
+    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Propios" aria-label="Propios">
+      P
     </span>
   );
 }
@@ -430,7 +432,7 @@ function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): Stage
 
 function StageTools({ view, tools }: { view: BandejaView; tools?: ReactNode }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-1">
       {tools}
       <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
         <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
@@ -628,10 +630,11 @@ function StageFilterQueue({
                 type="button"
                 onClick={() => view.setChannelCode(channel.value)}
                 className={cn(
-                  'rounded-md px-1.5 py-0.5',
+                  'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5',
                   active ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
+                {channel.value !== 'all' && <ChannelMark code={channel.value} className="size-3.5" />}
                 {channel.label}
               </button>
             );
@@ -676,7 +679,7 @@ export function UrgencyTabs({ view }: { view: BandejaView }) {
   if (view.stage === 'shipped') return null;
   return (
     <div role="tablist" aria-label="Plazo de entrega" className="flex flex-wrap gap-5 border-b border-border">
-      {LOGISTICS_URGENCIES.filter((tab) => tab.value !== 'overdue').map((tab) => {
+      {BANDEJA_DEADLINE_FILTERS.map((tab) => {
         const active = view.urgency === tab.value;
         return (
           <button

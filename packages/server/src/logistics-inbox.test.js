@@ -43,8 +43,14 @@ class InboxDb {
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim();
     this.queries.push({ sql: compact, params });
+    if (compact.includes("ch.code = 'ripley'") && compact.includes("fulfillment_status = 'ready_to_ship'")) {
+      return { rows: [] };
+    }
     if (compact.includes('as pending_count')) {
       return { rows: [{ pending_count: 2, ready_count: 1, shipped_count: 0 }] };
+    }
+    if (compact.includes('as date') && compact.includes('group by 1')) {
+      return { rows: [{ date: '2026-09-08', count: 2 }] };
     }
     return {
       rows: [{
@@ -95,10 +101,12 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(result.orders[0].itemsCount, 2);
   assert.equal(result.orders[0].items[0].sku, 'ZF-1');
   assert.equal(result.stage, 'pending');
-  assert.equal(db.queries.length, 2);
-  assert.match(db.queries[1].sql, /fulfillment_status = any/);
+  assert.equal(db.queries.length, 4);
+  assert.match(db.queries[0].sql, /ch\.code = 'ripley'/);
+  assert.match(db.queries[2].sql, /fulfillment_status = any/);
+  assert.match(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
   assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
-  assert.match(db.queries[0].sql, /promised_shipping_at >= now\(\)/);
+  assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
 
 async function stubLabelPdf(text = 'FALABELLA') {
@@ -177,28 +185,33 @@ test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   assert.match(listSql, /media_url/);
 });
 
-test('usa product_medias de Ripley cuando el catálogo no trae foto', async () => {
-  const db = new InboxDb();
-  db.queries = [];
-  const original = db.query.bind(db);
-  db.query = async (sql, params = []) => {
-    const result = await original(sql, params);
-    if (result.rows[0]?.items) {
-      result.rows[0].items = [{
-        id: 9,
-        sku: 'S793615',
-        description: 'Escritorio gamer negro',
-        quantity: 1,
-        image_url: '',
-        raw_data: { product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg' }] },
-        metadata: {},
-      }];
-    }
-    return result;
-  };
-  const result = await listLogisticsInbox({ stage: 'pending' }, db);
-  assert.equal(result.orders[0].items[0].imageUrl, 'https://home.ripley.com.pe/desk.jpg');
-});
+for (const mediaUrl of [
+  'https://home.ripley.com.pe/desk.jpg',
+  '/media/product/image/2bdc44c6-94f2-4927-8a86-6c199e72f2ff',
+]) {
+  test(`usa la foto Ripley sin asociación al catálogo: ${mediaUrl}`, async () => {
+    const db = new InboxDb();
+    db.queries = [];
+    const original = db.query.bind(db);
+    db.query = async (sql, params = []) => {
+      const result = await original(sql, params);
+      if (result.rows[0]?.items) {
+        result.rows[0].items = [{
+          id: 9,
+          sku: 'S215629',
+          description: 'Escritorio gamer negro',
+          quantity: 1,
+          image_url: mediaUrl.startsWith('/') ? mediaUrl : '',
+          raw_data: { product_medias: [{ media_url: mediaUrl }] },
+          metadata: {},
+        }];
+      }
+      return result;
+    };
+    const result = await listLogisticsInbox({ stage: 'pending' }, db);
+    assert.equal(result.orders[0].items[0].imageUrl, new URL(mediaUrl, 'https://ripleyperu-prod.mirakl.net').href);
+  });
+}
 
 test('agrupa líneas repetidas del mismo producto como una sola con cantidad', () => {
   const grouped = groupLogisticsItems([
@@ -226,11 +239,22 @@ test('clasifica la urgencia de entrega en hora de Lima', () => {
 test('filtra por urgencia y expone conteos de prioridad', async () => {
   const db = new InboxDb();
   const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db);
-  assert.match(db.queries[1].sql, /America\/Lima/);
+  assert.match(db.queries[2].sql, /America\/Lima/);
   assert.deepEqual(result.counts.urgency, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
   assert.equal(result.orders[0].urgency, 'later');
   assert.equal(result.orders[0].labelPrint, null);
   assert.throws(() => parseLogisticsInboxFilters({ urgency: 'ayer' }), /Prioridad/);
+});
+
+test('filtra por una fecha concreta de plazo', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db);
+  assert.equal(parseLogisticsInboxFilters({ deadline: '2026-09-08' }).deadline, '2026-09-08');
+  assert.match(db.queries[2].sql, /::date = \$/);
+  assert.match(db.queries[3].sql, /group by 1/);
+  assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
+  assert.throws(() => parseLogisticsInboxFilters({ deadline: '08-09' }), /Fecha/);
+  assert.throws(() => parseLogisticsInboxFilters({ deadline: '2026-13-40' }), /Fecha/);
 });
 
 test('compone Falabella y deja Ripley fuera de la impresión', async () => {
@@ -331,5 +355,3 @@ test('arma los ids de búsqueda Ripley sin repetir', () => {
     metadata: '{"commercialId":"7935614201"}',
   }), ['7935614201-A', '7935614201']);
 });
-
-

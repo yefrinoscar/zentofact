@@ -15,7 +15,9 @@ import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import {
+  bandejaDeadlineFilter,
   canPrintLogisticsLabel,
+  formatBandejaDeadlineDate,
   logisticsBulkReadySummary,
   logisticsEmptyCopy,
   logisticsPrintSuccessCopy,
@@ -57,6 +59,7 @@ type InboxResponse = {
     ready: number;
     shipped: number;
     urgency: Record<LogisticsUrgency, number>;
+    dates: Array<{ date: string; count: number }>;
   };
   totalCount: number;
   limit: number;
@@ -116,6 +119,7 @@ export default function BandejaLogistica() {
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
   const [urgency, setUrgency] = useState<LogisticsUrgency | null>(null);
+  const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
   const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
@@ -126,12 +130,13 @@ export default function BandejaLogistica() {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
 
-  const filterKey = [stage, channelCode, urgency || '', search].join('|');
+  const filterKey = [stage, channelCode, urgency || '', deadlineDate || '', search].join('|');
   const offset = page.key === filterKey ? page.offset : 0;
   const filters = {
     stage,
     channelCode: channelCode === 'all' ? undefined : channelCode,
-    urgency: stage === 'shipped' || !urgency ? undefined : urgency,
+    urgency: stage === 'shipped' || deadlineDate ? undefined : bandejaDeadlineFilter(urgency) || undefined,
+    deadline: stage === 'shipped' ? undefined : deadlineDate || undefined,
     search: search || undefined,
     limit: PAGE_SIZE,
     offset,
@@ -147,16 +152,31 @@ export default function BandejaLogistica() {
 
   const now = new Date();
   const orders = inboxQuery.data?.orders || [];
-  const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY };
+  const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
   const loading = inboxQuery.isPending && !inboxQuery.data;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
+  const announce = (next: InboxNotice) => {
+    if (next.refs.length) {
+      setNotice(next);
+      return;
+    }
+    showSnackbar({
+      message: next.message,
+      tone: next.tone === 'error' ? 'error' : 'success',
+      duration: next.tone === 'error' ? 6000 : undefined,
+    });
+    setNotice(null);
+  };
 
   const changeStage = (next: LogisticsStage) => {
     setStage(next);
     setLabelSelection(null);
     setPage({ key: '', offset: 0 });
-    if (next === 'shipped') setUrgency(null);
+    if (next === 'shipped') {
+      setUrgency(null);
+      setDeadlineDate(null);
+    }
   };
 
   const printMutation = useMutation({
@@ -164,7 +184,7 @@ export default function BandejaLogistica() {
     onSuccess: (result) => {
       if (result?.base64) openPdfFromBase64(result.base64, result.filename || 'bandeja.pdf');
       const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
-      setNotice({
+      announce({
         tone: skipped.length ? 'warning' : 'success',
         message: skipped.length ? logisticsSkippedNotice(skipped) : logisticsPrintSuccessCopy(result),
         refs: [],
@@ -172,7 +192,7 @@ export default function BandejaLogistica() {
       setLabelSelection(null);
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudo armar la impresión.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudo armar la impresión.')),
     onSettled: () => setBusyOrderId(null),
   });
 
@@ -192,10 +212,10 @@ export default function BandejaLogistica() {
     mutationFn: (order: LogisticsOrder) => api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId),
     onSuccess: (_result, order) => {
       setReadyOrder(null);
-      setNotice({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
+      announce({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
     onSettled: () => setBusyOrderId(null),
   });
 
@@ -226,27 +246,27 @@ export default function BandejaLogistica() {
     },
     onSuccess: ({ total, failed }) => {
       setBulkReady(null);
-      setNotice({
+      announce({
         tone: failed.length ? (failed.length === total ? 'error' : 'warning') : 'success',
         message: logisticsBulkReadySummary(total, failed.length),
         refs: failed.map((row) => ({ label: row.orderNumber, logId: row.logId })),
       });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
   });
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
+    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onSuccess: (result) => {
       const rows = Array.isArray(result?.results) ? result.results : [];
       const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));
-      setNotice(failed.length
+      announce(failed.length
         ? { tone: rows.length === failed.length ? 'error' : 'warning', message: `${failed.length} tienda${failed.length === 1 ? '' : 's'} no pudo${failed.length === 1 ? '' : 'ieron'} sincronizarse.`, refs: [] }
-        : { tone: 'success', message: 'Pedidos actualizados con los marketplaces.', refs: [] });
+        : { tone: 'success', message: 'Pedidos actualizados.', refs: [] });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
   });
 
   const refresh = () => {
@@ -280,7 +300,9 @@ export default function BandejaLogistica() {
     channelCode,
     setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
     urgency,
-    setUrgency: (next) => { setUrgency(next); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    deadlineDate,
+    setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setUrgency: (next) => { setUrgency(bandejaDeadlineFilter(next)); setDeadlineDate(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
     searchInput,
     setSearchInput: (value) => { setSearchInput(value); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
     orders,
@@ -302,7 +324,11 @@ export default function BandejaLogistica() {
     labelSelection,
     setLabelSelection,
     toggleLabel,
-    emptyCopy: logisticsEmptyCopy(stage, stage === 'shipped' ? null : urgency),
+    emptyCopy: logisticsEmptyCopy(
+      stage,
+      stage === 'shipped' ? null : bandejaDeadlineFilter(urgency),
+      deadlineDate ? formatBandejaDeadlineDate(deadlineDate, now) : null,
+    ),
   };
 
   const body = visualVariant ? <figure className="pb-24"><figcaption className="mb-3 text-sm text-muted-foreground">{visualVariant.name} · Propuesta visual con datos ilustrativos. Los controles de la imagen no son interactivos.</figcaption><img src={visualVariant.src} alt={visualVariant.name} className="h-auto w-full rounded-lg border" /></figure>
@@ -314,9 +340,6 @@ export default function BandejaLogistica() {
   return (
     <div>
       {notice && <InboxStatusNotice notice={notice} />}
-      {notice?.tone === 'success' && stage === 'pending' && counts.ready > 0 && (
-        <Button className="mb-3" variant="outline" onClick={() => changeStage('ready')}>Ir a imprimir {counts.ready} pedidos</Button>
-      )}
       {body}
       {import.meta.env.DEV && !['A', 'B', 'C'].includes(variant) && (
         <BandejaVersionPicker current={visualVariant?.key || layout} />

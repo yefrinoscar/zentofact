@@ -9,6 +9,7 @@ import {
 } from './order-adapters/falabella.js';
 import { providerFetch } from './provider-request.js';
 import { resolveIncrementalOrderWindow } from './order-sync-policy.js';
+import { loadOrderSyncSettings } from './order-sync-settings.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -182,11 +183,22 @@ export function catalogInventoryEnabledForSync(mode, restockNow) {
 }
 
 export async function fetchFalabellaPages(client, filters, onPage, pageSize = PAGE_SIZE) {
+  const providerFilters = { ...filters };
+  for (const field of ['createdAfter', 'createdBefore', 'updatedAfter', 'updatedBefore']) {
+    if (providerFilters[field] == null) continue;
+    const value = String(providerFilters[field]);
+    if (!/(Z|[+-]\d{2}:\d{2})$/i.test(value) || !Number.isFinite(Date.parse(value))) {
+      throw new Error(`Fecha de sincronización inválida: ${field} requiere zona horaria.`);
+    }
+    // GetOrders interpreta sus filtros como hora de Lima, sin zona ni formato ISO.
+    providerFilters[field] = new Date(Date.parse(value) - 5 * 60 * 60_000)
+      .toISOString().slice(0, 19).replace('T', ' ');
+  }
   let pages = 0;
   let received = 0;
   let completed = false;
   for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
-    const response = await client.getOrdersV2({ ...filters, limit: pageSize, offset });
+    const response = await client.getOrdersV2({ ...providerFilters, limit: pageSize, offset });
     const apiError = getFalabellaError(response.data);
     if (apiError) {
       throw new Error(apiError.Head?.ErrorMessage || apiError.Head?.ErrorCode || 'Falabella devolvió un error.');
@@ -695,7 +707,12 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
         ? { createdAfter: windowFrom.toISOString(), createdBefore: windowTo.toISOString(), sortDirection: 'ASC' }
         : { updatedAfter: windowFrom.toISOString(), updatedBefore: windowTo.toISOString(), sortDirection: 'ASC' };
     } else {
-      const window = resolveIncrementalOrderWindow({ now, cursor: state.cursor_updated_at });
+      const settings = await loadOrderSyncSettings(db);
+      const window = resolveIncrementalOrderWindow({
+        now,
+        cursor: state.cursor_updated_at,
+        lookbackDays: settings.lookbackDays,
+      });
       windowFrom = new Date(window.from);
       windowTo = new Date(window.to);
       if (windowFrom >= windowTo) {
@@ -1058,7 +1075,8 @@ export function startFalabellaSyncScheduler() {
         if (!state?.enabled) continue;
         const lastReference = state.lastAttemptAt || state.lastSuccessfulSyncAt;
         const last = lastReference ? new Date(lastReference).getTime() : 0;
-        const interval = Math.max(1, Number(state.syncIntervalMinutes || 15)) * 60_000;
+        const settings = await loadOrderSyncSettings();
+        const interval = Math.max(1, Number(settings.intervalMinutes || 15)) * 60_000;
         if (Date.now() - last >= interval) await syncFalabellaOrders(company.id).catch((error) => console.error('[FALABELLA SYNC]', company.id, error.message));
       }
     } finally { running = false; }

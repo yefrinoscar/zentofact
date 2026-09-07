@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './item-image.js';
 
+test('resuelve la ruta relativa real del escritorio S215629 de Manta Raya', () => {
+  const path = '/media/product/image/2bdc44c6-94f2-4927-8a86-6c199e72f2ff';
+  const expected = `https://ripleyperu-prod.mirakl.net${path}`;
+  assert.equal(marketplaceItemImageUrl({
+    product_medias: [{ type: 'MEDIUM', media_url: path, mime_type: 'JPG' }],
+  }), expected);
+  assert.equal(marketplaceItemImageUrl({}, { imageUrl: path }), expected);
+  assert.equal(marketplaceItemImageUrl({}, { metaImageUrl: path }), expected);
+});
+
+test('conserva las rutas locales de imágenes que no son de Mirakl', () => {
+  assert.equal(marketplaceItemImageUrl({}, { imageUrl: '/uploads/product.jpg' }), '/uploads/product.jpg');
+});
+
 test('lee la foto de Ripley en product_medias de Mirakl', () => {
   assert.equal(marketplaceItemImageUrl({
     product_medias: [

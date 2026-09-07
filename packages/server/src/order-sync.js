@@ -1,11 +1,12 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
-import { ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
-import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
+import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
+import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
+import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
-import { isFalabellaSyncEnabled } from './system-config.js';
+import { isFalabellaSyncEnabled, isRipleySyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -129,6 +130,7 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   ];
   const companyId = positiveId(filters.companyId, 'companyId');
   const channelAccountId = positiveId(filters.channelAccountId, 'channelAccountId');
+  const channelCode = String(filters.channelCode || '').trim().toLowerCase();
   if (companyId) {
     values.push(companyId);
     where.push(`a.company_id=$${values.length}`);
@@ -136,6 +138,13 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   if (channelAccountId) {
     values.push(channelAccountId);
     where.push(`a.id=$${values.length}`);
+  }
+  if (channelCode) {
+    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+      throw new Error('channelCode inválido.');
+    }
+    values.push(channelCode);
+    where.push(`ch.code=$${values.length}`);
   }
   const result = await target.query(
     `select a.id as channel_account_id, a.company_id, a.display_name, a.auto_create_orders,
@@ -223,6 +232,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             displayName: account.displayName,
           },
           normalized,
+          remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
           eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}`,
           source: 'sync',
@@ -284,6 +294,9 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
       from: window.from,
       to: window.to,
     });
+    if (result.status === 'already_running') {
+      throw new Error('La sincronización de Falabella está ocupada; se reintentará la ventana.');
+    }
     return {
       pages: Number(result.pages || 0),
       received: Number(result.received || 0),
@@ -309,14 +322,29 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
     if (!locked) return { channelAccountId: accountId, status: 'already_running' };
     account = await loadAccount(db, accountId);
     assertEligible(account);
+    if (account.channelCode === 'ripley') {
+      await (dependencies.remapPersistedRipleyReadyOrders || remapPersistedRipleyReadyOrders)(
+        db,
+        account.channelAccountId,
+      );
+    }
     const state = await ensureState(db, accountId);
     await recoverInterruptedOrderSyncRuns(accountId, db);
+    const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(db);
+    const lookbackDays = options.lookbackDays ?? settings.lookbackDays;
     const mode = options.mode === 'backfill' ? 'backfill' : 'incremental';
     const window = mode === 'backfill'
-      ? resolveOrderBackfillWindow(options)
-      : resolveIncrementalOrderWindow({ cursor: state.cursor_updated_at, now: options.now });
+      ? (options.from
+        ? resolveOrderBackfillWindow(options)
+        : resolveLookbackBackfillWindow({ lookbackDays, now: options.now }))
+      : resolveIncrementalOrderWindow({
+        cursor: state.cursor_updated_at,
+        now: options.now,
+        lookbackDays,
+      });
     window.initial = mode === 'incremental' && !state.cursor_updated_at;
     window.creationRange = mode === 'backfill';
+    window.remapFromProvider = mode === 'backfill';
     if (new Date(window.from) >= new Date(window.to)) {
       return { ...account, status: 'success', skipped: 'already_current' };
     }
@@ -423,10 +451,28 @@ async function eligibleAccountIds(filters = {}, db) {
     values.push(id);
     where.push(`${column}=$${values.length}`);
   }
+  const channelCode = String(filters.channelCode || '').trim().toLowerCase();
+  if (channelCode) {
+    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+      throw new Error('channelCode inválido.');
+    }
+    values.push(channelCode);
+    where.push(`ch.code=$${values.length}`);
+  }
+  if (Array.isArray(filters.channelCodes) && filters.channelCodes.length) {
+    const allowed = filters.channelCodes
+      .map((code) => String(code || '').trim().toLowerCase())
+      .filter((code) => code === 'falabella' || code === 'ripley');
+    if (!allowed.length) return [];
+    where.push(`ch.code in (${allowed.map((_, index) => `$${values.length + index + 1}`).join(',')})`);
+    values.push(...allowed);
+  }
   if (filters.due === true) {
+    const intervalMinutes = clampPositiveMinutes(filters.intervalMinutes);
+    values.push(intervalMinutes);
     where.push(`(
       state.last_attempt_at is null
-      or state.last_attempt_at <= now() - (coalesce(state.sync_interval_minutes, 15) * interval '1 minute')
+      or state.last_attempt_at <= now() - ($${values.length} * interval '1 minute')
     )`);
   }
   const result = await target.query(
@@ -456,22 +502,42 @@ async function mapBounded(values, limit, mapper) {
   return output;
 }
 
+function clampPositiveMinutes(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 15;
+}
+
 export async function syncOrders(options = {}, dependencies = {}) {
-  const ids = await eligibleAccountIds(options, dependencies.db);
+  const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
+  const ids = await eligibleAccountIds({
+    ...options,
+    intervalMinutes: settings.intervalMinutes,
+  }, dependencies.db);
   const concurrency = Math.min(Math.max(Number(dependencies.concurrency || DEFAULT_CONCURRENCY), 1), 10);
-  const results = await mapBounded(ids, concurrency, (id) => syncOrderAccount(id, options, dependencies));
-  return { results };
+  const results = await mapBounded(ids, concurrency, (id) => syncOrderAccount(id, {
+    ...options,
+    lookbackDays: options.lookbackDays ?? settings.lookbackDays,
+  }, dependencies));
+  return { results, settings };
 }
 
 export function startOrderSyncScheduler(dependencies = {}) {
   let running = false;
   const tick = async () => {
     // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
-    if (!(await isFalabellaSyncEnabled(dependencies.db))) return;
+    const [falabellaOn, ripleyOn] = await Promise.all([
+      isFalabellaSyncEnabled(dependencies.db),
+      isRipleySyncEnabled(dependencies.db),
+    ]);
+    const channelCodes = [
+      falabellaOn ? 'falabella' : null,
+      ripleyOn ? 'ripley' : null,
+    ].filter(Boolean);
+    if (!channelCodes.length) return;
     if (running) return;
     running = true;
     try {
-      await syncOrders({ mode: 'incremental', due: true }, dependencies);
+      await syncOrders({ mode: 'incremental', due: true, channelCodes }, dependencies);
     } finally {
       running = false;
     }
