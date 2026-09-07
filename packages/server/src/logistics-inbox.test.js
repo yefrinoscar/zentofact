@@ -43,6 +43,9 @@ class InboxDb {
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim();
     this.queries.push({ sql: compact, params });
+    if (compact.includes("ch.code = 'ripley'") && compact.includes("fulfillment_status = 'ready_to_ship'")) {
+      return { rows: [] };
+    }
     if (compact.includes('as pending_count')) {
       return { rows: [{ pending_count: 2, ready_count: 1, shipped_count: 0 }] };
     }
@@ -98,10 +101,11 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(result.orders[0].itemsCount, 2);
   assert.equal(result.orders[0].items[0].sku, 'ZF-1');
   assert.equal(result.stage, 'pending');
-  assert.equal(db.queries.length, 3);
-  assert.match(db.queries[1].sql, /fulfillment_status = any/);
+  assert.equal(db.queries.length, 4);
+  assert.match(db.queries[0].sql, /ch\.code = 'ripley'/);
+  assert.match(db.queries[2].sql, /fulfillment_status = any/);
+  assert.match(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
   assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
-  assert.match(db.queries[0].sql, /promised_shipping_at >= now\(\)/);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
 
@@ -235,7 +239,7 @@ test('clasifica la urgencia de entrega en hora de Lima', () => {
 test('filtra por urgencia y expone conteos de prioridad', async () => {
   const db = new InboxDb();
   const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db);
-  assert.match(db.queries[1].sql, /America\/Lima/);
+  assert.match(db.queries[2].sql, /America\/Lima/);
   assert.deepEqual(result.counts.urgency, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
   assert.equal(result.orders[0].urgency, 'later');
   assert.equal(result.orders[0].labelPrint, null);
@@ -246,8 +250,8 @@ test('filtra por una fecha concreta de plazo', async () => {
   const db = new InboxDb();
   const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db);
   assert.equal(parseLogisticsInboxFilters({ deadline: '2026-09-08' }).deadline, '2026-09-08');
-  assert.match(db.queries[1].sql, /::date = \$/);
-  assert.match(db.queries[2].sql, /group by 1/);
+  assert.match(db.queries[2].sql, /::date = \$/);
+  assert.match(db.queries[3].sql, /group by 1/);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
   assert.throws(() => parseLogisticsInboxFilters({ deadline: '08-09' }), /Fecha/);
   assert.throws(() => parseLogisticsInboxFilters({ deadline: '2026-13-40' }), /Fecha/);
