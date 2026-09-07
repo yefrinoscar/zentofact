@@ -6,19 +6,17 @@ import {
   arrivesMoneyHint,
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
-  formatVisits,
   paidMoneyHint,
-  paidPendingCompact,
+  paidShare,
   pagosHint,
   pendingMoneyHint,
   sellerChannelLabel,
   productSalesKpis,
   publishedLabel,
   sellerSalesLabel,
-  visitsHint,
 } from './product-sales-presentation.ts';
 
-test('los kpis de ventas ponen Falabella, te llega, pagado y pendiente', () => {
+test('los kpis muestran el total de te llega y el desglose pagado/pendiente', () => {
   const kpis = productSalesKpis({
     productsCount: 4,
     unitsSold: 18,
@@ -34,23 +32,18 @@ test('los kpis de ventas ponen Falabella, te llega, pagado y pendiente', () => {
     averageTicket: 200.875,
     visits: null,
   });
-  assert.deepEqual(kpis.map((item) => item.label), [
-    'Ventas brutas', 'Falabella', 'Te llega', 'Pagado', 'Pendiente', 'Unidades', 'Pedidos', 'Ticket',
-  ]);
+  assert.deepEqual(kpis.map((item) => item.label), ['Ventas brutas', 'Te llega']);
   assert.equal(String(kpis[0].display).replace(/\u00a0/g, ' '), 'S/ 2,410.50');
-  assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 626.73');
-  assert.equal(String(kpis[3].display).replace(/\u00a0/g, ' '), 'S/ 421.56');
-  assert.equal(String(kpis[4].display).replace(/\u00a0/g, ' '), 'S/ 1,362.21');
-  assert.equal(kpis[0].why, 'Suma Falabella del maestro.');
-  assert.equal(kpis[1].why, 'Comisión y logística.');
-  assert.equal(kpis[2].why, 'Pagado y pendiente.');
-  assert.equal(kpis[3].why, 'Ya está en tu cuenta.');
-  assert.equal(kpis[4].why, 'Aún no depositan.');
-  assert.equal(kpis[5].display, '18 u');
-  assert.match(paidPendingCompact({ paidArrives: 140.52, pendingArrives: 421.56 }).replace(/\u00a0/g, ' '), /S\/ 140\.52 pagado · S\/ 421\.56 pendiente/);
+  assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 1,783.77');
+  assert.equal(kpis[0].why, '18 u · 12 pedidos.');
+  assert.equal(kpis[1].why, 'Lo que entra a tu cuenta.');
+  assert.equal(kpis[1].paid, 421.56);
+  assert.equal(kpis[1].pending, 1362.21);
+  assert.equal(kpis[1].tone, 'receive');
+  assert.equal(paidShare(421.56, 1362.21).toFixed(4), (421.56 / (421.56 + 1362.21)).toFixed(4));
 });
 
-test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
+test('sin cruce de Pagos te llega queda vacío', () => {
   const kpis = productSalesKpis({
     productsCount: 1,
     unitsSold: 2,
@@ -67,12 +60,8 @@ test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
     visits: null,
   });
   assert.equal(kpis[1].display, '—');
-  assert.equal(kpis[2].display, '—');
-  assert.equal(kpis[3].display, '—');
-  assert.equal(kpis[4].display, '—');
   assert.equal(kpis[1].why, pagosHint());
-  assert.equal(kpis[3].why, pagosHint());
-  assert.equal(kpis[4].why, pagosHint());
+  assert.equal(kpis[1].paid, null);
   assert.equal(paidMoneyHint({ paidArrives: 140.52 }), 'Ya está en tu cuenta.');
   assert.equal(pendingMoneyHint({ pendingArrives: 421.56 }), 'Aún no depositan.');
   assert.equal(formatSalesMoneyOrDash(null), '—');
@@ -80,12 +69,10 @@ test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
     falabellaTake: null,
     sellers: [{ channelCode: 'manual', channelCodes: ['manual'] }],
   }), 'Sin cobro de Falabella.');
-  assert.equal(arrivesMoneyHint({ arrives: 140.52 }), 'Lo que te depositan.');
+  assert.equal(arrivesMoneyHint({ arrives: 140.52 }), 'Lo que entra a tu cuenta.');
 });
 
-test('sin visitas el dato queda vacío y el seller usa el nombre corto', () => {
-  assert.equal(formatVisits(null), '—');
-  assert.equal(visitsHint(), 'El canal no envía visitas.');
+test('el seller usa el nombre corto', () => {
   assert.equal(publishedLabel(true), 'Sí');
   assert.equal(publishedLabel(false), 'No');
   assert.equal(channelLabel('falabella'), 'Falabella');

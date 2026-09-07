@@ -1,15 +1,14 @@
 # Product sales
 
-Admin sales table at `/ventas`. Each row is a master product. It sums only Falabella listings of that product across sellers, shows the seller breakdown in a drawer, and lists the period KPIs plus the Falabella buyers who spent the most. Marketplace visit counts are empty because Falabella does not send them. Manual and Ripley sales stay out.
+Admin sales table at `/ventas`. Each row is a master product. It sums only Falabella listings of that product across sellers, shows the seller breakdown in a drawer, and lists four period KPIs plus the Falabella buyers who spent the most. Manual and Ripley sales stay out. There is no visits column.
 
 ## Sub-features
 
 - Header `h1` `Ventas` with toolbar search `Buscar por nombre, SKU u otros criterios`, period chips, and seller filter.
-- KPI strip `Indicadores de ventas` with Ventas brutas, Falabella, Te llega, Pagado, Pendiente, Unidades, Pedidos, and Ticket for the selected period.
-- Falabella, Te llega, Pagado, and Pendiente come from `sale_settlements` (Pagos). Without a cruce they show `—`. Pagado and Pendiente split Te llega.
-- `Más vendidos` names the top products by gross sales, with units and seller count.
-- Table `Ventas de productos` lists product name, copyable SKU, published, gross sales, Falabella, Te llega, Pagado, Pendiente, units, orders, and visits (`—`).
-- Row click opens the product drawer with per-seller gross sales, Falabella take, Te llega, Pagado, Pendiente, and units.
+- KPI strip `Indicadores de ventas` with Ventas brutas and Te llega. Te llega shows the total, then Pagado vs Pendiente beside it.
+- Falabella + Te llega cover the same sales as Ventas brutas. Lines without a Pagos cruce inherit the take rate from crossed sales of that product or seller. Uncrossed Te llega stays pendiente.
+- Table `Ventas de productos` lists product, gross sales (with a Falabella/Te llega bar), Falabella, Te llega, and a Pagado/Pendiente compare bar.
+- Row click opens the product drawer with the same money split per seller.
 - `Compradores más importantes` lists the highest-spend buyers with document, orders, units, and gross sales.
 - Operator and vendedor cannot open `/ventas`.
 
@@ -28,13 +27,13 @@ Admin sales table at `/ventas`. Each row is a master product. It sums only Falab
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /dashboard/product-sales .cursor/skills/verify-zentofact/artifacts/<run>/product-sales.json
 ```
 
-Expect `totals.grossSales`, `totals.falabellaTake`, `totals.arrives`, `totals.paidArrives`, and `totals.pendingArrives`. AG301 has Falabella take, Te llega, Pagado, and Pendiente from Pagos. At least one product has `sellers.length >= 2` when LIMBO and MANTA RAYA both sold it. `visits` is `null`. Buyer list includes a seeded customer name.
+Expect `totals.grossSales` ≈ `totals.falabellaTake` + `totals.arrives`, and `totals.arrives` ≈ `totals.paidArrives` + `totals.pendingArrives`. AG301 has both LIMBO and MANTA RAYA. Buyer list includes a seeded customer name.
 
 Browser: `http://127.0.0.1:3011/#/ventas`. Handles: header `h1` `Ventas`; search `role=textbox[name='Buscar por nombre, SKU u otros criterios']`; table `aria-label='Ventas de productos'`; region `Indicadores de ventas`; region `Compradores más importantes`.
 
 ## Gotchas
 
 - The page uses `ordered_at`, not promised shipping. Cancelled and returned seed orders stay out.
-- Visits stay `—`. Do not call Falabella seller APIs to fill them.
+- Do not call Falabella seller APIs for visits. The column is gone.
 - Dashboard permission only. `operator@preview.zentofact.local` is redirected away.
 - Search filters the product table. KPIs, top products, and buyers stay on the whole period.
