@@ -20,15 +20,13 @@ import {
   arrivesMoneyHint,
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
-  formatVisits,
   paidMoneyHint,
-  paidPendingCompact,
+  paidShare,
   pendingMoneyHint,
   productSalesKpis,
   publishedLabel,
   sellerChannelLabel,
   sellerSalesLabel,
-  visitsHint,
   type ProductSaleBuyer,
   type ProductSaleRow,
   type ProductSalesTotals,
@@ -59,16 +57,16 @@ type ProductSalesResponse = {
 type SortBy = 'product' | 'units' | 'orders' | 'grossSales' | 'sellers';
 
 const COLUMN_CLASS = {
-  product: 'w-full sm:w-[26%]',
-  published: 'hidden 2xl:table-cell 2xl:w-[6%]',
-  grossSales: 'w-[22%] sm:w-[12%]',
-  falabella: 'w-[22%] sm:w-[11%]',
-  arrives: 'w-[24%] sm:w-[11%]',
-  paid: 'hidden md:table-cell md:w-[10%]',
-  pending: 'hidden md:table-cell md:w-[10%]',
-  units: 'hidden sm:table-cell sm:w-[8%]',
-  orders: 'hidden lg:table-cell lg:w-[8%]',
-  visits: 'hidden xl:table-cell xl:w-[8%]',
+  product: 'w-full sm:w-[32%]',
+  grossSales: 'w-[22%] sm:w-[16%] text-right',
+  falabella: 'hidden sm:table-cell sm:w-[14%] text-right',
+  arrives: 'w-[46%] sm:w-[38%]',
+} as const;
+
+const TONE = {
+  take: 'text-rose-700 dark:text-rose-400',
+  receive: 'text-emerald-700 dark:text-emerald-400',
+  wait: 'text-amber-700 dark:text-amber-400',
 } as const;
 
 function companyLabel(company: Company) {
@@ -168,23 +166,25 @@ export default function VentasProductos() {
       cell: ({ row }) => <ProductCell product={row.original} />,
     },
     {
-      id: 'published',
-      accessorKey: 'published',
-      header: 'Publicado',
-      cell: ({ row }) => <PublishedBadge published={row.original.published} />,
-    },
-    {
       id: 'grossSales',
       accessorKey: 'grossSales',
       header: () => <SortHeader label="Ventas brutas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />,
-      cell: ({ row }) => <span className="tabular-nums">{formatSalesMoney(row.original.grossSales)}</span>,
+      cell: ({ row }) => (
+        <MoneySplit
+          value={row.original.grossSales}
+          left={Number(row.original.falabellaTake || 0)}
+          right={Number(row.original.arrives || 0)}
+          leftClass="bg-rose-400"
+          rightClass="bg-emerald-500"
+        />
+      ),
     },
     {
       id: 'falabella',
       accessorKey: 'falabellaTake',
-      header: 'Falabella',
+      header: () => <span className={TONE.take}>Falabella</span>,
       cell: ({ row }) => (
-        <span className="tabular-nums" title={falabellaMoneyHint(row.original)}>
+        <span className={cn('tabular-nums', TONE.take)} title={falabellaMoneyHint(row.original)}>
           {formatSalesMoneyOrDash(row.original.falabellaTake)}
         </span>
       ),
@@ -192,55 +192,16 @@ export default function VentasProductos() {
     {
       id: 'arrives',
       accessorKey: 'arrives',
-      header: 'Te llega',
-      cell: ({ row }) => (
-        <span className="block" title={arrivesMoneyHint(row.original)}>
-          <span className="tabular-nums">{formatSalesMoneyOrDash(row.original.arrives)}</span>
-          {paidPendingCompact(row.original) ? (
-            <span className="mt-0.5 block text-xs text-muted-foreground md:hidden">
-              {paidPendingCompact(row.original)}
-            </span>
-          ) : null}
+      header: () => (
+        <span className="flex w-full items-end justify-between gap-4">
+          <span className={TONE.receive}>Te llega</span>
+          <span className="hidden text-xs font-medium sm:flex sm:gap-4">
+            <span className={TONE.receive}>Pagado</span>
+            <span className={TONE.wait}>Pendiente</span>
+          </span>
         </span>
       ),
-    },
-    {
-      id: 'paid',
-      accessorKey: 'paidArrives',
-      header: 'Pagado',
-      cell: ({ row }) => (
-        <span className="tabular-nums" title={paidMoneyHint(row.original)}>
-          {formatSalesMoneyOrDash(row.original.paidArrives)}
-        </span>
-      ),
-    },
-    {
-      id: 'pending',
-      accessorKey: 'pendingArrives',
-      header: 'Pendiente',
-      cell: ({ row }) => (
-        <span className="tabular-nums" title={pendingMoneyHint(row.original)}>
-          {formatSalesMoneyOrDash(row.original.pendingArrives)}
-        </span>
-      ),
-    },
-    {
-      id: 'units',
-      accessorKey: 'unitsSold',
-      header: () => <SortHeader label="Unidades" active={sortBy === 'units'} dir={sortDir} onClick={() => applySort('units')} />,
-      cell: ({ row }) => <span className="tabular-nums">{formatSalesCount(row.original.unitsSold)}</span>,
-    },
-    {
-      id: 'orders',
-      accessorKey: 'ordersCount',
-      header: () => <SortHeader label="Pedidos" active={sortBy === 'orders'} dir={sortDir} onClick={() => applySort('orders')} />,
-      cell: ({ row }) => <span className="tabular-nums">{formatSalesCount(row.original.ordersCount)}</span>,
-    },
-    {
-      id: 'visits',
-      accessorKey: 'visits',
-      header: 'Visitas',
-      cell: ({ row }) => <span className="tabular-nums text-muted-foreground" title={visitsHint()}>{formatVisits(row.original.visits)}</span>,
+      cell: ({ row }) => <ArrivesCompare product={row.original} />,
     },
   ], [sortBy, sortDir]);
 
@@ -419,16 +380,8 @@ function ProductCell({ product }: { product: ProductSaleRow }) {
       <span className="min-w-0">
         <strong className="block whitespace-normal break-words text-sm leading-5">{product.name}</strong>
         <CopyableSku sku={product.sku} />
-        <span className="mt-0.5 block text-xs text-muted-foreground">{sellerCountLabel(product.sellersCount)}</span>
-        <span className="mt-2 grid grid-cols-2 gap-3 border-t border-border/60 pt-2 sm:hidden">
-          <span>
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Unidades</span>
-            <span className="tabular-nums">{formatSalesCount(product.unitsSold)}</span>
-          </span>
-          <span>
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">Pedidos</span>
-            <span className="tabular-nums">{formatSalesCount(product.ordersCount)}</span>
-          </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          {formatSalesCount(product.unitsSold)} u · {formatSalesCount(product.ordersCount)} pedidos · {sellerCountLabel(product.sellersCount)}
         </span>
       </span>
     </div>
@@ -453,28 +406,33 @@ function SalesKpis({
   items: ReturnType<typeof productSalesKpis>;
   loading: boolean;
 }) {
-  const groups = [
-    { title: 'Dinero', cols: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-5', rows: items.filter((item) => item.group === 'Dinero') },
-    { title: 'Ritmo', cols: 'grid-cols-3', rows: items.filter((item) => item.group === 'Ritmo') },
-  ];
+  const brutas = items.find((item) => item.key === 'grossSales');
+  const llega = items.find((item) => item.key === 'arrives');
   return (
-    <div className="grid gap-5" aria-label="Indicadores de ventas">
-      {groups.map((group) => (
-        <div key={group.title}>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group.title}</p>
-          <div className={cn('mt-2 grid gap-4', group.cols)}>
-            {group.rows.map((item) => (
-              <div key={item.key} className="min-w-0">
-                {loading ? <Skeleton className="h-8 w-20" /> : (
-                  <span className="block truncate text-2xl font-semibold tabular-nums tracking-tight">{item.display}</span>
-                )}
-                <span className="mt-1 block text-sm font-medium">{item.label}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">{item.why}</span>
-              </div>
-            ))}
+    <div className="grid gap-6 md:grid-cols-2" aria-label="Indicadores de ventas">
+      <div className="min-w-0">
+        {loading || !brutas ? <Skeleton className="h-8 w-28" /> : (
+          <span className="block truncate text-2xl font-semibold tabular-nums tracking-tight">{brutas.display}</span>
+        )}
+        <span className="mt-1 block text-sm font-medium">{brutas?.label || 'Ventas brutas'}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{brutas?.why}</span>
+      </div>
+      <div className="min-w-0">
+        {loading || !llega ? <Skeleton className="h-16 w-full" /> : (
+          <div className="flex items-start gap-6">
+            <div className="min-w-0">
+              <span className={cn('block truncate text-2xl font-semibold tabular-nums tracking-tight', TONE.receive)}>
+                {llega.display}
+              </span>
+              <span className="mt-1 block text-sm font-medium">{llega.label}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">{llega.why}</span>
+            </div>
+            <div className="min-w-[11rem] flex-1">
+              <PayoutCompare paid={llega.paid} pending={llega.pending} />
+            </div>
           </div>
-        </div>
-      ))}
+        )}
+      </div>
     </div>
   );
 }
@@ -562,31 +520,26 @@ function SellerSalesDrawer({
         </SheetHeader>
         {product ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-4">
               <Metric label="Ventas brutas" value={formatSalesMoney(product.grossSales)} />
               <Metric
                 label="Falabella"
                 value={formatSalesMoneyOrDash(product.falabellaTake)}
                 hint={falabellaMoneyHint(product)}
+                tone="take"
               />
+              <Metric label="Unidades" value={`${formatSalesCount(product.unitsSold)} u · ${formatSalesCount(product.ordersCount)} pedidos`} />
+            </div>
+            <div className="mt-5 flex items-start gap-6">
               <Metric
                 label="Te llega"
                 value={formatSalesMoneyOrDash(product.arrives)}
                 hint={arrivesMoneyHint(product)}
+                tone="receive"
               />
-              <Metric
-                label="Pagado"
-                value={formatSalesMoneyOrDash(product.paidArrives)}
-                hint={paidMoneyHint(product)}
-              />
-              <Metric
-                label="Pendiente"
-                value={formatSalesMoneyOrDash(product.pendingArrives)}
-                hint={pendingMoneyHint(product)}
-              />
-              <Metric label="Unidades" value={`${formatSalesCount(product.unitsSold)} u`} />
-              <Metric label="Pedidos" value={formatSalesCount(product.ordersCount)} />
-              <Metric label="Visitas" value={formatVisits(product.visits)} hint={visitsHint()} />
+              <div className="min-w-[11rem] flex-1 pt-5">
+                <PayoutCompare paid={product.paidArrives} pending={product.pendingArrives} />
+              </div>
             </div>
             <p className="mt-8 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Por seller</p>
             {product.sellers.length === 0 ? (
@@ -603,33 +556,21 @@ function SellerSalesDrawer({
                       </div>
                       <PublishedBadge published={seller.published} />
                     </div>
-                    <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
                       <div>
                         <dt className="text-xs text-muted-foreground">Ventas brutas</dt>
                         <dd className="mt-0.5 tabular-nums">{formatSalesMoney(seller.grossSales)}</dd>
                       </div>
                       <div>
-                        <dt className="text-xs text-muted-foreground">Falabella</dt>
-                        <dd className="mt-0.5 tabular-nums" title={falabellaMoneyHint(seller)}>
-                          {formatSalesMoneyOrDash(seller.falabellaTake)}
-                        </dd>
-                      </div>
-                      <div>
                         <dt className="text-xs text-muted-foreground">Te llega</dt>
-                        <dd className="mt-0.5 tabular-nums" title={arrivesMoneyHint(seller)}>
+                        <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', TONE.receive)} title={arrivesMoneyHint(seller)}>
                           {formatSalesMoneyOrDash(seller.arrives)}
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-xs text-muted-foreground">Pagado</dt>
-                        <dd className="mt-0.5 tabular-nums" title={paidMoneyHint(seller)}>
-                          {formatSalesMoneyOrDash(seller.paidArrives)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-muted-foreground">Pendiente</dt>
-                        <dd className="mt-0.5 tabular-nums" title={pendingMoneyHint(seller)}>
-                          {formatSalesMoneyOrDash(seller.pendingArrives)}
+                        <dt className="text-xs text-muted-foreground">Falabella</dt>
+                        <dd className={cn('mt-0.5 tabular-nums', TONE.take)} title={falabellaMoneyHint(seller)}>
+                          {formatSalesMoneyOrDash(seller.falabellaTake)}
                         </dd>
                       </div>
                       <div>
@@ -637,6 +578,9 @@ function SellerSalesDrawer({
                         <dd className="mt-0.5 tabular-nums">{formatSalesCount(seller.unitsSold)} u</dd>
                       </div>
                     </dl>
+                    <div className="mt-3">
+                      <PayoutCompare paid={seller.paidArrives} pending={seller.pendingArrives} />
+                    </div>
                   </article>
                 ))}
               </div>
@@ -648,12 +592,92 @@ function SellerSalesDrawer({
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'take' | 'receive' | 'wait';
+}) {
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-lg font-semibold tabular-nums tracking-tight">{value}</p>
+      <p className={cn('mt-1 truncate text-lg font-semibold tabular-nums tracking-tight', tone && TONE[tone])}>{value}</p>
       {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function MoneySplit({
+  value,
+  left,
+  right,
+  leftClass,
+  rightClass,
+}: {
+  value: number;
+  left: number;
+  right: number;
+  leftClass: string;
+  rightClass: string;
+}) {
+  const total = Math.max(0, left) + Math.max(0, right);
+  const leftPct = total > 0 ? (Math.max(0, left) / total) * 100 : 0;
+  return (
+    <span className="block">
+      <span className="tabular-nums font-medium">{formatSalesMoney(value)}</span>
+      <span className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+        <span className={leftClass} style={{ width: `${leftPct}%` }} />
+        <span className={rightClass} style={{ width: `${Math.max(0, 100 - leftPct)}%` }} />
+      </span>
+    </span>
+  );
+}
+
+function ArrivesCompare({
+  product,
+}: {
+  product: Pick<ProductSaleRow, 'arrives' | 'paidArrives' | 'pendingArrives'>;
+}) {
+  return (
+    <div className="flex items-start gap-4">
+      <span className={cn('shrink-0 tabular-nums text-base font-semibold', TONE.receive)} title={arrivesMoneyHint(product)}>
+        {formatSalesMoneyOrDash(product.arrives)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <PayoutCompare paid={product.paidArrives} pending={product.pendingArrives} />
+      </div>
+    </div>
+  );
+}
+
+function PayoutCompare({
+  paid,
+  pending,
+}: {
+  paid?: number | null;
+  pending?: number | null;
+}) {
+  const received = Number(paid || 0);
+  const waiting = Number(pending || 0);
+  const share = paidShare(received, waiting) * 100;
+  return (
+    <div>
+      <div className="flex h-1.5 overflow-hidden rounded-full bg-amber-100 dark:bg-amber-950/60" aria-hidden="true">
+        <div className="bg-emerald-500" style={{ width: `${share}%` }} />
+      </div>
+      <div className="mt-1 flex items-start justify-between gap-3 text-[11px] tabular-nums">
+        <span className={TONE.receive} title={paidMoneyHint({ paidArrives: paid ?? null })}>
+          {formatSalesMoney(received)} <span className="font-normal">pagado</span>
+        </span>
+        <span className={TONE.wait} title={pendingMoneyHint({ pendingArrives: pending ?? null })}>
+          {formatSalesMoney(waiting)} <span className="font-normal">pendiente</span>
+        </span>
+      </div>
     </div>
   );
 }
@@ -665,15 +689,9 @@ function SalesTableSkeleton() {
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead><Skeleton className="h-4 w-20" /></TableHead>
-            <TableHead className="hidden 2xl:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
-            <TableHead className="hidden sm:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
-            <TableHead className="hidden lg:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
-            <TableHead className="hidden xl:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
+            <TableHead className="text-right"><Skeleton className="ml-auto h-4 w-16" /></TableHead>
+            <TableHead className="hidden text-right sm:table-cell"><Skeleton className="ml-auto h-4 w-16" /></TableHead>
+            <TableHead><Skeleton className="h-4 w-40" /></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -685,15 +703,9 @@ function SalesTableSkeleton() {
                   <div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-20" /></div>
                 </div>
               </TableCell>
-              <TableCell className="hidden 2xl:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
-              <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell className="hidden lg:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell className="hidden xl:table-cell"><Skeleton className="h-5 w-8" /></TableCell>
+              <TableCell className="text-right"><Skeleton className="ml-auto h-5 w-16" /></TableCell>
+              <TableCell className="hidden text-right sm:table-cell"><Skeleton className="ml-auto h-5 w-16" /></TableCell>
+              <TableCell><Skeleton className="h-8 w-40" /></TableCell>
             </TableRow>
           ))}
         </TableBody>
