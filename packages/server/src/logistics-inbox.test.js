@@ -6,8 +6,11 @@ import {
   parseLogisticsInboxFilters,
   parsePrintSelection,
   listLogisticsInbox,
+  limaTomorrowDate,
+  markLogisticsOrderReady,
   printLogisticsPack,
   ripleyOrderLookupIds,
+  scheduleRipleyInboxReady,
   urgencyForDeadline,
   groupLogisticsItems,
 } from './logistics-inbox.js';
@@ -77,8 +80,9 @@ class InboxDb {
         company_name: 'LIMBO',
         items: [{
           id: 1,
-          sku: 'ZF-1',
-          provider_sku: null,
+          sku: 'S126718',
+          main_sku: 'HOG025',
+          provider_sku: 'S126718',
           description: 'Botella',
           quantity: 2,
           raw_data: {},
@@ -99,12 +103,15 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(result.orders.length, 1);
   assert.equal(result.orders[0].channelCode, 'manual');
   assert.equal(result.orders[0].itemsCount, 2);
-  assert.equal(result.orders[0].items[0].sku, 'ZF-1');
+  assert.equal(result.orders[0].items[0].sku, 'HOG025');
+  assert.equal(result.orders[0].items[0].mainSku, 'HOG025');
   assert.equal(result.stage, 'pending');
   assert.equal(db.queries.length, 4);
   assert.match(db.queries[0].sql, /ch\.code = 'ripley'/);
   assert.match(db.queries[2].sql, /fulfillment_status = any/);
   assert.match(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[2].sql, /p\.main_sku/);
+  assert.match(db.queries[2].sql, /warehouse_address/);
   assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
@@ -225,6 +232,16 @@ test('agrupa líneas repetidas del mismo producto como una sola con cantidad', (
   assert.equal(grouped[0].imageUrl, 'https://img/bt.jpg');
   assert.equal(grouped[1].quantity, 2);
   assert.equal(grouped[1].lineCount, 1);
+});
+
+test('agrupa por SKU maestro aunque el seller SKU cambie', () => {
+  const grouped = groupLogisticsItems([
+    { id: 1, sku: 'S126718', mainSku: 'HOG025', description: 'Silla', quantity: 1, imageUrl: '' },
+    { id: 2, sku: 'S166285', mainSku: 'HOG025', description: 'Silla', quantity: 1, imageUrl: '' },
+  ]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].quantity, 2);
+  assert.equal(grouped[0].mainSku, 'HOG025');
 });
 
 test('clasifica la urgencia de entrega en hora de Lima', () => {
@@ -354,4 +371,118 @@ test('arma los ids de búsqueda Ripley sin repetir', () => {
     externalOrderId: '7935614201-A',
     metadata: '{"commercialId":"7935614201"}',
   }), ['7935614201-A', '7935614201']);
+});
+
+test('la fecha de recojo Ripley es el día siguiente en Lima', () => {
+  assert.equal(limaTomorrowDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
+});
+
+test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
+  const updates = [];
+  const listed = [];
+  const scheduled = [];
+  const enqueued = [];
+  const db = {
+    async query(sql, params) {
+      updates.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+      if (sql.includes('update orders')) {
+        return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const result = await scheduleRipleyInboxReady({
+    id: 20,
+    companyId: 7,
+    externalOrderId: '7935614201-A',
+    externalOrderNumber: '7935614201',
+    warehouseAddress: 'Av. Demo 101, Lima',
+    hasRipleySvcCredentials: false,
+    metadata: {},
+    orderedAt: '2026-09-04T10:00:00.000Z',
+  }, { pickupDate: '2026-09-08' }, {
+    db,
+    listEligible: async (filter) => {
+      listed.push(filter);
+      return { labels: [{ _id: 'label-1', order_id: filter.orderId }] };
+    },
+    schedule: async (companyId, data) => {
+      scheduled.push({ companyId, data });
+      return { manifests: [{ _id: 'man-1' }] };
+    },
+    enqueue: async (job) => {
+      enqueued.push(job);
+      return { enqueued: true };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyReady, false);
+  assert.equal(result.sandbox, true);
+  assert.equal(result.pickupDate, '2026-09-08');
+  assert.equal(result.manifestId, 'man-1');
+  assert.equal(listed[0].sandbox, true);
+  assert.deepEqual(scheduled[0].data.labelIds, ['label-1']);
+  assert.equal(scheduled[0].data.sandbox, true);
+  assert.match(JSON.stringify(updates[0].params[1]), /TO_PICKUP/);
+  assert.equal(enqueued[0].orderId, 20);
+});
+
+test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
+  const rows = [{
+    id: 20,
+    company_id: 7,
+    external_order_id: 'R-20',
+    external_order_number: 'RP-10020',
+    fulfillment_status: 'pending',
+    ordered_at: '2026-09-02T10:00:00.000Z',
+    metadata: {},
+    channel_code: 'ripley',
+    warehouse_address: 'Av. Demo 101, Lima',
+    has_ripley_svc_credentials: false,
+  }];
+  const db = {
+    async query(sql, params) {
+      if (sql.includes('from orders o')) return { rows };
+      if (sql.includes('update orders')) {
+        return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const result = await markLogisticsOrderReady({ orderId: 20, pickupDate: '2026-09-08' }, {
+    db,
+    listEligible: async () => ({ labels: [{ _id: 'label-1', order_id: 'R-20' }] }),
+    schedule: async () => ({ manifests: [{ _id: 'man-1' }] }),
+    enqueue: async () => ({ enqueued: true }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.pickupDate, '2026-09-08');
+
+  await assert.rejects(
+    () => markLogisticsOrderReady({ orderId: 21 }, {
+      db: {
+        async query() {
+          return { rows: [{ ...rows[0], id: 21, channel_code: 'falabella' }] };
+        },
+      },
+    }),
+    /no se agenda en Ripley/,
+  );
+});
+
+test('un Ripley ya listo no vuelve a agendar el recojo', async () => {
+  const result = await markLogisticsOrderReady({ orderId: 22 }, {
+    db: {
+      async query() {
+        return {
+          rows: [{
+            id: 22,
+            channel_code: 'ripley',
+            fulfillment_status: 'ready_to_ship',
+          }],
+        };
+      },
+    },
+  });
+  assert.deepEqual(result, { ok: true, alreadyReady: true, orderId: 22 });
 });

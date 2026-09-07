@@ -392,6 +392,19 @@ app.post('/logistics-inbox/print', async (c) => {
     });
   }
 });
+app.post('/logistics-inbox/:orderId/ready', async (c) => {
+  try {
+    const user = c.get('user');
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await logisticsInbox.markLogisticsOrderReady({
+      ...body,
+      orderId: c.req.param('orderId'),
+      markedBy: user?.email || user?.name || null,
+    }));
+  } catch (e) {
+    return fail(c, e, 400, { operation: 'logistics.ripley-ready' });
+  }
+});
 
 app.get('/order-management/geo/maps-key', async (c) => {
   try {

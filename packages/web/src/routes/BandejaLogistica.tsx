@@ -18,12 +18,16 @@ import {
   bandejaDeadlineFilter,
   canPrintLogisticsLabel,
   formatBandejaDeadlineDate,
+  logisticsBulkReadyConfirmCopy,
   logisticsBulkReadySummary,
   logisticsEmptyCopy,
   logisticsPrintSuccessCopy,
+  logisticsReadyConfirmCopy,
+  logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
   logisticsSkippedNotice,
   openPdfFromBase64,
+  ripleyDefaultPickupDate,
   RIPLEY_LABEL_SOON_COPY,
   type LogisticsChannel,
   type LogisticsStage,
@@ -208,11 +212,22 @@ export default function BandejaLogistica() {
     printMutation.mutate(printable.map((order) => order.id));
   };
 
+  const markOrderReady = (order: LogisticsOrder) => {
+    if (order.channelCode === 'ripley') {
+      return api.markLogisticsOrderReady({
+        orderId: order.id,
+        pickupDate: ripleyDefaultPickupDate(),
+        warehouseAddress: order.warehouseAddress || undefined,
+      });
+    }
+    return api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId);
+  };
+
   const readyMutation = useMutation({
-    mutationFn: (order: LogisticsOrder) => api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId),
+    mutationFn: markOrderReady,
     onSuccess: (_result, order) => {
       setReadyOrder(null);
-      announce({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
+      announce({ tone: 'success', message: logisticsReadySuccessCopy(order), refs: [] });
       void invalidate();
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
@@ -232,9 +247,7 @@ export default function BandejaLogistica() {
       const failed: Array<{ orderNumber: string; logId?: string }> = [];
       for (let index = 0; index < targets.length; index += 4) {
         const chunk = targets.slice(index, index + 4);
-        const results = await Promise.allSettled(chunk.map((order) => (
-          api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId)
-        )));
+        const results = await Promise.allSettled(chunk.map((order) => markOrderReady(order)));
         setBulkProgress(Math.min(index + chunk.length, targets.length));
         results.forEach((result, resultIndex) => {
           if (result.status === 'rejected') {
@@ -358,11 +371,11 @@ export default function BandejaLogistica() {
           <DialogHeader>
             <DialogTitle>Marcar {bulkReady?.length} pedidos listos</DialogTitle>
             <DialogDescription>
-              {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} Falabella seleccionado${bulkReady.length === 1 ? '' : 's'}.` : ''}
+              {bulkReady ? `${bulkReady.length} pedido${bulkReady.length === 1 ? '' : 's'} seleccionado${bulkReady.length === 1 ? '' : 's'}.` : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-md bg-orange-50 px-3 py-2.5 text-sm text-orange-900">
-            Confirma que estos pedidos están empacados. Falabella descontará el stock y habilitará las etiquetas.
+            Confirma que estos pedidos están empacados. {bulkReady ? logisticsBulkReadyConfirmCopy(bulkReady) : ''}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBulkReady(null)} disabled={bulkReadyMutation.isPending}>Cancelar</Button>
@@ -387,7 +400,10 @@ export default function BandejaLogistica() {
                 <div>
                   <p className="font-semibold">Confirma que todo el pedido está empacado</p>
                   <p className="mt-1 text-sm text-orange-800">
-                    Falabella cambiará a listo para envío todos los productos de esta orden y descontará el stock. No lo hagas si falta algún producto por empacar.
+                    {logisticsReadyConfirmCopy(readyOrder)}
+                    {readyOrder.channelCode === 'ripley' && readyOrder.warehouseAddress
+                      ? ` Recojo en ${readyOrder.warehouseAddress}.`
+                      : ''}
                   </p>
                 </div>
               </div>
@@ -395,7 +411,7 @@ export default function BandejaLogistica() {
                 <Button variant="outline" onClick={closeReady} disabled={readyMutation.isPending}>Cancelar</Button>
                 <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
                   {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-                  Confirmar y marcar listo
+                  {readyOrder.channelCode === 'ripley' ? 'Agendar recojo' : 'Confirmar y marcar listo'}
                 </Button>
               </DialogFooter>
             </>

@@ -50,6 +50,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 export type LogisticsItem = {
   id: number;
   sku?: string | null;
+  mainSku?: string | null;
   shopSku?: string | null;
   description: string;
   quantity: number;
@@ -79,6 +80,7 @@ export type LogisticsOrder = {
   updatedAt?: string | null;
   itemsCount: number;
   items: LogisticsItem[];
+  warehouseAddress?: string | null;
   labelPrint?: { printCount: number; lastPrintedAt: string | null } | null;
 };
 

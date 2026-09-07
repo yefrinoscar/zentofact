@@ -1,5 +1,5 @@
 import type { LogisticsOrder } from './bandeja-prototype/shared';
-import { groupLogisticsByUrgency, canMarkFalabellaReady, canPrintLogisticsLabel, formatBandejaDeadlineDate, limaDeadlineKey, logisticsChannelLabel, logisticsUrgency, parseLogisticsDate, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
+import { groupLogisticsByUrgency, canMarkLogisticsReady, canPrintLogisticsLabel, formatBandejaDeadlineDate, limaDeadlineKey, logisticsChannelLabel, logisticsItemSku, logisticsUrgency, parseLogisticsDate, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
 import { sellerShortName } from '../lib/seller-name';
 
 export const OPERATIONAL_VARIANTS = [
@@ -54,14 +54,14 @@ export function operationalGroups(orders: LogisticsOrder[], now: Date, layout: O
       label = logisticsChannelLabel(key);
     } else if (layout === '11') {
       const item = order.items[0];
-      key = order.items.length !== 1 ? 'multiple' : `${order.companyId}|${item.sku || item.shopSku || item.description}`;
+      key = order.items.length !== 1 ? 'multiple' : `${order.companyId}|${logisticsItemSku(item) || item.description}`;
       label = order.items.length !== 1 ? 'Pedidos con varios productos' : `${item.description} · ${sellerShortName(order.companyName)}`;
     } else if (layout === '12') {
       const units = orderUnits(order);
       key = units === 1 ? 'single' : 'multiple';
       label = units === 1 ? 'Una unidad' : 'Varias unidades · Revisa cantidades';
     } else if (layout === '16') {
-      key = canMarkFalabellaReady(order) ? 'prepare' : canPrintLogisticsLabel(order) ? 'print' : 'other';
+      key = canMarkLogisticsReady(order) ? 'prepare' : canPrintLogisticsLabel(order) ? 'print' : 'other';
       label = key === 'prepare' ? 'Puedes marcar listos' : key === 'print' ? 'Puedes imprimir' : 'Sin acción disponible';
     }
     const group = groups.get(key) || { key, label, orders: [] };

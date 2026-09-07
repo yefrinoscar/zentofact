@@ -143,6 +143,7 @@ const SEED_LOGISTICS_ORDERS = [
     key: 'ripley-pending',
     orderNumber: 'RP-10020',
     channel: 'ripley',
+    sku: 'HOG025',
     customer: {
       name: 'Marco Preview',
       firstName: 'Marco',
@@ -237,6 +238,7 @@ const SEED_LOGISTICS_ORDERS = [
     customer: { name: 'Nora Preview', firstName: 'Nora', lastName: 'Preview', documentNumber: '88990011' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'ready_to_ship',
+    ripleySvc: { statusManagement: 'TO_PICKUP' },
     promisedOffsetDays: 0,
     itemLines: 2,
     shipping: { type: 'envio' },
@@ -322,6 +324,7 @@ const SEED_PRODUCTS = [
     imageUrl: '/seed/hog025.svg',
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
+      { companyRuc: '20990001001', channelCode: 'ripley', sellerSku: 'S126718', title: 'Silla evolutiva gris · Ripley' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
       { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S166285', title: 'Silla evolutiva gris · Ripley' },
     ],
@@ -357,6 +360,7 @@ const SEED_PRODUCTS = [
     stock: 40,
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-BB220', title: 'Set platos · LIMBO' },
+      { companyRuc: '20990001001', channelCode: 'ripley', sellerSku: 'S220991', title: 'Set platos · Ripley' },
       { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-BB220', title: 'Set platos · MANTA RAYA' },
     ],
   },
@@ -372,6 +376,14 @@ const SEED_PRODUCTS = [
     ],
   },
 ];
+
+function seedListingSellerSku(spec, lineProduct, company) {
+  if ((spec.channel || 'falabella') === 'manual') return null;
+  const seedProduct = SEED_PRODUCTS.find((row) => row.mainSku === lineProduct.mainSku);
+  return seedProduct?.listings?.find((row) => (
+    row.companyRuc === company.ruc && row.channelCode === (spec.channel || 'falabella')
+  ))?.sellerSku || null;
+}
 
 function newId() {
   return randomBytes(24).toString('base64url');
@@ -781,6 +793,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
          order_status = EXCLUDED.order_status,
          fulfillment_status = EXCLUDED.fulfillment_status,
          shipping = EXCLUDED.shipping,
+         metadata = EXCLUDED.metadata,
          promised_shipping_at = EXCLUDED.promised_shipping_at,
          cancelled_at = coalesce(orders.cancelled_at, EXCLUDED.cancelled_at),
          returned_at = coalesce(orders.returned_at, EXCLUDED.returned_at),
@@ -799,6 +812,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
         JSON.stringify(spec.shipping || {}),
         JSON.stringify({
           origin: SEED_MARKER,
+          ...(spec.ripleySvc ? { ripleySvc: spec.ripleySvc } : {}),
           ...(spec.payment ? {
             paymentMethod: spec.payment.method,
             paidTo: spec.payment.paidTo || '',
@@ -819,9 +833,11 @@ async function ensureSampleOrders(companiesByRuc, products) {
       const unitPrice = lineProduct.referencePrice || 100;
       line += 1;
       const ripleyImage = spec.productMediaUrl || lineProduct.imageUrl || null;
+      const sellerSku = seedListingSellerSku(spec, lineProduct, company);
+      const itemSku = sellerSku || lineProduct.mainSku;
       const rawData = spec.channel === 'ripley' && ripleyImage
         ? {
-            offer_sku: lineProduct.mainSku,
+            offer_sku: itemSku,
             product_sku: lineProduct.mainSku,
             product_title: lineProduct.name,
             product_medias: [{ media_url: ripleyImage, type: 'SMALL', mime_type: 'image/svg+xml' }],
@@ -831,25 +847,32 @@ async function ensureSampleOrders(companiesByRuc, products) {
         `INSERT INTO order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
            unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata, raw_data
-         ) VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11::jsonb,$12::jsonb)
-         ON CONFLICT (order_id, external_item_id) DO NOTHING
-         RETURNING id, product_id, quantity`,
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb)
+         ON CONFLICT (order_id, external_item_id) DO UPDATE SET
+           sku = EXCLUDED.sku,
+           provider_sku = EXCLUDED.provider_sku,
+           main_sku = EXCLUDED.main_sku,
+           description = EXCLUDED.description,
+           raw_data = EXCLUDED.raw_data
+         RETURNING id, product_id, quantity, (xmax = 0) AS inserted`
         [
           orderId,
           `${externalOrderId}-item-${line}`,
-          lineProduct.mainSku,
+          itemSku,
+          sellerSku || lineProduct.mainSku,
           lineProduct.name,
           quantity,
           unitPrice,
           unitPrice * quantity,
           lineProduct.productId,
+          lineProduct.mainSku,
           spec.stockState,
           spec.stockApplied,
           JSON.stringify({ origin: SEED_MARKER, imageUrl: ripleyImage }),
           JSON.stringify(rawData),
         ],
       );
-      if (itemResult.rows[0]) insertedItems.push(itemResult.rows[0]);
+      if (itemResult.rows[0]?.inserted) insertedItems.push(itemResult.rows[0]);
     }
     if (spec.needsReturnApproval) {
       for (const item of insertedItems) {
