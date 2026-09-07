@@ -156,6 +156,18 @@ export default function BandejaLogistica() {
   const loading = inboxQuery.isPending && !inboxQuery.data;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
+  const announce = (next: InboxNotice) => {
+    if (next.refs.length) {
+      setNotice(next);
+      return;
+    }
+    showSnackbar({
+      message: next.message,
+      tone: next.tone === 'error' ? 'error' : 'success',
+      duration: next.tone === 'error' ? 6000 : undefined,
+    });
+    setNotice(null);
+  };
 
   const changeStage = (next: LogisticsStage) => {
     setStage(next);
@@ -172,7 +184,7 @@ export default function BandejaLogistica() {
     onSuccess: (result) => {
       if (result?.base64) openPdfFromBase64(result.base64, result.filename || 'bandeja.pdf');
       const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
-      setNotice({
+      announce({
         tone: skipped.length ? 'warning' : 'success',
         message: skipped.length ? logisticsSkippedNotice(skipped) : logisticsPrintSuccessCopy(result),
         refs: [],
@@ -180,7 +192,7 @@ export default function BandejaLogistica() {
       setLabelSelection(null);
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudo armar la impresión.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudo armar la impresión.')),
     onSettled: () => setBusyOrderId(null),
   });
 
@@ -200,10 +212,10 @@ export default function BandejaLogistica() {
     mutationFn: (order: LogisticsOrder) => api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId),
     onSuccess: (_result, order) => {
       setReadyOrder(null);
-      setNotice({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
+      announce({ tone: 'success', message: `${order.externalOrderNumber} quedó listo para enviar. Ya puedes imprimir la etiqueta.`, refs: [] });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudo marcar el pedido como listo para envío.')),
     onSettled: () => setBusyOrderId(null),
   });
 
@@ -234,14 +246,14 @@ export default function BandejaLogistica() {
     },
     onSuccess: ({ total, failed }) => {
       setBulkReady(null);
-      setNotice({
+      announce({
         tone: failed.length ? (failed.length === total ? 'error' : 'warning') : 'success',
         message: logisticsBulkReadySummary(total, failed.length),
         refs: failed.map((row) => ({ label: row.orderNumber, logId: row.logId })),
       });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
   });
 
   const syncMutation = useMutation({
@@ -249,12 +261,12 @@ export default function BandejaLogistica() {
     onSuccess: (result) => {
       const rows = Array.isArray(result?.results) ? result.results : [];
       const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));
-      setNotice(failed.length
+      announce(failed.length
         ? { tone: rows.length === failed.length ? 'error' : 'warning', message: `${failed.length} tienda${failed.length === 1 ? '' : 's'} no pudo${failed.length === 1 ? '' : 'ieron'} sincronizarse.`, refs: [] }
-        : { tone: 'success', message: 'Pedidos actualizados con los marketplaces.', refs: [] });
+        : { tone: 'success', message: 'Pedidos actualizados.', refs: [] });
       void invalidate();
     },
-    onError: (error) => setNotice(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
+    onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
   });
 
   const refresh = () => {
@@ -328,9 +340,6 @@ export default function BandejaLogistica() {
   return (
     <div>
       {notice && <InboxStatusNotice notice={notice} />}
-      {notice?.tone === 'success' && stage === 'pending' && counts.ready > 0 && (
-        <Button className="mb-3" variant="outline" onClick={() => changeStage('ready')}>Ir a imprimir {counts.ready} pedidos</Button>
-      )}
       {body}
       {import.meta.env.DEV && !['A', 'B', 'C'].includes(variant) && (
         <BandejaVersionPicker current={visualVariant?.key || layout} />
