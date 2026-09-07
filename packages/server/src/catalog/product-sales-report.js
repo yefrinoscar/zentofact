@@ -209,10 +209,17 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
     )`;
 }
 
+function settlementMoney(value, arrives) {
+  if (arrives == null && value == null) return null;
+  if (arrives != null) return Number(value || 0);
+  return value == null ? null : Number(value);
+}
+
 function mapSeller(seller = {}) {
   const channelCodes = Array.isArray(seller.channelCodes)
     ? seller.channelCodes.filter(Boolean)
     : seller.channelCode ? [seller.channelCode] : [];
+  const arrives = seller.arrives == null ? null : Number(seller.arrives);
   return {
     companyId: seller.companyId == null ? null : Number(seller.companyId),
     companyName: seller.companyName || null,
@@ -226,12 +233,15 @@ function mapSeller(seller = {}) {
     ordersCount: Number(seller.ordersCount || 0),
     grossSales: Number(seller.grossSales || 0),
     falabellaTake: seller.falabellaTake == null ? null : Number(seller.falabellaTake),
-    arrives: seller.arrives == null ? null : Number(seller.arrives),
+    arrives,
+    paidArrives: settlementMoney(seller.paidArrives, arrives),
+    pendingArrives: settlementMoney(seller.pendingArrives, arrives),
     visits: seller.visits == null ? null : Number(seller.visits),
   };
 }
 
 function mapProductRow(row = {}) {
+  const arrives = row.arrives == null ? null : Number(row.arrives);
   return {
     productKey: row.product_key,
     productId: row.product_id == null ? null : Number(row.product_id),
@@ -246,7 +256,9 @@ function mapProductRow(row = {}) {
     sellersCount: Number(row.sellers_count || 0),
     grossSales: Number(row.revenue || 0),
     falabellaTake: row.falabella_take == null ? null : Number(row.falabella_take),
-    arrives: row.arrives == null ? null : Number(row.arrives),
+    arrives,
+    paidArrives: settlementMoney(row.paid_arrives, arrives),
+    pendingArrives: settlementMoney(row.pending_arrives, arrives),
     visits: row.visits == null ? null : Number(row.visits),
     sellers: (Array.isArray(row.sellers) ? row.sellers : []).map(mapSeller),
   };
@@ -292,6 +304,8 @@ export async function listProductSalesReport(input = {}, db) {
            sum(line_total) as revenue,
            sum(${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')}) as falabella_take,
            sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives,
+           sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'paid') as paid_arrives,
+           sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'pending') as pending_arrives,
            ${sellerPublishedSql} as published,
            array_agg(distinct channel_code) filter (where channel_code is not null) as channel_codes,
            min(seller_title) as seller_title,
@@ -314,6 +328,8 @@ export async function listProductSalesReport(input = {}, db) {
          sum(revenue) as revenue,
          sum(falabella_take) as falabella_take,
          sum(arrives) as arrives,
+         sum(paid_arrives) as paid_arrives,
+         sum(pending_arrives) as pending_arrives,
          null::numeric as visits,
          jsonb_agg(jsonb_build_object(
            'companyId', company_id,
@@ -329,6 +345,8 @@ export async function listProductSalesReport(input = {}, db) {
            'grossSales', revenue,
            'falabellaTake', falabella_take,
            'arrives', arrives,
+           'paidArrives', paid_arrives,
+           'pendingArrives', pending_arrives,
            'visits', null
          ) order by revenue desc, company_name) as sellers
        from seller_rows
@@ -372,7 +390,9 @@ export async function listProductSalesReport(input = {}, db) {
          count(distinct company_id)::int as sellers_count,
          coalesce(sum(line_total), 0) as revenue,
          sum(${SETTLEMENT_SHARE('coalesce(settlement_commission, 0) + coalesce(settlement_other_fees, 0)')}) as falabella_take,
-         sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives
+         sum(${SETTLEMENT_SHARE('settlement_neto')}) as arrives,
+         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'paid') as paid_arrives,
+         sum(${SETTLEMENT_SHARE('settlement_neto')}) filter (where settlement_status = 'pending') as pending_arrives
        from eligible
        group by product_key
        order by revenue desc nulls last, min(name), min(sku)
@@ -418,8 +438,8 @@ export async function listProductSalesReport(input = {}, db) {
       grossSales,
       falabellaTake: settlementOrders > 0 && totals.falabella_take != null ? Number(totals.falabella_take) : null,
       arrives: settlementOrders > 0 && totals.arrives != null ? Number(totals.arrives) : null,
-      paidArrives: settlementOrders > 0 && totals.paid_arrives != null ? Number(totals.paid_arrives) : null,
-      pendingArrives: settlementOrders > 0 && totals.pending_arrives != null ? Number(totals.pending_arrives) : null,
+      paidArrives: settlementOrders > 0 ? Number(totals.paid_arrives || 0) : null,
+      pendingArrives: settlementOrders > 0 ? Number(totals.pending_arrives || 0) : null,
       settlementOrders,
       averageTicket: ordersCount > 0 ? grossSales / ordersCount : 0,
       visits: null,

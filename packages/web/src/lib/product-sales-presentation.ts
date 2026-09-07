@@ -14,6 +14,8 @@ export type ProductSaleSeller = {
   grossSales: number;
   falabellaTake: number | null;
   arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
   visits: number | null;
 };
 
@@ -32,6 +34,8 @@ export type ProductSaleRow = {
   grossSales: number;
   falabellaTake: number | null;
   arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
   visits: number | null;
   sellers: ProductSaleSeller[];
 };
@@ -117,6 +121,24 @@ export function arrivesMoneyHint(row?: {
   return falabellaMoneyHint({ falabellaTake: null, sellers: row?.sellers });
 }
 
+export function paidMoneyHint(row?: { paidArrives?: number | null } | null) {
+  if (row?.paidArrives == null) return pagosHint();
+  return 'Ya está en tu cuenta.';
+}
+
+export function pendingMoneyHint(row?: { pendingArrives?: number | null } | null) {
+  if (row?.pendingArrives == null) return pagosHint();
+  return 'Aún no depositan.';
+}
+
+export function paidPendingCompact(row?: {
+  paidArrives?: number | null;
+  pendingArrives?: number | null;
+} | null) {
+  if (row?.paidArrives == null && row?.pendingArrives == null) return '';
+  return `${formatSalesMoneyOrDash(row?.paidArrives)} pagado · ${formatSalesMoneyOrDash(row?.pendingArrives)} pendiente`;
+}
+
 export function formatSalesCount(value: number | null | undefined) {
   return integer.format(Number(value || 0));
 }
@@ -193,6 +215,20 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
       label: 'Te llega',
       why: arrivesWhy(totals),
       display: formatSalesMoneyOrDash(arrives),
+    },
+    {
+      key: 'paid' as const,
+      group: 'Dinero',
+      label: 'Pagado',
+      why: totals?.paidArrives == null ? pagosHint() : 'Ya está en tu cuenta.',
+      display: formatSalesMoneyOrDash(totals?.paidArrives ?? null),
+    },
+    {
+      key: 'pending' as const,
+      group: 'Dinero',
+      label: 'Pendiente',
+      why: totals?.pendingArrives == null ? pagosHint() : 'Aún no depositan.',
+      display: formatSalesMoneyOrDash(totals?.pendingArrives ?? null),
     },
     {
       key: 'units' as const,

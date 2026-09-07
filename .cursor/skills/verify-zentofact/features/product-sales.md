@@ -5,11 +5,11 @@ Admin sales table at `/ventas`. Each row is a master product. It sums only Falab
 ## Sub-features
 
 - Header `h1` `Ventas` with toolbar search `Buscar por nombre, SKU u otros criterios`, period chips, and seller filter.
-- KPI strip `Indicadores de ventas` with Ventas brutas, Falabella, Te llega, Unidades, Pedidos, and Ticket for the selected period.
-- Falabella and Te llega come from `sale_settlements` (Pagos). Without a cruce they show `—`.
+- KPI strip `Indicadores de ventas` with Ventas brutas, Falabella, Te llega, Pagado, Pendiente, Unidades, Pedidos, and Ticket for the selected period.
+- Falabella, Te llega, Pagado, and Pendiente come from `sale_settlements` (Pagos). Without a cruce they show `—`. Pagado and Pendiente split Te llega.
 - `Más vendidos` names the top products by gross sales, with units and seller count.
-- Table `Ventas de productos` lists product name, copyable SKU, published, gross sales, Falabella, Te llega, units, orders, and visits (`—`).
-- Row click opens the product drawer with per-seller gross sales, Falabella take, Te llega, and units.
+- Table `Ventas de productos` lists product name, copyable SKU, published, gross sales, Falabella, Te llega, Pagado, Pendiente, units, orders, and visits (`—`).
+- Row click opens the product drawer with per-seller gross sales, Falabella take, Te llega, Pagado, Pendiente, and units.
 - `Compradores más importantes` lists the highest-spend buyers with document, orders, units, and gross sales.
 - Operator and vendedor cannot open `/ventas`.
 
@@ -28,7 +28,7 @@ Admin sales table at `/ventas`. Each row is a master product. It sums only Falab
 .cursor/skills/verify-zentofact/scripts/control-zentofact api GET /dashboard/product-sales .cursor/skills/verify-zentofact/artifacts/<run>/product-sales.json
 ```
 
-Expect `totals.grossSales`, `totals.falabellaTake`, and `totals.arrives`. AG301 has Falabella take and Te llega from Pagos. At least one product has `sellers.length >= 2` when LIMBO and MANTA RAYA both sold it. `visits` is `null`. Buyer list includes a seeded customer name.
+Expect `totals.grossSales`, `totals.falabellaTake`, `totals.arrives`, `totals.paidArrives`, and `totals.pendingArrives`. AG301 has Falabella take, Te llega, Pagado, and Pendiente from Pagos. At least one product has `sellers.length >= 2` when LIMBO and MANTA RAYA both sold it. `visits` is `null`. Buyer list includes a seeded customer name.
 
 Browser: `http://127.0.0.1:3011/#/ventas`. Handles: header `h1` `Ventas`; search `role=textbox[name='Buscar por nombre, SKU u otros criterios']`; table `aria-label='Ventas de productos'`; region `Indicadores de ventas`; region `Compradores más importantes`.
 

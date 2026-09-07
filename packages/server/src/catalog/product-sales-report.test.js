@@ -44,6 +44,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
             revenue: 1139.4,
             falabella_take: 296.24,
             arrives: 842.16,
+            paid_arrives: 140.52,
+            pending_arrives: 701.64,
             visits: null,
             sellers: [
               {
@@ -58,6 +60,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
                 grossSales: 759.6,
                 falabellaTake: 197.5,
                 arrives: 561.2,
+                paidArrives: 0,
+                pendingArrives: 561.2,
                 visits: null,
               },
               {
@@ -71,6 +75,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
                 grossSales: 379.8,
                 falabellaTake: 98.74,
                 arrives: 280.96,
+                paidArrives: 140.52,
+                pendingArrives: 140.44,
                 visits: null,
               },
             ],
@@ -146,6 +152,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.products[0].grossSales, 1139.4);
   assert.equal(result.products[0].falabellaTake, 296.24);
   assert.equal(result.products[0].arrives, 842.16);
+  assert.equal(result.products[0].paidArrives, 140.52);
+  assert.equal(result.products[0].pendingArrives, 701.64);
+  assert.equal(result.products[0].sellers[0].pendingArrives, 561.2);
+  assert.equal(result.products[0].sellers[1].paidArrives, 140.52);
   assert.equal(result.products[0].sellersCount, 2);
   assert.equal(result.products[0].sellers[0].falabellaTake, 197.5);
   assert.equal(result.products[0].sellers[0].companyName, 'LIMBO');
@@ -156,6 +166,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.totals.buyersCount, 9);
   assert.equal(result.totals.falabellaTake, 626.73);
   assert.equal(result.totals.arrives, 1783.77);
+  assert.equal(result.totals.paidArrives, 421.56);
+  assert.equal(result.totals.pendingArrives, 1362.21);
   assert.equal(result.totals.settlementOrders, 3);
   assert.equal(result.totals.averageTicket, 2410.5 / 12);
   assert.equal(result.totalCount, 1);
@@ -167,6 +179,8 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /ordered_at at time zone 'America\/Lima'\)::date between \$1::date and \$2::date/i);
   assert.match(pageSql, /o\.company_id=\$3/);
   assert.match(pageSql, /left join sale_settlements ss/);
+  assert.match(pageSql, /settlement_status = 'paid'/);
+  assert.match(pageSql, /settlement_status = 'pending'/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(pageSql, /l\.channel_code='falabella'/);
   assert.match(pageSql, /coalesce\(linked\.channel_code, listing\.channel_code, ch\.code\) = 'falabella'/);

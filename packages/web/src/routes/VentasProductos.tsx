@@ -21,6 +21,9 @@ import {
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
   formatVisits,
+  paidMoneyHint,
+  paidPendingCompact,
+  pendingMoneyHint,
   productSalesKpis,
   publishedLabel,
   sellerChannelLabel,
@@ -56,14 +59,16 @@ type ProductSalesResponse = {
 type SortBy = 'product' | 'units' | 'orders' | 'grossSales' | 'sellers';
 
 const COLUMN_CLASS = {
-  product: 'w-full sm:w-[30%]',
-  published: 'hidden xl:table-cell xl:w-[8%]',
-  grossSales: 'w-[23%] sm:w-[14%]',
-  falabella: 'w-[23%] sm:w-[14%]',
-  arrives: 'w-[24%] sm:w-[14%]',
-  units: 'hidden sm:table-cell sm:w-[10%]',
-  orders: 'hidden md:table-cell md:w-[10%]',
-  visits: 'hidden lg:table-cell lg:w-[10%]',
+  product: 'w-full sm:w-[26%]',
+  published: 'hidden 2xl:table-cell 2xl:w-[6%]',
+  grossSales: 'w-[22%] sm:w-[12%]',
+  falabella: 'w-[22%] sm:w-[11%]',
+  arrives: 'w-[24%] sm:w-[11%]',
+  paid: 'hidden md:table-cell md:w-[10%]',
+  pending: 'hidden md:table-cell md:w-[10%]',
+  units: 'hidden sm:table-cell sm:w-[8%]',
+  orders: 'hidden lg:table-cell lg:w-[8%]',
+  visits: 'hidden xl:table-cell xl:w-[8%]',
 } as const;
 
 function companyLabel(company: Company) {
@@ -189,8 +194,33 @@ export default function VentasProductos() {
       accessorKey: 'arrives',
       header: 'Te llega',
       cell: ({ row }) => (
-        <span className="tabular-nums" title={arrivesMoneyHint(row.original)}>
-          {formatSalesMoneyOrDash(row.original.arrives)}
+        <span className="block" title={arrivesMoneyHint(row.original)}>
+          <span className="tabular-nums">{formatSalesMoneyOrDash(row.original.arrives)}</span>
+          {paidPendingCompact(row.original) ? (
+            <span className="mt-0.5 block text-xs text-muted-foreground md:hidden">
+              {paidPendingCompact(row.original)}
+            </span>
+          ) : null}
+        </span>
+      ),
+    },
+    {
+      id: 'paid',
+      accessorKey: 'paidArrives',
+      header: 'Pagado',
+      cell: ({ row }) => (
+        <span className="tabular-nums" title={paidMoneyHint(row.original)}>
+          {formatSalesMoneyOrDash(row.original.paidArrives)}
+        </span>
+      ),
+    },
+    {
+      id: 'pending',
+      accessorKey: 'pendingArrives',
+      header: 'Pendiente',
+      cell: ({ row }) => (
+        <span className="tabular-nums" title={pendingMoneyHint(row.original)}>
+          {formatSalesMoneyOrDash(row.original.pendingArrives)}
         </span>
       ),
     },
@@ -424,15 +454,15 @@ function SalesKpis({
   loading: boolean;
 }) {
   const groups = [
-    { title: 'Dinero', rows: items.filter((item) => item.group === 'Dinero') },
-    { title: 'Ritmo', rows: items.filter((item) => item.group === 'Ritmo') },
+    { title: 'Dinero', cols: 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-5', rows: items.filter((item) => item.group === 'Dinero') },
+    { title: 'Ritmo', cols: 'grid-cols-3', rows: items.filter((item) => item.group === 'Ritmo') },
   ];
   return (
-    <div className="grid gap-5 md:grid-cols-2" aria-label="Indicadores de ventas">
+    <div className="grid gap-5" aria-label="Indicadores de ventas">
       {groups.map((group) => (
         <div key={group.title}>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group.title}</p>
-          <div className="mt-2 grid grid-cols-3 gap-4">
+          <div className={cn('mt-2 grid gap-4', group.cols)}>
             {group.rows.map((item) => (
               <div key={item.key} className="min-w-0">
                 {loading ? <Skeleton className="h-8 w-20" /> : (
@@ -544,6 +574,16 @@ function SellerSalesDrawer({
                 value={formatSalesMoneyOrDash(product.arrives)}
                 hint={arrivesMoneyHint(product)}
               />
+              <Metric
+                label="Pagado"
+                value={formatSalesMoneyOrDash(product.paidArrives)}
+                hint={paidMoneyHint(product)}
+              />
+              <Metric
+                label="Pendiente"
+                value={formatSalesMoneyOrDash(product.pendingArrives)}
+                hint={pendingMoneyHint(product)}
+              />
               <Metric label="Unidades" value={`${formatSalesCount(product.unitsSold)} u`} />
               <Metric label="Pedidos" value={formatSalesCount(product.ordersCount)} />
               <Metric label="Visitas" value={formatVisits(product.visits)} hint={visitsHint()} />
@@ -563,7 +603,7 @@ function SellerSalesDrawer({
                       </div>
                       <PublishedBadge published={seller.published} />
                     </div>
-                    <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                       <div>
                         <dt className="text-xs text-muted-foreground">Ventas brutas</dt>
                         <dd className="mt-0.5 tabular-nums">{formatSalesMoney(seller.grossSales)}</dd>
@@ -578,6 +618,18 @@ function SellerSalesDrawer({
                         <dt className="text-xs text-muted-foreground">Te llega</dt>
                         <dd className="mt-0.5 tabular-nums" title={arrivesMoneyHint(seller)}>
                           {formatSalesMoneyOrDash(seller.arrives)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">Pagado</dt>
+                        <dd className="mt-0.5 tabular-nums" title={paidMoneyHint(seller)}>
+                          {formatSalesMoneyOrDash(seller.paidArrives)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-muted-foreground">Pendiente</dt>
+                        <dd className="mt-0.5 tabular-nums" title={pendingMoneyHint(seller)}>
+                          {formatSalesMoneyOrDash(seller.pendingArrives)}
                         </dd>
                       </div>
                       <div>
@@ -613,13 +665,15 @@ function SalesTableSkeleton() {
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead><Skeleton className="h-4 w-20" /></TableHead>
-            <TableHead className="hidden xl:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
+            <TableHead className="hidden 2xl:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead><Skeleton className="h-4 w-16" /></TableHead>
+            <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
+            <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-16" /></TableHead>
             <TableHead className="hidden sm:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
-            <TableHead className="hidden md:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
             <TableHead className="hidden lg:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
+            <TableHead className="hidden xl:table-cell"><Skeleton className="h-4 w-14" /></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -631,13 +685,15 @@ function SalesTableSkeleton() {
                   <div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-20" /></div>
                 </div>
               </TableCell>
-              <TableCell className="hidden xl:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
+              <TableCell className="hidden 2xl:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
               <TableCell><Skeleton className="h-5 w-16" /></TableCell>
               <TableCell><Skeleton className="h-5 w-16" /></TableCell>
               <TableCell><Skeleton className="h-5 w-16" /></TableCell>
+              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
+              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
               <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell className="hidden md:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
-              <TableCell className="hidden lg:table-cell"><Skeleton className="h-5 w-8" /></TableCell>
+              <TableCell className="hidden lg:table-cell"><Skeleton className="h-5 w-10" /></TableCell>
+              <TableCell className="hidden xl:table-cell"><Skeleton className="h-5 w-8" /></TableCell>
             </TableRow>
           ))}
         </TableBody>

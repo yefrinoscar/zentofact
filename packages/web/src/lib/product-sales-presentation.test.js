@@ -7,7 +7,10 @@ import {
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
   formatVisits,
+  paidMoneyHint,
+  paidPendingCompact,
   pagosHint,
+  pendingMoneyHint,
   sellerChannelLabel,
   productSalesKpis,
   publishedLabel,
@@ -15,7 +18,7 @@ import {
   visitsHint,
 } from './product-sales-presentation.ts';
 
-test('los kpis de ventas ponen Falabella y te llega al lado de la venta bruta', () => {
+test('los kpis de ventas ponen Falabella, te llega, pagado y pendiente', () => {
   const kpis = productSalesKpis({
     productsCount: 4,
     unitsSold: 18,
@@ -32,14 +35,19 @@ test('los kpis de ventas ponen Falabella y te llega al lado de la venta bruta', 
     visits: null,
   });
   assert.deepEqual(kpis.map((item) => item.label), [
-    'Ventas brutas', 'Falabella', 'Te llega', 'Unidades', 'Pedidos', 'Ticket',
+    'Ventas brutas', 'Falabella', 'Te llega', 'Pagado', 'Pendiente', 'Unidades', 'Pedidos', 'Ticket',
   ]);
   assert.equal(String(kpis[0].display).replace(/\u00a0/g, ' '), 'S/ 2,410.50');
   assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 626.73');
+  assert.equal(String(kpis[3].display).replace(/\u00a0/g, ' '), 'S/ 421.56');
+  assert.equal(String(kpis[4].display).replace(/\u00a0/g, ' '), 'S/ 1,362.21');
   assert.equal(kpis[0].why, 'Suma Falabella del maestro.');
   assert.equal(kpis[1].why, 'Comisión y logística.');
   assert.equal(kpis[2].why, 'Pagado y pendiente.');
-  assert.equal(kpis[3].display, '18 u');
+  assert.equal(kpis[3].why, 'Ya está en tu cuenta.');
+  assert.equal(kpis[4].why, 'Aún no depositan.');
+  assert.equal(kpis[5].display, '18 u');
+  assert.match(paidPendingCompact({ paidArrives: 140.52, pendingArrives: 421.56 }).replace(/\u00a0/g, ' '), /S\/ 140\.52 pagado · S\/ 421\.56 pendiente/);
 });
 
 test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
@@ -60,7 +68,13 @@ test('sin cruce de Pagos Falabella y te llega quedan vacíos', () => {
   });
   assert.equal(kpis[1].display, '—');
   assert.equal(kpis[2].display, '—');
+  assert.equal(kpis[3].display, '—');
+  assert.equal(kpis[4].display, '—');
   assert.equal(kpis[1].why, pagosHint());
+  assert.equal(kpis[3].why, pagosHint());
+  assert.equal(kpis[4].why, pagosHint());
+  assert.equal(paidMoneyHint({ paidArrives: 140.52 }), 'Ya está en tu cuenta.');
+  assert.equal(pendingMoneyHint({ pendingArrives: 421.56 }), 'Aún no depositan.');
   assert.equal(formatSalesMoneyOrDash(null), '—');
   assert.equal(falabellaMoneyHint({
     falabellaTake: null,
