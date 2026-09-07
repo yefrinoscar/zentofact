@@ -189,6 +189,16 @@ const apiHttp = {
   // Dashboard consolidado
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
     req(`/dashboard${qs(filter)}`),
+  listProductSalesReport: (filter: {
+    from?: string;
+    to?: string;
+    search?: string;
+    companyId?: number;
+    sortBy?: string;
+    sortDir?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/dashboard/product-sales${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
   listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
     req(`/pagos/imports${qs(filter)}`),

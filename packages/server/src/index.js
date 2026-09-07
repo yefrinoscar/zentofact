@@ -77,6 +77,7 @@ const ripleyOrders = await import('./ripley-orders.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
+const productSalesReport = await import('./catalog/product-sales-report.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -293,6 +294,13 @@ app.get('/dashboard', async (c) => {
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
 });
+app.get('/dashboard/product-sales', async (c) => {
+  try {
+    const data = await productSalesReport.listProductSalesReport(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/dashboard/refresh', async (c) => {
   try {
     const refresh = await dashboard.refreshDashboard();
@@ -328,8 +336,17 @@ app.get('/pagos/invoices', async (c) => {
   catch (e) { return fail(c, e, e.status || 400); }
 });
 app.get('/pagos/invoices/:id', async (c) => {
-  try { return ok(c, await invoiceReports.getInvoiceDocument(c.req.param('id'))); }
-  catch (e) { return fail(c, e, e.status || 400); }
+  try {
+    const document = await invoiceReports.getInvoiceDocument(c.req.param('id'));
+    const orderIds = [...new Set((document.lines || [])
+      .map((line) => String(line.orderNumber || '').trim())
+      .filter(Boolean))];
+    const sales = await pagos.loadSettlementSalesForOrders(orderIds);
+    return ok(c, {
+      ...document,
+      reconciliation: invoiceReports.compareInvoiceToSettlements(document, sales),
+    });
+  } catch (e) { return fail(c, e, e.status || 400); }
 });
 app.post('/pagos/invoices', async (c) => {
   try {
