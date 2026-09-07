@@ -1,8 +1,23 @@
 const LIMA_UTC_OFFSET_HOURS = 5;
-const FIVE_CALENDAR_DAYS = 5;
 const OVERLAP_MS = 10 * 60_000;
 const SAFETY_LAG_MS = 60_000;
 const MAX_BACKFILL_DAYS = 31;
+export const DEFAULT_ORDER_SYNC_LOOKBACK_DAYS = 5;
+export const DEFAULT_ORDER_SYNC_INTERVAL_MINUTES = 15;
+export const MIN_ORDER_SYNC_INTERVAL_MINUTES = 1;
+export const MAX_ORDER_SYNC_INTERVAL_MINUTES = 1440;
+
+export function clampOrderSyncLookbackDays(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_ORDER_SYNC_LOOKBACK_DAYS;
+  return Math.min(MAX_BACKFILL_DAYS, Math.max(1, Math.round(parsed)));
+}
+
+export function clampOrderSyncIntervalMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_ORDER_SYNC_INTERVAL_MINUTES;
+  return Math.min(MAX_ORDER_SYNC_INTERVAL_MINUTES, Math.max(MIN_ORDER_SYNC_INTERVAL_MINUTES, Math.round(parsed)));
+}
 
 function validDate(value, field) {
   const date = value instanceof Date ? new Date(value) : new Date(value);
@@ -25,15 +40,26 @@ function limaDayStart(value, field) {
   return date;
 }
 
-function fiveDayFloor(now) {
+function lookbackFloor(now, lookbackDays) {
   const today = limaDayStart(limaCalendarDate(now), 'now');
-  return new Date(today.getTime() - (FIVE_CALENDAR_DAYS - 1) * 86_400_000);
+  return new Date(today.getTime() - (clampOrderSyncLookbackDays(lookbackDays) - 1) * 86_400_000);
+}
+
+export function resolveLookbackCalendarRange(input = {}) {
+  const now = validDate(input.now || new Date(), 'now');
+  const to = limaCalendarDate(now);
+  const from = limaCalendarDate(lookbackFloor(now, input.lookbackDays));
+  return { from, to };
+}
+
+export function resolveLookbackBackfillWindow(input = {}) {
+  return resolveOrderBackfillWindow(resolveLookbackCalendarRange(input));
 }
 
 export function resolveIncrementalOrderWindow(input = {}) {
   const now = validDate(input.now || new Date(), 'now');
   const to = new Date(now.getTime() - SAFETY_LAG_MS);
-  const floor = fiveDayFloor(now);
+  const floor = lookbackFloor(now, input.lookbackDays);
   const cursor = input.cursor ? validDate(input.cursor, 'cursor') : null;
   const overlappedCursor = cursor ? new Date(cursor.getTime() - OVERLAP_MS) : floor;
   const from = new Date(Math.max(floor.getTime(), overlappedCursor.getTime()));

@@ -50,6 +50,11 @@ export type OrderSyncResponse = {
   results?: OrderSyncResult[];
 };
 
+export type OrderSyncSettings = {
+  intervalMinutes: number;
+  lookbackDays: number;
+};
+
 export type ProductAssociationCandidate = {
   id: number;
   productId: number;
@@ -221,12 +226,19 @@ const apiHttp = {
     req(`/order-management/accounts${qs(filter)}`),
   getManagedOrderSyncStatus: (filter: { companyId?: number; channelAccountId?: number } = {}) =>
     req<OrderSyncStatusResponse>(`/order-management/sync-status${qs(filter)}`),
+  getOrderSyncSettings: () => req<OrderSyncSettings>('/order-management/sync-settings'),
+  updateOrderSyncSettings: (data: Partial<OrderSyncSettings>) =>
+    req<OrderSyncSettings>('/order-management/sync-settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
   syncManagedOrders: (data: {
     companyId?: number;
     channelAccountId?: number;
     mode?: 'incremental' | 'backfill';
     from?: string;
     to?: string;
+    lookbackDays?: number;
   } = {}) => req<OrderSyncResponse>('/order-management/sync', {
     method: 'POST',
     body: JSON.stringify(data),

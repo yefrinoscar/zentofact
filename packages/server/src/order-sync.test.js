@@ -157,6 +157,37 @@ test('el backfill pide a Ripley remapear el estado desde Mirakl', async () => {
   assert.deepEqual(remaps, [true]);
 });
 
+test('un backfill sin fechas usa la ventana compartida', async () => {
+  const windows = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 1, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T12:00:00Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  await syncOrderAccount(7, { mode: 'backfill', now: '2026-09-07T18:00:00.000Z', lookbackDays: 7 }, {
+    pool: { connect: async () => db },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    syncFalabellaOrders: async (_companyId, options) => {
+      windows.push(options);
+      return { status: 'success', received: 0 };
+    },
+  });
+  assert.deepEqual(windows, [{
+    mode: 'range_created',
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-08T04:59:59.999Z',
+  }]);
+});
+
 test('al retomar una cuenta cierra las ejecuciones que quedaron running', async () => {
   const queries = [];
   const result = await recoverInterruptedOrderSyncRuns(12, {

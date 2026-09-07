@@ -54,6 +54,11 @@ import {
 } from '../lib/order-document';
 import { registeredFromMisVentasState, saleSavedSnackbarMessage } from '../lib/sale-feedback';
 import { todayInLima } from '../lib/documentDateRange';
+import { OrderSyncWindowControls } from '../components/OrderSyncWindowControls';
+import {
+  DEFAULT_ORDER_SYNC_INTERVAL_MINUTES,
+  DEFAULT_ORDER_SYNC_LOOKBACK_DAYS,
+} from '../lib/order-sync-presentation';
 import DayStrip from '../components/DayStrip';
 import { OrdersVirtualTable } from '../components/OrdersVirtualTable';
 import { Badge } from '../components/ui/badge';
@@ -679,6 +684,8 @@ export default function PedidosMulticanal() {
   const [ripleyActionNote, setRipleyActionNote] = useState('');
   const [productsOpen, setProductsOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
+  const [intervalDraft, setIntervalDraft] = useState<number | null>(null);
+  const [lookbackDraft, setLookbackDraft] = useState<number | null>(null);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
 
@@ -968,8 +975,32 @@ export default function PedidosMulticanal() {
     syncNoteTimer.current = window.setTimeout(() => setSyncNote(''), 2800);
   };
 
+  const syncSettingsQuery = useQuery({
+    queryKey: ['order-sync-settings'],
+    queryFn: () => api.getOrderSyncSettings(),
+    staleTime: 30_000,
+  });
+  const syncIntervalMinutes = intervalDraft
+    ?? syncSettingsQuery.data?.intervalMinutes
+    ?? DEFAULT_ORDER_SYNC_INTERVAL_MINUTES;
+  const syncLookbackDays = lookbackDraft
+    ?? syncSettingsQuery.data?.lookbackDays
+    ?? DEFAULT_ORDER_SYNC_LOOKBACK_DAYS;
+  const saveSyncSettings = useMutation({
+    mutationFn: (next: { intervalMinutes: number; lookbackDays: number }) => api.updateOrderSyncSettings(next),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['order-sync-settings'], saved);
+    },
+  });
+
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders(),
+    mutationFn: async () => {
+      await api.updateOrderSyncSettings({
+        intervalMinutes: syncIntervalMinutes,
+        lookbackDays: syncLookbackDays,
+      });
+      return api.syncManagedOrders({ mode: 'backfill', lookbackDays: syncLookbackDays });
+    },
     onMutate: () => {
       setSyncNote('');
     },
@@ -1209,12 +1240,26 @@ export default function PedidosMulticanal() {
             </Button>
           )}
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:items-center">
+          <OrderSyncWindowControls
+            compact
+            intervalMinutes={syncIntervalMinutes}
+            lookbackDays={syncLookbackDays}
+            onIntervalMinutes={(minutes) => {
+              setIntervalDraft(minutes);
+              saveSyncSettings.mutate({ intervalMinutes: minutes, lookbackDays: syncLookbackDays });
+            }}
+            onLookbackDays={(days) => {
+              setLookbackDraft(days);
+              saveSyncSettings.mutate({ intervalMinutes: syncIntervalMinutes, lookbackDays: days });
+            }}
+            disabled={syncing || saveSyncSettings.isPending}
+          />
           <Button
             type="button"
             variant="outline"
             onClick={() => void syncRealData()}
-            disabled={syncing}
+            disabled={syncing || saveSyncSettings.isPending}
             aria-live="polite"
             className={cn(
               'h-11 min-w-0 cursor-pointer sm:h-9 sm:min-w-36',

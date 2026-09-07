@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveIncrementalOrderWindow, resolveOrderBackfillWindow, resolveRipleyOrderBackfillOptions } from './order-sync-policy.js';
+import {
+  resolveIncrementalOrderWindow,
+  resolveLookbackCalendarRange,
+  resolveLookbackBackfillWindow,
+  resolveOrderBackfillWindow,
+  resolveRipleyOrderBackfillOptions,
+} from './order-sync-policy.js';
 
 test('la primera sincronización cubre los cinco días calendario de Lima', () => {
   assert.deepEqual(resolveIncrementalOrderWindow({
@@ -34,6 +40,33 @@ test('el backfill manual acepta un rango acotado de días de Lima', () => {
     () => resolveOrderBackfillWindow({ from: '2026-01-01', to: '2026-08-01' }),
     /máximo 31 días/,
   );
+});
+
+test('la ventana incremental acepta más de cinco días calendario', () => {
+  assert.deepEqual(resolveIncrementalOrderWindow({
+    now: '2026-09-07T18:30:00.000Z',
+    lookbackDays: 7,
+  }), {
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-07T18:29:00.000Z',
+  });
+});
+
+test('el lookback compartido cubre los mismos días de Lima para ambos canales', () => {
+  assert.deepEqual(resolveLookbackCalendarRange({
+    now: '2026-09-07T18:00:00.000Z',
+    lookbackDays: 7,
+  }), {
+    from: '2026-09-01',
+    to: '2026-09-07',
+  });
+  assert.deepEqual(resolveLookbackBackfillWindow({
+    now: '2026-09-07T18:00:00.000Z',
+    lookbackDays: 7,
+  }), {
+    from: '2026-09-01T05:00:00.000Z',
+    to: '2026-09-08T04:59:59.999Z',
+  });
 });
 
 test('el backfill Ripley por defecto empieza el 1 de septiembre y no toca Falabella', () => {
