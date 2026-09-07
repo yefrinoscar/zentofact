@@ -979,6 +979,7 @@ export default function PedidosMulticanal() {
     queryKey: ['order-sync-settings'],
     queryFn: () => api.getOrderSyncSettings(),
     staleTime: 30_000,
+    refetchOnMount: 'always',
   });
   const syncIntervalMinutes = intervalDraft
     ?? syncSettingsQuery.data?.intervalMinutes

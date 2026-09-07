@@ -153,6 +153,7 @@ export default function BandejaLogistica() {
     queryFn: () => api.getOrderSyncSettings(),
     enabled: canSync,
     staleTime: 30_000,
+    refetchOnMount: 'always',
   });
   const syncIntervalMinutes = intervalDraft
     ?? syncSettingsQuery.data?.intervalMinutes

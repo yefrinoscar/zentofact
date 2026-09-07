@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CircleAlert, CircleCheck, Info, RefreshCw } from 'lucide-react';
 import api from '../lib/api';
@@ -102,6 +103,7 @@ const FLAG_ORDER = [
 ];
 
 export default function SystemConfig() {
+  const queryClient = useQueryClient();
   const { user } = usePermissions();
   const [config, setConfig] = useState<SystemConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,7 +179,9 @@ export default function SystemConfig() {
     setSavingSync(true);
     setError('');
     try {
-      setOrderSync(await api.updateOrderSyncSettings({ ...orderSync, ...next }));
+      const saved = await api.updateOrderSyncSettings({ ...orderSync, ...next });
+      setOrderSync(saved);
+      queryClient.setQueryData(['order-sync-settings'], saved);
     } catch (saveError: unknown) {
       setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar el intervalo.');
     } finally {
@@ -321,7 +325,7 @@ export default function SystemConfig() {
                   <p className="text-sm font-medium text-foreground">Sincronización de pedidos</p>
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  El mismo ritmo para Falabella y Ripley. Cámbialo y lanza la sync desde la bandeja.
+                  El mismo ritmo para Falabella y Ripley. Cámbialo y sincroniza en la bandeja.
                 </p>
               </div>
               <div className="mt-3">
