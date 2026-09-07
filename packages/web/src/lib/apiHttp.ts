@@ -194,6 +194,10 @@ const apiHttp = {
     to?: string;
     search?: string;
     companyId?: number;
+    minGrossSales?: number;
+    minFalabellaTake?: number;
+    minArrives?: number;
+    payout?: 'all' | 'paid' | 'pending';
     sortBy?: string;
     sortDir?: string;
     limit?: number;

@@ -1,19 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buyerCompaniesLabel,
   buyerIdentity,
+  buyerPhoneLabel,
+  buyerProductsLabel,
   channelLabel,
   arrivesMoneyHint,
   falabellaMoneyHint,
+  formatBuyerPhone,
   formatSalesMoneyOrDash,
+  isTrackedBuyer,
   paidMoneyHint,
+  sortSalesBuyers,
   paidShare,
   pagosHint,
   pendingMoneyHint,
   sellerChannelLabel,
+  splitSalesBuyers,
   productSalesKpis,
   publishedLabel,
   sellerSalesLabel,
+  TRACKED_BUYER_MIN_UNITS,
 } from './product-sales-presentation.ts';
 
 test('los kpis muestran el total de te llega y el desglose pagado/pendiente', () => {
@@ -86,4 +94,44 @@ test('el seller usa el nombre corto', () => {
     unitsBought: 4,
     grossSales: 100,
   }), '22334455');
+});
+
+test('agrupa compradores de más de 5 unidades y arma el detalle', () => {
+  const tracked = {
+    buyerKey: '74561743',
+    name: 'Max Preview',
+    documentNumber: '74561743',
+    phone: '987654321',
+    tracked: true,
+    companies: [
+      { companyId: 8, companyName: 'LIMBO', unitsBought: 4, ordersCount: 1, grossSales: 182 },
+      { companyId: 9, companyName: 'INVERSIONES MANTA RAYA S.A.C.', unitsBought: 3, ordersCount: 1, grossSales: 136.5 },
+    ],
+    products: [{ productKey: 'p:9', sku: 'BB220', name: 'Set platos', unitsBought: 7, grossSales: 318.5 }],
+    ordersCount: 2,
+    unitsBought: 7,
+    grossSales: 318.5,
+  };
+  const other = {
+    buyerKey: '12345678',
+    name: 'Ana Preview',
+    documentNumber: '12345678',
+    phone: '999111001',
+    companies: [{ companyId: 8, companyName: 'LIMBO', unitsBought: 1, ordersCount: 1, grossSales: 189.9 }],
+    products: [],
+    ordersCount: 1,
+    unitsBought: 1,
+    grossSales: 189.9,
+  };
+  assert.equal(TRACKED_BUYER_MIN_UNITS, 5);
+  assert.equal(isTrackedBuyer(tracked), true);
+  assert.equal(isTrackedBuyer({ unitsBought: 5 }), false);
+  assert.equal(isTrackedBuyer({ unitsBought: 6 }), true);
+  assert.deepEqual(splitSalesBuyers([other, tracked]).tracked.map((buyer) => buyer.name), ['Max Preview']);
+  assert.equal(formatBuyerPhone('987654321'), '987 654 321');
+  assert.equal(buyerPhoneLabel(tracked), '987 654 321');
+  assert.equal(buyerCompaniesLabel(tracked), 'Limbo · Manta raya');
+  assert.equal(buyerProductsLabel(tracked), 'BB220 · 7 u');
+  assert.deepEqual(sortSalesBuyers([other, tracked], 'units', 'desc').map((buyer) => buyer.name), ['Max Preview', 'Ana Preview']);
+  assert.deepEqual(sortSalesBuyers([other, tracked], 'name', 'asc').map((buyer) => buyer.name), ['Ana Preview', 'Max Preview']);
 });
