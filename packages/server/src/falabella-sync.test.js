@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { FalabellaApiClient } from '@zentofact/falabella-api';
 import {
   canonicalLifecycleStatus,
   catalogInventoryEnabledForSync,
@@ -29,6 +30,24 @@ function response(orders, overrides = {}) {
     ...overrides,
   };
 }
+
+test('el polling encuentra un pedido de Lima conservando la ventana interna UTC', async () => {
+  const filters = { updatedAfter: '2026-09-06T22:49:00Z', updatedBefore: '2026-09-06T22:52:00Z' };
+  const client = new FalabellaApiClient({
+    userId: 'seller', apiKey: 'test', version: '2.0',
+    fetchImpl: async (url) => {
+      const params = new URL(url).searchParams;
+      const matches = params.get('UpdatedAfter') === '2026-09-06 17:49:00'
+        && params.get('UpdatedBefore') === '2026-09-06 17:52:00';
+      return new Response(JSON.stringify({ orders: matches ? [{ OrderId: '5005290072' }] : [] }));
+    },
+  });
+  const seen = [];
+  const result = await fetchFalabellaPages(client, filters, async (orders) => seen.push(...orders));
+  assert.equal(result.received, 1);
+  assert.equal(seen[0].OrderId, '5005290072');
+  assert.equal(filters.updatedAfter, '2026-09-06T22:49:00Z');
+});
 
 test('un Statuses histórico pending|canceled se trata como cancelado', () => {
   assert.equal(canonicalLifecycleStatus('pending|canceled'), 'canceled');
@@ -263,8 +282,8 @@ test('una sincronización mensual guarda órdenes y registra cobertura del mes',
   const result = await syncFalabellaOrders(7, { mode: 'month', month: '2026-07' }, fakeDependencies(db, client));
   assert.equal(result.status, 'success');
   assert.equal(result.received, 1);
-  assert.equal(seenFilters.createdAfter, '2026-07-01T05:00:00.000Z');
-  assert.equal(seenFilters.createdBefore, '2026-08-01T04:59:59.999Z');
+  assert.equal(seenFilters.createdAfter, '2026-07-01 00:00:00');
+  assert.equal(seenFilters.createdBefore, '2026-07-31 23:59:59');
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into order_events')), true);
@@ -299,8 +318,8 @@ test('una sincronización por día pide a Falabella los pedidos creados en esa f
   assert.equal(result.status, 'success');
   assert.equal(result.mode, 'day');
   assert.equal(result.received, 1);
-  assert.equal(seenFilters.createdAfter, '2026-08-17T05:00:00.000Z');
-  assert.equal(seenFilters.createdBefore, '2026-08-18T04:59:59.999Z');
+  assert.equal(seenFilters.createdAfter, '2026-08-17 00:00:00');
+  assert.equal(seenFilters.createdBefore, '2026-08-17 23:59:59');
   assert.equal(seenFilters.updatedAfter, undefined);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into falabella_orders')), true);
   assert.equal(db.queries.some((query) => query.sql.startsWith('insert into orders')), true);

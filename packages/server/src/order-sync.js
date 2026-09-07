@@ -284,6 +284,9 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
       from: window.from,
       to: window.to,
     });
+    if (result.status === 'already_running') {
+      throw new Error('La sincronización de Falabella está ocupada; se reintentará la ventana.');
+    }
     return {
       pages: Number(result.pages || 0),
       received: Number(result.received || 0),
