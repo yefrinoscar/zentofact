@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
-import { Check, ChevronLeft, ChevronRight, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
+import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
+import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
@@ -101,36 +102,54 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
     <div className="min-w-0 pb-24">
       <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-52 shrink-0 sm:w-56">
-          <Search className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
-          <Input aria-label="Buscar pedido o producto" placeholder="Buscar pedido o producto" className="pl-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
+        <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input aria-label="Buscar pedido o producto" placeholder="Pedido o producto" className="h-11 pl-9 sm:h-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
-        <div className="flex flex-wrap gap-1" aria-label="Filtrar por canal">
-          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
-            {channel.value !== 'all' && <ChannelMark code={channel.value} className="size-4" />}
+        <div className="order-last grid w-full grid-cols-4 gap-1 sm:order-none sm:flex sm:w-auto sm:flex-wrap" aria-label="Filtrar por canal">
+          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" className={cn('h-14 min-w-0 flex-col gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
+            {channel.value === 'all' ? <Layers3 aria-hidden="true" className="size-4 sm:hidden" /> : <ChannelMark code={channel.value} className="size-4" />}
             {channel.label}
           </Button>)}
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <span className="hidden text-xs text-muted-foreground xl:inline">{view.updatedAt ? `Actualizado ${logisticsUpdatedClock(view.updatedAt)}` : ''}</span>
-          <Button size="sm" variant="outline" disabled={view.refreshing} onClick={view.refresh}>
-            <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} />{view.canSync ? 'Sincronizar' : 'Actualizar'}
+          <Button size="sm" variant="outline" className="size-11 p-0 sm:h-8 sm:w-auto sm:px-3" aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'} disabled={view.refreshing} onClick={view.refresh}>
+            <RefreshCw className={cn('size-4', view.refreshing && 'animate-spin')} /><span className="hidden sm:inline">{view.canSync ? 'Sincronizar' : 'Actualizar'}</span>
           </Button>
         </div>
       </div>
 
-      <div className="flex items-stretch gap-1 border-b" aria-label="Etapa del pedido">
+      <BandejaDeadlineSummary view={view} error={error} />
+
+      <div className="grid grid-cols-2 items-stretch gap-1 border-b sm:flex" aria-label="Etapa del pedido">
         {([
-          { stage: 'pending', label: 'Por preparar', icon: PackageCheck },
-          { stage: 'ready', label: 'Listos para imprimir', icon: Printer },
-        ] as const).map(({ stage, label, icon: Icon }) => <button key={stage} type="button" aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
+          { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
+          { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
+        ] as const).map(({ stage, label, mobileLabel, icon: Icon }) => <button key={stage} type="button" aria-label={`${label}: ${view.counts[stage]}`} aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
           className={cn('flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-4 text-sm font-semibold outline-offset-4 sm:flex-none sm:justify-start sm:px-5', view.stage === stage ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:bg-muted/50')}>
-          <Icon className="hidden size-4 lg:block" />{label}<span className="rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
+          <Icon className="hidden size-4 lg:block" /><span className="sm:hidden">{mobileLabel}</span><span className="hidden sm:inline">{label}</span><span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
         </button>)}
-        <button type="button" aria-pressed={view.stage === 'shipped'} onClick={() => view.setStage('shipped')} className={cn('ml-auto border-b-2 px-2 text-xs sm:px-4 sm:text-sm', view.stage === 'shipped' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground')}>Enviados <span className="hidden tabular-nums sm:inline">{view.counts.shipped}</span></button>
       </div>
 
-      {view.stage !== 'shipped' && <div className="flex flex-wrap items-center gap-1.5" aria-label="Filtrar por entrega">
+      {view.stage !== 'shipped' && <label className="flex items-center gap-3 sm:hidden">
+        <span className="shrink-0 text-sm font-medium">Plazo</span>
+        <select aria-label="Filtrar por entrega" className="daisy-select h-11 min-w-0 flex-1 rounded-lg border border-solid border-border bg-background text-sm text-foreground shadow-none focus-visible:outline-ring"
+          value={view.deadlineDate || view.urgency || 'all'} onChange={(event) => {
+            const value = event.target.value;
+            if (value === 'all') { view.setUrgency(null); view.setDeadlineDate(null); }
+            else if (value === 'today' || value === 'tomorrow') view.setUrgency(value);
+            else view.setDeadlineDate(value);
+          }}>
+          <option value="all">Todos los plazos</option>
+          {BANDEJA_DEADLINE_FILTERS.map((urgency) => <option key={urgency.value} value={urgency.value}>
+            {urgency.label} · {bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
+          </option>)}
+          {laterDates.map((item) => <option key={item.date} value={item.date}>{formatBandejaDeadlineDate(item.date, view.now)} · {item.count}</option>)}
+        </select>
+      </label>}
+
+      {view.stage !== 'shipped' && <div className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label="Filtrar por entrega">
         <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
           const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
