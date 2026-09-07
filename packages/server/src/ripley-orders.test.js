@@ -43,10 +43,6 @@ test('un SHIPPING de Mirakl no pisa el estado operativo que ya avanzó SVC', () 
     metadata: {},
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
-    fulfillment_status: 'ready_to_ship',
-    metadata: {},
-  }, { svcConfigured: false }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
-  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
@@ -204,59 +200,51 @@ test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PI
   assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
 });
 
-test('sin Seller Center repara el listo que solo nació del mapeo SHIPPING', () => {
+test('sin Seller Center no se inventa un pendiente sobre un listo ya persistido', () => {
   assert.equal(nextHealedRipleyFulfillment({
     provider_status: 'SHIPPING',
     fulfillment_status: 'ready_to_ship',
     metadata: {},
-  }, { svcConfigured: false }), 'pending');
-  assert.equal(nextHealedRipleyFulfillment({
-    provider_status: 'SHIPPING',
-    fulfillment_status: 'ready_to_ship',
-    metadata: {},
-  }, { svcConfigured: true }), null);
+  }), null);
   assert.equal(nextHealedRipleyFulfillment({
     provider_status: 'SHIPPING',
     fulfillment_status: 'ready_to_ship',
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
-  }, { svcConfigured: true }), 'preparing');
+  }), 'preparing');
   assert.equal(nextHealedRipleyFulfillment({
     provider_status: 'SHIPPING',
     fulfillment_status: 'ready_to_ship',
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }, { svcConfigured: false }), null);
+  }), null);
 });
 
-test('el heal sin SVC baja a pendiente los SHIPPING mal marcados como listos', async () => {
+test('el heal no toca listos sin evidencia SVC', async () => {
   const updates = [];
   const result = await healPersistedRipleyShippingOrders({
     async query(sql, params) {
       if (String(sql).includes('select o.id')) {
-        assert.match(sql, /channel.code='ripley'/);
-        assert.deepEqual(params, [7]);
         return {
           rows: [
             { id: 11, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: {} },
-            { id: 12, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } } },
+            { id: 14, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } } },
           ],
         };
       }
       updates.push(params);
       return { rowCount: 1, rows: [{ id: params[0] }] };
     },
-  }, 7, { svcConfigured: false });
+  }, 7);
   assert.equal(result.scanned, 2);
   assert.equal(result.healed, 1);
-  assert.deepEqual(updates, [[11, 'pending']]);
+  assert.deepEqual(updates, [[14, 'preparing']]);
 });
 
-test('el ingest sin SVC corrige un listo persistido que sigue en SHIPPING', async () => {
+test('el ingest no pisa un listo persistido si no hay evidencia SVC', async () => {
   let ingestPayload = null;
   await ingestRipleyOrder({
     companyId: 2,
     account: { id: 9, channelCode: 'ripley' },
-    svcConfigured: false,
-    normalized: { orderId: 'R-FIX', orderNumber: 'RP-FIX', status: 'SHIPPING', raw: {} },
+    normalized: { orderId: 'R-KEEP-READY', orderNumber: 'RP-KEEP-READY', status: 'SHIPPING', raw: {} },
   }, {
     async query() {
       return { rows: [{ fulfillment_status: 'ready_to_ship', metadata: {} }] };
@@ -268,7 +256,7 @@ test('el ingest sin SVC corrige un listo persistido que sigue en SHIPPING', asyn
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {

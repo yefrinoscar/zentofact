@@ -57,7 +57,7 @@ export function mapRipleyCanonicalStatus(value) {
   return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
 }
 
-export function resolveRipleyIngestStatuses(providerStatus, existing = null, options = {}) {
+export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
   if (TERMINAL_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
 
@@ -70,11 +70,9 @@ export function resolveRipleyIngestStatuses(providerStatus, existing = null, opt
   if (fromSvc) {
     return { ...mapped, fulfillmentStatus: fromSvc };
   }
-  // Con Seller Center, Mirakl SHIPPING no basta para bajar un listo: puede ser recojo.
-  // Sin Seller Center, ese listo solo pudo nacer del mapeo viejo.
+  // Sin señal de Seller Center no se inventa el estado: un listo persistido se deja.
   if (
-    options.svcConfigured !== false
-    && mapped.fulfillmentStatus === 'pending'
+    mapped.fulfillmentStatus === 'pending'
     && (existingFulfillment === 'ready_to_ship' || existingFulfillment === 'preparing')
   ) {
     return { ...mapped, fulfillmentStatus: existingFulfillment };
@@ -82,7 +80,7 @@ export function resolveRipleyIngestStatuses(providerStatus, existing = null, opt
   return mapped;
 }
 
-export function nextHealedRipleyFulfillment(row, options = {}) {
+export function nextHealedRipleyFulfillment(row) {
   const fulfillment = String(row?.fulfillment_status || row?.fulfillmentStatus || '').trim().toLowerCase();
   if (fulfillment !== 'ready_to_ship') return null;
   const provider = normalizedState(row?.provider_status || row?.providerStatus);
@@ -91,12 +89,10 @@ export function nextHealedRipleyFulfillment(row, options = {}) {
   const fromSvc = mapRipleySvcFulfillmentStatus(
     metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement,
   );
-  if (fromSvc === 'preparing') return 'preparing';
-  if (fromSvc) return null;
-  return options.svcConfigured === false ? 'pending' : null;
+  return fromSvc === 'preparing' ? 'preparing' : null;
 }
 
-export async function healPersistedRipleyShippingOrders(db, companyId = null, options = {}) {
+export async function healPersistedRipleyShippingOrders(db, companyId = null) {
   if (!db?.query) return { scanned: 0, healed: 0 };
   const values = [];
   let companyFilter = '';
@@ -116,7 +112,7 @@ export async function healPersistedRipleyShippingOrders(db, companyId = null, op
   );
   let healed = 0;
   for (const row of selected.rows) {
-    const next = nextHealedRipleyFulfillment(row, options);
+    const next = nextHealedRipleyFulfillment(row);
     if (!next) continue;
     const result = await db.query(
       `update orders
@@ -268,9 +264,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.shopId,
   );
   const existing = await existingRipleyOrder(db, account.id, normalized?.orderId);
-  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing, {
-    svcConfigured: input.svcConfigured,
-  });
+  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing);
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,

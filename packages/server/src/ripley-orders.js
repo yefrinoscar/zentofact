@@ -68,10 +68,6 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
       company.ripleyShopId,
     );
     const orders = await client.listAllOrders(ripleySyncWindow(options, claimed.rows[0].last_successful_sync_at));
-    const hasSvc = Boolean(
-      (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
-      && (company.ripleySvcPassword || company.ripley_svc_password),
-    );
     const results = [];
     for (const listed of orders) {
       const normalized = await withRipleyOrderLines(client, listed);
@@ -81,15 +77,16 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         account,
         shopId: company.ripleyShopId,
         source: 'sync',
-        svcConfigured: hasSvc,
       }, db));
     }
+    const hasSvc = Boolean(
+      (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
+      && (company.ripleySvcPassword || company.ripley_svc_password),
+    );
     const logistics = hasSvc
       ? await (dependencies.syncLogistics || syncRipleyLogistics)(company, { db, fetchImpl: dependencies.fetchImpl })
       : { received: 0, matched: 0, status: 'not_configured' };
-    const healed = await (dependencies.healPersisted || healPersistedRipleyShippingOrders)(db, companyId, {
-      svcConfigured: hasSvc,
-    });
+    const healed = await (dependencies.healPersisted || healPersistedRipleyShippingOrders)(db, companyId);
     await db.query(
       `update ripley_sync_state set status='success', last_finished_at=now(),
          last_successful_sync_at=now(), last_orders_received=$2, last_error=null, updated_at=now()
