@@ -24,6 +24,10 @@ import {
   logisticsQuantityLabel,
   logisticsSkippedNotice,
   logisticsUrgency,
+  BANDEJA_DEADLINE_FILTERS,
+  bandejaDeadlineFilter,
+  formatBandejaDeadlineDate,
+  laterBandejaDeadlineDates,
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
   productImageSrc,
@@ -31,7 +35,7 @@ import {
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
-  assert.equal(logisticsChannelLabel('manual'), 'Manual');
+  assert.equal(logisticsChannelLabel('manual'), 'Propios');
   assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
   assert.equal(logisticsQuantityLabel({ quantity: 6 }), 'x6');
@@ -75,6 +79,22 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), false);
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), true);
   assert.deepEqual(LOGISTICS_URGENCIES.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana', 'Próximos']);
+  assert.deepEqual(BANDEJA_DEADLINE_FILTERS.map((item) => item.label), ['Vencen hoy', 'Vencen mañana']);
+  assert.equal(bandejaDeadlineFilter('overdue'), null);
+  assert.equal(bandejaDeadlineFilter('later'), null);
+  assert.equal(bandejaDeadlineFilter(null), null);
+  assert.equal(bandejaDeadlineFilter('today'), 'today');
+  assert.equal(formatBandejaDeadlineDate('2026-09-07', now), '7 de setiembre');
+  assert.equal(formatBandejaDeadlineDate('2026-09-08', now), '8 de setiembre');
+  assert.deepEqual(
+    laterBandejaDeadlineDates([
+      { date: '2026-09-02', count: 3 },
+      { date: '2026-09-03', count: 1 },
+      { date: '2026-09-07', count: 4 },
+      { date: '2026-09-08', count: 2 },
+    ], now).map((item) => item.date),
+    ['2026-09-07', '2026-09-08'],
+  );
   const groups = groupLogisticsByUrgency([
     { id: 1, promisedShippingAt: '2026-09-05T17:00:00.000Z' },
     { id: 2, promisedShippingAt: '2026-09-02T14:00:00.000Z' },
@@ -123,6 +143,7 @@ test('copy operativa de bandeja', () => {
   assert.equal(logisticsCountLabel('ready', 2), '2 etiquetas');
   assert.equal(logisticsEmptyCopy('pending'), 'Nada que preparar con estos filtros.');
   assert.match(logisticsEmptyCopy('pending', 'today'), /Vencen hoy/);
+  assert.match(logisticsEmptyCopy('pending', null, '8 de setiembre'), /8 de setiembre/);
   assert.equal(logisticsSkippedNotice([{ id: 1, reason: 'Ripley aún no tiene etiqueta.' }]), 'Ripley aún no tiene etiqueta.');
   assert.equal(logisticsPrintSuccessCopy({ labelCount: 1, packingPageCount: 1 }), 'Listo. 1 etiqueta y 1 hoja de armado.');
   assert.equal(logisticsPrintSuccessCopy({ labelCount: 3, packingPageCount: 0 }), 'Listo. 3 etiquetas.');

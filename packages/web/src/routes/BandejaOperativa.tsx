@@ -7,8 +7,9 @@ import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  canMarkFalabellaReady, canPrintLogisticsLabel, groupLogisticsByUrgency,
-  labelWasPrinted, logisticsDeadlineLabel, logisticsUpdatedClock,
+  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkFalabellaReady, canPrintLogisticsLabel,
+  formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
+  limaDeadlineKey, logisticsDeadlineLabel, logisticsUpdatedClock,
   LOGISTICS_CHANNELS, LOGISTICS_URGENCIES,
 } from '../lib/logistics-inbox';
 import {
@@ -40,9 +41,15 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const targets = selectedOrders.length ? selectedOrders : isPending ? eligible : unprinted;
   const groups = groupLogisticsByUrgency(view.orders, view.now);
   const focused = view.orders.find((order) => order.id === focusedId) || groups[0]?.orders[0];
+  const laterDates = laterBandejaDeadlineDates(view.counts.dates || [], view.now);
+  const todayKey = limaDeadlineKey(view.now);
+  const tomorrowKey = limaDeadlineKey(new Date(view.now.getTime() + 24 * 60 * 60 * 1000));
+  const selectedDeadline = !view.urgency && !view.deadlineDate;
   const displayGroups = view.stage === 'shipped'
-    ? [{ key: 'shipped', label: 'Enviados', urgency: 'later', orders: view.orders }]
-    : operationalGroups(view.orders, view.now, layout);
+    ? [{ key: 'shipped', label: 'Enviados', urgency: 'later' as const, orders: view.orders }]
+    : view.deadlineDate
+      ? [{ key: view.deadlineDate, label: formatBandejaDeadlineDate(view.deadlineDate, view.now), urgency: 'later' as const, orders: view.orders }]
+      : operationalGroups(view.orders, view.now, layout);
   const isCard = ['2', '9', '10', '13', '16'].includes(layout);
   const isChecklist = layout === '13' && isPending;
   const isColumns = ['9', '10', '16'].includes(layout);
@@ -97,7 +104,10 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           <Input aria-label="Buscar pedido o producto" placeholder="Buscar pedido o producto" className="pl-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
         <div className="flex flex-wrap gap-1" aria-label="Filtrar por canal">
-          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>{channel.label}</Button>)}
+          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
+            {channel.value !== 'all' && <ChannelMark code={channel.value} className="size-4" />}
+            {channel.label}
+          </Button>)}
         </div>
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden text-xs text-muted-foreground xl:inline">{view.updatedAt ? `Actualizado ${logisticsUpdatedClock(view.updatedAt)}` : ''}</span>
@@ -120,9 +130,18 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       </div>
 
       {view.stage !== 'shipped' && <div className="flex flex-wrap items-center gap-1.5" aria-label="Filtrar por entrega">
-        <Button size="sm" variant={view.urgency === null ? 'secondary' : 'ghost'} aria-pressed={view.urgency === null} onClick={() => view.setUrgency(null)}>Todos los plazos</Button>
-        {LOGISTICS_URGENCIES.map((urgency) => <Button key={urgency.value} size="sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
-          <span className={cn('size-1.5 rounded-full', urgency.dotClass)} />{urgency.label}
+        <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
+        {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
+          const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
+          const count = bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
+          return <Button key={urgency.value} size="sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
+            <span className={cn('size-1.5 rounded-full', urgency.dotClass)} />{urgency.label}
+            <span className="tabular-nums text-muted-foreground">{count}</span>
+          </Button>;
+        })}
+        {laterDates.map((item) => <Button key={item.date} size="sm" variant={view.deadlineDate === item.date ? 'secondary' : 'ghost'} aria-pressed={view.deadlineDate === item.date} onClick={() => view.setDeadlineDate(item.date)}>
+          <span className="size-1.5 rounded-full bg-slate-300" />{formatBandejaDeadlineDate(item.date, view.now)}
+          <span className="tabular-nums text-muted-foreground">{item.count}</span>
         </Button>)}
       </div>}
 
@@ -141,7 +160,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </Button>}
       </div>
       {view.stage !== 'shipped' && <p className="-mt-2 px-3 text-xs text-muted-foreground">
-        {layout === '4' ? 'Elige un pedido de la cola para revisar sus productos.' : isPending ? 'La acción en lote incluye solo Falabella. Manuales y Ripley se gestionan en su fila.' : 'Las etiquetas ya generadas solo se incluyen si las seleccionas.'}
+        {layout === '4' ? 'Elige un pedido de la cola para revisar sus productos.' : isPending ? 'La acción en lote incluye solo Falabella. Propios y Ripley se gestionan en su fila.' : 'Las etiquetas ya generadas solo se incluyen si las seleccionas.'}
         {view.totalCount > pageSize && ' Las acciones incluyen solo esta página.'}
       </p>}
 
@@ -161,7 +180,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
-          : !view.orders.length ? <div className="py-16 text-center"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
+          : !view.orders.length ? <div className="py-16 text-center"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
             : <div aria-busy={view.fetching} className={cn('min-w-0', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);

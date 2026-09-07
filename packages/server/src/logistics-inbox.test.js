@@ -46,6 +46,9 @@ class InboxDb {
     if (compact.includes('as pending_count')) {
       return { rows: [{ pending_count: 2, ready_count: 1, shipped_count: 0 }] };
     }
+    if (compact.includes('as date') && compact.includes('group by 1')) {
+      return { rows: [{ date: '2026-09-08', count: 2 }] };
+    }
     return {
       rows: [{
         id: 44,
@@ -95,10 +98,11 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(result.orders[0].itemsCount, 2);
   assert.equal(result.orders[0].items[0].sku, 'ZF-1');
   assert.equal(result.stage, 'pending');
-  assert.equal(db.queries.length, 2);
+  assert.equal(db.queries.length, 3);
   assert.match(db.queries[1].sql, /fulfillment_status = any/);
   assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
   assert.match(db.queries[0].sql, /promised_shipping_at >= now\(\)/);
+  assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
 
 async function stubLabelPdf(text = 'FALABELLA') {
@@ -231,6 +235,17 @@ test('filtra por urgencia y expone conteos de prioridad', async () => {
   assert.equal(result.orders[0].urgency, 'later');
   assert.equal(result.orders[0].labelPrint, null);
   assert.throws(() => parseLogisticsInboxFilters({ urgency: 'ayer' }), /Prioridad/);
+});
+
+test('filtra por una fecha concreta de plazo', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db);
+  assert.equal(parseLogisticsInboxFilters({ deadline: '2026-09-08' }).deadline, '2026-09-08');
+  assert.match(db.queries[1].sql, /::date = \$/);
+  assert.match(db.queries[2].sql, /group by 1/);
+  assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
+  assert.throws(() => parseLogisticsInboxFilters({ deadline: '08-09' }), /Fecha/);
+  assert.throws(() => parseLogisticsInboxFilters({ deadline: '2026-13-40' }), /Fecha/);
 });
 
 test('compone Falabella y deja Ripley fuera de la impresión', async () => {

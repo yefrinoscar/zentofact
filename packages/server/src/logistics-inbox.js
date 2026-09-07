@@ -53,10 +53,23 @@ export function parseLogisticsInboxFilters(input = {}) {
     stage,
     channelCode: channelCode || null,
     urgency: urgency || null,
+    deadline: parseDeadlineDate(input.deadline),
     search: String(input.search || '').trim().slice(0, 120),
     limit: positiveInt(input.limit, 80, 300),
     offset: Math.max(Number.isInteger(Number(input.offset)) ? Number(input.offset) : 0, 0),
   };
+}
+
+function parseDeadlineDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Fecha inválida.');
+  const [year, month, day] = text.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+    throw new Error('Fecha inválida.');
+  }
+  return text;
 }
 
 function fulfillmentFilter(stage) {
@@ -181,7 +194,7 @@ const URGENCY_SQL = {
 
 const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and o.promised_shipping_at >= now()`;
 
-function whereClause(filters, values, { forStage } = {}) {
+function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
   const where = [
     `o.order_status not in ('cancelled', 'failed')`,
     `o.fulfillment_status not in ('cancelled', 'returned', 'failed')`,
@@ -218,7 +231,14 @@ function whereClause(filters, values, { forStage } = {}) {
       where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
     } else {
       where.push(DATED_UPCOMING_SQL);
-      if (filters.urgency) where.push(`(${URGENCY_SQL[filters.urgency]})`);
+      if (!ignoreDeadline) {
+        if (filters.deadline) {
+          values.push(filters.deadline);
+          where.push(`(o.promised_shipping_at at time zone '${LIMA}')::date = $${values.length}::date`);
+        } else if (filters.urgency) {
+          where.push(`(${URGENCY_SQL[filters.urgency]})`);
+        }
+      }
     }
   }
   return where;
@@ -327,6 +347,25 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
     listValues,
   );
 
+  const dateValues = [];
+  const dateWhere = filters.stage === 'shipped'
+    ? []
+    : whereClause(filters, dateValues, { forStage: filters.stage, ignoreDeadline: true });
+  const dateResult = filters.stage === 'shipped'
+    ? { rows: [] }
+    : await target.query(
+      `select to_char((o.promised_shipping_at at time zone '${LIMA}')::date, 'YYYY-MM-DD') as date,
+              count(*)::int as count
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       left join companies c on c.id=o.company_id
+       where ${dateWhere.join(' and ')}
+       group by 1
+       order by 1`,
+      dateValues,
+    );
+
   const counts = countResult.rows[0] || {};
   return {
     orders: listResult.rows.map(normalizeInboxOrder),
@@ -340,6 +379,10 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
         tomorrow: Number(counts.tomorrow_count || 0),
         later: Number(counts.later_count || 0),
       },
+      dates: (dateResult.rows || []).map((row) => ({
+        date: String(row.date),
+        count: Number(row.count || 0),
+      })),
     },
     totalCount: Number(listResult.rows[0]?.total_count || 0),
     limit: filters.limit,
