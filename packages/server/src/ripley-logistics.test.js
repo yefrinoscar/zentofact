@@ -6,12 +6,15 @@ import {
   downloadRipleySvcManifest,
   editRipleySvcPackages,
   getRipleySvcManifest,
+  hasRipleySvcCredentials,
   listAllRipleySvcOrders,
   listRipleySvcEligibleLabels,
   listRipleySvcLabels,
   listRipleySvcManifests,
   mapRipleySvcFulfillmentStatus,
+  ripleyOrderIdentityKeys,
   scheduleRipleySvcManifest,
+  syncRipleyLogistics,
 } from './ripley-logistics.js';
 
 test('permite consultar el historial sandbox vacío sin credenciales productivas SVC', async () => {
@@ -162,4 +165,84 @@ test('pagina la bandeja SVC hasta alcanzar el total', async () => {
   });
   assert.equal(orders.length, 201);
   assert.deepEqual(calls, [{ page: 1, limit: 200 }, { page: 2, limit: 200 }]);
+});
+
+test('el id comercial de Ripley y el sufijo de bulto son la misma identidad', () => {
+  assert.deepEqual(ripleyOrderIdentityKeys('7937596201-A', '7937596201'), [
+    '7937596201-A',
+    '7937596201',
+  ]);
+  assert.deepEqual(ripleyOrderIdentityKeys('7937873401'), ['7937873401']);
+  assert.equal(hasRipleySvcCredentials({
+    ripleySvcUsername: 'limbo',
+    ripleySvcPassword: 'clave',
+  }), true);
+  assert.equal(hasRipleySvcCredentials({ id: 4 }), false);
+});
+
+test('escucha TO_PICKUP aunque el listado general solo traiga Para preparar', async () => {
+  const calls = [];
+  const updates = [];
+  const enqueued = [];
+  const result = await syncRipleyLogistics({
+    id: 7,
+    ripleySvcUsername: 'limbo',
+    ripleySvcPassword: 'clave',
+  }, {
+    db: {
+      async query(sql, params) {
+        updates.push({ sql, params });
+        const externalOrderId = (params[1] || []).find((id) => !String(id).includes('-')) || params[1]?.[0];
+        return {
+          rowCount: 1,
+          rows: [{
+            id: externalOrderId === '7937873401' ? 89 : 88,
+            external_order_id: externalOrderId,
+            external_order_number: externalOrderId,
+            ordered_at: '2026-09-07T15:00:00.000Z',
+            fulfillment_status: 'ready_to_ship',
+          }],
+        };
+      },
+    },
+    enqueue: async (job) => {
+      enqueued.push(job);
+      return { enqueued: true };
+    },
+    client: {
+      async listLogisticsOrders(options) {
+        calls.push(options);
+        if (options.statusManagement === 'TO_PICKUP') {
+          return {
+            data: {
+              total: 2,
+              orders: [
+                {
+                  order_id: '7937596201-A',
+                  commercial_id: '7937596201',
+                  _status_management: 'TO_PICKUP',
+                },
+                {
+                  order_id: '7937873401-A',
+                  commercial_id: '7937873401',
+                  status_management: 'TO_PICKUP',
+                },
+              ],
+            },
+          };
+        }
+        return { data: { total: 0, orders: [] } };
+      },
+    },
+  });
+
+  assert.deepEqual(calls.map((call) => call.statusManagement), ['TO_PICKUP', 'SHIPPED', undefined]);
+  assert.equal(result.received, 2);
+  assert.equal(result.matched, 2);
+  assert.deepEqual(updates[0].params[1], ['7937596201-A', '7937596201']);
+  assert.equal(updates[0].params[2], 'ready_to_ship');
+  assert.match(updates[0].sql, /external_order_id = any\(\$2::text\[\]\)/);
+  assert.equal(updates[1].params[2], 'ready_to_ship');
+  assert.deepEqual(enqueued.map((job) => job.externalOrderId), ['7937596201', '7937873401']);
+  assert.equal(enqueued[0].source, 'listen');
 });
