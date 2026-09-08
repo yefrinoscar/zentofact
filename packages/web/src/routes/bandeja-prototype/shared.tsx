@@ -170,9 +170,9 @@ export function buildDeadlineColumns(orders: LogisticsOrder[], now: Date) {
     groups.set(key, list);
   }
   const later = [...groups.keys()]
-    .filter((key) => key !== 'today' && key !== 'tomorrow')
+    .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'tomorrow')
     .sort((left, right) => left.localeCompare(right));
-  const keys = ['today', 'tomorrow', ...later].filter((key) => (groups.get(key) || []).length);
+  const keys = ['overdue', 'today', 'tomorrow', ...later].filter((key) => (groups.get(key) || []).length);
   return keys.map((key) => ({
     key,
     label: deadlineColumnLabel(key, now),

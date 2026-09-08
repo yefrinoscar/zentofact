@@ -138,12 +138,14 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           value={view.deadlineDate || view.urgency || 'all'} onChange={(event) => {
             const value = event.target.value;
             if (value === 'all') { view.setUrgency(null); view.setDeadlineDate(null); }
-            else if (value === 'today' || value === 'tomorrow') view.setUrgency(value);
+            else if (value === 'overdue' || value === 'today' || value === 'tomorrow') view.setUrgency(value);
             else view.setDeadlineDate(value);
           }}>
           <option value="all">Todos los plazos</option>
           {BANDEJA_DEADLINE_FILTERS.map((urgency) => <option key={urgency.value} value={urgency.value}>
-            {urgency.label} · {bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
+            {urgency.label} · {urgency.value === 'overdue'
+              ? view.counts.urgency.overdue
+              : bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
           </option>)}
           {laterDates.map((item) => <option key={item.date} value={item.date}>{formatBandejaDeadlineDate(item.date, view.now)} · {item.count}</option>)}
         </select>
@@ -153,7 +155,9 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
           const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
-          const count = bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
+          const count = urgency.value === 'overdue'
+            ? view.counts.urgency.overdue
+            : bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
           return <Button key={urgency.value} size="sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
             <span className={cn('size-1.5 rounded-full', urgency.dotClass)} />{urgency.label}
             <span className="tabular-nums text-muted-foreground">{count}</span>

@@ -22,16 +22,24 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
             'daisy-stat min-w-0 gap-1 border-0 px-1 py-3 text-center sm:px-5 sm:py-4 sm:text-left',
             index < 3 && 'border-r border-border',
           )}>
-            <dt className="daisy-stat-title flex items-center justify-center gap-2 whitespace-normal text-[11px] font-medium text-foreground sm:justify-start sm:text-sm">
-              <span aria-hidden="true" className={cn('hidden size-1.5 shrink-0 rounded-full sm:block', urgency.dotClass)} />
-              <span className="sm:hidden">{mobileLabels[urgency.value]}</span><span className="hidden sm:inline">{urgency.label}</span>
-            </dt>
-            <dd className={cn('daisy-stat-value mt-1 break-all text-2xl font-semibold tracking-tight tabular-nums sm:text-4xl', urgency.textClass)}>
-              {unavailable ? '—' : view.counts.urgency[urgency.value].toLocaleString('es-PE')}
-            </dd>
-            <dd className="daisy-stat-desc mt-1 hidden whitespace-normal text-xs text-muted-foreground sm:block">
-              {urgency.value === 'later' ? 'Después de mañana' : urgency.description}
-            </dd>
+            <button
+              type="button"
+              className="contents text-left"
+              disabled={unavailable || urgency.value === 'later'}
+              aria-pressed={view.urgency === urgency.value}
+              onClick={() => view.setUrgency(view.urgency === urgency.value ? null : urgency.value)}
+            >
+              <dt className="daisy-stat-title flex items-center justify-center gap-2 whitespace-normal text-[11px] font-medium text-foreground sm:justify-start sm:text-sm">
+                <span aria-hidden="true" className={cn('hidden size-1.5 shrink-0 rounded-full sm:block', urgency.dotClass)} />
+                <span className="sm:hidden">{mobileLabels[urgency.value]}</span><span className="hidden sm:inline">{urgency.label}</span>
+              </dt>
+              <dd className={cn('daisy-stat-value mt-1 break-all text-2xl font-semibold tracking-tight tabular-nums sm:text-4xl', urgency.textClass)}>
+                {unavailable ? '—' : view.counts.urgency[urgency.value].toLocaleString('es-PE')}
+              </dd>
+              <dd className="daisy-stat-desc mt-1 hidden whitespace-normal text-xs text-muted-foreground sm:block">
+                {urgency.value === 'later' ? 'Después de mañana' : urgency.description}
+              </dd>
+            </button>
           </div>
         ))}
       </dl>
