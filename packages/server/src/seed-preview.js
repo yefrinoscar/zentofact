@@ -830,6 +830,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
     if (!company || !product) continue;
     const channelAccount = await ensureChannelAccount(company, spec.channel || 'falabella');
     if (!channelAccount) continue;
+    const promisedAt = promisedAtForSpec(spec);
     const externalOrderId = previewOrderId(spec.key);
     const lineSpecs = Array.isArray(spec.items) && spec.items.length
       ? spec.items
@@ -884,7 +885,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
             paymentProof: spec.payment.proof || null,
           } : {}),
         }),
-        promisedAtForSpec(spec),
+        promisedAt,
         spec.channel === 'manual' && vendedor?.id ? vendedor.id : 'preview-seed',
       ],
     );
