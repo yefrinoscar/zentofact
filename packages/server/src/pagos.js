@@ -362,8 +362,7 @@ export async function listSettlementSales(filter = {}, db) {
        left join settlement_imports si
          on si.id = sl.import_id
       ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by sl.import_id desc, sl.row_number asc
-      limit 10000`,
+      order by sl.import_id desc, sl.row_number asc`,
     values,
   );
   let sales = aggregateSettlementSales(

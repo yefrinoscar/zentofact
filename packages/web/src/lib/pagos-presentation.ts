@@ -563,7 +563,21 @@ export function documentLabel(document: {
   return 'Sin boleta ni factura';
 }
 
-export const PAGOS_SALES_PAGE = 2000;
+export const PAGOS_SALES_PAGE = 500;
+
+export function settlementSalesNextOffset(page: {
+  offset?: number | null;
+  limit?: number | null;
+  totalCount?: number | null;
+  items?: unknown[] | null;
+} | null | undefined) {
+  const offset = Math.max(Number(page?.offset) || 0, 0);
+  const limit = Math.max(Number(page?.limit) || PAGOS_SALES_PAGE, 1);
+  const total = Math.max(Number(page?.totalCount) || 0, 0);
+  const loaded = offset + (Array.isArray(page?.items) ? page.items.length : 0);
+  if (!total || loaded >= total) return undefined;
+  return offset + limit;
+}
 
 export const PAGOS_COLUMN_COPY = {
   dates: { label: 'Fechas', hint: 'Orden · pago' },
@@ -582,7 +596,7 @@ export function salesPageNote(shown: number, total: number) {
   const visible = Number(shown) || 0;
   if (!count) return '';
   if (visible >= count) return count === 1 ? '1 venta' : `${count} ventas`;
-  return `Mostrando ${visible} de ${count}. Afina la búsqueda.`;
+  return `Mostrando ${visible} de ${count}`;
 }
 
 export function settlementCash(summary: {
