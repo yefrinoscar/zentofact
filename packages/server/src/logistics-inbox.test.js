@@ -113,7 +113,8 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.match(db.queries[2].sql, /p\.main_sku/);
   assert.match(db.queries[2].sql, /warehouse_address/);
   assert.match(db.queries[1].sql, /promised_shipping_at is not null/);
-  assert.match(db.queries[3].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[3].sql, /America\/Lima/);
+  assert.match(db.queries[3].sql, /::date >= /);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
 
@@ -248,17 +249,22 @@ test('agrupa por SKU maestro aunque el seller SKU cambie', () => {
 test('clasifica la urgencia de entrega en hora de Lima', () => {
   const now = new Date('2026-09-02T15:00:00.000Z');
   assert.equal(urgencyForDeadline(null, now), 'later');
-  assert.equal(urgencyForDeadline('2026-09-02T14:00:00.000Z', now), 'overdue');
+  assert.equal(urgencyForDeadline('2026-09-01T22:00:00.000Z', now), 'overdue');
+  assert.equal(urgencyForDeadline('2026-09-02T14:00:00.000Z', now), 'today');
   assert.equal(urgencyForDeadline('2026-09-02T22:00:00.000Z', now), 'today');
   assert.equal(urgencyForDeadline('2026-09-03T17:00:00.000Z', now), 'tomorrow');
   assert.equal(urgencyForDeadline('2026-09-05T17:00:00.000Z', now), 'later');
+  const night = new Date('2026-09-08T03:06:00.000Z');
+  assert.equal(urgencyForDeadline('2026-09-08T00:00:00.000Z', night), 'today');
+  assert.equal(urgencyForDeadline('2026-09-08T21:00:00.000Z', night), 'tomorrow');
 });
 
 test('el filtro de vencidos no exige plazo futuro', async () => {
   const db = new InboxDb();
   await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db);
-  assert.match(db.queries[2].sql, /promised_shipping_at < now\(\)/);
-  assert.doesNotMatch(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[2].sql, /America\/Lima/);
+  assert.match(db.queries[2].sql, /::date < /);
+  assert.doesNotMatch(db.queries[2].sql, /promised_shipping_at < now\(\)/);
 });
 
 test('filtra por urgencia y expone conteos de prioridad', async () => {

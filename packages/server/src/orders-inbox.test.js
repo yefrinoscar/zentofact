@@ -21,11 +21,11 @@ test('rechaza etapas y periodos desconocidos', () => {
   assert.throws(() => parseOrdersInboxFilters({ days: 365 }), /Periodo/);
 });
 
-test('la bandeja Falabella usa el plazo unificado cuando el pedido ya está en orders', () => {
+test('la bandeja Falabella lee el plazo de PromisedShippingTime, no el unificado', () => {
   assert.equal(resolveInboxPromisedShippingAt({
     unified_promised_shipping_at: '2026-09-01T21:00:00.000Z',
     promised_shipping_time: '2026-09-08 16:00:00',
-  }), '2026-09-01T21:00:00.000Z');
+  }), '2026-09-08T16:00:00.000Z');
   assert.equal(resolveInboxPromisedShippingAt({
     promised_shipping_time: '2026-07-15 21:00:00',
   }), '2026-07-15T21:00:00.000Z');
@@ -151,8 +151,6 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   });
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
-  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /unified_promised_shipping_at/);
-  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /o\.external_order_id = fo\.order_id/);
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /partition by company_id, order_number/);
   assert.match(calls.find((call) => call.sql.includes('shipped_at_utc >=')).sql, /shipped_at \+ interval '5 hours'/);

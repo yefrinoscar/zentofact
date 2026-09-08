@@ -786,9 +786,10 @@ function overdueLabel(value: string | null | undefined, now: Date) {
 function urgencyFor(order: InboxOrder, now: Date): UrgencyKey {
   const deadline = parseDate(order.promisedShippingAt);
   if (!deadline) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const deadlineDay = limaDateKey(deadline);
-  if (deadlineDay === limaDateKey(now)) return 'today';
+  const today = limaDateKey(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === tomorrowKey(now)) return 'tomorrow';
   return 'later';
 }

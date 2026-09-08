@@ -116,7 +116,6 @@ const BASE_CTE = `
       fo.grand_total,
       coalesce(nullif(fo.currency, ''), 'PEN') as currency,
       fo.first_seen_at,
-      unified.promised_shipping_at as unified_promised_shipping_at,
       nullif(fo.raw_data->>'PromisedShippingTime', '') as promised_shipping_time,
       nullif(fo.raw_data->>'ShippingType', '') as shipping_type,
       concat_ws(' ', nullif(fo.raw_data->>'CustomerFirstName', ''), nullif(fo.raw_data->>'CustomerLastName', ''), nullif(fo.raw_data->>'CustomerLastName2', '')) as customer_name,
@@ -141,14 +140,6 @@ const BASE_CTE = `
       end as stage
     from falabella_orders fo
     join companies c on c.id = fo.company_id and c.activo is not false
-    left join lateral (
-      select o.promised_shipping_at
-      from orders o
-      where o.company_id = fo.company_id
-        and o.external_order_id = fo.order_id
-      order by o.id desc
-      limit 1
-    ) unified on true
     left join lateral (
       select jsonb_agg(jsonb_build_object(
         'labelIndex', prints.label_index,
@@ -449,14 +440,7 @@ export async function listFalabellaInboxCompanies(dependencies = {}) {
 }
 
 export function resolveInboxPromisedShippingAt(row = {}) {
-  return unifiedPromisedShippingAt(row.unified_promised_shipping_at)
-    || falabellaUtcDate(row.promised_shipping_time);
-}
-
-function unifiedPromisedShippingAt(value) {
-  if (value == null || value === '') return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  return falabellaUtcDate(row.promised_shipping_time);
 }
 
 function falabellaUtcDate(value) {

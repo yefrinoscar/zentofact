@@ -125,10 +125,11 @@ export function urgencyForDeadline(value, now = new Date()) {
   if (!value) return 'later';
   const deadline = new Date(value);
   if (Number.isNaN(deadline.getTime())) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const dayOf = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: LIMA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
   const deadlineDay = dayOf(deadline);
-  if (deadlineDay === dayOf(now)) return 'today';
+  const today = dayOf(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === dayOf(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return 'tomorrow';
   return 'later';
 }
@@ -187,18 +188,17 @@ function normalizeInboxOrder(row) {
   };
 }
 
+const LIMA_DEADLINE_DATE = `(o.promised_shipping_at at time zone '${LIMA}')::date`;
+const LIMA_TODAY_DATE = `(now() at time zone '${LIMA}')::date`;
+
 const URGENCY_SQL = {
-  overdue: `o.promised_shipping_at is not null and o.promised_shipping_at < now()`,
-  today: `o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date`,
-  tomorrow: `o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date + 1`,
-  later: `o.promised_shipping_at is not null
-    and o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date > (now() at time zone '${LIMA}')::date + 1`,
+  overdue: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} < ${LIMA_TODAY_DATE}`,
+  today: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} = ${LIMA_TODAY_DATE}`,
+  tomorrow: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} = ${LIMA_TODAY_DATE} + 1`,
+  later: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} > ${LIMA_TODAY_DATE} + 1`,
 };
 
-const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and o.promised_shipping_at >= now()`;
+const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} >= ${LIMA_TODAY_DATE}`;
 
 function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
   const where = [

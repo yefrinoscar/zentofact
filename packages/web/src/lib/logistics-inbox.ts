@@ -233,9 +233,10 @@ export function formatLogisticsTime(value?: string | null) {
 export function logisticsUrgency(order: LogisticsOrderLike, now: Date): LogisticsUrgency {
   const deadline = parseLogisticsDate(order.promisedShippingAt);
   if (!deadline) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const deadlineDay = limaDateKey(deadline);
-  if (deadlineDay === limaDateKey(now)) return 'today';
+  const today = limaDateKey(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === limaDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return 'tomorrow';
   return 'later';
 }
