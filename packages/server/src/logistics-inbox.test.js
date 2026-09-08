@@ -109,10 +109,11 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(db.queries.length, 4);
   assert.match(db.queries[0].sql, /ch\.code = 'ripley'/);
   assert.match(db.queries[2].sql, /fulfillment_status = any/);
-  assert.match(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[2].sql, /promised_shipping_at is not null/);
   assert.match(db.queries[2].sql, /p\.main_sku/);
   assert.match(db.queries[2].sql, /warehouse_address/);
-  assert.match(db.queries[1].sql, /promised_shipping_at >= now\(\)/);
+  assert.match(db.queries[1].sql, /promised_shipping_at is not null/);
+  assert.match(db.queries[3].sql, /promised_shipping_at >= now\(\)/);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
 });
 
@@ -251,6 +252,13 @@ test('clasifica la urgencia de entrega en hora de Lima', () => {
   assert.equal(urgencyForDeadline('2026-09-02T22:00:00.000Z', now), 'today');
   assert.equal(urgencyForDeadline('2026-09-03T17:00:00.000Z', now), 'tomorrow');
   assert.equal(urgencyForDeadline('2026-09-05T17:00:00.000Z', now), 'later');
+});
+
+test('el filtro de vencidos no exige plazo futuro', async () => {
+  const db = new InboxDb();
+  await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db);
+  assert.match(db.queries[2].sql, /promised_shipping_at < now\(\)/);
+  assert.doesNotMatch(db.queries[2].sql, /promised_shipping_at >= now\(\)/);
 });
 
 test('filtra por urgencia y expone conteos de prioridad', async () => {

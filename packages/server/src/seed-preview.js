@@ -231,6 +231,21 @@ const SEED_LOGISTICS_ORDERS = [
     stockApplied: 0,
   },
   {
+    key: 'falabella-limbo-overdue',
+    orderNumber: 'PV-10013',
+    channel: 'falabella',
+    companyRuc: '20990001001',
+    sku: 'AG301',
+    customer: { name: 'Raúl Preview', firstName: 'Raúl', lastName: 'Preview', documentNumber: '11220033', phone: '999111013' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    falabellaStatus: 'pending',
+    promisedOffsetDays: -1,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
     key: 'falabella-max-limbo',
     orderNumber: 'PV-10030',
     channel: 'falabella',
@@ -742,6 +757,10 @@ async function ensureClients(companies) {
   return created;
 }
 
+function promisedAtForSpec(spec, now = new Date()) {
+  return new Date(limaNoonToday(now).getTime() + (Number(spec.promisedOffsetDays) || 0) * 24 * 60 * 60 * 1000);
+}
+
 function limaNoonToday(now = new Date()) {
   const lima = new Date(now.getTime() - 5 * 60 * 60 * 1000);
   // 23:59 Lima del día en curso, para que “vencen hoy” no se vuelva vencido a la tarde.
@@ -800,7 +819,6 @@ async function ensureSampleOrders(companiesByRuc, products) {
   const vendedor = vendedorEmail
     ? (await pool.query('SELECT id FROM "user" WHERE lower(email)=lower($1) LIMIT 1', [vendedorEmail])).rows[0]
     : null;
-  const promisedAt = limaNoonToday();
   const specs = [
     ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
     ...SEED_LOGISTICS_ORDERS,
@@ -866,7 +884,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
             paymentProof: spec.payment.proof || null,
           } : {}),
         }),
-        new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
+        promisedAtForSpec(spec),
         spec.channel === 'manual' && vendedor?.id ? vendedor.id : 'preview-seed',
       ],
     );
@@ -966,7 +984,6 @@ function previewSettlementAmounts(bruto) {
 }
 
 async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
-  const promised = limaNoonToday().toISOString();
   const specs = [
     ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
     ...SEED_LOGISTICS_ORDERS.filter((spec) => (spec.channel || 'falabella') === 'falabella'),
@@ -991,7 +1008,7 @@ async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
       CustomerLastName: spec.customer.lastName,
       CustomerPhone: spec.customer.phone || '',
       NationalRegistrationNumber: spec.customer.documentNumber || '',
-      PromisedShippingTime: promised,
+      PromisedShippingTime: promisedAtForSpec(spec).toISOString(),
       ItemsCount: String(lineSpecs.reduce((sum, lineSpec) => sum + Math.max(1, Number(lineSpec.quantity || 1)), 0)),
       Statuses: spec.falabellaStatus || spec.fulfillmentStatus,
     };
@@ -1065,7 +1082,6 @@ async function ensurePreviewSettlements() {
 
 async function ensureFalabellaInboxOrders(limbo, product) {
   if (!limbo || !product) return { falabellaOrders: 0 };
-  const promised = limaNoonToday().toISOString();
   for (const spec of SEED_ORDERS) {
     const orderId = previewOrderId(spec.key);
     const raw = {
@@ -1073,7 +1089,7 @@ async function ensureFalabellaInboxOrders(limbo, product) {
       OrderNumber: spec.orderNumber,
       CustomerFirstName: spec.customer.firstName,
       CustomerLastName: spec.customer.lastName,
-      PromisedShippingTime: promised,
+      PromisedShippingTime: promisedAtForSpec(spec).toISOString(),
       ItemsCount: '1',
       Statuses: spec.falabellaStatus,
     };

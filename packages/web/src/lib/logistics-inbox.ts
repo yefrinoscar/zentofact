@@ -46,11 +46,10 @@ export const LOGISTICS_URGENCIES: Array<{
   { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', railClass: 'border-l-slate-300', textClass: 'text-slate-600', pillClass: 'bg-slate-100 text-slate-600' },
 ];
 
-// La bandeja operativa no ofrece vencidos: hoy, mañana y cada fecha posterior con pedidos.
-export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => item.value === 'today' || item.value === 'tomorrow');
+export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => item.value !== 'later');
 
-export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'today' | 'tomorrow' | null {
-  if (urgency === 'today' || urgency === 'tomorrow') return urgency;
+export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'overdue' | 'today' | 'tomorrow' | null {
+  if (urgency === 'overdue' || urgency === 'today' || urgency === 'tomorrow') return urgency;
   return null;
 }
 
@@ -73,10 +72,9 @@ export function formatBandejaDeadlineDate(key: string, now: Date) {
 }
 
 export function laterBandejaDeadlineDates(dates: BandejaDeadlineDateCount[], now: Date) {
-  const today = limaDateKey(now);
   const tomorrow = limaDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   return dates
-    .filter((item) => item.count > 0 && item.date !== today && item.date !== tomorrow)
+    .filter((item) => item.count > 0 && item.date > tomorrow)
     .sort((left, right) => left.date.localeCompare(right.date));
 }
 
@@ -242,11 +240,8 @@ export function logisticsUrgency(order: LogisticsOrderLike, now: Date): Logistic
   return 'later';
 }
 
-// Por ahora la bandeja no muestra vencidos ni pedidos sin plazo.
-export function isActiveLogisticsDeadline(order: LogisticsOrderLike, now: Date) {
-  const deadline = parseLogisticsDate(order.promisedShippingAt);
-  if (!deadline) return false;
-  return logisticsUrgency(order, now) !== 'overdue';
+export function isActiveLogisticsDeadline(order: LogisticsOrderLike, _now?: Date) {
+  return Boolean(parseLogisticsDate(order.promisedShippingAt));
 }
 
 export function logisticsElapsedLabel(value: string | null | undefined, now: Date) {
@@ -352,17 +347,20 @@ export function logisticsCountLabel(stage: LogisticsStage, count: number) {
 }
 
 export function pendingDeadlineHelper(orders: LogisticsOrderLike[], now: Date) {
+  let overdue = 0;
   let today = 0;
   let tomorrow = 0;
   let later = 0;
   for (const order of orders) {
     if (!isActiveLogisticsDeadline(order, now)) continue;
     const urgency = logisticsUrgency(order, now);
-    if (urgency === 'today') today += 1;
+    if (urgency === 'overdue') overdue += 1;
+    else if (urgency === 'today') today += 1;
     else if (urgency === 'tomorrow') tomorrow += 1;
     else later += 1;
   }
   const parts: string[] = [];
+  if (overdue) parts.push(`${overdue} vencido${overdue === 1 ? '' : 's'}`);
   if (today) parts.push(`${today} hoy`);
   if (tomorrow) parts.push(`${tomorrow} mañana`);
   if (!parts.length && later) parts.push(`${later} próximo${later === 1 ? '' : 's'}`);

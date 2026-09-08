@@ -236,16 +236,17 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     where.push(`o.fulfillment_status = any($${values.length}::text[])`);
     if (forStage === 'shipped') {
       where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
-    } else {
+    } else if (ignoreDeadline) {
       where.push(DATED_UPCOMING_SQL);
-      if (!ignoreDeadline) {
-        if (filters.deadline) {
-          values.push(filters.deadline);
-          where.push(`(o.promised_shipping_at at time zone '${LIMA}')::date = $${values.length}::date`);
-        } else if (filters.urgency) {
-          where.push(`(${URGENCY_SQL[filters.urgency]})`);
-        }
-      }
+    } else if (filters.urgency === 'overdue') {
+      where.push(`(${URGENCY_SQL.overdue})`);
+    } else if (filters.deadline) {
+      values.push(filters.deadline);
+      where.push(`(o.promised_shipping_at at time zone '${LIMA}')::date = $${values.length}::date`);
+    } else if (filters.urgency) {
+      where.push(`(${URGENCY_SQL[filters.urgency]})`);
+    } else {
+      where.push(`o.promised_shipping_at is not null`);
     }
   }
   return where;
@@ -303,8 +304,8 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
   const countWhere = whereClause(filters, countValues);
   const countResult = await target.query(
     `select
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${DATED_UPCOMING_SQL})::int as pending_count,
-       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and ${DATED_UPCOMING_SQL})::int as ready_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and o.promised_shipping_at is not null)::int as pending_count,
+       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and o.promised_shipping_at is not null)::int as ready_count,
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'

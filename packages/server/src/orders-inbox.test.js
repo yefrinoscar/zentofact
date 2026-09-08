@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deliveryCycleWindows, listFalabellaInboxCompanies, listOrdersInbox, parseOrdersInboxFilters, syncAllOrdersInbox } from './orders-inbox.js';
+import { deliveryCycleWindows, listFalabellaInboxCompanies, listOrdersInbox, parseOrdersInboxFilters, resolveInboxPromisedShippingAt, syncAllOrdersInbox } from './orders-inbox.js';
 
 test('normaliza filtros seguros para la bandeja', () => {
   assert.deepEqual(parseOrdersInboxFilters({
@@ -19,6 +19,16 @@ test('normaliza filtros seguros para la bandeja', () => {
 test('rechaza etapas y periodos desconocidos', () => {
   assert.throws(() => parseOrdersInboxFilters({ stage: 'inventada' }), /Etapa/);
   assert.throws(() => parseOrdersInboxFilters({ days: 365 }), /Periodo/);
+});
+
+test('la bandeja Falabella usa el plazo unificado cuando el pedido ya está en orders', () => {
+  assert.equal(resolveInboxPromisedShippingAt({
+    unified_promised_shipping_at: '2026-09-01T21:00:00.000Z',
+    promised_shipping_time: '2026-09-08 16:00:00',
+  }), '2026-09-01T21:00:00.000Z');
+  assert.equal(resolveInboxPromisedShippingAt({
+    promised_shipping_time: '2026-07-15 21:00:00',
+  }), '2026-07-15T21:00:00.000Z');
 });
 
 test('acepta la vista operativa y permite cargar el tablero completo', () => {
@@ -141,6 +151,8 @@ test('consolida pedidos, métricas y tiendas en una respuesta', async () => {
   });
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[3], 'actionable');
   assert.equal(calls.find((call) => call.sql.includes('select *, count(*) over()')).params[4], 'por_emitir');
+  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /unified_promised_shipping_at/);
+  assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /o\.external_order_id = fo\.order_id/);
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /pending\|ready_to_ship\|shipped/);
   assert.match(calls.find((call) => call.sql.includes('select *, count(*) over()')).sql, /partition by company_id, order_number/);
   assert.match(calls.find((call) => call.sql.includes('shipped_at_utc >=')).sql, /shipped_at \+ interval '5 hours'/);
