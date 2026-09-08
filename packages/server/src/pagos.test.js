@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -229,6 +229,50 @@ test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async (
   assert.equal(calls.some((sql) => sql.includes('update settlement_imports')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into settlement_lines')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into sale_settlements')), true);
+});
+
+test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', async () => {
+  const extra = 12;
+  const lineCount = 10000 + extra;
+  const rows = Array.from({ length: lineCount }, (_, index) => ({
+    id: index + 1,
+    import_id: 1,
+    row_number: index + 1,
+    match_status: 'matched',
+    match_method: 'order_id',
+    match_reason: null,
+    order_ref: `ORD-${String(index + 1).padStart(5, '0')}`,
+    sku: 'AG301',
+    sale_date: '2026-08-01',
+    transaction_type: 'Pago por precio del producto',
+    kind: 'sale',
+    payment_status: 'Pagado',
+    item_id: `item-${index + 1}`,
+    bruto: 10,
+    commission: 0,
+    other_fees: 0,
+    neto: 10,
+    raw: {},
+    sale_order_number: `ORD-${String(index + 1).padStart(5, '0')}`,
+    match_company_id: 1,
+    import_company_id: 1,
+  }));
+  let listSql = '';
+  const result = await listSettlementSales({ limit: 50 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        listSql = sql;
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.match(listSql, /from settlement_lines/);
+  assert.equal(/limit\s+10000\b/i.test(listSql), false);
+  assert.equal(result.summary.saleCount, lineCount);
+  assert.equal(result.totalCount, lineCount);
+  assert.equal(result.summary.bruto, lineCount * 10);
+  assert.equal(result.items.length, 50);
 });
 
 test('carga las ventas del estado de cuenta por pedido de la factura', async () => {
