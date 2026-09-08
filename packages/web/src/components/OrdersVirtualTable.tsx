@@ -60,18 +60,25 @@ export function OrdersVirtualTable<TData>({
   'aria-label'?: string;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const requestedMore = useRef(false);
+  const loadedCount = useRef(0);
   const rows = table.getRowModel().rows;
   const headerGroup = table.getHeaderGroups()[0];
   const columns = table.getVisibleLeafColumns();
   const tableWidth = columns.reduce((sum, column) => sum + column.getSize(), 0);
+  if (loadedCount.current !== rows.length) {
+    loadedCount.current = rows.length;
+    requestedMore.current = false;
+  }
 
   function maybeLoadMore() {
-    if (!onEndReached || !hasMore || fetchingMore || fetching) return;
+    if (!onEndReached || !hasMore || fetchingMore || fetching || requestedMore.current) return;
     const el = parentRef.current;
     if (el) {
       const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
       if (remaining > rowHeight * 10) return;
     }
+    requestedMore.current = true;
     onEndReached();
   }
 
@@ -80,12 +87,6 @@ export function OrdersVirtualTable<TData>({
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
     overscan: 16,
-    onChange: (instance) => {
-      if (!onEndReached || !hasMore || fetchingMore || fetching) return;
-      const items = instance.getVirtualItems();
-      const last = items[items.length - 1];
-      if (last && last.index >= rows.length - 12) onEndReached();
-    },
   });
   const virtualRows = virtualizer.getVirtualItems();
 
