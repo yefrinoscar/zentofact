@@ -273,6 +273,29 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
   assert.equal(result.totalCount, lineCount);
   assert.equal(result.summary.bruto, lineCount * 10);
   assert.equal(result.items.length, 50);
+
+  const firstPage = await listSettlementSales({ limit: 500 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  const secondPage = await listSettlementSales({ limit: 500, offset: 500 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(firstPage.items.length, 500);
+  assert.equal(secondPage.items.length, 500);
+  assert.equal(firstPage.summary.saleCount, lineCount);
+  assert.equal(secondPage.summary.saleCount, lineCount);
+  assert.equal(firstPage.summary.bruto, secondPage.summary.bruto);
+  assert.notEqual(firstPage.items[0].orderId, secondPage.items[0].orderId);
 });
 
 test('carga las ventas del estado de cuenta por pedido de la factura', async () => {
