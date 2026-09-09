@@ -323,13 +323,14 @@ export async function listSettlementLines(filter = {}, db) {
 }
 
 export const SETTLEMENT_SALES_LIST_MAX = 20000;
-export const SETTLEMENT_SALES_PAGE_MAX = SETTLEMENT_SALES_LIST_MAX;
+export const SETTLEMENT_SALES_PAGE_MAX = 200;
+export const SETTLEMENT_SALES_PAGE_DEFAULT = 80;
 
 export function settlementSalesLimit(raw) {
-  if (raw === undefined || raw === null || raw === '') return SETTLEMENT_SALES_LIST_MAX;
+  if (raw === undefined || raw === null || raw === '') return SETTLEMENT_SALES_PAGE_DEFAULT;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return SETTLEMENT_SALES_LIST_MAX;
-  return Math.min(Math.floor(parsed), SETTLEMENT_SALES_LIST_MAX);
+  if (!Number.isFinite(parsed) || parsed <= 0) return SETTLEMENT_SALES_PAGE_DEFAULT;
+  return Math.min(Math.floor(parsed), SETTLEMENT_SALES_PAGE_MAX);
 }
 
 const SETTLEMENT_SALES_LINE_SQL = `
@@ -375,8 +376,11 @@ async function loadAggregatedSettlementSales(target, { useCache, importId } = {}
       order by sl.import_id desc, sl.row_number asc`,
     values,
   );
-  const sales = aggregateSettlementSales(
-    await attachCompaniesToLines(query.rows.map(mapLine), target),
+  const sales = await attachSaleOrderShipping(
+    aggregateSettlementSales(
+      await attachCompaniesToLines(query.rows.map(mapLine), target),
+    ),
+    target,
   );
   if (useCache && !importId) {
     const stamp = await target.query(`

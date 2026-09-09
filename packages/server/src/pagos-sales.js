@@ -147,6 +147,15 @@ export function saleReturnLoss(sale) {
   return queda < 0 ? queda : 0;
 }
 
+export function saleEnvioNet(sale) {
+  if (sale?.returned) return 0;
+  const fromOrder = sale?.orderShipping;
+  const gross = fromOrder != null && Number.isFinite(Number(fromOrder))
+    ? Math.max(0, round2(fromOrder))
+    : Math.max(0, round2(sale?.buyerShippingPaid));
+  return igvNet(gross);
+}
+
 export function settlementDailySeries(sales) {
   const days = new Map();
   for (const sale of sales || []) {
@@ -222,6 +231,7 @@ export function summarizeSettlementSales(sales) {
       matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
       returnCount: totals.returnCount + (returned ? 1 : 0),
       returnLoss: round2(totals.returnLoss + saleReturnLoss(sale)),
+      envio: round2(totals.envio + saleEnvioNet(sale)),
     };
   }, {
     saleCount: 0,
@@ -240,6 +250,7 @@ export function summarizeSettlementSales(sales) {
     matchedCount: 0,
     returnCount: 0,
     returnLoss: 0,
+    envio: 0,
   });
   return {
     ...summary,

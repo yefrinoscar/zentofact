@@ -643,6 +643,7 @@ export function summarizeSettlementSales(sales: Array<{
       matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
       returnCount: totals.returnCount + (returned ? 1 : 0),
       returnLoss: money2(totals.returnLoss + (returned && story.queda < 0 ? story.queda : 0)),
+      envio: money2(totals.envio + story.envioSplit.net),
     };
   }, {
     saleCount: 0,
@@ -661,6 +662,7 @@ export function summarizeSettlementSales(sales: Array<{
     matchedCount: 0,
     returnCount: 0,
     returnLoss: 0,
+    envio: 0,
   } as {
     saleCount: number;
     paidCount: number;
@@ -678,6 +680,7 @@ export function summarizeSettlementSales(sales: Array<{
     matchedCount: number;
     returnCount: number;
     returnLoss: number;
+    envio: number;
   });
   return {
     ...summary,
@@ -700,6 +703,22 @@ export const PAGOS_COLUMN_COPY = {
   ganas: { label: 'Ganas', hint: 'Lo que te queda' },
   factura: { label: 'Factura', hint: 'Falabella' },
 } as const;
+
+export const PAGOS_SALES_PAGE = 80;
+
+export function settlementSalesNextOffset(page: {
+  offset?: number | null;
+  limit?: number | null;
+  totalCount?: number | null;
+  items?: unknown[] | null;
+} | null | undefined) {
+  const offset = Math.max(Number(page?.offset) || 0, 0);
+  const limit = Math.max(Number(page?.limit) || PAGOS_SALES_PAGE, 1);
+  const total = Math.max(Number(page?.totalCount) || 0, 0);
+  const loaded = offset + (Array.isArray(page?.items) ? page.items.length : 0);
+  if (!total || loaded >= total) return undefined;
+  return offset + limit;
+}
 
 export function salesPageNote(shown: number, total: number) {
   const count = Number(total) || 0;

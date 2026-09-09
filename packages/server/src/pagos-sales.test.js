@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, saleEnvioNet, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -126,6 +126,20 @@ test('el 25.9% del facturado es comisión más logística de las tres líneas re
   assert.equal(sale.takeRate, 0.2592);
   assert.equal(summary.takeRate, 0.2592);
   assert.equal(summary.commissionRate, 0.1501);
+  assert.equal(saleEnvioNet({ buyerShippingPaid: 50 }), 42.37);
+  assert.equal(saleEnvioNet({ orderShipping: 50, buyerShippingPaid: 10 }), 42.37);
+  assert.equal(saleEnvioNet({ returned: true, buyerShippingPaid: 50 }), 0);
+  assert.equal(summarizeSettlementSales([{
+    paid: true,
+    bruto: 100,
+    commission: 20,
+    shipping: 10,
+    neto: 70,
+    take: 30,
+    buyerShippingPaid: 50,
+    itemCount: 1,
+    matched: true,
+  }]).envio, 42.37);
 });
 
 test('el porcentaje de comisión no es fijo entre ventas', () => {
