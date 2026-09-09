@@ -141,6 +141,95 @@ function igvNet(gross) {
   return round2((Number(gross) || 0) / 1.18);
 }
 
+function igvParts(gross) {
+  const amount = round2(gross || 0);
+  const net = igvNet(amount);
+  return { gross: amount, net, igv: round2(amount - net) };
+}
+
+function invoiceParts(row) {
+  if (!row) return null;
+  const gross = round2(row.gross);
+  const net = round2(row.net);
+  const igv = round2(row.igv);
+  if (!gross && !net && !igv) return null;
+  return { gross, net, igv };
+}
+
+function addParts(left, right) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return {
+    gross: round2(left.gross + right.gross),
+    net: round2(left.net + right.net),
+    igv: round2(left.igv + right.igv),
+  };
+}
+
+export function saleStatement(sale) {
+  const returned = Boolean(sale?.returned);
+  const product = returned ? 0 : round2(sale?.bruto);
+  const envio = returned
+    ? 0
+    : sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+      ? Math.max(0, round2(sale.orderShipping))
+      : Math.max(0, round2(sale?.buyerShippingPaid));
+  const productSplit = igvParts(product);
+  const envioSplit = igvParts(envio);
+  const boleta = igvParts(product + envio);
+  const invoice = returned ? null : sale?.invoiceCharges || null;
+  const commissionSplit = invoiceParts(invoice?.commission) || igvParts(sale?.commission);
+  const logisticsSplit = addParts(
+    invoiceParts(invoice?.logistics) || igvParts(sale?.shipping),
+    invoiceParts(invoice?.buyer_shipping),
+  ) || igvParts(sale?.shipping);
+  const adsSplit = invoiceParts(invoice?.ads);
+  const factura = invoice
+    ? addParts(addParts(commissionSplit, logisticsSplit), adsSplit) || commissionSplit
+    : igvParts(round2(Number(sale?.commission || 0) + Number(sale?.shipping || 0)));
+  return {
+    productNet: productSplit.net,
+    productGross: product,
+    envioNet: envioSplit.net,
+    envioGross: envio,
+    envioMissing: envio <= 0 && sale?.orderShipping == null,
+    boletaNet: boleta.net,
+    boletaGross: boleta.gross,
+    commissionNet: commissionSplit.net,
+    commissionGross: commissionSplit.gross,
+    logisticsNet: logisticsSplit.net,
+    logisticsGross: logisticsSplit.gross,
+    facturaNet: factura.net,
+    facturaGross: factura.gross,
+    queda: round2(boleta.net - factura.net),
+  };
+}
+
+function slimProducts(products) {
+  return (products || []).map((product) => ({
+    sku: product.sku,
+    shopSku: product.shopSku,
+    productName: product.productName,
+    quantity: product.quantity,
+    unitBruto: product.unitBruto,
+    unitCommission: product.unitCommission,
+    unitShipping: product.unitShipping,
+    unitNeto: product.unitNeto,
+    commissionRate: product.commissionRate,
+    shippingRate: product.shippingRate,
+    takeRate: product.takeRate,
+  }));
+}
+
+function slimInvoice(invoice) {
+  if (!invoice) return null;
+  return {
+    id: invoice.id,
+    number: invoice.number,
+    kind: invoice.kind,
+  };
+}
+
 export function saleReturnLoss(sale) {
   if (!sale?.returned) return 0;
   const queda = round2(0 - igvNet(Number(sale.commission || 0) + Number(sale.shipping || 0)));
@@ -189,6 +278,7 @@ export function downsampleDailySeries(days, maxPoints = SETTLEMENT_CHART_POINTS)
 
 export function slimSettlementSale(sale) {
   if (!sale) return sale;
+  const invoice = slimInvoice(sale.falabellaInvoice);
   return {
     orderId: sale.orderId,
     date: sale.date,
@@ -220,11 +310,11 @@ export function slimSettlementSale(sale) {
     commissionReversed: sale.commissionReversed,
     shippingCharged: sale.shippingCharged,
     shippingReversed: sale.shippingReversed,
-    products: sale.products || [],
+    products: slimProducts(sale.products),
     document: sale.document || null,
     orderShipping: sale.orderShipping ?? null,
-    falabellaInvoice: sale.falabellaInvoice || null,
-    falabellaInvoices: sale.falabellaInvoices || [],
+    falabellaInvoice: invoice,
+    statement: saleStatement(sale),
   };
 }
 

@@ -1,19 +1,11 @@
 import { memo } from 'react';
-import { CartesianGrid, Label, Line, LineChart, Pie, PieChart, XAxis } from 'recharts';
 import {
   money,
   percentLabel,
-  saleDateLabel,
   settlementCharts,
   waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from '@/components/ui/chart';
 
 const LINE_COLOR = {
   facturado: '#7A7672',
@@ -32,11 +24,6 @@ type ChartItem = { key: string; label: string; value: number; withoutIgv?: numbe
 function seriesColor(key: string) {
   return LINE_COLOR[key as keyof typeof LINE_COLOR] || LINE_COLOR.take;
 }
-
-const compareChartConfig = {
-  facturado: { label: 'Facturado', color: LINE_COLOR.facturado },
-  neto: { label: 'Neto', color: LINE_COLOR.neto },
-} satisfies ChartConfig;
 
 function MetricDot({ itemKey }: { itemKey: string }) {
   return (
@@ -132,65 +119,37 @@ function MetricHeader({
   );
 }
 
+function linePath(
+  days: Array<{ date: string; facturado: number; neto: number }>,
+  key: 'facturado' | 'neto',
+  width: number,
+  height: number,
+) {
+  const pad = 8;
+  const max = Math.max(1, ...days.flatMap((day) => [day.facturado, day.neto]));
+  const span = Math.max(days.length - 1, 1);
+  return days.map((day, index) => {
+    const x = pad + ((width - pad * 2) * index) / span;
+    const y = height - pad - ((Number(day[key]) || 0) / max) * (height - pad * 2);
+    return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+}
+
 function CompareLineChart({ days }: { days: Array<{ date: string; facturado: number; neto: number }> }) {
   const data = days.length === 1 ? [days[0], days[0]] : days;
   if (!data.length) {
     return <div className="mt-2 h-[148px] w-full rounded-md bg-muted/40" aria-hidden />;
   }
   return (
-    <ChartContainer
-      config={compareChartConfig}
-      className="mt-2 aspect-auto h-[148px] w-full min-w-0"
-      initialDimension={{ width: 640, height: 148 }}
-      debounce={400}
+    <svg
+      viewBox="0 0 640 148"
+      className="mt-2 h-[148px] w-full"
       role="img"
       aria-label="Facturado y neto por día"
     >
-      <LineChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
-        <CartesianGrid vertical={false} strokeDasharray="3 3" />
-        <XAxis dataKey="date" hide />
-        <ChartTooltip
-          cursor={{ stroke: 'var(--border)', strokeDasharray: '3 3' }}
-          content={({ active, payload, label }) => {
-            if (!active || !payload?.length) return null;
-            return (
-              <div className="grid min-w-36 gap-1.5 rounded-xl bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg ring-1 ring-foreground/5">
-                <p className="font-medium">{saleDateLabel(String(label || ''))}</p>
-                {payload.map((item) => (
-                  <p key={String(item.dataKey)} className="flex items-center justify-between gap-4">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <span className="size-2 rounded-[2px]" style={{ background: String(item.color || '') }} />
-                      {item.name}
-                    </span>
-                    <span className="font-medium tabular-nums">{money.format(Number(item.value || 0))}</span>
-                  </p>
-                ))}
-              </div>
-            );
-          }}
-        />
-        <Line
-          type="monotone"
-          dataKey="facturado"
-          name="Facturado"
-          stroke="var(--color-facturado)"
-          strokeWidth={2.25}
-          dot={false}
-          activeDot={{ r: 4 }}
-          isAnimationActive={false}
-        />
-        <Line
-          type="monotone"
-          dataKey="neto"
-          name="Neto"
-          stroke="var(--color-neto)"
-          strokeWidth={2.25}
-          dot={false}
-          activeDot={{ r: 4 }}
-          isAnimationActive={false}
-        />
-      </LineChart>
-    </ChartContainer>
+      <path d={linePath(data, 'facturado', 640, 148)} fill="none" stroke={LINE_COLOR.facturado} strokeWidth="2.25" />
+      <path d={linePath(data, 'neto', 640, 148)} fill="none" stroke={LINE_COLOR.neto} strokeWidth="2.25" />
+    </svg>
   );
 }
 
@@ -237,70 +196,35 @@ function WaffleHundred({
   );
 }
 
-const payoutChartConfig = {
-  amount: { label: 'Neto' },
-  paid: { label: 'Pagado', color: LINE_COLOR.paid },
-  pending: { label: 'Pendiente', color: LINE_COLOR.pending },
-} satisfies ChartConfig;
-
 function NetoPie({ paid, pending }: { paid: number; pending: number }) {
   const paidValue = Math.max(0, paid);
   const pendingValue = Math.max(0, pending);
   const total = paidValue + pendingValue;
   const paidShare = total ? paidValue / total : 0;
   const pendingShare = total ? pendingValue / total : 0;
-  const data = [
-    { slice: 'paid', amount: paidValue, fill: 'var(--color-paid)' },
-    { slice: 'pending', amount: pendingValue, fill: 'var(--color-pending)' },
-  ].filter((item) => item.amount > 0);
+  const paidDeg = paidShare * 360;
   return (
     <div
       className="mt-2 grid w-full place-items-center"
       role="img"
       aria-label={`Neto ${money.format(total)}: pagado ${percentLabel(paidShare)}, pendiente ${percentLabel(pendingShare)}`}
     >
-      <ChartContainer
-        config={payoutChartConfig}
-        className="aspect-square size-[148px] min-h-[148px] min-w-[148px] max-h-[148px] max-w-[148px] shrink-0 overflow-hidden"
-        initialDimension={{ width: 148, height: 148 }}
-        debounce={400}
-      >
-        <PieChart>
-          <ChartTooltip
-            cursor={false}
-            content={<ChartTooltipContent hideLabel nameKey="slice" />}
-          />
-          <Pie
-            data={data}
-            dataKey="amount"
-            nameKey="slice"
-            innerRadius="62%"
-            outerRadius="88%"
-            paddingAngle={data.length > 1 ? 5 : 0}
-            cornerRadius="50%"
-            stroke="none"
-            startAngle={90}
-            endAngle={450}
-            isAnimationActive={false}
-          >
-            <Label
-              content={({ viewBox }) => {
-                if (!viewBox || !('cx' in viewBox) || !('cy' in viewBox)) return null;
-                return (
-                  <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
-                    <tspan x={viewBox.cx} y={(viewBox.cy || 0) - 7} className="fill-foreground text-[12px] font-semibold tabular-nums">
-                      {money.format(total)}
-                    </tspan>
-                    <tspan x={viewBox.cx} y={(viewBox.cy || 0) + 10} className="fill-muted-foreground text-[10px]">
-                      Neto
-                    </tspan>
-                  </text>
-                );
-              }}
-            />
-          </Pie>
-        </PieChart>
-      </ChartContainer>
+      <div className="relative size-[148px]">
+        <div
+          className="size-full rounded-full"
+          style={{
+            background: total
+              ? `conic-gradient(from -90deg, ${LINE_COLOR.paid} 0 ${paidDeg}deg, ${LINE_COLOR.pending} ${paidDeg}deg 360deg)`
+              : 'var(--muted)',
+          }}
+        />
+        <div className="absolute inset-[18%] grid place-items-center rounded-full bg-background">
+          <p className="text-center leading-tight">
+            <span className="block text-[12px] font-semibold tabular-nums">{money.format(total)}</span>
+            <span className="block text-[10px] text-muted-foreground">Neto</span>
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
