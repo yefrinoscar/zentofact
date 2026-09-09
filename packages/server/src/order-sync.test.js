@@ -225,6 +225,35 @@ test('después de Mirakl, Ripley escucha el estado logístico de SVC', async () 
   assert.deepEqual(result.logistics, { received: 2, matched: 2 });
 });
 
+test('Falabella sigue reconciliando si la ventana incremental ya está al día', async () => {
+  const called = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 1, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T18:20:00.000Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const result = await syncOrderAccount(7, { now: '2026-09-07T18:00:00.000Z' }, {
+    pool: { connect: async () => db },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    syncFalabellaOrders: async (companyId, options) => {
+      called.push({ companyId, options });
+      return { status: 'success', skipped: 'already_current', received: 0, lastLogId: null };
+    },
+  });
+  assert.deepEqual(called, [{ companyId: 1, options: { mode: 'incremental' } }]);
+  assert.equal(result.status, 'success');
+  assert.equal(result.skipped, 'already_current');
+});
+
 test('un backfill sin fechas usa la ventana compartida', async () => {
   const windows = [];
   const db = {

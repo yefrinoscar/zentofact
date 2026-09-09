@@ -7,6 +7,7 @@ import {
   parsePrintSelection,
   listLogisticsInbox,
   limaTomorrowDate,
+  markLogisticsOrderDelivered,
   markLogisticsOrderReady,
   printLogisticsPack,
   ripleyOrderLookupIds,
@@ -109,10 +110,12 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.equal(db.queries.length, 4);
   assert.match(db.queries[0].sql, /ch\.code = 'ripley'/);
   assert.match(db.queries[2].sql, /fulfillment_status = any/);
-  assert.match(db.queries[2].sql, /promised_shipping_at is not null/);
+  assert.match(db.queries[2].sql, /::date >= /);
+  assert.match(db.queries[2].sql, /ch\.code = 'manual'/);
   assert.match(db.queries[2].sql, /p\.main_sku/);
   assert.match(db.queries[2].sql, /warehouse_address/);
-  assert.match(db.queries[1].sql, /promised_shipping_at is not null/);
+  assert.match(db.queries[1].sql, /::date >= /);
+  assert.match(db.queries[1].sql, /ch\.code = 'manual'/);
   assert.match(db.queries[3].sql, /America\/Lima/);
   assert.match(db.queries[3].sql, /::date >= /);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
@@ -482,6 +485,74 @@ test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
     }),
     /no se agenda en Ripley/,
   );
+});
+
+test('un propio se marca entregado sin pasar por marketplace', async () => {
+  const updates = [];
+  const enqueued = [];
+  const result = await markLogisticsOrderDelivered({ orderId: 44 }, {
+    db: {
+      async query(sql, params) {
+        if (sql.includes('from orders o')) {
+          return {
+            rows: [{
+              id: 44,
+              company_id: 7,
+              external_order_id: 'MAN-44',
+              external_order_number: 'QNC-10010',
+              fulfillment_status: 'pending',
+              ordered_at: '2026-09-08T12:00:00.000Z',
+              channel_code: 'manual',
+            }],
+          };
+        }
+        if (sql.includes('update orders')) {
+          updates.push(params);
+          return {
+            rows: [{
+              id: 44,
+              company_id: 7,
+              external_order_id: 'MAN-44',
+              external_order_number: 'QNC-10010',
+              fulfillment_status: 'delivered',
+              ordered_at: '2026-09-08T12:00:00.000Z',
+            }],
+          };
+        }
+        return { rows: [] };
+      },
+    },
+    enqueue: async (input) => {
+      enqueued.push(input);
+      return { enqueued: true };
+    },
+  });
+  assert.deepEqual(result, { ok: true, alreadyDelivered: false, orderId: 44 });
+  assert.equal(updates[0][0], 44);
+  assert.equal(enqueued[0].orderId, 44);
+  assert.equal(enqueued[0].source, 'user');
+
+  await assert.rejects(
+    () => markLogisticsOrderDelivered({ orderId: 20 }, {
+      db: {
+        async query() {
+          return { rows: [{ id: 20, channel_code: 'falabella', fulfillment_status: 'pending' }] };
+        },
+      },
+    }),
+    /propios/,
+  );
+});
+
+test('un propio ya entregado no se vuelve a marcar', async () => {
+  const result = await markLogisticsOrderDelivered({ orderId: 45 }, {
+    db: {
+      async query() {
+        return { rows: [{ id: 45, channel_code: 'manual', fulfillment_status: 'delivered' }] };
+      },
+    },
+  });
+  assert.deepEqual(result, { ok: true, alreadyDelivered: true, orderId: 45 });
 });
 
 test('un Ripley ya listo no vuelve a agendar el recojo', async () => {

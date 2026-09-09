@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canMarkFalabellaReady,
+  canMarkLogisticsDelivered,
   canMarkLogisticsReady,
   canPrintLogisticsLabel,
   logisticsItemSku,
@@ -14,7 +15,10 @@ import {
   labelWasPrinted,
   logisticsBulkReadyConfirmCopy,
   applyLogisticsReadyToInbox,
+  applyLogisticsDeliveredToInbox,
+  logisticsBulkDeliverSummary,
   logisticsBulkReadySummary,
+  logisticsDeliverSuccessCopy,
   logisticsChannelClass,
   logisticsChannelLabel,
   logisticsCountLabel,
@@ -100,8 +104,8 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), true);
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), true);
   assert.deepEqual(LOGISTICS_URGENCIES.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana', 'Próximos']);
-  assert.deepEqual(BANDEJA_DEADLINE_FILTERS.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana']);
-  assert.equal(bandejaDeadlineFilter('overdue'), 'overdue');
+  assert.deepEqual(BANDEJA_DEADLINE_FILTERS.map((item) => item.label), ['Vencen hoy', 'Vencen mañana']);
+  assert.equal(bandejaDeadlineFilter('overdue'), null);
   assert.equal(bandejaDeadlineFilter('later'), null);
   assert.equal(bandejaDeadlineFilter(null), null);
   assert.equal(bandejaDeadlineFilter('today'), 'today');
@@ -127,11 +131,14 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
 });
 
 test('el siguiente paso depende del canal, el estado y la impresión previa', () => {
-  assert.deepEqual(logisticsNextStep({ channelCode: 'manual', fulfillmentStatus: 'pending' }), { kind: 'print', label: 'Imprimir' });
+  assert.deepEqual(logisticsNextStep({ channelCode: 'manual', fulfillmentStatus: 'pending' }), { kind: 'deliver', label: 'Marcar entregado' });
   assert.deepEqual(
-    logisticsNextStep({ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }),
-    { kind: 'print', label: 'Reimprimir' },
+    logisticsNextStep({ channelCode: 'manual', fulfillmentStatus: 'ready_to_ship', labelPrint: { printCount: 2 } }),
+    { kind: 'deliver', label: 'Marcar entregado' },
   );
+  assert.equal(canMarkLogisticsDelivered({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
+  assert.equal(canMarkLogisticsDelivered({ channelCode: 'falabella', fulfillmentStatus: 'pending' }), false);
+  assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'F-1' }),
     { kind: 'ready', label: 'Marcar listo' },
@@ -155,12 +162,12 @@ test('el flujo de despacho marca los pasos completados', () => {
     ['done', 'done', 'current'],
   );
   assert.deepEqual(
-    logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 1 } }).map((step) => step.state),
-    ['done', 'done', 'current'],
+    logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 1 } }).map((step) => [step.label, step.state]),
+    [['Empacar', 'current'], ['Entregar', 'todo']],
   );
   assert.deepEqual(
-    logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'shipped' }).map((step) => step.state),
-    ['done', 'done', 'done'],
+    logisticsFlowSteps({ channelCode: 'manual', fulfillmentStatus: 'shipped' }).map((step) => [step.label, step.state]),
+    [['Empacar', 'done'], ['Entregar', 'done']],
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }).map((step) => [step.label, step.state]),
@@ -224,6 +231,30 @@ test('marcar listo saca el pedido de pendientes y lo cuenta en listos', () => {
   assert.equal(next.totalCount, 51);
   assert.deepEqual(next.counts.dates, [{ date: '2026-09-08', count: 1 }]);
   assert.equal(applyLogisticsReadyToInbox(inbox, [99]), inbox);
+});
+
+test('marcar entregado saca el pedido propio de la bandeja abierta', () => {
+  const inbox = {
+    orders: [
+      { id: 10, promisedShippingAt: '2026-09-08T21:00:00.000Z', fulfillmentStatus: 'pending' },
+      { id: 11, promisedShippingAt: '2026-09-08T22:00:00.000Z', fulfillmentStatus: 'ready_to_ship' },
+    ],
+    counts: {
+      pending: 4,
+      ready: 3,
+      shipped: 10,
+      dates: [{ date: '2026-09-08', count: 2 }],
+    },
+    totalCount: 7,
+  };
+  const next = applyLogisticsDeliveredToInbox(inbox, [10, 11]);
+  assert.deepEqual(next.orders, []);
+  assert.equal(next.counts.pending, 3);
+  assert.equal(next.counts.ready, 2);
+  assert.equal(next.counts.shipped, 12);
+  assert.equal(next.totalCount, 5);
+  assert.equal(logisticsDeliverSuccessCopy({ externalOrderNumber: 'QNC-10010' }), 'QNC-10010 quedó entregado.');
+  assert.equal(logisticsBulkDeliverSummary(2, 0), '2 pedidos marcados como entregados.');
 });
 
 test('el filtro de etapa resume plazo y lo que falta imprimir', () => {

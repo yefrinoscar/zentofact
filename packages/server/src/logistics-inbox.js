@@ -3,6 +3,8 @@ import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } f
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 import { createLogId } from './error-log.js';
 import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
+import { shouldListenStockOrder } from './catalog/stock-commitment.js';
 import { enqueueRipleyStockJob, remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
@@ -199,6 +201,9 @@ const URGENCY_SQL = {
 };
 
 const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} >= ${LIMA_TODAY_DATE}`;
+const MANUAL_UNDATED_SQL = `ch.code = 'manual' and o.promised_shipping_at is null`;
+const WORKING_QUEUE_SQL = `((${DATED_UPCOMING_SQL}) or (${MANUAL_UNDATED_SQL}))`;
+const LATER_OR_UNDATED_SQL = `((${URGENCY_SQL.later}) or (${MANUAL_UNDATED_SQL}))`;
 
 function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
   const where = [
@@ -237,7 +242,7 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     if (forStage === 'shipped') {
       where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
     } else if (ignoreDeadline) {
-      where.push(DATED_UPCOMING_SQL);
+      where.push(WORKING_QUEUE_SQL);
     } else if (filters.urgency === 'overdue') {
       where.push(`(${URGENCY_SQL.overdue})`);
     } else if (filters.deadline) {
@@ -246,7 +251,7 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     } else if (filters.urgency) {
       where.push(`(${URGENCY_SQL[filters.urgency]})`);
     } else {
-      where.push(`o.promised_shipping_at is not null`);
+      where.push(WORKING_QUEUE_SQL);
     }
   }
   return where;
@@ -304,8 +309,8 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
   const countWhere = whereClause(filters, countValues);
   const countResult = await target.query(
     `select
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and o.promised_shipping_at is not null)::int as pending_count,
-       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and o.promised_shipping_at is not null)::int as ready_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${WORKING_QUEUE_SQL})::int as pending_count,
+       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and ${WORKING_QUEUE_SQL})::int as ready_count,
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
@@ -313,7 +318,7 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
        count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.overdue})::int as overdue_count,
        count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.today})::int as today_count,
        count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.later})::int as later_count
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${LATER_OR_UNDATED_SQL})::int as later_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
@@ -936,6 +941,58 @@ export async function markLogisticsOrderReady(input = {}, dependencies = {}) {
     warehouseAddress: row.warehouse_address,
     hasRipleySvcCredentials: row.has_ripley_svc_credentials === true,
   }, input, { ...dependencies, db });
+}
+
+export async function markLogisticsOrderDelivered(input = {}, dependencies = {}) {
+  const orderId = Number(input.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
+  const core = dependencies.db ? null : await loadCore();
+  const db = dependencies.db || core.pool;
+  const result = await db.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+            o.fulfillment_status, o.ordered_at,
+            ch.code as channel_code
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where o.id = $1`,
+    [orderId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('Pedido no encontrado.');
+  if (row.channel_code !== 'manual') {
+    throw new Error('Solo los pedidos propios se marcan como entregados aquí.');
+  }
+  const status = String(row.fulfillment_status || '');
+  if (status === 'delivered' || status === 'shipped') {
+    return { ok: true, alreadyDelivered: true, orderId: Number(row.id) };
+  }
+  if (status !== 'pending' && status !== 'preparing' && status !== 'ready_to_ship') {
+    throw new Error('Este pedido ya no se puede marcar como entregado.');
+  }
+  const persisted = await db.query(
+    `update orders
+     set fulfillment_status = 'delivered',
+         order_status = 'completed',
+         updated_at = now()
+     where id = $1
+       and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+     returning id, company_id, external_order_id, external_order_number, fulfillment_status, ordered_at`,
+    [orderId],
+  );
+  const order = persisted.rows[0];
+  if (!order) throw new Error('El pedido ya no está disponible.');
+  if (shouldListenStockOrder({ status: 'delivered', orderedAt: order.ordered_at })) {
+    const enqueue = dependencies.enqueue || enqueueStockJob;
+    await enqueue({
+      orderId: Number(order.id),
+      companyId: order.company_id == null ? null : Number(order.company_id),
+      externalOrderId: order.external_order_id,
+      orderNumber: order.external_order_number,
+      source: 'user',
+    }, db);
+  }
+  return { ok: true, alreadyDelivered: false, orderId: Number(order.id) };
 }
 
 export async function printLogisticsPackWithDefaults(input = {}, dependencies = {}) {

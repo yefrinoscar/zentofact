@@ -1,5 +1,5 @@
 import type { LogisticsOrder } from './bandeja-prototype/shared';
-import { groupLogisticsByUrgency, canMarkLogisticsReady, canPrintLogisticsLabel, formatBandejaDeadlineDate, limaDeadlineKey, logisticsChannelLabel, logisticsItemSku, logisticsUrgency, parseLogisticsDate, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
+import { groupLogisticsByUrgency, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel, formatBandejaDeadlineDate, limaDeadlineKey, logisticsChannelLabel, logisticsItemSku, logisticsUrgency, parseLogisticsDate, LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
 import { sellerShortName } from '../lib/seller-name';
 
 export const OPERATIONAL_VARIANTS = [
@@ -61,8 +61,8 @@ export function operationalGroups(orders: LogisticsOrder[], now: Date, layout: O
       key = units === 1 ? 'single' : 'multiple';
       label = units === 1 ? 'Una unidad' : 'Varias unidades · Revisa cantidades';
     } else if (layout === '16') {
-      key = canMarkLogisticsReady(order) ? 'prepare' : canPrintLogisticsLabel(order) ? 'print' : 'other';
-      label = key === 'prepare' ? 'Puedes marcar listos' : key === 'print' ? 'Puedes imprimir' : 'Sin acción disponible';
+      key = canMarkLogisticsReady(order) ? 'prepare' : canMarkLogisticsDelivered(order) ? 'deliver' : canPrintLogisticsLabel(order) ? 'print' : 'other';
+      label = key === 'prepare' ? 'Puedes marcar listos' : key === 'deliver' ? 'Puedes marcar entregados' : key === 'print' ? 'Puedes imprimir' : 'Sin acción disponible';
     }
     const group = groups.get(key) || { key, label, orders: [] };
     group.orders.push(order);
