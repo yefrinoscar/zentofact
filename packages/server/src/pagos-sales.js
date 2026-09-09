@@ -147,6 +147,15 @@ export function saleReturnLoss(sale) {
   return queda < 0 ? queda : 0;
 }
 
+export function saleEnvioNet(sale) {
+  if (sale?.returned) return 0;
+  const fromOrder = sale?.orderShipping;
+  const gross = fromOrder != null && Number.isFinite(Number(fromOrder))
+    ? Math.max(0, round2(fromOrder))
+    : Math.max(0, round2(sale?.buyerShippingPaid));
+  return igvNet(gross);
+}
+
 export function settlementDailySeries(sales) {
   const days = new Map();
   for (const sale of sales || []) {
@@ -157,7 +166,25 @@ export function settlementDailySeries(sales) {
     current.neto = round2(current.neto + Number(sale.neto || 0));
     days.set(date, current);
   }
-  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+  return downsampleDailySeries([...days.values()].sort((left, right) => left.date.localeCompare(right.date)));
+}
+
+export const SETTLEMENT_CHART_POINTS = 72;
+
+export function downsampleDailySeries(days, maxPoints = SETTLEMENT_CHART_POINTS) {
+  const rows = days || [];
+  const limit = Math.max(Number(maxPoints) || SETTLEMENT_CHART_POINTS, 2);
+  if (rows.length <= limit) return rows;
+  const step = (rows.length - 1) / (limit - 1);
+  const picked = [];
+  const seen = new Set();
+  for (let index = 0; index < limit; index += 1) {
+    const at = Math.round(index * step);
+    if (seen.has(at)) continue;
+    seen.add(at);
+    picked.push(rows[at]);
+  }
+  return picked;
 }
 
 export function slimSettlementSale(sale) {
@@ -222,6 +249,7 @@ export function summarizeSettlementSales(sales) {
       matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
       returnCount: totals.returnCount + (returned ? 1 : 0),
       returnLoss: round2(totals.returnLoss + saleReturnLoss(sale)),
+      envio: round2(totals.envio + saleEnvioNet(sale)),
     };
   }, {
     saleCount: 0,
@@ -240,6 +268,7 @@ export function summarizeSettlementSales(sales) {
     matchedCount: 0,
     returnCount: 0,
     returnLoss: 0,
+    envio: 0,
   });
   return {
     ...summary,

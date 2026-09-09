@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, downsampleDailySeries, filterAggregatedSales, groupSaleCharges, groupSaleProducts, saleEnvioNet, SETTLEMENT_CHART_POINTS, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -126,6 +126,37 @@ test('el 25.9% del facturado es comisión más logística de las tres líneas re
   assert.equal(sale.takeRate, 0.2592);
   assert.equal(summary.takeRate, 0.2592);
   assert.equal(summary.commissionRate, 0.1501);
+  assert.equal(saleEnvioNet({ buyerShippingPaid: 50 }), 42.37);
+  assert.equal(saleEnvioNet({ orderShipping: 50, buyerShippingPaid: 10 }), 42.37);
+  assert.equal(saleEnvioNet({ returned: true, buyerShippingPaid: 50 }), 0);
+  assert.equal(summarizeSettlementSales([{
+    paid: true,
+    bruto: 100,
+    commission: 20,
+    shipping: 10,
+    neto: 70,
+    take: 30,
+    buyerShippingPaid: 50,
+    itemCount: 1,
+    matched: true,
+  }]).envio, 42.37);
+});
+
+test('la serie diaria del gráfico no lleva un punto por cada día del catálogo', () => {
+  const days = Array.from({ length: 400 }, (_, index) => ({
+    date: `2025-01-01`,
+    facturado: index,
+    neto: index,
+  })).map((row, index) => ({
+    ...row,
+    date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+  }));
+  const compact = downsampleDailySeries(days);
+  assert.equal(SETTLEMENT_CHART_POINTS, 72);
+  assert.ok(compact.length <= SETTLEMENT_CHART_POINTS);
+  assert.equal(compact[0].date, days[0].date);
+  assert.equal(compact.at(-1).date, days.at(-1).date);
+  assert.deepEqual(downsampleDailySeries(days.slice(0, 10)).length, 10);
 });
 
 test('el porcentaje de comisión no es fijo entre ventas', () => {

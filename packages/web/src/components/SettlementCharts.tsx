@@ -1,10 +1,10 @@
+import { memo } from 'react';
 import { CartesianGrid, Label, Line, LineChart, Pie, PieChart, XAxis } from 'recharts';
 import {
   money,
   percentLabel,
   saleDateLabel,
   settlementCharts,
-  settlementDailySeries,
   waffleOutOf100,
 } from '../lib/pagos-presentation';
 import { cn } from '@/lib/utils';
@@ -142,6 +142,7 @@ function CompareLineChart({ days }: { days: Array<{ date: string; facturado: num
       config={compareChartConfig}
       className="mt-2 aspect-auto h-[148px] w-full min-w-0"
       initialDimension={{ width: 640, height: 148 }}
+      debounce={400}
       role="img"
       aria-label="Facturado y neto por día"
     >
@@ -262,6 +263,7 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
         config={payoutChartConfig}
         className="aspect-square size-[148px] min-h-[148px] min-w-[148px] max-h-[148px] max-w-[148px] shrink-0 overflow-hidden"
         initialDimension={{ width: 148, height: 148 }}
+        debounce={400}
       >
         <PieChart>
           <ChartTooltip
@@ -303,7 +305,7 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
   );
 }
 
-export function SettlementKpiStrip({ summary, sales }: {
+export const SettlementKpiStrip = memo(function SettlementKpiStrip({ summary, days = [] }: {
   summary?: {
     saleCount?: number;
     bruto?: number | null;
@@ -318,17 +320,9 @@ export function SettlementKpiStrip({ summary, sales }: {
     takeRate?: number | null;
     matchedCount?: number | null;
   } | null;
-  sales?: Array<{
-    date?: string | null;
-    paid?: boolean;
-    bruto?: number | null;
-    neto?: number | null;
-    commission?: number | null;
-    shipping?: number | null;
-  }>;
+  days?: Array<{ date: string; facturado: number; neto: number }>;
 }) {
   const charts = settlementCharts(summary);
-  const days = settlementDailySeries(sales);
   if (!summary?.saleCount) return null;
   return (
     <div className="grid grid-cols-1 items-start gap-x-8 gap-y-8 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -364,4 +358,4 @@ export function SettlementKpiStrip({ summary, sales }: {
       })}
     </div>
   );
-}
+});

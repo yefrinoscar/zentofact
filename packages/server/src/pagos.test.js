@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_DEFAULT, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -145,14 +145,16 @@ test('No Pagado cruza el pedido e inserta liquidación pendiente', async () => {
   assert.match(settlement.sql, /sale_settlements\.status = 'pending'/);
 });
 
-test('Pagos entrega todas las ventas en una respuesta, hasta 20000', () => {
+test('Pagos pagina las ventas y no entrega el catálogo entero', () => {
   assert.equal(SETTLEMENT_SALES_LIST_MAX, 20000);
-  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 20000);
-  assert.equal(settlementSalesLimit(undefined), 20000);
+  assert.equal(SETTLEMENT_SALES_PAGE_DEFAULT, 80);
+  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 200);
+  assert.equal(settlementSalesLimit(undefined), 80);
   assert.equal(settlementSalesLimit(100), 100);
-  assert.equal(settlementSalesLimit(20000), 20000);
-  assert.equal(settlementSalesLimit(90000), 20000);
-  assert.equal(settlementSalesLimit(0), 20000);
+  assert.equal(settlementSalesLimit(200), 200);
+  assert.equal(settlementSalesLimit(20000), 200);
+  assert.equal(settlementSalesLimit(90000), 200);
+  assert.equal(settlementSalesLimit(0), 80);
 });
 
 test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async () => {
@@ -282,7 +284,7 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
   assert.equal(result.days.length, 1);
   assert.equal(result.days[0].facturado, lineCount * 10);
 
-  const allSales = await listSettlementSales({}, {
+  const defaultPage = await listSettlementSales({}, {
     query: async (sql) => {
       if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
         return { rows };
@@ -290,10 +292,12 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
       return { rows: [] };
     },
   });
-  assert.equal(allSales.items.length, lineCount);
-  assert.equal(allSales.items[0].charges, undefined);
+  assert.equal(defaultPage.items.length, SETTLEMENT_SALES_PAGE_DEFAULT);
+  assert.equal(defaultPage.totalCount, lineCount);
+  assert.equal(defaultPage.summary.saleCount, lineCount);
+  assert.equal(defaultPage.items[0].charges, undefined);
 
-  const firstPage = await listSettlementSales({ limit: 500 }, {
+  const firstPage = await listSettlementSales({ limit: 80 }, {
     query: async (sql) => {
       if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
         return { rows };
@@ -301,7 +305,7 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
       return { rows: [] };
     },
   });
-  const secondPage = await listSettlementSales({ limit: 500, offset: 500 }, {
+  const secondPage = await listSettlementSales({ limit: 80, offset: 80 }, {
     query: async (sql) => {
       if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
         return { rows };
@@ -309,12 +313,29 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
       return { rows: [] };
     },
   });
-  assert.equal(firstPage.items.length, 500);
-  assert.equal(secondPage.items.length, 500);
+  assert.equal(firstPage.items.length, 80);
+  assert.equal(secondPage.items.length, 80);
   assert.equal(firstPage.summary.saleCount, lineCount);
   assert.equal(secondPage.summary.saleCount, lineCount);
   assert.equal(firstPage.summary.bruto, secondPage.summary.bruto);
   assert.notEqual(firstPage.items[0].orderId, secondPage.items[0].orderId);
+
+  const augustRows = rows.map((row, index) => ({
+    ...row,
+    sale_date: index % 4 === 0 ? '2026-07-15' : '2026-08-01',
+  }));
+  const august = await listSettlementSales({ orderMonth: '2026-08', limit: 80 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows: augustRows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(august.totalCount, lineCount - Math.ceil(lineCount / 4));
+  assert.equal(august.items.length, 80);
+  assert.ok(august.items.every((sale) => String(sale.date).startsWith('2026-08')));
+  assert.deepEqual(august.orderMonths, ['2026-08', '2026-07']);
 });
 
 test('carga las ventas del estado de cuenta por pedido de la factura', async () => {

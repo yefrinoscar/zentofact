@@ -45,6 +45,7 @@ function ChartContainer({
   children,
   config,
   initialDimension = INITIAL_DIMENSION,
+  debounce = 0,
   ...props
 }: React.ComponentProps<"div"> & {
   config: ChartConfig
@@ -55,6 +56,7 @@ function ChartContainer({
     width: number
     height: number
   }
+  debounce?: number
 }) {
   const uniqueId = React.useId()
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`
@@ -74,6 +76,7 @@ function ChartContainer({
         <RechartsPrimitive.ResponsiveContainer
           width="100%"
           height="100%"
+          debounce={debounce}
           initialDimension={initialDimension}
         >
           {children}
