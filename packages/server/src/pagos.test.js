@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -145,13 +145,14 @@ test('No Pagado cruza el pedido e inserta liquidación pendiente', async () => {
   assert.match(settlement.sql, /sale_settlements\.status = 'pending'/);
 });
 
-test('la página de ventas de Pagos admite hasta 2000 filas', () => {
-  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 2000);
-  assert.equal(settlementSalesLimit(undefined), 50);
+test('Pagos entrega todas las ventas en una respuesta, hasta 20000', () => {
+  assert.equal(SETTLEMENT_SALES_LIST_MAX, 20000);
+  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 20000);
+  assert.equal(settlementSalesLimit(undefined), 20000);
   assert.equal(settlementSalesLimit(100), 100);
-  assert.equal(settlementSalesLimit(2000), 2000);
-  assert.equal(settlementSalesLimit(9000), 2000);
-  assert.equal(settlementSalesLimit(0), 50);
+  assert.equal(settlementSalesLimit(20000), 20000);
+  assert.equal(settlementSalesLimit(90000), 20000);
+  assert.equal(settlementSalesLimit(0), 20000);
 });
 
 test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async () => {
@@ -269,10 +270,28 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
   });
   assert.match(listSql, /from settlement_lines/);
   assert.equal(/limit\s+10000\b/i.test(listSql), false);
+  assert.equal(/sl\.raw,/.test(listSql), false);
   assert.equal(result.summary.saleCount, lineCount);
   assert.equal(result.totalCount, lineCount);
   assert.equal(result.summary.bruto, lineCount * 10);
   assert.equal(result.items.length, 50);
+  assert.equal(result.items[0].charges, undefined);
+  assert.equal(result.items[0].items, undefined);
+  assert.equal(result.items[0].invoiceCharges, undefined);
+  assert.ok(Array.isArray(result.days));
+  assert.equal(result.days.length, 1);
+  assert.equal(result.days[0].facturado, lineCount * 10);
+
+  const allSales = await listSettlementSales({}, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(allSales.items.length, lineCount);
+  assert.equal(allSales.items[0].charges, undefined);
 
   const firstPage = await listSettlementSales({ limit: 500 }, {
     query: async (sql) => {
