@@ -33,6 +33,7 @@ Preconditions:
 - `Bandeja Falabella` at `/#/pedidos` stays. This screen does not replace it.
 - `Imprimir` builds Falabella and manual labels plus a packing sheet and records the print in `logistics_label_prints`. Ripley print stays paused. Treat Falabella print and Falabella `Marcar listo` as live seller mutations.
 - Ripley `Marcar listo` calls `POST /logistics-inbox/:orderId/ready`, which agendas recojo in Seller Center (`manifest/schedule/generate`) and persists `metadata.ripleySvc.statusManagement = TO_PICKUP`. Preview sellers without SVC credentials use the sandbox.
-- `Sincronizar` calls `POST /order-management/sync` with `mode=incremental` and reconciles open Falabella statuses into `orders`. Preview keys are fake; leave it alone unless the recipe is a sync check.
+- `Sincronizar` calls `POST /order-management/sync` with `mode=incremental` and reconciles open Falabella statuses into `orders`. It also closes unified rows that `falabella_orders` already has as shipped/delivered, so they leave Vencidos even if the seller API is down. Preview keys are fake; the local close still runs.
+- Marketplace orders already shipped or delivered must not appear in Vencidos or in Por preparar / Listos. Preview `PV-10013` is that drift case.
 - Hash route: `/#/bandeja`, not `/bandeja`.
 - The three layout variants tried before this design live on branch `yef/bandeja-prototipo-variantes-c820` (`/#/bandeja?variant=A|B|C`). `A` (cola por plazo) won; the others are not in `dev`.

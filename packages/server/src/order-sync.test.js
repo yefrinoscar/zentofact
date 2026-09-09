@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { recoverInterruptedOrderSyncRuns, syncOrderAccount, syncRipleyPages } from './order-sync.js';
+import { recoverInterruptedOrderSyncRuns, syncOrderAccount, syncOrders, syncRipleyPages } from './order-sync.js';
 
 for (const scenario of [
   { name: 'no avanza el cursor cuando otro proceso ocupa el seller', response: { status: 'already_running' }, status: 'error', cursor: '2026-09-06T22:40:00Z' },
@@ -283,6 +283,20 @@ test('un backfill sin fechas usa la ventana compartida', async () => {
     from: '2026-09-01T05:00:00.000Z',
     to: '2026-09-08T04:59:59.999Z',
   }]);
+});
+
+test('Sincronizar cierra pedidos marketplace ya enviados antes de llamar al canal', async () => {
+  const closed = [];
+  const result = await syncOrders({}, {
+    db: { async query() { return { rows: [] }; } },
+    closeStaleMarketplaceFulfillment: async (db) => {
+      closed.push(Boolean(db));
+      return { falabella: 4, ripley: 1 };
+    },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+  });
+  assert.deepEqual(closed, [true]);
+  assert.deepEqual(result.results, []);
 });
 
 test('al retomar una cuenta cierra las ejecuciones que quedaron running', async () => {

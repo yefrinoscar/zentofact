@@ -71,6 +71,7 @@ Unified sample orders on LIMBO:
 | RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · `Marcar listo` agendas recojo · master SKU `HOG025` · three unit lines shown as one product `x3` |
 | PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
 | PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
+| PV-10013 | Falabella | stale `pending` / channel `shipped` | must not stay in Vencidos after bandeja load or Sincronizar |
 
 Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, and RP-10020. Own orders use `Marcar entregado`; print stays secondary. Falabella labels and Falabella `Marcar listo` need live seller APIs. Ripley print stays paused. Ripley `Marcar listo` agendas recojo; preview sellers without SVC credentials use the sandbox.
 

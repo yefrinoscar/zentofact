@@ -239,7 +239,7 @@ const SEED_LOGISTICS_ORDERS = [
     customer: { name: 'Raúl Preview', firstName: 'Raúl', lastName: 'Preview', documentNumber: '11220033', phone: '999111013' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
-    falabellaStatus: 'pending',
+    falabellaStatus: 'shipped',
     promisedOffsetDays: -1,
     shipping: { type: 'envio' },
     stockState: 'none',

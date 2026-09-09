@@ -1,6 +1,7 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
+import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
@@ -556,6 +557,11 @@ function clampPositiveMinutes(value) {
 }
 
 export async function syncOrders(options = {}, dependencies = {}) {
+  const closer = dependencies.closeStaleMarketplaceFulfillment || closeStaleMarketplaceFulfillment;
+  if (typeof closer === 'function') {
+    const core = dependencies.db || dependencies.pool ? null : await loadCore();
+    await closer(dependencies.db || dependencies.pool || core.pool);
+  }
   const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
   const ids = await eligibleAccountIds({
     ...options,
