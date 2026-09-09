@@ -142,6 +142,7 @@ function CompareLineChart({ days }: { days: Array<{ date: string; facturado: num
       config={compareChartConfig}
       className="mt-2 aspect-auto h-[148px] w-full min-w-0"
       initialDimension={{ width: 640, height: 148 }}
+      debounce={400}
       role="img"
       aria-label="Facturado y neto por día"
     >
@@ -262,6 +263,7 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
         config={payoutChartConfig}
         className="aspect-square size-[148px] min-h-[148px] min-w-[148px] max-h-[148px] max-w-[148px] shrink-0 overflow-hidden"
         initialDimension={{ width: 148, height: 148 }}
+        debounce={400}
       >
         <PieChart>
           <ChartTooltip

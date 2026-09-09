@@ -166,7 +166,25 @@ export function settlementDailySeries(sales) {
     current.neto = round2(current.neto + Number(sale.neto || 0));
     days.set(date, current);
   }
-  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+  return downsampleDailySeries([...days.values()].sort((left, right) => left.date.localeCompare(right.date)));
+}
+
+export const SETTLEMENT_CHART_POINTS = 72;
+
+export function downsampleDailySeries(days, maxPoints = SETTLEMENT_CHART_POINTS) {
+  const rows = days || [];
+  const limit = Math.max(Number(maxPoints) || SETTLEMENT_CHART_POINTS, 2);
+  if (rows.length <= limit) return rows;
+  const step = (rows.length - 1) / (limit - 1);
+  const picked = [];
+  const seen = new Set();
+  for (let index = 0; index < limit; index += 1) {
+    const at = Math.round(index * step);
+    if (seen.has(at)) continue;
+    seen.add(at);
+    picked.push(rows[at]);
+  }
+  return picked;
 }
 
 export function slimSettlementSale(sale) {

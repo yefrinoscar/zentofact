@@ -40,6 +40,7 @@ export function OrdersVirtualTable<TData>({
   stickyRightId = 'actions',
   rowHeight = ROW_HEIGHT,
   compact = false,
+  overscan = 16,
   scrollClassName = 'h-[min(70vh,36rem)]',
   'aria-label': ariaLabel,
 }: {
@@ -56,6 +57,7 @@ export function OrdersVirtualTable<TData>({
   stickyRightId?: string;
   rowHeight?: number;
   compact?: boolean;
+  overscan?: number;
   scrollClassName?: string;
   'aria-label'?: string;
 }) {
@@ -86,7 +88,7 @@ export function OrdersVirtualTable<TData>({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
-    overscan: 16,
+    overscan,
   });
   const virtualRows = virtualizer.getVirtualItems();
 

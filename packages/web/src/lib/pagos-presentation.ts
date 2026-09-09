@@ -89,7 +89,9 @@ export function igvSplit(gross: number | null | undefined) {
   return { gross: amount, net, igv: money2(amount - net) };
 }
 
-export function saleIgvStory(sale: {
+const igvStoryCache = new WeakMap<object, ReturnType<typeof buildSaleIgvStory>>();
+
+function buildSaleIgvStory(sale: {
   bruto?: number | null;
   commission?: number | null;
   shipping?: number | null;
@@ -143,6 +145,15 @@ export function saleIgvStory(sale: {
     shippingAdjust: money2(queda - (productSplit.net - commissionSplit.net)),
     queda,
   };
+}
+
+export function saleIgvStory(sale: Parameters<typeof buildSaleIgvStory>[0]) {
+  if (!sale || typeof sale !== 'object') return buildSaleIgvStory(sale);
+  const cached = igvStoryCache.get(sale);
+  if (cached) return cached;
+  const story = buildSaleIgvStory(sale);
+  igvStoryCache.set(sale, story);
+  return story;
 }
 
 function invoiceSplit(row: { net?: number; igv?: number; gross?: number } | null | undefined) {

@@ -892,10 +892,29 @@ export default function Pagos() {
   } | undefined;
   const days = (salesHead?.days || []) as Array<{ date: string; facturado: number; neto: number }>;
   const orderMonths = (salesHead?.orderMonths || []) as string[];
-  const companies = ((companiesQuery.data || []) as CompanyOption[])
-    .filter((company) => (company as { activo?: boolean | null }).activo !== false)
-    .slice()
-    .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
+  const companies = useMemo(() => (
+    ((companiesQuery.data || []) as CompanyOption[])
+      .filter((company) => (company as { activo?: boolean | null }).activo !== false)
+      .slice()
+      .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'))
+  ), [companiesQuery.data]);
+  const companyOptions = useMemo(() => [
+    { value: 'all', label: 'Todos' },
+    ...companies.map((company) => ({ value: String(company.id), label: companyLabel(company) })),
+  ], [companies]);
+  const monthOptions = useMemo(() => {
+    const months = orderMonth !== 'all' && !orderMonths.includes(orderMonth)
+      ? [orderMonth, ...orderMonths]
+      : orderMonths;
+    return [
+      { value: 'all', label: 'Mes orden' },
+      ...months.map((month) => ({ value: month, label: monthLabel(month) })),
+    ];
+  }, [orderMonth, orderMonths]);
+  const paidOptions = useMemo(() => PAYMENT_FILTERS.map((item) => ({
+    value: item.value,
+    label: item.trigger,
+  })), []);
   const totalCount = Number(salesHead?.totalCount || 0);
   const loadError = salesQuery.error as Error | undefined;
 
@@ -1149,36 +1168,23 @@ export default function Pagos() {
           className="w-[8.75rem]"
           aria-label="Compañía"
           value={companyId}
+          options={companyOptions}
           onValueChange={setCompanyId}
-        >
-          <option value="all">Todos</option>
-          {companies.map((company) => (
-            <option key={company.id} value={String(company.id)}>{companyLabel(company)}</option>
-          ))}
-        </ToolbarSelect>
+        />
         <ToolbarSelect
           className="w-[8.25rem]"
           aria-label="Mes de la orden"
           value={orderMonth}
+          options={monthOptions}
           onValueChange={setOrderMonth}
-        >
-          <option value="all">Mes orden</option>
-          {(orderMonth !== 'all' && !orderMonths.includes(orderMonth) ? [orderMonth, ...orderMonths] : orderMonths).map((month) => (
-            <option key={`orden-${month}`} value={month}>{monthLabel(month)}</option>
-          ))}
-        </ToolbarSelect>
+        />
         <ToolbarSelect
           className="w-[11.25rem]"
           aria-label="Estado de pago"
           value={paid}
+          options={paidOptions}
           onValueChange={(value) => setPaid(value as PaymentFilterValue)}
-        >
-          {PAYMENT_FILTERS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.trigger}
-            </option>
-          ))}
-        </ToolbarSelect>
+        />
         <input
           ref={fileInput}
           type="file"
@@ -1294,6 +1300,7 @@ export default function Pagos() {
         table={table}
         compact
         rowHeight={52}
+        overscan={6}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
