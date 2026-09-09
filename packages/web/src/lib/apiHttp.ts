@@ -282,6 +282,8 @@ const apiHttp = {
     req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
+  markLogisticsOrderDelivered: (data: { orderId: number }) =>
+    req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/delivered`, { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;

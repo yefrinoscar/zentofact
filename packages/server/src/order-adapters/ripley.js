@@ -252,6 +252,37 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
 
 const RIPLEY_READY_DEMOTE = new Set(['pending', 'preparing']);
 
+const CLOSED_RIPLEY_FULFILLMENT = new Set(['cancelled', 'returned', 'shipped', 'delivered', 'failed']);
+
+export async function closeStaleRipleyShippedFulfillment(db) {
+  if (!db?.query) return { updated: 0 };
+  const found = await db.query(
+    `select o.id, o.provider_status, o.fulfillment_status, o.metadata
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where ch.code = 'ripley'
+       and o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and o.order_status not in ('cancelled', 'failed')`,
+  );
+  let updated = 0;
+  for (const row of found.rows || []) {
+    const next = resolveRipleyIngestStatuses(row.provider_status, row);
+    if (!CLOSED_RIPLEY_FULFILLMENT.has(next.fulfillmentStatus)) continue;
+    const result = await db.query(
+      `update orders
+       set fulfillment_status = $2,
+           order_status = $3,
+           updated_at = now()
+       where id = $1
+         and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')`,
+      [row.id, next.fulfillmentStatus, next.orderStatus],
+    );
+    updated += Number(result.rowCount || 0);
+  }
+  return { updated };
+}
+
 export async function remapPersistedRipleyReadyOrders(db, accountId = null) {
   if (!db?.query) return { updated: 0 };
   const found = await db.query(

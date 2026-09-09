@@ -1,6 +1,7 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
+import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
@@ -367,7 +368,30 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
     window.creationRange = mode === 'backfill';
     window.remapFromProvider = mode === 'backfill';
     if (new Date(window.from) >= new Date(window.to)) {
-      return { ...account, status: 'success', skipped: 'already_current' };
+      if (account.channelCode === 'falabella') {
+        const result = await (dependencies.syncFalabellaOrders || syncFalabellaOrders)(account.companyId, {
+          mode: 'incremental',
+        });
+        if (result.status === 'already_running') {
+          return { channelAccountId: accountId, companyId: account.companyId, channelCode: 'falabella', status: 'already_running' };
+        }
+        return {
+          channelAccountId: accountId,
+          companyId: account.companyId,
+          channelCode: 'falabella',
+          status: result.status === 'partial' ? 'partial' : 'success',
+          skipped: result.skipped || 'already_current',
+          pages: Number(result.pages || 0),
+          received: Number(result.received || 0),
+          upserted: Number(result.upserted || 0),
+          failed: Number(result.failed || 0),
+          logId: result.lastLogId || null,
+        };
+      }
+      const logistics = account.channelCode === 'ripley'
+        ? await applyRipleyLogistics(account, db, dependencies)
+        : null;
+      return { ...account, status: 'success', skipped: 'already_current', logistics };
     }
     const run = await db.query(
       `insert into order_sync_runs (channel_account_id, mode, status, cursor_from, cursor_to)
@@ -533,6 +557,11 @@ function clampPositiveMinutes(value) {
 }
 
 export async function syncOrders(options = {}, dependencies = {}) {
+  const closer = dependencies.closeStaleMarketplaceFulfillment || closeStaleMarketplaceFulfillment;
+  if (typeof closer === 'function') {
+    const core = dependencies.db || dependencies.pool ? null : await loadCore();
+    await closer(dependencies.db || dependencies.pool || core.pool);
+  }
   const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
   const ids = await eligibleAccountIds({
     ...options,

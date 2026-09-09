@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
-import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search, Truck } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsReady, canPrintLogisticsLabel,
+  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
   limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
   LOGISTICS_CHANNELS, LOGISTICS_URGENCIES,
@@ -35,11 +35,20 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const isPending = view.stage === 'pending';
   const isReady = view.stage === 'ready';
   const locked = busy || error || view.fetching || view.printing || view.busyOrderId !== null;
-  const eligible = view.orders.filter(isPending ? canMarkLogisticsReady : canPrintLogisticsLabel);
+  const eligible = view.orders.filter((order) => (
+    canMarkLogisticsReady(order) || canMarkLogisticsDelivered(order) || (isReady && canPrintLogisticsLabel(order))
+  ));
   const selectedOrders = eligible.filter((order) => selected.has(order.id));
   const allSelected = eligible.length > 0 && selectedOrders.length === eligible.length;
-  const unprinted = eligible.filter((order) => !labelWasPrinted(order));
-  const targets = selectedOrders.length ? selectedOrders : isPending ? eligible : unprinted;
+  const selectedReady = selectedOrders.filter(canMarkLogisticsReady);
+  const selectedDeliver = selectedOrders.filter(canMarkLogisticsDelivered);
+  const selectedPrint = selectedOrders.filter(canPrintLogisticsLabel);
+  const defaultReady = view.orders.filter(canMarkLogisticsReady);
+  const defaultDeliver = view.orders.filter(canMarkLogisticsDelivered);
+  const unprinted = view.orders.filter((order) => canPrintLogisticsLabel(order) && !labelWasPrinted(order));
+  const readyTargets = selectedOrders.length ? selectedReady : defaultReady;
+  const deliverTargets = selectedOrders.length ? selectedDeliver : defaultDeliver;
+  const printTargets = selectedOrders.length ? selectedPrint : unprinted;
   const groups = groupLogisticsByUrgency(view.orders, view.now);
   const focused = view.orders.find((order) => order.id === focusedId) || groups[0]?.orders[0];
   const laterDates = laterBandejaDeadlineDates(view.counts.dates || [], view.now);
@@ -55,10 +64,10 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const isChecklist = layout === '13' && isPending;
   const isColumns = ['9', '10', '16'].includes(layout);
   const showPlazoHeading = view.stage !== 'shipped' && !((view.urgency || view.deadlineDate) && !['3', '8', '10', '11', '12', '16'].includes(layout));
-  const action = () => {
-    if (locked || !targets.length) return;
-    if (isPending) view.requestBulkReady(targets);
-    else { view.printOrders(targets); setSelected(new Set()); }
+  const printAction = () => {
+    if (locked || !printTargets.length) return;
+    view.printOrders(printTargets);
+    setSelected(new Set());
   };
   const toggle = (order: LogisticsOrder) => setSelected((current) => {
     const next = new Set(current);
@@ -68,7 +77,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   });
 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
-                      const selectable = isPending ? canMarkLogisticsReady(order) : canPrintLogisticsLabel(order);
+                      const selectable = canMarkLogisticsReady(order) || canMarkLogisticsDelivered(order) || (isReady && canPrintLogisticsLabel(order));
                       const printed = labelWasPrinted(order);
                       const rowClass = cn('grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-3 hover:bg-muted/30', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
                       const content = <>
@@ -86,9 +95,13 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
                         </div>
                         <div className={cn("col-start-2 flex items-center justify-between gap-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
-                          {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span> : canMarkLogisticsReady(order) ? <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>
-                            : canPrintLogisticsLabel(order) ? <Button size="sm" variant="outline" disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>
-                              : view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
+                          {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span>
+                            : <span className="flex flex-wrap items-center justify-end gap-2">
+                              {canMarkLogisticsDelivered(order) && <Button size="sm" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(order)}><Truck />Marcar entregado</Button>}
+                              {canMarkLogisticsReady(order) && <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>}
+                              {canPrintLogisticsLabel(order) && <Button size="sm" variant={canMarkLogisticsDelivered(order) ? 'ghost' : 'outline'} disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>}
+                              {!canMarkLogisticsDelivered(order) && !canMarkLogisticsReady(order) && !canPrintLogisticsLabel(order) && view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
+                            </span>}
                         </div>
                         {layout === '12' && <p className="col-start-2 text-sm font-semibold tabular-nums md:col-start-3">{orderUnits(order)} {orderUnits(order) === 1 ? 'unidad para empacar' : 'unidades para empacar'}</p>}
                         {isChecklist && canMarkLogisticsReady(order) && <BandejaPackingChecklist key={order.items.map((item) => `${item.id}:${item.quantity}`).join('|')} order={order} disabled={locked || !view.canDispatch} onReady={() => view.requestReady(order)} />}
@@ -183,14 +196,22 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} />}
           <div>
             <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} pedidos`}</p>
-            <p className="text-xs text-muted-foreground">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo.' : 'Prepara, selecciona y marca listo.' : isReady ? 'Etiquetas y detalle de productos en un PDF.' : 'Pedidos enviados.'}</p>
+            <p className="text-xs text-muted-foreground">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo o entregado.' : 'Prepara y marca listo o entregado.' : isReady ? 'Imprime marketplaces o marca entregados los propios.' : 'Pedidos enviados.'}</p>
           </div>
           {selectedOrders.length > 0 && <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Quitar selección</Button>}
         </div>
-        {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && layout !== '14' && !isChecklist && <Button onClick={action} disabled={locked || !targets.length || (isPending && !view.canDispatch)}>
-          {view.printing ? <Loader2 className="animate-spin" /> : isPending ? <PackageCheck /> : <Printer />}
-          {view.printing ? 'Generando PDF…' : isPending ? `Marcar ${targets.length} listos` : selectedOrders.length ? `Imprimir ${targets.length} seleccionados` : `Imprimir ${targets.length} sin imprimir`}
-        </Button>}
+        {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && layout !== '14' && !isChecklist && <div className="flex flex-wrap gap-2">
+          {readyTargets.length > 0 && <Button onClick={() => view.requestBulkReady(readyTargets)} disabled={locked || !view.canDispatch}>
+            <PackageCheck />{`Marcar ${readyTargets.length} listos`}
+          </Button>}
+          {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} onClick={() => view.requestBulkDeliver(deliverTargets)} disabled={locked || !view.canDispatch}>
+            <Truck />{`Marcar ${deliverTargets.length} entregados`}
+          </Button>}
+          {isReady && printTargets.length > 0 && <Button variant={deliverTargets.length ? 'outline' : 'default'} onClick={printAction} disabled={locked}>
+            {view.printing ? <Loader2 className="animate-spin" /> : <Printer />}
+            {view.printing ? 'Generando PDF…' : selectedOrders.length ? `Imprimir ${printTargets.length} seleccionados` : `Imprimir ${printTargets.length} sin imprimir`}
+          </Button>}
+        </div>}
         </div>
       </div>
 
@@ -206,7 +227,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <section className="min-w-0">
           <div className="mb-5 flex flex-wrap justify-between gap-3 border-b pb-4"><div><p className="mb-1 text-xs text-muted-foreground">{isPending ? 'PEDIDO EN PREPARACIÓN' : isReady ? 'PEDIDO PARA IMPRIMIR' : 'PEDIDO ENVIADO'}</p><CopyableOrderNumber value={focused.externalOrderNumber} /><p className="mt-1 text-sm text-muted-foreground">{sellerShortName(focused.companyName)}</p></div><p className="text-sm font-medium">{logisticsDeadlineLabel(focused, view.now)}</p></div>
           <div className="space-y-5">{focused.items.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-5 border-b pb-5"><ProductThumb item={item} className="size-36 rounded-lg bg-white sm:size-44" onOpen={setPreview} /><div className="min-w-0 flex-1"><p className="text-lg font-semibold">{item.description}</p>{logisticsItemSku(item) && <p className="my-2 font-mono text-sm text-muted-foreground">{logisticsItemSku(item)}</p>}<QuantityTag item={item} /></div></div>)}</div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />Marcar pedido listo</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsDelivered(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(focused)}><Truck />Marcar pedido entregado</Button> : canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />Marcar pedido listo</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
@@ -227,8 +248,10 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <p className="mt-3 text-3xl font-semibold tabular-nums">{selectedOrders.length} <span className="text-sm font-normal text-muted-foreground">seleccionados</span></p>
         <p className="mt-1 text-sm text-muted-foreground">{selectedOrders.reduce((sum, order) => sum + order.items.reduce((units, item) => units + item.quantity, 0), 0)} unidades · {new Set(selectedOrders.map((order) => order.companyId)).size} tiendas</p>
         <div className="my-5 max-h-72 space-y-3 overflow-y-auto border-y py-4">{selectedOrders.length ? selectedOrders.map((order) => <div key={order.id} className="flex justify-between gap-2 text-xs"><span className="min-w-0"><span className="block font-mono font-semibold">{order.externalOrderNumber}</span><span className="text-muted-foreground">{sellerShortName(order.companyName)}</span></span><button type="button" onClick={() => toggle(order)} className="text-muted-foreground underline" aria-label={`Quitar pedido ${order.externalOrderNumber}`}>Quitar</button></div>) : <p className="text-sm text-muted-foreground">Selecciona pedidos de la lista para formar el lote.</p>}</div>
-        <Button className="w-full" disabled={locked || !selectedOrders.length || (isPending && !view.canDispatch)} onClick={action}>{isPending ? <PackageCheck /> : <Printer />}{isPending ? `Marcar ${selectedOrders.length} listos` : `Imprimir ${selectedOrders.length} pedidos`}</Button>
-        <p className="mt-3 text-xs text-muted-foreground">{isPending ? 'Confirma que el lote está empacado.' : 'Un PDF con etiquetas y productos.'}</p>
+        {readyTargets.length > 0 && <Button className="w-full" disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} listos`}</Button>}
+        {deliverTargets.length > 0 && <Button className="mt-2 w-full" variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} entregados`}</Button>}
+        {isReady && printTargets.length > 0 && <Button className="mt-2 w-full" variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}><Printer />{`Imprimir ${printTargets.length} pedidos`}</Button>}
+        <p className="mt-3 text-xs text-muted-foreground">{isPending ? 'Confirma que el lote está empacado o entregado.' : 'Imprime marketplaces o marca entregados los propios.'}</p>
         {isPending && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{view.counts.ready}</span></Button>}
       </aside>}
       </div>
@@ -237,8 +260,12 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <div className="flex gap-2"><Button size="sm" variant="outline" disabled={locked || offset === 0} onClick={() => onPage(Math.max(0, offset - pageSize))}><ChevronLeft />Anterior</Button><Button size="sm" variant="outline" disabled={locked || offset + pageSize >= view.totalCount} onClick={() => onPage(offset + pageSize)}>Siguiente<ChevronRight /></Button></div>
       </div>
       {layout === '14' && view.stage !== 'shipped' && <div className="fixed inset-x-4 bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4 shadow-lg xl:left-72">
-        <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${targets.length} pedidos disponibles en esta página`}</p><p className="text-xs text-muted-foreground">{targets.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma que están empacados.' : 'Etiquetas y productos en un PDF.'}</p></div>
-        <Button disabled={locked || !targets.length || (isPending && !view.canDispatch)} onClick={action}>{view.printing ? <Loader2 className="animate-spin" /> : isPending ? <PackageCheck /> : <Printer />}{isPending ? `Marcar ${targets.length} listos` : `Imprimir ${targets.length} pedidos`}</Button>
+        <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${eligible.length} pedidos disponibles en esta página`}</p><p className="text-xs text-muted-foreground">{eligible.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma listo o entregado.' : 'Imprime o marca entregados.'}</p></div>
+        <div className="flex flex-wrap gap-2">
+          {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} listos`}</Button>}
+          {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} entregados`}</Button>}
+          {isReady && printTargets.length > 0 && <Button variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}>{view.printing ? <Loader2 className="animate-spin" /> : <Printer />}{`Imprimir ${printTargets.length} pedidos`}</Button>}
+        </div>
       </div>}
       <ProductImageLightbox preview={preview} onClose={() => setPreview(null)} />
     </div>

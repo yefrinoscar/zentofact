@@ -15,12 +15,17 @@ import { logIdFromUnknown } from '../lib/api-error';
 import { sellerShortName } from '../lib/seller-name';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import {
+  applyLogisticsDeliveredToInbox,
   applyLogisticsReadyToInbox,
   bandejaDeadlineFilter,
   canPrintLogisticsLabel,
   formatBandejaDeadlineDate,
+  logisticsBulkDeliverConfirmCopy,
+  logisticsBulkDeliverSummary,
   logisticsBulkReadyConfirmCopy,
   logisticsBulkReadySummary,
+  logisticsDeliverConfirmCopy,
+  logisticsDeliverSuccessCopy,
   logisticsEmptyCopy,
   logisticsPrintSuccessCopy,
   logisticsReadyConfirmCopy,
@@ -131,6 +136,8 @@ export default function BandejaLogistica() {
   const [labelSelection, setLabelSelection] = useState<Set<number> | null>(null);
   const [readyOrder, setReadyOrder] = useState<LogisticsOrder | null>(null);
   const [bulkReady, setBulkReady] = useState<LogisticsOrder[] | null>(null);
+  const [deliverOrder, setDeliverOrder] = useState<LogisticsOrder | null>(null);
+  const [bulkDeliver, setBulkDeliver] = useState<LogisticsOrder[] | null>(null);
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
@@ -166,6 +173,15 @@ export default function BandejaLogistica() {
     if (ids.length) {
       queryClient.setQueriesData<InboxResponse>({ queryKey: ['logistics-inbox'] }, (current) => (
         applyLogisticsReadyToInbox(current, ids)
+      ));
+    }
+    void invalidate();
+  };
+  const revealDeliveredOrders = (orderIds: Iterable<number>) => {
+    const ids = [...orderIds];
+    if (ids.length) {
+      queryClient.setQueriesData<InboxResponse>({ queryKey: ['logistics-inbox'] }, (current) => (
+        applyLogisticsDeliveredToInbox(current, ids)
       ));
     }
     void invalidate();
@@ -282,14 +298,66 @@ export default function BandejaLogistica() {
     onError: (error) => announce(noticeFromError(error, 'No se pudieron actualizar los pedidos.')),
   });
 
+  const deliverMutation = useMutation({
+    mutationFn: (order: LogisticsOrder) => api.markLogisticsOrderDelivered({ orderId: order.id }),
+    onSuccess: (_result, order) => {
+      setDeliverOrder(null);
+      announce({ tone: 'success', message: logisticsDeliverSuccessCopy(order), refs: [] });
+      revealDeliveredOrders([order.id]);
+    },
+    onError: (error) => announce(noticeFromError(error, 'No se pudo marcar el pedido como entregado.')),
+    onSettled: () => setBusyOrderId(null),
+  });
+
+  const markDelivered = (order: LogisticsOrder) => {
+    if (!canDispatch || deliverMutation.isPending) return;
+    setBusyOrderId(order.id);
+    setNotice(null);
+    deliverMutation.mutate(order);
+  };
+
+  const bulkDeliverMutation = useMutation({
+    mutationFn: async (targets: LogisticsOrder[]) => {
+      setBulkProgress(0);
+      const failed: Array<{ orderNumber: string; logId?: string }> = [];
+      const succeeded: number[] = [];
+      for (let index = 0; index < targets.length; index += 4) {
+        const chunk = targets.slice(index, index + 4);
+        const results = await Promise.allSettled(chunk.map((order) => api.markLogisticsOrderDelivered({ orderId: order.id })));
+        setBulkProgress(Math.min(index + chunk.length, targets.length));
+        results.forEach((result, resultIndex) => {
+          if (result.status === 'rejected') {
+            failed.push({ orderNumber: chunk[resultIndex].externalOrderNumber, logId: logIdFromUnknown(result.reason) });
+          } else {
+            succeeded.push(chunk[resultIndex].id);
+          }
+        });
+      }
+      return { total: targets.length, failed, succeeded };
+    },
+    onSuccess: ({ total, failed, succeeded }) => {
+      setBulkDeliver(null);
+      announce({
+        tone: failed.length ? (failed.length === total ? 'error' : 'warning') : 'success',
+        message: logisticsBulkDeliverSummary(total, failed.length),
+        refs: failed.map((row) => ({ label: row.orderNumber, logId: row.logId })),
+      });
+      revealDeliveredOrders(succeeded);
+    },
+    onError: (error) => announce(noticeFromError(error, 'No se pudieron marcar los pedidos como entregados.')),
+  });
+
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
+    mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
     onSuccess: (result) => {
       const rows = Array.isArray(result?.results) ? result.results : [];
       const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));
+      const running = rows.filter((row) => String(row.status || '') === 'already_running');
       announce(failed.length
         ? { tone: rows.length === failed.length ? 'error' : 'warning', message: `${failed.length} tienda${failed.length === 1 ? '' : 's'} no pudo${failed.length === 1 ? '' : 'ieron'} sincronizarse.`, refs: [] }
-        : { tone: 'success', message: 'Pedidos actualizados.', refs: [] });
+        : running.length
+          ? { tone: 'warning', message: 'La sincronización ya estaba en curso. La bandeja se actualiza al terminar.', refs: [] }
+          : { tone: 'success', message: 'Estados de pedidos actualizados.', refs: [] });
       void invalidate();
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
@@ -317,6 +385,11 @@ export default function BandejaLogistica() {
   const closeReady = () => {
     if (readyMutation.isPending) return;
     setReadyOrder(null);
+  };
+
+  const closeDeliver = () => {
+    if (deliverMutation.isPending) return;
+    setDeliverOrder(null);
   };
 
   const view: BandejaView = {
@@ -347,6 +420,8 @@ export default function BandejaLogistica() {
     printOrders,
     requestReady: (order) => setReadyOrder(order),
     requestBulkReady: (targets) => setBulkReady(targets),
+    requestDeliver: (order) => setDeliverOrder(order),
+    requestBulkDeliver: (targets) => setBulkDeliver(targets),
     labelSelection,
     setLabelSelection,
     toggleLabel,
@@ -361,7 +436,7 @@ export default function BandejaLogistica() {
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
-        : <BandejaOperativa key={`${layout}|${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
+        : <BandejaOperativa key={`${layout}|${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
 
   return (
     <div>
@@ -425,6 +500,54 @@ export default function BandejaLogistica() {
                 <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
                   {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
                   {readyOrder.channelCode === 'ripley' ? 'Agendar recojo' : 'Confirmar y marcar listo'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(bulkDeliver)} onOpenChange={(open) => !open && !bulkDeliverMutation.isPending && setBulkDeliver(null)}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!bulkDeliverMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Marcar {bulkDeliver?.length} entregados</DialogTitle>
+            <DialogDescription>
+              {bulkDeliver ? logisticsBulkDeliverConfirmCopy(bulkDeliver.length) : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md bg-teal-50 px-3 py-2.5 text-sm text-teal-950">
+            Estos pedidos propios salen de la bandeja. No se llama a un marketplace.
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeliver(null)} disabled={bulkDeliverMutation.isPending}>Cancelar</Button>
+            <Button onClick={() => bulkDeliver && bulkDeliverMutation.mutate(bulkDeliver)} disabled={bulkDeliverMutation.isPending}>
+              {bulkDeliverMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
+              {bulkDeliverMutation.isPending ? `Actualizando ${bulkProgress} de ${bulkDeliver?.length}…` : `Marcar ${bulkDeliver?.length} entregados`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deliverOrder)} onOpenChange={(open) => !open && closeDeliver()}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!deliverMutation.isPending}>
+          {deliverOrder && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Confirmar pedido entregado</DialogTitle>
+                <DialogDescription>Pedido {deliverOrder.externalOrderNumber} · {sellerShortName(deliverOrder.companyName)}</DialogDescription>
+              </DialogHeader>
+              <div className="flex gap-3 rounded-md border border-teal-200 bg-teal-50 p-4 text-teal-950">
+                <PackageCheck className="mt-0.5 size-5 shrink-0" />
+                <div>
+                  <p className="font-semibold">El pedido propio ya salió</p>
+                  <p className="mt-1 text-sm text-teal-900">{logisticsDeliverConfirmCopy()}</p>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeDeliver} disabled={deliverMutation.isPending}>Cancelar</Button>
+                <Button onClick={() => markDelivered(deliverOrder)} disabled={deliverMutation.isPending}>
+                  {deliverMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
+                  Confirmar entregado
                 </Button>
               </DialogFooter>
             </>

@@ -46,10 +46,12 @@ export const LOGISTICS_URGENCIES: Array<{
   { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', railClass: 'border-l-slate-300', textClass: 'text-slate-600', pillClass: 'bg-slate-100 text-slate-600' },
 ];
 
-export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => item.value !== 'later');
+export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => (
+  item.value === 'today' || item.value === 'tomorrow'
+));
 
-export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'overdue' | 'today' | 'tomorrow' | null {
-  if (urgency === 'overdue' || urgency === 'today' || urgency === 'tomorrow') return urgency;
+export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'today' | 'tomorrow' | null {
+  if (urgency === 'today' || urgency === 'tomorrow') return urgency;
   return null;
 }
 
@@ -183,6 +185,12 @@ export function canMarkLogisticsReady(order: LogisticsOrderLike) {
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
 }
 
+export function canMarkLogisticsDelivered(order: LogisticsOrderLike) {
+  if (String(order.channelCode || '') !== 'manual') return false;
+  const status = String(order.fulfillmentStatus || '');
+  return status === 'pending' || status === 'preparing' || status === 'ready_to_ship';
+}
+
 export function canMarkFalabellaReady(order: LogisticsOrderLike) {
   return order.channelCode === 'falabella' && canMarkLogisticsReady(order);
 }
@@ -281,12 +289,14 @@ export type LogisticsNextStep =
   | { kind: 'print'; label: 'Imprimir' | 'Reimprimir' }
   | { kind: 'soon'; label: 'Imprimir' }
   | { kind: 'ready'; label: 'Marcar listo' }
+  | { kind: 'deliver'; label: 'Marcar entregado' }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
 
 export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
+  if (canMarkLogisticsDelivered(order)) return { kind: 'deliver', label: 'Marcar entregado' };
   if (canMarkLogisticsReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
@@ -316,11 +326,9 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Etiqueta', state: shipped ? 'done' : 'todo' },
     ];
   }
-  const printed = labelWasPrinted(order);
   return [
-    { label: 'Empacar', state: printed || shipped ? 'done' : 'current' },
-    { label: 'Etiqueta', state: shipped ? 'done' : printed ? 'done' : 'current' },
-    { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
+    { label: 'Empacar', state: shipped ? 'done' : 'current' },
+    { label: 'Entregar', state: shipped ? 'done' : 'todo' },
   ];
 }
 
@@ -338,8 +346,11 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     }
     return RIPLEY_LABEL_SOON_COPY;
   }
+  if (canMarkLogisticsDelivered(order)) {
+    return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';
+  }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
-  return 'Empaca los productos e imprime la etiqueta ZentoFact con la guía de armado.';
+  return 'Empaca los productos. Si necesitas guía, puedes imprimirla.';
 }
 
 export function logisticsCountLabel(stage: LogisticsStage, count: number) {
@@ -420,7 +431,11 @@ export function logisticsBulkReadySummary(total: number, failed: number) {
 }
 
 export type LogisticsInboxSnapshot = {
-  orders: Array<{ id: number; promisedShippingAt?: string | null }>;
+  orders: Array<{
+    id: number;
+    promisedShippingAt?: string | null;
+    fulfillmentStatus?: string | null;
+  }>;
   counts: {
     pending: number;
     ready: number;
@@ -459,6 +474,60 @@ export function applyLogisticsReadyToInbox<T extends LogisticsInboxSnapshot>(
       dates: dates.filter((item) => item.count > 0),
     },
   };
+}
+
+export function applyLogisticsDeliveredToInbox<T extends LogisticsInboxSnapshot>(
+  inbox: T | undefined,
+  orderIds: Iterable<number>,
+): T | undefined {
+  if (!inbox) return inbox;
+  const ids = new Set(orderIds);
+  if (!ids.size) return inbox;
+  const remaining = inbox.orders.filter((order) => !ids.has(order.id));
+  const removed = inbox.orders.filter((order) => ids.has(order.id));
+  if (!removed.length) return inbox;
+  const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
+  let pendingRemoved = 0;
+  let readyRemoved = 0;
+  for (const order of removed) {
+    if (String(order.fulfillmentStatus || '') === 'ready_to_ship') readyRemoved += 1;
+    else pendingRemoved += 1;
+    const deadline = parseLogisticsDate(order.promisedShippingAt);
+    if (!deadline) continue;
+    const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
+    if (item) item.count = Math.max(0, item.count - 1);
+  }
+  return {
+    ...inbox,
+    orders: remaining,
+    totalCount: Math.max(0, Number(inbox.totalCount) - removed.length),
+    counts: {
+      ...inbox.counts,
+      pending: Math.max(0, Number(inbox.counts.pending) - pendingRemoved),
+      ready: Math.max(0, Number(inbox.counts.ready) - readyRemoved),
+      shipped: Number(inbox.counts.shipped || 0) + removed.length,
+      dates: dates.filter((item) => item.count > 0),
+    },
+  };
+}
+
+export function logisticsDeliverConfirmCopy() {
+  return 'Confirmas que este pedido propio ya se entregó. Sale de la bandeja.';
+}
+
+export function logisticsDeliverSuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }) {
+  const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
+  return `${number} quedó entregado.`;
+}
+
+export function logisticsBulkDeliverConfirmCopy(count: number) {
+  return `Confirma que ${count === 1 ? 'este pedido propio ya se entregó' : `estos ${count} pedidos propios ya se entregaron`}.`;
+}
+
+export function logisticsBulkDeliverSummary(total: number, failed: number) {
+  if (!failed) return `${total} pedido${total === 1 ? '' : 's'} marcado${total === 1 ? '' : 's'} como entregado${total === 1 ? '' : 's'}.`;
+  const ok = total - failed;
+  return `${ok} entregado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
 }
 
 export function logisticsReadyConfirmCopy(order: LogisticsOrderLike, pickupDate = ripleyDefaultPickupDate()) {
