@@ -1,17 +1,17 @@
 import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
-  PAGOS_SALES_PAGE,
   PAYMENT_FILTERS,
   type PaymentFilterValue,
   csvReadError,
   paymentFilterLabel,
   documentLabel,
+  filterSettlementSales,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
   SUCCESS_NOTICE_MS,
@@ -28,7 +28,7 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
-  settlementSalesNextOffset,
+  summarizeSettlementSales,
   returnProductPair,
   settlementPair,
   settlementStatementTotals,
@@ -710,25 +710,17 @@ export default function Pagos() {
     enabled: Number.isInteger(invoiceId) && Number(invoiceId) > 0,
   });
 
-  const salesQuery = useInfiniteQuery({
-    queryKey: ['pagos-sales', search, paid, orderMonth, companyId],
-    queryFn: async ({ pageParam }) => {
-      const result = await api.listSettlementSales({
-        search: search.trim() || undefined,
-        paid: paid === 'all' ? undefined : paid,
-        orderMonth: orderMonth === 'all' ? undefined : orderMonth,
-        companyId: companyId === 'all' ? undefined : Number(companyId),
-        limit: PAGOS_SALES_PAGE,
-        offset: pageParam,
-      });
-      if (!delayedBoot.current && pageParam === 0) {
+  const salesQuery = useQuery({
+    queryKey: ['pagos-sales'],
+    queryFn: async () => {
+      const result = await api.listSettlementSales();
+      if (!delayedBoot.current) {
         await waitForDevLoadingDelay(bootStartedAt.current);
         delayedBoot.current = true;
       }
       return result;
     },
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => settlementSalesNextOffset(lastPage),
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
 
@@ -857,9 +849,14 @@ export default function Pagos() {
     },
   });
 
-  const salesPages = salesQuery.data?.pages || [];
-  const sales = salesPages.flatMap((page) => (page.items || []) as SettlementSale[]);
-  const salesHead = salesPages[0];
+  const catalog = salesQuery.data;
+  const allSales = (catalog?.items || []) as SettlementSale[];
+  const sales = useMemo(() => filterSettlementSales(allSales, {
+    search,
+    paid: paid === 'all' ? '' : paid,
+    orderMonth: orderMonth === 'all' ? '' : orderMonth,
+    companyId: companyId === 'all' ? 0 : Number(companyId),
+  }), [allSales, search, paid, orderMonth, companyId]);
   const invoices = (invoicesQuery.data?.items || []) as Array<{
     id: number;
     number: string;
@@ -867,15 +864,15 @@ export default function Pagos() {
     issuedOn?: string | null;
     gross?: number | null;
   }>;
-  const summary = salesHead?.summary;
-  const orderMonths = (salesHead?.orderMonths || []) as string[];
+  const summary = useMemo(() => summarizeSettlementSales(sales), [sales]);
+  const orderMonths = (catalog?.orderMonths || []) as string[];
   const companies = ((companiesQuery.data || []) as CompanyOption[])
     .filter((company) => (company as { activo?: boolean | null }).activo !== false)
     .slice()
     .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
   const selectedCompany = companies.find((company) => String(company.id) === companyId);
-  const totalCount = Number(salesHead?.totalCount || sales.length);
-  const footerTotals = settlementStatementTotals(sales);
+  const totalCount = sales.length;
+  const footerTotals = useMemo(() => settlementStatementTotals(sales), [sales]);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -1106,7 +1103,7 @@ export default function Pagos() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (sale) => sale.orderId,
   });
-  const pageLoading = salesQuery.isLoading && !sales.length && !loadError;
+  const pageLoading = salesQuery.isLoading && !allSales.length && !loadError;
 
   if (pageLoading) return <PagosSkeleton />;
 
@@ -1280,13 +1277,7 @@ export default function Pagos() {
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
-        fetching={salesQuery.isFetching && !salesQuery.isFetchingNextPage}
-        fetchingMore={salesQuery.isFetchingNextPage}
-        hasMore={Boolean(salesQuery.hasNextPage)}
-        onEndReached={() => {
-          if (!salesQuery.hasNextPage || salesQuery.isFetchingNextPage) return;
-          void salesQuery.fetchNextPage();
-        }}
+        fetching={salesQuery.isFetching && !sales.length}
         onRowClick={setSelected}
         aria-label="Cobros de Falabella por venta"
         empty={(

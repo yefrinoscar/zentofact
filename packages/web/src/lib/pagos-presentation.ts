@@ -563,20 +563,130 @@ export function documentLabel(document: {
   return 'Sin boleta ni factura';
 }
 
-export const PAGOS_SALES_PAGE = 500;
+export function filterSettlementSales<T extends {
+  paid?: boolean | null;
+  returned?: boolean | null;
+  companyId?: number | null;
+  orderId?: string | null;
+  productName?: string | null;
+  skus?: Array<string | null> | null;
+  date?: string | null;
+  paidDate?: string | null;
+}>(sales: T[] | null | undefined, filter: {
+  paid?: string | null;
+  search?: string | null;
+  orderMonth?: string | null;
+  paidMonth?: string | null;
+  companyId?: number | string | null;
+} = {}): T[] {
+  const paid = String(filter.paid || '').trim().toLowerCase();
+  const search = String(filter.search || '').trim().toLowerCase();
+  const orderMonth = String(filter.orderMonth || '').trim();
+  const paidMonth = String(filter.paidMonth || '').trim();
+  const companyId = Number(filter.companyId || 0);
+  let next = sales || [];
+  if (paid === 'pagado') next = next.filter((sale) => sale.paid && !sale.returned);
+  if (paid === 'no-pagado' || paid === 'no_pagado') next = next.filter((sale) => !sale.paid && !sale.returned);
+  if (paid === 'devolucion-pagado' || paid === 'devolucion_pagado') {
+    next = next.filter((sale) => sale.returned && sale.paid);
+  }
+  if (paid === 'devolucion-no-pagado' || paid === 'devolucion_no_pagado') {
+    next = next.filter((sale) => sale.returned && !sale.paid);
+  }
+  if (companyId) next = next.filter((sale) => Number(sale.companyId) === companyId);
+  if (search) {
+    next = next.filter((sale) => (
+      String(sale.orderId || '').toLowerCase().includes(search)
+      || String(sale.productName || '').toLowerCase().includes(search)
+      || (sale.skus || []).some((sku) => String(sku || '').toLowerCase().includes(search))
+    ));
+  }
+  if (orderMonth) next = next.filter((sale) => monthKey(sale.date) === orderMonth);
+  if (paidMonth) next = next.filter((sale) => monthKey(sale.paidDate) === paidMonth);
+  return next;
+}
 
-export function settlementSalesNextOffset(page: {
-  offset?: number | null;
-  limit?: number | null;
-  totalCount?: number | null;
-  items?: unknown[] | null;
-} | null | undefined) {
-  const offset = Math.max(Number(page?.offset) || 0, 0);
-  const limit = Math.max(Number(page?.limit) || PAGOS_SALES_PAGE, 1);
-  const total = Math.max(Number(page?.totalCount) || 0, 0);
-  const loaded = offset + (Array.isArray(page?.items) ? page.items.length : 0);
-  if (!total || loaded >= total) return undefined;
-  return offset + limit;
+function rateOrNull(part: number, whole: number) {
+  if (!whole) return null;
+  return Math.round((Number(part || 0) / Number(whole)) * 10000) / 10000;
+}
+
+export function summarizeSettlementSales(sales: Array<{
+  paid?: boolean | null;
+  returned?: boolean | null;
+  matched?: boolean | null;
+  bruto?: number | null;
+  commission?: number | null;
+  shipping?: number | null;
+  neto?: number | null;
+  take?: number | null;
+  itemCount?: number | null;
+}> | null | undefined) {
+  const summary = (sales || []).reduce((totals, sale) => {
+    const paid = Boolean(sale.paid);
+    const returned = Boolean(sale.returned);
+    const story = saleIgvStory(sale);
+    return {
+      saleCount: totals.saleCount + 1,
+      paidCount: totals.paidCount + (paid ? 1 : 0),
+      pendingCount: totals.pendingCount + (paid ? 0 : 1),
+      bruto: money2(totals.bruto + Number(sale.bruto || 0)),
+      commission: money2(totals.commission + Number(sale.commission || 0)),
+      shipping: money2(totals.shipping + Number(sale.shipping || 0)),
+      neto: money2(totals.neto + Number(sale.neto || 0)),
+      take: money2(totals.take + Number(sale.take || 0)),
+      paidBruto: money2(totals.paidBruto + (paid ? Number(sale.bruto || 0) : 0)),
+      pendingBruto: money2(totals.pendingBruto + (paid ? 0 : Number(sale.bruto || 0))),
+      paidNeto: money2(totals.paidNeto + (paid ? Number(sale.neto || 0) : 0)),
+      pendingNeto: money2(totals.pendingNeto + (paid ? 0 : Number(sale.neto || 0))),
+      itemCount: totals.itemCount + Number(sale.itemCount || 0),
+      matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
+      returnCount: totals.returnCount + (returned ? 1 : 0),
+      returnLoss: money2(totals.returnLoss + (returned && story.queda < 0 ? story.queda : 0)),
+    };
+  }, {
+    saleCount: 0,
+    paidCount: 0,
+    pendingCount: 0,
+    bruto: 0,
+    commission: 0,
+    shipping: 0,
+    neto: 0,
+    take: 0,
+    paidBruto: 0,
+    pendingBruto: 0,
+    paidNeto: 0,
+    pendingNeto: 0,
+    itemCount: 0,
+    matchedCount: 0,
+    returnCount: 0,
+    returnLoss: 0,
+  } as {
+    saleCount: number;
+    paidCount: number;
+    pendingCount: number;
+    bruto: number;
+    commission: number;
+    shipping: number;
+    neto: number;
+    take: number;
+    paidBruto: number;
+    pendingBruto: number;
+    paidNeto: number;
+    pendingNeto: number;
+    itemCount: number;
+    matchedCount: number;
+    returnCount: number;
+    returnLoss: number;
+  });
+  return {
+    ...summary,
+    commissionRate: rateOrNull(summary.commission, summary.bruto),
+    shippingRate: rateOrNull(summary.shipping, summary.bruto),
+    takeRate: rateOrNull(summary.take, summary.bruto),
+    ticket: summary.saleCount ? money2(summary.bruto / summary.saleCount) : 0,
+    arriveTicket: summary.saleCount ? money2(summary.neto / summary.saleCount) : 0,
+  };
 }
 
 export const PAGOS_COLUMN_COPY = {

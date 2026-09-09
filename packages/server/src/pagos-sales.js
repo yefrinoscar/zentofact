@@ -137,9 +137,74 @@ function finalizeTotals(row) {
   };
 }
 
+function igvNet(gross) {
+  return round2((Number(gross) || 0) / 1.18);
+}
+
+export function saleReturnLoss(sale) {
+  if (!sale?.returned) return 0;
+  const queda = round2(0 - igvNet(Number(sale.commission || 0) + Number(sale.shipping || 0)));
+  return queda < 0 ? queda : 0;
+}
+
+export function settlementDailySeries(sales) {
+  const days = new Map();
+  for (const sale of sales || []) {
+    const date = String(sale.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const current = days.get(date) || { date, facturado: 0, neto: 0 };
+    current.facturado = round2(current.facturado + Number(sale.bruto || 0));
+    current.neto = round2(current.neto + Number(sale.neto || 0));
+    days.set(date, current);
+  }
+  return [...days.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function slimSettlementSale(sale) {
+  if (!sale) return sale;
+  return {
+    orderId: sale.orderId,
+    date: sale.date,
+    paidDate: sale.paidDate || null,
+    companyId: sale.companyId || null,
+    paid: sale.paid,
+    returned: sale.returned,
+    paymentStatus: sale.paymentStatus,
+    matched: sale.matched,
+    productName: sale.productName,
+    skus: sale.skus,
+    orderNumbers: sale.orderNumbers,
+    itemCount: sale.itemCount,
+    bruto: sale.bruto,
+    commission: sale.commission,
+    shipping: sale.shipping,
+    buyerShipping: sale.buyerShipping,
+    buyerShippingPaid: sale.buyerShippingPaid,
+    buyerShippingReversed: sale.buyerShippingReversed,
+    other: sale.other,
+    neto: sale.neto,
+    take: sale.take,
+    commissionRate: sale.commissionRate,
+    shippingRate: sale.shippingRate,
+    takeRate: sale.takeRate,
+    brutoCharged: sale.brutoCharged,
+    brutoReversed: sale.brutoReversed,
+    commissionCharged: sale.commissionCharged,
+    commissionReversed: sale.commissionReversed,
+    shippingCharged: sale.shippingCharged,
+    shippingReversed: sale.shippingReversed,
+    products: sale.products || [],
+    document: sale.document || null,
+    orderShipping: sale.orderShipping ?? null,
+    falabellaInvoice: sale.falabellaInvoice || null,
+    falabellaInvoices: sale.falabellaInvoices || [],
+  };
+}
+
 export function summarizeSettlementSales(sales) {
   const summary = sales.reduce((totals, sale) => {
     const paid = Boolean(sale.paid);
+    const returned = Boolean(sale.returned);
     return {
       saleCount: totals.saleCount + 1,
       paidCount: totals.paidCount + (paid ? 1 : 0),
@@ -155,6 +220,8 @@ export function summarizeSettlementSales(sales) {
       pendingNeto: round2(totals.pendingNeto + (paid ? 0 : sale.neto)),
       itemCount: totals.itemCount + Number(sale.itemCount || 0),
       matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
+      returnCount: totals.returnCount + (returned ? 1 : 0),
+      returnLoss: round2(totals.returnLoss + saleReturnLoss(sale)),
     };
   }, {
     saleCount: 0,
@@ -171,6 +238,8 @@ export function summarizeSettlementSales(sales) {
     pendingNeto: 0,
     itemCount: 0,
     matchedCount: 0,
+    returnCount: 0,
+    returnLoss: 0,
   });
   return {
     ...summary,

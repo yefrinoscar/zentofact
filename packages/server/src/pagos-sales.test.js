@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -603,6 +603,34 @@ test('el pedido muestra boleta o factura si ya se emitió', () => {
   );
   assert.equal(sale.document.kind, 'boleta');
   assert.equal(sale.document.number, 'B001-12');
+});
+
+test('la venta del listado no lleva cargos ni ítems crudos', () => {
+  const [sale] = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row(),
+    row({
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-1.35',
+      'Falabella-Id': 'item-1',
+    }),
+  ].join('\n')).lines);
+  const slim = slimSettlementSale({
+    ...sale,
+    document: { kind: 'boleta', number: 'B001-1' },
+    invoiceCharges: { commission: { net: 1 } },
+  });
+  assert.equal(slim.orderId, sale.orderId);
+  assert.equal(slim.charges, undefined);
+  assert.equal(slim.chargeGroups, undefined);
+  assert.equal(slim.items, undefined);
+  assert.equal(slim.invoiceCharges, undefined);
+  assert.ok(Array.isArray(slim.products));
+  assert.deepEqual(settlementDailySeries([sale]), [{
+    date: '2026-08-19',
+    facturado: sale.bruto,
+    neto: sale.neto,
+  }]);
 });
 
 test('el envío de Pagos sale de la orden cruzada', () => {
