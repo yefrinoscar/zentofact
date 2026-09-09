@@ -29,6 +29,7 @@ import { firstAllowedPath, pathPermission } from './lib/permissions';
 import { Button } from './components/ui/button';
 import { PanelLeft } from 'lucide-react';
 import { documentDateRangeForLastDays } from './lib/documentDateRange';
+import { PagosSkeleton } from './components/PagosSkeleton';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
 const VentasProductos = lazy(() => import('./routes/VentasProductos'));
@@ -281,7 +282,7 @@ function AppLayout() {
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/ventas" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><VentasProductos /></Suspense></RequirePermission>} />
-              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Pagos /></Suspense></RequirePermission>} />
+              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<PagosSkeleton />}><Pagos /></Suspense></RequirePermission>} />
               <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
               <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
