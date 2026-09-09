@@ -1,17 +1,17 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
 import {
   PAGOS_COLUMN_COPY,
+  PAGOS_SALES_PAGE,
   PAYMENT_FILTERS,
   type PaymentFilterValue,
   csvReadError,
   paymentFilterLabel,
   documentLabel,
-  filterSettlementSales,
   holdAtLeast,
   CSV_UPLOAD_MIN_MS,
   SUCCESS_NOTICE_MS,
@@ -28,10 +28,9 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
-  summarizeSettlementSales,
+  settlementSalesNextOffset,
   returnProductPair,
   settlementPair,
-  settlementStatementTotals,
   shortProductName,
   skuLabel,
   teLlegaHint,
@@ -55,7 +54,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToolbarSelect } from '@/components/ToolbarSelect';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
@@ -647,6 +646,7 @@ export default function Pagos() {
   const fileInput = useRef<HTMLInputElement>(null);
   const invoiceFileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [paid, setPaid] = useState<PaymentFilterValue>('all');
   const [orderMonth, setOrderMonth] = useState('all');
   const [companyId, setCompanyId] = useState('all');
@@ -664,6 +664,11 @@ export default function Pagos() {
   const delayedBoot = useRef(false);
   const reading = Boolean(readingName);
   const invoiceBusy = Boolean(readingInvoice);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   function openInvoice(id: number, orderId?: string | null) {
     setSelected(null);
@@ -710,16 +715,25 @@ export default function Pagos() {
     enabled: Number.isInteger(invoiceId) && Number(invoiceId) > 0,
   });
 
-  const salesQuery = useQuery({
-    queryKey: ['pagos-sales'],
-    queryFn: async () => {
-      const result = await api.listSettlementSales();
-      if (!delayedBoot.current) {
+  const salesQuery = useInfiniteQuery({
+    queryKey: ['pagos-sales', debouncedSearch, paid, orderMonth, companyId],
+    queryFn: async ({ pageParam }) => {
+      const result = await api.listSettlementSales({
+        search: debouncedSearch || undefined,
+        paid: paid === 'all' ? undefined : paid,
+        orderMonth: orderMonth === 'all' ? undefined : orderMonth,
+        companyId: companyId === 'all' ? undefined : Number(companyId),
+        limit: PAGOS_SALES_PAGE,
+        offset: pageParam,
+      });
+      if (!delayedBoot.current && pageParam === 0) {
         await waitForDevLoadingDelay(bootStartedAt.current);
         delayedBoot.current = true;
       }
       return result;
     },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => settlementSalesNextOffset(lastPage),
     staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
@@ -849,14 +863,9 @@ export default function Pagos() {
     },
   });
 
-  const catalog = salesQuery.data;
-  const allSales = (catalog?.items || []) as SettlementSale[];
-  const sales = useMemo(() => filterSettlementSales(allSales, {
-    search,
-    paid: paid === 'all' ? '' : paid,
-    orderMonth: orderMonth === 'all' ? '' : orderMonth,
-    companyId: companyId === 'all' ? 0 : Number(companyId),
-  }), [allSales, search, paid, orderMonth, companyId]);
+  const salesPages = salesQuery.data?.pages || [];
+  const salesHead = salesPages[0];
+  const sales = salesPages.flatMap((page) => (page.items || []) as SettlementSale[]);
   const invoices = (invoicesQuery.data?.items || []) as Array<{
     id: number;
     number: string;
@@ -864,15 +873,49 @@ export default function Pagos() {
     issuedOn?: string | null;
     gross?: number | null;
   }>;
-  const summary = useMemo(() => summarizeSettlementSales(sales), [sales]);
-  const orderMonths = (catalog?.orderMonths || []) as string[];
-  const companies = ((companiesQuery.data || []) as CompanyOption[])
-    .filter((company) => (company as { activo?: boolean | null }).activo !== false)
-    .slice()
-    .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
-  const selectedCompany = companies.find((company) => String(company.id) === companyId);
-  const totalCount = sales.length;
-  const footerTotals = useMemo(() => settlementStatementTotals(sales), [sales]);
+  const summary = salesHead?.summary as {
+    saleCount?: number;
+    returnCount?: number;
+    returnLoss?: number;
+    envio?: number;
+    bruto?: number | null;
+    neto?: number | null;
+    take?: number | null;
+    commission?: number | null;
+    shipping?: number | null;
+    paidNeto?: number | null;
+    pendingNeto?: number | null;
+    paidCount?: number | null;
+    pendingCount?: number | null;
+    takeRate?: number | null;
+    matchedCount?: number | null;
+  } | undefined;
+  const days = (salesHead?.days || []) as Array<{ date: string; facturado: number; neto: number }>;
+  const orderMonths = (salesHead?.orderMonths || []) as string[];
+  const companies = useMemo(() => (
+    ((companiesQuery.data || []) as CompanyOption[])
+      .filter((company) => (company as { activo?: boolean | null }).activo !== false)
+      .slice()
+      .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'))
+  ), [companiesQuery.data]);
+  const companyOptions = useMemo(() => [
+    { value: 'all', label: 'Todos' },
+    ...companies.map((company) => ({ value: String(company.id), label: companyLabel(company) })),
+  ], [companies]);
+  const monthOptions = useMemo(() => {
+    const months = orderMonth !== 'all' && !orderMonths.includes(orderMonth)
+      ? [orderMonth, ...orderMonths]
+      : orderMonths;
+    return [
+      { value: 'all', label: 'Mes orden' },
+      ...months.map((month) => ({ value: month, label: monthLabel(month) })),
+    ];
+  }, [orderMonth, orderMonths]);
+  const paidOptions = useMemo(() => PAYMENT_FILTERS.map((item) => ({
+    value: item.value,
+    label: item.trigger,
+  })), []);
+  const totalCount = Number(salesHead?.totalCount || 0);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -1103,13 +1146,13 @@ export default function Pagos() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (sale) => sale.orderId,
   });
-  const pageLoading = salesQuery.isLoading && !allSales.length && !loadError;
+  const pageLoading = salesQuery.isLoading && !sales.length && !loadError;
 
   if (pageLoading) return <PagosSkeleton />;
 
   return (
     <div className="space-y-4 pb-8">
-      <SettlementKpiStrip summary={summary} sales={sales} />
+      <SettlementKpiStrip summary={summary} days={days} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-44 shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1121,44 +1164,27 @@ export default function Pagos() {
             className="pl-8"
           />
         </div>
-        <Select value={companyId} onValueChange={setCompanyId}>
-          <SelectTrigger className="w-[8.75rem]" aria-label="Compañía">
-            <SelectValue>
-              {companyId === 'all' ? 'Todos' : (selectedCompany ? companyLabel(selectedCompany) : 'Todos')}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            {companies.map((company) => (
-              <SelectItem key={company.id} value={String(company.id)}>{companyLabel(company)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={orderMonth} onValueChange={setOrderMonth}>
-          <SelectTrigger className="w-[8.25rem]" aria-label="Mes de la orden">
-            <SelectValue>
-              {orderMonth === 'all' ? 'Mes orden' : monthLabel(orderMonth)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Mes orden</SelectItem>
-            {(orderMonth !== 'all' && !orderMonths.includes(orderMonth) ? [orderMonth, ...orderMonths] : orderMonths).map((month) => (
-              <SelectItem key={`orden-${month}`} value={month}>{monthLabel(month)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={paid} onValueChange={(value) => setPaid(value as PaymentFilterValue)}>
-          <SelectTrigger className="w-[11.25rem]" aria-label="Estado de pago">
-            <SelectValue>
-              {paymentFilterLabel(paid, 'trigger')}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="w-max min-w-[14.5rem]">
-            {PAYMENT_FILTERS.map((item) => (
-              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <ToolbarSelect
+          className="w-[8.75rem]"
+          aria-label="Compañía"
+          value={companyId}
+          options={companyOptions}
+          onValueChange={setCompanyId}
+        />
+        <ToolbarSelect
+          className="w-[8.25rem]"
+          aria-label="Mes de la orden"
+          value={orderMonth}
+          options={monthOptions}
+          onValueChange={setOrderMonth}
+        />
+        <ToolbarSelect
+          className="w-[11.25rem]"
+          aria-label="Estado de pago"
+          value={paid}
+          options={paidOptions}
+          onValueChange={(value) => setPaid(value as PaymentFilterValue)}
+        />
         <input
           ref={fileInput}
           type="file"
@@ -1274,10 +1300,17 @@ export default function Pagos() {
         table={table}
         compact
         rowHeight={52}
+        overscan={6}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
-        fetching={salesQuery.isFetching && !sales.length}
+        fetching={salesQuery.isFetching && !salesQuery.isFetchingNextPage}
+        fetchingMore={salesQuery.isFetchingNextPage}
+        hasMore={Boolean(salesQuery.hasNextPage)}
+        onEndReached={() => {
+          if (!salesQuery.hasNextPage || salesQuery.isFetchingNextPage) return;
+          void salesQuery.fetchNextPage();
+        }}
         onRowClick={setSelected}
         aria-label="Cobros de Falabella por venta"
         empty={(
@@ -1289,14 +1322,14 @@ export default function Pagos() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
             <p className="text-muted-foreground">
               {salesPageNote(sales.length, totalCount)}
-              {footerTotals.returnCount
-                ? ` · ${footerTotals.returnCount === 1 ? '1 devolución' : `${footerTotals.returnCount} devoluciones`}`
+              {summary.returnCount
+                ? ` · ${summary.returnCount === 1 ? '1 devolución' : `${summary.returnCount} devoluciones`}`
                 : ''}
             </p>
             <p className="tabular-nums">
-              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))} title="Suma de Ganas en rojo de las devoluciones">{money.format(footerTotals.returnLoss)}</span>
+              Pérdida <span className={cn('font-medium', amountToneClass('receive', Number(summary.returnLoss || 0)))} title="Suma de Ganas en rojo de las devoluciones">{money.format(Number(summary.returnLoss || 0))}</span>
               <span className="text-muted-foreground"> · </span>
-              Envío {money.format(footerTotals.envio)}
+              Envío {money.format(Number(summary.envio || 0))}
             </p>
           </div>
         ) : undefined}
