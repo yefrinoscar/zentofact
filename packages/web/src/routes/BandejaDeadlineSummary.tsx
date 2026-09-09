@@ -25,7 +25,7 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
             <button
               type="button"
               className="contents text-left"
-              disabled={unavailable || urgency.value === 'later'}
+              disabled={unavailable || urgency.value === 'later' || urgency.value === 'overdue'}
               aria-pressed={view.urgency === urgency.value}
               onClick={() => view.setUrgency(view.urgency === urgency.value ? null : urgency.value)}
             >

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { recoverInterruptedOrderSyncRuns, syncOrderAccount, syncRipleyPages } from './order-sync.js';
+import { recoverInterruptedOrderSyncRuns, syncOrderAccount, syncOrders, syncRipleyPages } from './order-sync.js';
 
 for (const scenario of [
   { name: 'no avanza el cursor cuando otro proceso ocupa el seller', response: { status: 'already_running' }, status: 'error', cursor: '2026-09-06T22:40:00Z' },
@@ -225,6 +225,35 @@ test('después de Mirakl, Ripley escucha el estado logístico de SVC', async () 
   assert.deepEqual(result.logistics, { received: 2, matched: 2 });
 });
 
+test('Falabella sigue reconciliando si la ventana incremental ya está al día', async () => {
+  const called = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 1, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T18:20:00.000Z' }] };
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const result = await syncOrderAccount(7, { now: '2026-09-07T18:00:00.000Z' }, {
+    pool: { connect: async () => db },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    syncFalabellaOrders: async (companyId, options) => {
+      called.push({ companyId, options });
+      return { status: 'success', skipped: 'already_current', received: 0, lastLogId: null };
+    },
+  });
+  assert.deepEqual(called, [{ companyId: 1, options: { mode: 'incremental' } }]);
+  assert.equal(result.status, 'success');
+  assert.equal(result.skipped, 'already_current');
+});
+
 test('un backfill sin fechas usa la ventana compartida', async () => {
   const windows = [];
   const db = {
@@ -254,6 +283,20 @@ test('un backfill sin fechas usa la ventana compartida', async () => {
     from: '2026-09-01T05:00:00.000Z',
     to: '2026-09-08T04:59:59.999Z',
   }]);
+});
+
+test('Sincronizar cierra pedidos marketplace ya enviados antes de llamar al canal', async () => {
+  const closed = [];
+  const result = await syncOrders({}, {
+    db: { async query() { return { rows: [] }; } },
+    closeStaleMarketplaceFulfillment: async (db) => {
+      closed.push(Boolean(db));
+      return { falabella: 4, ripley: 1 };
+    },
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+  });
+  assert.deepEqual(closed, [true]);
+  assert.deepEqual(result.results, []);
 });
 
 test('al retomar una cuenta cierra las ejecuciones que quedaron running', async () => {

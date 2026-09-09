@@ -26,6 +26,51 @@ function includesStatus(status, expected) {
   ));
 }
 
+const CLOSED_FALABELLA_STATUSES = new Set(['cancelled', 'returned', 'failed', 'delivered', 'shipped']);
+
+export function closedFalabellaFulfillment(status) {
+  const mapped = mapFalabellaCanonicalStatus(status);
+  if (!CLOSED_FALABELLA_STATUSES.has(mapped.fulfillmentStatus)) return null;
+  return mapped;
+}
+
+export async function closeStaleFalabellaFulfillment(db) {
+  if (!db?.query) return { updated: 0 };
+  const found = await db.query(
+    `select o.id, o.fulfillment_status, o.provider_status, fo.status as falabella_status
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     left join falabella_orders fo
+       on fo.company_id = o.company_id
+      and fo.order_id = o.external_order_id
+     where ch.code = 'falabella'
+       and o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and o.order_status not in ('cancelled', 'failed')
+       and (
+         lower(coalesce(fo.status, '')) ~ '(^|\\|)(shipped|delivered|canceled|cancelled|returned|failed)(\\||$)'
+         or lower(coalesce(o.provider_status, '')) ~ '(^|\\|)(shipped|delivered|canceled|cancelled|returned|failed)(\\||$)'
+       )`,
+  );
+  let updated = 0;
+  for (const row of found.rows || []) {
+    const next = closedFalabellaFulfillment(row.falabella_status || row.provider_status);
+    if (!next) continue;
+    const result = await db.query(
+      `update orders
+       set fulfillment_status = $2,
+           order_status = $3,
+           provider_status = coalesce(nullif($4, ''), provider_status),
+           updated_at = now()
+       where id = $1
+         and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')`,
+      [row.id, next.fulfillmentStatus, next.orderStatus, row.falabella_status || row.provider_status],
+    );
+    updated += Number(result.rowCount || 0);
+  }
+  return { updated };
+}
+
 export function mapFalabellaCanonicalStatus(status) {
   if (includesStatus(status, 'cancel')) {
     return { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' };

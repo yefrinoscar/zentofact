@@ -422,6 +422,19 @@ app.post('/logistics-inbox/:orderId/ready', async (c) => {
     return fail(c, e, 400, { operation: 'logistics.ripley-ready' });
   }
 });
+app.post('/logistics-inbox/:orderId/delivered', async (c) => {
+  try {
+    const user = c.get('user');
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await logisticsInbox.markLogisticsOrderDelivered({
+      ...body,
+      orderId: c.req.param('orderId'),
+      markedBy: user?.email || user?.name || null,
+    }));
+  } catch (e) {
+    return fail(c, e, 400, { operation: 'logistics.manual-delivered' });
+  }
+});
 
 app.get('/order-management/geo/maps-key', async (c) => {
   try {

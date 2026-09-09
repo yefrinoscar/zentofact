@@ -118,6 +118,8 @@ export type BandejaView = {
   printOrders: (orders: LogisticsOrder[]) => void;
   requestReady: (order: LogisticsOrder) => void;
   requestBulkReady: (orders: LogisticsOrder[]) => void;
+  requestDeliver: (order: LogisticsOrder) => void;
+  requestBulkDeliver: (orders: LogisticsOrder[]) => void;
   labelSelection: Set<number> | null;
   setLabelSelection: (selection: Set<number> | null) => void;
   toggleLabel: (order: LogisticsOrder) => void;

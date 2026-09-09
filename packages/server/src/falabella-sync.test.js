@@ -11,9 +11,19 @@ import {
   listLocalFalabellaOrders,
   normalizeFalabellaOrder,
   normalizeFalabellaStatus,
+  shouldIngestReconciledFalabellaStatus,
   syncFalabellaOrders,
 } from './falabella-sync.js';
 import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
+
+test('la reconciliación de Falabella debe escribir shipped y delivered en la bandeja', () => {
+  assert.equal(shouldIngestReconciledFalabellaStatus('shipped', { statusChanged: true }), true);
+  assert.equal(shouldIngestReconciledFalabellaStatus('delivered', { statusChanged: true }), true);
+  assert.equal(shouldIngestReconciledFalabellaStatus('ready_to_ship', { statusChanged: true }), true);
+  assert.equal(shouldIngestReconciledFalabellaStatus('pending', { statusChanged: false }), false);
+  assert.equal(shouldIngestReconciledFalabellaStatus('shipped', { statusChanged: false }), true);
+  assert.equal(shouldIngestReconciledFalabellaStatus('canceled', { restockNeeded: true }), true);
+});
 
 test('una sincronización histórica nunca mueve inventario aunque encuentre cancelaciones', () => {
   assert.equal(catalogInventoryEnabledForSync('month', true), false);
@@ -183,6 +193,7 @@ class FakeDb {
     this.locked = locked;
     this.queries = [];
     this.released = false;
+    this.reconcileCandidates = [];
     this.state = {
       company_id: 7,
       enabled: true,
@@ -236,6 +247,7 @@ class FakeDb {
       }] };
     }
     if (compact.startsWith('insert into order_snapshots')) return { rows: [{ id: 701 }] };
+    if (compact.includes('as label_count')) return { rows: this.reconcileCandidates };
     return { rows: [] };
   }
 
@@ -369,6 +381,50 @@ test('cuando Falabella marca un pedido como devuelto, el ciclo de vida guarda re
   assert.match(lifecycle.sql, /excluded.current_status='returned'/);
   const ordersInsert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
   assert.equal(ordersInsert.params[6], 'returned');
+});
+
+test('la reconciliación pasa a la bandeja un pedido Falabella ya enviado', async () => {
+  const db = new FakeDb();
+  db.reconcileCandidates = [{
+    order_id: '3251302842',
+    order_number: '3251302842',
+    status: 'ready_to_ship',
+    falabella_created_at: '2026-09-01T10:00:00Z',
+    falabella_updated_at: '2026-09-01T10:00:00Z',
+    raw_data: { OrderId: '3251302842', OrderNumber: '3251302842' },
+    label_count: 1,
+  }];
+  await syncFalabellaOrders(7, {
+    mode: 'range',
+    from: '2026-09-03T20:00:00.000Z',
+    to: '2026-09-03T20:30:00.000Z',
+  }, {
+    ...fakeDependencies(db, { getOrdersV2: async () => response([]) }),
+    orderItemsClientFor: () => ({
+      async call() {
+        return {
+          ok: true,
+          data: {
+            SuccessResponse: {
+              Body: {
+                OrderItems: {
+                  OrderItem: [{
+                    OrderItemId: '1',
+                    Status: 'shipped',
+                    UpdatedAt: '2026-09-08T15:00:00Z',
+                  }],
+                },
+              },
+            },
+          },
+        };
+      },
+    }),
+  });
+  const ingested = db.queries.filter((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(ingested.length, 'debe persistir el estado enviado en orders');
+  assert.equal(ingested[0].params[6], 'shipped');
+  assert.equal(db.queries.some((query) => query.sql.startsWith('update falabella_orders')), true);
 });
 
 test('el sync periódico recupera cabeceras sin artículos desde el corte operativo', async () => {

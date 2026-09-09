@@ -527,6 +527,16 @@ async function ingestReconciledOrder(db, companyId, order, items, status, accoun
   }, db);
 }
 
+// La bandeja lee `orders`. Si GetOrderItems ya dice shipped/delivered,
+// hay que persistirlo ahí; no basta con actualizar falabella_orders.
+export function shouldIngestReconciledFalabellaStatus(status, {
+  statusChanged = false,
+  restockNeeded = false,
+} = {}) {
+  if (statusChanged || restockNeeded) return true;
+  return /cancel|returned|failed|shipped|delivered/.test(String(status || ''));
+}
+
 async function reconcileActionableOrderStatuses(db, companyId, client, options = {}) {
   if (typeof client?.call !== 'function') return { checked: 0, updated: 0, failed: 0 };
   const candidates = await db.query(
@@ -539,6 +549,16 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
      where fo.company_id=$1
        and (
          lower(coalesce(fo.status, '')) ~ '(^|\\|)(pending|ready_to_ship)(\\||$)'
+         or exists (
+           select 1
+           from orders o
+           join order_channel_accounts a on a.id=o.channel_account_id
+           join order_channels ch on ch.id=a.channel_id
+           where o.company_id=fo.company_id
+             and o.external_order_id=fo.order_id
+             and ch.code='falabella'
+             and o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+         )
          or exists (
            select 1
            from orders o
@@ -600,7 +620,8 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
       });
       const statusChanged = status !== order.status || labelCount !== Number(order.label_count || 1);
       const restockNeeded = items.some(itemNeedsStockRestock);
-      if (!statusChanged && !restockNeeded) continue;
+      const ingestNeeded = shouldIngestReconciledFalabellaStatus(status, { statusChanged, restockNeeded });
+      if (!statusChanged && !ingestNeeded) continue;
       if (statusChanged) {
         await db.query(
           `update falabella_orders
@@ -616,7 +637,7 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
         );
         updated += 1;
       }
-      if (restockNeeded || /cancel|returned|failed/.test(status)) {
+      if (ingestNeeded) {
         account ||= await ensureFalabellaOrderAccount(db, companyId);
         await ingestReconciledOrder(db, companyId, {
           ...order,

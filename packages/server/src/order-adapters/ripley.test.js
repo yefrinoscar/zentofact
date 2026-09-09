@@ -4,6 +4,7 @@ import {
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
   remapPersistedRipleyReadyOrders,
+  closeStaleRipleyShippedFulfillment,
   resolveRipleyIngestStatuses,
 } from './ripley.js';
 
@@ -93,6 +94,21 @@ test('baja de listos un Ripley SHIPPING persistido sin evidencia SVC', async () 
     params: [11, 'pending'],
   }]);
   assert.match(updates[0].sql, /fulfillment_status = \$2/);
+});
+
+test('no cierra un Ripley SHIPPING: sigue siendo por preparar', async () => {
+  const updates = [];
+  const result = await closeStaleRipleyShippedFulfillment({
+    async query(sql, params = []) {
+      if (sql.includes('from orders o')) {
+        return { rows: [{ id: 14, provider_status: 'SHIPPING', fulfillment_status: 'pending', metadata: {} }] };
+      }
+      updates.push({ sql, params });
+      return { rowCount: 1 };
+    },
+  });
+  assert.equal(result.updated, 0);
+  assert.deepEqual(updates, []);
 });
 
 test('guarda la foto de product_medias en la línea Ripley', () => {
