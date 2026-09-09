@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, downsampleDailySeries, filterAggregatedSales, groupSaleCharges, groupSaleProducts, saleEnvioNet, SETTLEMENT_CHART_POINTS, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, downsampleDailySeries, filterAggregatedSales, groupSaleCharges, groupSaleProducts, saleEnvioNet, saleStatement, SETTLEMENT_CHART_POINTS, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -656,7 +656,15 @@ test('la venta del listado no lleva cargos ni ítems crudos', () => {
   assert.equal(slim.chargeGroups, undefined);
   assert.equal(slim.items, undefined);
   assert.equal(slim.invoiceCharges, undefined);
+  assert.equal(slim.falabellaInvoices, undefined);
   assert.ok(Array.isArray(slim.products));
+  assert.equal(slim.statement.commissionNet, 1);
+  assert.equal(saleStatement({
+    bruto: 100,
+    buyerShippingPaid: 50,
+    commission: 20,
+    shipping: 50,
+  }).queda, 67.8);
   assert.deepEqual(settlementDailySeries([sale]), [{
     date: '2026-08-19',
     facturado: sale.bruto,

@@ -151,6 +151,22 @@ type SettlementSale = {
     buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
     ads?: { net?: number; igv?: number; gross?: number } | null;
   } | null;
+  statement?: {
+    productNet: number;
+    productGross: number;
+    envioNet: number;
+    envioGross: number;
+    envioMissing?: boolean;
+    boletaNet: number;
+    boletaGross: number;
+    commissionNet: number;
+    commissionGross: number;
+    logisticsNet: number;
+    logisticsGross: number;
+    facturaNet: number;
+    facturaGross: number;
+    queda: number;
+  };
 };
 
 const cobroCol = 'bg-muted/40';
@@ -602,6 +618,27 @@ function StatementAmount({
   );
 }
 
+function saleSheet(sale: SettlementSale) {
+  if (sale.statement) return sale.statement;
+  const story = saleIgvStory(sale);
+  return {
+    productNet: story.productSplit.net,
+    productGross: story.product,
+    envioNet: story.envioSplit.net,
+    envioGross: story.envio,
+    envioMissing: story.envio <= 0 && sale.orderShipping == null,
+    boletaNet: story.boleta.net,
+    boletaGross: story.boleta.gross,
+    commissionNet: story.commissionSplit.net,
+    commissionGross: story.commissionSplit.gross,
+    logisticsNet: story.logisticsSplit.net,
+    logisticsGross: story.logisticsSplit.gross,
+    facturaNet: story.factura.net,
+    facturaGross: story.factura.gross,
+    queda: story.queda,
+  };
+}
+
 function saleTitle(sale: SettlementSale) {
   return shortProductName(sale.productName) || skuLabel(sale.skus) || sale.orderId;
 }
@@ -992,12 +1029,12 @@ export default function Pagos() {
     },
     {
       id: 'precio',
-      accessorFn: (sale) => saleIgvStory(sale).productSplit.net,
+      accessorFn: (sale) => saleSheet(sale).productNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
       size: 92,
       meta: { align: 'end', headerClassName: ventaHeadStart, cellClassName: ventaCellStart },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = returnProductPair(
             row.original.brutoCharged,
@@ -1012,47 +1049,47 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount net={story.productSplit.net} gross={story.product} />;
+        return <StatementAmount net={sheet.productNet} gross={sheet.productGross} />;
       },
     },
     {
       id: 'envio',
-      accessorFn: (sale) => saleIgvStory(sale).envioSplit.net,
+      accessorFn: (sale) => saleSheet(sale).envioNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
       size: 84,
       meta: { align: 'end' },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
-        if (row.original.returned || (story.envio <= 0 && row.original.orderShipping == null)) {
+        const sheet = saleSheet(row.original);
+        if (row.original.returned || sheet.envioMissing) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
-          <StatementAmount net={story.envioSplit.net} gross={story.envio} />
+          <StatementAmount net={sheet.envioNet} gross={sheet.envioGross} />
         );
       },
     },
     {
       id: 'boleta',
-      accessorFn: (sale) => saleIgvStory(sale).boleta.net,
+      accessorFn: (sale) => saleSheet(sale).boletaNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
       size: 108,
       meta: { align: 'end', headerClassName: ventaHeadEnd, cellClassName: ventaCellEnd },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount net={story.boleta.net} gross={story.boleta.gross} />;
+        return <StatementAmount net={sheet.boletaNet} gross={sheet.boletaGross} />;
       },
     },
     {
       id: 'comision',
-      accessorFn: (sale) => saleIgvStory(sale).commissionSplit.net,
+      accessorFn: (sale) => saleSheet(sale).commissionNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
           return (
@@ -1066,8 +1103,8 @@ export default function Pagos() {
         }
         return (
           <StatementAmount
-            net={story.commissionSplit.net}
-            gross={story.commissionSplit.gross}
+            net={sheet.commissionNet}
+            gross={sheet.commissionGross}
             className={takeText}
           />
         );
@@ -1075,12 +1112,12 @@ export default function Pagos() {
     },
     {
       id: 'logistica',
-      accessorFn: (sale) => saleIgvStory(sale).logisticsSplit.net,
+      accessorFn: (sale) => saleSheet(sale).logisticsNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadMid, cellClassName: cobroCellMid },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
           return (
@@ -1094,8 +1131,8 @@ export default function Pagos() {
         }
         return (
           <StatementAmount
-            net={story.logisticsSplit.net}
-            gross={story.logisticsSplit.gross}
+            net={sheet.logisticsNet}
+            gross={sheet.logisticsGross}
             className={takeText}
           />
         );
@@ -1103,19 +1140,19 @@ export default function Pagos() {
     },
     {
       id: 'total',
-      accessorFn: (sale) => saleIgvStory(sale).factura.net,
+      accessorFn: (sale) => saleSheet(sale).facturaNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.total} />,
       size: 108,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
           <StatementAmount
-            net={story.factura.net}
-            gross={story.factura.gross}
+            net={sheet.facturaNet}
+            gross={sheet.facturaGross}
             className={takeText}
           />
         );
@@ -1123,17 +1160,17 @@ export default function Pagos() {
     },
     {
       id: 'ganas',
-      accessorFn: (sale) => saleIgvStory(sale).queda,
+      accessorFn: (sale) => saleSheet(sale).queda,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         return (
           <StatementAmount
-            net={story.queda}
-            gross={row.original.returned ? -story.factura.gross : undefined}
-            className={cn('font-semibold', amountToneClass('receive', story.queda))}
+            net={sheet.queda}
+            gross={row.original.returned ? -sheet.facturaGross : undefined}
+            className={cn('font-semibold', amountToneClass('receive', sheet.queda))}
           />
         );
       },
