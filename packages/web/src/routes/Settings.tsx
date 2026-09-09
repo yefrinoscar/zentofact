@@ -107,7 +107,7 @@ export default function Settings() {
                   Simular carga lenta
                 </label>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Mantiene visible el skeleton inicial durante {devLoadingDelayMs / 1000} segundos para revisar la transición del Gestor de Sellers.
+                  Mantiene visible el skeleton inicial durante {devLoadingDelayMs / 1000} segundos para revisar la transición de Pagos y el Gestor de Sellers.
                 </p>
               </div>
               <Switch

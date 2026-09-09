@@ -48,7 +48,9 @@ import { sellerShortName } from '../lib/seller-name';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoaderMark } from '@/components/WorkLoader';
+import { PagosSkeleton } from '@/components/PagosSkeleton';
 import { SettlementKpiStrip } from '@/components/SettlementCharts';
+import { waitForDevLoadingDelay } from '../config/dev';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -658,6 +660,8 @@ export default function Pagos() {
   const lastInvoiceRef = useRef<{ filename: string; csv: string; xlsxBase64?: string } | null>(null);
   const lastUploadFileRef = useRef<File | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bootStartedAt = useRef(Date.now());
+  const delayedBoot = useRef(false);
   const reading = Boolean(readingName);
   const invoiceBusy = Boolean(readingInvoice);
 
@@ -708,14 +712,21 @@ export default function Pagos() {
 
   const salesQuery = useInfiniteQuery({
     queryKey: ['pagos-sales', search, paid, orderMonth, companyId],
-    queryFn: ({ pageParam }) => api.listSettlementSales({
-      search: search.trim() || undefined,
-      paid: paid === 'all' ? undefined : paid,
-      orderMonth: orderMonth === 'all' ? undefined : orderMonth,
-      companyId: companyId === 'all' ? undefined : Number(companyId),
-      limit: PAGOS_SALES_PAGE,
-      offset: pageParam,
-    }),
+    queryFn: async ({ pageParam }) => {
+      const result = await api.listSettlementSales({
+        search: search.trim() || undefined,
+        paid: paid === 'all' ? undefined : paid,
+        orderMonth: orderMonth === 'all' ? undefined : orderMonth,
+        companyId: companyId === 'all' ? undefined : Number(companyId),
+        limit: PAGOS_SALES_PAGE,
+        offset: pageParam,
+      });
+      if (!delayedBoot.current && pageParam === 0) {
+        await waitForDevLoadingDelay(bootStartedAt.current);
+        delayedBoot.current = true;
+      }
+      return result;
+    },
     initialPageParam: 0,
     getNextPageParam: (lastPage) => settlementSalesNextOffset(lastPage),
     placeholderData: keepPreviousData,
@@ -1095,6 +1106,9 @@ export default function Pagos() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (sale) => sale.orderId,
   });
+  const pageLoading = salesQuery.isLoading && !sales.length && !loadError;
+
+  if (pageLoading) return <PagosSkeleton />;
 
   return (
     <div className="space-y-4 pb-8">

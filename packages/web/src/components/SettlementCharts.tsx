@@ -134,11 +134,16 @@ function MetricHeader({
 
 function CompareLineChart({ days }: { days: Array<{ date: string; facturado: number; neto: number }> }) {
   const data = days.length === 1 ? [days[0], days[0]] : days;
+  if (!data.length) {
+    return <div className="mt-2 h-[148px] w-full rounded-md bg-muted/40" aria-hidden />;
+  }
   return (
     <ChartContainer
       config={compareChartConfig}
-      className="mt-2 aspect-auto h-[148px] w-full"
+      className="mt-2 aspect-auto h-[148px] w-full min-w-0"
       initialDimension={{ width: 640, height: 148 }}
+      role="img"
+      aria-label="Facturado y neto por día"
     >
       <LineChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
         <CartesianGrid vertical={false} strokeDasharray="3 3" />
@@ -171,6 +176,7 @@ function CompareLineChart({ days }: { days: Array<{ date: string; facturado: num
           strokeWidth={2.25}
           dot={false}
           activeDot={{ r: 4 }}
+          isAnimationActive={false}
         />
         <Line
           type="monotone"
@@ -180,6 +186,7 @@ function CompareLineChart({ days }: { days: Array<{ date: string; facturado: num
           strokeWidth={2.25}
           dot={false}
           activeDot={{ r: 4 }}
+          isAnimationActive={false}
         />
       </LineChart>
     </ChartContainer>
@@ -272,6 +279,7 @@ function NetoPie({ paid, pending }: { paid: number; pending: number }) {
             stroke="none"
             startAngle={90}
             endAngle={450}
+            isAnimationActive={false}
           >
             <Label
               content={({ viewBox }) => {
