@@ -6,6 +6,7 @@ import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOr
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
+import { hasRipleySvcCredentials, syncRipleyLogistics } from './ripley-logistics.js';
 import { isFalabellaSyncEnabled, isRipleySyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
@@ -308,6 +309,26 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
   throw new Error(`El canal ${account.channelCode} no admite sincronización de pedidos.`);
 }
 
+async function applyRipleyLogistics(account, db, dependencies = {}) {
+  const core = dependencies.getCompany ? null : await loadCore();
+  const company = await (dependencies.getCompany || core.getCompany)(account.companyId);
+  if (typeof dependencies.syncLogistics === 'function') {
+    return dependencies.syncLogistics(company, {
+      db,
+      fetchImpl: dependencies.fetchImpl,
+      client: dependencies.ripleySvcClient,
+    });
+  }
+  if (!hasRipleySvcCredentials(company)) {
+    return { received: 0, matched: 0, status: 'not_configured' };
+  }
+  return syncRipleyLogistics(company, {
+    db,
+    fetchImpl: dependencies.fetchImpl,
+    client: dependencies.ripleySvcClient,
+  });
+}
+
 export async function syncOrderAccount(accountIdInput, options = {}, dependencies = {}) {
   const accountId = positiveId(accountIdInput, 'channelAccountId');
   const core = dependencies.pool ? null : await loadCore();
@@ -361,6 +382,9 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       [accountId, runId],
     );
     const stats = await dispatchAccountSync(db, account, window, runId, dependencies);
+    if (account.channelCode === 'ripley') {
+      stats.logistics = await applyRipleyLogistics(account, db, dependencies);
+    }
     const status = stats.failed > 0 ? 'partial' : 'success';
     await db.query(
       `update order_sync_runs set status=$2, pages_count=$3, received_count=$4,
@@ -392,6 +416,7 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       received: stats.received,
       upserted: stats.upserted,
       failed: stats.failed,
+      logistics: stats.logistics || null,
     };
   } catch (error) {
     const logged = operationalErrorBody(error, {

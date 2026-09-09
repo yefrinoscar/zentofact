@@ -29,6 +29,16 @@ test('keeps Vencen hoy when that tab has pending orders', () => {
   }), { tab: 'today', orders: today });
 });
 
+test('abre en Vencidos cuando hay pedidos fuera de plazo', () => {
+  const overdue = [{ id: 'overdue' }];
+  const today = [{ id: 'today' }];
+  assert.deepEqual(displayedPendingOrders({
+    selectedTab: null,
+    pendingOrders: [...overdue, ...today],
+    groups: { overdue, today },
+  }), { tab: 'overdue', orders: overdue });
+});
+
 test('an explicit empty date tab stays empty so the copy can explain it', () => {
   const pendingOrders = [{ id: 'later' }];
   const result = displayedPendingOrders({
@@ -49,6 +59,17 @@ test('an explicit empty date tab stays empty so the copy can explain it', () => 
   );
 });
 
+test('explica el tab de vencidos cuando está vacío', () => {
+  assert.equal(
+    pendingBoardEmptyCopy({
+      visibleCount: 0,
+      pendingCount: 4,
+      selectedTab: 'overdue',
+    }),
+    'Ningún pendiente vencido. Hay 4 en otras fechas.',
+  );
+});
+
 test('pending copy uses pedidos and ready copy uses etiquetas', () => {
   assert.equal(inboxVisibleCountLabel('pending', 0), '0 pedidos');
   assert.equal(inboxVisibleCountLabel('pending', 1), '1 pedido');
@@ -57,8 +78,9 @@ test('pending copy uses pedidos and ready copy uses etiquetas', () => {
   assert.equal(inboxVisibleCountLabel('shipped', 2), '2 etiquetas');
 });
 
-test('auto tab prefers today and otherwise all', () => {
+test('auto tab prefers overdue, then today, otherwise all', () => {
   assert.equal(resolvePendingDeadlineTab({ selectedTab: null, todayCount: 0, pendingCount: 2 }), 'all');
+  assert.equal(resolvePendingDeadlineTab({ selectedTab: null, overdueCount: 3, todayCount: 1, pendingCount: 5 }), 'overdue');
   assert.equal(resolvePendingDeadlineTab({ selectedTab: null, todayCount: 1, pendingCount: 2 }), 'today');
   assert.equal(resolvePendingDeadlineTab({ selectedTab: '2026-08-21', todayCount: 0, pendingCount: 2 }), '2026-08-21');
 });

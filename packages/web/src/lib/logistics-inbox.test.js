@@ -86,19 +86,22 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausad
 test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   const now = new Date('2026-09-02T15:00:00.000Z');
   assert.equal(logisticsUrgency({ promisedShippingAt: null }, now), 'later');
-  assert.equal(logisticsUrgency({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), 'overdue');
+  assert.equal(logisticsUrgency({ promisedShippingAt: '2026-09-01T22:00:00.000Z' }, now), 'overdue');
+  assert.equal(logisticsUrgency({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), 'today');
   assert.equal(logisticsUrgency({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), 'today');
   assert.equal(logisticsUrgency({ promisedShippingAt: '2026-09-03T17:00:00.000Z' }, now), 'tomorrow');
-  assert.equal(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), 'Venció hace 1 h');
+  assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-01T22:00:00.000Z' }, now), /^Venció hace /);
+  assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), /^Hoy · /);
   assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), /^Hoy · /);
   assert.match(logisticsDeadlineLabel({ promisedShippingAt: '2026-09-03T17:00:00.000Z' }, now), /^Mañana · /);
   assert.equal(logisticsDeadlineLabel({ promisedShippingAt: null }, now), 'Sin plazo informado');
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: null }, now), false);
-  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), false);
+  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-01T22:00:00.000Z' }, now), true);
+  assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T14:00:00.000Z' }, now), true);
   assert.equal(isActiveLogisticsDeadline({ promisedShippingAt: '2026-09-02T22:00:00.000Z' }, now), true);
   assert.deepEqual(LOGISTICS_URGENCIES.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana', 'Próximos']);
-  assert.deepEqual(BANDEJA_DEADLINE_FILTERS.map((item) => item.label), ['Vencen hoy', 'Vencen mañana']);
-  assert.equal(bandejaDeadlineFilter('overdue'), null);
+  assert.deepEqual(BANDEJA_DEADLINE_FILTERS.map((item) => item.label), ['Vencidos', 'Vencen hoy', 'Vencen mañana']);
+  assert.equal(bandejaDeadlineFilter('overdue'), 'overdue');
   assert.equal(bandejaDeadlineFilter('later'), null);
   assert.equal(bandejaDeadlineFilter(null), null);
   assert.equal(bandejaDeadlineFilter('today'), 'today');
@@ -106,6 +109,7 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   assert.equal(formatBandejaDeadlineDate('2026-09-08', now), '8 de setiembre');
   assert.deepEqual(
     laterBandejaDeadlineDates([
+      { date: '2026-09-01', count: 5 },
       { date: '2026-09-02', count: 3 },
       { date: '2026-09-03', count: 1 },
       { date: '2026-09-07', count: 4 },
@@ -115,8 +119,8 @@ test('la urgencia y el plazo se leen como en la bandeja Falabella', () => {
   );
   const groups = groupLogisticsByUrgency([
     { id: 1, promisedShippingAt: '2026-09-05T17:00:00.000Z' },
-    { id: 2, promisedShippingAt: '2026-09-02T14:00:00.000Z' },
-    { id: 3, promisedShippingAt: '2026-09-02T13:00:00.000Z' },
+    { id: 2, promisedShippingAt: '2026-09-01T22:00:00.000Z' },
+    { id: 3, promisedShippingAt: '2026-09-01T13:00:00.000Z' },
   ], now);
   assert.deepEqual(groups.map((group) => [group.urgency, group.orders.length]), [['overdue', 2], ['later', 1]]);
   assert.deepEqual(LOGISTICS_STAGES.map((item) => item.label), ['Pendientes', 'Listos para enviar', 'Enviados']);
@@ -229,13 +233,13 @@ test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
     { channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'F-2', promisedShippingAt: '2026-09-02T23:00:00.000Z' },
     { channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, promisedShippingAt: '2026-09-03T17:00:00.000Z' },
     { channelCode: 'manual', fulfillmentStatus: 'pending', promisedShippingAt: '2026-09-05T17:00:00.000Z' },
-    { channelCode: 'manual', fulfillmentStatus: 'pending', promisedShippingAt: '2026-09-02T14:00:00.000Z' },
+    { channelCode: 'manual', fulfillmentStatus: 'pending', promisedShippingAt: '2026-09-01T22:00:00.000Z' },
   ];
   const ready = [
     { channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 },
     { channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 1 } },
   ];
-  assert.equal(pendingDeadlineHelper(pending, now), '2 hoy · 1 mañana');
+  assert.equal(pendingDeadlineHelper(pending, now), '1 vencido · 2 hoy · 1 mañana');
   assert.equal(readyPrintHelper(ready), '1 por imprimir');
   assert.equal(readyPrintHelper([{ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }]), 'Ya impresa');
   assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
