@@ -7,6 +7,7 @@ import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { shouldListenStockOrder } from './catalog/stock-commitment.js';
 import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { enqueueRipleyStockJob, remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
+import { isRipleySyncEnabled } from './system-config.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -238,6 +239,9 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     values.push(filters.channelCode);
     where.push(`ch.code=$${values.length}`);
   }
+  if (filters.ripleyEnabled === false) {
+    where.push(`ch.code <> 'ripley'`);
+  }
   if (filters.search) {
     values.push(filters.search);
     where.push(`(
@@ -323,11 +327,15 @@ const LABEL_PRINT_SQL = `(
   where lp.order_id=o.id
 ) as label_print`;
 
-export async function listLogisticsInbox(filtersInput = {}, db) {
+export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
   const filters = parseLogisticsInboxFilters(filtersInput);
   const target = db || (await loadCore()).pool;
+  const ripleyEnabled = Object.hasOwn(options, 'ripleyEnabled')
+    ? options.ripleyEnabled === true
+    : await isRipleySyncEnabled(target);
+  if (!ripleyEnabled) filters.ripleyEnabled = false;
   await closeStaleMarketplaceFulfillment(target);
-  await remapPersistedRipleyReadyOrders(target);
+  if (ripleyEnabled) await remapPersistedRipleyReadyOrders(target);
 
   const countValues = [];
   const countWhere = whereClause(filters, countValues);
@@ -411,6 +419,11 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
   const counts = countResult.rows[0] || {};
   return {
     orders: listResult.rows.map(normalizeInboxOrder),
+    channels: {
+      falabella: true,
+      ripley: ripleyEnabled,
+      manual: true,
+    },
     counts: {
       pending: Number(counts.pending_count || 0),
       ready: Number(counts.ready_count || 0),

@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -64,6 +64,11 @@ import {
 
 type InboxResponse = {
   orders: LogisticsOrder[];
+  channels?: {
+    falabella?: boolean;
+    ripley?: boolean;
+    manual?: boolean;
+  };
   counts: {
     pending: number;
     ready: number;
@@ -165,6 +170,12 @@ export default function BandejaLogistica() {
   const orders = inboxQuery.data?.orders || [];
   const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
   const loading = inboxQuery.isPending && !inboxQuery.data;
+
+  useEffect(() => {
+    if (inboxQuery.data?.channels?.ripley === false && channelCode === 'ripley') {
+      setChannelCode('all');
+    }
+  }, [inboxQuery.data?.channels?.ripley, channelCode]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
   const revealReadyOrders = (orderIds: Iterable<number>) => {
@@ -393,6 +404,7 @@ export default function BandejaLogistica() {
     setStage: changeStage,
     channelCode,
     setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    channels: inboxQuery.data?.channels,
     urgency,
     deadlineDate,
     setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
