@@ -1,5 +1,6 @@
 import { localAuthOriginPatterns, localWebOrigins } from './local-web-origins.js';
 
+// Public LIMBO origin. Production login rejects callbackURL until this is deployed.
 export const CANONICAL_WEB_ORIGINS = [
   'https://limbo.zentolabs.com',
 ];
