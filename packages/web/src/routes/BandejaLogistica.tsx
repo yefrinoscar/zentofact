@@ -132,7 +132,7 @@ export default function BandejaLogistica() {
 
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
-  const [urgency, setUrgency] = useState<LogisticsUrgency | null>(null);
+  const [urgency, setUrgency] = useState<LogisticsUrgency | null>('today');
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
@@ -212,6 +212,8 @@ export default function BandejaLogistica() {
     if (next === 'shipped') {
       setUrgency(null);
       setDeadlineDate(null);
+    } else if (stage === 'shipped') {
+      setUrgency('today');
     }
   };
 
