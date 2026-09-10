@@ -5,21 +5,14 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import { isAdminRole, isSuperadminRole, userHasPermission } from './permissions.js';
 import { isProtectedPath } from './protected-paths.js';
-import { isLocalDevelopmentOrigin, localAuthOriginPatterns, localWebOrigins } from './local-web-origins.js';
+import { isLocalDevelopmentOrigin } from './local-web-origins.js';
+import { isZentolabsOrigin, resolveWebOrigins } from './web-origins.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL_POSTGRES });
 const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
 const baseURL = process.env.AUTH_BASE_URL || railwayOrigin || `http://localhost:${process.env.PORT || 3010}`;
 const usesHttps = baseURL.startsWith('https://');
-const trustedOrigins = Array.from(new Set([
-  ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
-  railwayOrigin,
-  'http://localhost:3011',
-  'http://127.0.0.1:3011',
-  'http://localhost:3000',
-  ...localWebOrigins(),
-  ...localAuthOriginPatterns(),
-].filter(Boolean)));
+const trustedOrigins = resolveWebOrigins({ includeAuthPatterns: true });
 const trustedOriginSet = new Set([
   ...trustedOrigins,
   (() => { try { return new URL(baseURL).origin; } catch { return ''; } })(),
@@ -155,7 +148,9 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function isTrustedOrigin(origin) {
   const normalized = String(origin || '').replace(/\/$/, '');
-  return trustedOriginSet.has(normalized) || isLocalDevelopmentOrigin(normalized);
+  return trustedOriginSet.has(normalized)
+    || isZentolabsOrigin(normalized)
+    || isLocalDevelopmentOrigin(normalized);
 }
 
 export function originMatchesRequestHost(origin, hostHeader, forwardedHost) {
