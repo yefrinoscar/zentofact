@@ -288,14 +288,6 @@ test('con Ripley apagado la bandeja no lista ni cuenta ese canal', async () => {
   assert.match(inboxSql(db, 'fulfillment_status = any'), /ch.code <> 'ripley'/);
 });
 
-test('Vencen hoy de la prioridad cuenta solo la etapa actual', async () => {
-  const db = new InboxDb();
-  await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
-  const countSql = inboxSql(db, 'as today_count');
-  assert.match(countSql, /as today_count/);
-  assert.match(countSql, /fulfillment_status = any/);
-});
-
 test('el filtro de vencidos no exige plazo futuro', async () => {
   const db = new InboxDb();
   await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db, { ripleyEnabled: true });

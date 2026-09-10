@@ -339,11 +339,6 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
 
   const countValues = [];
   const countWhere = whereClause(filters, countValues);
-  let urgencyStageSql = 'true';
-  if (filters.stage === 'pending' || filters.stage === 'ready') {
-    countValues.push(fulfillmentFilter(filters.stage));
-    urgencyStageSql = `o.fulfillment_status = any($${countValues.length}::text[])`;
-  }
   const countResult = await target.query(
     `select
        count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${WORKING_QUEUE_SQL} and not (${MARKETPLACE_ALREADY_SENT_SQL}))::int as pending_count,
@@ -352,10 +347,10 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
        )::int as shipped_count,
-       count(*) filter (where ${OPEN_UNSENT_SQL} and ${urgencyStageSql} and ${URGENCY_SQL.overdue})::int as overdue_count,
-       count(*) filter (where ${OPEN_UNSENT_SQL} and ${urgencyStageSql} and ${URGENCY_SQL.today})::int as today_count,
-       count(*) filter (where ${OPEN_UNSENT_SQL} and ${urgencyStageSql} and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
-       count(*) filter (where ${OPEN_UNSENT_SQL} and ${urgencyStageSql} and ${LATER_OR_UNDATED_SQL})::int as later_count
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.overdue})::int as overdue_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.today})::int as today_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${LATER_OR_UNDATED_SQL})::int as later_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id

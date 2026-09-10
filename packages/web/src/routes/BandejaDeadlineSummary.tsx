@@ -21,7 +21,6 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
           <div key={urgency.value} className={cn(
             'daisy-stat min-w-0 gap-1 border-0 px-1 py-3 text-center sm:px-5 sm:py-4 sm:text-left',
             index < 3 && 'border-r border-border',
-            view.urgency === urgency.value && 'bg-background',
           )}>
             <button
               type="button"
