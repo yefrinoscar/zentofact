@@ -41,7 +41,7 @@ test('rechaza filtros de bandeja inválidos', () => {
 
 test('la impresión pide ids concretos y tope', () => {
   assert.deepEqual(parsePrintSelection({ orderIds: [3, '3', 8] }).orderIds, [3, 8]);
-  assert.equal(parsePrintSelection({ orderIds: [1] }).includePacking, true);
+  assert.deepEqual(parsePrintSelection({ orderIds: [1] }), { orderIds: [1] });
   assert.throws(() => parsePrintSelection({ orderIds: [] }), /al menos un pedido/);
 });
 
@@ -182,7 +182,7 @@ function printRow(overrides = {}) {
   };
 }
 
-test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
+test('imprime solo la etiqueta manual', async () => {
   const db = new PrintDb([printRow()]);
   const result = await printLogisticsPack(
     { orderIds: [10], printedBy: 'operator@zentofact.local' },
@@ -191,10 +191,9 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.mimeType, 'application/pdf');
   assert.equal(result.labelCount, 1);
-  assert.ok(result.packingPageCount >= 1);
   assert.equal(result.skipped.length, 0);
   const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
-  assert.ok(pdf.getPageCount() >= 2);
+  assert.equal(pdf.getPageCount(), 1);
   const record = db.queries.find((query) => query.sql.includes('insert into logistics_label_prints'));
   assert.ok(record, 'registra la impresión');
   assert.deepEqual(record.params[0], [10]);
@@ -311,7 +310,7 @@ test('compone Falabella y deja Ripley fuera de la impresión', async () => {
     printRow({ id: 22, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-22' }),
   ];
   const result = await printLogisticsPack(
-    { orderIds: [21, 22], includePacking: false },
+    { orderIds: [21, 22] },
     {
       db: new PrintDb(rows),
       getFalabellaLabel: async () => stubLabelPdf('FAL'),
@@ -337,7 +336,7 @@ test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () =>
   const lines = [];
   await assert.rejects(
     () => printLogisticsPack(
-      { orderIds: [32], includePacking: false },
+      { orderIds: [32] },
       {
         db: new PrintDb([printRow({
           id: 32,
@@ -369,7 +368,7 @@ test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
   const lines = [];
   await assert.rejects(
     () => printLogisticsPack(
-      { orderIds: [51, 52], includePacking: false },
+      { orderIds: [51, 52] },
       {
         db: new PrintDb([
           printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),

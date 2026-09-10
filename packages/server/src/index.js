@@ -399,7 +399,6 @@ app.post('/logistics-inbox/print', async (c) => {
       operation: 'logistics.print',
       context: {
         orderIds: Array.isArray(body?.orderIds) ? body.orderIds : undefined,
-        includePacking: body?.includePacking,
       },
     });
   }
