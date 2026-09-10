@@ -139,9 +139,9 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         {([
           { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
           { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
-        ] as const).map(({ stage, label, mobileLabel, icon: Icon }) => <button key={stage} type="button" aria-label={`${label}: ${view.counts[stage]}`} aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
+        ] as const).map(({ stage, label, mobileLabel, icon: Icon }) => <button key={stage} type="button" aria-label={label} aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
           className={cn('flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-4 text-sm font-semibold outline-offset-4 sm:flex-none sm:justify-start sm:px-5', view.stage === stage ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:bg-muted/50')}>
-          <Icon className="hidden size-4 lg:block" /><span className="sm:hidden">{mobileLabel}</span><span className="hidden sm:inline">{label}</span><span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs tabular-nums text-foreground">{view.counts[stage]}</span>
+          <Icon className="hidden size-4 lg:block" /><span className="sm:hidden">{mobileLabel}</span><span className="hidden sm:inline">{label}</span>
         </button>)}
       </div>
 
