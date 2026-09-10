@@ -336,6 +336,15 @@ export function extractOrderItems(document) {
   return [];
 }
 
+function extractFalabellaOrder(document) {
+  const body = document?.SuccessResponse?.Body?.Orders?.Order
+    ?? document?.SuccessResponse?.Body?.Order
+    ?? document?.Orders?.Order
+    ?? document?.Order;
+  const order = Array.isArray(body) ? body[0] : body;
+  return order && typeof order === 'object' ? order : null;
+}
+
 async function markFalabellaItemsError(db, accountId, externalOrderId, message) {
   if (!accountId) return;
   await db.query(
@@ -607,17 +616,30 @@ async function reconcileActionableOrderStatuses(db, companyId, client, options =
       }
       const items = extractOrderItems(response.data);
       const itemStatus = effectiveFalabellaItemStatus(items);
-      const status = resolveFalabellaIngestStatus(
-        order.unified_fulfillment || order.status,
-        items,
-      ) || itemStatus;
-      if (!status) continue;
-      const labelCount = falabellaLabelCount(items);
-      const updatedAt = items
+      let headerStatus = order.unified_fulfillment || order.status;
+      let updatedAt = items
         .map((item) => validDate(item?.UpdatedAt ?? item?.updatedAt))
         .filter(Boolean)
         .sort()
         .at(-1) || null;
+      const itemsStillOpen = itemStatus === 'pending' || itemStatus === 'ready_to_ship';
+      if (itemsStillOpen && typeof options.orderClient?.call === 'function') {
+        const headerResponse = await options.orderClient.call({
+          action: 'GetOrder',
+          params: { OrderId: order.order_id },
+          accept: 'application/json',
+        });
+        const header = headerResponse?.ok && !getFalabellaError(headerResponse.data)
+          ? extractFalabellaOrder(headerResponse.data)
+          : null;
+        if (header) {
+          headerStatus = normalizeFalabellaStatus(header.Statuses) || headerStatus;
+          updatedAt = validDate(header.UpdatedAt ?? header.updatedAt) || updatedAt;
+        }
+      }
+      const status = resolveFalabellaIngestStatus(headerStatus, items) || itemStatus;
+      if (!status) continue;
+      const labelCount = falabellaLabelCount(items);
       await recordOrderLifecycle(db, {
         companyId,
         orderId: order.order_id,
@@ -750,7 +772,9 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
           observedSince: INVENTORY_LISTEN_FROM_AT,
           stockDb: dbPool,
         });
-        const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient);
+        const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
+          orderClient: client,
+        });
         return { status: 'success', skipped: 'already_current', itemHydration, reconciliation, sync: await getFalabellaSyncStatus(companyId, db) };
       }
       filters = { updatedAfter: windowFrom.toISOString(), updatedBefore: windowTo.toISOString(), sortDirection: 'ASC' };
@@ -792,6 +816,7 @@ export async function syncFalabellaOrders(companyId, options = {}, dependencies 
       stockDb: dbPool,
     });
     const reconciliation = await reconcileActionableOrderStatuses(db, companyId, orderItemsClient, {
+      orderClient: client,
       seller: company.nombreComercial || company.nombre || company.razonSocial,
       runId,
       syncMode: mode,

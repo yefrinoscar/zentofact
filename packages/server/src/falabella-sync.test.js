@@ -438,6 +438,72 @@ test('la reconciliación no baja a pending un pedido cuyo padre ya está shipped
   assert.equal(ingested.params[8], 'shipped');
 });
 
+test('GetOrder shipped saca de la bandeja un pedido cuyos items siguen pending', async () => {
+  const db = new FakeDb();
+  db.reconcileCandidates = [{
+    order_id: '5005366610',
+    order_number: '3251246385',
+    status: 'pending',
+    unified_fulfillment: 'ready_to_ship',
+    falabella_created_at: '2026-09-09T03:00:00Z',
+    falabella_updated_at: '2026-09-10T18:15:54Z',
+    raw_data: { OrderId: '5005366610', OrderNumber: '3251246385', Statuses: 'pending' },
+    label_count: 1,
+  }];
+  await syncFalabellaOrders(7, {
+    mode: 'range',
+    from: '2026-09-03T20:00:00.000Z',
+    to: '2026-09-03T20:30:00.000Z',
+  }, {
+    ...fakeDependencies(db, {
+      getOrdersV2: async () => response([]),
+      async call(input) {
+        assert.equal(input.action, 'GetOrder');
+        return {
+          ok: true,
+          data: {
+            SuccessResponse: {
+              Body: {
+                Orders: {
+                  Order: {
+                    OrderId: '5005366610',
+                    OrderNumber: '3251246385',
+                    Statuses: [{ Status: 'shipped' }],
+                    UpdatedAt: '2026-09-10 13:15:54',
+                  },
+                },
+              },
+            },
+          },
+        };
+      },
+    }),
+    orderItemsClientFor: () => ({
+      async call() {
+        return {
+          ok: true,
+          data: {
+            SuccessResponse: {
+              Body: {
+                OrderItems: {
+                  OrderItem: [
+                    { OrderItemId: '58601763', Status: 'pending', UpdatedAt: '2026-09-10 13:15:54' },
+                    { OrderItemId: '58601764', Status: 'pending', UpdatedAt: '2026-09-10 13:15:54' },
+                  ],
+                },
+              },
+            },
+          },
+        };
+      },
+    }),
+  });
+  const headerUpdate = db.queries.find((query) => query.sql.startsWith('update falabella_orders'));
+  assert.equal(headerUpdate.params[2], 'shipped');
+  const ingested = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.equal(ingested.params[6], 'shipped');
+});
+
 test('la reconciliación pasa a la bandeja un pedido Falabella ya enviado', async () => {
   const db = new FakeDb();
   db.reconcileCandidates = [{
