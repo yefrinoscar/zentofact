@@ -3,7 +3,7 @@ import test from 'node:test';
 import { recoverInterruptedOrderSyncRuns, syncOrderAccount, syncOrders, syncRipleyPages } from './order-sync.js';
 
 for (const scenario of [
-  { name: 'no avanza el cursor cuando otro proceso ocupa el seller', response: { status: 'already_running' }, status: 'error', cursor: '2026-09-06T22:40:00Z' },
+  { name: 'no avanza el cursor cuando otro proceso ocupa el seller', response: { status: 'already_running' }, status: 'already_running', cursor: '2026-09-06T22:40:00Z' },
   { name: 'avanza el cursor si la consulta termina sin pedidos', response: { status: 'success', received: 0 }, status: 'success', cursor: '2026-09-06T22:51:00.000Z' },
   { name: 'conserva el cursor si un pedido falla', response: { status: 'partial', received: 2, upserted: 1, failed: 1 }, status: 'partial', cursor: '2026-09-06T22:40:00Z' },
 ]) {
@@ -15,7 +15,7 @@ test(`una cuenta Falabella ${scenario.name}`, async () => {
       if (sql.includes('select a.id as channel_account_id')) return { rows: [{
         channel_account_id: 7, company_id: 1, channel_code: 'falabella',
         active: true, company_active: true, auto_create_orders: true,
-        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+        nombre_comercial: 'LIMBO', falabella_api_user_id: 'seller', falabella_api_key: 'test',
       }] };
       if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: cursor }] };
       if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 9 }] };
@@ -30,8 +30,41 @@ test(`una cuenta Falabella ${scenario.name}`, async () => {
   });
   assert.equal(cursor, scenario.cursor);
   assert.equal(result.status, scenario.status);
+  assert.equal(result.companyName, 'LIMBO');
 });
 }
+
+test('si Falabella está ocupada no deja last_error ni retrasa el próximo intento', async () => {
+  const writes = [];
+  const db = {
+    async query(sql, params = []) {
+      writes.push({ sql, params });
+      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
+      if (sql.includes('select a.id as channel_account_id')) return { rows: [{
+        channel_account_id: 7, company_id: 1, channel_code: 'falabella',
+        active: true, company_active: true, auto_create_orders: true,
+        nombre_comercial: 'BEAUTY HOMEHOLD', falabella_api_user_id: 'seller', falabella_api_key: 'test',
+      }] };
+      if (sql.includes('select * from order_sync_state')) {
+        return { rows: [{ cursor_updated_at: '2026-09-06T22:40:00Z', status: 'success', last_attempt_at: '2026-09-06T22:30:00Z' }] };
+      }
+      if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 9 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const result = await syncOrderAccount(7, { now: '2026-09-06T22:52:00Z' }, {
+    pool: { connect: async () => db },
+    syncFalabellaOrders: async () => ({ status: 'already_running' }),
+  });
+  assert.equal(result.status, 'already_running');
+  assert.equal(result.companyName, 'BEAUTY HOMEHOLD');
+  const stateWrite = writes.find((write) => write.sql.includes('last_attempt_at=$3'));
+  assert.ok(stateWrite);
+  assert.equal(stateWrite.params[1], 'success');
+  assert.equal(stateWrite.params[2], '2026-09-06T22:30:00Z');
+  assert.equal(writes.some((write) => write.sql.includes('last_error=$2')), false);
+});
 
 test('Ripley aísla el pedido fallido y continúa la página', async () => {
   const transactions = [];
@@ -233,7 +266,7 @@ test('Falabella sigue reconciliando si la ventana incremental ya está al día',
       if (sql.includes('select a.id as channel_account_id')) return { rows: [{
         channel_account_id: 7, company_id: 1, channel_code: 'falabella',
         active: true, company_active: true, auto_create_orders: true,
-        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+        nombre_comercial: 'LIMBO', falabella_api_user_id: 'seller', falabella_api_key: 'test',
       }] };
       if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T18:20:00.000Z' }] };
       if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };
@@ -262,7 +295,7 @@ test('un backfill sin fechas usa la ventana compartida', async () => {
       if (sql.includes('select a.id as channel_account_id')) return { rows: [{
         channel_account_id: 7, company_id: 1, channel_code: 'falabella',
         active: true, company_active: true, auto_create_orders: true,
-        falabella_api_user_id: 'seller', falabella_api_key: 'test',
+        nombre_comercial: 'LIMBO', falabella_api_user_id: 'seller', falabella_api_key: 'test',
       }] };
       if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T12:00:00Z' }] };
       if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 11 }] };

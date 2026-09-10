@@ -73,13 +73,16 @@ export function orderSyncLookbackLabel(days: number) {
   return value === 1 ? '1 día' : `${value} días`;
 }
 
+export function isFailedOrderSyncResult(result: { status?: string; failed?: number }) {
+  const status = String(result.status || '');
+  return status === 'failed'
+    || status === 'error'
+    || status === 'partial'
+    || Number(result.failed || 0) > 0;
+}
+
 export function syncResultNote(results: ReadonlyArray<{ status?: string; failed?: number }>) {
-  const hasFailure = results.some((result) => (
-    result.status === 'failed'
-    || result.status === 'error'
-    || result.status === 'partial'
-    || Number(result.failed || 0) > 0
-  ));
+  const hasFailure = results.some(isFailedOrderSyncResult);
   if (hasFailure) return 'Incompleto';
   const stillRunning = results.some((result) => result.status === 'already_running' || result.status === 'running');
   return stillRunning ? 'En curso' : 'Actualizado';

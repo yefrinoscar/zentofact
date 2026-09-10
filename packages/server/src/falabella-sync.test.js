@@ -12,6 +12,7 @@ import {
   normalizeFalabellaOrder,
   normalizeFalabellaStatus,
   shouldIngestReconciledFalabellaStatus,
+  companiesOutsideUnifiedFalabellaSync,
   syncFalabellaOrders,
 } from './falabella-sync.js';
 import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
@@ -440,6 +441,13 @@ test('el sync periódico recupera cabeceras sin artículos desde el corte operat
   const detailHydration = db.queries.find((query) => query.sql.includes('fo.synchronized_at >= $3'));
   assert.ok(detailHydration);
   assert.equal(detailHydration.params[2], INVENTORY_LISTEN_FROM_AT);
+});
+
+test('el scheduler legado no vuelve a tirar de sellers que ya cubre el sync unificado', () => {
+  assert.deepEqual(companiesOutsideUnifiedFalabellaSync([
+    { id: 8, nombre: 'Beauty Home' },
+    { id: 11, nombre: 'Nueva tienda' },
+  ], [8, 2]), [{ id: 11, nombre: 'Nueva tienda' }]);
 });
 
 test('rechaza una segunda sincronización de la misma empresa sin llamar Falabella', async () => {
