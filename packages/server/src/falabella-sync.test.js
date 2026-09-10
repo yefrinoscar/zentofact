@@ -13,6 +13,7 @@ import {
   normalizeFalabellaStatus,
   shouldIngestReconciledFalabellaStatus,
   companiesOutsideUnifiedFalabellaSync,
+  resolveFalabellaIngestStatus,
   syncFalabellaOrders,
 } from './falabella-sync.js';
 import { INVENTORY_LISTEN_FROM_AT, shouldListenStockOrder } from './catalog/stock-commitment.js';
@@ -24,6 +25,12 @@ test('la reconciliación de Falabella debe escribir shipped y delivered en la ba
   assert.equal(shouldIngestReconciledFalabellaStatus('pending', { statusChanged: false }), false);
   assert.equal(shouldIngestReconciledFalabellaStatus('shipped', { statusChanged: false }), true);
   assert.equal(shouldIngestReconciledFalabellaStatus('canceled', { restockNeeded: true }), true);
+});
+
+test('GetOrderItems pending no baja un pedido que GetOrder ya marcó shipped', () => {
+  assert.equal(resolveFalabellaIngestStatus('shipped', [{ Status: 'pending' }]), 'shipped');
+  assert.equal(resolveFalabellaIngestStatus('delivered', [{ Status: 'pending' }]), 'delivered');
+  assert.equal(resolveFalabellaIngestStatus('pending', [{ Status: 'shipped' }]), 'shipped');
 });
 
 test('una sincronización histórica nunca mueve inventario aunque encuentre cancelaciones', () => {
@@ -382,6 +389,53 @@ test('cuando Falabella marca un pedido como devuelto, el ciclo de vida guarda re
   assert.match(lifecycle.sql, /excluded.current_status='returned'/);
   const ordersInsert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
   assert.equal(ordersInsert.params[6], 'returned');
+});
+
+test('la reconciliación no baja a pending un pedido cuyo padre ya está shipped', async () => {
+  const db = new FakeDb();
+  db.reconcileCandidates = [{
+    order_id: '5005363607',
+    order_number: '3251240124',
+    status: 'pending',
+    unified_fulfillment: 'shipped',
+    falabella_created_at: '2026-09-09T03:53:55Z',
+    falabella_updated_at: '2026-09-10T10:15:26Z',
+    raw_data: { OrderId: '5005363607', OrderNumber: '3251240124', Statuses: 'pending' },
+    label_count: 1,
+  }];
+  await syncFalabellaOrders(7, {
+    mode: 'range',
+    from: '2026-09-03T20:00:00.000Z',
+    to: '2026-09-03T20:30:00.000Z',
+  }, {
+    ...fakeDependencies(db, { getOrdersV2: async () => response([]) }),
+    orderItemsClientFor: () => ({
+      async call() {
+        return {
+          ok: true,
+          data: {
+            SuccessResponse: {
+              Body: {
+                OrderItems: {
+                  OrderItem: [{
+                    OrderItemId: '58597455',
+                    Status: 'pending',
+                    UpdatedAt: '2026-09-10 05:15:26',
+                  }],
+                },
+              },
+            },
+          },
+        };
+      },
+    }),
+  });
+  const headerUpdate = db.queries.find((query) => query.sql.startsWith('update falabella_orders'));
+  assert.ok(headerUpdate, 'debe reescribir el padre a shipped');
+  assert.equal(headerUpdate.params[2], 'shipped');
+  const ingested = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.equal(ingested.params[6], 'shipped');
+  assert.equal(ingested.params[8], 'shipped');
 });
 
 test('la reconciliación pasa a la bandeja un pedido Falabella ya enviado', async () => {
