@@ -28,7 +28,7 @@ if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
 }
 
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
-const { localWebOrigins } = await import('./local-web-origins.js');
+const { allowCorsOrigin, resolveWebOrigins } = await import('./web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 const insumos = await import('./insumos.js');
@@ -95,16 +95,11 @@ const manifestJobs = await import('./falabella-manifest-jobs.js');
 const app = new Hono();
 
 // CORS con credenciales (cookies de sesión) para el front web.
-const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
-const webOrigins = Array.from(new Set([
-  ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
-  railwayOrigin,
-  'http://localhost:3011',
-  'http://127.0.0.1:3011',
-  'http://localhost:3000',
-  ...localWebOrigins(),
-].filter(Boolean)));
-app.use('*', cors({ origin: webOrigins, credentials: true }));
+const webOrigins = resolveWebOrigins();
+app.use('*', cors({
+  origin: (origin) => allowCorsOrigin(origin, webOrigins),
+  credentials: true,
+}));
 
 // Log de todas las requests (para diagnóstico).
 app.use('*', async (c, next) => {

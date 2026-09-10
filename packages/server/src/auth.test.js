@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { originMatchesRequestHost, requireAnyPermission, requirePermission } from './auth.js';
+import { isTrustedOrigin, originMatchesRequestHost, requireAnyPermission, requirePermission } from './auth.js';
 
 function context(user, method = 'GET') {
   return {
@@ -42,6 +42,11 @@ test('los guards conservan el bloqueo de métodos unsafe para viewer', async () 
       status: 403,
     });
   }
+});
+
+test('Better Auth y CSRF aceptan el dominio canónico de LIMBO', () => {
+  assert.equal(isTrustedOrigin('https://limbo.zentolabs.com'), true);
+  assert.equal(isTrustedOrigin('https://limbo.zentolabs.com/'), true);
 });
 
 test('el origen CSRF coincide con el host de la petición o el forwarded host', () => {
