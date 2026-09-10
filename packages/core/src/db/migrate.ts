@@ -1078,6 +1078,10 @@ const DDL = `
     ON orders(channel_account_id, order_status, fulfillment_status);
   CREATE INDEX IF NOT EXISTS idx_orders_external_number
     ON orders(company_id, external_order_number);
+  CREATE INDEX IF NOT EXISTS idx_orders_external_order_id
+    ON orders(external_order_id);
+  CREATE INDEX IF NOT EXISTS idx_orders_external_order_number_lookup
+    ON orders(external_order_number);
   CREATE INDEX IF NOT EXISTS idx_orders_promised_shipping
     ON orders(promised_shipping_at)
     WHERE fulfillment_status NOT IN ('delivered', 'cancelled', 'returned');
@@ -1784,6 +1788,19 @@ const DDL = `
   CREATE INDEX IF NOT EXISTS idx_settlement_lines_sale
     ON settlement_lines(sale_source, sale_id)
     WHERE sale_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_settlement_lines_order_ref
+    ON settlement_lines(order_ref)
+    WHERE order_ref <> '';
+
+  CREATE TABLE IF NOT EXISTS settlement_sales_snapshot (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    line_max_id BIGINT NOT NULL,
+    import_max_id BIGINT NOT NULL,
+    import_count INTEGER NOT NULL,
+    sale_count INTEGER NOT NULL,
+    sales JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
 
   CREATE TABLE IF NOT EXISTS sale_settlements (
     sale_source TEXT NOT NULL,
