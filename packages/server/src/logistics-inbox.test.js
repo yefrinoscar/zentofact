@@ -15,7 +15,11 @@ import {
   urgencyForDeadline,
   groupLogisticsItems,
 } from './logistics-inbox.js';
-import { closeStaleFalabellaFulfillment, closedFalabellaFulfillment } from './order-adapters/falabella.js';
+import {
+  alignFalabellaHeaderWithClosedFulfillment,
+  closeStaleFalabellaFulfillment,
+  closedFalabellaFulfillment,
+} from './order-adapters/falabella.js';
 import { closeStaleRipleyShippedFulfillment } from './order-adapters/ripley.js';
 
 function inboxSql(db, fragment) {
@@ -53,6 +57,9 @@ class InboxDb {
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim();
     this.queries.push({ sql: compact, params });
+    if (compact.startsWith('update falabella_orders') || compact.startsWith('update falabella_order_lifecycle')) {
+      return { rowCount: 0, rows: [] };
+    }
     if (compact.startsWith('select o.id, o.fulfillment_status, o.provider_status, fo.status as falabella_status')) {
       return { rows: [] };
     }
@@ -578,6 +585,20 @@ test('un marketplace ya enviado no cuenta como vencido ni queda abierto', () => 
   });
   assert.equal(closedFalabellaFulfillment('ready_to_ship'), null);
   assert.equal(closedFalabellaFulfillment('pending'), null);
+});
+
+test('restaura todos los padres Falabella que GetOrderItems había bajado a pending', async () => {
+  const sql = [];
+  const result = await alignFalabellaHeaderWithClosedFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update falabella_orders') ? 4 : 4, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 4);
+  assert.match(sql[0], /update falabella_orders/);
+  assert.match(sql[0], /fulfillment_status in \('shipped', 'delivered'\)/);
+  assert.match(sql[1], /update falabella_order_lifecycle/);
 });
 
 test('cierra en la bandeja un Falabella que el canal ya marcó enviado', async () => {
