@@ -57,6 +57,25 @@ function hasCredentials(account) {
   return false;
 }
 
+function companyDisplayName(account) {
+  if (!account) return undefined;
+  const name = String(
+    account.nombreComercial || account.nombre || account.razonSocial || account.displayName || '',
+  ).trim();
+  return name || undefined;
+}
+
+function withAccount(account, payload) {
+  const companyName = companyDisplayName(account);
+  return {
+    ...(account?.companyId ? { companyId: account.companyId } : {}),
+    ...(account?.channelCode ? { channelCode: account.channelCode } : {}),
+    ...(companyName ? { companyName } : {}),
+    ...(account?.displayName ? { displayName: account.displayName } : {}),
+    ...payload,
+  };
+}
+
 function assertEligible(account) {
   if (!account || !account.active || !account.companyActive) {
     throw new Error('Seller o cuenta de canal inactiva.');
@@ -297,9 +316,10 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
       to: window.to,
     });
     if (result.status === 'already_running') {
-      throw new Error('La sincronización de Falabella está ocupada; se reintentará la ventana.');
+      return { status: 'already_running', pages: 0, received: 0, upserted: 0, failed: 0, lastLogId: null };
     }
     return {
+      status: result.status === 'partial' ? 'partial' : 'success',
       pages: Number(result.pages || 0),
       received: Number(result.received || 0),
       upserted: Number(result.upserted || 0),
@@ -341,7 +361,10 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
   try {
     const lock = await db.query('select pg_try_advisory_lock($1,$2) as locked', [LOCK_NAMESPACE, accountId]);
     locked = lock.rows[0]?.locked === true;
-    if (!locked) return { channelAccountId: accountId, status: 'already_running' };
+    if (!locked) {
+      account = await loadAccount(db, accountId).catch(() => null);
+      return withAccount(account, { channelAccountId: accountId, status: 'already_running' });
+    }
     account = await loadAccount(db, accountId);
     assertEligible(account);
     if (account.channelCode === 'ripley') {
@@ -373,12 +396,10 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
           mode: 'incremental',
         });
         if (result.status === 'already_running') {
-          return { channelAccountId: accountId, companyId: account.companyId, channelCode: 'falabella', status: 'already_running' };
+          return withAccount(account, { channelAccountId: accountId, status: 'already_running' });
         }
-        return {
+        return withAccount(account, {
           channelAccountId: accountId,
-          companyId: account.companyId,
-          channelCode: 'falabella',
           status: result.status === 'partial' ? 'partial' : 'success',
           skipped: result.skipped || 'already_current',
           pages: Number(result.pages || 0),
@@ -386,12 +407,12 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
           upserted: Number(result.upserted || 0),
           failed: Number(result.failed || 0),
           logId: result.lastLogId || null,
-        };
+        });
       }
       const logistics = account.channelCode === 'ripley'
         ? await applyRipleyLogistics(account, db, dependencies)
         : null;
-      return { ...account, status: 'success', skipped: 'already_current', logistics };
+      return withAccount(account, { channelAccountId: accountId, status: 'success', skipped: 'already_current', logistics });
     }
     const run = await db.query(
       `insert into order_sync_runs (channel_account_id, mode, status, cursor_from, cursor_to)
@@ -406,10 +427,29 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       [accountId, runId],
     );
     const stats = await dispatchAccountSync(db, account, window, runId, dependencies);
+    if (stats.status === 'already_running') {
+      await db.query(
+        `update order_sync_runs set status='error', error=$2, finished_at=now() where id=$1`,
+        [runId, 'La sincronización de Falabella ya estaba en curso.'],
+      );
+      await db.query(
+        `update order_sync_state set status=$2, last_attempt_at=$3, last_started_at=$4,
+         last_finished_at=now(), last_error=null, last_run_id=$5, updated_at=now()
+         where channel_account_id=$1`,
+        [
+          accountId,
+          state.status && state.status !== 'running' ? state.status : 'pending',
+          state.last_attempt_at || null,
+          state.last_started_at || null,
+          state.last_run_id || null,
+        ],
+      );
+      return withAccount(account, { channelAccountId: accountId, status: 'already_running', runId });
+    }
     if (account.channelCode === 'ripley') {
       stats.logistics = await applyRipleyLogistics(account, db, dependencies);
     }
-    const status = stats.failed > 0 ? 'partial' : 'success';
+    const status = stats.failed > 0 || stats.status === 'partial' ? 'partial' : 'success';
     await db.query(
       `update order_sync_runs set status=$2, pages_count=$3, received_count=$4,
        upserted_count=$5, failed_count=$6, log_id=$7, finished_at=now() where id=$1`,
@@ -429,10 +469,8 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
         stats.lastLogId, stats.pages, stats.received, stats.upserted, stats.failed,
       ],
     );
-    return {
+    return withAccount(account, {
       channelAccountId: accountId,
-      companyId: account.companyId,
-      channelCode: account.channelCode,
       status,
       runId,
       logId: stats.lastLogId,
@@ -441,12 +479,12 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
       upserted: stats.upserted,
       failed: stats.failed,
       logistics: stats.logistics || null,
-    };
+    });
   } catch (error) {
     const logged = operationalErrorBody(error, {
       operation: 'order_sync_account',
       context: {
-        seller: account?.displayName,
+        seller: companyDisplayName(account) || account?.displayName,
         companyId: account?.companyId,
         channelAccountId: accountId,
         channelCode: account?.channelCode,
@@ -465,15 +503,13 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
        where channel_account_id=$1`,
       [accountId, logged.error, logged.logId, runId],
     ).catch(() => {});
-    return {
+    return withAccount(account, {
       channelAccountId: accountId,
-      companyId: account?.companyId,
-      channelCode: account?.channelCode,
       status: 'error',
       runId,
       logId: logged.logId,
       error: logged.error,
-    };
+    });
   } finally {
     if (locked) await db.query('select pg_advisory_unlock($1,$2)', [LOCK_NAMESPACE, accountId]).catch(() => {});
     db.release();

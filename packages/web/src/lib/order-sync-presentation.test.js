@@ -5,6 +5,7 @@ import {
   FULFILLMENT_TONES,
   fulfillmentLabel,
   fulfillmentTone,
+  isFailedOrderSyncResult,
   orderSyncIntervalLabel,
   orderSyncLookbackLabel,
   syncResultNote,
@@ -47,4 +48,6 @@ test('los estados reales del backend muestran fallos totales y parciales', () =>
   assert.equal(syncStatusLabel('partial'), 'Sincronización incompleta');
   assert.equal(syncResultNote([{ status: 'error' }]), 'Incompleto');
   assert.equal(syncResultNote([{ status: 'partial' }]), 'Incompleto');
+  assert.equal(isFailedOrderSyncResult({ status: 'partial' }), true);
+  assert.equal(isFailedOrderSyncResult({ status: 'already_running' }), false);
 });

@@ -37,9 +37,12 @@ export type OrderSyncResult = {
   channelAccountId: number;
   companyId: number;
   channelCode: string;
+  companyName?: string;
+  displayName?: string;
   status: string;
   runId?: number | null;
   logId?: string | null;
+  error?: string;
   pages?: number;
   received?: number;
   upserted?: number;

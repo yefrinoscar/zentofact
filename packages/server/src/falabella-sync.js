@@ -1081,6 +1081,11 @@ export async function listLocalFalabellaOrders(companyId, filters = {}, db) {
   return { orders, totalCount: query.rows[0]?.total_count || 0, sync: await getFalabellaSyncStatus(companyId, target), coverage, source: 'postgres' };
 }
 
+export function companiesOutsideUnifiedFalabellaSync(companies, unifiedCompanyIds) {
+  const skip = new Set((unifiedCompanyIds || []).map((id) => Number(id)));
+  return (companies || []).filter((company) => !skip.has(Number(company.id)));
+}
+
 export function startFalabellaSyncScheduler() {
   let running = false;
   const tick = async () => {
@@ -1089,9 +1094,19 @@ export function startFalabellaSyncScheduler() {
     if (running) return;
     running = true;
     try {
-      const { listCompanies } = await loadCore();
+      const { listCompanies, pool } = await loadCore();
       const companies = (await listCompanies()).filter((company) => company.activo && company.falabellaApiUserId?.trim() && company.falabellaApiKey?.trim());
-      for (const company of companies) {
+      const unified = await pool.query(
+        `select a.company_id
+         from order_channel_accounts a
+         join order_channels ch on ch.id = a.channel_id
+         where ch.code = 'falabella' and a.active = true and a.auto_create_orders = true`,
+      );
+      const targets = companiesOutsideUnifiedFalabellaSync(
+        companies,
+        unified.rows.map((row) => Number(row.company_id)),
+      );
+      for (const company of targets) {
         const state = await getFalabellaSyncStatus(company.id);
         if (!state?.enabled) continue;
         const lastReference = state.lastAttemptAt || state.lastSuccessfulSyncAt;
