@@ -45,6 +45,8 @@ test('los guards conservan el bloqueo de métodos unsafe para viewer', async () 
 });
 
 test('Better Auth y CSRF aceptan el dominio canónico de LIMBO', () => {
+  assert.equal(isTrustedOrigin('https://limbo.zentoolabs.com'), true);
+  assert.equal(isTrustedOrigin('https://limbo.zentoolabs.com/'), true);
   assert.equal(isTrustedOrigin('https://limbo.zentolabs.com'), true);
   assert.equal(isTrustedOrigin('https://limbo.zentolabs.com/'), true);
 });
