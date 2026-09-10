@@ -8,9 +8,9 @@ import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
 import {
-  BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
+  BANDEJA_DEADLINE_FILTERS, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
-  limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
+  logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
   LOGISTICS_URGENCIES, visibleLogisticsChannels,
 } from '../lib/logistics-inbox';
 import {
@@ -52,8 +52,6 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const groups = groupLogisticsByUrgency(view.orders, view.now);
   const focused = view.orders.find((order) => order.id === focusedId) || groups[0]?.orders[0];
   const laterDates = laterBandejaDeadlineDates(view.counts.dates || [], view.now);
-  const todayKey = limaDeadlineKey(view.now);
-  const tomorrowKey = limaDeadlineKey(new Date(view.now.getTime() + 24 * 60 * 60 * 1000));
   const selectedDeadline = !view.urgency && !view.deadlineDate;
   const displayGroups = view.stage === 'shipped'
     ? [{ key: 'shipped', label: 'Enviados', urgency: 'later' as const, orders: view.orders }]
@@ -156,9 +154,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           }}>
           <option value="all">Todos los plazos</option>
           {BANDEJA_DEADLINE_FILTERS.map((urgency) => <option key={urgency.value} value={urgency.value}>
-            {urgency.label} · {urgency.value === 'overdue'
-              ? view.counts.urgency.overdue
-              : bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
+            {urgency.label} · {urgency.value === 'today' ? view.counts.urgency.today : view.counts.urgency.tomorrow}
           </option>)}
           {laterDates.map((item) => <option key={item.date} value={item.date}>{formatBandejaDeadlineDate(item.date, view.now)} · {item.count}</option>)}
         </select>
@@ -167,10 +163,9 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       {view.stage !== 'shipped' && <div className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label="Filtrar por entrega">
         <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
-          const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
-          const count = urgency.value === 'overdue'
-            ? view.counts.urgency.overdue
-            : bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
+          const count = urgency.value === 'today'
+            ? view.counts.urgency.today
+            : view.counts.urgency.tomorrow;
           return <Button key={urgency.value} size="sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
             <span className={cn('size-1.5 rounded-full', urgency.dotClass)} />{urgency.label}
             <span className="tabular-nums text-muted-foreground">{count}</span>
