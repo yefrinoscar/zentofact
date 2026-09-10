@@ -592,6 +592,15 @@ function clampPositiveMinutes(value) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 15;
 }
 
+function requestedSyncChannels(options = {}) {
+  if (Array.isArray(options.channelCodes) && options.channelCodes.length) {
+    return options.channelCodes.map((code) => String(code || '').trim().toLowerCase());
+  }
+  const single = String(options.channelCode || '').trim().toLowerCase();
+  if (single) return [single];
+  return ['falabella', 'ripley'];
+}
+
 export async function syncOrders(options = {}, dependencies = {}) {
   const closer = dependencies.closeStaleMarketplaceFulfillment || closeStaleMarketplaceFulfillment;
   if (typeof closer === 'function') {
@@ -599,8 +608,12 @@ export async function syncOrders(options = {}, dependencies = {}) {
     await closer(dependencies.db || dependencies.pool || core.pool);
   }
   const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
+  const ripleyOn = await (dependencies.isRipleySyncEnabled || isRipleySyncEnabled)(dependencies.db);
+  const channelCodes = requestedSyncChannels(options).filter((code) => code !== 'ripley' || ripleyOn);
+  if (!channelCodes.length) return { results: [], settings };
   const ids = await eligibleAccountIds({
     ...options,
+    channelCodes,
     intervalMinutes: settings.intervalMinutes,
   }, dependencies.db);
   const concurrency = Math.min(Math.max(Number(dependencies.concurrency || DEFAULT_CONCURRENCY), 1), 10);

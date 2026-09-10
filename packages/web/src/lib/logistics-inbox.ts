@@ -20,6 +20,18 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'manual', label: 'Propios' },
 ];
 
+export type LogisticsEnabledChannels = {
+  falabella?: boolean;
+  ripley?: boolean;
+  manual?: boolean;
+};
+
+export function visibleLogisticsChannels(enabled?: LogisticsEnabledChannels | null) {
+  return LOGISTICS_CHANNELS.filter((channel) => (
+    channel.value === 'all' || enabled?.[channel.value] !== false
+  ));
+}
+
 export const LOGISTICS_STAGES: Array<{
   value: LogisticsStage;
   label: string;

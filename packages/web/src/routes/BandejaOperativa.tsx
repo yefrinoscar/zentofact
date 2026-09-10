@@ -11,7 +11,7 @@ import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
   limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
-  LOGISTICS_CHANNELS, LOGISTICS_URGENCIES,
+  LOGISTICS_URGENCIES, visibleLogisticsChannels,
 } from '../lib/logistics-inbox';
 import {
   ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
@@ -119,8 +119,8 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input aria-label="Buscar pedido o producto" placeholder="Pedido o producto" className="h-11 pl-9 sm:h-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
-        <div className="order-last grid w-full grid-cols-4 gap-1 sm:order-none sm:flex sm:w-auto sm:flex-wrap" aria-label="Filtrar por canal">
-          {LOGISTICS_CHANNELS.map((channel) => <Button key={channel.value} size="sm" className={cn('h-14 min-w-0 flex-col gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
+        <div className={cn('order-last grid w-full gap-1 sm:order-none sm:flex sm:w-auto sm:flex-wrap', visibleLogisticsChannels(view.channels).length === 4 ? 'grid-cols-4' : 'grid-cols-3')} aria-label="Filtrar por canal">
+          {visibleLogisticsChannels(view.channels).map((channel) => <Button key={channel.value} size="sm" className={cn('h-14 min-w-0 flex-col gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
             {channel.value === 'all' ? <Layers3 aria-hidden="true" className="size-4 sm:hidden" /> : <ChannelMark code={channel.value} className="size-4" />}
             {channel.label}
           </Button>)}

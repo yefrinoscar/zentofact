@@ -42,11 +42,14 @@ import {
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
   productImageSrc,
+  visibleLogisticsChannels,
 } from './logistics-inbox.ts';
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
   assert.equal(logisticsChannelLabel('manual'), 'Propios');
+  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'manual']);
+  assert.equal(visibleLogisticsChannels().some((item) => item.value === 'ripley'), true);
   assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
   assert.equal(logisticsQuantityLabel({ quantity: 6 }), 'x6');

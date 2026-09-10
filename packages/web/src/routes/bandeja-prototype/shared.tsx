@@ -35,9 +35,10 @@ import {
   RIPLEY_LABEL_SOON_COPY,
   BANDEJA_DEADLINE_FILTERS,
   formatBandejaDeadlineDate,
-  LOGISTICS_CHANNELS,
   LOGISTICS_URGENCIES,
+  visibleLogisticsChannels,
   type LogisticsChannel,
+  type LogisticsEnabledChannels,
   type LogisticsStage,
   type LogisticsUrgency,
 } from '../../lib/logistics-inbox';
@@ -90,6 +91,7 @@ export type BandejaView = {
   setStage: (stage: LogisticsStage) => void;
   channelCode: 'all' | LogisticsChannel;
   setChannelCode: (code: 'all' | LogisticsChannel) => void;
+  channels?: LogisticsEnabledChannels | null;
   urgency: LogisticsUrgency | null;
   setUrgency: (urgency: LogisticsUrgency | null) => void;
   deadlineDate: string | null;
@@ -626,7 +628,7 @@ function StageFilterQueue({
       </div>
       {density === 'full' && (
         <div role="group" aria-label="Canal" className="flex items-center gap-0.5 text-xs">
-          {LOGISTICS_CHANNELS.map((channel) => {
+          {visibleLogisticsChannels(view.channels).map((channel) => {
             const active = view.channelCode === channel.value;
             return (
               <button
