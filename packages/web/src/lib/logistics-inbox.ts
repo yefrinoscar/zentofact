@@ -336,7 +336,7 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return 'El pedido ya salió del almacén. No hace falta volver a imprimir.';
   if (order.channelCode === 'falabella') {
-    if (canPrintLogisticsLabel(order)) return 'Falabella confirmó el pedido como listo. Imprime la etiqueta y la guía de armado.';
+    if (canPrintLogisticsLabel(order)) return 'Falabella confirmó el pedido como listo. Imprime la etiqueta.';
     if (canMarkFalabellaReady(order)) return 'Empaca todos los productos y confirma que está listo para habilitar la etiqueta de Falabella.';
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
@@ -416,12 +416,10 @@ export function logisticsSkippedNotice(skipped: Array<{ id: number; reason: stri
   return `${skipped.length} pedidos no se imprimieron.`;
 }
 
-export function logisticsPrintSuccessCopy(result: { labelCount?: number; packingPageCount?: number }) {
+export function logisticsPrintSuccessCopy(result: { labelCount?: number }) {
   const labels = Number(result.labelCount || 0);
-  const packing = Number(result.packingPageCount || 0);
   const labelCopy = `${labels} etiqueta${labels === 1 ? '' : 's'}`;
-  if (!packing) return `Listo. ${labelCopy}.`;
-  return `Listo. ${labelCopy} y ${packing} hoja${packing === 1 ? '' : 's'} de armado.`;
+  return `Listo. ${labelCopy}.`;
 }
 
 export function logisticsBulkReadySummary(total: number, failed: number) {

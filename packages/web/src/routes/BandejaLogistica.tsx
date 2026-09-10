@@ -80,7 +80,6 @@ type PrintResult = {
   base64?: string;
   filename?: string;
   labelCount?: number;
-  packingPageCount?: number;
   skipped?: Array<{ id: number; reason: string }>;
 };
 
@@ -206,7 +205,7 @@ export default function BandejaLogistica() {
   };
 
   const printMutation = useMutation({
-    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds, includePacking: true }) as Promise<PrintResult>,
+    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds }) as Promise<PrintResult>,
     onSuccess: (result) => {
       if (result?.base64) openPdfFromBase64(result.base64, result.filename || 'bandeja.pdf');
       const skipped = Array.isArray(result?.skipped) ? result.skipped : [];

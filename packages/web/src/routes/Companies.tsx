@@ -86,6 +86,11 @@ type ChannelAccount = {
   settings?: { autoEmitDocuments?: boolean };
 };
 
+type OrderSyncStatus = {
+  channelCode?: string;
+  lastError?: string | null;
+};
+
 const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false };
 const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true };
 
@@ -169,6 +174,14 @@ function isChannelAccount(value: unknown): value is ChannelAccount {
     && (autoEmitDocuments === undefined || typeof autoEmitDocuments === 'boolean');
 }
 
+function isOrderSyncStatus(value: unknown): value is OrderSyncStatus {
+  if (!value || typeof value !== 'object') return false;
+  const channelCode = Reflect.get(value, 'channelCode');
+  const lastError = Reflect.get(value, 'lastError');
+  return (channelCode === undefined || typeof channelCode === 'string')
+    && (lastError === undefined || lastError === null || typeof lastError === 'string');
+}
+
 function billingInput(
   companyId: number,
   channelCode: 'falabella' | 'ripley',
@@ -222,6 +235,7 @@ export default function Companies() {
   const [showCertPassword, setShowCertPassword] = useState(false);
   const [channelAutoEmission, setChannelAutoEmission] = useState<ChannelAutoEmission>(initialAutoEmission);
   const [channelAutoCreateOrders, setChannelAutoCreateOrders] = useState<ChannelAutoCreateOrders>(initialAutoCreateOrders);
+  const [channelSyncErrors, setChannelSyncErrors] = useState<Record<string, string>>({});
   const [loadingBilling, setLoadingBilling] = useState(false);
   const [initialFalabellaAutoEmission, setInitialFalabellaAutoEmission] = useState(false);
   const [search, setSearch] = useState('');
@@ -260,6 +274,7 @@ export default function Companies() {
     setShowCertPassword(false);
     setChannelAutoEmission(initialAutoEmission);
     setChannelAutoCreateOrders(initialAutoCreateOrders);
+    setChannelSyncErrors({});
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
     if (certInputRef.current) certInputRef.current.value = '';
@@ -589,8 +604,12 @@ export default function Companies() {
     void Promise.all([
       api.listOrderChannelAccounts({ companyId: company.id }),
       api.autoEmitGetConfig(),
-    ]).then(([accounts, autoEmission]) => {
+      api.getManagedOrderSyncStatus({ companyId: company.id }),
+    ]).then(([accounts, autoEmission, syncStatus]) => {
       const channelAccounts = Array.isArray(accounts) ? accounts.filter(isChannelAccount) : [];
+      const syncAccounts = Array.isArray(syncStatus?.accounts)
+        ? syncStatus.accounts.filter(isOrderSyncStatus)
+        : [];
       const falabella = channelAccounts.find((account) => account.channelCode === 'falabella');
       const ripley = channelAccounts.find((account) => account.channelCode === 'ripley');
       const configuredCompanies = Array.isArray(autoEmission?.companies) ? autoEmission.companies : [];
@@ -604,6 +623,13 @@ export default function Companies() {
         ripley: ripley?.settings?.autoEmitDocuments === true,
       });
       setInitialFalabellaAutoEmission(automatic);
+      setChannelSyncErrors(Object.fromEntries(
+        syncAccounts.flatMap((account) => (
+          account.channelCode && account.lastError?.trim()
+            ? [[account.channelCode, account.lastError]]
+            : []
+        )),
+      ));
     }).catch((caught: unknown) => {
       const message = caught instanceof Error ? caught.message : 'No se pudo cargar la configuración de canales.';
       setError(message);
@@ -795,6 +821,15 @@ export default function Companies() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   Usuario y clave de Seller Center. Nada más.
                 </p>
+                {channelSyncErrors.ripley && (
+                  <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">Error al sincronizar Ripley</p>
+                      <p className="mt-0.5 break-words">{channelSyncErrors.ripley}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 border-t border-border pt-4">
