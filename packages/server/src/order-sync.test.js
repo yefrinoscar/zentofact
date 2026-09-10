@@ -327,8 +327,29 @@ test('Sincronizar cierra pedidos marketplace ya enviados antes de llamar al cana
       return { falabella: 4, ripley: 1 };
     },
     loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    isRipleySyncEnabled: async () => true,
   });
   assert.deepEqual(closed, [true]);
+  assert.deepEqual(result.results, []);
+});
+
+test('con Ripley apagado Sincronizar no tira de cuentas Ripley', async () => {
+  const seen = [];
+  const result = await syncOrders({ channelCodes: ['falabella', 'ripley'] }, {
+    db: {
+      async query(sql, params = []) {
+        seen.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+        return { rows: [] };
+      },
+    },
+    closeStaleMarketplaceFulfillment: async () => ({ falabella: 0, ripley: 0 }),
+    loadOrderSyncSettings: async () => ({ intervalMinutes: 15, lookbackDays: 5 }),
+    isRipleySyncEnabled: async () => false,
+  });
+  const accounts = seen.find((query) => query.sql.includes('from order_channel_accounts'));
+  assert.ok(accounts);
+  assert.equal(accounts.params.includes('ripley'), false);
+  assert.equal(accounts.params.includes('falabella'), true);
   assert.deepEqual(result.results, []);
 });
 

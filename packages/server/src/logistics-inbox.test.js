@@ -114,7 +114,7 @@ class InboxDb {
 
 test('lista la bandeja con conteos por etapa y productos', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', search: 'QNC' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', search: 'QNC' }, db, { ripleyEnabled: true });
   assert.equal(result.counts.pending, 2);
   assert.equal(result.counts.ready, 1);
   assert.equal(result.orders.length, 1);
@@ -209,7 +209,7 @@ test('imprime solo la etiqueta manual', async () => {
 
 test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   const db = new InboxDb();
-  await listLogisticsInbox({ stage: 'pending' }, db);
+  await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
   const listSql = db.queries.find((query) => query.sql.includes('image_url'))?.sql || '';
   assert.match(listSql, /product_medias/);
   assert.match(listSql, /media_url/);
@@ -238,7 +238,7 @@ for (const mediaUrl of [
       }
       return result;
     };
-    const result = await listLogisticsInbox({ stage: 'pending' }, db);
+    const result = await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
     assert.equal(result.orders[0].items[0].imageUrl, new URL(mediaUrl, 'https://ripleyperu-prod.mirakl.net').href);
   });
 }
@@ -280,9 +280,17 @@ test('clasifica la urgencia de entrega en hora de Lima', () => {
   assert.equal(urgencyForDeadline('2026-09-08T21:00:00.000Z', night), 'tomorrow');
 });
 
+test('con Ripley apagado la bandeja no lista ni cuenta ese canal', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: false });
+  assert.equal(result.channels.ripley, false);
+  assert.match(inboxSql(db, 'as pending_count'), /ch.code <> 'ripley'/);
+  assert.match(inboxSql(db, 'fulfillment_status = any'), /ch.code <> 'ripley'/);
+});
+
 test('el filtro de vencidos no exige plazo futuro', async () => {
   const db = new InboxDb();
-  await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db);
+  await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db, { ripleyEnabled: true });
   const listSql = inboxSql(db, 'fulfillment_status = any');
   assert.match(listSql, /America\/Lima/);
   assert.match(listSql, /::date < /);
@@ -291,7 +299,7 @@ test('el filtro de vencidos no exige plazo futuro', async () => {
 
 test('filtra por urgencia y expone conteos de prioridad', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db, { ripleyEnabled: true });
   assert.match(inboxSql(db, 'fulfillment_status = any'), /America\/Lima/);
   assert.deepEqual(result.counts.urgency, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
   assert.equal(result.orders[0].urgency, 'later');
@@ -301,7 +309,7 @@ test('filtra por urgencia y expone conteos de prioridad', async () => {
 
 test('filtra por una fecha concreta de plazo', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db, { ripleyEnabled: true });
   assert.equal(parseLogisticsInboxFilters({ deadline: '2026-09-08' }).deadline, '2026-09-08');
   assert.match(inboxSql(db, 'fulfillment_status = any'), /::date = \$/);
   assert.match(inboxSql(db, 'group by 1'), /group by 1/);
