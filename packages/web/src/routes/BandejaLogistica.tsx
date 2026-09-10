@@ -39,7 +39,7 @@ import {
   type LogisticsStage,
   type LogisticsUrgency,
 } from '../lib/logistics-inbox';
-import { noticeFromError, type InboxNotice } from '../lib/inbox-notice';
+import { logisticsSyncNotice, noticeFromError, type InboxNotice } from '../lib/inbox-notice';
 import { CopyableLogId } from '../components/CopyableLogId';
 import { PrototypeSwitcherGroup } from '../components/PrototypeSwitcher';
 import { usePermissions } from '../hooks/usePermissions';
@@ -187,16 +187,12 @@ export default function BandejaLogistica() {
     void invalidate();
   };
   const announce = (next: InboxNotice) => {
-    if (next.refs.length) {
-      setNotice(next);
-      return;
-    }
     showSnackbar({
       message: next.message,
-      tone: next.tone === 'error' ? 'error' : 'success',
-      duration: next.tone === 'error' ? 6000 : undefined,
+      tone: next.tone === 'success' ? 'success' : 'error',
+      duration: next.tone === 'success' ? undefined : 8000,
     });
-    setNotice(null);
+    setNotice(next.refs.length ? next : null);
   };
 
   const changeStage = (next: LogisticsStage) => {
@@ -350,14 +346,14 @@ export default function BandejaLogistica() {
   const syncMutation = useMutation({
     mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
     onSuccess: (result) => {
-      const rows = Array.isArray(result?.results) ? result.results : [];
-      const failed = rows.filter((row) => /error|fail/i.test(String(row.status || '')));
-      const running = rows.filter((row) => String(row.status || '') === 'already_running');
-      announce(failed.length
-        ? { tone: rows.length === failed.length ? 'error' : 'warning', message: `${failed.length} tienda${failed.length === 1 ? '' : 's'} no pudo${failed.length === 1 ? '' : 'ieron'} sincronizarse.`, refs: [] }
-        : running.length
-          ? { tone: 'warning', message: 'La sincronización ya estaba en curso. La bandeja se actualiza al terminar.', refs: [] }
-          : { tone: 'success', message: 'Estados de pedidos actualizados.', refs: [] });
+      const nameByCompanyId = new Map(
+        orders.flatMap((order) => (
+          order.companyId != null && order.companyName
+            ? [[order.companyId, order.companyName] as const]
+            : []
+        )),
+      );
+      announce(logisticsSyncNotice(result, nameByCompanyId));
       void invalidate();
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
