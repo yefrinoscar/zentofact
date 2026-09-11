@@ -11,7 +11,7 @@ import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
   limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
-  LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
+  remainingReadyToPrint, LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
 import {
   ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
@@ -20,7 +20,7 @@ import {
 
 const STAGE_TABS = [
   { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
-  { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
+  { stage: 'ready', label: 'Confirmado', mobileLabel: 'Confirmado', icon: Printer },
 ] as const;
 
 function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
@@ -137,6 +137,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const defaultReady = view.orders.filter(canMarkLogisticsReady);
   const defaultDeliver = view.orders.filter(canMarkLogisticsDelivered);
   const unprinted = view.orders.filter((order) => canPrintLogisticsLabel(order) && !labelWasPrinted(order));
+  const toPrint = remainingReadyToPrint(view.counts);
   const readyTargets = selectedOrders.length ? selectedReady : defaultReady;
   const deliverTargets = selectedOrders.length ? selectedDeliver : defaultDeliver;
   const printTargets = selectedOrders.length ? selectedPrint : unprinted;
@@ -304,7 +305,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
-          : !view.orders.length ? <div className="py-10 text-center sm:py-16"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
+          : !view.orders.length ? <div className="py-10 text-center sm:py-16"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && toPrint > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {toPrint}</Button>}</div>
             : <div aria-busy={view.fetching} className={cn('min-w-0 transition-opacity duration-200', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);
@@ -326,7 +327,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         {deliverTargets.length > 0 && <Button className="mt-2 w-full" variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}
         {isReady && printTargets.length > 0 && <Button className="mt-2 w-full" variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}><Printer />{`Imprimir ${printTargets.length} pedidos`}</Button>}
         <p className="mt-3 text-xs text-muted-foreground">{isPending ? 'Confirma que el lote está empacado o entregado.' : 'Imprime marketplaces o marca entregados los propios.'}</p>
-        {isPending && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{view.counts.ready}</span></Button>}
+        {isPending && toPrint > 0 && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{toPrint}</span></Button>}
       </aside>}
       </div>
       <div className={cn("mt-4 items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground", view.totalCount > pageSize || offset > 0 ? "flex" : "hidden sm:flex")}>

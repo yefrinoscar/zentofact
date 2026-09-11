@@ -72,6 +72,7 @@ type InboxResponse = {
   counts: {
     pending: number;
     ready: number;
+    readyUnprinted?: number;
     shipped: number;
     urgency: Record<LogisticsUrgency, number>;
     dates: Array<{ date: string; count: number }>;
@@ -168,7 +169,7 @@ export default function BandejaLogistica() {
 
   const now = new Date();
   const orders = inboxQuery.data?.orders || [];
-  const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
+  const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, readyUnprinted: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
   const loading = inboxQuery.isPending && !inboxQuery.data;
 
   useEffect(() => {

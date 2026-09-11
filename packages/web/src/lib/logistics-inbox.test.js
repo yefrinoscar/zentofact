@@ -26,6 +26,7 @@ import {
   isActiveLogisticsDeadline,
   pendingDeadlineHelper,
   readyPrintHelper,
+  remainingReadyToPrint,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
@@ -186,6 +187,11 @@ test('copy operativa de bandeja', () => {
   assert.equal(logisticsCountLabel('pending', 1), '1 pedido');
   assert.equal(logisticsCountLabel('ready', 2), '2 etiquetas');
   assert.equal(logisticsEmptyCopy('pending'), 'Nada que preparar con estos filtros.');
+  assert.equal(logisticsEmptyCopy('ready'), 'No hay pedidos confirmados.');
+  assert.equal(remainingReadyToPrint({ readyUnprinted: 3 }), 3);
+  assert.equal(remainingReadyToPrint({ readyUnprinted: 0, ready: 27 }), 0);
+  assert.equal(remainingReadyToPrint({ ready: 27 }), 27);
+  assert.equal(remainingReadyToPrint({}), 0);
   assert.match(logisticsEmptyCopy('pending', 'today'), /Vencen hoy/);
   assert.match(logisticsEmptyCopy('pending', null, '8 de setiembre'), /8 de setiembre/);
   assert.equal(logisticsSkippedNotice([{ id: 1, reason: 'Ripley aún no tiene etiqueta.' }]), 'Ripley aún no tiene etiqueta.');
@@ -222,6 +228,7 @@ test('marcar listo saca el pedido de pendientes y lo cuenta en listos', () => {
     counts: {
       pending: 52,
       ready: 3,
+      readyUnprinted: 1,
       shipped: 10,
       dates: [{ date: '2026-09-08', count: 2 }],
     },
@@ -231,6 +238,7 @@ test('marcar listo saca el pedido de pendientes y lo cuenta en listos', () => {
   assert.deepEqual(next.orders.map((order) => order.id), [11]);
   assert.equal(next.counts.pending, 51);
   assert.equal(next.counts.ready, 4);
+  assert.equal(next.counts.readyUnprinted, 2);
   assert.equal(next.totalCount, 51);
   assert.deepEqual(next.counts.dates, [{ date: '2026-09-08', count: 1 }]);
   assert.equal(applyLogisticsReadyToInbox(inbox, [99]), inbox);
@@ -241,19 +249,22 @@ test('marcar entregado saca el pedido propio de la bandeja abierta', () => {
     orders: [
       { id: 10, promisedShippingAt: '2026-09-08T21:00:00.000Z', fulfillmentStatus: 'pending' },
       { id: 11, promisedShippingAt: '2026-09-08T22:00:00.000Z', fulfillmentStatus: 'ready_to_ship' },
+      { id: 12, promisedShippingAt: '2026-09-08T23:00:00.000Z', fulfillmentStatus: 'ready_to_ship', labelPrint: { printCount: 1 } },
     ],
     counts: {
       pending: 4,
       ready: 3,
+      readyUnprinted: 2,
       shipped: 10,
       dates: [{ date: '2026-09-08', count: 2 }],
     },
     totalCount: 7,
   };
   const next = applyLogisticsDeliveredToInbox(inbox, [10, 11]);
-  assert.deepEqual(next.orders, []);
+  assert.deepEqual(next.orders.map((order) => order.id), [12]);
   assert.equal(next.counts.pending, 3);
   assert.equal(next.counts.ready, 2);
+  assert.equal(next.counts.readyUnprinted, 1);
   assert.equal(next.counts.shipped, 12);
   assert.equal(next.totalCount, 5);
   assert.equal(logisticsDeliverSuccessCopy({ externalOrderNumber: 'QNC-10010' }), 'QNC-10010 quedó entregado.');

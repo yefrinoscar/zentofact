@@ -69,7 +69,7 @@ class InboxDb {
       return { rows: [] };
     }
     if (compact.includes('as pending_count')) {
-      return { rows: [{ pending_count: 2, ready_count: 1, shipped_count: 0 }] };
+      return { rows: [{ pending_count: 2, ready_count: 1, ready_unprinted_count: 1, shipped_count: 0 }] };
     }
     if (compact.includes('as date') && compact.includes('group by 1')) {
       return { rows: [{ date: '2026-09-08', count: 2 }] };
@@ -119,6 +119,7 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   const result = await listLogisticsInbox({ stage: 'pending', search: 'QNC' }, db, { ripleyEnabled: true });
   assert.equal(result.counts.pending, 2);
   assert.equal(result.counts.ready, 1);
+  assert.equal(result.counts.readyUnprinted, 1);
   assert.equal(result.orders.length, 1);
   assert.equal(result.orders[0].channelCode, 'manual');
   assert.equal(result.orders[0].itemsCount, 2);
@@ -137,6 +138,9 @@ test('lista la bandeja con conteos por etapa y productos', async () => {
   assert.match(countSql, /::date >= /);
   assert.match(countSql, /ch\.code = 'manual'/);
   assert.match(countSql, /falabella_orders fo/);
+  assert.match(countSql, /ready_unprinted_count/);
+  assert.match(countSql, /logistics_label_prints/);
+  assert.match(countSql, /falabella_label_prints/);
   assert.match(dateSql, /America\/Lima/);
   assert.match(dateSql, /::date >= /);
   assert.deepEqual(result.counts.dates, [{ date: '2026-09-08', count: 2 }]);
