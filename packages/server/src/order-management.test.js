@@ -14,6 +14,7 @@ import {
 } from './order-management.js';
 import {
   alignFalabellaHeaderWithClosedFulfillment,
+  closeOverdueFalabellaFulfillment,
   mapFalabellaCanonicalStatus,
   mapFalabellaOrderItems,
   mapFalabellaShipping,
@@ -393,6 +394,20 @@ test('GetOrder shipped no se pisa con GetOrderItems pending', () => {
     resolveFalabellaIngestStatus('ready_to_ship', [{ Status: 'shipped' }]),
     'shipped',
   );
+});
+
+test('saca de vencidos un Falabella con plazo vencido que GetOrder ya envió', async () => {
+  const sql = [];
+  const result = await closeOverdueFalabellaFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update orders') ? 7 : 7, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 7);
+  assert.match(sql[0], /update orders o/);
+  assert.match(sql[0], /America\/Lima/);
+  assert.match(sql[1], /update falabella_orders/);
 });
 
 test('alinea todos los padres Falabella abiertos cuya bandeja ya está enviada', async () => {
