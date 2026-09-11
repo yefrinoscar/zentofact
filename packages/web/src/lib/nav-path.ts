@@ -27,6 +27,7 @@ export type NavVisibilityItem = {
   adminOnly?: boolean;
   superadminOnly?: boolean;
   hiddenInProduction?: boolean;
+  alwaysVisible?: boolean;
 };
 
 export function isNavItemVisible(
@@ -38,6 +39,7 @@ export function isNavItemVisible(
   if (isProd && item.hiddenInProduction) return false;
   if (item.adminOnly) return options.isAdmin === true || options.isSuperadmin === true;
   if (item.superadminOnly) return options.isSuperadmin === true;
+  if (item.alwaysVisible) return true;
   if (!item.permission) return false;
   return can(item.permission);
 }

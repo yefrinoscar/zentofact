@@ -17,6 +17,12 @@ test('insumos exige sesión para lectura y ajustes', () => {
   assert.equal(isProtectedPath('/insumos/3/adjust'), true);
 });
 
+test('los avisos operativos exigen sesión', () => {
+  assert.equal(isProtectedPath('/notifications'), true);
+  assert.equal(isProtectedPath('/notifications/read'), true);
+  assert.equal(isProtectedPath('/notifications/dismiss'), true);
+});
+
 test('pagos exige sesión para historial y carga de CSV', () => {
   assert.equal(isProtectedPath('/pagos'), true);
   assert.equal(isProtectedPath('/pagos/imports'), true);

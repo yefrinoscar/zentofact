@@ -15,6 +15,12 @@ test('mobileNavPathname no reescribe Nueva venta si también gestiona pedidos', 
   assert.equal(isNavItemActive('/orders/nueva', '/orders'), true);
 });
 
+test('Avisos queda visible para cualquier sesión autenticada', () => {
+  const avisos = { to: '/avisos', alwaysVisible: true };
+  assert.equal(isNavItemVisible(avisos, () => false, false), true);
+  assert.equal(isNavItemVisible({ to: '/mystery' }, () => true, false), false);
+});
+
 test('Ventas usa el permiso de dashboard', () => {
   const ventas = { to: '/ventas', permission: 'dashboard' };
   assert.equal(isNavItemVisible(ventas, (key) => key === 'dashboard', false), true);

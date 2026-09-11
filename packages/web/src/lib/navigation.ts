@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Ban,
   BarChart3,
+  Bell,
   Building2,
   ChartNoAxesCombined,
   CircleDollarSign,
@@ -39,6 +40,7 @@ export type NavItem = {
   adminOnly?: boolean;
   superadminOnly?: boolean;
   hiddenInProduction?: boolean;
+  alwaysVisible?: boolean;
 };
 
 export type NavGroup = {
@@ -52,6 +54,13 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'ops',
     label: 'Operación',
     items: [
+      {
+        to: '/avisos',
+        icon: Bell,
+        label: 'Avisos',
+        alwaysVisible: true,
+        description: 'Lo que necesita tu atención ahora.',
+      },
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/ventas', icon: BarChart3, label: 'Ventas', permission: 'dashboard' },
       { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },

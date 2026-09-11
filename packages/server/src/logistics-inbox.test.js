@@ -14,6 +14,7 @@ import {
   scheduleRipleyInboxReady,
   urgencyForDeadline,
   groupLogisticsItems,
+  countOpenOverdueOrders,
 } from './logistics-inbox.js';
 import {
   alignFalabellaHeaderWithClosedFulfillment,
@@ -279,6 +280,17 @@ test('clasifica la urgencia de entrega en hora de Lima', () => {
   const night = new Date('2026-09-08T03:06:00.000Z');
   assert.equal(urgencyForDeadline('2026-09-08T00:00:00.000Z', night), 'today');
   assert.equal(urgencyForDeadline('2026-09-08T21:00:00.000Z', night), 'tomorrow');
+});
+
+test('el conteo de vencidos reutiliza el criterio de bandeja y no cierra pedidos', async () => {
+  const db = new InboxDb();
+  const result = await countOpenOverdueOrders(db);
+  assert.equal(result.count, 0);
+  const sql = inboxSql(db, 'min(o.promised_shipping_at)');
+  assert.match(sql, /America\/Lima/);
+  assert.match(sql, /::date < /);
+  assert.doesNotMatch(sql, /update orders/);
+  assert.equal(db.queries.length, 1);
 });
 
 test('con Ripley apagado la bandeja no lista ni cuenta ese canal', async () => {
