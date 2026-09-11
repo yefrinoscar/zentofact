@@ -347,6 +347,21 @@ const LABEL_PRINT_SQL = `(
   where lp.order_id=o.id
 ) as label_print`;
 
+const LABEL_PRINT_COUNT_SQL = `coalesce(
+  (select lp.print_count from logistics_label_prints lp where lp.order_id = o.id),
+  (
+    select sum(prints.print_count)::int
+    from falabella_label_prints prints
+    where prints.company_id = o.company_id
+      and prints.order_id = o.external_order_id
+  ),
+  0
+)`;
+const PRINTABLE_READY_SQL = `(
+  ch.code = 'manual'
+  or (ch.code = 'falabella' and o.company_id is not null)
+)`;
+
 export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
   const filters = parseLogisticsInboxFilters(filtersInput);
   const target = db || (await loadCore()).pool;
@@ -363,6 +378,13 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
     `select
        count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${WORKING_QUEUE_SQL} and not (${MARKETPLACE_ALREADY_SENT_SQL}))::int as pending_count,
        count(*) filter (where o.fulfillment_status = 'ready_to_ship' and ${WORKING_QUEUE_SQL} and not (${MARKETPLACE_ALREADY_SENT_SQL}))::int as ready_count,
+       count(*) filter (
+         where o.fulfillment_status = 'ready_to_ship'
+           and ${WORKING_QUEUE_SQL}
+           and not (${MARKETPLACE_ALREADY_SENT_SQL})
+           and ${PRINTABLE_READY_SQL}
+           and ${LABEL_PRINT_COUNT_SQL} = 0
+       )::int as ready_unprinted_count,
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
@@ -447,6 +469,7 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
     counts: {
       pending: Number(counts.pending_count || 0),
       ready: Number(counts.ready_count || 0),
+      readyUnprinted: Number(counts.ready_unprinted_count || 0),
       shipped: Number(counts.shipped_count || 0),
       urgency: {
         overdue: Number(counts.overdue_count || 0),

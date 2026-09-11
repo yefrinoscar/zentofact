@@ -418,8 +418,13 @@ export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrg
     return `Ningún pedido en “${meta.label}”. Quita el filtro de prioridad para ver el resto.`;
   }
   if (stage === 'pending') return 'Nada que preparar con estos filtros.';
-  if (stage === 'ready') return 'No hay pedidos listos para imprimir.';
+  if (stage === 'ready') return 'No hay pedidos confirmados.';
   return 'No hay envíos recientes.';
+}
+
+export function remainingReadyToPrint(counts: { readyUnprinted?: number | null; ready?: number | null }) {
+  if (counts.readyUnprinted == null) return Math.max(0, Number(counts.ready || 0));
+  return Math.max(0, Number(counts.readyUnprinted) || 0);
 }
 
 export function logisticsSkippedNotice(skipped: Array<{ id: number; reason: string }>) {
@@ -445,10 +450,12 @@ export type LogisticsInboxSnapshot = {
     id: number;
     promisedShippingAt?: string | null;
     fulfillmentStatus?: string | null;
+    labelPrint?: { printCount?: number | null } | null;
   }>;
   counts: {
     pending: number;
     ready: number;
+    readyUnprinted?: number;
     shipped: number;
     dates?: BandejaDeadlineDateCount[];
   };
@@ -481,6 +488,7 @@ export function applyLogisticsReadyToInbox<T extends LogisticsInboxSnapshot>(
       ...inbox.counts,
       pending: Math.max(0, Number(inbox.counts.pending) - removed.length),
       ready: Number(inbox.counts.ready) + removed.length,
+      readyUnprinted: Number(inbox.counts.readyUnprinted || 0) + removed.length,
       dates: dates.filter((item) => item.count > 0),
     },
   };
@@ -499,9 +507,12 @@ export function applyLogisticsDeliveredToInbox<T extends LogisticsInboxSnapshot>
   const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
   let pendingRemoved = 0;
   let readyRemoved = 0;
+  let readyUnprintedRemoved = 0;
   for (const order of removed) {
-    if (String(order.fulfillmentStatus || '') === 'ready_to_ship') readyRemoved += 1;
-    else pendingRemoved += 1;
+    if (String(order.fulfillmentStatus || '') === 'ready_to_ship') {
+      readyRemoved += 1;
+      if (!labelWasPrinted(order)) readyUnprintedRemoved += 1;
+    } else pendingRemoved += 1;
     const deadline = parseLogisticsDate(order.promisedShippingAt);
     if (!deadline) continue;
     const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
@@ -515,6 +526,7 @@ export function applyLogisticsDeliveredToInbox<T extends LogisticsInboxSnapshot>
       ...inbox.counts,
       pending: Math.max(0, Number(inbox.counts.pending) - pendingRemoved),
       ready: Math.max(0, Number(inbox.counts.ready) - readyRemoved),
+      readyUnprinted: Math.max(0, Number(inbox.counts.readyUnprinted || 0) - readyUnprintedRemoved),
       shipped: Number(inbox.counts.shipped || 0) + removed.length,
       dates: dates.filter((item) => item.count > 0),
     },
