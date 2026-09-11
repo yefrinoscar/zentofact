@@ -1,0 +1,13 @@
+{
+  "name": "@zentofact/print-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "zentofact-print": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js"
+  }
+}

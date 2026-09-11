@@ -58,6 +58,8 @@ await listenReset.resetInventoryListenHistory();
 const falabellaSync = await import('./falabella-sync.js');
 const ordersInbox = await import('./orders-inbox.js');
 const logisticsInbox = await import('./logistics-inbox.js');
+const printQueue = await import('./print-queue.js');
+await printQueue.ensurePrintQueueTables();
 const orderManagement = await import('./order-management.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
@@ -140,6 +142,8 @@ app.post('/webhooks/falabella/:companyId/:token', (c) =>
 app.post('/webhooks/falabella/:companyId', (c) =>
   handleFalabellaWebhook(c, c.req.param('companyId'), ''));
 app.on(['GET'], '/webhooks/falabella/*', (c) => c.json({ error: 'method not allowed' }, 405));
+app.use('/print-jobs', printQueue.attachPrintStation());
+app.use('/print-jobs/*', printQueue.attachPrintStation());
 // Guard: exige sesión solo en las rutas protegidas del API (login/estáticos quedan públicos).
 app.use('*', requireAuth());
 app.use('*', requireCsrf());
@@ -165,6 +169,9 @@ app.use('/order-management/*', orderManagementGuard);
 const logisticsInboxGuard = requireAnyPermission(['orders_inbox', 'order_management']);
 app.use('/logistics-inbox', logisticsInboxGuard);
 app.use('/logistics-inbox/*', logisticsInboxGuard);
+const printStationGuard = requireAnyPermission(['settings']);
+app.use('/print-station', printStationGuard);
+app.use('/print-station/*', printStationGuard);
 
 const catalogGuard = (c, next) => {
   const path = c.req.path;
@@ -416,6 +423,95 @@ app.post('/logistics-inbox/:orderId/ready', async (c) => {
   } catch (e) {
     return fail(c, e, 400, { operation: 'logistics.ripley-ready' });
   }
+});
+app.get('/print-station', async (c) => {
+  try { return ok(c, await printQueue.getPrintStation()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.patch('/print-station', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await printQueue.setPrintStationEnabled(body.enabled === true));
+  } catch (e) { return fail(c, e, 400); }
+});
+app.post('/print-station/token', async (c) => {
+  try { return ok(c, await printQueue.rotatePrintStationToken()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/print-jobs/next', async (c) => {
+  try {
+    if (!c.get('printStation')) return c.json({ error: 'Estación de impresión no autorizada' }, 401);
+    const claimed = await printQueue.claimNextBatch({
+      stationId: c.get('printStation').id,
+      now: new Date(),
+    });
+    if (claimed.kind !== 'print' || !claimed.orderIds.length) return ok(c, claimed);
+    try {
+      const printed = await logisticsInbox.printLogisticsPackWithDefaults({
+        orderIds: claimed.orderIds,
+        includePacking: false,
+        printedBy: 'print-agent',
+      }, { recordPrints: false });
+      const skippedIds = [...new Set((printed.skipped || []).map((entry) => Number(entry.id)).filter(Boolean))];
+      const orderIds = claimed.orderIds.filter((id) => !skippedIds.includes(Number(id)));
+      if (skippedIds.length) {
+        await printQueue.releaseClaimedOrders({
+          batchId: claimed.batchId,
+          orderIds: skippedIds,
+          error: (printed.skipped || []).map((entry) => entry.reason).filter(Boolean).join(' ') || 'Etiqueta no disponible.',
+        });
+      }
+      if (!printed.base64 || !orderIds.length) {
+        await printQueue.failPrintBatch({
+          batchId: claimed.batchId,
+          error: (printed.skipped || []).map((entry) => entry.reason).filter(Boolean).join(' ') || 'Sin etiquetas.',
+          stationId: c.get('printStation').id,
+        });
+        return ok(c, { kind: 'wait', reason: 'empty', waitMs: 5000, pendingCount: claimed.pendingCount || 0 });
+      }
+      return ok(c, {
+        kind: 'print',
+        batchId: claimed.batchId,
+        reason: claimed.reason,
+        orderIds,
+        pages: claimed.pages,
+        pendingCount: claimed.pendingCount,
+        filename: printed.filename,
+        mimeType: printed.mimeType,
+        base64: printed.base64,
+        labelCount: printed.labelCount,
+        skipped: printed.skipped || [],
+      });
+    } catch (error) {
+      await printQueue.failPrintBatch({
+        batchId: claimed.batchId,
+        error: error.message,
+        stationId: c.get('printStation').id,
+      });
+      throw error;
+    }
+  } catch (e) { return fail(c, e, 400, { operation: 'print-jobs.next' }); }
+});
+app.post('/print-jobs/ack', async (c) => {
+  try {
+    if (!c.get('printStation')) return c.json({ error: 'Estación de impresión no autorizada' }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await printQueue.ackPrintBatch({
+      ...body,
+      stationId: c.get('printStation').id,
+      printedBy: 'print-agent',
+    }));
+  } catch (e) { return fail(c, e, 400, { operation: 'print-jobs.ack' }); }
+});
+app.post('/print-jobs/fail', async (c) => {
+  try {
+    if (!c.get('printStation')) return c.json({ error: 'Estación de impresión no autorizada' }, 401);
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await printQueue.failPrintBatch({
+      ...body,
+      stationId: c.get('printStation').id,
+    }));
+  } catch (e) { return fail(c, e, 400, { operation: 'print-jobs.fail' }); }
 });
 app.post('/logistics-inbox/:orderId/delivered', async (c) => {
   try {
@@ -1873,4 +1969,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   orderSync.startOrderSyncScheduler();
   stockJobs.startStockReconciliationCron();
   stockJobs.startStockJobWorker();
+  printQueue.startPrintQueueSweeper();
 });

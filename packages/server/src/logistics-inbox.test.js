@@ -148,6 +148,7 @@ class PrintDb {
   async query(sql, params = []) {
     this.queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
     if (sql.includes('logistics_label_prints')) return { rows: [] };
+    if (sql.includes('print_jobs')) return { rows: [] };
     return { rows: this.rows };
   }
 }

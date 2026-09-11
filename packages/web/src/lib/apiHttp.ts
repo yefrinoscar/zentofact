@@ -58,6 +58,24 @@ export type OrderSyncSettings = {
   lookbackDays: number;
 };
 
+export type PrintStationStatus = {
+  enabled: boolean;
+  hasToken: boolean;
+  tokenSuffix?: string | null;
+  envToken?: boolean;
+  lastSeenAt?: string | null;
+  lastBatchAt?: string | null;
+  lastError?: string | null;
+  listening?: boolean;
+  pendingCount: number;
+  nextReason?: string;
+  flushAt?: string | null;
+  labelsPerPage: number;
+  maxBatch: number;
+  flushAfterMinutes: number;
+  token?: string;
+};
+
 export type ProductAssociationCandidate = {
   id: number;
   productId: number;
@@ -283,6 +301,11 @@ const apiHttp = {
   } = {}) => req(`/logistics-inbox${qs(filter)}`),
   printLogisticsPack: (data: { orderIds: number[]; includePacking?: boolean }) =>
     req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
+  getPrintStation: () => req<PrintStationStatus>('/print-station'),
+  setPrintStationEnabled: (enabled: boolean) =>
+    req<PrintStationStatus>('/print-station', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  rotatePrintStationToken: () =>
+    req<PrintStationStatus & { token?: string }>('/print-station/token', { method: 'POST' }),
   markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderDelivered: (data: { orderId: number }) =>

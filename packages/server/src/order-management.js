@@ -880,6 +880,13 @@ async function ingestOrderInTransaction(input, db) {
     );
   }
 
+  const { syncPrintJobForOrder } = await import('./print-queue.js');
+  await syncPrintJobForOrder(db, {
+    orderId: persisted.id,
+    channelCode: account.channelCode,
+    fulfillmentStatus: persisted.fulfillment_status,
+  });
+
   return {
     order: normalizeOrderRow({
       ...persisted,

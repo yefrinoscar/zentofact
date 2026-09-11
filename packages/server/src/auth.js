@@ -182,6 +182,7 @@ export function csrfTokenForSession(session) {
 // Guard: exige sesión solo en rutas protegidas del API.
 export function requireAuth() {
   return async (c, next) => {
+    if (c.get('printStation')) return next();
     const path = c.req.path;
     const needsAuth = isProtectedPath(path);
     if (!needsAuth) return next();
@@ -209,6 +210,7 @@ export function requireAuth() {
 // externa envíe un POST. Requerimos origen conocido y token ligado a sesión.
 export function requireCsrf() {
   return async (c, next) => {
+    if (c.get('printStation')) return next();
     const path = c.req.path;
     const needsAuth = isProtectedPath(path);
     if (!needsAuth || !UNSAFE_METHODS.has(c.req.method)) return next();

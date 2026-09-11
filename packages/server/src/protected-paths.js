@@ -22,6 +22,8 @@ export const PROTECTED_PATHS = [
   '/users',
   '/me',
   '/insumos',
+  '/print-jobs',
+  '/print-station',
 ];
 
 export function isProtectedPath(path) {
