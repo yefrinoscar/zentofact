@@ -35,6 +35,7 @@ test('recupera una etiqueta pendiente ya impresa leyendo el tracking de su PDF',
       if (sql.includes('where fo.order_number=$1')) return { rows: [] };
       if (sql.includes('from falabella_ticket_items') && sql.includes('match_type')) return { rows: [] };
       if (sql.includes('from falabella_label_prints')) return { rows: [{ company_id: 3, order_id: stored.order_id, order_number: stored.order_number }] };
+      if (sql.includes('from orders o')) return { rows: [] };
       if (sql.includes('where fo.company_id=$1')) return { rows: [stored] };
       if (sql.includes('from falabella_product_variants')) return { rows: [] };
       if (sql.includes('insert into falabella_product_variants')) return { rows: [] };
@@ -64,6 +65,46 @@ test('recupera una etiqueta pendiente ya impresa leyendo el tracking de su PDF',
   assert.equal(result.order.orderNumber, '3248342012');
   assert.equal(result.scan.matchType, 'tracking');
   assert.equal(result.packages[0].trackingCode, '240121000011894785');
+});
+
+test('resuelve el tracking sincronizado sin impresión ni snapshot y sin conexión a Falabella', async () => {
+  const code = '240111000012662439';
+  const stored = {
+    company_id: 4, company_name: 'Tienda', order_id: '5005434747',
+    order_number: '3251479771', status: 'ready_to_ship', raw_data: {},
+  };
+  const db = {
+    async query(sql, params) {
+      if (sql.includes('where fo.order_number=$1')) return { rows: [] };
+      if (sql.includes('from falabella_ticket_items')) return { rows: [] };
+      if (sql.includes('from falabella_label_prints')) return { rows: [] };
+      if (sql.includes('from orders o')) {
+        assert.deepEqual(params, [code]);
+        return { rows: [{ company_id: 4, order_id: stored.order_id, match_type: 'tracking' }] };
+      }
+      if (sql.includes('where fo.company_id=$1')) return { rows: [stored] };
+      if (sql.includes('from order_items oi')) {
+        assert.deepEqual(params, [4, stored.order_id]);
+        return { rows: [
+          { raw_data: { OrderItemId: '58707550', Name: 'Producto', TrackingCode: code, PackageId: 'PKG-1', Quantity: 2 } },
+          { raw_data: { OrderItemId: '58707551', Name: 'Otro bulto', TrackingCode: '240111000012662440', PackageId: 'PKG-2' } },
+        ] };
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  };
+  const result = await lookupPickingScan({
+    db, input: code,
+    getOrderItems: async () => { throw new Error('Falabella no disponible'); },
+    getShippingLabel: async () => assert.fail('No debe buscar PDFs para un tracking sincronizado'),
+  });
+  assert.equal(result.order.orderNumber, '3251479771');
+  assert.equal(result.order.companyId, 4);
+  assert.equal(result.scan.matchType, 'tracking');
+  assert.equal(result.packages.length, 1);
+  assert.equal(result.packages[0].trackingCode, code);
+  assert.equal(result.packages[0].items[0].orderItemId, '58707550');
+  assert.equal(result.unitCount, 2);
 });
 
 test('resuelve un tracking guardado y devuelve solo el bulto escaneado', async () => {
