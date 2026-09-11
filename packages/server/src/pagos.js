@@ -9,8 +9,14 @@ const MAX_CSV_BYTES = 8 * 1024 * 1024;
 let defaultPoolPromise;
 let aggregatedSalesCache = null;
 
+const SETTLEMENT_SNAPSHOT_LOCK = 746201;
+
 export function clearSettlementSalesCache() {
   aggregatedSalesCache = null;
+}
+
+export function shouldCacheSettlementSales(db) {
+  return db == null || db.useSettlementSalesCache === true;
 }
 
 async function resolvePool(db) {
@@ -213,6 +219,7 @@ function sellerIdFromRaw(raw) {
 }
 
 async function attachCompaniesToLines(lines, db) {
+  if ((lines || []).every((line) => line.companyId)) return lines;
   const needSku = new Set();
   const needSeller = new Set();
   for (const line of lines || []) {
@@ -349,21 +356,91 @@ const SETTLEMENT_SALES_LINE_SQL = `
          left join settlement_imports si
            on si.id = sl.import_id`;
 
-function cacheKey(stamp) {
-  return `${Number(stamp?.lineCount || 0)}:${Number(stamp?.maxId || 0)}:${Number(stamp?.importMax || 0)}`;
+function stampKey(stamp) {
+  return `${Number(stamp?.lineMaxId || 0)}:${Number(stamp?.importMaxId || 0)}:${Number(stamp?.importCount || 0)}`;
 }
 
-async function loadAggregatedSettlementSales(target, { useCache, importId } = {}) {
-  if (useCache && !importId && aggregatedSalesCache?.sales) {
-    const stamp = await target.query(`
-      select
-        (select count(*)::int from settlement_lines) as line_count,
-        (select coalesce(max(id), 0)::bigint from settlement_lines) as max_id,
-        (select coalesce(max(id), 0)::bigint from settlement_imports) as import_max
-    `);
-    const key = cacheKey(stamp.rows[0]);
-    if (aggregatedSalesCache.key === key) return aggregatedSalesCache.sales;
+function persistableSale(sale) {
+  const next = slimSettlementSale(sale);
+  return {
+    ...next,
+    document: null,
+    falabellaInvoice: null,
+  };
+}
+
+async function readSettlementStamp(target) {
+  const query = await target.query(`
+    select
+      (select coalesce(max(id), 0)::bigint from settlement_lines) as line_max_id,
+      (select coalesce(max(id), 0)::bigint from settlement_imports) as import_max_id,
+      (select count(*)::int from settlement_imports) as import_count
+  `);
+  const row = query.rows[0] || {};
+  return {
+    lineMaxId: Number(row.line_max_id || 0),
+    importMaxId: Number(row.import_max_id || 0),
+    importCount: Number(row.import_count || 0),
+  };
+}
+
+async function readSettlementSnapshot(target, stamp) {
+  try {
+    const query = await target.query(
+      `select sales
+         from settlement_sales_snapshot
+        where id = 1
+          and line_max_id = $1
+          and import_max_id = $2
+          and import_count = $3`,
+      [stamp.lineMaxId, stamp.importMaxId, stamp.importCount],
+    );
+    if (!query.rows[0]) return null;
+    const sales = query.rows[0].sales;
+    return Array.isArray(sales) ? sales : null;
+  } catch {
+    return null;
   }
+}
+
+async function writeSettlementSnapshot(target, stamp, sales) {
+  try {
+    await target.query(
+      `insert into settlement_sales_snapshot (
+         id, line_max_id, import_max_id, import_count, sale_count, sales, updated_at
+       ) values (1, $1, $2, $3, $4, $5::jsonb, now())
+       on conflict (id) do update set
+         line_max_id = excluded.line_max_id,
+         import_max_id = excluded.import_max_id,
+         import_count = excluded.import_count,
+         sale_count = excluded.sale_count,
+         sales = excluded.sales,
+         updated_at = now()`,
+      [stamp.lineMaxId, stamp.importMaxId, stamp.importCount, sales.length, JSON.stringify(sales)],
+    );
+  } catch {
+    // Listing still works from lines if the snapshot table is missing.
+  }
+}
+
+async function withSettlementSnapshotLock(target, run) {
+  try {
+    await target.query('select pg_advisory_lock($1)', [SETTLEMENT_SNAPSHOT_LOCK]);
+  } catch {
+    return run();
+  }
+  try {
+    return await run();
+  } finally {
+    try {
+      await target.query('select pg_advisory_unlock($1)', [SETTLEMENT_SNAPSHOT_LOCK]);
+    } catch {
+      // The listing path must still return sales if unlock fails.
+    }
+  }
+}
+
+async function loadSalesFromLines(target, importId = null) {
   const values = [];
   const where = [];
   if (importId) {
@@ -376,22 +453,55 @@ async function loadAggregatedSettlementSales(target, { useCache, importId } = {}
       order by sl.import_id desc, sl.row_number asc`,
     values,
   );
-  const sales = await attachSaleOrderShipping(
+  return attachSaleOrderShipping(
     aggregateSettlementSales(
       await attachCompaniesToLines(query.rows.map(mapLine), target),
     ),
     target,
   );
-  if (useCache && !importId) {
-    const stamp = await target.query(`
-      select
-        (select count(*)::int from settlement_lines) as line_count,
-        (select coalesce(max(id), 0)::bigint from settlement_lines) as max_id,
-        (select coalesce(max(id), 0)::bigint from settlement_imports) as import_max
-    `);
-    aggregatedSalesCache = { key: cacheKey(stamp.rows[0]), sales };
+}
+
+async function rememberSettlementSales(target, stamp, sales) {
+  const persistable = sales.map(persistableSale);
+  aggregatedSalesCache = { key: stampKey(stamp), sales: persistable };
+  await writeSettlementSnapshot(target, stamp, persistable);
+  return persistable;
+}
+
+async function loadAggregatedSettlementSales(target, { useCache, importId } = {}) {
+  if (importId) return loadSalesFromLines(target, importId);
+  if (!useCache) return loadSalesFromLines(target);
+  const stamp = await readSettlementStamp(target);
+  if (aggregatedSalesCache?.sales && aggregatedSalesCache.key === stampKey(stamp)) {
+    return aggregatedSalesCache.sales;
   }
-  return sales;
+  const cached = await readSettlementSnapshot(target, stamp);
+  if (cached != null) {
+    aggregatedSalesCache = { key: stampKey(stamp), sales: cached };
+    return cached;
+  }
+  return withSettlementSnapshotLock(target, async () => {
+    const latest = await readSettlementStamp(target);
+    if (aggregatedSalesCache?.sales && aggregatedSalesCache.key === stampKey(latest)) {
+      return aggregatedSalesCache.sales;
+    }
+    const raced = await readSettlementSnapshot(target, latest);
+    if (raced != null) {
+      aggregatedSalesCache = { key: stampKey(latest), sales: raced };
+      return raced;
+    }
+    const sales = await loadSalesFromLines(target);
+    return rememberSettlementSales(target, latest, sales);
+  });
+}
+
+async function refreshSettlementSalesSnapshot(db) {
+  const target = await resolvePool(db);
+  return withSettlementSnapshotLock(target, async () => {
+    const stamp = await readSettlementStamp(target);
+    const sales = await loadSalesFromLines(target);
+    return rememberSettlementSales(target, stamp, sales);
+  });
 }
 
 export async function listSettlementSales(filter = {}, db) {
@@ -416,7 +526,7 @@ export async function listSettlementSales(filter = {}, db) {
   const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
   let sales = await loadAggregatedSettlementSales(target, {
-    useCache: db == null,
+    useCache: shouldCacheSettlementSales(db),
     importId,
   });
   const months = settlementMonthOptions(sales);
@@ -489,25 +599,46 @@ async function attachSaleDocuments(sales, db) {
   })));
 }
 
+function saleHasOrderShipping(sale) {
+  return sale != null && Object.prototype.hasOwnProperty.call(sale, 'orderShipping');
+}
+
 async function attachSaleOrderShipping(sales, db) {
-  const refs = [...new Set(sales.flatMap((sale) => (
+  const rows = sales || [];
+  if (!rows.length) return attachOrderShippingToSales(rows, []);
+  if (rows.every(saleHasOrderShipping)) return rows;
+  const pending = rows.filter((sale) => !saleHasOrderShipping(sale));
+  const refs = [...new Set(pending.flatMap((sale) => (
     [sale.orderId, ...(sale.orderNumbers || [])]
   )).map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!refs.length) return attachOrderShippingToSales(sales, []);
+  if (!refs.length) {
+    const empty = attachOrderShippingToSales(pending, []);
+    if (empty.length === rows.length) return empty;
+    const byId = new Map(empty.map((sale) => [sale.orderId, sale]));
+    return rows.map((sale) => (saleHasOrderShipping(sale) ? sale : byId.get(sale.orderId) || { ...sale, orderShipping: null }));
+  }
   const query = await db.query(
     `select o.external_order_id as order_id,
             o.external_order_number as order_number,
             o.shipping_amount
        from orders o
       where o.external_order_id = any($1::text[])
-         or o.external_order_number = any($1::text[])`,
+     union
+     select o.external_order_id,
+            o.external_order_number,
+            o.shipping_amount
+       from orders o
+      where o.external_order_number = any($1::text[])`,
     [refs],
   );
-  return attachOrderShippingToSales(sales, query.rows.map((row) => ({
+  const attached = attachOrderShippingToSales(pending, query.rows.map((row) => ({
     orderId: row.order_id,
     orderNumber: row.order_number,
     shippingAmount: row.shipping_amount,
   })));
+  if (attached.length === rows.length) return attached;
+  const byId = new Map(attached.map((sale) => [sale.orderId, sale]));
+  return rows.map((sale) => (saleHasOrderShipping(sale) ? sale : byId.get(sale.orderId) || { ...sale, orderShipping: null }));
 }
 
 export async function importSettlementCsv(input = {}, db) {
@@ -653,6 +784,7 @@ export async function importSettlementCsv(input = {}, db) {
     }
     await client.query('commit');
     clearSettlementSalesCache();
+    await refreshSettlementSalesSnapshot(target).catch(() => {});
     return mapImport(importRow);
   } catch (error) {
     await client.query('rollback');

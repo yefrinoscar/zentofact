@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_DEFAULT, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { clearSettlementSalesCache, importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_DEFAULT, SETTLEMENT_SALES_PAGE_MAX, shouldCacheSettlementSales } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -335,6 +335,124 @@ test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', a
   assert.equal(august.totalCount, lineCount - Math.ceil(lineCount / 4));
   assert.equal(august.items.length, 80);
   assert.ok(august.items.every((sale) => String(sale.date).startsWith('2026-08')));
+  assert.deepEqual(august.orderMonths, ['2026-08', '2026-07']);
+});
+
+function productionSaleRows(saleCount, linesPerSale = 1) {
+  const rows = [];
+  for (let sale = 0; sale < saleCount; sale += 1) {
+    const orderRef = `3247${String(sale + 1).padStart(6, '0')}`;
+    for (let line = 0; line < linesPerSale; line += 1) {
+      const kinds = ['sale', 'commission', 'shipping', 'sale', 'commission'];
+      const kind = kinds[line] || 'sale';
+      const amount = kind === 'sale' ? 19.9 : kind === 'commission' ? -2.4 : -1.1;
+      rows.push({
+        id: rows.length + 1,
+        import_id: 1,
+        row_number: rows.length + 1,
+        match_status: 'matched',
+        match_method: 'order_id',
+        match_reason: null,
+        order_ref: orderRef,
+        sku: 'PÑL12309854',
+        sale_date: sale % 5 === 0 ? '2026-07-02' : '2026-08-02',
+        transaction_type: kind === 'commission' ? 'Cobro por comisión por venta' : kind === 'shipping' ? 'Cobro por logística' : 'Pago por precio del producto',
+        kind,
+        payment_status: 'Pagado',
+        item_id: `item-${sale + 1}`,
+        bruto: kind === 'sale' ? amount : 0,
+        commission: kind === 'commission' ? Math.abs(amount) : 0,
+        other_fees: 0,
+        neto: amount,
+        raw: { 'Nombre del producto': 'Pañalera' },
+        sale_order_number: orderRef,
+        match_company_id: 1,
+        import_company_id: 1,
+      });
+    }
+  }
+  return rows;
+}
+
+function snapshotListDb(rows) {
+  const snapshot = { row: null };
+  const stats = { lineReads: 0, shippingReads: 0, snapshotReads: 0, snapshotWrites: 0 };
+  const stamp = {
+    line_max_id: rows[rows.length - 1]?.id || 0,
+    import_max_id: 1,
+    import_count: 1,
+  };
+  return {
+    useSettlementSalesCache: true,
+    stats,
+    query: async (sql, params = []) => {
+      if (sql.includes('pg_advisory')) return { rows: [{}] };
+      if (sql.includes('as line_max_id')) return { rows: [stamp] };
+      if (sql.includes('from settlement_sales_snapshot') && sql.includes('select sales')) {
+        stats.snapshotReads += 1;
+        if (!snapshot.row) return { rows: [] };
+        if (Number(params[0]) !== Number(snapshot.row.line_max_id)) return { rows: [] };
+        return { rows: [{ sales: snapshot.row.sales }] };
+      }
+      if (sql.includes('insert into settlement_sales_snapshot')) {
+        stats.snapshotWrites += 1;
+        snapshot.row = {
+          line_max_id: params[0],
+          import_max_id: params[1],
+          import_count: params[2],
+          sales: JSON.parse(params[4]),
+        };
+        return { rows: [] };
+      }
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        stats.lineReads += 1;
+        return { rows };
+      }
+      if (sql.includes('from orders o')) {
+        stats.shippingReads += 1;
+        assert.match(sql, /union/i);
+        assert.equal(/or o\.external_order_number/i.test(sql), false);
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+test('el cache de Pagos no se activa en los mocks de listado', () => {
+  assert.equal(shouldCacheSettlementSales(null), true);
+  assert.equal(shouldCacheSettlementSales({}), false);
+  assert.equal(shouldCacheSettlementSales({ useSettlementSalesCache: true }), true);
+});
+
+test('Pagos reusa el snapshot con 4608 ventas y no vuelve a leer líneas', async () => {
+  const saleCount = 4608;
+  const rows = productionSaleRows(saleCount, 3);
+  const db = snapshotListDb(rows);
+  const first = await listSettlementSales({ limit: 80 }, db);
+  assert.equal(first.totalCount, saleCount);
+  assert.equal(first.items.length, 80);
+  assert.equal(first.summary.saleCount, saleCount);
+  assert.equal(db.stats.lineReads, 1);
+  assert.equal(db.stats.shippingReads, 1);
+  assert.equal(db.stats.snapshotWrites, 1);
+  assert.ok(first.items[0].orderShipping === null || first.items[0].orderShipping === undefined || Number.isFinite(first.items[0].orderShipping));
+  assert.equal(first.items[0].charges, undefined);
+
+  clearSettlementSalesCache();
+  const second = await listSettlementSales({ limit: 80, offset: 80 }, db);
+  assert.equal(second.totalCount, saleCount);
+  assert.equal(second.items.length, 80);
+  assert.notEqual(second.items[0].orderId, first.items[0].orderId);
+  assert.equal(second.summary.bruto, first.summary.bruto);
+  assert.equal(db.stats.lineReads, 1);
+  assert.equal(db.stats.shippingReads, 1);
+  assert.equal(db.stats.snapshotReads >= 1, true);
+
+  const august = await listSettlementSales({ orderMonth: '2026-08', limit: 80 }, db);
+  assert.equal(august.totalCount, saleCount - Math.ceil(saleCount / 5));
+  assert.ok(august.items.every((sale) => String(sale.date).startsWith('2026-08')));
+  assert.equal(db.stats.lineReads, 1);
   assert.deepEqual(august.orderMonths, ['2026-08', '2026-07']);
 });
 
