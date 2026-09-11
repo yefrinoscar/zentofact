@@ -296,7 +296,7 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/logistics-inbox${qs(filter)}`),
-  printLogisticsPack: (data: { orderIds: number[]; includePacking?: boolean }) =>
+  printLogisticsPack: (data: { orderIds: number[] }) =>
     req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),

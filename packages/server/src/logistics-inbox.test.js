@@ -16,7 +16,12 @@ import {
   groupLogisticsItems,
   countOpenOverdueOrders,
 } from './logistics-inbox.js';
-import { closeStaleFalabellaFulfillment, closedFalabellaFulfillment } from './order-adapters/falabella.js';
+import {
+  alignFalabellaHeaderWithClosedFulfillment,
+  closeOverdueFalabellaFulfillment,
+  closeStaleFalabellaFulfillment,
+  closedFalabellaFulfillment,
+} from './order-adapters/falabella.js';
 import { closeStaleRipleyShippedFulfillment } from './order-adapters/ripley.js';
 
 function inboxSql(db, fragment) {
@@ -42,7 +47,7 @@ test('rechaza filtros de bandeja inválidos', () => {
 
 test('la impresión pide ids concretos y tope', () => {
   assert.deepEqual(parsePrintSelection({ orderIds: [3, '3', 8] }).orderIds, [3, 8]);
-  assert.equal(parsePrintSelection({ orderIds: [1] }).includePacking, true);
+  assert.deepEqual(parsePrintSelection({ orderIds: [1] }), { orderIds: [1] });
   assert.throws(() => parsePrintSelection({ orderIds: [] }), /al menos un pedido/);
 });
 
@@ -54,6 +59,9 @@ class InboxDb {
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim();
     this.queries.push({ sql: compact, params });
+    if (compact.startsWith('update falabella_orders') || compact.startsWith('update falabella_order_lifecycle')) {
+      return { rowCount: 0, rows: [] };
+    }
     if (compact.startsWith('select o.id, o.fulfillment_status, o.provider_status, fo.status as falabella_status')) {
       return { rows: [] };
     }
@@ -108,7 +116,7 @@ class InboxDb {
 
 test('lista la bandeja con conteos por etapa y productos', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', search: 'QNC' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', search: 'QNC' }, db, { ripleyEnabled: true });
   assert.equal(result.counts.pending, 2);
   assert.equal(result.counts.ready, 1);
   assert.equal(result.orders.length, 1);
@@ -183,7 +191,7 @@ function printRow(overrides = {}) {
   };
 }
 
-test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
+test('imprime solo la etiqueta manual', async () => {
   const db = new PrintDb([printRow()]);
   const result = await printLogisticsPack(
     { orderIds: [10], printedBy: 'operator@zentofact.local' },
@@ -192,10 +200,9 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.mimeType, 'application/pdf');
   assert.equal(result.labelCount, 1);
-  assert.ok(result.packingPageCount >= 1);
   assert.equal(result.skipped.length, 0);
   const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
-  assert.ok(pdf.getPageCount() >= 2);
+  assert.equal(pdf.getPageCount(), 1);
   const record = db.queries.find((query) => query.sql.includes('insert into logistics_label_prints'));
   assert.ok(record, 'registra la impresión');
   assert.deepEqual(record.params[0], [10]);
@@ -204,7 +211,7 @@ test('imprime etiqueta manual y guía de armado en un solo PDF', async () => {
 
 test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   const db = new InboxDb();
-  await listLogisticsInbox({ stage: 'pending' }, db);
+  await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
   const listSql = db.queries.find((query) => query.sql.includes('image_url'))?.sql || '';
   assert.match(listSql, /product_medias/);
   assert.match(listSql, /media_url/);
@@ -233,7 +240,7 @@ for (const mediaUrl of [
       }
       return result;
     };
-    const result = await listLogisticsInbox({ stage: 'pending' }, db);
+    const result = await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
     assert.equal(result.orders[0].items[0].imageUrl, new URL(mediaUrl, 'https://ripleyperu-prod.mirakl.net').href);
   });
 }
@@ -286,9 +293,17 @@ test('el conteo de vencidos reutiliza el criterio de bandeja y no cierra pedidos
   assert.equal(db.queries.length, 1);
 });
 
+test('con Ripley apagado la bandeja no lista ni cuenta ese canal', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: false });
+  assert.equal(result.channels.ripley, false);
+  assert.match(inboxSql(db, 'as pending_count'), /ch.code <> 'ripley'/);
+  assert.match(inboxSql(db, 'fulfillment_status = any'), /ch.code <> 'ripley'/);
+});
+
 test('el filtro de vencidos no exige plazo futuro', async () => {
   const db = new InboxDb();
-  await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db);
+  await listLogisticsInbox({ stage: 'pending', urgency: 'overdue' }, db, { ripleyEnabled: true });
   const listSql = inboxSql(db, 'fulfillment_status = any');
   assert.match(listSql, /America\/Lima/);
   assert.match(listSql, /::date < /);
@@ -297,7 +312,7 @@ test('el filtro de vencidos no exige plazo futuro', async () => {
 
 test('filtra por urgencia y expone conteos de prioridad', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', urgency: 'today' }, db, { ripleyEnabled: true });
   assert.match(inboxSql(db, 'fulfillment_status = any'), /America\/Lima/);
   assert.deepEqual(result.counts.urgency, { overdue: 0, today: 0, tomorrow: 0, later: 0 });
   assert.equal(result.orders[0].urgency, 'later');
@@ -307,7 +322,7 @@ test('filtra por urgencia y expone conteos de prioridad', async () => {
 
 test('filtra por una fecha concreta de plazo', async () => {
   const db = new InboxDb();
-  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db);
+  const result = await listLogisticsInbox({ stage: 'pending', deadline: '2026-09-08' }, db, { ripleyEnabled: true });
   assert.equal(parseLogisticsInboxFilters({ deadline: '2026-09-08' }).deadline, '2026-09-08');
   assert.match(inboxSql(db, 'fulfillment_status = any'), /::date = \$/);
   assert.match(inboxSql(db, 'group by 1'), /group by 1/);
@@ -323,7 +338,7 @@ test('compone Falabella y deja Ripley fuera de la impresión', async () => {
     printRow({ id: 22, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-22' }),
   ];
   const result = await printLogisticsPack(
-    { orderIds: [21, 22], includePacking: false },
+    { orderIds: [21, 22] },
     {
       db: new PrintDb(rows),
       getFalabellaLabel: async () => stubLabelPdf('FAL'),
@@ -349,7 +364,7 @@ test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () =>
   const lines = [];
   await assert.rejects(
     () => printLogisticsPack(
-      { orderIds: [32], includePacking: false },
+      { orderIds: [32] },
       {
         db: new PrintDb([printRow({
           id: 32,
@@ -381,7 +396,7 @@ test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
   const lines = [];
   await assert.rejects(
     () => printLogisticsPack(
-      { orderIds: [51, 52], includePacking: false },
+      { orderIds: [51, 52] },
       {
         db: new PrintDb([
           printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),
@@ -591,6 +606,35 @@ test('un marketplace ya enviado no cuenta como vencido ni queda abierto', () => 
   });
   assert.equal(closedFalabellaFulfillment('ready_to_ship'), null);
   assert.equal(closedFalabellaFulfillment('pending'), null);
+});
+
+test('restaura todos los padres Falabella que GetOrderItems había bajado a pending', async () => {
+  const sql = [];
+  const result = await alignFalabellaHeaderWithClosedFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update falabella_orders') ? 4 : 4, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 4);
+  assert.match(sql[0], /update falabella_orders/);
+  assert.match(sql[0], /fulfillment_status in \('shipped', 'delivered'\)/);
+  assert.match(sql[1], /update falabella_order_lifecycle/);
+});
+
+test('saca de vencidos un Falabella con plazo vencido que GetOrder ya envió', async () => {
+  const sql = [];
+  const result = await closeOverdueFalabellaFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update orders') ? 7 : 7, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 7);
+  assert.match(sql[0], /update orders/);
+  assert.match(sql[0], /America\/Lima/);
+  assert.match(sql[0], /fulfillment_status = 'shipped'/);
+  assert.match(sql[1], /update falabella_orders/);
 });
 
 test('cierra en la bandeja un Falabella que el canal ya marcó enviado', async () => {

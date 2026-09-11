@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -64,6 +64,11 @@ import {
 
 type InboxResponse = {
   orders: LogisticsOrder[];
+  channels?: {
+    falabella?: boolean;
+    ripley?: boolean;
+    manual?: boolean;
+  };
   counts: {
     pending: number;
     ready: number;
@@ -80,7 +85,6 @@ type PrintResult = {
   base64?: string;
   filename?: string;
   labelCount?: number;
-  packingPageCount?: number;
   skipped?: Array<{ id: number; reason: string }>;
 };
 
@@ -128,7 +132,7 @@ export default function BandejaLogistica() {
 
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
-  const [urgency, setUrgency] = useState<LogisticsUrgency | null>(null);
+  const [urgency, setUrgency] = useState<LogisticsUrgency | null>('today');
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
@@ -167,6 +171,12 @@ export default function BandejaLogistica() {
   const counts = inboxQuery.data?.counts || { pending: 0, ready: 0, shipped: 0, urgency: EMPTY_URGENCY, dates: [] };
   const loading = inboxQuery.isPending && !inboxQuery.data;
 
+  useEffect(() => {
+    if (inboxQuery.data?.channels?.ripley === false && channelCode === 'ripley') {
+      setChannelCode('all');
+    }
+  }, [inboxQuery.data?.channels?.ripley, channelCode]);
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['logistics-inbox'] });
   const revealReadyOrders = (orderIds: Iterable<number>) => {
     const ids = [...orderIds];
@@ -202,11 +212,13 @@ export default function BandejaLogistica() {
     if (next === 'shipped') {
       setUrgency(null);
       setDeadlineDate(null);
+    } else if (stage === 'shipped') {
+      setUrgency('today');
     }
   };
 
   const printMutation = useMutation({
-    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds, includePacking: true }) as Promise<PrintResult>,
+    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds }) as Promise<PrintResult>,
     onSuccess: (result) => {
       if (result?.base64) openPdfFromBase64(result.base64, result.filename || 'bandeja.pdf');
       const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
@@ -394,6 +406,7 @@ export default function BandejaLogistica() {
     setStage: changeStage,
     channelCode,
     setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    channels: inboxQuery.data?.channels,
     urgency,
     deadlineDate,
     setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
@@ -432,7 +445,7 @@ export default function BandejaLogistica() {
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
-        : <BandejaOperativa key={`${layout}|${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
+        : <BandejaOperativa key={layout} resetKey={`${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
 
   return (
     <div>

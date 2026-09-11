@@ -235,7 +235,7 @@ function drawManualLabel(page, fonts, order, bounds) {
     });
   });
   if (items.length > 4) {
-    page.drawText(`+${items.length - 4} más en la guía de armado`, {
+    page.drawText(`+${items.length - 4} productos más`, {
       x: x + 12,
       y: y + 8,
       size: 7,

@@ -1,5 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
-import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } from './shipping-label-sheet.js';
+import { composeA4ShippingLabelSheet } from './shipping-label-sheet.js';
 import { buildManualLabelSheet } from './manual-shipping-label.js';
 import { createLogId } from './error-log.js';
 import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
@@ -7,6 +7,7 @@ import { enqueueStockJob } from './catalog/stock-jobs.js';
 import { shouldListenStockOrder } from './catalog/stock-commitment.js';
 import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { enqueueRipleyStockJob, remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
+import { isRipleySyncEnabled } from './system-config.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
@@ -258,6 +259,9 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     values.push(filters.channelCode);
     where.push(`ch.code=$${values.length}`);
   }
+  if (filters.ripleyEnabled === false) {
+    where.push(`ch.code <> 'ripley'`);
+  }
   if (filters.search) {
     values.push(filters.search);
     where.push(`(
@@ -343,11 +347,15 @@ const LABEL_PRINT_SQL = `(
   where lp.order_id=o.id
 ) as label_print`;
 
-export async function listLogisticsInbox(filtersInput = {}, db) {
+export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
   const filters = parseLogisticsInboxFilters(filtersInput);
   const target = db || (await loadCore()).pool;
+  const ripleyEnabled = Object.hasOwn(options, 'ripleyEnabled')
+    ? options.ripleyEnabled === true
+    : await isRipleySyncEnabled(target);
+  if (!ripleyEnabled) filters.ripleyEnabled = false;
   await closeStaleMarketplaceFulfillment(target);
-  await remapPersistedRipleyReadyOrders(target);
+  if (ripleyEnabled) await remapPersistedRipleyReadyOrders(target);
 
   const countValues = [];
   const countWhere = whereClause(filters, countValues);
@@ -431,6 +439,11 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
   const counts = countResult.rows[0] || {};
   return {
     orders: listResult.rows.map(normalizeInboxOrder),
+    channels: {
+      falabella: true,
+      ripley: ripleyEnabled,
+      manual: true,
+    },
     counts: {
       pending: Number(counts.pending_count || 0),
       ready: Number(counts.ready_count || 0),
@@ -480,25 +493,6 @@ async function mergePdfBuffers(buffers) {
   return output.save();
 }
 
-function packingTicket(order, index) {
-  return {
-    code: ticketCode(index + 1),
-    ticketNumber: index + 1,
-    labelIndex: 1,
-    labelCount: 1,
-    inventory: {
-      customerName: String(order.customer?.name || '').trim() || 'Cliente no informado',
-      items: (order.items || []).map((item) => ({
-        name: item.description,
-        sellerSku: item.sku,
-        sku: item.mainSku || item.sku,
-        quantity: item.quantity,
-        imageUrl: item.imageUrl,
-      })),
-    },
-  };
-}
-
 export function parsePrintSelection(input = {}) {
   const ids = [...new Set(
     (Array.isArray(input.orderIds) ? input.orderIds : [])
@@ -507,10 +501,7 @@ export function parsePrintSelection(input = {}) {
   )];
   if (!ids.length) throw new Error('Selecciona al menos un pedido para imprimir.');
   if (ids.length > MAX_PRINT) throw new Error(`Puedes imprimir hasta ${MAX_PRINT} pedidos por vez.`);
-  return {
-    orderIds: ids,
-    includePacking: input.includePacking !== false,
-  };
+  return { orderIds: ids };
 }
 
 async function loadPrintOrders(orderIds, db) {
@@ -773,10 +764,9 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     skipped.push({ id: order.id, reason: `Canal ${order.channelCode} aún no imprime etiqueta.` });
   }
 
-  if (!pdfParts.length && !selection.includePacking) {
+  if (!pdfParts.length) {
     throwPrintFailure(skipped, {
       orderIds: selection.orderIds,
-      includePacking: selection.includePacking,
       labelCount,
       pdfPartCount: pdfParts.length,
       orders: summarizePrintOrders(orders),
@@ -788,21 +778,9 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (!skip) return CHANNELS.has(order.channelCode);
     return skip.printed === true;
   });
-  let packingPageCount = 0;
-  if (selection.includePacking && printable.length) {
-    const packingPdf = await PDFDocument.create();
-    const stats = await appendTicketInventoryPages(
-      packingPdf,
-      printable.map(packingTicket),
-    );
-    packingPageCount = stats.inventoryPageCount || 0;
-    if (packingPageCount) pdfParts.push(await packingPdf.save());
-  }
-
   if (!pdfParts.length) {
     throwPrintFailure(skipped, {
       orderIds: selection.orderIds,
-      includePacking: selection.includePacking,
       labelCount,
       pdfPartCount: pdfParts.length,
       orders: summarizePrintOrders(orders),
@@ -821,7 +799,6 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     filename: `bandeja-${date}.pdf`,
     orderCount: printable.length,
     labelCount,
-    packingPageCount,
     skipped,
   };
 }

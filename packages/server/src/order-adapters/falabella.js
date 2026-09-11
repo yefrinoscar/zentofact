@@ -26,12 +26,142 @@ function includesStatus(status, expected) {
   ));
 }
 
+function statusToken(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function effectiveFalabellaItemStatus(items) {
+  const statuses = (Array.isArray(items) ? items : [])
+    .map((item) => statusToken(item?.Status ?? item?.status ?? item?.providerStatus ?? item?.provider_status))
+    .filter(Boolean);
+  if (!statuses.length) return '';
+  const has = (value) => statuses.some((status) => status === value || status.includes(value));
+  if (has('pending')) return 'pending';
+  if (has('ready_to_ship')) return 'ready_to_ship';
+  if (has('shipped')) return 'shipped';
+  if (has('delivered')) return 'delivered';
+  if (has('canceled') || has('cancelled')) return 'canceled';
+  if (has('returned') || has('return_')) return 'returned';
+  if (has('failed')) return 'failed';
+  return [...new Set(statuses)].join('|');
+}
+
+function isClosedFalabellaStatus(status) {
+  return /(?:^|\|)(?:shipped|delivered)(?:\||$)/.test(statusToken(status));
+}
+
+function isOpenFalabellaStatus(status) {
+  return /(?:^|\|)(?:pending|ready_to_ship)(?:\||$)/.test(statusToken(status))
+    && !isClosedFalabellaStatus(status);
+}
+
+// GetOrder.Statuses is what Seller Center shows. GetOrderItems can stay
+// pending after the order already shipped; never take the header backwards.
+export function resolveFalabellaIngestStatus(headerStatus, items = []) {
+  const itemStatus = effectiveFalabellaItemStatus(items);
+  if (!itemStatus) return headerStatus;
+  if (isClosedFalabellaStatus(headerStatus) && isOpenFalabellaStatus(itemStatus)) {
+    return headerStatus;
+  }
+  return itemStatus;
+}
+
 const CLOSED_FALABELLA_STATUSES = new Set(['cancelled', 'returned', 'failed', 'delivered', 'shipped']);
 
 export function closedFalabellaFulfillment(status) {
   const mapped = mapFalabellaCanonicalStatus(status);
   if (!CLOSED_FALABELLA_STATUSES.has(mapped.fulfillmentStatus)) return null;
   return mapped;
+}
+
+const OPEN_FALABELLA_STATUS_SQL = `'(^|\\|)(pending|ready_to_ship)(\\||$)'`;
+const CLOSED_FALABELLA_STATUS_SQL = `'(^|\\|)(shipped|delivered|canceled|cancelled|returned|failed)(\\||$)'`;
+
+// GetOrderItems can stay pending after Seller Center already shipped.
+// Restore every drifted header from the unified order, not one by one.
+export async function alignFalabellaHeaderWithClosedFulfillment(db) {
+  if (!db?.query) return { updated: 0 };
+  const headers = await db.query(
+    `update falabella_orders fo
+     set status = case when o.fulfillment_status = 'delivered' then 'delivered' else 'shipped' end,
+         raw_data = jsonb_set(
+           coalesce(fo.raw_data, '{}'::jsonb),
+           '{Statuses}',
+           to_jsonb(case when o.fulfillment_status = 'delivered' then 'delivered' else 'shipped' end),
+           true
+         ),
+         synchronized_at = now()
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where fo.company_id = o.company_id
+       and fo.order_id = o.external_order_id
+       and ch.code = 'falabella'
+       and o.fulfillment_status in ('shipped', 'delivered')
+       and o.order_status not in ('cancelled', 'failed')
+       and lower(coalesce(fo.status, '')) ~ ${OPEN_FALABELLA_STATUS_SQL}
+       and lower(coalesce(fo.status, '')) !~ ${CLOSED_FALABELLA_STATUS_SQL}`,
+  );
+  await db.query(
+    `update falabella_order_lifecycle l
+     set current_status = case when o.fulfillment_status = 'delivered' then 'delivered' else 'shipped' end,
+         shipped_at = coalesce(l.shipped_at, now()),
+         last_observed_at = now()
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     join falabella_orders fo
+       on fo.company_id = o.company_id
+      and fo.order_id = o.external_order_id
+     where l.company_id = fo.company_id
+       and l.order_id = fo.order_id
+       and ch.code = 'falabella'
+       and o.fulfillment_status in ('shipped', 'delivered')
+       and o.order_status not in ('cancelled', 'failed')
+       and l.current_status in ('pending', 'ready_to_ship')`,
+  );
+  return { updated: Number(headers.rowCount || 0) };
+}
+
+// Falabella GetOrder can already be shipped while items stay pending.
+// Those overdue ghosts were counting as Vencidos without appearing in the list.
+export async function closeOverdueFalabellaFulfillment(db) {
+  if (!db?.query) return { updated: 0 };
+  const orders = await db.query(
+    `update orders o
+     set fulfillment_status = 'shipped',
+         order_status = case when o.order_status in ('completed', 'cancelled', 'failed') then o.order_status else 'confirmed' end,
+         provider_status = 'shipped',
+         updated_at = now()
+     from order_channel_accounts a
+     join order_channels ch on ch.id = a.channel_id
+     where o.channel_account_id = a.id
+       and ch.code = 'falabella'
+       and o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and o.order_status not in ('cancelled', 'failed')
+       and o.promised_shipping_at is not null
+       and (o.promised_shipping_at at time zone 'America/Lima')::date
+           < (now() at time zone 'America/Lima')::date`,
+  );
+  await db.query(
+    `update falabella_orders fo
+     set status = 'shipped',
+         raw_data = jsonb_set(coalesce(fo.raw_data, '{}'::jsonb), '{Statuses}', to_jsonb('shipped'::text), true),
+         synchronized_at = now()
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where fo.company_id = o.company_id
+       and fo.order_id = o.external_order_id
+       and ch.code = 'falabella'
+       and o.fulfillment_status = 'shipped'
+       and lower(coalesce(fo.status, '')) ~ ${OPEN_FALABELLA_STATUS_SQL}
+       and lower(coalesce(fo.status, '')) !~ ${CLOSED_FALABELLA_STATUS_SQL}
+       and o.promised_shipping_at is not null
+       and (o.promised_shipping_at at time zone 'America/Lima')::date
+           < (now() at time zone 'America/Lima')::date`,
+  );
+  return { updated: Number(orders.rowCount || 0) };
 }
 
 export async function closeStaleFalabellaFulfillment(db) {
@@ -206,8 +336,9 @@ export async function ingestFalabellaOrder(input, db) {
   const normalized = input.normalized;
   const raw = normalized?.raw || {};
   const account = input.account || await ensureFalabellaOrderAccount(db, input.companyId, input.displayName);
-  const statuses = mapFalabellaCanonicalStatus(normalized?.status);
   const items = mapFalabellaOrderItems(raw);
+  const status = resolveFalabellaIngestStatus(normalized?.status, items);
+  const statuses = mapFalabellaCanonicalStatus(status);
   const shippingAmount = falabellaOrderShippingAmount(raw, items);
   return ingestOrder({
     companyId: input.companyId,
@@ -217,7 +348,7 @@ export async function ingestFalabellaOrder(input, db) {
     externalOrderNumber: normalized?.orderNumber,
     ...statuses,
     paymentStatus: 'unknown',
-    providerStatus: normalized?.status,
+    providerStatus: status || normalized?.status,
     requestedDocumentType: normalized?.invoiceRequired ? 'factura' : null,
     currency: normalized?.currency || 'PEN',
     total: normalized?.grandTotal,

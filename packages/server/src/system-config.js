@@ -43,7 +43,7 @@ export const SYSTEM_FLAGS = {
     key: 'ripley_sync',
     envVar: 'RIPLEY_SYNC_ENABLED',
     label: 'Sincronización periódica de Ripley',
-    description: 'Pausa o reanuda la descarga automática de pedidos Ripley. Comparte el intervalo con Falabella. No afecta el sync manual.',
+    description: 'Pausa Ripley por completo: no sincroniza en el cron ni en Sincronizar, y lo oculta de la bandeja. No borra pedidos ya guardados.',
     confirmWord: null,
     requireListings: false,
     docsPath: null,

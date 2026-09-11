@@ -42,11 +42,14 @@ import {
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
   productImageSrc,
+  visibleLogisticsChannels,
 } from './logistics-inbox.ts';
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
   assert.equal(logisticsChannelLabel('manual'), 'Propios');
+  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'manual']);
+  assert.equal(visibleLogisticsChannels().some((item) => item.value === 'ripley'), true);
   assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
   assert.equal(logisticsQuantityLabel({ quantity: 6 }), 'x6');
@@ -186,8 +189,8 @@ test('copy operativa de bandeja', () => {
   assert.match(logisticsEmptyCopy('pending', 'today'), /Vencen hoy/);
   assert.match(logisticsEmptyCopy('pending', null, '8 de setiembre'), /8 de setiembre/);
   assert.equal(logisticsSkippedNotice([{ id: 1, reason: 'Ripley aún no tiene etiqueta.' }]), 'Ripley aún no tiene etiqueta.');
-  assert.equal(logisticsPrintSuccessCopy({ labelCount: 1, packingPageCount: 1 }), 'Listo. 1 etiqueta y 1 hoja de armado.');
-  assert.equal(logisticsPrintSuccessCopy({ labelCount: 3, packingPageCount: 0 }), 'Listo. 3 etiquetas.');
+  assert.equal(logisticsPrintSuccessCopy({ labelCount: 1 }), 'Listo. 1 etiqueta.');
+  assert.equal(logisticsPrintSuccessCopy({ labelCount: 3 }), 'Listo. 3 etiquetas.');
   assert.equal(logisticsBulkReadySummary(3, 0), '3 pedidos marcados listos para enviar.');
   assert.equal(logisticsBulkReadySummary(3, 1), '2 marcados; 1 no pudo actualizarse.');
   assert.match(logisticsBulkReadyConfirmCopy([

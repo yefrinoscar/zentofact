@@ -27,6 +27,13 @@ test('Ventas usa el permiso de dashboard', () => {
   assert.equal(isNavItemVisible(ventas, () => false, false), false);
 });
 
+test('Bandeja Falabella no aparece en producción', () => {
+  const can = () => true;
+  const item = { to: '/pedidos', permission: 'orders_inbox', hiddenInProduction: true };
+  assert.equal(isNavItemVisible(item, can, true), false);
+  assert.equal(isNavItemVisible(item, can, false), true);
+});
+
 test('Envío propio no es un ítem de menú; vive en Ajustes', () => {
   const can = () => true;
   const settings = { to: '/settings', permission: 'settings' };

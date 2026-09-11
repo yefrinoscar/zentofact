@@ -12,7 +12,15 @@ import {
   resolveDocumentDecision,
   updateOrderPayment,
 } from './order-management.js';
-import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems, mapFalabellaShipping, falabellaOrderShippingAmount } from './order-adapters/falabella.js';
+import {
+  alignFalabellaHeaderWithClosedFulfillment,
+  closeOverdueFalabellaFulfillment,
+  mapFalabellaCanonicalStatus,
+  mapFalabellaOrderItems,
+  mapFalabellaShipping,
+  falabellaOrderShippingAmount,
+  resolveFalabellaIngestStatus,
+} from './order-adapters/falabella.js';
 
 function account(overrides = {}) {
   return {
@@ -367,6 +375,53 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
     orderStatus: 'cancelled',
     fulfillmentStatus: 'cancelled',
   });
+});
+
+test('GetOrder shipped no se pisa con GetOrderItems pending', () => {
+  assert.equal(
+    resolveFalabellaIngestStatus('shipped', [{ Status: 'pending' }]),
+    'shipped',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('delivered', [{ Status: 'ready_to_ship' }]),
+    'delivered',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('pending', [{ Status: 'ready_to_ship' }]),
+    'ready_to_ship',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('ready_to_ship', [{ Status: 'shipped' }]),
+    'shipped',
+  );
+});
+
+test('saca de vencidos un Falabella con plazo vencido que GetOrder ya envió', async () => {
+  const sql = [];
+  const result = await closeOverdueFalabellaFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update orders') ? 7 : 7, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 7);
+  assert.match(sql[0], /update orders o/);
+  assert.match(sql[0], /America\/Lima/);
+  assert.match(sql[1], /update falabella_orders/);
+});
+
+test('alinea todos los padres Falabella abiertos cuya bandeja ya está enviada', async () => {
+  const sql = [];
+  const result = await alignFalabellaHeaderWithClosedFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update falabella_orders') ? 4 : 2, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 4);
+  assert.match(sql[0], /update falabella_orders/);
+  assert.match(sql[0], /fulfillment_status in \('shipped', 'delivered'\)/);
+  assert.match(sql[1], /update falabella_order_lifecycle/);
 });
 
 test('arma la dirección oficial de Falabella desde AddressShipping', () => {
