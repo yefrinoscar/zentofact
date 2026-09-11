@@ -3,10 +3,11 @@ import { LOGISTICS_URGENCIES } from '../lib/logistics-inbox';
 import type { BandejaView } from './bandeja-prototype/shared';
 
 const mobileLabels = { overdue: 'Vencidos', today: 'Hoy', tomorrow: 'Mañana', later: 'Próximos' };
+const SUMMARY_URGENCIES = LOGISTICS_URGENCIES.filter((item) => item.value !== 'overdue');
 
 export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; error: boolean }) {
   const unavailable = view.loading || error;
-  const total = Object.values(view.counts.urgency).reduce((sum, count) => sum + count, 0);
+  const total = SUMMARY_URGENCIES.reduce((sum, item) => sum + view.counts.urgency[item.value], 0);
 
   return (
     <section aria-label="Resumen de plazos" aria-busy={view.fetching} className="space-y-2.5">
@@ -16,11 +17,11 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
           {error ? 'No se pudo cargar el resumen' : view.loading ? 'Cargando plazos…' : <><span className="font-medium tabular-nums text-foreground">{total.toLocaleString('es-PE')}</span> sin enviar<span className="hidden sm:inline"> · por preparar y listos</span></>}
         </p>
       </div>
-      <dl className="daisy-stats grid grid-flow-row grid-cols-4 overflow-hidden rounded-xl border border-border bg-muted/20 shadow-none">
-        {LOGISTICS_URGENCIES.map((urgency, index) => (
+      <dl className="daisy-stats grid grid-flow-row grid-cols-3 overflow-hidden rounded-xl border border-border bg-muted/20 shadow-none">
+        {SUMMARY_URGENCIES.map((urgency, index) => (
           <div key={urgency.value} className={cn(
             'daisy-stat min-w-0 gap-1 border-0 px-1 py-3 text-center sm:px-5 sm:py-4 sm:text-left',
-            index < 3 && 'border-r border-border',
+            index < 2 && 'border-r border-border',
           )}>
             <button
               type="button"
