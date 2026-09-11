@@ -72,7 +72,7 @@ function StageTabBar({ view }: { view: BandejaView }) {
             aria-pressed={view.stage === stage}
             onClick={() => view.setStage(stage)}
             className={cn(
-              'flex min-w-0 flex-1 items-center justify-center gap-2 px-2 py-4 text-sm font-semibold outline-offset-4 transition-colors duration-200 sm:flex-none sm:justify-start sm:px-5',
+              'flex min-w-0 flex-1 items-center justify-center gap-2 px-2 py-3 text-sm font-semibold outline-offset-4 transition-colors duration-200 sm:flex-none sm:justify-start sm:px-5 sm:py-4',
               view.stage === stage ? 'text-primary' : 'text-muted-foreground hover:bg-muted/50',
             )}
           >
@@ -170,21 +170,21 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
   const renderOrder = (order: LogisticsOrder, tone?: string) => {
                       const selectable = canMarkLogisticsReady(order) || canMarkLogisticsDelivered(order) || (isReady && canPrintLogisticsLabel(order));
                       const printed = labelWasPrinted(order);
-                      const rowClass = cn('grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-3 hover:bg-muted/30', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
+                      const rowClass = cn('grid grid-cols-1 items-center gap-x-3 gap-y-2 py-3 hover:bg-muted/30 sm:grid-cols-[20px_minmax(0,1fr)] sm:px-3', isCard ? 'rounded-xl border p-4' : layout === '5' ? 'lg:grid-cols-[20px_140px_minmax(0,1fr)]' : 'md:grid-cols-[20px_160px_minmax(0,1fr)_155px]', selected.has(order.id) && 'bg-primary/5', layout === '7' && 'py-1.5 text-xs', layout === '12' && 'border-l-4 border-l-primary/30');
                       const content = <>
-                        <div>{view.stage !== 'shipped' && !isChecklist && <SelectionBox checked={selectable && selected.has(order.id)} disabled={locked || !selectable || (isPending && !view.canDispatch)} label={`Seleccionar pedido ${order.externalOrderNumber}`} onChange={() => toggle(order)} />}</div>
+                        <div className="hidden sm:block">{view.stage !== 'shipped' && !isChecklist && <SelectionBox checked={selectable && selected.has(order.id)} disabled={locked || !selectable || (isPending && !view.canDispatch)} label={`Seleccionar pedido ${order.externalOrderNumber}`} onChange={() => toggle(order)} />}</div>
                         <div className="min-w-0 self-start pt-1">
                           <CopyableOrderNumber value={order.externalOrderNumber} />
                           <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><ChannelMark code={order.channelCode} className="size-4" /><span className="line-clamp-2">{sellerShortName(order.companyName)}</span></div>
                         </div>
-                        <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "col-start-2 min-w-0 space-y-2", !isCard && "md:col-start-auto")}>
+                        <div className={cn(isChecklist && canMarkLogisticsReady(order) && 'hidden', "min-w-0 space-y-2 sm:col-start-2", !isCard && "md:col-start-auto")}>
                           {order.items.length ? order.items.map((item) => <div key={item.id} className="flex items-center gap-3">
                             <ProductThumb item={item} className={cn("rounded-md bg-white", layout === '2' ? 'size-24' : isCard ? 'size-20' : layout === '7' ? 'size-8' : 'size-12')} onOpen={setPreview} />
                             <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm leading-5">{item.description}</p>{logisticsItemSku(item) && <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{logisticsItemSku(item)}</p>}</div>
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                         </div>
-                        <div className={cn("col-start-2 flex items-center justify-between gap-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
+                        <div className={cn("col-start-2 hidden items-center justify-between gap-2 sm:flex", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
                           {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span>
                             : <span className="flex flex-wrap items-center justify-end gap-2">
@@ -204,14 +204,14 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
   return (
     <div className="min-w-0 pb-24">
-      <div className="space-y-4">
+      <div className="space-y-2 sm:space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input aria-label="Buscar pedido o producto" placeholder="Pedido o producto" className="h-11 pl-9 sm:h-9" value={view.searchInput} onChange={(event) => view.setSearchInput(event.target.value)} />
         </div>
         <div className={cn('order-last grid w-full gap-1 sm:order-none sm:flex sm:w-auto sm:flex-wrap', visibleLogisticsChannels(view.channels).length === 4 ? 'grid-cols-4' : 'grid-cols-3')} aria-label="Filtrar por canal">
-          {visibleLogisticsChannels(view.channels).map((channel) => <Button key={channel.value} size="sm" className={cn('h-14 min-w-0 flex-col gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
+          {visibleLogisticsChannels(view.channels).map((channel) => <Button key={channel.value} size="sm" className={cn('h-11 min-w-0 flex-row gap-1.5 rounded-lg px-1 text-xs sm:h-8 sm:flex-row sm:gap-1 sm:rounded-md sm:px-3 sm:text-sm', view.channelCode === channel.value && 'bg-primary/8 text-primary sm:bg-secondary sm:text-secondary-foreground')} variant={view.channelCode === channel.value ? 'secondary' : 'ghost'} aria-pressed={view.channelCode === channel.value} onClick={() => view.setChannelCode(channel.value)}>
             {channel.value === 'all' ? <Layers3 aria-hidden="true" className="size-4 sm:hidden" /> : <ChannelMark code={channel.value} className="size-4" />}
             {channel.label}
           </Button>)}
@@ -228,38 +228,19 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
       <StageTabBar view={view} />
 
-      {view.stage !== 'shipped' && <label className="flex items-center gap-3 sm:hidden">
-        <span className="shrink-0 text-sm font-medium">Plazo</span>
-        <select aria-label="Filtrar por entrega" className="daisy-select h-11 min-w-0 flex-1 rounded-lg border border-solid border-border bg-background text-sm text-foreground shadow-none focus-visible:outline-ring"
-          value={view.deadlineDate || view.urgency || 'all'} onChange={(event) => {
-            const value = event.target.value;
-            if (value === 'all') { view.setUrgency(null); view.setDeadlineDate(null); }
-            else if (value === 'overdue' || value === 'today' || value === 'tomorrow') view.setUrgency(value);
-            else view.setDeadlineDate(value);
-          }}>
-          <option value="all">Todos los plazos</option>
-          {BANDEJA_DEADLINE_FILTERS.map((urgency) => <option key={urgency.value} value={urgency.value}>
-            {urgency.label} · {urgency.value === 'overdue'
-              ? view.counts.urgency.overdue
-              : bandejaDeadlineDateCount(view.counts.dates || [], urgency.value === 'today' ? todayKey : tomorrowKey)}
-          </option>)}
-          {laterDates.map((item) => <option key={item.date} value={item.date}>{formatBandejaDeadlineDate(item.date, view.now)} · {item.count}</option>)}
-        </select>
-      </label>}
-
-      {view.stage !== 'shipped' && <div className="hidden flex-wrap items-center gap-1.5 sm:flex" aria-label="Filtrar por entrega">
-        <Button size="sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}>Todos los plazos</Button>
+      {view.stage !== 'shipped' && <div className="flex flex-wrap items-center gap-1 sm:gap-1.5" aria-label="Filtrar por entrega">
+        <Button size="sm" className="min-h-11 sm:min-h-0" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}><span className="sm:hidden">Todos</span><span className="hidden sm:inline">Todos los plazos</span></Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
           const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
           const count = urgency.value === 'overdue'
             ? view.counts.urgency.overdue
             : bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
-          return <Button key={urgency.value} size="sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
-            <span className={cn('size-1.5 rounded-full', urgency.dotClass)} />{urgency.label}
-            <span className="tabular-nums text-muted-foreground">{count}</span>
+          return <Button key={urgency.value} size="sm" className="min-h-11 flex-1 flex-col gap-0.5 px-2 text-xs sm:min-h-0 sm:flex-none sm:flex-row sm:gap-2 sm:px-3 sm:text-sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
+            <span className={cn('hidden size-1.5 rounded-full sm:block', urgency.dotClass)} /><span>{urgency.label}</span>
+            <span className="w-full text-center tabular-nums text-muted-foreground sm:w-auto">{count}</span>
           </Button>;
         })}
-        {laterDates.map((item) => <Button key={item.date} size="sm" variant={view.deadlineDate === item.date ? 'secondary' : 'ghost'} aria-pressed={view.deadlineDate === item.date} onClick={() => view.setDeadlineDate(item.date)}>
+        {laterDates.map((item) => <Button key={item.date} size="sm" className="hidden sm:inline-flex" variant={view.deadlineDate === item.date ? 'secondary' : 'ghost'} aria-pressed={view.deadlineDate === item.date} onClick={() => view.setDeadlineDate(item.date)}>
           <span className="size-1.5 rounded-full bg-slate-300" />{formatBandejaDeadlineDate(item.date, view.now)}
           <span className="tabular-nums text-muted-foreground">{item.count}</span>
         </Button>)}
@@ -274,12 +255,12 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         data-bandeja-action-bar
         className="relative isolate sticky top-[-1rem] z-30 -mx-4 mt-4 bg-background px-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-background md:top-[-1.5rem] md:-mx-6 md:px-6 lg:top-[-2rem] lg:-mx-8 lg:px-8"
       >
-        <div className="flex flex-wrap items-center justify-between gap-3 border-y px-2 py-3 sm:px-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-y py-2 sm:px-3 sm:py-3">
         <div className="flex min-h-9 items-center gap-3">
-          {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} />}
+          {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <span className="hidden sm:inline-flex"><SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} /></span>}
           <div>
             <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} pedidos`}</p>
-            <p className="text-xs text-muted-foreground">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo o entregado.' : 'Prepara y marca listo o entregado.' : isReady ? 'Imprime marketplaces o marca entregados los propios.' : 'Pedidos enviados.'}</p>
+            <p className="hidden text-xs text-muted-foreground sm:block">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo o entregado.' : 'Prepara y marca listo o entregado.' : isReady ? 'Imprime marketplaces o marca entregados los propios.' : 'Pedidos enviados.'}</p>
           </div>
           {selectedOrders.length > 0 && <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Quitar selección</Button>}
         </div>
@@ -298,7 +279,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </div>
       </div>
 
-      <div className={cn('mt-4', (layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
+      <div className={cn('mt-0 sm:mt-4', (layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
       <div
         key={panelStage}
         className={cn(

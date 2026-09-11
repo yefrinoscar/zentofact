@@ -10,7 +10,7 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
   const total = SUMMARY_URGENCIES.reduce((sum, item) => sum + view.counts.urgency[item.value], 0);
 
   return (
-    <section aria-label="Resumen de plazos" aria-busy={view.fetching} className="space-y-2.5">
+    <section aria-label="Resumen de plazos" aria-busy={view.fetching} className="hidden space-y-2.5 sm:block">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-semibold">Prioridad de entrega</h2>
         <p className="text-xs text-muted-foreground">
@@ -25,7 +25,7 @@ export function BandejaDeadlineSummary({ view, error }: { view: BandejaView; err
           )}>
             <button
               type="button"
-              className="contents text-left"
+              className="contents"
               disabled={unavailable || urgency.value === 'later'}
               aria-pressed={view.urgency === urgency.value}
               onClick={() => view.setUrgency(view.urgency === urgency.value ? null : urgency.value)}
