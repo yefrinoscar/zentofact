@@ -792,6 +792,8 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   const bytes = await mergePdfBuffers(pdfParts);
   if (printable.length && dependencies.recordPrints !== false) {
     await recordLabelPrints(db, printable.map((order) => order.id), input.printedBy);
+    const { skipPrintJobsForManualPrint } = await import('./print-queue.js');
+    await skipPrintJobsForManualPrint(db, printable.map((order) => order.id));
   }
   const date = new Date().toISOString().slice(0, 10);
   return {
@@ -1024,6 +1026,7 @@ export async function printLogisticsPackWithDefaults(input = {}, dependencies = 
   const ripleyLogistics = dependencies.ripleyLogistics || await import('./ripley-logistics.js');
   return printLogisticsPack(input, {
     db: dependencies.db || core.pool,
+    recordPrints: dependencies.recordPrints,
     getFalabellaLabel: dependencies.getFalabellaLabel || (({ companyId, orderId }) => (
       core.falabellaGetShippingLabel({ companyId, orderId, recordPrint: false })
     )),

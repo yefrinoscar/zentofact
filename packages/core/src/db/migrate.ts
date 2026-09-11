@@ -1947,6 +1947,45 @@ const DDL = `
     WHERE order_number <> '';
   CREATE INDEX IF NOT EXISTS idx_falabella_invoice_lines_document
     ON falabella_invoice_lines(document_id, row_number);
+
+  CREATE TABLE IF NOT EXISTS print_stations (
+    id TEXT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    token_hash TEXT,
+    token_suffix TEXT,
+    last_seen_at TIMESTAMPTZ,
+    last_batch_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  INSERT INTO print_stations (id, enabled) VALUES ('default', FALSE)
+    ON CONFLICT (id) DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS print_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    batch_id TEXT,
+    reason TEXT,
+    claimed_by TEXT,
+    claimed_at TIMESTAMPTZ,
+    claim_expires_at TIMESTAMPTZ,
+    printed_at TIMESTAMPTZ,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (status IN (
+      'pending', 'claimed', 'done',
+      'skipped_printed', 'skipped_manual', 'skipped_unprintable', 'failed'
+    ))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_print_jobs_open_order
+    ON print_jobs (order_id) WHERE status IN ('pending', 'claimed');
+  CREATE INDEX IF NOT EXISTS idx_print_jobs_pending_created
+    ON print_jobs (created_at, id) WHERE status = 'pending';
+  CREATE INDEX IF NOT EXISTS idx_print_jobs_batch
+    ON print_jobs (batch_id) WHERE batch_id IS NOT NULL;
 `;
 
 export async function runMigrations(pool: Pool): Promise<void> {

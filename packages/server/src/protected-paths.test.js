@@ -36,6 +36,12 @@ test('Ripley carga la sesión antes de validar el permiso de pedidos', () => {
   assert.equal(isProtectedPath('/ripley/1/orders'), true);
 });
 
+test('la estación de impresión exige sesión o token de agente', () => {
+  assert.equal(isProtectedPath('/print-jobs'), true);
+  assert.equal(isProtectedPath('/print-jobs/next'), true);
+  assert.equal(isProtectedPath('/print-station'), true);
+});
+
 test('no protege rutas públicas con prefijos parecidos', () => {
   assert.equal(isProtectedPath('/orders-inbox-public'), false);
   assert.equal(isProtectedPath('/health'), false);
