@@ -228,19 +228,19 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
       <StageTabBar view={view} />
 
-      {view.stage !== 'shipped' && <div className="flex flex-wrap items-center gap-1 sm:gap-1.5" aria-label="Filtrar por entrega">
-        <Button size="sm" className="min-h-11 sm:min-h-0" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}><span className="sm:hidden">Todos</span><span className="hidden sm:inline">Todos los plazos</span></Button>
+      {view.stage !== 'shipped' && <div className="flex items-center gap-1 overflow-x-auto sm:flex-wrap sm:gap-1.5 sm:overflow-visible" aria-label="Filtrar por entrega">
+        <Button size="sm" className="h-11 shrink-0 px-3 text-xs sm:h-8 sm:text-sm" variant={selectedDeadline ? 'secondary' : 'ghost'} aria-pressed={selectedDeadline} onClick={() => { view.setUrgency(null); view.setDeadlineDate(null); }}><span className="sm:hidden">Todos</span><span className="hidden sm:inline">Todos los plazos</span></Button>
         {BANDEJA_DEADLINE_FILTERS.map((urgency) => {
           const dateKey = urgency.value === 'today' ? todayKey : tomorrowKey;
           const count = urgency.value === 'overdue'
             ? view.counts.urgency.overdue
             : bandejaDeadlineDateCount(view.counts.dates || [], dateKey);
-          return <Button key={urgency.value} size="sm" className="min-h-11 flex-1 flex-col gap-0.5 px-2 text-xs sm:min-h-0 sm:flex-none sm:flex-row sm:gap-2 sm:px-3 sm:text-sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
-            <span className={cn('hidden size-1.5 rounded-full sm:block', urgency.dotClass)} /><span>{urgency.label}</span>
-            <span className="w-full text-center tabular-nums text-muted-foreground sm:w-auto">{count}</span>
+          return <Button key={urgency.value} size="sm" className="h-11 shrink-0 gap-1.5 px-3 text-xs sm:h-8 sm:text-sm" variant={view.urgency === urgency.value ? 'secondary' : 'ghost'} aria-pressed={view.urgency === urgency.value} onClick={() => view.setUrgency(urgency.value)}>
+            <span className={cn('hidden size-1.5 rounded-full sm:block', urgency.dotClass)} /><span className="sm:hidden">{urgency.value === 'today' ? 'Hoy' : 'Mañana'}</span><span className="hidden sm:inline">{urgency.label}</span>
+            <span className="text-center tabular-nums text-muted-foreground">{count}</span>
           </Button>;
         })}
-        {laterDates.map((item) => <Button key={item.date} size="sm" className="hidden sm:inline-flex" variant={view.deadlineDate === item.date ? 'secondary' : 'ghost'} aria-pressed={view.deadlineDate === item.date} onClick={() => view.setDeadlineDate(item.date)}>
+        {laterDates.map((item) => <Button key={item.date} size="sm" className="h-11 shrink-0 gap-1.5 px-3 text-xs sm:h-8 sm:text-sm" variant={view.deadlineDate === item.date ? 'secondary' : 'ghost'} aria-pressed={view.deadlineDate === item.date} onClick={() => view.setDeadlineDate(item.date)}>
           <span className="size-1.5 rounded-full bg-slate-300" />{formatBandejaDeadlineDate(item.date, view.now)}
           <span className="tabular-nums text-muted-foreground">{item.count}</span>
         </Button>)}
@@ -253,23 +253,23 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       */}
       <div
         data-bandeja-action-bar
-        className="relative isolate sticky top-[-1rem] z-30 -mx-4 mt-4 bg-background px-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-background md:top-[-1.5rem] md:-mx-6 md:px-6 lg:top-[-2rem] lg:-mx-8 lg:px-8"
+        className={cn(!view.orders.length && 'hidden sm:block', "relative isolate sticky top-[-1rem] z-30 -mx-4 mt-4 bg-background px-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-4 before:bg-background md:top-[-1.5rem] md:-mx-6 md:px-6 lg:top-[-2rem] lg:-mx-8 lg:px-8")}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-y py-2 sm:px-3 sm:py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 py-1 sm:border-y sm:px-3 sm:py-3">
         <div className="flex min-h-9 items-center gap-3">
           {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <span className="hidden sm:inline-flex"><SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} /></span>}
           <div>
-            <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} pedidos`}</p>
+            <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} ${view.totalCount === 1 ? 'pedido' : 'pedidos'}`}</p>
             <p className="hidden text-xs text-muted-foreground sm:block">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo o entregado.' : 'Prepara y marca listo o entregado.' : isReady ? 'Imprime marketplaces o marca entregados los propios.' : 'Pedidos enviados.'}</p>
           </div>
           {selectedOrders.length > 0 && <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Quitar selección</Button>}
         </div>
         {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && layout !== '14' && !isChecklist && <div className="flex flex-wrap gap-2">
           {readyTargets.length > 0 && <Button onClick={() => view.requestBulkReady(readyTargets)} disabled={locked || !view.canDispatch}>
-            <PackageCheck />{`Marcar ${readyTargets.length} listos`}
+            <PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}
           </Button>}
           {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} onClick={() => view.requestBulkDeliver(deliverTargets)} disabled={locked || !view.canDispatch}>
-            <Truck />{`Marcar ${deliverTargets.length} entregados`}
+            <Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}
           </Button>}
           {isReady && printTargets.length > 0 && <Button variant={deliverTargets.length ? 'outline' : 'default'} onClick={printAction} disabled={locked}>
             {view.printing ? <Loader2 className="animate-spin" /> : <Printer />}
@@ -304,7 +304,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
-          : !view.orders.length ? <div className="py-16 text-center"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
+          : !view.orders.length ? <div className="py-10 text-center sm:py-16"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
             : <div aria-busy={view.fetching} className={cn('min-w-0 transition-opacity duration-200', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);
@@ -322,22 +322,22 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <p className="mt-3 text-3xl font-semibold tabular-nums">{selectedOrders.length} <span className="text-sm font-normal text-muted-foreground">seleccionados</span></p>
         <p className="mt-1 text-sm text-muted-foreground">{selectedOrders.reduce((sum, order) => sum + order.items.reduce((units, item) => units + item.quantity, 0), 0)} unidades · {new Set(selectedOrders.map((order) => order.companyId)).size} tiendas</p>
         <div className="my-5 max-h-72 space-y-3 overflow-y-auto border-y py-4">{selectedOrders.length ? selectedOrders.map((order) => <div key={order.id} className="flex justify-between gap-2 text-xs"><span className="min-w-0"><span className="block font-mono font-semibold">{order.externalOrderNumber}</span><span className="text-muted-foreground">{sellerShortName(order.companyName)}</span></span><button type="button" onClick={() => toggle(order)} className="text-muted-foreground underline" aria-label={`Quitar pedido ${order.externalOrderNumber}`}>Quitar</button></div>) : <p className="text-sm text-muted-foreground">Selecciona pedidos de la lista para formar el lote.</p>}</div>
-        {readyTargets.length > 0 && <Button className="w-full" disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} listos`}</Button>}
-        {deliverTargets.length > 0 && <Button className="mt-2 w-full" variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} entregados`}</Button>}
+        {readyTargets.length > 0 && <Button className="w-full" disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}</Button>}
+        {deliverTargets.length > 0 && <Button className="mt-2 w-full" variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}
         {isReady && printTargets.length > 0 && <Button className="mt-2 w-full" variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}><Printer />{`Imprimir ${printTargets.length} pedidos`}</Button>}
         <p className="mt-3 text-xs text-muted-foreground">{isPending ? 'Confirma que el lote está empacado o entregado.' : 'Imprime marketplaces o marca entregados los propios.'}</p>
         {isPending && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{view.counts.ready}</span></Button>}
       </aside>}
       </div>
-      <div className="mt-4 flex items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
+      <div className={cn("mt-4 items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground", view.totalCount > pageSize || offset > 0 ? "flex" : "hidden sm:flex")}>
         <span>{view.totalCount ? `${offset + 1}–${Math.min(offset + view.orders.length, view.totalCount)} de ${view.totalCount}` : '0 pedidos'}</span>
         <div className="flex gap-2"><Button size="sm" variant="outline" disabled={locked || offset === 0} onClick={() => onPage(Math.max(0, offset - pageSize))}><ChevronLeft />Anterior</Button><Button size="sm" variant="outline" disabled={locked || offset + pageSize >= view.totalCount} onClick={() => onPage(offset + pageSize)}>Siguiente<ChevronRight /></Button></div>
       </div>
       {layout === '14' && view.stage !== 'shipped' && <div className="fixed inset-x-4 bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4 shadow-lg xl:left-72">
         <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${eligible.length} pedidos disponibles en esta página`}</p><p className="text-xs text-muted-foreground">{eligible.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma listo o entregado.' : 'Imprime o marca entregados.'}</p></div>
         <div className="flex flex-wrap gap-2">
-          {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} listos`}</Button>}
-          {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} entregados`}</Button>}
+          {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}</Button>}
+          {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}
           {isReady && printTargets.length > 0 && <Button variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}>{view.printing ? <Loader2 className="animate-spin" /> : <Printer />}{`Imprimir ${printTargets.length} pedidos`}</Button>}
         </div>
       </div>}
