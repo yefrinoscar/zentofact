@@ -2,11 +2,14 @@
 import { Pool } from 'pg';
 import { FAILED_EMISSION_ALERT_AFTER_ATTEMPTS } from './auto-emission-alert.js';
 import { userHasPermission } from './permissions.js';
+import { isCatalogInventoryEnabled } from './system-config.js';
 import {
   applyNotificationState,
   collectLiveNotifications,
   filterNotificationsForUser,
+  NOTIFICATION_KINDS,
   parseNotificationIds,
+  PRODUCT_SOLD_OUT_WINDOW_DAYS,
   publicNotification,
   sortNotifications,
   unreadNotificationCount,
@@ -119,21 +122,73 @@ async function loadStateById(userId, ids, db) {
   return stateById;
 }
 
+async function soldOutProducts(db) {
+  if (!(await isCatalogInventoryEnabled(db))) return [];
+  const result = await target(db).query(
+    `select p.id, p.main_sku, p.name, p.status,
+            i.quantity_on_hand, i.quantity_reserved,
+            coalesce(i.quantity_pending_return, 0) as quantity_pending_return,
+            i.updated_at,
+            sales.units as units_sold_7d,
+            sales.last_sold_at
+     from products p
+     join product_inventory i on i.product_id = p.id
+     join (
+       select oi.product_id,
+              sum(oi.quantity)::numeric as units,
+              max(coalesce(o.ordered_at, o.created_at)) as last_sold_at
+         from order_items oi
+         join orders o on o.id = oi.order_id
+        where oi.product_id is not null
+          and o.order_status not in ('cancelled', 'failed')
+          and coalesce(o.fulfillment_status, '') not in ('cancelled', 'returned', 'failed')
+          and coalesce(o.ordered_at, o.created_at) >= now() - ($1 * interval '1 day')
+        group by oi.product_id
+     ) sales on sales.product_id = p.id
+     where p.status = 'active'
+       and (i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0)) <= 0
+       and sales.units > 0
+     order by sales.units desc, sales.last_sold_at desc, p.id asc
+     limit 10`,
+    [PRODUCT_SOLD_OUT_WINDOW_DAYS],
+  );
+  return result.rows.map((row) => ({
+    id: Number(row.id),
+    mainSku: row.main_sku,
+    name: row.name,
+    status: row.status,
+    quantityOnHand: Number(row.quantity_on_hand || 0),
+    quantityReserved: Number(row.quantity_reserved || 0),
+    quantityPendingReturn: Number(row.quantity_pending_return || 0),
+    unitsSold7d: Number(row.units_sold_7d || 0),
+    lastSoldAt: row.last_sold_at || null,
+    updatedAt: row.updated_at || null,
+  }));
+}
+
+function hrefForItem(item, user) {
+  if (item.kind !== NOTIFICATION_KINDS.productSoldOut) return item.href;
+  if (userHasPermission(user, 'productos')) return '/productos';
+  return '/orders';
+}
+
 async function collectVisibleNotifications(user, db) {
   requireUserId(user);
-  const [failedEmissions, lowInsumos, overdueBandeja] = await Promise.all([
+  const [failedEmissions, lowInsumos, overdueBandeja, soldOut] = await Promise.all([
     safeSource('emission', () => failedEmissionSummary(db)),
     safeSource('insumos', () => lowStockInsumos(db)),
     safeSource('bandeja', async () => {
       const { countOpenOverdueOrders } = await import('./logistics-inbox.js');
       return countOpenOverdueOrders(db);
     }),
+    safeSource('products', () => soldOutProducts(db)),
   ]);
   const live = collectLiveNotifications({
     failedEmissions: failedEmissions || { count: 0 },
     lowInsumos: lowInsumos || [],
     overdueBandeja: overdueBandeja || { count: 0 },
-  });
+    soldOutProducts: soldOut || [],
+  }).map((item) => ({ ...item, href: hrefForItem(item, user) }));
   const scoped = filterNotificationsForUser(live, user, userHasPermission);
   const stateById = await loadStateById(requireUserId(user), scoped.map((item) => item.id), db);
   return sortNotifications(applyNotificationState(scoped, stateById));
