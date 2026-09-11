@@ -13,6 +13,7 @@ import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
 import Avisos from './routes/Avisos';
 import { NotificationBell } from './components/NotificationBell';
+import { ProductSoldOutAlertSound } from './hooks/useProductSoldOutAlertSound';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import DescuentosCola from './routes/DescuentosCola';
@@ -256,6 +257,7 @@ function AppLayout() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+      <ProductSoldOutAlertSound />
       <Sidebar hideOnMobile />
 
       <div className="flex min-w-0 flex-1 flex-col">

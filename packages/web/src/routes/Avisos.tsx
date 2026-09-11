@@ -9,7 +9,8 @@ export default function Avisos() {
   const query = useOperatorNotifications();
   const { markRead, dismiss } = useNotificationActions();
   const data = query.data || emptyNotifications();
-  const canReceive = can('auto_emision') || can('insumos') || can('orders_inbox');
+  const canReceive = can('auto_emision') || can('insumos') || can('orders_inbox')
+    || can('productos') || can('order_management');
 
   return (
     <div className="space-y-4">
@@ -57,7 +58,7 @@ export default function Avisos() {
           <p className="text-sm font-medium">Nada pendiente</p>
           <p className="max-w-sm text-sm text-muted-foreground">
             {canReceive
-              ? 'Cuando falle una boleta, se acabe un insumo o se venza un pedido, aparece aquí.'
+              ? 'Cuando falle una boleta, se agote un producto o un insumo, o se venza un pedido, aparece aquí.'
               : 'Tu perfil no recibe avisos de operación.'}
           </p>
         </div>
