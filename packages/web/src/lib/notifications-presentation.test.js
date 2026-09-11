@@ -26,6 +26,13 @@ test('acepta un aviso operativo y descarta filas rotas', () => {
   assert.equal(parsed?.kind, 'bandeja_overdue');
   assert.equal(parsed?.unread, true);
   assert.equal(parseOperatorNotification({ ...valid, kind: 'email' }), null);
+  assert.equal(parseOperatorNotification({
+    ...valid,
+    id: 'product_sold_out:22:18',
+    kind: 'product_sold_out',
+    title: 'Silla evolutiva se agotó',
+    href: '/productos',
+  })?.kind, 'product_sold_out');
   assert.equal(parseOperatorNotification({ ...valid, href: 'https://evil.example' }), null);
   assert.equal(parseOperatorNotification({ ...valid, title: '' }), null);
 });

@@ -5,8 +5,10 @@ import {
   buildBandejaOverdueNotification,
   buildEmissionFailedNotification,
   buildInsumoLowStockNotification,
+  buildProductSoldOutNotification,
   collectLiveNotifications,
   filterNotificationsForUser,
+  isProductSoldOut,
   notificationPermissionForKind,
   parseNotificationIds,
   publicNotification,
@@ -64,6 +66,34 @@ test('un insumo avisa al llegar al mínimo y cambia de id si el saldo sigue baja
   assert.equal(buildInsumoLowStockNotification({ ...fill, id: null }), null);
 });
 
+const chair = {
+  id: 22,
+  mainSku: 'HOG025',
+  name: 'Silla evolutiva',
+  status: 'active',
+  quantityOnHand: 0,
+  quantityReserved: 0,
+  quantityPendingReturn: 0,
+  unitsSold7d: 18,
+  lastSoldAt: '2026-09-10T15:00:00.000Z',
+};
+
+test('un producto agotado avisa con su rotación de 7 días', () => {
+  assert.equal(isProductSoldOut({ ...chair, unitsSold7d: 0 }), false);
+  assert.equal(isProductSoldOut({ ...chair, quantityOnHand: 4 }), false);
+  const hot = buildProductSoldOutNotification(chair);
+  assert.equal(hot.kind, 'product_sold_out');
+  assert.equal(hot.severity, 'critical');
+  assert.equal(hot.title, 'Silla evolutiva se agotó');
+  assert.equal(hot.body, 'HOG025 · Se está vendiendo mucho: 18 unidades en 7 días.');
+  assert.equal(hot.href, '/productos');
+  assert.equal(hot.id, 'product_sold_out:22:18');
+  const slow = buildProductSoldOutNotification({ ...chair, unitsSold7d: 2 });
+  assert.equal(slow.severity, 'warning');
+  assert.equal(slow.body, 'HOG025 · Vendió 2 unidades en 7 días.');
+  assert.equal(buildProductSoldOutNotification({ ...chair, id: null }), null);
+});
+
 test('los vencidos de bandeja se agrupan y no se inventan sin pedidos', () => {
   assert.equal(buildBandejaOverdueNotification({ count: 0 }), null);
   const one = buildBandejaOverdueNotification({ count: 1, oldestAt: '2026-09-01T15:00:00.000Z' });
@@ -76,15 +106,17 @@ test('cada aviso exige el permiso del módulo que lo resuelve', () => {
   assert.equal(notificationPermissionForKind('emission_failed'), 'auto_emision');
   assert.equal(notificationPermissionForKind('insumo_low_stock'), 'insumos');
   assert.equal(notificationPermissionForKind('bandeja_overdue'), 'orders_inbox');
+  assert.deepEqual(notificationPermissionForKind('product_sold_out'), ['productos', 'order_management']);
   const live = collectLiveNotifications({
     failedEmissions: { count: 2, updatedAt: '2026-09-10T12:00:00.000Z' },
     lowInsumos: [fill],
     overdueBandeja: { count: 3, oldestAt: '2026-09-01T15:00:00.000Z' },
+    soldOutProducts: [chair],
   });
-  assert.equal(live.length, 3);
+  assert.equal(live.length, 4);
   assert.deepEqual(
     filterNotificationsForUser(live, operator, userHasPermission).map((item) => item.kind).sort(),
-    ['bandeja_overdue', 'insumo_low_stock'],
+    ['bandeja_overdue', 'insumo_low_stock', 'product_sold_out'],
   );
   assert.deepEqual(
     filterNotificationsForUser(live, billing, userHasPermission).map((item) => item.kind),

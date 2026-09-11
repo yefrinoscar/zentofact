@@ -7,7 +7,11 @@ export const NOTIFICATION_KINDS = Object.freeze({
   emissionFailed: 'emission_failed',
   insumoLowStock: 'insumo_low_stock',
   bandejaOverdue: 'bandeja_overdue',
+  productSoldOut: 'product_sold_out',
 });
+
+export const PRODUCT_SOLD_OUT_WINDOW_DAYS = 7;
+export const PRODUCT_HIGH_ROTATION_UNITS = 7;
 
 export const NOTIFICATION_SEVERITIES = Object.freeze({
   critical: 'critical',
@@ -18,6 +22,7 @@ const KIND_PERMISSION = {
   [NOTIFICATION_KINDS.emissionFailed]: 'auto_emision',
   [NOTIFICATION_KINDS.insumoLowStock]: 'insumos',
   [NOTIFICATION_KINDS.bandejaOverdue]: 'orders_inbox',
+  [NOTIFICATION_KINDS.productSoldOut]: ['productos', 'order_management'],
 };
 
 const SEVERITY_RANK = {
@@ -103,10 +108,54 @@ export function buildBandejaOverdueNotification({ count = 0, oldestAt } = {}) {
   };
 }
 
+export function productAvailableQuantity(product = {}) {
+  return Number(product.quantityOnHand || 0)
+    - Number(product.quantityReserved || 0)
+    - Number(product.quantityPendingReturn || 0);
+}
+
+export function isProductSoldOut(product) {
+  if (!product) return false;
+  if (String(product.status || 'active') !== 'active') return false;
+  if (productAvailableQuantity(product) > 0) return false;
+  return Number(product.unitsSold7d || 0) > 0;
+}
+
+function unitsPhrase(units) {
+  const count = countLabel(units);
+  return units === 1 ? `${count} unidad` : `${count} unidades`;
+}
+
+export function buildProductSoldOutNotification(product = {}) {
+  if (!isProductSoldOut(product)) return null;
+  const id = Number(product.id);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const units = Number(product.unitsSold7d || 0);
+  const name = String(product.name || product.mainSku || '').trim() || 'Producto';
+  const sku = String(product.mainSku || '').trim();
+  const high = units >= PRODUCT_HIGH_ROTATION_UNITS;
+  const rotation = high
+    ? `Se está vendiendo mucho: ${unitsPhrase(units)} en ${PRODUCT_SOLD_OUT_WINDOW_DAYS} días.`
+    : `Vendió ${unitsPhrase(units)} en ${PRODUCT_SOLD_OUT_WINDOW_DAYS} días.`;
+  return {
+    id: `product_sold_out:${id}:${units}`,
+    kind: NOTIFICATION_KINDS.productSoldOut,
+    severity: high ? NOTIFICATION_SEVERITIES.critical : NOTIFICATION_SEVERITIES.warning,
+    permission: KIND_PERMISSION[NOTIFICATION_KINDS.productSoldOut],
+    title: `${name} se agotó`,
+    body: sku && sku !== name ? `${sku} · ${rotation}` : rotation,
+    href: '/productos',
+    moduleLabel: 'Productos',
+    count: 1,
+    createdAt: isoOrNull(product.lastSoldAt || product.updatedAt || product.updated_at),
+  };
+}
+
 export function collectLiveNotifications({
   failedEmissions = { count: 0 },
   lowInsumos = [],
   overdueBandeja = { count: 0 },
+  soldOutProducts = [],
 } = {}) {
   const items = [];
   const emission = buildEmissionFailedNotification(failedEmissions);
@@ -117,11 +166,22 @@ export function collectLiveNotifications({
   }
   const bandeja = buildBandejaOverdueNotification(overdueBandeja);
   if (bandeja) items.push(bandeja);
+  for (const product of soldOutProducts) {
+    const item = buildProductSoldOutNotification(product);
+    if (item) items.push(item);
+  }
   return items;
 }
 
+export function notificationPermissionKeys(item) {
+  const raw = item?.permission;
+  return Array.isArray(raw) ? raw : raw ? [raw] : [];
+}
+
 export function filterNotificationsForUser(items, user, hasPermission) {
-  return (items || []).filter((item) => hasPermission(user, item.permission));
+  return (items || []).filter((item) => (
+    notificationPermissionKeys(item).some((key) => hasPermission(user, key))
+  ));
 }
 
 export function applyNotificationState(items, stateById) {
