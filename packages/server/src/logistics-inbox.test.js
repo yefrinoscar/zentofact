@@ -17,6 +17,7 @@ import {
 } from './logistics-inbox.js';
 import {
   alignFalabellaHeaderWithClosedFulfillment,
+  closeOverdueFalabellaFulfillment,
   closeStaleFalabellaFulfillment,
   closedFalabellaFulfillment,
 } from './order-adapters/falabella.js';
@@ -607,6 +608,21 @@ test('restaura todos los padres Falabella que GetOrderItems había bajado a pend
   assert.match(sql[0], /update falabella_orders/);
   assert.match(sql[0], /fulfillment_status in \('shipped', 'delivered'\)/);
   assert.match(sql[1], /update falabella_order_lifecycle/);
+});
+
+test('saca de vencidos un Falabella con plazo vencido que GetOrder ya envió', async () => {
+  const sql = [];
+  const result = await closeOverdueFalabellaFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update orders') ? 7 : 7, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 7);
+  assert.match(sql[0], /update orders/);
+  assert.match(sql[0], /America\/Lima/);
+  assert.match(sql[0], /fulfillment_status = 'shipped'/);
+  assert.match(sql[1], /update falabella_orders/);
 });
 
 test('cierra en la bandeja un Falabella que el canal ya marcó enviado', async () => {

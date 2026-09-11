@@ -123,6 +123,47 @@ export async function alignFalabellaHeaderWithClosedFulfillment(db) {
   return { updated: Number(headers.rowCount || 0) };
 }
 
+// Falabella GetOrder can already be shipped while items stay pending.
+// Those overdue ghosts were counting as Vencidos without appearing in the list.
+export async function closeOverdueFalabellaFulfillment(db) {
+  if (!db?.query) return { updated: 0 };
+  const orders = await db.query(
+    `update orders o
+     set fulfillment_status = 'shipped',
+         order_status = case when o.order_status in ('completed', 'cancelled', 'failed') then o.order_status else 'confirmed' end,
+         provider_status = 'shipped',
+         updated_at = now()
+     from order_channel_accounts a
+     join order_channels ch on ch.id = a.channel_id
+     where o.channel_account_id = a.id
+       and ch.code = 'falabella'
+       and o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and o.order_status not in ('cancelled', 'failed')
+       and o.promised_shipping_at is not null
+       and (o.promised_shipping_at at time zone 'America/Lima')::date
+           < (now() at time zone 'America/Lima')::date`,
+  );
+  await db.query(
+    `update falabella_orders fo
+     set status = 'shipped',
+         raw_data = jsonb_set(coalesce(fo.raw_data, '{}'::jsonb), '{Statuses}', to_jsonb('shipped'::text), true),
+         synchronized_at = now()
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where fo.company_id = o.company_id
+       and fo.order_id = o.external_order_id
+       and ch.code = 'falabella'
+       and o.fulfillment_status = 'shipped'
+       and lower(coalesce(fo.status, '')) ~ ${OPEN_FALABELLA_STATUS_SQL}
+       and lower(coalesce(fo.status, '')) !~ ${CLOSED_FALABELLA_STATUS_SQL}
+       and o.promised_shipping_at is not null
+       and (o.promised_shipping_at at time zone 'America/Lima')::date
+           < (now() at time zone 'America/Lima')::date`,
+  );
+  return { updated: Number(orders.rowCount || 0) };
+}
+
 export async function closeStaleFalabellaFulfillment(db) {
   if (!db?.query) return { updated: 0 };
   const found = await db.query(
