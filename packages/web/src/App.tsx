@@ -11,6 +11,8 @@ import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
+import Avisos from './routes/Avisos';
+import { NotificationBell } from './components/NotificationBell';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import DescuentosCola from './routes/DescuentosCola';
@@ -53,6 +55,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/pagos': {
     title: 'Pagos',
     subtitle: 'Cuánto te cobra Falabella por cada venta.',
+  },
+  '/avisos': {
+    title: 'Avisos',
+    subtitle: 'Lo que necesita tu atención ahora.',
   },
   '/menu': {
     title: 'Menú',
@@ -272,6 +278,7 @@ function AppLayout() {
                 <p className="truncate text-sm text-muted-foreground">{currentRoute.subtitle}</p>
               </div>
             </div>
+            <NotificationBell />
           </div>
         </header>
 
@@ -280,6 +287,7 @@ function AppLayout() {
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
+              <Route path="/avisos" element={<Avisos />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
               <Route path="/ventas" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><VentasProductos /></Suspense></RequirePermission>} />
               <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<PagosSkeleton />}><Pagos /></Suspense></RequirePermission>} />

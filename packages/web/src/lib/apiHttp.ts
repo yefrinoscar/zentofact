@@ -3,6 +3,10 @@
 import { apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
+import {
+  parseOperatorNotificationsResponse,
+  type OperatorNotificationsResponse,
+} from './notifications-presentation';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -172,6 +176,17 @@ const apiHttp = {
   getMe: () => req('/me'),
   /** Revoca todas las sesiones del usuario en el servidor (todos los dispositivos). */
   logoutAll: () => req('/me/logout', { method: 'POST' }),
+  listNotifications: () => req('/notifications').then(parseOperatorNotificationsResponse),
+  markNotificationsRead: (input: { ids?: string[]; all?: boolean } = {}) =>
+    req<OperatorNotificationsResponse>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then(parseOperatorNotificationsResponse),
+  dismissNotification: (id: string) =>
+    req<OperatorNotificationsResponse>('/notifications/dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    }).then(parseOperatorNotificationsResponse),
   listUsers: () => req('/users'),
   createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

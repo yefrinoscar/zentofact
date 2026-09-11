@@ -35,6 +35,8 @@ const insumos = await import('./insumos.js');
 const insumoLowStockAlert = await import('./insumo-low-stock-alert.js');
 const { sendEmail } = await import('./mailer.js');
 await insumos.ensureTables();
+const notifications = await import('./notifications.js');
+await notifications.ensureTables();
 if (shouldSeedPreview()) {
   const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
   await bootstrapPreviewIfNeeded();
@@ -269,6 +271,20 @@ app.get('/me', async (c) => {
       csrfToken: csrfTokenForSession(c.get('session')),
     });
   } catch (e) { return fail(c, e); }
+});
+app.get('/notifications', async (c) => {
+  try { return ok(c, await notifications.listForUser(c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/notifications/read', async (c) => {
+  try {
+    return ok(c, await notifications.markRead(c.get('user'), await c.req.json().catch(() => ({}))));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/notifications/dismiss', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await notifications.dismiss(c.get('user'), body.id ?? body.ids));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 // Logout total: revoca TODAS las sesiones del usuario (otros tabs/dispositivos) y
 // fuerza nuevo login. El cliente limpia cookies + localStorage después.

@@ -39,6 +39,7 @@ test('salesperson aparece antes de todos los pedidos para abrir Mis ventas', () 
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/ventas'), 'dashboard');
   assert.equal(pathPermission('/bandeja'), 'orders_inbox');
+  assert.equal(pathPermission('/avisos'), null);
   assert.equal(PERMISSIONS.find(({ key }) => key === 'orders_inbox')?.path, '/bandeja');
 });
 
