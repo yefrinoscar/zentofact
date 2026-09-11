@@ -102,6 +102,7 @@ export type BandejaView = {
   counts: {
     pending: number;
     ready: number;
+    readyUnprinted?: number;
     shipped: number;
     urgency: Record<LogisticsUrgency, number>;
     dates: Array<{ date: string; count: number }>;
@@ -431,7 +432,7 @@ function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): Stage
     pendingLabel: 'Pendientes',
     readyLabel: density === 'compact' ? 'Listos' : 'Listos para enviar',
     pendingHelper: loadingPending ? 'Cargando…' : view.stage === 'pending' ? pendingDeadlineHelper(view.orders, view.now) : 'Por preparar',
-    readyHelper: loadingReady ? 'Cargando…' : view.stage === 'ready' ? readyPrintHelper(view.orders) : 'Listos para imprimir',
+    readyHelper: loadingReady ? 'Cargando…' : view.stage === 'ready' ? readyPrintHelper(view.orders) : 'Confirmado',
     clock: logisticsUpdatedClock(view.updatedAt),
   };
 }
