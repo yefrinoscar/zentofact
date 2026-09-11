@@ -65,6 +65,7 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/bulk'), 'credit_notes_bulk');
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
   assert.equal(pathPermission('/insumos'), 'insumos');
+  assert.equal(pathPermission('/avisos'), null);
   assert.equal(pathPermission('/pagos'), 'pagos');
   assert.equal(pathPermission('/ventas'), 'dashboard');
   assert.equal(pathPermission('/productos'), 'productos');

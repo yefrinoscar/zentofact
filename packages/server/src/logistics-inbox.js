@@ -225,6 +225,26 @@ const MARKETPLACE_ALREADY_SENT_SQL = `(
 )`;
 const OPEN_UNSENT_SQL = `o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and not (${MARKETPLACE_ALREADY_SENT_SQL})`;
 
+export async function countOpenOverdueOrders(db) {
+  const target = db || (await loadCore()).pool;
+  const result = await target.query(
+    `select count(*)::int as count,
+            min(o.promised_shipping_at) as oldest_at
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.order_status not in ('cancelled', 'failed')
+       and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+       and ${OPEN_UNSENT_SQL}
+       and ${URGENCY_SQL.overdue}`,
+  );
+  const row = result.rows[0] || {};
+  return {
+    count: Number(row.count || 0),
+    oldestAt: row.oldest_at || null,
+  };
+}
+
 function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
   const where = [
     `o.order_status not in ('cancelled', 'failed')`,

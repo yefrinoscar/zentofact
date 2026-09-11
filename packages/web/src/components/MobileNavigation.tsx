@@ -8,6 +8,7 @@ import { isNavItemActive, mobileNavPathname, visibleNavigation } from '../lib/na
 import { ROLE_PRESETS, normalizeRole } from '../lib/permissions';
 import { usePermissions } from '../hooks/usePermissions';
 import { EnvBadge } from './ZentoFactBrand';
+import { NotificationBell } from './NotificationBell';
 import { isDevApp, runtimeEnvironmentLabel } from '../lib/runtimeEnv';
 import {
   DropdownMenu,
@@ -72,6 +73,7 @@ export function MobileTopNavigation({ title }: { title: string }) {
           <p className="min-w-0 flex-1 truncate px-2 text-sm font-semibold">{title}</p>
         )}
 
+        <NotificationBell variant="link" />
         <MobileAccountMenu />
       </div>
     </header>
