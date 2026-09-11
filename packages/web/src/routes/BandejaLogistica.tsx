@@ -445,7 +445,7 @@ export default function BandejaLogistica() {
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
-        : <BandejaOperativa key={`${layout}|${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
+        : <BandejaOperativa key={layout} resetKey={`${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
 
   return (
     <div>

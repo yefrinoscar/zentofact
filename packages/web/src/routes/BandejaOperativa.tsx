@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
@@ -11,12 +11,17 @@ import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
   limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
-  LOGISTICS_URGENCIES, visibleLogisticsChannels,
+  LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
 import {
   ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
   type BandejaView, type LogisticsOrder,
 } from './bandeja-prototype/shared';
+
+const STAGE_TABS = [
+  { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
+  { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
+] as const;
 
 function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
   checked: boolean; mixed?: boolean; disabled: boolean; label: string; onChange: () => void;
@@ -26,12 +31,98 @@ function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
     ref={(node) => { if (node) node.indeterminate = mixed; }} onChange={onChange} />;
 }
 
-export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, layout = '1' }: {
-  view: BandejaView; offset: number; pageSize: number; onPage: (offset: number) => void; error: boolean; busy: boolean; layout?: OperationalLayout;
+function StageTabBar({ view }: { view: BandejaView }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState({ x: 0, width: 0 });
+  const [move, setMove] = useState(false);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+
+    const measure = () => {
+      const active = list.querySelector<HTMLElement>('[aria-pressed="true"]');
+      if (!active) return;
+      setIndicator({ x: active.offsetLeft, width: active.offsetWidth });
+    };
+
+    measure();
+    const frame = requestAnimationFrame(() => setMove(true));
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    for (const child of list.querySelectorAll('[aria-pressed]')) observer.observe(child);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [view.stage]);
+
+  return (
+    <div className="relative border-b">
+      <div
+        ref={listRef}
+        className="grid grid-cols-2 items-stretch gap-1 sm:flex"
+        aria-label="Etapa del pedido"
+      >
+        {STAGE_TABS.map(({ stage, label, mobileLabel, icon: Icon }) => (
+          <button
+            key={stage}
+            type="button"
+            aria-label={label}
+            aria-pressed={view.stage === stage}
+            onClick={() => view.setStage(stage)}
+            className={cn(
+              'flex min-w-0 flex-1 items-center justify-center gap-2 px-2 py-4 text-sm font-semibold outline-offset-4 transition-colors duration-200 sm:flex-none sm:justify-start sm:px-5',
+              view.stage === stage ? 'text-primary' : 'text-muted-foreground hover:bg-muted/50',
+            )}
+          >
+            <Icon className="hidden size-4 lg:block" />
+            <span className="sm:hidden">{mobileLabel}</span>
+            <span className="hidden sm:inline">{label}</span>
+          </button>
+        ))}
+      </div>
+      <span
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute bottom-0 left-0 h-0.5 origin-left bg-primary',
+          move && 'motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.77,0,0.175,1)]',
+        )}
+        style={{
+          width: 1,
+          opacity: indicator.width ? 1 : 0,
+          transform: `translateX(${indicator.x}px) scaleX(${indicator.width})`,
+        }}
+      />
+    </div>
+  );
+}
+
+function stagePanelKey(stage: LogisticsStage, fetching: boolean, orders: LogisticsOrder[]) {
+  const current = orders[0];
+  if (fetching && current != null && current.stage !== stage) return current.stage;
+  return stage;
+}
+
+export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, layout = '1', resetKey }: {
+  view: BandejaView; offset: number; pageSize: number; onPage: (offset: number) => void; error: boolean; busy: boolean; layout?: OperationalLayout; resetKey?: string;
 }) {
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  const [appliedResetKey, setAppliedResetKey] = useState(resetKey);
+  if (resetKey !== undefined && resetKey !== appliedResetKey) {
+    setAppliedResetKey(resetKey);
+    setSelected(new Set());
+    setFocusedId(null);
+    setPreview(null);
+  }
+  const panelStage = stagePanelKey(view.stage, view.fetching, view.orders);
+  const skipEnter = useRef(true);
+  const animatePanel = !skipEnter.current;
+  useEffect(() => {
+    skipEnter.current = false;
+  }, []);
   const isPending = view.stage === 'pending';
   const isReady = view.stage === 'ready';
   const locked = busy || error || view.fetching || view.printing || view.busyOrderId !== null;
@@ -135,15 +226,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
 
       <BandejaDeadlineSummary view={view} error={error} />
 
-      <div className="grid grid-cols-2 items-stretch gap-1 border-b sm:flex" aria-label="Etapa del pedido">
-        {([
-          { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
-          { stage: 'ready', label: 'Listos para imprimir', mobileLabel: 'Imprimir', icon: Printer },
-        ] as const).map(({ stage, label, mobileLabel, icon: Icon }) => <button key={stage} type="button" aria-label={label} aria-pressed={view.stage === stage} onClick={() => view.setStage(stage)}
-          className={cn('flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-4 text-sm font-semibold outline-offset-4 sm:flex-none sm:justify-start sm:px-5', view.stage === stage ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:bg-muted/50')}>
-          <Icon className="hidden size-4 lg:block" /><span className="sm:hidden">{mobileLabel}</span><span className="hidden sm:inline">{label}</span>
-        </button>)}
-      </div>
+      <StageTabBar view={view} />
 
       {view.stage !== 'shipped' && <label className="flex items-center gap-3 sm:hidden">
         <span className="shrink-0 text-sm font-medium">Plazo</span>
@@ -216,7 +299,16 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       </div>
 
       <div className={cn('mt-4', (layout === '4' || layout === '5') && 'grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]')}>
-      {layout === '4' && focused && !error && !view.loading ? <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)] xl:col-span-2">
+      <div
+        key={panelStage}
+        className={cn(
+          'min-w-0',
+          layout === '4' && 'xl:col-span-2',
+          animatePanel && 'motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.23,1,0.32,1)]',
+          animatePanel && (panelStage === 'ready' ? 'motion-safe:slide-in-from-right-2' : 'motion-safe:slide-in-from-left-2'),
+        )}
+      >
+      {layout === '4' && focused && !error && !view.loading ? <div className="grid min-w-0 items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
         <div className="flex gap-2 overflow-x-auto border-b pb-3 lg:block lg:max-h-[65vh] lg:overflow-y-auto lg:border-r lg:border-b-0 lg:pr-3">
           <p className="mb-3 hidden text-xs font-semibold text-muted-foreground lg:block">{isPending ? 'COLA DE PREPARACIÓN' : 'PEDIDOS'} · {view.orders.length}</p>
           {groups.flatMap((group) => group.orders).map((order) => <button type="button" key={order.id} onClick={() => setFocusedId(order.id)} aria-pressed={focused.id === order.id} className={cn('mb-1 flex w-48 shrink-0 items-center gap-3 rounded-md p-3 text-left lg:w-full', focused.id === order.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted')}>
@@ -232,7 +324,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
           : !view.orders.length ? <div className="py-16 text-center"><PackageCheck className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="text-sm">{view.searchInput || view.urgency || view.deadlineDate || view.channelCode !== 'all' ? 'No hay pedidos con estos filtros.' : view.emptyCopy}</p>{isPending && view.counts.ready > 0 && <Button className="mt-4" onClick={() => view.setStage('ready')}><Printer />Ir a imprimir {view.counts.ready}</Button>}</div>
-            : <div aria-busy={view.fetching} className={cn('min-w-0', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
+            : <div aria-busy={view.fetching} className={cn('min-w-0 transition-opacity duration-200', isColumns && 'grid items-start gap-4 xl:grid-cols-3', view.fetching && 'opacity-60')}>
               {displayGroups.map((group) => {
                 const meta = LOGISTICS_URGENCIES.find((entry) => entry.value === group.urgency);
                 return <section key={group.key} aria-label={group.label} className={cn("mb-4 min-w-0", layout === '8' && "ml-2 border-l-2 border-l-primary/20 pl-4")}>
@@ -243,6 +335,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
                 </section>;
               })}
             </div>}
+      </div>
       {layout === '5' && view.stage !== 'shipped' && <aside className="order-first border-b pb-4 xl:order-last xl:sticky xl:top-0 xl:border-b-0 xl:border-l xl:pb-0 xl:pl-5">
         <p className="text-xs font-semibold tracking-wide text-muted-foreground">LOTE DE {isPending ? 'PREPARACIÓN' : 'IMPRESIÓN'}</p>
         <p className="mt-3 text-3xl font-semibold tabular-nums">{selectedOrders.length} <span className="text-sm font-normal text-muted-foreground">seleccionados</span></p>
