@@ -1698,6 +1698,19 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   const sortedByAvailable = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
   assert.match(sortedByAvailable, /order by \(i\.quantity_on_hand - i\.quantity_reserved - coalesce\(i\.quantity_pending_return, 0\)\) asc nulls last, p\.id desc/);
 
+  statements.length = 0;
+  await listProducts({ sortBy: 'price', sortDir: 'desc' }, db);
+  const sortedByPrice = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(sortedByPrice, /order by coalesce\(p\.reference_price, listing_stats\.seller_price_min\) desc nulls last, p\.id desc/);
+  assert.match(sortedByPrice, /cross join lateral/);
+
+  statements.length = 0;
+  await listProducts({ sortBy: 'salesPace', sortDir: 'desc' }, db);
+  const sortedByPace = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(sortedByPace, /order by coalesce\(sales7\.sold, 0\) desc nulls last, p\.id desc/);
+  assert.match(sortedByPace, /left join sales7 on sales7\.product_id=p\.id/);
+  assert.doesNotMatch(sortedByPace, /left join sales7 on sales7\.product_id=page\.id/);
+
   await assert.rejects(() => listProducts({ inventoryStatus: 'unknown' }, db), /inventoryStatus inválido/);
   await assert.rejects(() => listProducts({ publicationStatus: 'unknown' }, db), /publicationStatus inválido/);
   await assert.rejects(() => listProducts({ sortBy: 'unknown' }, db), /sortBy inválido/);

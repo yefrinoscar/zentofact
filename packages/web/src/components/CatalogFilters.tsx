@@ -26,6 +26,10 @@ export type CatalogSort =
   | 'name_desc'
   | 'inventory_asc'
   | 'inventory_desc'
+  | 'price_asc'
+  | 'price_desc'
+  | 'pace_asc'
+  | 'pace_desc'
   | 'sellers_asc'
   | 'sellers_desc';
 
@@ -35,6 +39,10 @@ export const CATALOG_SORT_REQUESTS: Record<CatalogSort, { sortBy: string; sortDi
   name_desc: { sortBy: 'name', sortDir: 'desc' },
   inventory_asc: { sortBy: 'available', sortDir: 'asc' },
   inventory_desc: { sortBy: 'available', sortDir: 'desc' },
+  price_asc: { sortBy: 'price', sortDir: 'asc' },
+  price_desc: { sortBy: 'price', sortDir: 'desc' },
+  pace_asc: { sortBy: 'salesPace', sortDir: 'asc' },
+  pace_desc: { sortBy: 'salesPace', sortDir: 'desc' },
   sellers_asc: { sortBy: 'sellers', sortDir: 'asc' },
   sellers_desc: { sortBy: 'sellers', sortDir: 'desc' },
 };
@@ -72,8 +80,12 @@ const SORT_OPTIONS: Array<{ value: CatalogSort; label: string }> = [
   { value: 'updated_desc', label: 'Actualización reciente' },
   { value: 'name_asc', label: 'Nombre: A–Z' },
   { value: 'name_desc', label: 'Nombre: Z–A' },
-  { value: 'inventory_asc', label: 'Stock interno: menor primero' },
-  { value: 'inventory_desc', label: 'Stock interno: mayor primero' },
+  { value: 'price_desc', label: 'Precio: mayor primero' },
+  { value: 'price_asc', label: 'Precio: menor primero' },
+  { value: 'inventory_desc', label: 'Stock: más unidades primero' },
+  { value: 'inventory_asc', label: 'Stock: menos unidades primero' },
+  { value: 'pace_desc', label: 'Ritmo: más venta primero' },
+  { value: 'pace_asc', label: 'Ritmo: menos venta primero' },
   { value: 'sellers_desc', label: 'Más sellers primero' },
   { value: 'sellers_asc', label: 'Menos sellers primero' },
 ];

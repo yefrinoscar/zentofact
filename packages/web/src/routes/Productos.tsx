@@ -7,8 +7,10 @@ import {
   BadgeDollarSign,
   BarChart3,
   Boxes,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleDollarSign,
   Check,
   CheckCircle2,
@@ -44,6 +46,12 @@ import {
 } from '../lib/publication-preview';
 import { marketplaceProductUrl } from '../lib/marketplace-url';
 import { catalogSalesPace, catalogStockHint, type CatalogSalesPaceTone } from '../lib/catalog-product-pace';
+import {
+  catalogColumnSortAria,
+  catalogColumnSortState,
+  nextCatalogColumnSort,
+  type CatalogSortColumn,
+} from '../lib/catalog-sort';
 import {
   eventFromStackedOverlay,
   inventoryAdjustFormFromOnHand,
@@ -367,6 +375,60 @@ function CatalogStockCell({ product, compact = false }: { product: Product; comp
   );
 }
 
+function CatalogSortGlyph({ active, dir, always }: { active: boolean; dir: 'asc' | 'desc'; always?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'relative inline-flex h-3.5 w-3.5 flex-col items-center justify-center transition-opacity',
+        active || always ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+      )}
+      aria-hidden="true"
+    >
+      <ChevronUp className={cn('-mb-1 size-3', active && dir === 'asc' ? 'text-foreground' : 'text-muted-foreground/40')} />
+      <ChevronDown className={cn('-mt-1 size-3', active && dir === 'desc' ? 'text-foreground' : 'text-muted-foreground/40')} />
+    </span>
+  );
+}
+
+function CatalogSortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+  compact = false,
+}: {
+  label: string;
+  column: CatalogSortColumn;
+  sort: CatalogSort;
+  onSort: (column: CatalogSortColumn) => void;
+  compact?: boolean;
+}) {
+  const state = catalogColumnSortState(sort);
+  const active = state?.column === column;
+  const dir = active ? state.dir : 'desc';
+  return (
+    <button
+      type="button"
+      className={cn(
+        'group inline-flex items-center gap-1 rounded-sm font-medium transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        compact ? 'h-8 rounded-md px-2 text-xs hover:bg-muted' : '-ml-1 px-1 text-sm',
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+      )}
+      aria-label={catalogColumnSortAria(column, sort)}
+      aria-pressed={active}
+      title={catalogColumnSortAria(column, sort)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSort(column);
+      }}
+    >
+      {label}
+      <CatalogSortGlyph active={active} dir={dir} always={compact} />
+    </button>
+  );
+}
+
 function CatalogPaceCell({ product, compact = false }: { product: Product; compact?: boolean }) {
   const pace = catalogSalesPace(product);
   return (
@@ -515,7 +577,7 @@ export default function Productos() {
   const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
   const [companyIds, setCompanyIds] = useState<number[]>([]);
   const [profitOwner, setProfitOwner] = useState('all');
-  const [sort] = useState<CatalogSort>('updated_desc');
+  const [sort, setSort] = useState<CatalogSort>('updated_desc');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -565,6 +627,11 @@ export default function Productos() {
     setOffset(0);
   };
 
+  const applyColumnSort = useCallback((column: CatalogSortColumn) => {
+    setSort((current) => nextCatalogColumnSort(current, column));
+    resetListView();
+  }, []);
+
   const applyAssociationSearch = (value: string, immediate = false) => {
     setAssociationSearch(value);
     window.clearTimeout(associationSearchTimer.current);
@@ -598,7 +665,6 @@ export default function Productos() {
     sellerCoverage,
     companyIds,
     profitOwner,
-    sort,
   });
   const listRequest = useMemo(() => ({
     search: submittedSearch,
@@ -1267,6 +1333,8 @@ export default function Productos() {
         fetching={productsQuery.isFetching}
         pageIndex={Math.floor(offset / PAGE_SIZE)}
         pageSize={PAGE_SIZE}
+        sort={sort}
+        onSort={applyColumnSort}
         onPageChange={handleCatalogPageChange}
         onPrefetch={handleCatalogPrefetch}
         onOpenProduct={openProduct}
@@ -1625,6 +1693,8 @@ const CatalogTable = memo(function CatalogTable({
   fetching,
   pageIndex,
   pageSize,
+  sort,
+  onSort,
   onPageChange,
   onPrefetch,
   onOpenProduct,
@@ -1638,6 +1708,8 @@ const CatalogTable = memo(function CatalogTable({
   fetching: boolean;
   pageIndex: number;
   pageSize: number;
+  sort: CatalogSort;
+  onSort: (column: CatalogSortColumn) => void;
   onPageChange: (nextPage: number) => void;
   onPrefetch: (nextPage: number) => void;
   onOpenProduct: (productId: number) => void;
@@ -1672,17 +1744,17 @@ const CatalogTable = memo(function CatalogTable({
     },
     {
       id: 'price',
-      header: 'Precio',
+      header: () => <CatalogSortHeader label="Precio" column="price" sort={sort} onSort={onSort} />,
       cell: ({ row }) => <CatalogPriceCell product={row.original} />,
     },
     {
       id: 'stock',
-      header: 'Stock',
+      header: () => <CatalogSortHeader label="Stock" column="stock" sort={sort} onSort={onSort} />,
       cell: ({ row }) => <CatalogStockCell product={row.original} />,
     },
     {
       id: 'pace',
-      header: 'Ritmo',
+      header: () => <CatalogSortHeader label="Ritmo" column="pace" sort={sort} onSort={onSort} />,
       cell: ({ row }) => <CatalogPaceCell product={row.original} />,
     },
     {
@@ -1690,7 +1762,7 @@ const CatalogTable = memo(function CatalogTable({
       header: 'Estado del producto',
       cell: ({ row }) => <ProductStatusBadge product={row.original} />,
     },
-  ], [onOpenImage, onOpenProduct, toggleExpand]);
+  ], [onOpenImage, onOpenProduct, onSort, sort, toggleExpand]);
 
   const table = useReactTable({
     data: products,
@@ -1711,8 +1783,15 @@ const CatalogTable = memo(function CatalogTable({
     },
   });
 
+  const sortState = catalogColumnSortState(sort);
+
   return (
     <TablePanel aria-label="Catálogo de productos">
+      <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-2 sm:hidden">
+        <CatalogSortHeader label="Precio" column="price" sort={sort} onSort={onSort} compact />
+        <CatalogSortHeader label="Stock" column="stock" sort={sort} onSort={onSort} compact />
+        <CatalogSortHeader label="Ritmo" column="pace" sort={sort} onSort={onSort} compact />
+      </div>
       {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
         <div className="min-w-0" aria-busy={fetching}>
           <Table className="table-fixed">
@@ -1725,10 +1804,18 @@ const CatalogTable = memo(function CatalogTable({
             </colgroup>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
-                {headerGroup.headers.map((header) => <TableHead
-                  key={header.id}
-                  className={cn('min-w-0', CATALOG_COLUMN_CLASS_NAMES[header.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES])}
-                >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
+                {headerGroup.headers.map((header) => {
+                  const columnId = header.column.id;
+                  const sortable = columnId === 'price' || columnId === 'stock' || columnId === 'pace';
+                  const ariaSort = sortable && sortState?.column === columnId
+                    ? (sortState.dir === 'asc' ? 'ascending' : 'descending')
+                    : sortable ? 'none' : undefined;
+                  return <TableHead
+                    key={header.id}
+                    aria-sort={ariaSort}
+                    className={cn('min-w-0', CATALOG_COLUMN_CLASS_NAMES[header.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES])}
+                  >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>;
+                })}
               </TableRow>)}
             </TableHeader>
             <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
