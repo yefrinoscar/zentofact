@@ -22,6 +22,16 @@ const CATALOG_SORTS = {
   updatedAt: { catalog: 'p.updated_at', page: 'page.updated_at' },
   name: { catalog: 'lower(p.name)', page: 'lower(page.name)' },
   available: { catalog: '(i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))', page: 'page.available' },
+  price: {
+    catalog: 'coalesce(p.reference_price, listing_stats.seller_price_min)',
+    page: 'coalesce(page.reference_price, listing_stats.seller_price_min)',
+    requiresListingStats: true,
+  },
+  salesPace: {
+    catalog: 'coalesce(sales7.sold, 0)',
+    page: 'coalesce(sales7.sold, 0)',
+    requiresSales: true,
+  },
   sellerStock: {
     catalog: 'listing_stats.seller_stock_total',
     page: 'listing_stats.seller_stock_total',
@@ -151,6 +161,7 @@ function catalogOrder(filters = {}) {
   const selected = CATALOG_SORTS[sortBy];
   return {
     requiresListingStats: selected.requiresListingStats === true,
+    requiresSales: selected.requiresSales === true,
     catalog: `${selected.catalog} ${requestedDirection} nulls last, p.id desc`,
     page: `${selected.page} ${requestedDirection} nulls last, page.id desc`,
   };
@@ -482,7 +493,7 @@ export async function listProducts(filters = {}, db) {
   const order = catalogOrder(filters);
   const salesCte = catalogSalesPaceCte();
   const salesColumns = 'coalesce(sales7.sold, 0) as units_sold_7d, sales7.last_sold_at';
-  const catalogSql = order.requiresListingStats
+  const catalogSql = (order.requiresListingStats || order.requiresSales)
     ? `with ${salesCte}
        select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
          ${inventoryAvailableSql()} as available,
