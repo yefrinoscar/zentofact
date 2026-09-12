@@ -447,6 +447,7 @@ export default function BandejaLogistica() {
     notice,
     canDispatch,
     canSync,
+    syncing: syncMutation.isPending,
     refreshing: syncMutation.isPending || inboxQuery.isFetching,
     refresh,
     printing: printMutation.isPending,

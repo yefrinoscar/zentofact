@@ -3,6 +3,7 @@ import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
 import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
+import { ripleyShipmentStatuses } from './ripley-orders.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
@@ -238,6 +239,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
           && createdAt <= new Date(window.to);
       })
       : page.orders;
+    const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
     for (const listed of orders) {
       try {
         await db.query('begin');
@@ -252,6 +254,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             displayName: account.displayName,
           },
           normalized,
+          shipmentStatus: shipmentStatuses.get(normalized.orderId) || null,
           remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
           eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}`,
