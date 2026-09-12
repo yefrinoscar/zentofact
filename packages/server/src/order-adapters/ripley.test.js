@@ -46,7 +46,7 @@ test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
 });
 
 test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
@@ -65,7 +65,7 @@ test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
   });
 });
 
-test('baja de listos un Ripley SHIPPING persistido sin evidencia SVC', async () => {
+test('reconcilia SHIPPING usando Mirakl incluso con metadata SVC antigua', async () => {
   const updates = [];
   const db = {
     async query(sql, params = []) {
@@ -88,11 +88,11 @@ test('baja de listos un Ripley SHIPPING persistido sin evidencia SVC', async () 
     },
   };
   const result = await remapPersistedRipleyReadyOrders(db);
-  assert.equal(result.updated, 1);
+  assert.equal(result.updated, 2);
   assert.deepEqual(updates, [{
     sql: updates[0]?.sql,
     params: [11, 'pending'],
-  }]);
+  }, { sql: updates[1]?.sql, params: [12, 'pending'] }]);
   assert.match(updates[0].sql, /fulfillment_status = \$2/);
 });
 

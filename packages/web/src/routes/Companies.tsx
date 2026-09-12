@@ -51,6 +51,7 @@ type CompanyForm = {
   ripleyShopId: string;
   ripleySvcUsername: string;
   ripleySvcPassword: string;
+  ripleySvcBaseUrl: string;
 };
 
 type CompanyRow = {
@@ -111,6 +112,7 @@ const initialForm: CompanyForm = {
   ripleyShopId: '',
   ripleySvcUsername: '',
   ripleySvcPassword: '',
+  ripleySvcBaseUrl: '',
 };
 
 function hasFalabellaApi(c: CompanyRow) {
@@ -427,6 +429,7 @@ export default function Companies() {
         falabellaApiUserId: nextForm.falabellaApiUserId,
         ripleyShopId: nextForm.ripleyShopId,
         ripleySvcUsername: nextForm.ripleySvcUsername,
+        ripleySvcBaseUrl: nextForm.ripleySvcBaseUrl,
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
@@ -598,6 +601,7 @@ export default function Companies() {
       ripleyApiKey: '',
       ripleyShopId: company.ripleyShopId || '',
       ripleySvcUsername: company.ripleySvcUsername || '',
+      ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
       ripleySvcPassword: '',
     });
     setLoadingBilling(true);
@@ -805,12 +809,13 @@ export default function Companies() {
                 </div>
                 <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {field('URL de API SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
                   {field('Usuario SVC', 'ripleySvcUsername', 'text', 'svc_limbo')}
                   {field(
                     'Contraseña SVC',
                     'ripleySvcPassword',
                     'password',
-                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : 'La del mismo correo',
+                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : 'Contraseña de Seller Center',
                     {
                       revealable: true,
                       revealed: showRipleySvcPassword,
@@ -819,7 +824,7 @@ export default function Companies() {
                   )}
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Usuario y clave de Seller Center. Nada más.
+                  Usa la URL y credenciales API de SVC.
                 </p>
                 {channelSyncErrors.ripley && (
                   <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">

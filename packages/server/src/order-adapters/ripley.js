@@ -2,7 +2,6 @@ import { marketplaceItemImageUrl } from '../catalog/item-image.js';
 import { enqueueStockJob } from '../catalog/stock-jobs.js';
 import { shouldListenStockOrder } from '../catalog/stock-commitment.js';
 import { ensureOrderChannelAccount, ingestOrder } from '../order-management.js';
-import { mapRipleySvcFulfillmentStatus } from '../ripley-logistics.js';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -24,15 +23,6 @@ function isoDate(value) {
 function normalizedState(value) {
   return text(value).toUpperCase().replace(/[ -]+/g, '_');
 }
-
-const TERMINAL_FULFILLMENT = new Set(['cancelled', 'returned', 'shipped', 'delivered', 'failed']);
-const FULFILLMENT_RANK = {
-  pending: 1,
-  preparing: 2,
-  ready_to_ship: 3,
-  shipped: 4,
-  delivered: 5,
-};
 
 export function mapRipleyCanonicalStatus(value) {
   const status = normalizedState(value);
@@ -58,28 +48,7 @@ export function mapRipleyCanonicalStatus(value) {
   return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
 }
 
-export function resolveRipleyIngestStatuses(providerStatus, existing = null) {
-  const mapped = mapRipleyCanonicalStatus(providerStatus);
-  if (TERMINAL_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
-
-  const metadata = existing?.metadata || {};
-  const svcStatus = metadata.ripleySvc?.statusManagement || metadata.ripley_svc?.statusManagement;
-  const fromSvc = mapRipleySvcFulfillmentStatus(svcStatus);
-  if (fromSvc && (FULFILLMENT_RANK[fromSvc] || 0) > (FULFILLMENT_RANK[mapped.fulfillmentStatus] || 0)) {
-    return { ...mapped, fulfillmentStatus: fromSvc };
-  }
-  return mapped;
-}
-
-async function existingRipleyOrder(db, accountId, externalOrderId) {
-  if (!db?.query || !accountId || !externalOrderId) return null;
-  const result = await db.query(
-    `select fulfillment_status, metadata from orders
-     where channel_account_id=$1 and external_order_id=$2`,
-    [accountId, externalOrderId],
-  );
-  return result.rows[0] || null;
-}
+export const resolveRipleyIngestStatuses = mapRipleyCanonicalStatus;
 
 function customerFrom(raw) {
   const customer = raw?.customer || {};
@@ -209,8 +178,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.displayName,
     input.shopId,
   );
-  const existing = await existingRipleyOrder(db, account.id, normalized?.orderId);
-  const statuses = resolveRipleyIngestStatuses(normalized?.status, existing);
+  const statuses = mapRipleyCanonicalStatus(normalized?.status);
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,
@@ -267,7 +235,7 @@ export async function closeStaleRipleyShippedFulfillment(db) {
   );
   let updated = 0;
   for (const row of found.rows || []) {
-    const next = resolveRipleyIngestStatuses(row.provider_status, row);
+    const next = mapRipleyCanonicalStatus(row.provider_status);
     if (!CLOSED_RIPLEY_FULFILLMENT.has(next.fulfillmentStatus)) continue;
     const result = await db.query(
       `update orders
@@ -298,7 +266,7 @@ export async function remapPersistedRipleyReadyOrders(db, accountId = null) {
   );
   let updated = 0;
   for (const row of found.rows || []) {
-    const next = resolveRipleyIngestStatuses(row.provider_status, row);
+    const next = mapRipleyCanonicalStatus(row.provider_status);
     if (!RIPLEY_READY_DEMOTE.has(next.fulfillmentStatus)) continue;
     const result = await db.query(
       `update orders

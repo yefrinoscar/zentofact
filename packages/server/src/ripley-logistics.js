@@ -24,9 +24,12 @@ function companyField(company, camel, snake) {
 }
 
 function svcClientFor(company, fetchImpl) {
+  if (process.env.RIPLEY_SVC_ENABLED !== 'true') {
+    throw new Error('Seller Center Ripley está pausado. Los pedidos se consultan mediante Mirakl.');
+  }
   const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
-  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '').trim();
-  if (!username || !password) {
+  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '');
+  if (!username || !password.trim()) {
     throw new Error('La empresa no tiene configuradas las credenciales productivas de Seller Center Ripley.');
   }
   return new RipleySvcClient({
@@ -57,8 +60,8 @@ export function mapRipleySvcFulfillmentStatus(value) {
 
 export function hasRipleySvcCredentials(company) {
   const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
-  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '').trim();
-  return Boolean(username && password);
+  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '');
+  return Boolean(username && password.trim());
 }
 
 export function ripleyOrderIdentityKeys(...values) {
