@@ -33,6 +33,23 @@ export function ripleySyncWindow(options = {}, lastSuccessfulSyncAt = null) {
   return { startUpdateDate: since.toISOString() };
 }
 
+export async function ripleyShipmentStatuses(client, orderIds) {
+  const statuses = new Map();
+  if (typeof client?.listAllShipments !== 'function') return statuses;
+  const ids = [...new Set(orderIds.map((value) => String(value || '').trim()).filter(Boolean))];
+  for (let start = 0; start < ids.length; start += 100) {
+    const shipments = await client.listAllShipments({ orderIds: ids.slice(start, start + 100) });
+    for (const shipment of shipments) {
+      const current = statuses.get(shipment.orderId);
+      const updatedAt = shipment.updatedAt || shipment.createdAt || '';
+      if (!current || updatedAt >= current.updatedAt) {
+        statuses.set(shipment.orderId, { status: shipment.status, updatedAt });
+      }
+    }
+  }
+  return new Map([...statuses].map(([orderId, value]) => [orderId, value.status]));
+}
+
 export async function syncRipleyOrders(companyIdInput, options = {}, dependencies = {}) {
   const companyId = Number(companyIdInput);
   if (!Number.isInteger(companyId) || companyId <= 0) throw new Error('Empresa inválida.');
@@ -63,6 +80,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
       company.ripleyShopId,
     );
     const orders = await client.listAllOrders(ripleySyncWindow(options, claimed.rows[0].last_successful_sync_at));
+    const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
     const results = [];
     for (const listed of orders) {
       const normalized = await withRipleyOrderLines(client, listed);
@@ -71,6 +89,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         normalized,
         account,
         shopId: company.ripleyShopId,
+        shipmentStatus: shipmentStatuses.get(normalized.orderId) || null,
         source: 'sync',
       }, db));
     }

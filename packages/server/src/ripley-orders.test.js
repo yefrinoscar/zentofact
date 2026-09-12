@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   ingestRipleyOrder,
   mapRipleyCanonicalStatus,
+  mapRipleyShipmentFulfillmentStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
   resolveRipleyIngestStatuses,
@@ -10,7 +11,7 @@ import {
   withRipleyOrderLines,
 } from './order-adapters/ripley.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
-import { ripleySyncWindow, syncAllRipleyOrders, syncRipleyOrders } from './ripley-orders.js';
+import { ripleyShipmentStatuses, ripleySyncWindow, syncAllRipleyOrders, syncRipleyOrders } from './ripley-orders.js';
 
 test('el polling incremental usa el cursor de la última sincronización', () => {
   assert.deepEqual(
@@ -25,27 +26,61 @@ test('el polling incremental usa el cursor de la última sincronización', () =>
 
 test('mapea el ciclo de estados Mirakl al modelo canónico', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_ACCEPTANCE'), { orderStatus: 'new', fulfillmentStatus: 'pending' });
-  assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT'), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(mapRipleyCanonicalStatus('SHIPPED'), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
   assert.deepEqual(mapRipleyCanonicalStatus('RECEIVED'), { orderStatus: 'completed', fulfillmentStatus: 'delivered' });
   assert.deepEqual(mapRipleyCanonicalStatus('CANCELED'), { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' });
 });
 
-test('el estado Mirakl prevalece sobre metadata SVC antigua', () => {
+test('ST11 separa un shipment en preparación de uno listo para recojo', () => {
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPPING'), 'preparing');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPMENT_PREPARED'), 'preparing');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('READY_FOR_PICK_UP'), 'ready_to_ship');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPPED'), 'shipped');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('TO_COLLECT'), 'shipped');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('RECEIVED'), 'delivered');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('CANCELED'), 'cancelled');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('CLOSED'), 'delivered');
+});
+
+test('obtiene de ST11 el estado más reciente de cada orden', async () => {
+  const statuses = await ripleyShipmentStatuses({
+    async listAllShipments({ orderIds }) {
+      assert.deepEqual(orderIds, ['R-1', 'R-2']);
+      return [
+        { orderId: 'R-1', status: 'SHIPPING', updatedAt: '2026-09-12T10:00:00Z' },
+        { orderId: 'R-1', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
+        { orderId: 'R-2', status: 'SHIPPED', updatedAt: '2026-09-12T12:00:00Z' },
+      ];
+    },
+  }, ['R-1', 'R-2']);
+  assert.deepEqual(Object.fromEntries(statuses), {
+    'R-1': 'READY_FOR_PICK_UP',
+    'R-2': 'SHIPPED',
+  });
+});
+
+test('ST11 tiene prioridad para el estado operativo de un SHIPPING de OR11', () => {
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+    orderStatus: 'confirmed', fulfillmentStatus: 'preparing',
+  });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', null, 'READY_FOR_PICK_UP'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship',
+  });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', null, 'SHIPPED'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'shipped',
   });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     fulfillment_status: 'ready_to_ship',
     metadata: {},
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPED', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
@@ -141,7 +176,7 @@ test('encola descuento de Ripley desde el corte y no marca vacío como completo'
     },
   });
 
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
   assert.equal(ingestPayload.providerStatus, 'SHIPPING');
   assert.equal(ingestPayload.itemsComplete, true);
   assert.equal(ingestPayload.catalogInventoryEnabled, false);
@@ -165,7 +200,7 @@ test('encola descuento de Ripley desde el corte y no marca vacío como completo'
     },
     enqueue: async () => ({ enqueued: true }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
   assert.equal(ingestPayload.itemsComplete, false);
   assert.equal(empty.order.id, 502);
 });
@@ -195,10 +230,10 @@ test('el ingest usa SHIPPING de Mirakl aunque exista metadata SVC antigua', asyn
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
 });
 
-test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', async () => {
+test('el ingest de SHIPPING corrige un listo persistido sin evidencia de ST11', async () => {
   let ingestPayload = null;
   await ingestRipleyOrder({
     companyId: 2,
@@ -215,7 +250,7 @@ test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', asyn
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {

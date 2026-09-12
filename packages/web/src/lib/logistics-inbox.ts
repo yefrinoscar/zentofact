@@ -2,6 +2,8 @@ export type LogisticsStage = 'pending' | 'ready' | 'shipped';
 export type LogisticsChannel = 'falabella' | 'ripley' | 'manual';
 export type LogisticsUrgency = 'overdue' | 'today' | 'tomorrow' | 'later';
 
+export const DEFAULT_BANDEJA_URGENCY: LogisticsUrgency | null = null;
+
 export type LogisticsOrderLike = {
   channelCode?: string | null;
   fulfillmentStatus?: string | null;

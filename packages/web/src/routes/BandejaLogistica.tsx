@@ -35,6 +35,7 @@ import {
   openPdfPreviewTab,
   PDF_POPUP_BLOCKED_COPY,
   ripleyDefaultPickupDate,
+  DEFAULT_BANDEJA_URGENCY,
   RIPLEY_LABEL_SOON_COPY,
   showPdfInTab,
   type LogisticsChannel,
@@ -135,7 +136,7 @@ export default function BandejaLogistica() {
 
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
-  const [urgency, setUrgency] = useState<LogisticsUrgency | null>('today');
+  const [urgency, setUrgency] = useState<LogisticsUrgency | null>(DEFAULT_BANDEJA_URGENCY);
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
@@ -217,7 +218,7 @@ export default function BandejaLogistica() {
       setUrgency(null);
       setDeadlineDate(null);
     } else if (stage === 'shipped') {
-      setUrgency('today');
+      setUrgency(DEFAULT_BANDEJA_URGENCY);
     }
   };
 

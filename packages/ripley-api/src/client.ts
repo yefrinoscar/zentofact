@@ -1,12 +1,15 @@
 import type {
   ListOffersOptions,
   ListOrdersOptions,
+  ListShipmentsOptions,
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
   RipleyProductContent,
   RipleyOrder,
   RipleyOrderPage,
+  RipleyShipment,
+  RipleyShipmentPage,
   RipleySvcClientOptions,
   RipleySvcLabelOptions,
   RipleySvcLogisticsOrderOptions,
@@ -116,6 +119,38 @@ export class RipleyApiClient {
       orders.push(...page.orders);
       if (offset + MAX_PAGE_SIZE >= page.totalCount || page.orders.length < MAX_PAGE_SIZE) return orders;
     }
+  }
+
+  async listShipments(options: ListShipmentsOptions = {}): Promise<RipleyShipmentPage> {
+    const url = new URL('/api/shipments', this.baseUrl);
+    this.addShopId(url);
+    addRepeated(url, 'order_id', options.orderIds);
+    addRepeated(url, 'shipment_state_code', options.shipmentStateCodes);
+    addText(url, 'last_updated_from', options.lastUpdatedFrom);
+    addText(url, 'last_updated_to', options.lastUpdatedTo);
+    addText(url, 'page_token', options.pageToken);
+    const limit = validPageSize(options.limit);
+    url.searchParams.set('limit', String(limit));
+
+    const body = await this.getJson(url);
+    const page = objectRecord(body);
+    if (!page || !Array.isArray(page.data)) throw new Error('Ripley no devolvió la lista de shipments.');
+    return {
+      shipments: page.data.map(normalizeShipment).filter((shipment): shipment is RipleyShipment => shipment !== null),
+      nextPageToken: nonEmptyText(page.next_page_token ?? page.nextPageToken),
+      previousPageToken: nonEmptyText(page.previous_page_token ?? page.previousPageToken),
+    };
+  }
+
+  async listAllShipments(options: Omit<ListShipmentsOptions, 'pageToken' | 'limit'> = {}): Promise<RipleyShipment[]> {
+    const shipments: RipleyShipment[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listShipments({ ...options, pageToken, limit: MAX_PAGE_SIZE });
+      shipments.push(...page.shipments);
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+    return shipments;
   }
 
   private addShopId(url: URL) {
@@ -366,6 +401,13 @@ function addCsv(url: URL, key: string, values: string[] | undefined) {
   if (normalized?.length) url.searchParams.set(key, normalized.join(','));
 }
 
+function addRepeated(url: URL, key: string, values: string[] | undefined) {
+  for (const value of values || []) {
+    const normalized = String(value).trim();
+    if (normalized) url.searchParams.append(key, normalized);
+  }
+}
+
 function addText(url: URL, key: string, value: string | undefined) {
   if (value?.trim()) url.searchParams.set(key, value.trim());
 }
@@ -464,6 +506,23 @@ function normalizeOrder(value: unknown): RipleyOrder | null {
   };
 }
 
+function normalizeShipment(value: unknown): RipleyShipment | null {
+  const shipment = objectRecord(value);
+  if (!shipment) return null;
+  const id = nonEmptyText(shipment.id);
+  const orderId = nonEmptyText(shipment.order_id ?? shipment.orderId);
+  if (!id || !orderId) return null;
+  return {
+    id,
+    orderId,
+    status: nonEmptyText(shipment.status) || 'UNKNOWN',
+    createdAt: isoDate(shipment.created_date ?? shipment.createdAt),
+    updatedAt: isoDate(shipment.last_updated_date ?? shipment.updatedAt),
+    shippedAt: isoDate(shipment.shipped_date ?? shipment.shippedAt),
+    raw: value,
+  };
+}
+
 function isoDate(value: unknown): string | null {
   const text = nonEmptyText(value);
   if (!text) return null;
@@ -540,4 +599,3 @@ function extractAccessToken(value: unknown): string | null {
     ?? nested?.token,
   );
 }
-
