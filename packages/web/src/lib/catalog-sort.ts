@@ -18,7 +18,9 @@ const SORT_STATE = {
 export type CatalogColumnSort = typeof COLUMN_SORT[CatalogSortColumn]['asc'] | typeof COLUMN_SORT[CatalogSortColumn]['desc'];
 
 export function catalogColumnSortState(sort: string): { column: CatalogSortColumn; dir: 'asc' | 'desc' } | null {
-  return Object.hasOwn(SORT_STATE, sort) ? SORT_STATE[sort as CatalogColumnSort] : null;
+  return Object.prototype.hasOwnProperty.call(SORT_STATE, sort)
+    ? SORT_STATE[sort as CatalogColumnSort]
+    : null;
 }
 
 export function nextCatalogColumnSort(sort: string, column: CatalogSortColumn): CatalogColumnSort {
