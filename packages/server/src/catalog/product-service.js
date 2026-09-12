@@ -17,6 +17,7 @@ const SELLER_COVERAGES = ['all', 'none', 'single', 'multiple'];
 const INVENTORY_STATUSES = ['all', 'inStock', 'lowStock', 'outOfStock'];
 const PUBLICATION_STATUSES = ['all', 'published', 'unpublished'];
 const SPECIAL_FILTERS = ['none', 'outOfStock', 'unpublished', 'lowStock'];
+export const CATALOG_SALES_PACE_DAYS = 7;
 const CATALOG_SORTS = {
   updatedAt: { catalog: 'p.updated_at', page: 'page.updated_at' },
   name: { catalog: 'lower(p.name)', page: 'lower(page.name)' },
@@ -348,16 +349,13 @@ function mapCatalogSummary(row = {}) {
   };
 }
 
-function catalogSales30Cte() {
-  return `sales30 as (
-    select mapped.product_id,
-      sum(mapped.quantity)::numeric as sold,
-      sum(mapped.line_total)::numeric as revenue
-    from (
-      select
+function catalogMappedSalesSql(days) {
+  const windowDays = Number(days);
+  return `select
         coalesce(oi.product_id, linked.product_id, listing.product_id) as product_id,
         oi.quantity,
-        coalesce(oi.total, oi.unit_price * oi.quantity, 0) as line_total
+        coalesce(oi.total, oi.unit_price * oi.quantity, 0) as line_total,
+        o.ordered_at
       from order_items oi
       join orders o on o.id=oi.order_id
       left join falabella_orders fo
@@ -386,11 +384,28 @@ function catalogSales30Cte() {
         and coalesce(o.fulfillment_status, '') <> 'returned'
         and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
         and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'
-        and o.ordered_at >= now() - interval '30 days'
+        and o.ordered_at >= now() - interval '${windowDays} days'`;
+}
+
+function catalogSalesWindowCte(alias, days, { includeRevenue = false } = {}) {
+  return `${alias} as (
+    select mapped.product_id,
+      sum(mapped.quantity)::numeric as sold${includeRevenue ? ',\n      sum(mapped.line_total)::numeric as revenue' : ''},
+      max(mapped.ordered_at) as last_sold_at
+    from (
+      ${catalogMappedSalesSql(days)}
     ) mapped
     where mapped.product_id is not null
     group by mapped.product_id
   )`;
+}
+
+function catalogSales30Cte() {
+  return catalogSalesWindowCte('sales30', 30, { includeRevenue: true });
+}
+
+function catalogSalesPaceCte() {
+  return catalogSalesWindowCte('sales7', CATALOG_SALES_PACE_DAYS);
 }
 
 export async function getCatalogSummary(filters = {}, db) {
@@ -465,8 +480,11 @@ export async function listProducts(filters = {}, db) {
   const clause = where.length ? `where ${where.join(' and ')}` : '';
   const pageValues = [...values, limit, offset];
   const order = catalogOrder(filters);
+  const salesCte = catalogSalesPaceCte();
+  const salesColumns = 'coalesce(sales7.sold, 0) as units_sold_7d, sales7.last_sold_at';
   const catalogSql = order.requiresListingStats
-    ? `select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+    ? `with ${salesCte}
+       select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
          ${inventoryAvailableSql()} as available,
          count(*) over() as total_count,
          listing_stats.listings_count,
@@ -474,20 +492,24 @@ export async function listProducts(filters = {}, db) {
          listing_stats.channels,
          listing_stats.seller_price_min,
          listing_stats.seller_price_max,
-         listing_stats.seller_stock_total
+         listing_stats.seller_stock_total,
+         ${salesColumns}
        from products p
        join product_inventory i on i.product_id=p.id
        cross join lateral (${listingStatsSql('p.id')}) listing_stats
+       left join sales7 on sales7.product_id=p.id
        ${clause}
        order by ${order.catalog}
        limit $${pageValues.length - 1} offset $${pageValues.length}`
-    : `select page.*,
+    : `with ${salesCte}
+       select page.*,
          listing_stats.listings_count,
          listing_stats.sellers_count,
          listing_stats.channels,
          listing_stats.seller_price_min,
          listing_stats.seller_price_max,
-         listing_stats.seller_stock_total
+         listing_stats.seller_stock_total,
+         ${salesColumns}
        from (
          select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
            ${inventoryAvailableSql()} as available,
@@ -499,6 +521,7 @@ export async function listProducts(filters = {}, db) {
          limit $${pageValues.length - 1} offset $${pageValues.length}
        ) page
        cross join lateral (${listingStatsSql('page.id')}) listing_stats
+       left join sales7 on sales7.product_id=page.id
        order by ${order.page}`;
   const [result, summary] = await Promise.all([
     target.query(catalogSql, pageValues),
@@ -545,14 +568,17 @@ export async function getProduct(id, db) {
   const productId = positiveInt(id, 'productId');
   const [productResult, listingsResult] = await Promise.all([
     target.query(
-      `select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+      `with ${catalogSalesPaceCte()}
+       select p.*, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
          ${inventoryAvailableSql()} as available,
          listing_stats.listings_count,
          listing_stats.sellers_count,
          listing_stats.channels,
          listing_stats.seller_price_min,
          listing_stats.seller_price_max,
-         listing_stats.seller_stock_total
+         listing_stats.seller_stock_total,
+         coalesce(sales7.sold, 0) as units_sold_7d,
+         sales7.last_sold_at
        from products p
        join product_inventory i on i.product_id=p.id
        cross join lateral (
@@ -568,6 +594,7 @@ export async function getProduct(id, db) {
          from product_listings l
          where l.product_id=p.id
        ) listing_stats
+       left join sales7 on sales7.product_id=p.id
        where p.id=$1`,
       [productId],
     ),

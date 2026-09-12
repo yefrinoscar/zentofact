@@ -43,6 +43,7 @@ import {
   simulatePublicationPreview,
 } from '../lib/publication-preview';
 import { marketplaceProductUrl } from '../lib/marketplace-url';
+import { catalogSalesPace, catalogStockHint, type CatalogSalesPaceTone } from '../lib/catalog-product-pace';
 import {
   eventFromStackedOverlay,
   inventoryAdjustFormFromOnHand,
@@ -128,6 +129,8 @@ type Product = {
   quantityReserved: number;
   quantityPendingReturn?: number;
   available: number;
+  unitsSold7d?: number;
+  lastSoldAt?: string | null;
   reorderPoint?: number | null;
   listingsCount?: number;
   sellersCount?: number;
@@ -241,11 +244,19 @@ const PAGE_SIZE = 20;
 const ASSOCIATION_PAGE_SIZE = 20;
 const SEARCH_DELAY_MS = 300;
 const CATALOG_COLUMN_CLASS_NAMES = {
-  product: 'w-full sm:w-[48%]',
-  price: 'hidden sm:table-cell sm:w-[14%]',
-  stock: 'hidden sm:table-cell sm:w-[18%]',
-  status: 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
+  product: 'w-full sm:w-[38%]',
+  price: 'hidden sm:table-cell sm:w-[12%]',
+  stock: 'hidden sm:table-cell sm:w-[16%]',
+  pace: 'hidden sm:table-cell sm:w-[16%]',
+  status: 'hidden whitespace-normal sm:table-cell sm:w-[18%]',
 } as const;
+const CATALOG_COLUMN_COUNT = 5;
+const PACE_TONE_CLASS: Record<CatalogSalesPaceTone, string> = {
+  muted: 'text-muted-foreground',
+  ok: '',
+  warn: 'text-amber-700 dark:text-amber-400',
+  danger: 'text-rose-700 dark:text-rose-400',
+};
 
 const initialCreate = {
   mainSku: '',
@@ -333,6 +344,43 @@ function CatalogPriceCell({ product, compact = false }: { product: Product; comp
           Por mayor {formatMoney(product.wholesalePrice)}
         </span>
       ) : null}
+    </span>
+  );
+}
+
+function CatalogStockCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const hint = catalogStockHint(product);
+  const empty = Number(product.available) <= 0;
+  return (
+    <span className="block min-w-0">
+      <span className={cn(
+        'tabular-nums',
+        compact ? 'mt-1 block text-xs font-semibold' : 'block text-lg font-semibold leading-none',
+        empty && 'text-rose-700 dark:text-rose-400',
+      )}>
+        {formatNumber(product.available)}{compact ? ' u' : <> <span className="text-xs font-normal text-muted-foreground">u</span></>}
+      </span>
+      <span className={cn('block text-muted-foreground', compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[11px]')}>
+        {hint || (empty ? 'sin stock' : 'disponible')}
+      </span>
+    </span>
+  );
+}
+
+function CatalogPaceCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const pace = catalogSalesPace(product);
+  return (
+    <span className="block min-w-0">
+      <span className={cn(
+        'tabular-nums',
+        compact ? 'mt-1 block text-xs font-semibold' : 'block text-sm font-medium',
+        PACE_TONE_CLASS[pace.tone],
+      )}>
+        {pace.rateLabel}
+      </span>
+      <span className={cn('block text-muted-foreground', compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[11px]', pace.tone === 'danger' && PACE_TONE_CLASS.danger, pace.tone === 'warn' && PACE_TONE_CLASS.warn)}>
+        {pace.coverLabel}
+      </span>
     </span>
   );
 }
@@ -1555,12 +1603,14 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
           <CatalogPriceCell product={product} compact />
         </span>
         <span className="min-w-0">
-          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock maestro</span>
-          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(product.available)} u</span>
-          <span className="mt-0.5 block text-[11px] text-muted-foreground">disponible</span>
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock</span>
+          <CatalogStockCell product={product} compact />
         </span>
-        <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
+        <span className="min-w-0">
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Ritmo</span>
+          <CatalogPaceCell product={product} compact />
+        </span>
+        <span className="flex min-w-0 items-end justify-end">
           <ProductStatusBadge product={product} compact />
         </span>
       </span>
@@ -1627,14 +1677,13 @@ const CatalogTable = memo(function CatalogTable({
     },
     {
       id: 'stock',
-      header: 'Stock maestro',
-      cell: ({ row }) => {
-        const product = row.original;
-        return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(product.available)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
-          <p className="mt-1 text-[11px] text-muted-foreground">disponible</p>
-        </div>;
-      },
+      header: 'Stock',
+      cell: ({ row }) => <CatalogStockCell product={row.original} />,
+    },
+    {
+      id: 'pace',
+      header: 'Ritmo',
+      cell: ({ row }) => <CatalogPaceCell product={row.original} />,
     },
     {
       id: 'status',
@@ -1668,10 +1717,11 @@ const CatalogTable = memo(function CatalogTable({
         <div className="min-w-0" aria-busy={fetching}>
           <Table className="table-fixed">
             <colgroup>
-              <col className="w-full sm:w-[48%]" />
-              <col className="hidden sm:table-column sm:w-[14%]" />
+              <col className="w-full sm:w-[38%]" />
+              <col className="hidden sm:table-column sm:w-[12%]" />
+              <col className="hidden sm:table-column sm:w-[16%]" />
+              <col className="hidden sm:table-column sm:w-[16%]" />
               <col className="hidden sm:table-column sm:w-[18%]" />
-              <col className="hidden sm:table-column sm:w-[20%]" />
             </colgroup>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
@@ -1747,13 +1797,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   const listings = useMemo(() => sourceListings.filter((listing) => listing.status !== 'unlinked'), [sourceListings]);
 
   if (shouldFetch && detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15" onClick={(event) => event.stopPropagation()}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
+    <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
       <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
     </TableCell>
   </TableRow>;
 
   if (shouldFetch && detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60" onClick={(event) => event.stopPropagation()}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
+    <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
   </TableRow>;
 
   return <>
@@ -1802,6 +1852,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         </TableCell>
         <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerPrice listing={listing} /></TableCell>
         <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerStock listing={listing} /></TableCell>
+        <TableCell className="hidden py-2.5 align-middle sm:table-cell" />
         <TableCell className="hidden py-2.5 align-middle sm:table-cell">
           <div className="flex items-center gap-2">
             <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
@@ -1814,10 +1865,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         </TableCell>
       </TableRow>;
     }) : <TableRow className={cn(sellerPublicationRowBorderClass(false), 'bg-muted/15 hover:bg-muted/15')} onClick={(event) => event.stopPropagation()}>
-      <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
+      <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
     </TableRow>}
     <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/30')} onClick={(event) => event.stopPropagation()}>
-      <TableCell colSpan={4} className="h-11 py-0 pl-[6.5rem]">
+      <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-11 py-0 pl-[6.5rem]">
         <button
           type="button"
           onClick={() => onAssociateProduct(product)}
@@ -1880,6 +1931,7 @@ function ProductDrawer({
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
   const publishedListings = associatedListings.filter(isActivelyPublished);
+  const salesPace = product ? catalogSalesPace(product) : null;
   const listingRows = listingFilter === 'visible'
     ? publishedListings
     : listingFilter === 'hidden'
@@ -2063,13 +2115,15 @@ function ProductDrawer({
         </TabsContent>
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
-          <MetricRow columns={product.quantityPendingReturn ? 4 : 3}>
-            <Metric label="Stock" value={`${formatNumber(product.available)} u`} />
+          <MetricRow columns={4}>
+            <Metric label="Stock" value={`${formatNumber(product.available)} u`} hint={catalogStockHint(product) || undefined} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
-            {product.quantityPendingReturn ? (
-              <Metric label="Por aprobar" value={`${formatNumber(product.quantityPendingReturn)} u`} />
-            ) : null}
             <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
+            <Metric
+              label="Ritmo"
+              value={salesPace?.rateLabel || 'Sin venta'}
+              hint={salesPace?.coverLabel}
+            />
           </MetricRow>
           <div className="mt-6 flex items-center justify-between gap-3">
             <div>
@@ -2149,6 +2203,7 @@ function CatalogTableSkeleton() {
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.product}><Skeleton className="h-4 w-20" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.price}><Skeleton className="h-4 w-14" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.stock}><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.pace}><Skeleton className="h-4 w-16" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.status}><Skeleton className="h-4 w-24" /></TableHead>
         </TableRow>
       </TableHeader>
@@ -2161,12 +2216,14 @@ function CatalogTableSkeleton() {
               <div className="col-span-2 grid grid-cols-2 gap-5 border-t border-border/60 pt-3 sm:hidden">
                 <Skeleton className="h-8 w-full" />
                 <Skeleton className="h-8 w-full" />
-                <Skeleton className="col-span-2 h-7 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-7 w-20 rounded-full" />
               </div>
             </div>
           </TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-8 w-24" /></TableCell>
+          <TableCell className="hidden sm:table-cell"><Skeleton className="h-8 w-20" /></TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-7 w-20 rounded-full" /></TableCell>
         </TableRow>)}
       </TableBody>
@@ -2392,6 +2449,9 @@ function ProductProperties({
           </button>
           <OverviewRow icon={<Clock3 />} label="Reservado">
             <span className="text-sm tabular-nums">{formatNumber(product.quantityReserved)} u</span>
+          </OverviewRow>
+          <OverviewRow icon={<BarChart3 />} label="Ritmo">
+            <CatalogPaceCell product={product} />
           </OverviewRow>
           <OverviewRow icon={<Store />} label="Sellers">
             <span className="text-sm tabular-nums">{formatNumber(product.sellersCount ?? new Set(listings.map((listing) => listing.companyId)).size)}</span>

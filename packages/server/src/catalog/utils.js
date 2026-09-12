@@ -68,6 +68,8 @@ export function mapProduct(row) {
     sellerPriceMin: row.seller_price_min == null ? null : Number(row.seller_price_min),
     sellerPriceMax: row.seller_price_max == null ? null : Number(row.seller_price_max),
     sellerStockTotal: row.seller_stock_total == null ? 0 : Number(row.seller_stock_total),
+    unitsSold7d: row.units_sold_7d == null ? 0 : Number(row.units_sold_7d),
+    lastSoldAt: row.last_sold_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by,
