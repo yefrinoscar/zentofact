@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveRipleySvcBaseUrl, RIPLEY_SVC_DEFAULT_BASE_URL, RipleyApiClient, RipleySvcClient } from '../dist/index.js';
+import { resolveRipleySvcBaseUrl, RipleyApiClient, RipleySvcClient } from '../dist/index.js';
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -127,34 +127,10 @@ test('trae todas las páginas de pedidos', async () => {
   assert.deepEqual(calls, [0, 100]);
 });
 
-test('no usa el host de Mirakl como Seller Center', () => {
-  assert.equal(resolveRipleySvcBaseUrl(''), RIPLEY_SVC_DEFAULT_BASE_URL);
-  assert.equal(resolveRipleySvcBaseUrl('   '), RIPLEY_SVC_DEFAULT_BASE_URL);
-  assert.equal(resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net'), RIPLEY_SVC_DEFAULT_BASE_URL);
-  assert.equal(resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net/login'), RIPLEY_SVC_DEFAULT_BASE_URL);
-  assert.equal(resolveRipleySvcBaseUrl('https://sellercenter.ripleylabs.com/login'), 'https://sellercenter.ripleylabs.com');
-});
-
-test('sin URL SVC usa Seller Center y no Mirakl', async () => {
-  const hosts = [];
-  const client = new RipleySvcClient({
-    baseUrl: '',
-    username: 'seller',
-    password: 'clave',
-    fetchImpl: async (url) => {
-      hosts.push(new URL(url).host);
-      if (String(url).includes('/auth/login/vendor')) return response({ access_token: 'token-1' });
-      return response({ labels: [] });
-    },
-  });
-  await client.listLabels({ orderId: '7935614201' });
-  assert.deepEqual([...new Set(hosts)], ['sellercenter.ripleylabs.com']);
-});
-
 test('si el login vendor falla, no usa el login web y reporta el Basic enviado', async () => {
   const paths = [];
   const client = new RipleySvcClient({
-    baseUrl: 'https://ripleyperu-prod.mirakl.net',
+    baseUrl: 'https://sellercenter.ripley.test',
     username: 'seller_limbo',
     password: 'clave-invalida',
     country: 'PE',
@@ -162,7 +138,7 @@ test('si el login vendor falla, no usa el login web y reporta el Basic enviado',
       const parsed = new URL(url);
       paths.push(parsed.pathname);
       if (parsed.pathname.endsWith('/auth/login/vendor')) {
-        assert.equal(parsed.host, 'sellercenter.ripleylabs.com');
+        assert.equal(parsed.host, 'sellercenter.ripley.test');
         assert.equal(init.headers['X-Country'], 'PE');
         assert.equal(init.headers.Authorization, `Basic ${btoa('seller_limbo:clave-invalida')}`);
         assert.equal(init.body, undefined);
@@ -177,10 +153,10 @@ test('si el login vendor falla, no usa el login web y reporta el Basic enviado',
     (error) => {
       assert.deepEqual(paths, ['/api/current/auth/login/vendor']);
       assert.match(error.message, /HTTP 403: Invalid authentication credentials/);
-      assert.match(error.message, /POST \/api\/current\/auth\/login\/vendor \(sellercenter.ripleylabs.com\)/);
+      assert.match(error.message, /POST \/api\/current\/auth\/login\/vendor \(sellercenter.ripley.test\)/);
       assert.match(error.message, /Authorization Basic \(usuario seller_limbo, clave de 14 caracteres\)/);
       assert.match(error.message, /X-Country PE/);
-      assert.match(error.message, /no la API key de Mirakl ni el login web/);
+      assert.match(error.message, /no uses la API key de Mirakl/);
       assert.equal(error.details.ripleyAuth.username, 'seller_limbo');
       assert.equal(error.details.ripleyAuth.passwordLength, 14);
       assert.equal(error.details.ripleyAuth.sent.officialApi.path, '/api/current/auth/login/vendor');
@@ -190,7 +166,7 @@ test('si el login vendor falla, no usa el login web y reporta el Basic enviado',
         step: 'vendor',
         method: 'POST',
         path: '/api/current/auth/login/vendor',
-        host: 'sellercenter.ripleylabs.com',
+        host: 'sellercenter.ripley.test',
         status: 403,
         ripley: 'Invalid authentication credentials',
       }]);
@@ -333,4 +309,35 @@ test('desvincula etiquetas de un manifiesto', async () => {
   await client.detachManifestLabels('manifest-1', ['label-1']);
   assert.equal(calls[1].init.method, 'PATCH');
   assert.deepEqual(JSON.parse(calls[1].init.body), { labels: [{ _id: 'label-1' }] });
+});
+
+test('usa SVC por defecto y rechaza una URL comercial Mirakl', () => {
+  assert.equal(resolveRipleySvcBaseUrl(''), 'https://sellercenter.ripleylabs.com');
+  assert.throws(() => resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net'), /Mirakl/);
+});
+
+test('conserva la contraseña exacta al construir Basic Auth', async () => {
+  const password = ' clave-con-espacios ';
+  const client = new RipleySvcClient({
+    baseUrl: 'https://sellercenter.ripley.test', username: 'seller', password,
+    fetchImpl: async (url, init) => {
+      if (new URL(url).pathname.endsWith('/auth/login/vendor')) {
+        assert.equal(init.headers.Authorization, `Basic ${btoa(`seller:${password}`)}`);
+        return response({ status_code: 200, access_token: 'token' });
+      }
+      assert.equal(init.headers.Authorization, 'Bearer token');
+      return response({ labels: [] });
+    },
+  });
+  await client.listLabels();
+});
+
+test('una página HTML de login no se presenta como una lista SVC vacía', async () => {
+  const client = new RipleySvcClient({
+    baseUrl: '', username: 'seller', password: 'clave',
+    fetchImpl: async (url) => new URL(url).pathname.endsWith('/auth/login/vendor')
+      ? response({ access_token: 'token' })
+      : new Response('<html>Iniciar sesión</html>', { headers: { 'content-type': 'text/html' } }),
+  });
+  await assert.rejects(() => client.listLabels(), /respuesta JSON/);
 });

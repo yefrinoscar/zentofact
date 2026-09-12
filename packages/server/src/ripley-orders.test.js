@@ -10,7 +10,7 @@ import {
   withRipleyOrderLines,
 } from './order-adapters/ripley.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
-import { ripleySyncWindow, syncAllRipleyOrders } from './ripley-orders.js';
+import { ripleySyncWindow, syncAllRipleyOrders, syncRipleyOrders } from './ripley-orders.js';
 
 test('el polling incremental usa el cursor de la última sincronización', () => {
   assert.deepEqual(
@@ -32,7 +32,7 @@ test('mapea el ciclo de estados Mirakl al modelo canónico', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('CANCELED'), { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' });
 });
 
-test('un SHIPPING de Mirakl no pisa el estado operativo que ya avanzó SVC', () => {
+test('el estado Mirakl prevalece sobre metadata SVC antigua', () => {
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING'), {
     orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
@@ -42,10 +42,10 @@ test('un SHIPPING de Mirakl no pisa el estado operativo que ya avanzó SVC', () 
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPED', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
@@ -170,7 +170,7 @@ test('encola descuento de Ripley desde el corte y no marca vacío como completo'
   assert.equal(empty.order.id, 502);
 });
 
-test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PICKUP', async () => {
+test('el ingest usa SHIPPING de Mirakl aunque exista metadata SVC antigua', async () => {
   let ingestPayload = null;
   const db = {
     async query(sql, params) {
@@ -195,7 +195,7 @@ test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PI
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
+  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
 });
 
 test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', async () => {
@@ -259,4 +259,18 @@ test('sincroniza solo empresas activas con API key de Ripley y aísla fallos', a
   assert.equal(result.successful, 1);
   assert.equal(result.failed, 1);
   assert.equal(result.results[1].error, 'Ripley no disponible');
+});
+
+test('la sincronización directa de Ripley consulta solo Mirakl con SVC configurado', async () => {
+  let calls = 0;
+  const result = await syncRipleyOrders(1, {}, {
+    getCompany: async () => ({ id: 1, activo: true, nombre: 'Seller', ripleySvcUsername: 'seller', ripleySvcPassword: 'clave' }),
+    db: { query: async () => ({ rows: [{ id: 12, last_successful_sync_at: null }] }) },
+    client: { listAllOrders: async () => { calls += 1; return []; } },
+    syncLogistics: async () => { assert.fail('No debe consultar SVC'); },
+    fetchImpl: async () => { assert.fail('No debe autenticar en SVC'); },
+  });
+  assert.equal(result.status, 'success');
+  assert.equal(calls, 1);
+  assert.equal(result.logistics.status, 'paused');
 });

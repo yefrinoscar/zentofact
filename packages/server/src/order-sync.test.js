@@ -221,7 +221,8 @@ test('Ripley reubica listos persistidos aunque Mirakl no los vuelva a mandar', a
   assert.deepEqual(remapped, [12]);
 });
 
-test('después de Mirakl, Ripley escucha el estado logístico de SVC', async () => {
+for (const cursor of ['2026-09-07T12:00:00Z', '2026-09-07T18:20:00Z']) {
+test(`Ripley no consulta SVC con cursor ${cursor}`, async () => {
   const logistics = [];
   const db = {
     async query(sql) {
@@ -231,7 +232,7 @@ test('después de Mirakl, Ripley escucha el estado logístico de SVC', async () 
         active: true, company_active: true, auto_create_orders: true,
         ripley_api_key: 'test',
       }] };
-      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: '2026-09-07T12:00:00Z' }] };
+      if (sql.includes('select * from order_sync_state')) return { rows: [{ cursor_updated_at: cursor }] };
       if (sql.includes('insert into order_sync_runs')) return { rows: [{ id: 22 }] };
       return { rows: [], rowCount: 0 };
     },
@@ -254,9 +255,12 @@ test('después de Mirakl, Ripley escucha el estado logístico de SVC', async () 
       return { received: 2, matched: 2 };
     },
   });
-  assert.deepEqual(logistics, [4]);
-  assert.deepEqual(result.logistics, { received: 2, matched: 2 });
+  assert.deepEqual(logistics, []);
+  assert.equal(result.status, 'success');
+  assert.equal(result.logistics, null);
 });
+
+}
 
 test('Falabella sigue reconciliando si la ventana incremental ya está al día', async () => {
   const called = [];

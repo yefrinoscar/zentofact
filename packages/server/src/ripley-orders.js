@@ -1,6 +1,5 @@
 import { RipleyApiClient } from '@zentofact/ripley-api';
 import { ensureRipleyOrderAccount, ingestRipleyOrder, withRipleyOrderLines } from './order-adapters/ripley.js';
-import { syncRipleyLogistics } from './ripley-logistics.js';
 import { isRipleySyncEnabled } from './system-config.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { RIPLEY_PERU_API_URL } from './ripley-api-url.js';
@@ -75,11 +74,6 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
         source: 'sync',
       }, db));
     }
-    const hasSvc = (company.ripleySvcUsername || company.ripley_svc_username)?.toString().trim()
-      && (company.ripleySvcPassword || company.ripley_svc_password);
-    const logistics = hasSvc
-      ? await (dependencies.syncLogistics || syncRipleyLogistics)(company, { db, fetchImpl: dependencies.fetchImpl })
-      : { received: 0, matched: 0, status: 'not_configured' };
     await db.query(
       `update ripley_sync_state set status='success', last_finished_at=now(),
          last_successful_sync_at=now(), last_orders_received=$2, last_error=null, updated_at=now()
@@ -92,7 +86,7 @@ export async function syncRipleyOrders(companyIdInput, options = {}, dependencie
       received: orders.length,
       ingested: results.length,
       orderIds: orders.map((order) => order.orderId),
-      logistics,
+      logistics: { received: 0, matched: 0, status: 'paused' },
     };
   } catch (error) {
     await db.query(
