@@ -45,6 +45,7 @@ import {
   laterBandejaDeadlineDates,
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
+  productImageCandidates,
   productImageSrc,
   visibleLogisticsChannels,
 } from './logistics-inbox.ts';
@@ -360,4 +361,15 @@ test('las imágenes de Falabella y Ripley pasan por el proxy del catálogo', () 
     /^\/catalog\/image\?url=https%3A%2F%2Fhome\.ripley\.com\.pe/,
   );
   assert.equal(productImageSrc('', ''), '');
+});
+
+test('conserva la foto del SKU como alternativa cuando falla la URL del pedido', () => {
+  assert.deepEqual(
+    productImageCandidates('https://media.falabella.com/falabellaPE/antigua_01', 'ABC123'),
+    [
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2Fantigua_01',
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2FABC123_01',
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2FABC123_1',
+    ],
+  );
 });
