@@ -18,6 +18,24 @@ test('mapProduct incluye el precio por mayor', () => {
   });
   assert.equal(product.wholesalePrice, 160);
   assert.equal(product.referencePrice, 189.9);
+  assert.equal(product.unitsSold7d, 0);
+  assert.equal(product.lastSoldAt, null);
+});
+
+test('mapProduct incluye el ritmo de ventas de 7 días', () => {
+  const product = mapProduct({
+    id: 3,
+    main_sku: 'HOG025',
+    name: 'Silla',
+    status: 'active',
+    quantity_on_hand: 8,
+    quantity_reserved: 2,
+    units_sold_7d: 14,
+    last_sold_at: '2026-09-11T12:00:00.000Z',
+  });
+  assert.equal(product.unitsSold7d, 14);
+  assert.equal(product.lastSoldAt, '2026-09-11T12:00:00.000Z');
+  assert.equal(product.available, 6);
 });
 
 test('mapProduct deja el precio por mayor nulo si no hay valor', () => {

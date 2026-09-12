@@ -25,7 +25,7 @@ import {
   refreshFalabellaListingSnapshots,
   refreshRipleyListingSnapshots,
 } from './catalog/listing-snapshot-service.js';
-import { getCatalogSummary, listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { getCatalogSummary, getProduct, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
@@ -1733,6 +1733,8 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
             seller_price_min: 19.9,
             seller_price_max: 19.9,
             seller_stock_total: 4,
+            units_sold_7d: 14,
+            last_sold_at: '2026-08-11T00:00:00.000Z',
             created_at: '2026-08-01T00:00:00.000Z',
             updated_at: '2026-08-12T00:00:00.000Z',
             created_by: null,
@@ -1802,6 +1804,11 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
   assert.match(pageQuery.sql, /sum\(l\.marketplace_quantity\) filter/);
   assert.deepEqual(listingsQuery.params[0], [5]);
   assert.equal(listed.products.length, 1);
+  assert.equal(listed.products[0].unitsSold7d, 14);
+  assert.equal(listed.products[0].lastSoldAt, '2026-08-11T00:00:00.000Z');
+  assert.match(pageQuery.sql, /sales7 as/);
+  assert.match(pageQuery.sql, /units_sold_7d/);
+  assert.match(pageQuery.sql, /interval '7 days'/);
   assert.equal(listed.products[0].listings.length, 1);
   const listing = listed.products[0].listings[0];
   assert.equal(listing.id, 71);
@@ -1838,6 +1845,36 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
   });
   assert.equal(Object.hasOwn(listing.metadata, 'images'), false);
   assert.equal(Object.hasOwn(listing.metadata, 'marketplaceSyncedAt'), false);
+});
+
+test('la ficha de producto incluye el ritmo de ventas de 7 días', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('from product_listings l join companies')) return { rows: [] };
+      return {
+        rows: [{
+          id: 5,
+          main_sku: 'AG301',
+          name: 'Camiseta',
+          status: 'active',
+          quantity_on_hand: 10,
+          quantity_reserved: 1,
+          available: 9,
+          units_sold_7d: 21,
+          last_sold_at: '2026-09-11T15:00:00.000Z',
+        }],
+      };
+    },
+  };
+  const product = await getProduct(5, db);
+  const detailSql = statements.find((statement) => statement.sql.includes('from products p'))?.sql || '';
+  assert.match(detailSql, /sales7 as/);
+  assert.match(detailSql, /units_sold_7d/);
+  assert.match(detailSql, /interval '7 days'/);
+  assert.equal(product.unitsSold7d, 21);
+  assert.equal(product.lastSoldAt, '2026-09-11T15:00:00.000Z');
 });
 
 test('el catálogo resume grupos y aplica filtros especiales desde SQL', async () => {
