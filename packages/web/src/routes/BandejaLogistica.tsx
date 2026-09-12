@@ -259,7 +259,7 @@ export default function BandejaLogistica() {
       if (targets.some(logisticsRipleyLabelSoon)) showSnackbar({ message: RIPLEY_LABEL_SOON_COPY });
       return;
     }
-    const preview = openPdfPreviewTab();
+    const preview = openPdfPreviewTab(printable.length);
     if (!preview) {
       showSnackbar({ message: PDF_POPUP_BLOCKED_COPY, tone: 'error' });
       return;
