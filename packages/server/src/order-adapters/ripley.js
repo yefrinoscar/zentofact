@@ -20,6 +20,12 @@ function isoDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+// Ripley muestra shipping_deadline como Agendamiento. commiteddate es solo el
+// compromiso del seller y no determina la prioridad operativa de la bandeja.
+export function resolveRipleyOperationalDeadline(raw) {
+  return isoDate(raw?.shipping_deadline || raw?.latest_shipping_date);
+}
+
 function normalizedState(value) {
   return text(value).toUpperCase().replace(/[ -]+/g, '_');
 }
@@ -38,9 +44,12 @@ export function mapRipleyCanonicalStatus(value) {
   if (/(SHIPPED|TO_COLLECT|COLLECTED)/.test(status)) {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' };
   }
-  // Mirakl SHIPPING = pagada y por preparar (SVC TO_PREPARE). No es listo para enviar.
+  // OR11 solo dice SHIPPING; ST11 aporta la transición READY_FOR_PICK_UP.
   if (status === 'READY_TO_SHIP') {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' };
+  }
+  if (status === 'SHIPPING') {
+    return { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' };
   }
   if (status === 'WAITING_ACCEPTANCE' || status === 'STAGING') {
     return { orderStatus: 'new', fulfillmentStatus: 'pending' };
@@ -48,7 +57,24 @@ export function mapRipleyCanonicalStatus(value) {
   return { orderStatus: 'confirmed', fulfillmentStatus: 'pending' };
 }
 
-export const resolveRipleyIngestStatuses = mapRipleyCanonicalStatus;
+export function mapRipleyShipmentFulfillmentStatus(value) {
+  const status = normalizedState(value);
+  if (status === 'READY_FOR_PICK_UP' || status === 'READY_FOR_PICKUP') return 'ready_to_ship';
+  if (status === 'SHIPPING' || status === 'SHIPMENT_PREPARED') return 'preparing';
+  if (status === 'SHIPPED' || status === 'TO_COLLECT') return 'shipped';
+  if (status === 'CLOSED' || status === 'RECEIVED' || status === 'DELIVERED') return 'delivered';
+  if (/(CANCEL|REFUSED|REJECTED)/.test(status)) return 'cancelled';
+  return null;
+}
+
+export function resolveRipleyIngestStatuses(providerStatus, _existing = null, shipmentStatus = null) {
+  const mapped = mapRipleyCanonicalStatus(providerStatus);
+  if (CLOSED_RIPLEY_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
+
+  const fromShipment = mapRipleyShipmentFulfillmentStatus(shipmentStatus);
+  if (fromShipment) return { ...mapped, fulfillmentStatus: fromShipment };
+  return mapped;
+}
 
 function customerFrom(raw) {
   const customer = raw?.customer || {};
@@ -178,7 +204,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.displayName,
     input.shopId,
   );
-  const statuses = mapRipleyCanonicalStatus(normalized?.status);
+  const statuses = resolveRipleyIngestStatuses(normalized?.status, null, input.shipmentStatus);
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,
@@ -196,7 +222,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     customer: customerFrom(raw),
     shipping: mapRipleyShipping(raw),
     orderedAt: normalized?.createdAt,
-    promisedShippingAt: isoDate(raw?.shipping_deadline || raw?.latest_shipping_date),
+    promisedShippingAt: resolveRipleyOperationalDeadline(raw),
     providerUpdatedAt: normalized?.updatedAt,
     metadata: {
       commercialId: text(raw?.commercial_id),
@@ -204,6 +230,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
       shopId: text(raw?.shop_id || input.shopId),
       shopName: text(raw?.shop_name),
       hasIncident: Boolean(raw?.has_incident),
+      miraklShipmentStatus: text(input.shipmentStatus),
     },
     items,
     itemsComplete: items.length > 0,

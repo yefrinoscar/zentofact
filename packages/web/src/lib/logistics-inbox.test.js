@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_BANDEJA_URGENCY,
   canMarkFalabellaReady,
   canMarkLogisticsDelivered,
   canMarkLogisticsReady,
@@ -49,6 +50,10 @@ import {
   productImageSrc,
   visibleLogisticsChannels,
 } from './logistics-inbox.ts';
+
+test('la bandeja inicia mostrando todos los plazos', () => {
+  assert.equal(DEFAULT_BANDEJA_URGENCY, null);
+});
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   mapRipleyCanonicalStatus,
   mapRipleyOrderItems,
+  resolveRipleyOperationalDeadline,
   remapPersistedRipleyReadyOrders,
   closeStaleRipleyShippedFulfillment,
   resolveRipleyIngestStatuses,
@@ -31,9 +32,21 @@ const raw = {
   }],
 };
 
+test('usa el agendamiento Mirakl como vencimiento y no el compromiso seller', () => {
+  assert.equal(resolveRipleyOperationalDeadline({
+    shipping_deadline: '2026-09-14T05:00:00Z',
+    latest_shipping_date: '2026-09-11T05:00:00Z',
+    order_additional_fields: [{
+      code: 'commiteddate',
+      type: 'DATE',
+      value: '2026-09-11T05:00:00Z',
+    }],
+  }), '2026-09-14T05:00:00.000Z');
+});
+
 test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+    orderStatus: 'confirmed', fulfillmentStatus: 'preparing',
   });
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT'), {
     orderStatus: 'confirmed', fulfillmentStatus: 'pending',
@@ -46,7 +59,7 @@ test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
 });
 
 test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
@@ -65,7 +78,7 @@ test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
   });
 });
 
-test('reconcilia SHIPPING usando Mirakl incluso con metadata SVC antigua', async () => {
+test('baja de listos un Ripley SHIPPING persistido sin evidencia ST11', async () => {
   const updates = [];
   const db = {
     async query(sql, params = []) {
@@ -91,8 +104,8 @@ test('reconcilia SHIPPING usando Mirakl incluso con metadata SVC antigua', async
   assert.equal(result.updated, 2);
   assert.deepEqual(updates, [{
     sql: updates[0]?.sql,
-    params: [11, 'pending'],
-  }, { sql: updates[1]?.sql, params: [12, 'pending'] }]);
+    params: [11, 'preparing'],
+  }, { sql: updates[1]?.sql, params: [12, 'preparing'] }]);
   assert.match(updates[0].sql, /fulfillment_status = \$2/);
 });
 

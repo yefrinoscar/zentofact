@@ -71,6 +71,32 @@ export interface RipleyOrderPage {
   max: number;
 }
 
+export interface ListShipmentsOptions {
+  orderIds?: string[];
+  shipmentStateCodes?: string[];
+  lastUpdatedFrom?: string;
+  lastUpdatedTo?: string;
+  pageToken?: string;
+  limit?: number;
+}
+
+/** Mirakl ST11 shipment state, used to distinguish preparation from ready for pickup. */
+export interface RipleyShipment {
+  id: string;
+  orderId: string;
+  status: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  shippedAt: string | null;
+  raw: unknown;
+}
+
+export interface RipleyShipmentPage {
+  shipments: RipleyShipment[];
+  nextPageToken: string | null;
+  previousPageToken: string | null;
+}
+
 export type RipleySvcCountry = 'PE' | 'CL';
 
 export interface RipleySvcClientOptions {

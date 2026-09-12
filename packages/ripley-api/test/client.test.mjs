@@ -127,6 +127,33 @@ test('trae todas las páginas de pedidos', async () => {
   assert.deepEqual(calls, [0, 100]);
 });
 
+test('lista shipments Mirakl ST11 filtrando por order_id repetido', async () => {
+  let request;
+  const raw = {
+    id: 'shipment-1', order_id: 'R-100-A', status: 'READY_FOR_PICK_UP',
+    created_date: '2026-09-12T10:00:00Z', last_updated_date: '2026-09-12T11:00:00Z',
+    shipped_date: null, shipment_lines: [],
+  };
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret', shopId: 17,
+    fetchImpl: async (url, init) => {
+      request = { url: new URL(url), init };
+      return response({ data: [raw], next_page_token: null, previous_page_token: null });
+    },
+  });
+
+  const page = await client.listShipments({ orderIds: ['R-100-A', 'R-200-A'], limit: 50 });
+  assert.equal(request.url.pathname, '/api/shipments');
+  assert.deepEqual(request.url.searchParams.getAll('order_id'), ['R-100-A', 'R-200-A']);
+  assert.equal(request.url.searchParams.get('limit'), '50');
+  assert.equal(request.url.searchParams.get('shop_id'), '17');
+  assert.equal(request.init.headers.Authorization, 'secret');
+  assert.deepEqual(page.shipments[0], {
+    id: 'shipment-1', orderId: 'R-100-A', status: 'READY_FOR_PICK_UP',
+    createdAt: '2026-09-12T10:00:00.000Z', updatedAt: '2026-09-12T11:00:00.000Z',
+    shippedAt: null, raw,
+  });
+});
 test('si el login vendor falla, no usa el login web y reporta el Basic enviado', async () => {
   const paths = [];
   const client = new RipleySvcClient({
