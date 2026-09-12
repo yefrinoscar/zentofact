@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -32,9 +32,11 @@ import {
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
   logisticsSkippedNotice,
-  openPdfFromBase64,
+  openPdfPreviewTab,
+  PDF_POPUP_BLOCKED_COPY,
   ripleyDefaultPickupDate,
   RIPLEY_LABEL_SOON_COPY,
+  showPdfInTab,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -146,6 +148,7 @@ export default function BandejaLogistica() {
   const [notice, setNotice] = useState<InboxNotice | null>(null);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
+  const printPreviewRef = useRef<Window | null>(null);
 
   const filterKey = [stage, channelCode, urgency || '', deadlineDate || '', search].join('|');
   const offset = page.key === filterKey ? page.offset : 0;
@@ -218,10 +221,21 @@ export default function BandejaLogistica() {
     }
   };
 
+  const closePrintPreview = () => {
+    printPreviewRef.current?.close();
+    printPreviewRef.current = null;
+  };
+
   const printMutation = useMutation({
     mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds }) as Promise<PrintResult>,
     onSuccess: (result) => {
-      if (result?.base64) openPdfFromBase64(result.base64, result.filename || 'bandeja.pdf');
+      const preview = printPreviewRef.current;
+      printPreviewRef.current = null;
+      if (result?.base64) {
+        if (!showPdfInTab(preview, result.base64)) showSnackbar({ message: PDF_POPUP_BLOCKED_COPY, tone: 'error' });
+      } else {
+        preview?.close();
+      }
       const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
       announce({
         tone: skipped.length ? 'warning' : 'success',
@@ -231,7 +245,10 @@ export default function BandejaLogistica() {
       setLabelSelection(null);
       void invalidate();
     },
-    onError: (error) => announce(noticeFromError(error, 'No se pudo armar la impresión.')),
+    onError: (error) => {
+      closePrintPreview();
+      announce(noticeFromError(error, 'No se pudo armar la impresión.'));
+    },
     onSettled: () => setBusyOrderId(null),
   });
 
@@ -242,6 +259,12 @@ export default function BandejaLogistica() {
       if (targets.some(logisticsRipleyLabelSoon)) showSnackbar({ message: RIPLEY_LABEL_SOON_COPY });
       return;
     }
+    const preview = openPdfPreviewTab();
+    if (!preview) {
+      showSnackbar({ message: PDF_POPUP_BLOCKED_COPY, tone: 'error' });
+      return;
+    }
+    printPreviewRef.current = preview;
     setBusyOrderId(printable.length === 1 ? printable[0].id : null);
     setNotice(null);
     printMutation.mutate(printable.map((order) => order.id));

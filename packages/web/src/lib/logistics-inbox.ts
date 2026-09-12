@@ -597,17 +597,34 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
   return value;
 }
 
-export function openPdfFromBase64(base64: string, filename: string) {
+export const PDF_POPUP_BLOCKED_COPY = 'Permite las ventanas emergentes para ver el PDF.';
+
+export function openPdfPreviewTab() {
+  const preview = window.open('', '_blank');
+  if (!preview) return null;
+  preview.opener = null;
+  preview.document.open();
+  preview.document.write('<!doctype html><title>Preparando PDF</title><body style="font:16px system-ui;padding:2rem">Preparando el PDF…</body>');
+  preview.document.close();
+  return preview;
+}
+
+export function pdfObjectUrlFromBase64(base64: string) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-  const preview = window.open(url, '_blank', 'noopener');
-  if (!preview) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
+  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
+
+export function showPdfInTab(preview: Window | null, base64: string) {
+  const url = pdfObjectUrlFromBase64(base64);
+  if (preview && !preview.closed) {
+    preview.location.replace(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+    return true;
   }
-  return url;
+  const next = window.open(url, '_blank');
+  if (next) next.opener = null;
+  window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+  return Boolean(next);
 }
