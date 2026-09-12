@@ -30,7 +30,7 @@ import {
   logisticsUrgencyMeta,
   parseLogisticsDate,
   pendingDeadlineHelper,
-  productImageSrc,
+  productImageCandidates,
   readyPrintHelper,
   RIPLEY_LABEL_SOON_COPY,
   BANDEJA_DEADLINE_FILTERS,
@@ -197,14 +197,15 @@ export function ProductThumb({
   className?: string;
   onOpen?: (preview: ProductPreview) => void;
 }) {
-  const [failed, setFailed] = useState(false);
-  const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
+  const candidates = productImageCandidates(item.imageUrl, item.shopSku || item.sku);
+  const [failedCount, setFailedCount] = useState(0);
+  const src = candidates[failedCount] || '';
   const canOpen = Boolean(onOpen);
   const body = (
     <>
       <ImageIcon className="size-4 text-muted-foreground/40" />
-      {src && !failed && (
-        <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain" onError={() => setFailed(true)} />
+      {src && (
+        <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain" onError={() => setFailedCount((current) => current + 1)} />
       )}
     </>
   );
@@ -212,7 +213,7 @@ export function ProductThumb({
     return (
       <button
         type="button"
-        onClick={() => onOpen?.({ src: src && !failed ? src : '', name: item.description })}
+        onClick={() => onOpen?.({ src, name: item.description })}
         aria-label={`Ver foto de ${item.description}`}
         className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted hover:ring-2 hover:ring-foreground/20', className)}
       >

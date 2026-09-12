@@ -597,6 +597,20 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
   return value;
 }
 
+export function productImageCandidates(url?: string | null, shopSku?: string | null) {
+  const sku = String(shopSku || '').trim();
+  const falabellaVariants = sku && /^[A-Za-z0-9_-]+$/.test(sku)
+    ? [
+        `https://media.falabella.com/falabellaPE/${sku}_01`,
+        `https://media.falabella.com/falabellaPE/${sku}_1`,
+      ]
+    : [];
+  return [...new Set([
+    productImageSrc(url),
+    ...falabellaVariants.map((imageUrl) => productImageSrc(imageUrl)),
+  ].filter(Boolean))];
+}
+
 export const PDF_POPUP_BLOCKED_COPY = 'Permite las ventanas emergentes para ver el PDF.';
 
 export function pdfPreviewLoadingHtml(labelCount = 0) {
