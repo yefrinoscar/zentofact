@@ -114,6 +114,7 @@ export type BandejaView = {
   notice: InboxNotice | null;
   canDispatch: boolean;
   canSync: boolean;
+  syncing?: boolean;
   refreshing: boolean;
   refresh: () => void;
   printing: boolean;

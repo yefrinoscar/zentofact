@@ -4,6 +4,7 @@ import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
 import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search, Truck } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { WorkLoader } from '../components/WorkLoader';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
@@ -224,6 +225,15 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
           </Button>
         </div>
       </div>
+
+      {view.syncing && (
+        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+          <WorkLoader
+            label="Sincronizando pedidos"
+            detail="Puedes seguir trabajando. Continúa en segundo plano."
+          />
+        </div>
+      )}
 
       <BandejaDeadlineSummary view={view} error={error} />
 

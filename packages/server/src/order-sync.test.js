@@ -118,6 +118,51 @@ test('Ripley aísla el pedido fallido y continúa la página', async () => {
   assert.equal(transactions.filter((sql) => sql === 'rollback').length, 1);
 });
 
+test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', async () => {
+  const ingested = [];
+  await syncRipleyPages({
+    async query() { return { rows: [] }; },
+  }, {
+    channelAccountId: 12,
+    companyId: 4,
+    channelCode: 'ripley',
+    displayName: 'LIMBO',
+  }, {
+    from: '2026-09-12T05:00:00.000Z',
+    to: '2026-09-13T04:59:59.999Z',
+  }, 102, {
+    ripleyClient: {
+      listOrders: async () => ({
+        orders: [
+          { orderId: '7942121801-A', updatedAt: '2026-09-12T10:00:00Z' },
+          { orderId: '7942151801-A', updatedAt: '2026-09-12T10:01:00Z' },
+          { orderId: '7942236901-A', updatedAt: '2026-09-12T10:02:00Z' },
+          { orderId: '7942310501-A', updatedAt: '2026-09-12T10:03:00Z' },
+        ],
+        totalCount: 4,
+        max: 100,
+      }),
+      listAllShipments: async () => ([
+        { orderId: '7942121801-A', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
+        { orderId: '7942151801-A', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:01:00Z' },
+        { orderId: '7942236901-A', status: 'SHIPPING', updatedAt: '2026-09-12T11:02:00Z' },
+        { orderId: '7942310501-A', status: 'SHIPPING', updatedAt: '2026-09-12T11:03:00Z' },
+      ]),
+    },
+    ingestRipleyOrder: async ({ normalized, shipmentStatus }) => {
+      ingested.push({ orderId: normalized.orderId, shipmentStatus });
+      return { order: { id: ingested.length } };
+    },
+  });
+
+  assert.deepEqual(ingested, [
+    { orderId: '7942121801-A', shipmentStatus: 'READY_FOR_PICK_UP' },
+    { orderId: '7942151801-A', shipmentStatus: 'READY_FOR_PICK_UP' },
+    { orderId: '7942236901-A', shipmentStatus: 'SHIPPING' },
+    { orderId: '7942310501-A', shipmentStatus: 'SHIPPING' },
+  ]);
+});
+
 test('Ripley conserva la cabecera sin items y deja la ventana pendiente de reintento', async () => {
   const transactions = [];
   const db = {
