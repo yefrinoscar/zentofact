@@ -24,9 +24,11 @@ import {
   logisticsCountLabel,
   logisticsUpdatedClock,
   isActiveLogisticsDeadline,
+  openPdfPreviewTab,
   pendingDeadlineHelper,
   readyPrintHelper,
   remainingReadyToPrint,
+  showPdfInTab,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
@@ -288,6 +290,55 @@ test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
   assert.equal(readyPrintHelper(ready), '1 por imprimir');
   assert.equal(readyPrintHelper([{ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }]), 'Ya impresa');
   assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
+});
+
+test('el PDF de bandeja se abre en otra pestaña y no se descarga', () => {
+  const opened = [];
+  const downloads = [];
+  const preview = {
+    closed: false,
+    opener: {},
+    location: { href: '', replace(url) { this.href = url; } },
+    document: { open() {}, write() {}, close() {} },
+  };
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const createObjectURL = URL.createObjectURL;
+  const revokeObjectURL = URL.revokeObjectURL;
+  globalThis.window = {
+    open(url, target) {
+      opened.push({ url, target });
+      return preview;
+    },
+    setTimeout(fn) { return globalThis.setTimeout(fn, 0); },
+  };
+  globalThis.document = {
+    createElement() {
+      return {
+        set href(_) {},
+        set download(_) { downloads.push('download'); },
+        click() { downloads.push('click'); },
+      };
+    },
+  };
+  URL.createObjectURL = () => 'blob:pdf';
+  URL.revokeObjectURL = () => {};
+  try {
+    const tab = openPdfPreviewTab();
+    assert.equal(tab, preview);
+    assert.equal(opened[0]?.url, '');
+    assert.equal(opened[0]?.target, '_blank');
+    assert.equal(showPdfInTab(tab, Buffer.from('%PDF').toString('base64')), true);
+    assert.equal(preview.location.href, 'blob:pdf');
+    assert.deepEqual(downloads, []);
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
 });
 
 test('las imágenes de Falabella y Ripley pasan por el proxy del catálogo', () => {
