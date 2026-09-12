@@ -599,12 +599,161 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
 
 export const PDF_POPUP_BLOCKED_COPY = 'Permite las ventanas emergentes para ver el PDF.';
 
-export function openPdfPreviewTab() {
+export function pdfPreviewLoadingHtml(labelCount = 0) {
+  const count = Number.isFinite(labelCount) ? Math.max(0, Math.floor(labelCount)) : 0;
+  const countLabel = count === 1 ? '1 etiqueta' : count > 1 ? `${count} etiquetas` : '';
+  const bars = [2, 1, 3, 1, 1, 2, 1, 4, 1, 2, 1, 1, 3, 2, 1, 2, 1, 4, 1, 1, 2, 3, 1, 2, 1, 1, 3, 1]
+    .map((width) => `<i style="width:${width}px"></i>`)
+    .join('');
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Armando las etiquetas</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: #f5f5f4;
+        color: #1c1917;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(92vw, 420px);
+        padding: 44px 36px 32px;
+        border: 1px solid #e7e5e4;
+        border-radius: 20px;
+        background: #fff;
+        box-shadow: 0 24px 60px rgba(28, 25, 23, .10);
+        text-align: center;
+      }
+      .press {
+        position: relative;
+        width: 112px;
+        height: 148px;
+        margin: 0 auto 28px;
+      }
+      .ghost {
+        position: absolute;
+        inset: 8px 6px -8px;
+        border-radius: 10px;
+        background: #fff;
+        border: 1px solid #e7e5e4;
+        transform: rotate(4deg);
+      }
+      .ghost:first-child { transform: rotate(-5deg); inset: 10px 8px -6px; background: #fafaf9; }
+      .label {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #fff;
+        border: 1px solid #d6d3d1;
+        box-shadow: 0 10px 24px rgba(28, 25, 23, .10);
+        animation: feed 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+      }
+      .band {
+        height: 18px;
+        background: #132238;
+      }
+      .pad { padding: 10px 12px 12px; }
+      .barcode {
+        display: flex;
+        align-items: stretch;
+        justify-content: space-between;
+        height: 42px;
+        margin-bottom: 12px;
+      }
+      .barcode i { display: block; height: 100%; background: #132238; border-radius: 0.5px; }
+      .lines { display: grid; gap: 7px; }
+      .lines b {
+        display: block;
+        height: 6px;
+        border-radius: 3px;
+        background: #e7e5e4;
+      }
+      .lines b:nth-child(1) { width: 82%; }
+      .lines b:nth-child(2) { width: 64%; }
+      .lines b:nth-child(3) { width: 46%; }
+      .mask {
+        position: absolute;
+        inset: 0;
+        background: #fff;
+        animation: wipe 2.4s linear infinite;
+      }
+      .head {
+        position: absolute;
+        top: 0;
+        left: -10px;
+        right: -10px;
+        height: 2px;
+        background: #2864F0;
+        box-shadow: 0 0 12px 2px rgba(40, 100, 240, .45);
+      }
+      h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; }
+      p { margin: 10px auto 0; max-width: 280px; color: #78716c; font-size: 14px; line-height: 1.5; }
+      .count {
+        display: ${countLabel ? 'inline-flex' : 'none'};
+        margin-top: 22px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: #f5f5f4;
+        color: #57534e;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      @keyframes feed {
+        0% { opacity: 0; transform: translateY(12px); }
+        12% { opacity: 1; transform: translateY(0); }
+        78% { opacity: 1; transform: translateY(0); }
+        92% { opacity: 0; transform: translateY(-10px); }
+        100% { opacity: 0; transform: translateY(12px); }
+      }
+      @keyframes wipe {
+        0%, 12% { transform: translateY(0); }
+        70% { transform: translateY(100%); }
+        100% { transform: translateY(100%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .label, .mask { animation: none; }
+        .label { opacity: 1; transform: none; }
+        .mask { transform: translateY(100%); }
+      }
+    </style>
+  </head>
+  <body>
+    <main role="status" aria-live="polite">
+      <div class="press" aria-hidden="true">
+        <div class="ghost"></div>
+        <div class="ghost"></div>
+        <div class="label">
+          <div class="band"></div>
+          <div class="pad">
+            <div class="barcode">${bars}</div>
+            <div class="lines"><b></b><b></b><b></b></div>
+          </div>
+          <div class="mask"><div class="head"></div></div>
+        </div>
+      </div>
+      <h1>Armando las etiquetas</h1>
+      <p>Revisa e imprime desde esta pestaña.</p>
+      <span class="count">${countLabel}</span>
+    </main>
+  </body>
+</html>`;
+}
+
+export function openPdfPreviewTab(labelCount = 0) {
   const preview = window.open('', '_blank');
   if (!preview) return null;
   preview.opener = null;
   preview.document.open();
-  preview.document.write('<!doctype html><title>Preparando PDF</title><body style="font:16px system-ui;padding:2rem">Preparando el PDF…</body>');
+  preview.document.write(pdfPreviewLoadingHtml(labelCount));
   preview.document.close();
   return preview;
 }

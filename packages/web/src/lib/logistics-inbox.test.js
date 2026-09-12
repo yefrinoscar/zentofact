@@ -25,6 +25,7 @@ import {
   logisticsUpdatedClock,
   isActiveLogisticsDeadline,
   openPdfPreviewTab,
+  pdfPreviewLoadingHtml,
   pendingDeadlineHelper,
   readyPrintHelper,
   remainingReadyToPrint,
@@ -290,6 +291,16 @@ test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
   assert.equal(readyPrintHelper(ready), '1 por imprimir');
   assert.equal(readyPrintHelper([{ channelCode: 'manual', fulfillmentStatus: 'pending', labelPrint: { printCount: 2 } }]), 'Ya impresa');
   assert.match(logisticsUpdatedClock(new Date('2026-09-02T15:32:00.000Z')), /10:32/);
+});
+
+test('la pestaña de impresión muestra una hoja de etiquetas, no un texto suelto', () => {
+  const html = pdfPreviewLoadingHtml(3);
+  assert.match(html, /Armando las etiquetas/);
+  assert.match(html, /3 etiquetas/);
+  assert.match(html, /class="press"/);
+  assert.match(html, /class="head"/);
+  assert.equal(pdfPreviewLoadingHtml(1).includes('1 etiqueta'), true);
+  assert.equal(pdfPreviewLoadingHtml(0).includes('0 etiqueta'), false);
 });
 
 test('el PDF de bandeja se abre en otra pestaña y no se descarga', () => {
