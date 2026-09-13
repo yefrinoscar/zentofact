@@ -115,6 +115,7 @@ export type BandejaView = {
   canDispatch: boolean;
   canSync: boolean;
   syncing?: boolean;
+  syncStep?: 'fetching-orders' | 'refreshing-inbox' | null;
   refreshing: boolean;
   refresh: () => void;
   printing: boolean;

@@ -138,6 +138,7 @@ export default function BandejaLogistica() {
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
   const [urgency, setUrgency] = useState<LogisticsUrgency | null>(DEFAULT_BANDEJA_URGENCY);
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
+  const [syncStep, setSyncStep] = useState<'fetching-orders' | 'refreshing-inbox' | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
   const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
@@ -382,7 +383,8 @@ export default function BandejaLogistica() {
 
   const syncMutation = useMutation({
     mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
-    onSuccess: (result) => {
+    onMutate: () => setSyncStep('fetching-orders'),
+    onSuccess: async (result) => {
       const nameByCompanyId = new Map(
         orders.flatMap((order) => (
           order.companyId != null && order.companyName
@@ -391,9 +393,11 @@ export default function BandejaLogistica() {
         )),
       );
       announce(logisticsSyncNotice(result, nameByCompanyId));
-      void invalidate();
+      setSyncStep('refreshing-inbox');
+      await invalidate();
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
+    onSettled: () => setSyncStep(null),
   });
 
   const refresh = () => {
@@ -448,6 +452,7 @@ export default function BandejaLogistica() {
     canDispatch,
     canSync,
     syncing: syncMutation.isPending,
+    syncStep,
     refreshing: syncMutation.isPending || inboxQuery.isFetching,
     refresh,
     printing: printMutation.isPending,
