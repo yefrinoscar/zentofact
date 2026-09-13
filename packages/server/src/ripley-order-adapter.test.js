@@ -6,6 +6,7 @@ import {
   mapRipleyShipmentFulfillmentStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
+  remapPersistedRipleyReadyOrders,
   resolveRipleyIngestStatuses,
   shouldEnqueueRipleyStockJob,
   withRipleyOrderLines,
@@ -240,6 +241,31 @@ test('el ingest de SHIPPING corrige un listo persistido sin evidencia de ST11', 
     enqueue: async () => ({ enqueued: false }),
   });
   assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
+});
+
+test('no baja un listo que ST11 confirmó para retiro', async () => {
+  const updates = [];
+  const result = await remapPersistedRipleyReadyOrders({
+    async query(sql, params) {
+      if (sql.startsWith('select')) {
+        return {
+          rows: [
+            { id: 11, provider_status: 'SHIPPING', metadata: {} },
+            {
+              id: 12,
+              provider_status: 'SHIPPING',
+              metadata: { miraklShipmentStatus: 'READY_FOR_PICK_UP' },
+            },
+          ],
+        };
+      }
+      updates.push(params);
+      return { rowCount: 1 };
+    },
+  }, 9);
+
+  assert.deepEqual(updates, [[11, 'preparing']]);
+  assert.equal(result.updated, 1);
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {
