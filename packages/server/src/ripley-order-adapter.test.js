@@ -11,18 +11,7 @@ import {
   withRipleyOrderLines,
 } from './order-adapters/ripley.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
-import { ripleyShipmentStatuses, ripleySyncWindow, syncAllRipleyOrders, syncRipleyOrders } from './ripley-orders.js';
-
-test('el polling incremental usa el cursor de la última sincronización', () => {
-  assert.deepEqual(
-    ripleySyncWindow({}, '2026-08-20T10:00:00Z'),
-    { startUpdateDate: '2026-08-20T10:00:00.000Z' },
-  );
-  assert.deepEqual(
-    ripleySyncWindow({ date: '2026-08-20' }),
-    { startDate: '2026-08-20T05:00:00.000Z', endDate: '2026-08-21T05:00:00.000Z' },
-  );
-});
+import { ripleyShipmentStatuses } from './order-sync.js';
 
 test('mapea el ciclo de estados Mirakl al modelo canónico', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_ACCEPTANCE'), { orderStatus: 'new', fulfillmentStatus: 'pending' });
@@ -56,8 +45,8 @@ test('obtiene de ST11 el estado más reciente de cada orden', async () => {
     },
   }, ['R-1', 'R-2']);
   assert.deepEqual(Object.fromEntries(statuses), {
-    'R-1': 'READY_FOR_PICK_UP',
-    'R-2': 'SHIPPED',
+    'R-1': { status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
+    'R-2': { status: 'SHIPPED', updatedAt: '2026-09-12T12:00:00Z' },
   });
 });
 
@@ -272,40 +261,4 @@ test('pide a Ripley las líneas si el listado llega sin order_lines', async () =
     async listOrders() { throw new Error('no debe pedir de nuevo'); },
   }, detailed);
   assert.equal(already, detailed);
-});
-
-test('sincroniza solo empresas activas con API key de Ripley y aísla fallos', async () => {
-  const calls = [];
-  const result = await syncAllRipleyOrders({ date: '2026-08-20' }, {
-    listCompanies: async () => [
-      { id: 1, activo: true, ripleyApiKey: 'key', nombre: 'Seller 1' },
-      { id: 2, activo: true, ripleyApiKey: '', nombre: 'Sin key' },
-      { id: 3, activo: false, ripleyApiKey: 'key', nombre: 'Inactivo' },
-      { id: 4, activo: true, ripleyApiKey: 'key', nombre: 'Seller 4' },
-    ],
-    syncOrders: async (companyId, options) => {
-      calls.push([companyId, options]);
-      if (companyId === 4) throw new Error('Ripley no disponible');
-      return { received: 2 };
-    },
-  });
-  assert.deepEqual(calls, [[1, { date: '2026-08-20' }], [4, { date: '2026-08-20' }]]);
-  assert.equal(result.stores, 2);
-  assert.equal(result.successful, 1);
-  assert.equal(result.failed, 1);
-  assert.equal(result.results[1].error, 'Ripley no disponible');
-});
-
-test('la sincronización directa de Ripley consulta solo Mirakl con SVC configurado', async () => {
-  let calls = 0;
-  const result = await syncRipleyOrders(1, {}, {
-    getCompany: async () => ({ id: 1, activo: true, nombre: 'Seller', ripleySvcUsername: 'seller', ripleySvcPassword: 'clave' }),
-    db: { query: async () => ({ rows: [{ id: 12, last_successful_sync_at: null }] }) },
-    client: { listAllOrders: async () => { calls += 1; return []; } },
-    syncLogistics: async () => { assert.fail('No debe consultar SVC'); },
-    fetchImpl: async () => { assert.fail('No debe autenticar en SVC'); },
-  });
-  assert.equal(result.status, 'success');
-  assert.equal(calls, 1);
-  assert.equal(result.logistics.status, 'paused');
 });

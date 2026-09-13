@@ -121,7 +121,17 @@ test('Ripley aísla el pedido fallido y continúa la página', async () => {
 test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', async () => {
   const ingested = [];
   await syncRipleyPages({
-    async query() { return { rows: [] }; },
+    async query(sql) {
+      if (sql.includes('select external_order_id')) {
+        return { rows: [
+          { external_order_id: '7942121801-A' },
+          { external_order_id: '7942151801-A' },
+          { external_order_id: '7942236901-A' },
+          { external_order_id: '7942310501-A' },
+        ] };
+      }
+      return { rows: [] };
+    },
   }, {
     channelAccountId: 12,
     companyId: 4,
@@ -132,16 +142,16 @@ test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', as
     to: '2026-09-13T04:59:59.999Z',
   }, 102, {
     ripleyClient: {
-      listOrders: async () => ({
-        orders: [
-          { orderId: '7942121801-A', updatedAt: '2026-09-12T10:00:00Z' },
-          { orderId: '7942151801-A', updatedAt: '2026-09-12T10:01:00Z' },
-          { orderId: '7942236901-A', updatedAt: '2026-09-12T10:02:00Z' },
-          { orderId: '7942310501-A', updatedAt: '2026-09-12T10:03:00Z' },
-        ],
-        totalCount: 4,
-        max: 100,
-      }),
+      listOrders: async (options) => options.orderIds
+        ? ({
+          orders: options.orderIds.map((orderId, index) => ({
+            orderId,
+            updatedAt: `2026-09-12T10:0${index}:00Z`,
+          })),
+          totalCount: options.orderIds.length,
+          max: 100,
+        })
+        : ({ orders: [], totalCount: 0, max: 100 }),
       listAllShipments: async () => ([
         { orderId: '7942121801-A', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
         { orderId: '7942151801-A', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:01:00Z' },
@@ -149,17 +159,17 @@ test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', as
         { orderId: '7942310501-A', status: 'SHIPPING', updatedAt: '2026-09-12T11:03:00Z' },
       ]),
     },
-    ingestRipleyOrder: async ({ normalized, shipmentStatus }) => {
-      ingested.push({ orderId: normalized.orderId, shipmentStatus });
+    ingestRipleyOrder: async ({ normalized, shipmentStatus, eventId }) => {
+      ingested.push({ orderId: normalized.orderId, shipmentStatus, eventId });
       return { order: { id: ingested.length } };
     },
   });
 
   assert.deepEqual(ingested, [
-    { orderId: '7942121801-A', shipmentStatus: 'READY_FOR_PICK_UP' },
-    { orderId: '7942151801-A', shipmentStatus: 'READY_FOR_PICK_UP' },
-    { orderId: '7942236901-A', shipmentStatus: 'SHIPPING' },
-    { orderId: '7942310501-A', shipmentStatus: 'SHIPPING' },
+    { orderId: '7942121801-A', shipmentStatus: 'READY_FOR_PICK_UP', eventId: 'ripley:7942121801-A:2026-09-12T10:00:00Z:shipment:2026-09-12T11:00:00Z' },
+    { orderId: '7942151801-A', shipmentStatus: 'READY_FOR_PICK_UP', eventId: 'ripley:7942151801-A:2026-09-12T10:01:00Z:shipment:2026-09-12T11:01:00Z' },
+    { orderId: '7942236901-A', shipmentStatus: 'SHIPPING', eventId: 'ripley:7942236901-A:2026-09-12T10:02:00Z:shipment:2026-09-12T11:02:00Z' },
+    { orderId: '7942310501-A', shipmentStatus: 'SHIPPING', eventId: 'ripley:7942310501-A:2026-09-12T10:03:00Z:shipment:2026-09-12T11:03:00Z' },
   ]);
 });
 
