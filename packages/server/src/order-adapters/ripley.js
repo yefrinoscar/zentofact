@@ -293,6 +293,13 @@ export async function remapPersistedRipleyReadyOrders(db, accountId = null) {
   );
   let updated = 0;
   for (const row of found.rows || []) {
+    // OR11 remains SHIPPING even after ST11 confirms READY_FOR_PICK_UP.
+    // Do not let that less-specific state move a confirmed pickup back to
+    // preparation while the inbox is being read.
+    const shipmentFulfillment = mapRipleyShipmentFulfillmentStatus(
+      row.metadata?.miraklShipmentStatus,
+    );
+    if (shipmentFulfillment && shipmentFulfillment !== 'preparing') continue;
     const next = mapRipleyCanonicalStatus(row.provider_status);
     if (!RIPLEY_READY_DEMOTE.has(next.fulfillmentStatus)) continue;
     const result = await db.query(
