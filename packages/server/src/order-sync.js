@@ -3,7 +3,6 @@ import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
 import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
 import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
-import { ripleyShipmentStatuses } from './ripley-orders.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
@@ -195,6 +194,23 @@ function ripleyClient(account, dependencies) {
   });
 }
 
+export async function ripleyShipmentStatuses(client, orderIds) {
+  const statuses = new Map();
+  if (typeof client?.listAllShipments !== 'function') return statuses;
+  const ids = [...new Set(orderIds.map((value) => String(value || '').trim()).filter(Boolean))];
+  for (let start = 0; start < ids.length; start += 100) {
+    const shipments = await client.listAllShipments({ orderIds: ids.slice(start, start + 100) });
+    for (const shipment of shipments) {
+      const current = statuses.get(shipment.orderId);
+      const updatedAt = shipment.updatedAt || shipment.createdAt || '';
+      if (!current || updatedAt >= current.updatedAt) {
+        statuses.set(shipment.orderId, { status: shipment.status, updatedAt });
+      }
+    }
+  }
+  return statuses;
+}
+
 export async function recoverInterruptedOrderSyncRuns(accountIdInput, db) {
   const accountId = positiveId(accountIdInput, 'channelAccountId');
   const target = db || (await loadCore()).pool;
@@ -216,6 +232,26 @@ export async function recoverInterruptedOrderSyncRuns(accountIdInput, db) {
 
 export async function syncRipleyPages(db, account, window, runId, dependencies = {}) {
   const client = ripleyClient(account, dependencies);
+  const open = await db.query(
+    `select external_order_id
+     from orders
+     where channel_account_id=$1
+       and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and order_status not in ('cancelled', 'failed')
+     order by id`,
+    [account.channelAccountId],
+  );
+  const openOrderIds = [...new Set((open.rows || [])
+    .map((row) => String(row.external_order_id || '').trim())
+    .filter(Boolean))];
+  const openOrders = [];
+  for (let start = 0; start < openOrderIds.length; start += PAGE_SIZE) {
+    const page = await client.listOrders({
+      orderIds: openOrderIds.slice(start, start + PAGE_SIZE),
+      max: PAGE_SIZE,
+    });
+    openOrders.push(...page.orders);
+  }
   let pages = 0;
   let received = 0;
   let upserted = 0;
@@ -231,7 +267,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
     });
     pages += 1;
     received += page.orders.length;
-    const orders = window.initial || window.creationRange
+    const windowOrders = window.initial || window.creationRange
       ? page.orders.filter((order) => {
         const createdAt = new Date(order.createdAt || '');
         return !Number.isNaN(createdAt.getTime())
@@ -239,11 +275,15 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
           && createdAt <= new Date(window.to);
       })
       : page.orders;
+    const orders = pages === 1
+      ? [...new Map([...openOrders, ...windowOrders].map((order) => [order.orderId, order])).values()]
+      : windowOrders;
     const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
     for (const listed of orders) {
       try {
         await db.query('begin');
         const normalized = await withRipleyOrderLines(client, listed);
+        const shipment = shipmentStatuses.get(normalized.orderId);
         const result = await (dependencies.ingestRipleyOrder || ingestRipleyOrder)({
           companyId: account.companyId,
           company: { ...account, id: account.companyId },
@@ -254,10 +294,10 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             displayName: account.displayName,
           },
           normalized,
-          shipmentStatus: shipmentStatuses.get(normalized.orderId) || null,
+          shipmentStatus: shipment?.status || null,
           remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
-          eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}`,
+          eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}:shipment:${shipment?.updatedAt || shipment?.status || 'none'}`,
           source: 'sync',
         }, db);
         await db.query('commit');
