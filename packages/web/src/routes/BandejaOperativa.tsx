@@ -24,6 +24,11 @@ const STAGE_TABS = [
   { stage: 'ready', label: 'Confirmado', mobileLabel: 'Confirmado', icon: Printer },
 ] as const;
 
+function syncStepDetail(step: BandejaView['syncStep']) {
+  if (step === 'refreshing-inbox') return 'Paso 2 de 2 · Actualizando la bandeja';
+  return 'Paso 1 de 2 · Consultando pedidos';
+}
+
 function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
   checked: boolean; mixed?: boolean; disabled: boolean; label: string; onChange: () => void;
 }) {
@@ -230,7 +235,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
           <WorkLoader
             label="Sincronizando pedidos"
-            detail="Puedes seguir trabajando. Continúa en segundo plano."
+            detail={syncStepDetail(view.syncStep)}
           />
         </div>
       )}
