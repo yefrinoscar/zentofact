@@ -3,49 +3,74 @@ import test from 'node:test';
 import {
   ingestRipleyOrder,
   mapRipleyCanonicalStatus,
+  mapRipleyShipmentFulfillmentStatus,
   mapRipleyOrderItems,
   mapRipleyShipping,
+  remapPersistedRipleyReadyOrders,
   resolveRipleyIngestStatuses,
   shouldEnqueueRipleyStockJob,
   withRipleyOrderLines,
 } from './order-adapters/ripley.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
-import { ripleySyncWindow, syncAllRipleyOrders } from './ripley-orders.js';
-
-test('el polling incremental usa el cursor de la última sincronización', () => {
-  assert.deepEqual(
-    ripleySyncWindow({}, '2026-08-20T10:00:00Z'),
-    { startUpdateDate: '2026-08-20T10:00:00.000Z' },
-  );
-  assert.deepEqual(
-    ripleySyncWindow({ date: '2026-08-20' }),
-    { startDate: '2026-08-20T05:00:00.000Z', endDate: '2026-08-21T05:00:00.000Z' },
-  );
-});
+import { ripleyShipmentStatuses } from './order-sync.js';
 
 test('mapea el ciclo de estados Mirakl al modelo canónico', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_ACCEPTANCE'), { orderStatus: 'new', fulfillmentStatus: 'pending' });
-  assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT'), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
   assert.deepEqual(mapRipleyCanonicalStatus('SHIPPED'), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
   assert.deepEqual(mapRipleyCanonicalStatus('RECEIVED'), { orderStatus: 'completed', fulfillmentStatus: 'delivered' });
   assert.deepEqual(mapRipleyCanonicalStatus('CANCELED'), { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' });
 });
 
-test('un SHIPPING de Mirakl no pisa el estado operativo que ya avanzó SVC', () => {
+test('ST11 separa un shipment en preparación de uno listo para recojo', () => {
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPPING'), 'preparing');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPMENT_PREPARED'), 'preparing');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('READY_FOR_PICK_UP'), 'ready_to_ship');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('SHIPPED'), 'shipped');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('TO_COLLECT'), 'shipped');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('RECEIVED'), 'delivered');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('CANCELED'), 'cancelled');
+  assert.equal(mapRipleyShipmentFulfillmentStatus('CLOSED'), 'delivered');
+});
+
+test('obtiene de ST11 el estado más reciente de cada orden', async () => {
+  const statuses = await ripleyShipmentStatuses({
+    async listAllShipments({ orderIds }) {
+      assert.deepEqual(orderIds, ['R-1', 'R-2']);
+      return [
+        { orderId: 'R-1', status: 'SHIPPING', updatedAt: '2026-09-12T10:00:00Z' },
+        { orderId: 'R-1', status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
+        { orderId: 'R-2', status: 'SHIPPED', updatedAt: '2026-09-12T12:00:00Z' },
+      ];
+    },
+  }, ['R-1', 'R-2']);
+  assert.deepEqual(Object.fromEntries(statuses), {
+    'R-1': { status: 'READY_FOR_PICK_UP', updatedAt: '2026-09-12T11:00:00Z' },
+    'R-2': { status: 'SHIPPED', updatedAt: '2026-09-12T12:00:00Z' },
+  });
+});
+
+test('ST11 tiene prioridad para el estado operativo de un SHIPPING de OR11', () => {
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+    orderStatus: 'confirmed', fulfillmentStatus: 'preparing',
+  });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', null, 'READY_FOR_PICK_UP'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship',
+  });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', null, 'SHIPPED'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'shipped',
   });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     fulfillment_status: 'ready_to_ship',
     metadata: {},
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'pending' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PREPARE' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
-  }), { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' });
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
   assert.deepEqual(resolveRipleyIngestStatuses('SHIPPED', {
     metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
   }), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
@@ -141,7 +166,7 @@ test('encola descuento de Ripley desde el corte y no marca vacío como completo'
     },
   });
 
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
   assert.equal(ingestPayload.providerStatus, 'SHIPPING');
   assert.equal(ingestPayload.itemsComplete, true);
   assert.equal(ingestPayload.catalogInventoryEnabled, false);
@@ -165,12 +190,12 @@ test('encola descuento de Ripley desde el corte y no marca vacío como completo'
     },
     enqueue: async () => ({ enqueued: true }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
   assert.equal(ingestPayload.itemsComplete, false);
   assert.equal(empty.order.id, 502);
 });
 
-test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PICKUP', async () => {
+test('el ingest usa SHIPPING de Mirakl aunque exista metadata SVC antigua', async () => {
   let ingestPayload = null;
   const db = {
     async query(sql, params) {
@@ -195,10 +220,10 @@ test('el ingest de SHIPPING conserva listo para enviar si SVC ya lo marcó TO_PI
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'ready_to_ship');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
 });
 
-test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', async () => {
+test('el ingest de SHIPPING corrige un listo persistido sin evidencia de ST11', async () => {
   let ingestPayload = null;
   await ingestRipleyOrder({
     companyId: 2,
@@ -215,7 +240,41 @@ test('el ingest de SHIPPING corrige un listo persistido sin evidencia SVC', asyn
     },
     enqueue: async () => ({ enqueued: false }),
   });
-  assert.equal(ingestPayload.fulfillmentStatus, 'pending');
+  assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
+});
+
+test('baja un listo heredado que no tiene evidencia vigente de ST11', async () => {
+  const updates = [];
+  const result = await remapPersistedRipleyReadyOrders({
+    async query(sql, params) {
+      if (sql.startsWith('select')) {
+        return {
+          rows: [
+            { id: 11, provider_status: 'SHIPPING', metadata: {} },
+            {
+              id: 12,
+              provider_status: 'SHIPPING',
+              metadata: { miraklShipmentStatus: 'READY_FOR_PICK_UP' },
+            },
+            {
+              id: 13,
+              provider_status: 'SHIPPING',
+              metadata: {
+                miraklShipmentStatus: 'READY_FOR_PICK_UP',
+                miraklShipmentSource: 'st11',
+                miraklShipmentObservedAt: '2026-09-14T04:00:00.000Z',
+              },
+            },
+          ],
+        };
+      }
+      updates.push(params);
+      return { rowCount: 1 };
+    },
+  }, 9);
+
+  assert.deepEqual(updates, [[11, 'preparing'], [12, 'preparing']]);
+  assert.equal(result.updated, 2);
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {
@@ -237,26 +296,4 @@ test('pide a Ripley las líneas si el listado llega sin order_lines', async () =
     async listOrders() { throw new Error('no debe pedir de nuevo'); },
   }, detailed);
   assert.equal(already, detailed);
-});
-
-test('sincroniza solo empresas activas con API key de Ripley y aísla fallos', async () => {
-  const calls = [];
-  const result = await syncAllRipleyOrders({ date: '2026-08-20' }, {
-    listCompanies: async () => [
-      { id: 1, activo: true, ripleyApiKey: 'key', nombre: 'Seller 1' },
-      { id: 2, activo: true, ripleyApiKey: '', nombre: 'Sin key' },
-      { id: 3, activo: false, ripleyApiKey: 'key', nombre: 'Inactivo' },
-      { id: 4, activo: true, ripleyApiKey: 'key', nombre: 'Seller 4' },
-    ],
-    syncOrders: async (companyId, options) => {
-      calls.push([companyId, options]);
-      if (companyId === 4) throw new Error('Ripley no disponible');
-      return { received: 2 };
-    },
-  });
-  assert.deepEqual(calls, [[1, { date: '2026-08-20' }], [4, { date: '2026-08-20' }]]);
-  assert.equal(result.stores, 2);
-  assert.equal(result.successful, 1);
-  assert.equal(result.failed, 1);
-  assert.equal(result.results[1].error, 'Ripley no disponible');
 });

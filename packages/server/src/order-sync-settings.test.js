@@ -40,7 +40,7 @@ test('loadOrderSyncSettings lee la fila compartida', async () => {
   });
 });
 
-test('saveOrderSyncSettings persiste un solo valor para Falabella y Ripley', async () => {
+test('saveOrderSyncSettings persiste el valor compartido de sincronización', async () => {
   const writes = [];
   const db = {
     async query(sql, params = []) {
@@ -59,5 +59,4 @@ test('saveOrderSyncSettings persiste un solo valor para Falabella y Ripley', asy
   assert.equal(insert.params[2], 'admin-1');
   assert.ok(writes.some((write) => write.sql.startsWith('update order_sync_state')));
   assert.ok(writes.some((write) => write.sql.startsWith('update falabella_sync_state')));
-  assert.ok(writes.some((write) => write.sql.startsWith('update ripley_sync_state')));
 });

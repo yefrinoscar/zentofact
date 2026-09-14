@@ -872,19 +872,7 @@ const DDL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
 
-  CREATE TABLE IF NOT EXISTS ripley_sync_state (
-    company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    status TEXT NOT NULL DEFAULT 'pending',
-    last_attempt_at TIMESTAMPTZ,
-    last_started_at TIMESTAMPTZ,
-    last_finished_at TIMESTAMPTZ,
-    last_successful_sync_at TIMESTAMPTZ,
-    last_error TEXT,
-    last_orders_received INTEGER NOT NULL DEFAULT 0,
-    sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
+  DROP TABLE IF EXISTS ripley_sync_state;
   DO $$
   BEGIN
     IF EXISTS (

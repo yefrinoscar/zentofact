@@ -7,10 +7,11 @@ import {
   BadgeDollarSign,
   BarChart3,
   Boxes,
-  ChevronDown,
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ArrowUpNarrowWide,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   CircleDollarSign,
   Check,
   CheckCircle2,
@@ -376,17 +377,16 @@ function CatalogStockCell({ product, compact = false }: { product: Product; comp
 }
 
 function CatalogSortGlyph({ active, dir, always }: { active: boolean; dir: 'asc' | 'desc'; always?: boolean }) {
+  const Icon = !active ? ArrowUpDown : dir === 'asc' ? ArrowUpNarrowWide : ArrowDownWideNarrow;
   return (
-    <span
+    <Icon
       className={cn(
-        'relative inline-flex h-3.5 w-3.5 flex-col items-center justify-center transition-opacity',
+        'size-3.5 shrink-0 transition-opacity',
+        active ? 'text-foreground' : 'text-muted-foreground',
         active || always ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
       )}
       aria-hidden="true"
-    >
-      <ChevronUp className={cn('-mb-1 size-3', active && dir === 'asc' ? 'text-foreground' : 'text-muted-foreground/40')} />
-      <ChevronDown className={cn('-mt-1 size-3', active && dir === 'desc' ? 'text-foreground' : 'text-muted-foreground/40')} />
-    </span>
+    />
   );
 }
 

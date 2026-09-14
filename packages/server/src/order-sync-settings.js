@@ -51,10 +51,6 @@ async function applySharedInterval(client, intervalMinutes) {
     'update falabella_sync_state set sync_interval_minutes=$1, updated_at=now()',
     [intervalMinutes],
   ).catch(() => {});
-  await client.query(
-    'update ripley_sync_state set sync_interval_minutes=$1, updated_at=now()',
-    [intervalMinutes],
-  ).catch(() => {});
 }
 
 export async function saveOrderSyncSettings(db, input = {}, actorId) {

@@ -2,8 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { operationalGroups, orderUnits, type OperationalLayout } from './bandeja-variants';
 import { BandejaPackingChecklist } from './BandejaPackingChecklist';
 import { BandejaDeadlineSummary } from './BandejaDeadlineSummary';
-import { Check, ChevronLeft, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search, Truck } from 'lucide-react';
+import { Check, ChevronRight, Layers3, Loader2, PackageCheck, Printer, RefreshCw, Search, Truck } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { WorkLoader } from '../components/WorkLoader';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/cn';
 import { sellerShortName } from '../lib/seller-name';
@@ -22,6 +23,11 @@ const STAGE_TABS = [
   { stage: 'pending', label: 'Por preparar', mobileLabel: 'Preparar', icon: PackageCheck },
   { stage: 'ready', label: 'Confirmado', mobileLabel: 'Confirmado', icon: Printer },
 ] as const;
+
+function syncStepDetail(step: BandejaView['syncStep']) {
+  if (step === 'refreshing-inbox') return 'Paso 2 de 2 · Actualizando la bandeja';
+  return 'Paso 1 de 2 · Consultando pedidos';
+}
 
 function SelectionBox({ checked, mixed = false, disabled, label, onChange }: {
   checked: boolean; mixed?: boolean; disabled: boolean; label: string; onChange: () => void;
@@ -104,8 +110,8 @@ function stagePanelKey(stage: LogisticsStage, fetching: boolean, orders: Logisti
   return stage;
 }
 
-export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, layout = '1', resetKey }: {
-  view: BandejaView; offset: number; pageSize: number; onPage: (offset: number) => void; error: boolean; busy: boolean; layout?: OperationalLayout; resetKey?: string;
+export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: {
+  view: BandejaView; error: boolean; busy: boolean; layout?: OperationalLayout; resetKey?: string;
 }) {
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [focusedId, setFocusedId] = useState<number | null>(null);
@@ -225,6 +231,15 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         </div>
       </div>
 
+      {view.syncing && (
+        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+          <WorkLoader
+            label="Sincronizando pedidos"
+            detail={syncStepDetail(view.syncStep)}
+          />
+        </div>
+      )}
+
       <BandejaDeadlineSummary view={view} error={error} />
 
       <StageTabBar view={view} />
@@ -258,7 +273,7 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
       >
         <div className="flex flex-wrap items-center justify-between gap-2 py-1 sm:border-y sm:px-3 sm:py-3">
         <div className="flex min-h-9 items-center gap-3">
-          {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <span className="hidden sm:inline-flex"><SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar pedidos disponibles de esta página" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} /></span>}
+          {view.stage !== 'shipped' && layout !== '4' && !isChecklist && <span className="hidden sm:inline-flex"><SelectionBox checked={allSelected} mixed={selectedOrders.length > 0 && !allSelected} disabled={locked || !eligible.length || (isPending && !view.canDispatch)} label="Seleccionar todos los pedidos disponibles del filtro" onChange={() => setSelected(allSelected ? new Set() : new Set(eligible.map((order) => order.id)))} /></span>}
           <div>
             <p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} seleccionados` : `${view.totalCount} ${view.totalCount === 1 ? 'pedido' : 'pedidos'}`}</p>
             <p className="hidden text-xs text-muted-foreground sm:block">{isPending ? layout === '4' ? 'Revisa, empaca y marca listo o entregado.' : 'Prepara y marca listo o entregado.' : isReady ? 'Imprime marketplaces o marca entregados los propios.' : 'Pedidos enviados.'}</p>
@@ -330,12 +345,8 @@ export function BandejaOperativa({ view, offset, pageSize, onPage, error, busy, 
         {isPending && toPrint > 0 && <Button className="mt-6 w-full justify-between" variant="ghost" onClick={() => view.setStage('ready')}>Ir a imprimir <span>{toPrint}</span></Button>}
       </aside>}
       </div>
-      <div className={cn("mt-4 items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground", view.totalCount > pageSize || offset > 0 ? "flex" : "hidden sm:flex")}>
-        <span>{view.totalCount ? `${offset + 1}–${Math.min(offset + view.orders.length, view.totalCount)} de ${view.totalCount}` : '0 pedidos'}</span>
-        <div className="flex gap-2"><Button size="sm" variant="outline" disabled={locked || offset === 0} onClick={() => onPage(Math.max(0, offset - pageSize))}><ChevronLeft />Anterior</Button><Button size="sm" variant="outline" disabled={locked || offset + pageSize >= view.totalCount} onClick={() => onPage(offset + pageSize)}>Siguiente<ChevronRight /></Button></div>
-      </div>
       {layout === '14' && view.stage !== 'shipped' && <div className="fixed inset-x-4 bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4 shadow-lg xl:left-72">
-        <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${eligible.length} pedidos disponibles en esta página`}</p><p className="text-xs text-muted-foreground">{eligible.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma listo o entregado.' : 'Imprime o marca entregados.'}</p></div>
+        <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${eligible.length} pedidos disponibles con este filtro`}</p><p className="text-xs text-muted-foreground">{eligible.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma listo o entregado.' : 'Imprime o marca entregados.'}</p></div>
         <div className="flex flex-wrap gap-2">
           {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}</Button>}
           {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}

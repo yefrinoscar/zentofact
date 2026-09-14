@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_BANDEJA_URGENCY,
   canMarkFalabellaReady,
   canMarkLogisticsDelivered,
   canMarkLogisticsReady,
@@ -9,7 +10,6 @@ import {
   logisticsReadyConfirmCopy,
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
-  ripleyDefaultPickupDate,
   RIPLEY_LABEL_SOON_COPY,
   groupLogisticsByUrgency,
   labelWasPrinted,
@@ -45,9 +45,14 @@ import {
   laterBandejaDeadlineDates,
   LOGISTICS_STAGES,
   LOGISTICS_URGENCIES,
+  productImageCandidates,
   productImageSrc,
   visibleLogisticsChannels,
 } from './logistics-inbox.ts';
+
+test('la bandeja inicia mostrando todos los plazos', () => {
+  assert.equal(DEFAULT_BANDEJA_URGENCY, null);
+});
 
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
@@ -66,13 +71,13 @@ test('la entrega propia usa Express, no nosotros', () => {
   assert.equal(logisticsDeliveryLabel({ channelCode: 'falabella', shipping: {} }), 'Marketplace');
 });
 
-test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausado; enviados no imprimen', () => {
+test('manual imprime siempre; Falabella solo si está listo; Ripley no se imprime ni confirma; enviados no imprimen', () => {
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
-  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'shipped', companyId: 1 }), false);
   assert.equal(RIPLEY_LABEL_SOON_COPY, 'Muy pronto.');
   assert.equal(canMarkFalabellaReady({
@@ -83,7 +88,7 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausad
   }), false);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
-  }), true);
+  }), false);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 2, externalOrderId: 'R-1',
   }), false);
@@ -153,11 +158,11 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
-    { kind: 'ready', label: 'Marcar listo' },
+    { kind: 'wait', label: 'Gestionar en Ripley' },
   );
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
-    { kind: 'soon', label: 'Imprimir' },
+    { kind: 'wait', label: 'Gestionar en Ripley' },
   );
   assert.equal(labelWasPrinted({ labelPrint: { printCount: 1 } }), true);
   assert.equal(labelWasPrinted({ labelPrint: null }), false);
@@ -178,11 +183,11 @@ test('el flujo de despacho marca los pasos completados', () => {
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }).map((step) => [step.label, step.state]),
-    [['Empacar', 'current'], ['Agendar recojo', 'todo'], ['Etiqueta', 'todo']],
+    [['Empacar', 'current'], ['Confirmar recojo', 'todo'], ['Etiqueta', 'todo']],
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => [step.label, step.state]),
-    [['Empacar', 'done'], ['Agendar recojo', 'done'], ['Etiqueta', 'todo']],
+    [['Empacar', 'done'], ['Confirmar recojo', 'done'], ['Etiqueta', 'todo']],
   );
 });
 
@@ -206,15 +211,14 @@ test('copy operativa de bandeja', () => {
     { channelCode: 'falabella' },
     { channelCode: 'ripley' },
   ]), /Falabella confirma listo/);
-  assert.match(logisticsBulkReadyConfirmCopy([{ channelCode: 'ripley' }]), /recojo de mañana/);
-  assert.equal(ripleyDefaultPickupDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
+  assert.match(logisticsBulkReadyConfirmCopy([{ channelCode: 'ripley' }]), /recojo en Mirakl/);
   assert.match(
-    logisticsReadyConfirmCopy({ channelCode: 'ripley' }, '2026-09-08'),
-    /2026-09-08/,
+    logisticsReadyConfirmCopy({ channelCode: 'ripley' }),
+    /Mirakl/,
   );
   assert.match(
-    logisticsReadySuccessCopy({ channelCode: 'ripley', externalOrderNumber: 'RP-10020' }, '2026-09-08'),
-    /RP-10020.*2026-09-08/,
+    logisticsReadySuccessCopy({ channelCode: 'ripley', externalOrderNumber: 'RP-10020' }),
+    /RP-10020.*confirmado en Ripley/,
   );
   assert.match(
     logisticsReadySuccessCopy({ channelCode: 'falabella', externalOrderNumber: 'PV-10001' }),
@@ -360,4 +364,15 @@ test('las imágenes de Falabella y Ripley pasan por el proxy del catálogo', () 
     /^\/catalog\/image\?url=https%3A%2F%2Fhome\.ripley\.com\.pe/,
   );
   assert.equal(productImageSrc('', ''), '');
+});
+
+test('conserva la foto del SKU como alternativa cuando falla la URL del pedido', () => {
+  assert.deepEqual(
+    productImageCandidates('https://media.falabella.com/falabellaPE/antigua_01', 'ABC123'),
+    [
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2Fantigua_01',
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2FABC123_01',
+      '/catalog/image?url=https%3A%2F%2Fmedia.falabella.com%2FfalabellaPE%2FABC123_1',
+    ],
+  );
 });

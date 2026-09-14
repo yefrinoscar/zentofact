@@ -11,6 +11,7 @@ export type {
   RipleyOffer,
   RipleyOfferPage,
   RipleyProductContent,
+  RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
   RipleySvcClientOptions,

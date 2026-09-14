@@ -6,7 +6,6 @@ import {
   parseLogisticsInboxFilters,
   parsePrintSelection,
   listLogisticsInbox,
-  limaTomorrowDate,
   markLogisticsOrderDelivered,
   markLogisticsOrderReady,
   printLogisticsPack,
@@ -48,6 +47,7 @@ test('rechaza filtros de bandeja inválidos', () => {
 test('la impresión pide ids concretos y tope', () => {
   assert.deepEqual(parsePrintSelection({ orderIds: [3, '3', 8] }).orderIds, [3, 8]);
   assert.deepEqual(parsePrintSelection({ orderIds: [1] }), { orderIds: [1] });
+  assert.equal(parsePrintSelection({ orderIds: Array.from({ length: 300 }, (_, index) => index + 1) }).orderIds.length, 300);
   assert.throws(() => parsePrintSelection({ orderIds: [] }), /al menos un pedido/);
 });
 
@@ -335,13 +335,13 @@ test('filtra por una fecha concreta de plazo', async () => {
   assert.throws(() => parseLogisticsInboxFilters({ deadline: '2026-13-40' }), /Fecha/);
 });
 
-test('compone Falabella y deja Ripley fuera de la impresión', async () => {
+test('bloquea un lote que incluye Ripley antes de imprimir', async () => {
   let listedRipley = 0;
   const rows = [
     printRow({ id: 21, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-21' }),
     printRow({ id: 22, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-22' }),
   ];
-  const result = await printLogisticsPack(
+  await assert.rejects(() => printLogisticsPack(
     { orderIds: [21, 22] },
     {
       db: new PrintDb(rows),
@@ -350,22 +350,12 @@ test('compone Falabella y deja Ripley fuera de la impresión', async () => {
         listedRipley += 1;
         return { labels: [] };
       },
-      downloadRipleyLabels: async () => {
-        throw new Error('no debe llamarse');
-      },
     },
-  );
+  ), /La impresión de pedidos Ripley está deshabilitada/);
   assert.equal(listedRipley, 0);
-  assert.equal(result.labelCount, 1);
-  assert.equal(result.skipped.length, 1);
-  assert.equal(result.skipped[0].id, 22);
-  assert.equal(result.skipped[0].reason, 'Muy pronto.');
-  const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
-  assert.equal(pdf.getPageCount(), 1);
 });
 
-test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () => {
-  const lines = [];
+test('un pedido Ripley no se imprime', async () => {
   await assert.rejects(
     () => printLogisticsPack(
       { orderIds: [32] },
@@ -380,24 +370,16 @@ test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () =>
           throw new Error('no debe llamarse');
         },
         downloadRipleyLabels: async () => ({ labels_generated: '' }),
-        createLogId: () => 'log_eeeeeeeeeeee',
-        log: (line) => lines.push(line),
       },
     ),
     (error) => {
-      assert.equal(error.message, 'Muy pronto.');
-      assert.equal(error.logId, 'log_eeeeeeeeeeee');
-      assert.equal(error.details.skipped[0].reason, 'Muy pronto.');
+      assert.equal(error.message, 'La impresión de pedidos Ripley está deshabilitada.');
       return true;
     },
   );
-  const payload = JSON.parse(lines.find((line) => String(line).includes('logistics.print.failed')));
-  assert.equal(payload.logId, 'log_eeeeeeeeeeee');
-  assert.equal(payload.orders[0].externalOrderId, 'R-32');
 });
 
-test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
-  const lines = [];
+test('Ripley bloquea la impresión antes de generar etiquetas de otros canales', async () => {
   await assert.rejects(
     () => printLogisticsPack(
       { orderIds: [51, 52] },
@@ -406,20 +388,18 @@ test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
           printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),
           printRow({ id: 52, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-52' }),
         ]),
-        getFalabellaLabel: async () => ({ base64: Buffer.from('<html>error</html>').toString('base64') }),
+        getFalabellaLabel: async () => {
+          throw new Error('no debe llamar a Falabella');
+        },
         listRipleyLabels: async () => ({ labels: [{ document_id: 'doc-52', order_id: 'R-52' }] }),
         downloadRipleyLabels: async () => ({ labels_generated: (await stubLabelPdf('RIP')).base64 }),
-        createLogId: () => 'log_cccccccccccc',
-        log: (line) => lines.push(line),
       },
     ),
     (error) => {
-      assert.match(error.message, /vacía/);
-      assert.equal(error.details.skipped.find((entry) => entry.id === 52).reason, 'Muy pronto.');
+      assert.equal(error.message, 'La impresión de pedidos Ripley está deshabilitada.');
       return true;
     },
   );
-  assert.match(lines.find((line) => String(line).includes('logistics.print.failed')) || '', /log_cccccccccccc/);
 });
 
 test('arma los ids de búsqueda Ripley sin repetir', () => {
@@ -434,14 +414,9 @@ test('arma los ids de búsqueda Ripley sin repetir', () => {
   }), ['7935614201-A', '7935614201']);
 });
 
-test('la fecha de recojo Ripley es el día siguiente en Lima', () => {
-  assert.equal(limaTomorrowDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
-});
-
-test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
+test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', async () => {
   const updates = [];
-  const listed = [];
-  const scheduled = [];
+  const validated = [];
   const enqueued = [];
   const db = {
     async query(sql, params) {
@@ -452,24 +427,31 @@ test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
       return { rows: [] };
     },
   };
+  let readCount = 0;
   const result = await scheduleRipleyInboxReady({
     id: 20,
     companyId: 7,
     externalOrderId: '7935614201-A',
     externalOrderNumber: '7935614201',
-    warehouseAddress: 'Av. Demo 101, Lima',
-    hasRipleySvcCredentials: false,
+    ripleyApiKey: 'api-key',
+    ripleyShopId: '4362',
     metadata: {},
     orderedAt: '2026-09-04T10:00:00.000Z',
-  }, { pickupDate: '2026-09-08' }, {
+  }, {}, {
     db,
-    listEligible: async (filter) => {
-      listed.push(filter);
-      return { labels: [{ _id: 'label-1', order_id: filter.orderId }] };
-    },
-    schedule: async (companyId, data) => {
-      scheduled.push({ companyId, data });
-      return { manifests: [{ _id: 'man-1' }] };
+    miraklClient: {
+      listAllShipments: async () => {
+        readCount += 1;
+        return [{
+          id: 'shipment-1',
+          orderId: '7935614201-A',
+          status: readCount === 1 ? 'SHIPPING' : 'READY_FOR_PICK_UP',
+        }];
+      },
+      validateShipmentsReadyForPickup: async (ids) => {
+        validated.push(ids);
+        return { successIds: ids, errors: [] };
+      },
     },
     enqueue: async (job) => {
       enqueued.push(job);
@@ -478,56 +460,16 @@ test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
   });
   assert.equal(result.ok, true);
   assert.equal(result.alreadyReady, false);
-  assert.equal(result.sandbox, true);
-  assert.equal(result.pickupDate, '2026-09-08');
-  assert.equal(result.manifestId, 'man-1');
-  assert.equal(listed[0].sandbox, true);
-  assert.deepEqual(scheduled[0].data.labelIds, ['label-1']);
-  assert.equal(scheduled[0].data.sandbox, true);
-  assert.match(JSON.stringify(updates[0].params[1]), /TO_PICKUP/);
+  assert.deepEqual(validated, [['shipment-1']]);
+  assert.deepEqual(result.shipmentIds, ['shipment-1']);
+  assert.match(JSON.stringify(updates[0].params[1]), /READY_FOR_PICK_UP/);
   assert.equal(enqueued[0].orderId, 20);
 });
 
-test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
-  const rows = [{
-    id: 20,
-    company_id: 7,
-    external_order_id: 'R-20',
-    external_order_number: 'RP-10020',
-    fulfillment_status: 'pending',
-    ordered_at: '2026-09-02T10:00:00.000Z',
-    metadata: {},
-    channel_code: 'ripley',
-    warehouse_address: 'Av. Demo 101, Lima',
-    has_ripley_svc_credentials: false,
-  }];
-  const db = {
-    async query(sql, params) {
-      if (sql.includes('from orders o')) return { rows };
-      if (sql.includes('update orders')) {
-        return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
-      }
-      return { rows: [] };
-    },
-  };
-  const result = await markLogisticsOrderReady({ orderId: 20, pickupDate: '2026-09-08' }, {
-    db,
-    listEligible: async () => ({ labels: [{ _id: 'label-1', order_id: 'R-20' }] }),
-    schedule: async () => ({ manifests: [{ _id: 'man-1' }] }),
-    enqueue: async () => ({ enqueued: true }),
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.pickupDate, '2026-09-08');
-
+test('marcar listo de Ripley permanece deshabilitado', async () => {
   await assert.rejects(
-    () => markLogisticsOrderReady({ orderId: 21 }, {
-      db: {
-        async query() {
-          return { rows: [{ ...rows[0], id: 21, channel_code: 'falabella' }] };
-        },
-      },
-    }),
-    /no se agenda en Ripley/,
+    () => markLogisticsOrderReady({ orderId: 20 }),
+    /confirmación de pedidos Ripley está deshabilitada/,
   );
 });
 
@@ -684,21 +626,4 @@ test('cierra en la bandeja un Ripley ya shipped aunque siga pending local', asyn
   });
   assert.equal(result.updated, 1);
   assert.equal(updates[0].params[1], 'shipped');
-});
-
-test('un Ripley ya listo no vuelve a agendar el recojo', async () => {
-  const result = await markLogisticsOrderReady({ orderId: 22 }, {
-    db: {
-      async query() {
-        return {
-          rows: [{
-            id: 22,
-            channel_code: 'ripley',
-            fulfillment_status: 'ready_to_ship',
-          }],
-        };
-      },
-    },
-  });
-  assert.deepEqual(result, { ok: true, alreadyReady: true, orderId: 22 });
 });

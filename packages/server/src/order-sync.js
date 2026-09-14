@@ -7,7 +7,6 @@ import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOr
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
-import { hasRipleySvcCredentials, syncRipleyLogistics } from './ripley-logistics.js';
 import { isFalabellaSyncEnabled, isRipleySyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
@@ -195,6 +194,23 @@ function ripleyClient(account, dependencies) {
   });
 }
 
+export async function ripleyShipmentStatuses(client, orderIds) {
+  const statuses = new Map();
+  if (typeof client?.listAllShipments !== 'function') return statuses;
+  const ids = [...new Set(orderIds.map((value) => String(value || '').trim()).filter(Boolean))];
+  for (let start = 0; start < ids.length; start += 100) {
+    const shipments = await client.listAllShipments({ orderIds: ids.slice(start, start + 100) });
+    for (const shipment of shipments) {
+      const current = statuses.get(shipment.orderId);
+      const updatedAt = shipment.updatedAt || shipment.createdAt || '';
+      if (!current || updatedAt >= current.updatedAt) {
+        statuses.set(shipment.orderId, { status: shipment.status, updatedAt });
+      }
+    }
+  }
+  return statuses;
+}
+
 export async function recoverInterruptedOrderSyncRuns(accountIdInput, db) {
   const accountId = positiveId(accountIdInput, 'channelAccountId');
   const target = db || (await loadCore()).pool;
@@ -216,6 +232,26 @@ export async function recoverInterruptedOrderSyncRuns(accountIdInput, db) {
 
 export async function syncRipleyPages(db, account, window, runId, dependencies = {}) {
   const client = ripleyClient(account, dependencies);
+  const open = await db.query(
+    `select external_order_id
+     from orders
+     where channel_account_id=$1
+       and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+       and order_status not in ('cancelled', 'failed')
+     order by id`,
+    [account.channelAccountId],
+  );
+  const openOrderIds = [...new Set((open.rows || [])
+    .map((row) => String(row.external_order_id || '').trim())
+    .filter(Boolean))];
+  const openOrders = [];
+  for (let start = 0; start < openOrderIds.length; start += PAGE_SIZE) {
+    const page = await client.listOrders({
+      orderIds: openOrderIds.slice(start, start + PAGE_SIZE),
+      max: PAGE_SIZE,
+    });
+    openOrders.push(...page.orders);
+  }
   let pages = 0;
   let received = 0;
   let upserted = 0;
@@ -231,7 +267,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
     });
     pages += 1;
     received += page.orders.length;
-    const orders = window.initial || window.creationRange
+    const windowOrders = window.initial || window.creationRange
       ? page.orders.filter((order) => {
         const createdAt = new Date(order.createdAt || '');
         return !Number.isNaN(createdAt.getTime())
@@ -239,10 +275,17 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
           && createdAt <= new Date(window.to);
       })
       : page.orders;
+    const orders = pages === 1
+      ? [...new Map([...openOrders, ...windowOrders].map((order) => [order.orderId, order])).values()]
+      : windowOrders;
+    const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
+    const shipmentObservedAt = new Date().toISOString();
     for (const listed of orders) {
       try {
         await db.query('begin');
         const normalized = await withRipleyOrderLines(client, listed);
+        const shipment = shipmentStatuses.get(normalized.orderId);
+        const shipmentStatus = shipment?.status || null;
         const result = await (dependencies.ingestRipleyOrder || ingestRipleyOrder)({
           companyId: account.companyId,
           company: { ...account, id: account.companyId },
@@ -253,9 +296,11 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
             displayName: account.displayName,
           },
           normalized,
+          shipmentStatus,
+          shipmentObservedAt: shipmentStatus ? shipmentObservedAt : null,
           remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
-          eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}`,
+          eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}:shipment:${shipment?.updatedAt || shipment?.status || 'none'}`,
           source: 'sync',
         }, db);
         await db.query('commit');
@@ -330,26 +375,6 @@ async function dispatchAccountSync(db, account, window, runId, dependencies) {
   throw new Error(`El canal ${account.channelCode} no admite sincronización de pedidos.`);
 }
 
-async function applyRipleyLogistics(account, db, dependencies = {}) {
-  const core = dependencies.getCompany ? null : await loadCore();
-  const company = await (dependencies.getCompany || core.getCompany)(account.companyId);
-  if (typeof dependencies.syncLogistics === 'function') {
-    return dependencies.syncLogistics(company, {
-      db,
-      fetchImpl: dependencies.fetchImpl,
-      client: dependencies.ripleySvcClient,
-    });
-  }
-  if (!hasRipleySvcCredentials(company)) {
-    return { received: 0, matched: 0, status: 'not_configured' };
-  }
-  return syncRipleyLogistics(company, {
-    db,
-    fetchImpl: dependencies.fetchImpl,
-    client: dependencies.ripleySvcClient,
-  });
-}
-
 export async function syncOrderAccount(accountIdInput, options = {}, dependencies = {}) {
   const accountId = positiveId(accountIdInput, 'channelAccountId');
   const core = dependencies.pool ? null : await loadCore();
@@ -409,10 +434,7 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
           logId: result.lastLogId || null,
         });
       }
-      const logistics = account.channelCode === 'ripley'
-        ? await applyRipleyLogistics(account, db, dependencies)
-        : null;
-      return withAccount(account, { channelAccountId: accountId, status: 'success', skipped: 'already_current', logistics });
+      return withAccount(account, { channelAccountId: accountId, status: 'success', skipped: 'already_current', logistics: null });
     }
     const run = await db.query(
       `insert into order_sync_runs (channel_account_id, mode, status, cursor_from, cursor_to)
@@ -445,9 +467,6 @@ export async function syncOrderAccount(accountIdInput, options = {}, dependencie
         ],
       );
       return withAccount(account, { channelAccountId: accountId, status: 'already_running', runId });
-    }
-    if (account.channelCode === 'ripley') {
-      stats.logistics = await applyRipleyLogistics(account, db, dependencies);
     }
     const status = stats.failed > 0 || stats.status === 'partial' ? 'partial' : 'success';
     await db.query(

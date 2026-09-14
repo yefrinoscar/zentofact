@@ -1,12 +1,16 @@
 import type {
   ListOffersOptions,
   ListOrdersOptions,
+  ListShipmentsOptions,
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
   RipleyProductContent,
+  RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
+  RipleyShipment,
+  RipleyShipmentPage,
   RipleySvcClientOptions,
   RipleySvcLabelOptions,
   RipleySvcLogisticsOrderOptions,
@@ -118,6 +122,53 @@ export class RipleyApiClient {
     }
   }
 
+  async listShipments(options: ListShipmentsOptions = {}): Promise<RipleyShipmentPage> {
+    const url = new URL('/api/shipments', this.baseUrl);
+    this.addShopId(url);
+    addRepeated(url, 'order_id', options.orderIds);
+    addRepeated(url, 'shipment_state_code', options.shipmentStateCodes);
+    addText(url, 'last_updated_from', options.lastUpdatedFrom);
+    addText(url, 'last_updated_to', options.lastUpdatedTo);
+    addText(url, 'page_token', options.pageToken);
+    const limit = validPageSize(options.limit);
+    url.searchParams.set('limit', String(limit));
+
+    const body = await this.getJson(url);
+    const page = objectRecord(body);
+    if (!page || !Array.isArray(page.data)) throw new Error('Ripley no devolvió la lista de shipments.');
+    return {
+      shipments: page.data.map(normalizeShipment).filter((shipment): shipment is RipleyShipment => shipment !== null),
+      nextPageToken: nonEmptyText(page.next_page_token ?? page.nextPageToken),
+      previousPageToken: nonEmptyText(page.previous_page_token ?? page.previousPageToken),
+    };
+  }
+
+  async listAllShipments(options: Omit<ListShipmentsOptions, 'pageToken' | 'limit'> = {}): Promise<RipleyShipment[]> {
+    const shipments: RipleyShipment[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listShipments({ ...options, pageToken, limit: MAX_PAGE_SIZE });
+      shipments.push(...page.shipments);
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+    return shipments;
+  }
+
+  /** Mirakl ST26: validates one or more shipments as ready for pickup. */
+  async validateShipmentsReadyForPickup(shipmentIds: string[]): Promise<RipleyReadyForPickupResult> {
+    const ids = [...new Set(shipmentIds.map((id) => id.trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('Indica al menos un shipment de Ripley.');
+    const url = new URL('/api/shipments/ready_for_pick_up', this.baseUrl);
+    this.addShopId(url);
+    const body = await this.putJson(url, { shipments: ids.map((id) => ({ id })) });
+    const result = objectRecord(body);
+    if (!result) throw new Error('Ripley devolvió una respuesta ST26 inválida.');
+    return {
+      successIds: readShipmentIds(result.shipment_success),
+      errors: readShipmentErrors(result.shipment_errors),
+    };
+  }
+
   private addShopId(url: URL) {
     if (this.options.shopId != null && String(this.options.shopId).trim()) {
       url.searchParams.set('shop_id', String(this.options.shopId).trim());
@@ -132,11 +183,42 @@ export class RipleyApiClient {
     if (!response.ok) throw providerError(response.status, body);
     return body;
   }
+
+  private async putJson(url: URL, payload: unknown): Promise<unknown> {
+    const response = await this.fetchImpl(url, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        Authorization: this.options.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await readJson(response);
+    if (!response.ok) throw providerError(response.status, body);
+    return body;
+  }
+}
+
+function readShipmentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => nonEmptyText(objectRecord(entry)?.id)).filter((id): id is string => Boolean(id));
+}
+
+function readShipmentErrors(value: unknown): Array<{ id: string | null; message: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const error = objectRecord(entry) || {};
+    return {
+      id: nonEmptyText(error.id),
+      message: nonEmptyText(error.message ?? error.error_message ?? error.code) || 'Ripley rechazó el shipment.',
+    };
+  });
 }
 
 export const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';
 
-/** Mirakl is the commercial API. Seller Center rejects those hosts with HTTP 401 Unauthorized. */
+/** SVC and Mirakl use separate hosts and credentials. */
 export function resolveRipleySvcBaseUrl(value?: string | null): string {
   const raw = String(value || '').trim();
   if (!raw) return RIPLEY_SVC_DEFAULT_BASE_URL;
@@ -147,7 +229,9 @@ export function resolveRipleySvcBaseUrl(value?: string | null): string {
     throw new Error('La URL de SVC Ripley es inválida.');
   }
   if (parsed.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
-  if (parsed.hostname.toLowerCase().endsWith('mirakl.net')) return RIPLEY_SVC_DEFAULT_BASE_URL;
+  if (parsed.hostname === 'mirakl.net' || parsed.hostname.endsWith('.mirakl.net')) {
+    throw new Error('La URL de Mirakl no corresponde a SVC. Configura la URL de API entregada por Ripley.');
+  }
   return parsed.origin;
 }
 
@@ -163,9 +247,9 @@ export class RipleySvcClient {
   constructor(options: RipleySvcClientOptions) {
     this.baseUrl = new URL(resolveRipleySvcBaseUrl(options.baseUrl));
     this.username = options.username.trim();
-    this.password = String(options.password ?? '').trim();
+    this.password = String(options.password ?? '');
     this.country = (options.country || 'PE').toUpperCase();
-    if (!this.username || !this.password) throw new Error('Faltan las credenciales de SVC Ripley.');
+    if (!this.username || !this.password.trim()) throw new Error('Faltan las credenciales de SVC Ripley.');
     this.fetchImpl = options.fetchImpl || fetch;
   }
 
@@ -322,14 +406,18 @@ export class RipleySvcClient {
       await this.login();
       response = await this.fetchImpl(url, this.authorizedInit(init));
     }
-    const body = await readJson(response);
+    const body = await readJson(response, response.ok);
     if (!response.ok) throw providerError(response.status, body, url);
+    if (body === null && (!init.method || init.method === 'GET')) {
+      throw new Error(`SVC Ripley no devolvió una respuesta JSON en ${url.pathname}.`);
+    }
     return body;
   }
 
   private authorizedInit(init: RequestInit): RequestInit {
     return {
       ...init,
+      redirect: 'manual',
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${this.accessToken}`,
@@ -358,6 +446,13 @@ function encodeBasicCredentials(username: string, password: string) {
 function addCsv(url: URL, key: string, values: string[] | undefined) {
   const normalized = values?.map((value) => String(value).trim()).filter(Boolean);
   if (normalized?.length) url.searchParams.set(key, normalized.join(','));
+}
+
+function addRepeated(url: URL, key: string, values: string[] | undefined) {
+  for (const value of values || []) {
+    const normalized = String(value).trim();
+    if (normalized) url.searchParams.append(key, normalized);
+  }
 }
 
 function addText(url: URL, key: string, value: string | undefined) {
@@ -458,6 +553,23 @@ function normalizeOrder(value: unknown): RipleyOrder | null {
   };
 }
 
+function normalizeShipment(value: unknown): RipleyShipment | null {
+  const shipment = objectRecord(value);
+  if (!shipment) return null;
+  const id = nonEmptyText(shipment.id);
+  const orderId = nonEmptyText(shipment.order_id ?? shipment.orderId);
+  if (!id || !orderId) return null;
+  return {
+    id,
+    orderId,
+    status: nonEmptyText(shipment.status) || 'UNKNOWN',
+    createdAt: isoDate(shipment.created_date ?? shipment.createdAt),
+    updatedAt: isoDate(shipment.last_updated_date ?? shipment.updatedAt),
+    shippedAt: isoDate(shipment.shipped_date ?? shipment.shippedAt),
+    raw: value,
+  };
+}
+
 function isoDate(value: unknown): string | null {
   const text = nonEmptyText(value);
   if (!text) return null;
@@ -465,11 +577,14 @@ function isoDate(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-async function readJson(response: Response): Promise<unknown> {
+async function readJson(response: Response, requireJson = false): Promise<unknown> {
   const text = await response.text();
   if (!text.trim()) return null;
   try { return JSON.parse(text); }
-  catch { return { message: text }; }
+  catch {
+    if (requireJson) throw new Error('SVC Ripley no devolvió una respuesta JSON válida. Revisa la conexión de Seller Center.');
+    return { message: text };
+  }
 }
 
 function providerError(status: number, body: unknown, url?: URL) {
@@ -491,7 +606,7 @@ function vendorLoginError(
   return new Error(
     `Ripley respondió HTTP ${status}${message ? `: ${message}` : ''} en POST /api/current/auth/login/vendor (${url.host}). `
     + `Enviamos Authorization Basic (usuario ${username}, clave de ${passwordLength} caracteres) y X-Country ${country}, sin body. `
-    + 'Kong espera el usuario y contraseña de API de Seller Center, no la API key de Mirakl ni el login web (Keycloak / NextAuth).',
+    + 'Verifica la URL y las credenciales de API SVC entregadas por Ripley; no uses la API key de Mirakl.',
   );
 }
 
@@ -531,4 +646,3 @@ function extractAccessToken(value: unknown): string | null {
     ?? nested?.token,
   );
 }
-

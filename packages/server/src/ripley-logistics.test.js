@@ -17,6 +17,15 @@ import {
   syncRipleyLogistics,
 } from './ripley-logistics.js';
 
+function enableSvc(t) {
+  const previous = process.env.RIPLEY_SVC_ENABLED;
+  process.env.RIPLEY_SVC_ENABLED = 'true';
+  t.after(() => {
+    if (previous === undefined) delete process.env.RIPLEY_SVC_ENABLED;
+    else process.env.RIPLEY_SVC_ENABLED = previous;
+  });
+}
+
 test('permite consultar el historial sandbox vacío sin credenciales productivas SVC', async () => {
   const result = await listRipleySvcManifests(7, { sandbox: true, orderId: 'TEST-100-A' }, {
     getCompany: async () => ({ id: 7, activo: true, nombre: 'Seller de prueba' }),
@@ -40,34 +49,19 @@ test('el sandbox logístico inicia con una etiqueta elegible y sin manifiesto', 
   assert.equal(labels.environment, 'simulated');
 });
 
-test('si la empresa guardó Mirakl como URL SVC, autentica en Seller Center', async () => {
-  const hosts = [];
-  await listRipleySvcLabels(7, { orderId: '7935614201', limit: 25 }, {
-    getCompany: async () => ({
-      id: 7,
-      activo: true,
+test('rechaza una URL Mirakl como SVC antes de enviar credenciales', async (t) => {
+  enableSvc(t);
+  await assert.rejects(() => listRipleySvcLabels(7, {}, {
+    getCompany: async () => ({ id: 7, activo: true,
       ripley_svc_base_url: 'https://ripleyperu-prod.mirakl.net',
-      ripley_svc_username: 'seller_limbo',
-      ripley_svc_password: 'clave',
+      ripley_svc_username: 'seller', ripley_svc_password: 'clave',
     }),
-    fetchImpl: async (url) => {
-      hosts.push(new URL(url).host);
-      if (String(url).includes('/auth/login/vendor')) {
-        return new Response(JSON.stringify({ access_token: 'token-1' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response(JSON.stringify({ labels: [] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    },
-  });
-  assert.deepEqual([...new Set(hosts)], ['sellercenter.ripleylabs.com']);
+    fetchImpl: async () => { assert.fail('No debe autenticar en otro host'); },
+  }), /Mirakl no corresponde a SVC/);
 });
 
-test('acepta credenciales SVC guardadas en snake_case', async () => {
+test('acepta credenciales SVC guardadas en snake_case', async (t) => {
+  enableSvc(t);
   const paths = [];
   const result = await listRipleySvcLabels(7, { orderId: 'R-1', limit: 25 }, {
     getCompany: async () => ({
@@ -75,11 +69,12 @@ test('acepta credenciales SVC guardadas en snake_case', async () => {
       activo: true,
       ripley_svc_base_url: 'https://sellercenter.ripley.test',
       ripley_svc_username: 'seller',
-      ripley_svc_password: 'clave',
+      ripley_svc_password: ' clave ',
     }),
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, init) => {
       paths.push(new URL(url).pathname);
       if (String(url).includes('/auth/login/vendor')) {
+        assert.equal(init.headers.Authorization, `Basic ${btoa('seller: clave ')}`);
         return new Response(JSON.stringify({ access_token: 'token-1' }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -96,7 +91,8 @@ test('acepta credenciales SVC guardadas en snake_case', async () => {
   assert.ok(paths.includes('/api/v7/label/labels'));
 });
 
-test('sin sandbox conserva el bloqueo cuando faltan credenciales SVC', async () => {
+test('sin sandbox conserva el bloqueo cuando faltan credenciales SVC', async (t) => {
+  enableSvc(t);
   await assert.rejects(
     () => listRipleySvcManifests(7, {}, {
       getCompany: async () => ({ id: 7, activo: true, nombre: 'Seller sin SVC' }),
@@ -245,4 +241,17 @@ test('escucha TO_PICKUP aunque el listado general solo traiga Para preparar', as
   assert.equal(updates[1].params[2], 'ready_to_ship');
   assert.deepEqual(enqueued.map((job) => job.externalOrderId), ['7937596201', '7937873401']);
   assert.equal(enqueued[0].source, 'listen');
+});
+
+test('SVC pausado no autentica aunque existan credenciales guardadas', async (t) => {
+  const previous = process.env.RIPLEY_SVC_ENABLED;
+  delete process.env.RIPLEY_SVC_ENABLED;
+  t.after(() => { if (previous !== undefined) process.env.RIPLEY_SVC_ENABLED = previous; });
+  const dependencies = {
+    getCompany: async () => ({ id: 1, activo: true, ripleySvcUsername: 'seller', ripleySvcPassword: 'clave' }),
+    fetchImpl: async () => { assert.fail('SVC no debe recibir solicitudes'); },
+  };
+  for (const list of [listRipleySvcLabels, listRipleySvcEligibleLabels, listRipleySvcManifests]) {
+    await assert.rejects(() => list(1, {}, dependencies), /Seller Center Ripley está pausado/);
+  }
 });

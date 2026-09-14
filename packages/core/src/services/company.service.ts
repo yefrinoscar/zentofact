@@ -84,19 +84,21 @@ export interface TestSunatConnectionResult {
 const SUNAT_BETA_ENDPOINT = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
 const SUNAT_PROD_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
 const PRODUCTION_DUMMY_TICKETS = ['202620699999999', '202600000000001'];
-const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';
-
 function normalizeRipleySvcBaseUrl(value?: string | null): string | undefined {
   if (value == null) return undefined;
   const raw = String(value).trim();
   if (!raw) return raw;
+  let parsed: URL;
   try {
-    const parsed = new URL(raw);
-    if (parsed.hostname.toLowerCase().endsWith('mirakl.net')) return RIPLEY_SVC_DEFAULT_BASE_URL;
-    return parsed.origin;
+    parsed = new URL(raw);
   } catch {
-    return raw;
+    throw new Error('La URL de SVC Ripley es inválida.');
   }
+  if (parsed.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
+  if (parsed.hostname === 'mirakl.net' || parsed.hostname.endsWith('.mirakl.net')) {
+    throw new Error('La URL de Mirakl no corresponde a SVC. Configura la URL de API entregada por Ripley.');
+  }
+  return parsed.origin;
 }
 
 function hasText(value: unknown): boolean {

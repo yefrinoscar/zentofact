@@ -34,7 +34,7 @@ import {
   logisticsSkippedNotice,
   openPdfPreviewTab,
   PDF_POPUP_BLOCKED_COPY,
-  ripleyDefaultPickupDate,
+  DEFAULT_BANDEJA_URGENCY,
   RIPLEY_LABEL_SOON_COPY,
   showPdfInTab,
   type LogisticsChannel,
@@ -91,7 +91,7 @@ type PrintResult = {
   skipped?: Array<{ id: number; reason: string }>;
 };
 
-const PAGE_SIZE = 50;
+const INBOX_BATCH_LIMIT = 300;
 const EMPTY_URGENCY: Record<LogisticsUrgency, number> = { overdue: 0, today: 0, tomorrow: 0, later: 0 };
 
 function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
@@ -135,11 +135,11 @@ export default function BandejaLogistica() {
 
   const [stage, setStage] = useState<LogisticsStage>('pending');
   const [channelCode, setChannelCode] = useState<'all' | LogisticsChannel>('all');
-  const [urgency, setUrgency] = useState<LogisticsUrgency | null>('today');
+  const [urgency, setUrgency] = useState<LogisticsUrgency | null>(DEFAULT_BANDEJA_URGENCY);
   const [deadlineDate, setDeadlineDate] = useState<string | null>(null);
+  const [syncStep, setSyncStep] = useState<'fetching-orders' | 'refreshing-inbox' | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
-  const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
   const [labelSelection, setLabelSelection] = useState<Set<number> | null>(null);
   const [readyOrder, setReadyOrder] = useState<LogisticsOrder | null>(null);
   const [bulkReady, setBulkReady] = useState<LogisticsOrder[] | null>(null);
@@ -151,15 +151,13 @@ export default function BandejaLogistica() {
   const printPreviewRef = useRef<Window | null>(null);
 
   const filterKey = [stage, channelCode, urgency || '', deadlineDate || '', search].join('|');
-  const offset = page.key === filterKey ? page.offset : 0;
   const filters = {
     stage,
     channelCode: channelCode === 'all' ? undefined : channelCode,
     urgency: stage === 'shipped' || deadlineDate ? undefined : bandejaDeadlineFilter(urgency) || undefined,
     deadline: stage === 'shipped' ? undefined : deadlineDate || undefined,
     search: search || undefined,
-    limit: PAGE_SIZE,
-    offset,
+    limit: INBOX_BATCH_LIMIT,
   };
 
   const inboxQuery = useQuery({
@@ -212,12 +210,11 @@ export default function BandejaLogistica() {
   const changeStage = (next: LogisticsStage) => {
     setStage(next);
     setLabelSelection(null);
-    setPage({ key: '', offset: 0 });
     if (next === 'shipped') {
       setUrgency(null);
       setDeadlineDate(null);
     } else if (stage === 'shipped') {
-      setUrgency('today');
+      setUrgency(DEFAULT_BANDEJA_URGENCY);
     }
   };
 
@@ -274,8 +271,6 @@ export default function BandejaLogistica() {
     if (order.channelCode === 'ripley') {
       return api.markLogisticsOrderReady({
         orderId: order.id,
-        pickupDate: ripleyDefaultPickupDate(),
-        warehouseAddress: order.warehouseAddress || undefined,
       });
     }
     return api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId);
@@ -381,7 +376,8 @@ export default function BandejaLogistica() {
 
   const syncMutation = useMutation({
     mutationFn: () => api.syncManagedOrders({ mode: 'incremental' }),
-    onSuccess: (result) => {
+    onMutate: () => setSyncStep('fetching-orders'),
+    onSuccess: async (result) => {
       const nameByCompanyId = new Map(
         orders.flatMap((order) => (
           order.companyId != null && order.companyName
@@ -390,9 +386,11 @@ export default function BandejaLogistica() {
         )),
       );
       announce(logisticsSyncNotice(result, nameByCompanyId));
-      void invalidate();
+      setSyncStep('refreshing-inbox');
+      await invalidate();
     },
     onError: (error) => announce(noticeFromError(error, 'No se pudieron sincronizar los pedidos.')),
+    onSettled: () => setSyncStep(null),
   });
 
   const refresh = () => {
@@ -429,14 +427,14 @@ export default function BandejaLogistica() {
     stage,
     setStage: changeStage,
     channelCode,
-    setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); },
     channels: inboxQuery.data?.channels,
     urgency,
     deadlineDate,
-    setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
-    setUrgency: (next) => { setUrgency(bandejaDeadlineFilter(next)); setDeadlineDate(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); },
+    setUrgency: (next) => { setUrgency(bandejaDeadlineFilter(next)); setDeadlineDate(null); setLabelSelection(null); },
     searchInput,
-    setSearchInput: (value) => { setSearchInput(value); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setSearchInput: (value) => { setSearchInput(value); setLabelSelection(null); },
     orders,
     counts,
     totalCount: inboxQuery.data?.totalCount || 0,
@@ -446,6 +444,8 @@ export default function BandejaLogistica() {
     notice,
     canDispatch,
     canSync,
+    syncing: syncMutation.isPending,
+    syncStep,
     refreshing: syncMutation.isPending || inboxQuery.isFetching,
     refresh,
     printing: printMutation.isPending,
@@ -469,7 +469,7 @@ export default function BandejaLogistica() {
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
-        : <BandejaOperativa key={layout} resetKey={`${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
+        : <BandejaOperativa key={layout} resetKey={filterKey} layout={layout} view={view} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} />;
 
   return (
     <div>
@@ -532,7 +532,7 @@ export default function BandejaLogistica() {
                 <Button variant="outline" onClick={closeReady} disabled={readyMutation.isPending}>Cancelar</Button>
                 <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
                   {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-                  {readyOrder.channelCode === 'ripley' ? 'Agendar recojo' : 'Confirmar y marcar listo'}
+                  {readyOrder.channelCode === 'ripley' ? 'Confirmar en Ripley' : 'Confirmar y marcar listo'}
                 </Button>
               </DialogFooter>
             </>
