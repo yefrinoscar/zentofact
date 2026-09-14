@@ -243,7 +243,7 @@ test('el ingest de SHIPPING corrige un listo persistido sin evidencia de ST11', 
   assert.equal(ingestPayload.fulfillmentStatus, 'preparing');
 });
 
-test('no baja un listo que ST11 confirmó para retiro', async () => {
+test('baja un listo heredado que no tiene evidencia vigente de ST11', async () => {
   const updates = [];
   const result = await remapPersistedRipleyReadyOrders({
     async query(sql, params) {
@@ -256,6 +256,15 @@ test('no baja un listo que ST11 confirmó para retiro', async () => {
               provider_status: 'SHIPPING',
               metadata: { miraklShipmentStatus: 'READY_FOR_PICK_UP' },
             },
+            {
+              id: 13,
+              provider_status: 'SHIPPING',
+              metadata: {
+                miraklShipmentStatus: 'READY_FOR_PICK_UP',
+                miraklShipmentSource: 'st11',
+                miraklShipmentObservedAt: '2026-09-14T04:00:00.000Z',
+              },
+            },
           ],
         };
       }
@@ -264,8 +273,8 @@ test('no baja un listo que ST11 confirmó para retiro', async () => {
     },
   }, 9);
 
-  assert.deepEqual(updates, [[11, 'preparing']]);
-  assert.equal(result.updated, 1);
+  assert.deepEqual(updates, [[11, 'preparing'], [12, 'preparing']]);
+  assert.equal(result.updated, 2);
 });
 
 test('pide a Ripley las líneas si el listado llega sin order_lines', async () => {
