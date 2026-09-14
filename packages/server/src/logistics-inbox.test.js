@@ -221,6 +221,14 @@ test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   assert.match(listSql, /media_url/);
 });
 
+test('la bandeja operativa excluye Falabella', async () => {
+  const db = new InboxDb();
+  const result = await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });
+  const listSql = db.queries.find((query) => query.sql.includes('image_url'))?.sql || '';
+  assert.match(listSql, /ch\.code <> 'falabella'/);
+  assert.equal(result.channels.falabella, false);
+});
+
 for (const mediaUrl of [
   'https://home.ripley.com.pe/desk.jpg',
   '/media/product/image/2bdc44c6-94f2-4927-8a86-6c199e72f2ff',

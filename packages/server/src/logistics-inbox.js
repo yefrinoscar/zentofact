@@ -262,6 +262,8 @@ function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
     values.push(filters.channelCode);
     where.push(`ch.code=$${values.length}`);
   }
+  // Falabella ya no forma parte de la bandeja operativa.
+  where.push(`ch.code <> 'falabella'`);
   if (filters.ripleyEnabled === false) {
     where.push(`ch.code <> 'ripley'`);
   }
@@ -465,7 +467,7 @@ export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
   return {
     orders: listResult.rows.map(normalizeInboxOrder),
     channels: {
-      falabella: true,
+      falabella: false,
       ripley: ripleyEnabled,
       manual: true,
     },
