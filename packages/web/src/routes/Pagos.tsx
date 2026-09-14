@@ -900,9 +900,12 @@ export default function Pagos() {
     },
   });
 
-  const salesPages = salesQuery.data?.pages || [];
-  const salesHead = salesPages[0];
-  const sales = salesPages.flatMap((page) => (page.items || []) as SettlementSale[]);
+  const salesPages = salesQuery.data?.pages;
+  const salesHead = salesPages?.[0];
+  const sales = useMemo<SettlementSale[]>(
+    () => salesPages?.flatMap((page) => page.items || []) ?? [],
+    [salesPages],
+  );
   const invoices = (invoicesQuery.data?.items || []) as Array<{
     id: number;
     number: string;
