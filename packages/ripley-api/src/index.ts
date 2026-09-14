@@ -7,7 +7,6 @@ export {
 export type {
   ListOffersOptions,
   ListOrdersOptions,
-  ListPicklistsOptions,
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
@@ -15,8 +14,6 @@ export type {
   RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
-  RipleyPicklist,
-  RipleyPicklistPage,
   RipleySvcClientOptions,
   RipleySvcCountry,
   RipleySvcLabelOptions,

@@ -97,30 +97,6 @@ export interface RipleyShipmentPage {
   previousPageToken: string | null;
 }
 
-export interface ListPicklistsOptions {
-  orderLineIds?: string[];
-  pickupDateMin?: string;
-  pickupDateMax?: string;
-  picklistStates?: string[];
-  pageToken?: string;
-}
-
-/** Mirakl PL11 picklist, including the pickup date assigned by the marketplace. */
-export interface RipleyPicklist {
-  id: string;
-  state: string;
-  pickupDate: string | null;
-  updatedAt: string | null;
-  orderLineIds: string[];
-  raw: unknown;
-}
-
-export interface RipleyPicklistPage {
-  picklists: RipleyPicklist[];
-  nextPageToken: string | null;
-  previousPageToken: string | null;
-}
-
 /** Result of Mirakl ST26, which validates shipments as ready for pickup. */
 export interface RipleyReadyForPickupResult {
   successIds: string[];

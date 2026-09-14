@@ -44,7 +44,9 @@ export function mapRipleyCanonicalStatus(value) {
   if (/(SHIPPED|TO_COLLECT|COLLECTED)/.test(status)) {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' };
   }
-  // OR11 solo dice SHIPPING; ST11 aporta la transición READY_FOR_PICK_UP.
+  // Para Ripley PE, ST11 puede decir READY_FOR_PICK_UP mientras Seller Center
+  // todavía muestra el pedido en “Para preparar”. El estado operativo procede
+  // de OR11 hasta que exista una lectura pública equivalente a Seller Center.
   if (status === 'READY_TO_SHIP') {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship' };
   }
@@ -69,10 +71,9 @@ export function mapRipleyShipmentFulfillmentStatus(value) {
 
 export function resolveRipleyIngestStatuses(providerStatus, _existing = null, shipmentStatus = null) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
-  if (CLOSED_RIPLEY_FULFILLMENT.has(mapped.fulfillmentStatus)) return mapped;
-
-  const fromShipment = mapRipleyShipmentFulfillmentStatus(shipmentStatus);
-  if (fromShipment) return { ...mapped, fulfillmentStatus: fromShipment };
+  // ST11 is diagnostic only. Its READY_FOR_PICK_UP value does not match the
+  // Seller Center workflow and must not advance the local fulfillment state.
+  void shipmentStatus;
   return mapped;
 }
 

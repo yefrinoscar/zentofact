@@ -211,34 +211,6 @@ export async function ripleyShipmentStatuses(client, orderIds) {
   return statuses;
 }
 
-function ripleyOrderLineIds(order) {
-  const raw = order?.raw && typeof order.raw === 'object' ? order.raw : {};
-  const lines = Array.isArray(raw.order_lines) ? raw.order_lines : [];
-  return [...new Set(lines
-    .map((line) => String(line?.id || line?.order_line_id || '').trim())
-    .filter(Boolean))];
-}
-
-export async function ripleyScheduledPickupStatuses(client, orders) {
-  const statuses = new Map();
-  if (typeof client?.listAllPicklists !== 'function') return statuses;
-  const orderLines = new Map(orders.map((order) => [order.orderId, ripleyOrderLineIds(order)]));
-  const lineIds = [...new Set([...orderLines.values()].flat())];
-  if (!lineIds.length) return statuses;
-  const scheduledLines = new Set();
-  for (let start = 0; start < lineIds.length; start += 100) {
-    const picklists = await client.listAllPicklists({ orderLineIds: lineIds.slice(start, start + 100) });
-    for (const picklist of picklists) {
-      if (!picklist.pickupDate) continue;
-      for (const lineId of picklist.orderLineIds || []) scheduledLines.add(String(lineId));
-    }
-  }
-  for (const [orderId, ids] of orderLines) {
-    if (ids.length && ids.every((id) => scheduledLines.has(id))) statuses.set(orderId, 'READY_FOR_PICK_UP');
-  }
-  return statuses;
-}
-
 export async function recoverInterruptedOrderSyncRuns(accountIdInput, db) {
   const accountId = positiveId(accountIdInput, 'channelAccountId');
   const target = db || (await loadCore()).pool;
@@ -307,17 +279,13 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
       ? [...new Map([...openOrders, ...windowOrders].map((order) => [order.orderId, order])).values()]
       : windowOrders;
     const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
-    const scheduledPickupStatuses = await ripleyScheduledPickupStatuses(client, orders);
     const shipmentObservedAt = new Date().toISOString();
     for (const listed of orders) {
       try {
         await db.query('begin');
         const normalized = await withRipleyOrderLines(client, listed);
         const shipment = shipmentStatuses.get(normalized.orderId);
-        const pickupStatus = scheduledPickupStatuses.get(normalized.orderId);
-        const shipmentStatus = pickupStatus && (!shipment || String(shipment.status).trim().toUpperCase() === 'SHIPPING')
-          ? pickupStatus
-          : shipment?.status || null;
+        const shipmentStatus = shipment?.status || null;
         const result = await (dependencies.ingestRipleyOrder || ingestRipleyOrder)({
           companyId: account.companyId,
           company: { ...account, id: account.companyId },

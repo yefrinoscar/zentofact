@@ -158,6 +158,7 @@ test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', as
         { orderId: '7942236901-A', status: 'SHIPPING', updatedAt: '2026-09-12T11:02:00Z' },
         { orderId: '7942310501-A', status: 'SHIPPING', updatedAt: '2026-09-12T11:03:00Z' },
       ]),
+      listAllPicklists: async () => { throw new Error('PL11 no debe consultarse para Ripley Perú.'); },
     },
     ingestRipleyOrder: async ({ normalized, shipmentStatus, eventId }) => {
       ingested.push({ orderId: normalized.orderId, shipmentStatus, eventId });
@@ -171,36 +172,6 @@ test('Sincronizar usa ST11 para separar confirmados de pendientes de Ripley', as
     { orderId: '7942236901-A', shipmentStatus: 'SHIPPING', eventId: 'ripley:7942236901-A:2026-09-12T10:02:00Z:shipment:2026-09-12T11:02:00Z' },
     { orderId: '7942310501-A', shipmentStatus: 'SHIPPING', eventId: 'ripley:7942310501-A:2026-09-12T10:03:00Z:shipment:2026-09-12T11:03:00Z' },
   ]);
-});
-
-test('Sincronizar usa PL11 cuando Ripley ya agendó el recojo', async () => {
-  const ingested = [];
-  await syncRipleyPages({
-    async query(sql) {
-      if (sql.includes('select external_order_id')) return { rows: [{ external_order_id: '7942761001-A' }] };
-      return { rows: [] };
-    },
-  }, {
-    channelAccountId: 12, companyId: 4, channelCode: 'ripley', displayName: 'LIMBO',
-  }, {
-    from: '2026-09-13T05:00:00.000Z', to: '2026-09-14T04:59:59.999Z',
-  }, 103, {
-    ripleyClient: {
-      listOrders: async (options) => options.orderIds
-        ? ({ orders: [{ orderId: '7942761001-A', updatedAt: '2026-09-13T12:00:00Z', raw: { order_lines: [{ id: '7942761001-A-1' }] } }], totalCount: 1, max: 100 })
-        : ({ orders: [], totalCount: 0, max: 100 }),
-      listAllShipments: async () => [{ orderId: '7942761001-A', status: 'SHIPPING', updatedAt: '2026-09-13T12:00:00Z' }],
-      listAllPicklists: async ({ orderLineIds }) => {
-        assert.deepEqual(orderLineIds, ['7942761001-A-1']);
-        return [{ id: 'picklist-1', state: 'IN_PREPARATION', pickupDate: '2026-09-14T00:00:00Z', orderLineIds }];
-      },
-    },
-    ingestRipleyOrder: async ({ normalized, shipmentStatus }) => {
-      ingested.push({ orderId: normalized.orderId, shipmentStatus });
-      return { order: { id: 1 } };
-    },
-  });
-  assert.deepEqual(ingested, [{ orderId: '7942761001-A', shipmentStatus: 'READY_FOR_PICK_UP' }]);
 });
 
 test('Ripley conserva la cabecera sin items y deja la ventana pendiente de reintento', async () => {
