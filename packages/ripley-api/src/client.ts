@@ -1,6 +1,7 @@
 import type {
   ListOffersOptions,
   ListOrdersOptions,
+  ListPicklistsOptions,
   ListShipmentsOptions,
   RipleyApiClientOptions,
   RipleyOffer,
@@ -9,6 +10,8 @@ import type {
   RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
+  RipleyPicklist,
+  RipleyPicklistPage,
   RipleyShipment,
   RipleyShipmentPage,
   RipleySvcClientOptions,
@@ -152,6 +155,36 @@ export class RipleyApiClient {
       pageToken = page.nextPageToken || undefined;
     } while (pageToken);
     return shipments;
+  }
+
+  /** Mirakl PL11: reads pickup lists, including their assigned pickup date. */
+  async listPicklists(options: ListPicklistsOptions = {}): Promise<RipleyPicklistPage> {
+    const url = new URL('/api/picklists', this.baseUrl);
+    this.addShopId(url);
+    addRepeated(url, 'order_line_id', options.orderLineIds);
+    addRepeated(url, 'picklist_state', options.picklistStates);
+    addText(url, 'pickup_date_min', options.pickupDateMin);
+    addText(url, 'pickup_date_max', options.pickupDateMax);
+    addText(url, 'page_token', options.pageToken);
+    const body = await this.getJson(url);
+    const page = objectRecord(body);
+    if (!page || !Array.isArray(page.data)) throw new Error('Ripley no devolvió la lista de recojos.');
+    return {
+      picklists: page.data.map(normalizePicklist).filter((picklist): picklist is RipleyPicklist => picklist !== null),
+      nextPageToken: nonEmptyText(page.next_page_token ?? page.nextPageToken),
+      previousPageToken: nonEmptyText(page.previous_page_token ?? page.previousPageToken),
+    };
+  }
+
+  async listAllPicklists(options: Omit<ListPicklistsOptions, 'pageToken'> = {}): Promise<RipleyPicklist[]> {
+    const picklists: RipleyPicklist[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listPicklists({ ...options, pageToken });
+      picklists.push(...page.picklists);
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+    return picklists;
   }
 
   /** Mirakl ST26: validates one or more shipments as ready for pickup. */
@@ -566,6 +599,28 @@ function normalizeShipment(value: unknown): RipleyShipment | null {
     createdAt: isoDate(shipment.created_date ?? shipment.createdAt),
     updatedAt: isoDate(shipment.last_updated_date ?? shipment.updatedAt),
     shippedAt: isoDate(shipment.shipped_date ?? shipment.shippedAt),
+    raw: value,
+  };
+}
+
+function normalizePicklist(value: unknown): RipleyPicklist | null {
+  const picklist = objectRecord(value);
+  const id = nonEmptyText(picklist?.id);
+  if (!picklist || !id) return null;
+  const orderLineIds = Array.isArray(picklist.order_lines)
+    ? picklist.order_lines
+      .map((line) => {
+        const orderLine = objectRecord(line);
+        return nonEmptyText(orderLine?.id ?? orderLine?.order_line_id ?? orderLine?.orderLineId);
+      })
+      .filter((line): line is string => Boolean(line))
+    : [];
+  return {
+    id,
+    state: nonEmptyText(picklist.state) || 'UNKNOWN',
+    pickupDate: isoDate(picklist.pickup_date ?? picklist.pickupDate),
+    updatedAt: isoDate(picklist.last_updated ?? picklist.lastUpdated),
+    orderLineIds,
     raw: value,
   };
 }
