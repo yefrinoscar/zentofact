@@ -10,7 +10,6 @@ import {
   logisticsReadyConfirmCopy,
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
-  ripleyDefaultPickupDate,
   RIPLEY_LABEL_SOON_COPY,
   groupLogisticsByUrgency,
   labelWasPrinted,
@@ -184,11 +183,11 @@ test('el flujo de despacho marca los pasos completados', () => {
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }).map((step) => [step.label, step.state]),
-    [['Empacar', 'current'], ['Agendar recojo', 'todo'], ['Etiqueta', 'todo']],
+    [['Empacar', 'current'], ['Confirmar recojo', 'todo'], ['Etiqueta', 'todo']],
   );
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => [step.label, step.state]),
-    [['Empacar', 'done'], ['Agendar recojo', 'done'], ['Etiqueta', 'todo']],
+    [['Empacar', 'done'], ['Confirmar recojo', 'done'], ['Etiqueta', 'todo']],
   );
 });
 
@@ -212,15 +211,14 @@ test('copy operativa de bandeja', () => {
     { channelCode: 'falabella' },
     { channelCode: 'ripley' },
   ]), /Falabella confirma listo/);
-  assert.match(logisticsBulkReadyConfirmCopy([{ channelCode: 'ripley' }]), /recojo de mañana/);
-  assert.equal(ripleyDefaultPickupDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
+  assert.match(logisticsBulkReadyConfirmCopy([{ channelCode: 'ripley' }]), /recojo en Mirakl/);
   assert.match(
-    logisticsReadyConfirmCopy({ channelCode: 'ripley' }, '2026-09-08'),
-    /2026-09-08/,
+    logisticsReadyConfirmCopy({ channelCode: 'ripley' }),
+    /Mirakl/,
   );
   assert.match(
-    logisticsReadySuccessCopy({ channelCode: 'ripley', externalOrderNumber: 'RP-10020' }, '2026-09-08'),
-    /RP-10020.*2026-09-08/,
+    logisticsReadySuccessCopy({ channelCode: 'ripley', externalOrderNumber: 'RP-10020' }),
+    /RP-10020.*confirmado en Ripley/,
   );
   assert.match(
     logisticsReadySuccessCopy({ channelCode: 'falabella', externalOrderNumber: 'PV-10001' }),

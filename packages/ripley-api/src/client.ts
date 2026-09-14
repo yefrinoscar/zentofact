@@ -6,6 +6,7 @@ import type {
   RipleyOffer,
   RipleyOfferPage,
   RipleyProductContent,
+  RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
   RipleyShipment,
@@ -153,6 +154,21 @@ export class RipleyApiClient {
     return shipments;
   }
 
+  /** Mirakl ST26: validates one or more shipments as ready for pickup. */
+  async validateShipmentsReadyForPickup(shipmentIds: string[]): Promise<RipleyReadyForPickupResult> {
+    const ids = [...new Set(shipmentIds.map((id) => id.trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('Indica al menos un shipment de Ripley.');
+    const url = new URL('/api/shipments/ready_for_pick_up', this.baseUrl);
+    this.addShopId(url);
+    const body = await this.putJson(url, { shipments: ids.map((id) => ({ id })) });
+    const result = objectRecord(body);
+    if (!result) throw new Error('Ripley devolvió una respuesta ST26 inválida.');
+    return {
+      successIds: readShipmentIds(result.shipment_success),
+      errors: readShipmentErrors(result.shipment_errors),
+    };
+  }
+
   private addShopId(url: URL) {
     if (this.options.shopId != null && String(this.options.shopId).trim()) {
       url.searchParams.set('shop_id', String(this.options.shopId).trim());
@@ -167,6 +183,37 @@ export class RipleyApiClient {
     if (!response.ok) throw providerError(response.status, body);
     return body;
   }
+
+  private async putJson(url: URL, payload: unknown): Promise<unknown> {
+    const response = await this.fetchImpl(url, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        Authorization: this.options.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await readJson(response);
+    if (!response.ok) throw providerError(response.status, body);
+    return body;
+  }
+}
+
+function readShipmentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => nonEmptyText(objectRecord(entry)?.id)).filter((id): id is string => Boolean(id));
+}
+
+function readShipmentErrors(value: unknown): Array<{ id: string | null; message: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const error = objectRecord(entry) || {};
+    return {
+      id: nonEmptyText(error.id),
+      message: nonEmptyText(error.message ?? error.error_message ?? error.code) || 'Ripley rechazó el shipment.',
+    };
+  });
 }
 
 export const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';

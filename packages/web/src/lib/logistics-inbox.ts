@@ -159,15 +159,6 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
 
 export const RIPLEY_LABEL_SOON_COPY = 'Muy pronto.';
 
-export function ripleyDefaultPickupDate(now = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: LIMA,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
-}
-
 function logisticsPrintableStatus(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'cancelled' || status === 'failed' || status === 'returned') return false;
@@ -336,7 +327,7 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
     const ready = status === 'ready_to_ship' || shipped;
     return [
       { label: 'Empacar', state: ready ? 'done' : 'current' },
-      { label: 'Agendar recojo', state: ready ? 'done' : 'todo' },
+      { label: 'Confirmar recojo', state: ready ? 'done' : 'todo' },
       { label: 'Etiqueta', state: shipped ? 'done' : 'todo' },
     ];
   }
@@ -554,17 +545,17 @@ export function logisticsBulkDeliverSummary(total: number, failed: number) {
   return `${ok} entregado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
 }
 
-export function logisticsReadyConfirmCopy(order: LogisticsOrderLike, pickupDate = ripleyDefaultPickupDate()) {
+export function logisticsReadyConfirmCopy(order: LogisticsOrderLike) {
   if (order.channelCode === 'ripley') {
-    return `Ripley agenda el recojo para ${pickupDate} y pasa el pedido a listo.`;
+    return 'Mirakl confirmará el pedido como listo para recojo en Ripley.';
   }
   return 'Falabella dejará este pedido en listo para enviar y descontará el stock.';
 }
 
-export function logisticsReadySuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }, pickupDate = ripleyDefaultPickupDate()) {
+export function logisticsReadySuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }) {
   const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
   if (order.channelCode === 'ripley') {
-    return `${number} quedó listo para enviar. El recojo quedó agendado para ${pickupDate}.`;
+    return `${number} quedó confirmado en Ripley y listo para recojo.`;
   }
   return `${number} quedó listo para enviar. Ya puedes imprimir la etiqueta.`;
 }
@@ -572,8 +563,8 @@ export function logisticsReadySuccessCopy(order: LogisticsOrderLike & { external
 export function logisticsBulkReadyConfirmCopy(orders: LogisticsOrderLike[]) {
   const ripley = orders.filter((order) => order.channelCode === 'ripley').length;
   const falabella = orders.filter((order) => order.channelCode === 'falabella').length;
-  if (ripley && falabella) return 'Falabella confirma listo. Ripley agenda el recojo de mañana.';
-  if (ripley) return 'Ripley agenda el recojo de mañana y pasa estos pedidos a listo.';
+  if (ripley && falabella) return 'Falabella confirma listo. Ripley confirma el recojo en Mirakl.';
+  if (ripley) return 'Ripley confirma estos pedidos como listos para recojo en Mirakl.';
   return 'Falabella descontará el stock y habilitará las etiquetas.';
 }
 

@@ -97,6 +97,12 @@ export interface RipleyShipmentPage {
   previousPageToken: string | null;
 }
 
+/** Result of Mirakl ST26, which validates shipments as ready for pickup. */
+export interface RipleyReadyForPickupResult {
+  successIds: string[];
+  errors: Array<{ id: string | null; message: string }>;
+}
+
 export type RipleySvcCountry = 'PE' | 'CL';
 
 export interface RipleySvcClientOptions {
