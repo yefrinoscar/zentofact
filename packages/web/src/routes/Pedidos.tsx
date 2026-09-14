@@ -1593,7 +1593,7 @@ export default function Pedidos() {
 
   const openStore = (order: InboxOrder) => {
     setActiveCompanyId(order.companyId);
-    navigate('/falabella-api');
+    navigate('/bandeja');
   };
 
   const openOrder = (order: InboxOrder) => {

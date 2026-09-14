@@ -8,7 +8,6 @@ import CreditNotes from './routes/CreditNotes';
 import CreditNotesList from './routes/CreditNotesList';
 import Settings from './routes/Settings';
 import UsersPage from './routes/Users';
-import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
 import Avisos from './routes/Avisos';
@@ -105,10 +104,6 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/credit-notes/bulk': {
     title: 'Anulación masiva',
     subtitle: 'Anula boletas por mes y empresa emitiendo NC en lote.',
-  },
-  '/falabella-api': {
-    title: 'Gestor de Sellers',
-    subtitle: 'Consulta órdenes por empresa usando las credenciales Seller API guardadas.',
   },
   '/productos': {
     title: 'Catálogo de productos',
@@ -306,10 +301,10 @@ function AppLayout() {
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />
               <Route path="/companies" element={<RequirePermission permission="companies" {...permissionState}><Companies /></RequirePermission>} />
-              <Route path="/workflow" element={<Navigate to="/falabella-api" replace />} />
+              <Route path="/workflow" element={<Navigate to="/bandeja" replace />} />
               <Route path="/credit-notes" element={<RequirePermission permission="credit_notes_manage" {...permissionState}><CreditNotesList /></RequirePermission>} />
               <Route path="/credit-notes/bulk" element={<RequirePermission permission="credit_notes_bulk" {...permissionState}><CreditNotes /></RequirePermission>} />
-              <Route path="/falabella-api" element={<RequirePermission permission="falabella_sellers" {...permissionState}><FalabellaApi /></RequirePermission>} />
+              <Route path="/falabella-api" element={<Navigate to="/bandeja" replace />} />
               <Route path="/productos" element={<RequirePermission permission="productos" {...permissionState}><Productos /></RequirePermission>} />
               <Route path="/descuentos-stock" element={<RequirePermission permission="productos" {...permissionState}><DescuentosCola /></RequirePermission>} />
               <Route path="/salidas" element={<Navigate to="/orders" replace />} />
