@@ -16,14 +16,12 @@ import {
   ScanLine,
   Settings,
   ShieldCheck,
-  ShoppingBag,
   Shuffle,
   TrendingDown,
   Users,
   Wallet,
   Zap,
 } from 'lucide-react';
-import falabellaIcon from '../assets/falabella.png';
 import type { PermissionKey } from './permissions';
 import { isNavItemActive, isNavItemVisible, mobileNavPathname } from './nav-path';
 
@@ -64,7 +62,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
       { to: '/ventas', icon: BarChart3, label: 'Ventas', permission: 'dashboard' },
       { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
-      { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
       { to: '/descuentos-stock', icon: TrendingDown, label: 'Cola de descuentos', permission: 'productos', hiddenInProduction: true },
     ],
@@ -77,7 +74,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
       { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management' },
-      { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox', hiddenInProduction: true },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],
