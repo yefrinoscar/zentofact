@@ -6,7 +6,6 @@ import {
   parseLogisticsInboxFilters,
   parsePrintSelection,
   listLogisticsInbox,
-  limaTomorrowDate,
   markLogisticsOrderDelivered,
   markLogisticsOrderReady,
   printLogisticsPack,
@@ -434,14 +433,9 @@ test('arma los ids de búsqueda Ripley sin repetir', () => {
   }), ['7935614201-A', '7935614201']);
 });
 
-test('la fecha de recojo Ripley es el día siguiente en Lima', () => {
-  assert.equal(limaTomorrowDate(new Date('2026-09-07T15:00:00.000Z')), '2026-09-08');
-});
-
-test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
+test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', async () => {
   const updates = [];
-  const listed = [];
-  const scheduled = [];
+  const validated = [];
   const enqueued = [];
   const db = {
     async query(sql, params) {
@@ -452,24 +446,31 @@ test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
       return { rows: [] };
     },
   };
+  let readCount = 0;
   const result = await scheduleRipleyInboxReady({
     id: 20,
     companyId: 7,
     externalOrderId: '7935614201-A',
     externalOrderNumber: '7935614201',
-    warehouseAddress: 'Av. Demo 101, Lima',
-    hasRipleySvcCredentials: false,
+    ripleyApiKey: 'api-key',
+    ripleyShopId: '4362',
     metadata: {},
     orderedAt: '2026-09-04T10:00:00.000Z',
-  }, { pickupDate: '2026-09-08' }, {
+  }, {}, {
     db,
-    listEligible: async (filter) => {
-      listed.push(filter);
-      return { labels: [{ _id: 'label-1', order_id: filter.orderId }] };
-    },
-    schedule: async (companyId, data) => {
-      scheduled.push({ companyId, data });
-      return { manifests: [{ _id: 'man-1' }] };
+    miraklClient: {
+      listAllShipments: async () => {
+        readCount += 1;
+        return [{
+          id: 'shipment-1',
+          orderId: '7935614201-A',
+          status: readCount === 1 ? 'SHIPPING' : 'READY_FOR_PICK_UP',
+        }];
+      },
+      validateShipmentsReadyForPickup: async (ids) => {
+        validated.push(ids);
+        return { successIds: ids, errors: [] };
+      },
     },
     enqueue: async (job) => {
       enqueued.push(job);
@@ -478,17 +479,13 @@ test('agenda recojo Ripley y deja el pedido listo para enviar', async () => {
   });
   assert.equal(result.ok, true);
   assert.equal(result.alreadyReady, false);
-  assert.equal(result.sandbox, true);
-  assert.equal(result.pickupDate, '2026-09-08');
-  assert.equal(result.manifestId, 'man-1');
-  assert.equal(listed[0].sandbox, true);
-  assert.deepEqual(scheduled[0].data.labelIds, ['label-1']);
-  assert.equal(scheduled[0].data.sandbox, true);
-  assert.match(JSON.stringify(updates[0].params[1]), /TO_PICKUP/);
+  assert.deepEqual(validated, [['shipment-1']]);
+  assert.deepEqual(result.shipmentIds, ['shipment-1']);
+  assert.match(JSON.stringify(updates[0].params[1]), /READY_FOR_PICK_UP/);
   assert.equal(enqueued[0].orderId, 20);
 });
 
-test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
+test('marcar listo en bandeja valida ST26 solo en Ripley', async () => {
   const rows = [{
     id: 20,
     company_id: 7,
@@ -498,8 +495,8 @@ test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
     ordered_at: '2026-09-02T10:00:00.000Z',
     metadata: {},
     channel_code: 'ripley',
-    warehouse_address: 'Av. Demo 101, Lima',
-    has_ripley_svc_credentials: false,
+    ripley_api_key: 'api-key',
+    ripley_shop_id: '4362',
   }];
   const db = {
     async query(sql, params) {
@@ -510,14 +507,19 @@ test('marcar listo en bandeja agenda recojo solo en Ripley', async () => {
       return { rows: [] };
     },
   };
-  const result = await markLogisticsOrderReady({ orderId: 20, pickupDate: '2026-09-08' }, {
+  let readCount = 0;
+  const result = await markLogisticsOrderReady({ orderId: 20 }, {
     db,
-    listEligible: async () => ({ labels: [{ _id: 'label-1', order_id: 'R-20' }] }),
-    schedule: async () => ({ manifests: [{ _id: 'man-1' }] }),
+    miraklClient: {
+      listAllShipments: async () => [{
+        id: 'shipment-20', orderId: 'R-20', status: readCount++ === 0 ? 'SHIPPING' : 'READY_FOR_PICK_UP',
+      }],
+      validateShipmentsReadyForPickup: async (ids) => ({ successIds: ids, errors: [] }),
+    },
     enqueue: async () => ({ enqueued: true }),
   });
   assert.equal(result.ok, true);
-  assert.equal(result.pickupDate, '2026-09-08');
+  assert.deepEqual(result.shipmentIds, ['shipment-20']);
 
   await assert.rejects(
     () => markLogisticsOrderReady({ orderId: 21 }, {
@@ -686,7 +688,7 @@ test('cierra en la bandeja un Ripley ya shipped aunque siga pending local', asyn
   assert.equal(updates[0].params[1], 'shipped');
 });
 
-test('un Ripley ya listo no vuelve a agendar el recojo', async () => {
+test('un Ripley ya listo no vuelve a validar el recojo', async () => {
   const result = await markLogisticsOrderReady({ orderId: 22 }, {
     db: {
       async query() {

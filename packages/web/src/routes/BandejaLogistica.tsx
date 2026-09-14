@@ -34,7 +34,6 @@ import {
   logisticsSkippedNotice,
   openPdfPreviewTab,
   PDF_POPUP_BLOCKED_COPY,
-  ripleyDefaultPickupDate,
   DEFAULT_BANDEJA_URGENCY,
   RIPLEY_LABEL_SOON_COPY,
   showPdfInTab,
@@ -276,8 +275,6 @@ export default function BandejaLogistica() {
     if (order.channelCode === 'ripley') {
       return api.markLogisticsOrderReady({
         orderId: order.id,
-        pickupDate: ripleyDefaultPickupDate(),
-        warehouseAddress: order.warehouseAddress || undefined,
       });
     }
     return api.falabellaApiSetReadyToShip(order.companyId as number, order.externalOrderId);
@@ -539,7 +536,7 @@ export default function BandejaLogistica() {
                 <Button variant="outline" onClick={closeReady} disabled={readyMutation.isPending}>Cancelar</Button>
                 <Button onClick={() => markReady(readyOrder)} disabled={readyMutation.isPending}>
                   {readyMutation.isPending ? <Loader2 className="animate-spin" /> : <PackageCheck />}
-                  {readyOrder.channelCode === 'ripley' ? 'Agendar recojo' : 'Confirmar y marcar listo'}
+                  {readyOrder.channelCode === 'ripley' ? 'Confirmar en Ripley' : 'Confirmar y marcar listo'}
                 </Button>
               </DialogFooter>
             </>

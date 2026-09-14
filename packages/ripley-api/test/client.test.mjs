@@ -154,6 +154,26 @@ test('lista shipments Mirakl ST11 filtrando por order_id repetido', async () => 
     shippedAt: null, raw,
   });
 });
+
+test('valida shipments listos para recojo mediante Mirakl ST26', async () => {
+  let request;
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret', shopId: 17,
+    fetchImpl: async (url, init) => {
+      request = { url: new URL(url), init };
+      return response({ shipment_success: [{ id: 'shipment-1' }], shipment_errors: [] });
+    },
+  });
+
+  const result = await client.validateShipmentsReadyForPickup(['shipment-1']);
+  assert.equal(request.url.pathname, '/api/shipments/ready_for_pick_up');
+  assert.equal(request.url.searchParams.get('shop_id'), '17');
+  assert.equal(request.init.method, 'PUT');
+  assert.equal(request.init.headers.Authorization, 'secret');
+  assert.equal(request.init.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(request.init.body), { shipments: [{ id: 'shipment-1' }] });
+  assert.deepEqual(result, { successIds: ['shipment-1'], errors: [] });
+});
 test('si el login vendor falla, no usa el login web y reporta el Basic enviado', async () => {
   const paths = [];
   const client = new RipleySvcClient({
