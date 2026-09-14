@@ -47,6 +47,7 @@ test('rechaza filtros de bandeja inválidos', () => {
 test('la impresión pide ids concretos y tope', () => {
   assert.deepEqual(parsePrintSelection({ orderIds: [3, '3', 8] }).orderIds, [3, 8]);
   assert.deepEqual(parsePrintSelection({ orderIds: [1] }), { orderIds: [1] });
+  assert.equal(parsePrintSelection({ orderIds: Array.from({ length: 300 }, (_, index) => index + 1) }).orderIds.length, 300);
   assert.throws(() => parsePrintSelection({ orderIds: [] }), /al menos un pedido/);
 });
 

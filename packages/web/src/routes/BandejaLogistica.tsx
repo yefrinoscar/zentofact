@@ -91,7 +91,7 @@ type PrintResult = {
   skipped?: Array<{ id: number; reason: string }>;
 };
 
-const PAGE_SIZE = 50;
+const INBOX_BATCH_LIMIT = 300;
 const EMPTY_URGENCY: Record<LogisticsUrgency, number> = { overdue: 0, today: 0, tomorrow: 0, later: 0 };
 
 function InboxStatusNotice({ notice }: { notice: InboxNotice }) {
@@ -140,7 +140,6 @@ export default function BandejaLogistica() {
   const [syncStep, setSyncStep] = useState<'fetching-orders' | 'refreshing-inbox' | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const search = useDeferredValue(searchInput.trim());
-  const [page, setPage] = useState<{ key: string; offset: number }>({ key: '', offset: 0 });
   const [labelSelection, setLabelSelection] = useState<Set<number> | null>(null);
   const [readyOrder, setReadyOrder] = useState<LogisticsOrder | null>(null);
   const [bulkReady, setBulkReady] = useState<LogisticsOrder[] | null>(null);
@@ -152,15 +151,13 @@ export default function BandejaLogistica() {
   const printPreviewRef = useRef<Window | null>(null);
 
   const filterKey = [stage, channelCode, urgency || '', deadlineDate || '', search].join('|');
-  const offset = page.key === filterKey ? page.offset : 0;
   const filters = {
     stage,
     channelCode: channelCode === 'all' ? undefined : channelCode,
     urgency: stage === 'shipped' || deadlineDate ? undefined : bandejaDeadlineFilter(urgency) || undefined,
     deadline: stage === 'shipped' ? undefined : deadlineDate || undefined,
     search: search || undefined,
-    limit: PAGE_SIZE,
-    offset,
+    limit: INBOX_BATCH_LIMIT,
   };
 
   const inboxQuery = useQuery({
@@ -213,7 +210,6 @@ export default function BandejaLogistica() {
   const changeStage = (next: LogisticsStage) => {
     setStage(next);
     setLabelSelection(null);
-    setPage({ key: '', offset: 0 });
     if (next === 'shipped') {
       setUrgency(null);
       setDeadlineDate(null);
@@ -431,14 +427,14 @@ export default function BandejaLogistica() {
     stage,
     setStage: changeStage,
     channelCode,
-    setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setChannelCode: (code) => { setChannelCode(code); setLabelSelection(null); },
     channels: inboxQuery.data?.channels,
     urgency,
     deadlineDate,
-    setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
-    setUrgency: (next) => { setUrgency(bandejaDeadlineFilter(next)); setDeadlineDate(null); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setDeadlineDate: (next) => { setDeadlineDate(next); setUrgency(null); setLabelSelection(null); },
+    setUrgency: (next) => { setUrgency(bandejaDeadlineFilter(next)); setDeadlineDate(null); setLabelSelection(null); },
     searchInput,
-    setSearchInput: (value) => { setSearchInput(value); setLabelSelection(null); setPage({ key: '', offset: 0 }); },
+    setSearchInput: (value) => { setSearchInput(value); setLabelSelection(null); },
     orders,
     counts,
     totalCount: inboxQuery.data?.totalCount || 0,
@@ -473,7 +469,7 @@ export default function BandejaLogistica() {
     : variant === 'A' ? <VariantA view={view} />
     : variant === 'C' ? <VariantC view={view} />
       : variant === 'B' ? <VariantB view={view} />
-        : <BandejaOperativa key={layout} resetKey={`${filterKey}|${offset}`} layout={layout} view={view} offset={offset} pageSize={PAGE_SIZE} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} onPage={(next) => { setPage({ key: filterKey, offset: next }); setLabelSelection(null); }} />;
+        : <BandejaOperativa key={layout} resetKey={filterKey} layout={layout} view={view} busy={bulkReadyMutation.isPending || bulkDeliverMutation.isPending} error={inboxQuery.isError} />;
 
   return (
     <div>

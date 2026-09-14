@@ -17,7 +17,7 @@ const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
 const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
 const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);
-const MAX_PRINT = 80;
+const MAX_PRINT = 300;
 
 let corePromise;
 function loadCore() {
