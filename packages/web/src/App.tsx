@@ -52,7 +52,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/ventas': {
     title: 'Ventas',
-    subtitle: 'Maestros de Falabella. Suma cada seller.',
+    subtitle: 'Qué se vende, qué traer y qué no tocar.',
   },
   '/pagos': {
     title: 'Pagos',

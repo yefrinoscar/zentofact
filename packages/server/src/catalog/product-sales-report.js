@@ -1,5 +1,13 @@
 import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import { publishedListingCondition } from './product-service.js';
+import {
+  RESTOCK_HORIZON_DAYS,
+  fillDailyOverview,
+  groupSeriesRows,
+  periodDayCount,
+  pickRestockLists,
+  productRestock,
+} from './product-sales-restock.js';
 import { httpError, loadCore, positiveInt } from './utils.js';
 
 const LIMA_DATE = new Intl.DateTimeFormat('en-CA', {
@@ -18,10 +26,13 @@ const SETTLEMENT_SHARE = (field, saleId = 'settlement_sale_id') => `case
 const PRODUCT_SORTS = {
   product: 'min(name)',
   units: 'sum(units_sold)',
+  unitsPerDay: 'sum(units_sold)',
   orders: 'sum(orders_count)',
   grossSales: 'sum(revenue)',
   falabellaTake: 'sum(falabella_take)',
   arrives: 'sum(arrives)',
+  keepsPerDay: 'keeps_per_day',
+  restockQty: 'restock_qty',
   sellers: 'count(distinct company_id)',
 };
 
@@ -34,8 +45,7 @@ const ELIGIBLE_SALE = `o.order_status in ('confirmed','completed')
     and coalesce(o.fulfillment_status, '') not in ('returned','cancelled','failed')
     and lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'
     and lower(coalesce(oi.provider_status, '')) !~ '(return|cancel|failed)'
-    and coalesce(oi.product_id, linked.product_id, listing.product_id) is not null
-    and coalesce(linked.channel_code, listing.channel_code, ch.code) = 'falabella'`;
+    and coalesce(oi.product_id, linked.product_id, listing.product_id) is not null`;
 
 function limaToday() {
   return LIMA_DATE.format(new Date());
@@ -101,6 +111,7 @@ export function parseProductSalesFilters(input = {}) {
   return {
     from,
     to,
+    dayCount: periodDayCount(from, to),
     companyId: optionalPositiveInt(input.companyId, 'companyId'),
     search: String(input.search || '').trim(),
     minGrossSales: optionalMoney(input.minGrossSales, 'minGrossSales'),
@@ -133,7 +144,18 @@ function productHavingSql(filters, values) {
 }
 
 function productOrderSql(filters) {
-  return `${PRODUCT_SORTS[filters.sortBy]} ${filters.sortDir} nulls last, min(name), min(sku)`;
+  const direction = `${filters.sortDir} nulls last, min(name), min(sku)`;
+  const days = Math.max(1, Number(filters.dayCount) || 1);
+  if (filters.sortBy === 'keepsPerDay') {
+    return `(case
+      when min(wholesale_price) is null then sum(arrives)
+      else sum(arrives) - min(wholesale_price) * sum(units_sold)
+    end) ${direction}`;
+  }
+  if (filters.sortBy === 'restockQty') {
+    return `greatest(0, ceil(sum(units_sold)::numeric / ${days} * ${RESTOCK_HORIZON_DAYS} - coalesce(min(available), 0))) ${direction}`;
+  }
+  return `${PRODUCT_SORTS[filters.sortBy]} ${direction}`;
 }
 
 const TAKE_RATE_SQL = `coalesce(
@@ -283,6 +305,8 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
           ${MARKETPLACE_RAW_IMAGE_SQL}
         ) as image_url,
         p.brand,
+        p.wholesale_price,
+        coalesce(i.quantity_on_hand, 0) - coalesce(i.quantity_reserved, 0) - coalesce(i.quantity_pending_return, 0) as available,
         o.id as order_id,
         o.company_id,
         coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social) as company_name,
@@ -309,8 +333,11 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         nullif(trim(o.customer->>'email'), '') as buyer_email,
         coalesce(
           nullif(trim(o.customer->>'phone'), ''),
+          nullif(trim(o.customer->>'Phone'), ''),
           nullif(trim(fo.raw_data->>'CustomerPhone'), ''),
-          nullif(trim(fo.raw_data->>'Phone'), '')
+          nullif(trim(fo.raw_data->>'Phone'), ''),
+          nullif(trim(fo.raw_data->'AddressBilling'->>'Phone'), ''),
+          nullif(trim(fo.raw_data->'AddressShipping'->>'Phone'), '')
         ) as buyer_phone,
         o.ordered_at
       from order_items oi
@@ -328,7 +355,7 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         from product_listings l
         where l.company_id=o.company_id
           and l.status='active'
-          and l.channel_code='falabella'
+          and (ch.code is null or l.channel_code = ch.code)
           and (
             (nullif(trim(oi.sku), '') is not null and l.seller_sku=oi.sku)
             or (nullif(trim(oi.provider_sku), '') is not null and l.shop_sku=oi.provider_sku)
@@ -349,6 +376,7 @@ function eligibleCte(filters, values, { includeSearch = false } = {}) {
         limit 1
       ) listing on true
       left join products p on p.id=coalesce(oi.product_id, linked.product_id, listing.product_id)
+      left join product_inventory i on i.product_id=p.id
       where ${where.join(' and ')}
       ) raw
     )`;
@@ -405,8 +433,19 @@ function mapProductRow(row = {}) {
     paidArrives: settlementMoney(row.paid_arrives, arrives),
     pendingArrives: settlementMoney(row.pending_arrives, arrives),
     visits: row.visits == null ? null : Number(row.visits),
+    wholesalePrice: row.wholesale_price == null ? null : Number(row.wholesale_price),
+    available: row.available == null ? null : Number(row.available),
     sellers: (Array.isArray(row.sellers) ? row.sellers : []).map(mapSeller),
   };
+}
+
+function restockFields(row, { from, to, seriesByKey, fillSeries = true }) {
+  return productRestock(row, {
+    from,
+    to,
+    series: seriesByKey.get(row.productKey) || [],
+    fillSeries,
+  });
 }
 
 function mapBuyerCompany(company = {}) {
@@ -448,7 +487,7 @@ function mapBuyer(row = {}) {
 
 function buyerDetailSql(eligibleCteSql, { tracked, limit }) {
   const unitClause = tracked
-    ? `b.units_bought > ${TRACKED_BUYER_MIN_UNITS}`
+    ? `b.units_bought > ${TRACKED_BUYER_MIN_UNITS} and nullif(trim(b.buyer_phone), '') is not null`
     : `b.units_bought <= ${TRACKED_BUYER_MIN_UNITS}`;
   const orderSql = tracked
     ? 'b.units_bought desc, b.revenue desc, b.buyer_name'
@@ -460,7 +499,7 @@ function buyerDetailSql(eligibleCteSql, { tracked, limit }) {
            min(buyer_name) as buyer_name,
            min(buyer_document) as buyer_document,
            min(buyer_email) as buyer_email,
-           min(buyer_phone) as buyer_phone,
+           max(buyer_phone) filter (where nullif(trim(buyer_phone), '') is not null) as buyer_phone,
            count(distinct order_id)::int as orders_count,
            coalesce(sum(quantity), 0) as units_bought,
            coalesce(sum(line_total), 0) as revenue,
@@ -546,7 +585,7 @@ export async function listProductSalesReport(input = {}, db) {
              and ${publishedListingCondition('pub')}
          ))`;
 
-  const [pageResult, pageCountResult, totalsResult, topProductsResult, trackedBuyersResult, otherBuyersResult] = await Promise.all([
+  const [pageResult, pageCountResult, totalsResult, topProductsResult, trackedBuyersResult, otherBuyersResult, restockResult, seriesResult, dailyResult] = await Promise.all([
     target.query(
       `with ${pageCte},
        ${moneyCtes()},
@@ -560,6 +599,8 @@ export async function listProductSalesReport(input = {}, db) {
            sum(arrives) as arrives,
            sum(paid_arrives) as paid_arrives,
            sum(pending_arrives) as pending_arrives,
+           min(wholesale_price) as wholesale_price,
+           min(available) as available,
            ${sellerPublishedSql} as published,
            array_agg(distinct channel_code) filter (where channel_code is not null) as channel_codes,
            min(seller_title) as seller_title,
@@ -584,6 +625,8 @@ export async function listProductSalesReport(input = {}, db) {
          sum(arrives) as arrives,
          sum(paid_arrives) as paid_arrives,
          sum(pending_arrives) as pending_arrives,
+         min(wholesale_price) as wholesale_price,
+         min(available) as available,
          null::numeric as visits,
          jsonb_agg(jsonb_build_object(
            'companyId', company_id,
@@ -675,6 +718,50 @@ export async function listProductSalesReport(input = {}, db) {
     ),
     target.query(buyerDetailSql(overviewCte, { tracked: true, limit: TRACKED_BUYER_LIMIT }), overviewValues),
     target.query(buyerDetailSql(overviewCte, { tracked: false, limit: OTHER_BUYER_LIMIT }), overviewValues),
+    target.query(
+      `with ${overviewCte},
+       ${moneyCtes()}
+       select
+         product_key,
+         min(product_id) as product_id,
+         min(sku) as sku,
+         min(name) as name,
+         min(image_url) as image_url,
+         min(brand) as brand,
+         coalesce(sum(quantity), 0) as units_sold,
+         count(distinct order_id)::int as orders_count,
+         count(distinct company_id)::int as sellers_count,
+         coalesce(sum(line_total), 0) as revenue,
+         coalesce(sum(falabella_take), 0) as falabella_take,
+         coalesce(sum(arrives), 0) as arrives,
+         coalesce(sum(paid_arrives), 0) as paid_arrives,
+         coalesce(sum(pending_arrives), 0) as pending_arrives,
+         min(wholesale_price) as wholesale_price,
+         min(available) as available
+       from priced
+       group by product_key`,
+      overviewValues,
+    ),
+    target.query(
+      `with ${overviewCte}
+       select
+         product_key,
+         (ordered_at at time zone 'America/Lima')::date as day,
+         coalesce(sum(quantity), 0) as units
+       from eligible
+       group by 1, 2`,
+      overviewValues,
+    ),
+    target.query(
+      `with ${overviewCte}
+       select
+         (ordered_at at time zone 'America/Lima')::date as day,
+         coalesce(sum(quantity), 0) as units,
+         coalesce(sum(line_total), 0) as revenue
+       from eligible
+       group by 1`,
+      overviewValues,
+    ),
   ]);
 
   const totals = totalsResult.rows[0] || {};
@@ -682,11 +769,30 @@ export async function listProductSalesReport(input = {}, db) {
   const ordersCount = Number(totals.orders_count || 0);
   const grossSales = Number(totals.gross_sales || 0);
   const settlementOrders = Number(totals.settlement_orders || 0);
+  const seriesByKey = groupSeriesRows(seriesResult?.rows || []);
+  const restockContext = { from: filters.from, to: filters.to, seriesByKey };
+  const products = pageResult.rows.map((row) => restockFields(mapProductRow(row), restockContext));
+  const restockPool = restockResult.rows.map((row) => restockFields(mapProductRow(row), {
+    ...restockContext,
+    fillSeries: false,
+  }));
+  const restock = pickRestockLists(restockPool);
+  const pageByKey = new Map(products.map((product) => [product.productKey, product]));
+  const restockWithSeries = {
+    horizonDays: RESTOCK_HORIZON_DAYS,
+    items: restock.items.map((item) => pageByKey.get(item.productKey) || restockFields(item, restockContext)),
+    skip: restock.skip.map((item) => {
+      const full = pageByKey.get(item.productKey) || restockFields(item, restockContext);
+      return { ...full, skipReason: item.skipReason || full.skipReason || null };
+    }),
+    points: restock.points,
+  };
   return {
     from: filters.from,
     to: filters.to,
     timezone: 'America/Lima',
-    products: pageResult.rows.map(mapProductRow),
+    horizonDays: RESTOCK_HORIZON_DAYS,
+    products,
     totalCount: Number(pageCountResult.rows[0]?.products_count || 0),
     totals: {
       productsCount: Number(totals.products_count || 0),
@@ -703,7 +809,9 @@ export async function listProductSalesReport(input = {}, db) {
       averageTicket: ordersCount > 0 ? grossSales / ordersCount : 0,
       visits: null,
     },
-    topProducts: topProductsResult.rows.map(mapProductRow),
+    topProducts: topProductsResult.rows.map((row) => restockFields(mapProductRow(row), restockContext)),
+    restock: restockWithSeries,
+    daily: fillDailyOverview(filters.from, filters.to, dailyResult?.rows || []),
     trackedBuyers: trackedBuyersResult.rows.map(mapBuyer),
     topBuyers: otherBuyersResult.rows.map(mapBuyer),
     limit: filters.limit,
