@@ -167,10 +167,7 @@ function logisticsPrintableStatus(order: LogisticsOrderLike) {
 }
 
 export function logisticsRipleyLabelSoon(order: LogisticsOrderLike) {
-  if (String(order.channelCode || '') !== 'ripley') return false;
-  if (!logisticsPrintableStatus(order)) return false;
-  if (canMarkLogisticsReady(order)) return false;
-  return order.companyId != null;
+  return false;
 }
 
 export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
@@ -184,7 +181,7 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
 
 export function canMarkLogisticsReady(order: LogisticsOrderLike) {
   const channel = String(order.channelCode || '');
-  if (channel !== 'falabella' && channel !== 'ripley') return false;
+  if (channel !== 'falabella') return false;
   return order.companyId != null
     && Boolean(order.externalOrderId)
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
@@ -306,7 +303,7 @@ export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep 
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
-  if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Sin seller' };
+  if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Gestionar en Ripley' };
   return { kind: 'view', label: 'Ver detalle' };
 }
 
@@ -346,10 +343,7 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
-    if (canMarkLogisticsReady(order)) {
-      return 'Empaca el pedido y agenda el recojo en Ripley para pasarlo a listo para enviar.';
-    }
-    return RIPLEY_LABEL_SOON_COPY;
+    return 'Gestiona la confirmación y la etiqueta directamente en Ripley. La bandeja no permite marcarlo listo ni imprimirlo.';
   }
   if (canMarkLogisticsDelivered(order)) {
     return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';

@@ -77,7 +77,7 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausad
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
-  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'shipped', companyId: 1 }), false);
   assert.equal(RIPLEY_LABEL_SOON_COPY, 'Muy pronto.');
   assert.equal(canMarkFalabellaReady({
@@ -88,7 +88,7 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausad
   }), false);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
-  }), true);
+  }), false);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 2, externalOrderId: 'R-1',
   }), false);
@@ -158,11 +158,11 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
-    { kind: 'ready', label: 'Marcar listo' },
+    { kind: 'wait', label: 'Gestionar en Ripley' },
   );
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
-    { kind: 'soon', label: 'Imprimir' },
+    { kind: 'wait', label: 'Gestionar en Ripley' },
   );
   assert.equal(labelWasPrinted({ labelPrint: { printCount: 1 } }), true);
   assert.equal(labelWasPrinted({ labelPrint: null }), false);

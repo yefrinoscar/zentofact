@@ -743,6 +743,9 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   const core = dependencies.db ? null : await loadCore();
   const db = dependencies.db || core.pool;
   const orders = await loadPrintOrders(selection.orderIds, db);
+  if (orders.some((order) => order.channelCode === 'ripley')) {
+    throw new Error('La impresión de pedidos Ripley está deshabilitada.');
+  }
   const skipped = [];
   const pdfParts = [];
   let labelCount = 0;
@@ -772,11 +775,6 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
       }
     }
     if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
-  }
-
-  const ripley = orders.filter((order) => order.channelCode === 'ripley');
-  for (const order of ripley) {
-    skipped.push({ id: order.id, reason: 'Muy pronto.' });
   }
 
   const manual = orders.filter((order) => order.channelCode === 'manual');
@@ -918,47 +916,10 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
-export async function markLogisticsOrderReady(input = {}, dependencies = {}) {
+export async function markLogisticsOrderReady(input = {}) {
   const orderId = Number(input.orderId);
   if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
-  const core = dependencies.db ? null : await loadCore();
-  const db = dependencies.db || core.pool;
-  const result = await db.query(
-    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
-            o.fulfillment_status, o.ordered_at, o.metadata,
-            ch.code as channel_code,
-            c.ripley_api_key, c.ripley_shop_id
-     from orders o
-     join order_channel_accounts a on a.id = o.channel_account_id
-     join order_channels ch on ch.id = a.channel_id
-     left join companies c on c.id = o.company_id
-     where o.id = $1`,
-    [orderId],
-  );
-  const row = result.rows[0];
-  if (!row) throw new Error('Pedido no encontrado.');
-  if (row.channel_code !== 'ripley') {
-    throw new Error('Este pedido no se agenda en Ripley.');
-  }
-  const status = String(row.fulfillment_status || '');
-  if (status === 'ready_to_ship') {
-    return { ok: true, alreadyReady: true, orderId: Number(row.id) };
-  }
-  if (status !== 'pending' && status !== 'preparing') {
-    throw new Error('Este pedido ya no está en preparación.');
-  }
-  return scheduleRipleyInboxReady({
-    id: Number(row.id),
-    companyId: row.company_id == null ? null : Number(row.company_id),
-    channelCode: 'ripley',
-    fulfillmentStatus: row.fulfillment_status,
-    externalOrderId: row.external_order_id,
-    externalOrderNumber: row.external_order_number,
-    orderedAt: row.ordered_at,
-    metadata: row.metadata,
-    ripleyApiKey: row.ripley_api_key,
-    ripleyShopId: row.ripley_shop_id,
-  }, input, { ...dependencies, db });
+  throw new Error('La confirmación de pedidos Ripley está deshabilitada.');
 }
 
 export async function markLogisticsOrderDelivered(input = {}, dependencies = {}) {
