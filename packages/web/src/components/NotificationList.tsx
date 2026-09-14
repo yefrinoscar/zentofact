@@ -9,7 +9,7 @@ import { Button } from './ui/button';
 
 function iconForKind(kind: OperatorNotification['kind']) {
   if (kind === 'emission_failed') return AlertTriangle;
-  if (kind === 'insumo_low_stock') return PackageOpen;
+  if (kind === 'insumo_low_stock' || kind === 'product_low_stock') return PackageOpen;
   if (kind === 'product_sold_out') return PackageX;
   return Clock;
 }

@@ -3,6 +3,7 @@ export const OPERATOR_NOTIFICATION_KINDS = [
   'insumo_low_stock',
   'bandeja_overdue',
   'product_sold_out',
+  'product_low_stock',
 ] as const;
 
 export type OperatorNotificationKind = (typeof OPERATOR_NOTIFICATION_KINDS)[number];
