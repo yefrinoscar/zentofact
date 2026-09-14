@@ -205,6 +205,7 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
     input.shopId,
   );
   const statuses = resolveRipleyIngestStatuses(normalized?.status, null, input.shipmentStatus);
+  const shipmentStatus = text(input.shipmentStatus);
   const items = mapRipleyOrderItems(raw);
   const ingested = await ingest({
     companyId: input.companyId,
@@ -230,7 +231,9 @@ export async function ingestRipleyOrder(input, db, dependencies = {}) {
       shopId: text(raw?.shop_id || input.shopId),
       shopName: text(raw?.shop_name),
       hasIncident: Boolean(raw?.has_incident),
-      miraklShipmentStatus: text(input.shipmentStatus),
+      miraklShipmentStatus: shipmentStatus,
+      miraklShipmentSource: shipmentStatus ? 'st11' : '',
+      miraklShipmentObservedAt: shipmentStatus ? text(input.shipmentObservedAt) : '',
     },
     items,
     itemsComplete: items.length > 0,
@@ -294,12 +297,18 @@ export async function remapPersistedRipleyReadyOrders(db, accountId = null) {
   let updated = 0;
   for (const row of found.rows || []) {
     // OR11 remains SHIPPING even after ST11 confirms READY_FOR_PICK_UP.
-    // Do not let that less-specific state move a confirmed pickup back to
-    // preparation while the inbox is being read.
-    const shipmentFulfillment = mapRipleyShipmentFulfillmentStatus(
-      row.metadata?.miraklShipmentStatus,
-    );
-    if (shipmentFulfillment && shipmentFulfillment !== 'preparing') continue;
+    // Only preserve a pickup confirmation when it records the source and
+    // observation of that direct Mirakl evidence. Historical local flags are
+    // not evidence and must be reconciled back to preparation.
+    const shipmentFulfillment = mapRipleyShipmentFulfillmentStatus(row.metadata?.miraklShipmentStatus);
+    const shipmentSource = text(row.metadata?.miraklShipmentSource);
+    const shipmentObservedAt = text(row.metadata?.miraklShipmentObservedAt);
+    if (
+      (shipmentSource === 'st11' || shipmentSource === 'st26')
+      && shipmentObservedAt
+      && shipmentFulfillment
+      && shipmentFulfillment !== 'preparing'
+    ) continue;
     const next = mapRipleyCanonicalStatus(row.provider_status);
     if (!RIPLEY_READY_DEMOTE.has(next.fulfillmentStatus)) continue;
     const result = await db.query(

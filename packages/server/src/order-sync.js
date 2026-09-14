@@ -279,6 +279,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
       ? [...new Map([...openOrders, ...windowOrders].map((order) => [order.orderId, order])).values()]
       : windowOrders;
     const shipmentStatuses = await ripleyShipmentStatuses(client, orders.map((order) => order.orderId));
+    const shipmentObservedAt = new Date().toISOString();
     for (const listed of orders) {
       try {
         await db.query('begin');
@@ -295,6 +296,7 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
           },
           normalized,
           shipmentStatus: shipment?.status || null,
+          shipmentObservedAt: shipment?.status ? shipmentObservedAt : null,
           remapFromProvider: window.remapFromProvider === true,
           correlationId: `order-sync:${runId}`,
           eventId: `ripley:${normalized.orderId}:${normalized.updatedAt || normalized.createdAt || 'observed'}:shipment:${shipment?.updatedAt || shipment?.status || 'none'}`,

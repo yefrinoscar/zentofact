@@ -853,6 +853,8 @@ async function persistRipleyMiraklReady(db, order, shipments) {
   const metadata = {
     ...objectMetadata(order.metadata),
     miraklShipmentStatus: 'READY_FOR_PICK_UP',
+    miraklShipmentSource: 'st26',
+    miraklShipmentObservedAt: new Date().toISOString(),
     miraklShipmentIds: shipments.map((shipment) => text(shipment.id)),
   };
   const result = await db.query(

@@ -233,6 +233,30 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   assert.equal(event.params[4], 'request-100');
 });
 
+test('la actualización reemplaza la evidencia logística vigente del canal', async () => {
+  const db = new IngestDb();
+  await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: 'RIPLEY-STATE-100',
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'preparing',
+    providerStatus: 'SHIPPING',
+    metadata: {
+      miraklShipmentStatus: 'SHIPPING',
+      miraklShipmentSource: 'st11',
+      miraklShipmentObservedAt: '2026-09-14T04:00:00.000Z',
+    },
+    source: 'sync',
+  }, db);
+
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(insert);
+  assert.match(insert.sql, /miraklShipmentStatus/);
+  assert.match(insert.sql, /miraklShipmentSource/);
+  assert.match(insert.sql, /miraklShipmentObservedAt/);
+});
+
 test('al cancelar o devolver un pedido guarda la fecha del cambio una sola vez', async () => {
   const canceledDb = new IngestDb();
   const canceled = await ingestOrder({

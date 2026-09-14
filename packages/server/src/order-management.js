@@ -696,7 +696,15 @@ async function ingestOrderInTransaction(input, db) {
          total=coalesce(excluded.total, orders.total),
          customer=orders.customer || excluded.customer,
          shipping=orders.shipping || excluded.shipping,
-         metadata=orders.metadata || excluded.metadata,
+         metadata=orders.metadata || excluded.metadata || case
+           when nullif(excluded.metadata->>'miraklShipmentStatus', '') is not null then
+             jsonb_build_object(
+               'miraklShipmentStatus', excluded.metadata->'miraklShipmentStatus',
+               'miraklShipmentSource', excluded.metadata->'miraklShipmentSource',
+               'miraklShipmentObservedAt', excluded.metadata->'miraklShipmentObservedAt'
+             )
+           else '{}'::jsonb
+         end,
          ordered_at=coalesce(excluded.ordered_at, orders.ordered_at),
          promised_shipping_at=coalesce(excluded.promised_shipping_at, orders.promised_shipping_at),
          provider_updated_at=coalesce(excluded.provider_updated_at, orders.provider_updated_at),
