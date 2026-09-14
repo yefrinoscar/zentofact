@@ -108,6 +108,33 @@ test('lista y normaliza pedidos de Ripley mediante Mirakl OR11', async () => {
   });
 });
 
+test('PL11 devuelve el agendamiento de retiro por línea de pedido', async () => {
+  let request;
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret', shopId: 17,
+    fetchImpl: async (url, init) => {
+      request = { url: new URL(url), init };
+      return response({ data: [{
+        id: 'picklist-1', state: 'IN_PREPARATION', pickup_date: '2026-09-14T00:00:00Z',
+        order_lines: [{ order_line_id: 'R-100-A-1' }],
+      }] });
+    },
+  });
+
+  const picklists = await client.listAllPicklists({ orderLineIds: ['R-100-A-1'] });
+  assert.equal(request.url.pathname, '/api/picklists');
+  assert.equal(request.url.searchParams.get('shop_id'), '17');
+  assert.deepEqual(request.url.searchParams.getAll('order_line_id'), ['R-100-A-1']);
+  assert.equal(request.init.headers.Authorization, 'secret');
+  assert.deepEqual(picklists, [{
+    id: 'picklist-1', state: 'IN_PREPARATION', pickupDate: '2026-09-14T00:00:00.000Z',
+    updatedAt: null, orderLineIds: ['R-100-A-1'], raw: {
+      id: 'picklist-1', state: 'IN_PREPARATION', pickup_date: '2026-09-14T00:00:00Z',
+      order_lines: [{ order_line_id: 'R-100-A-1' }],
+    },
+  }]);
+});
+
 test('trae todas las páginas de pedidos', async () => {
   const calls = [];
   const client = new RipleyApiClient({

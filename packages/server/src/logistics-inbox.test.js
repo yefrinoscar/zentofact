@@ -334,13 +334,13 @@ test('filtra por una fecha concreta de plazo', async () => {
   assert.throws(() => parseLogisticsInboxFilters({ deadline: '2026-13-40' }), /Fecha/);
 });
 
-test('compone Falabella y deja Ripley fuera de la impresión', async () => {
+test('bloquea un lote que incluye Ripley antes de imprimir', async () => {
   let listedRipley = 0;
   const rows = [
     printRow({ id: 21, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-21' }),
     printRow({ id: 22, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-22' }),
   ];
-  const result = await printLogisticsPack(
+  await assert.rejects(() => printLogisticsPack(
     { orderIds: [21, 22] },
     {
       db: new PrintDb(rows),
@@ -349,22 +349,12 @@ test('compone Falabella y deja Ripley fuera de la impresión', async () => {
         listedRipley += 1;
         return { labels: [] };
       },
-      downloadRipleyLabels: async () => {
-        throw new Error('no debe llamarse');
-      },
     },
-  );
+  ), /La impresión de pedidos Ripley está deshabilitada/);
   assert.equal(listedRipley, 0);
-  assert.equal(result.labelCount, 1);
-  assert.equal(result.skipped.length, 1);
-  assert.equal(result.skipped[0].id, 22);
-  assert.equal(result.skipped[0].reason, 'Muy pronto.');
-  const pdf = await PDFDocument.load(Buffer.from(result.base64, 'base64'));
-  assert.equal(pdf.getPageCount(), 1);
 });
 
-test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () => {
-  const lines = [];
+test('un pedido Ripley no se imprime', async () => {
   await assert.rejects(
     () => printLogisticsPack(
       { orderIds: [32] },
@@ -379,24 +369,16 @@ test('un pedido Ripley no llama a Seller Center y avisa Muy pronto', async () =>
           throw new Error('no debe llamarse');
         },
         downloadRipleyLabels: async () => ({ labels_generated: '' }),
-        createLogId: () => 'log_eeeeeeeeeeee',
-        log: (line) => lines.push(line),
       },
     ),
     (error) => {
-      assert.equal(error.message, 'Muy pronto.');
-      assert.equal(error.logId, 'log_eeeeeeeeeeee');
-      assert.equal(error.details.skipped[0].reason, 'Muy pronto.');
+      assert.equal(error.message, 'La impresión de pedidos Ripley está deshabilitada.');
       return true;
     },
   );
-  const payload = JSON.parse(lines.find((line) => String(line).includes('logistics.print.failed')));
-  assert.equal(payload.logId, 'log_eeeeeeeeeeee');
-  assert.equal(payload.orders[0].externalOrderId, 'R-32');
 });
 
-test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
-  const lines = [];
+test('Ripley bloquea la impresión antes de generar etiquetas de otros canales', async () => {
   await assert.rejects(
     () => printLogisticsPack(
       { orderIds: [51, 52] },
@@ -405,20 +387,18 @@ test('un PDF inválido de Falabella no se cubre con Ripley', async () => {
           printRow({ id: 51, channel_code: 'falabella', channel_name: 'Falabella', external_order_id: 'F-51' }),
           printRow({ id: 52, channel_code: 'ripley', channel_name: 'Ripley', external_order_id: 'R-52' }),
         ]),
-        getFalabellaLabel: async () => ({ base64: Buffer.from('<html>error</html>').toString('base64') }),
+        getFalabellaLabel: async () => {
+          throw new Error('no debe llamar a Falabella');
+        },
         listRipleyLabels: async () => ({ labels: [{ document_id: 'doc-52', order_id: 'R-52' }] }),
         downloadRipleyLabels: async () => ({ labels_generated: (await stubLabelPdf('RIP')).base64 }),
-        createLogId: () => 'log_cccccccccccc',
-        log: (line) => lines.push(line),
       },
     ),
     (error) => {
-      assert.match(error.message, /vacía/);
-      assert.equal(error.details.skipped.find((entry) => entry.id === 52).reason, 'Muy pronto.');
+      assert.equal(error.message, 'La impresión de pedidos Ripley está deshabilitada.');
       return true;
     },
   );
-  assert.match(lines.find((line) => String(line).includes('logistics.print.failed')) || '', /log_cccccccccccc/);
 });
 
 test('arma los ids de búsqueda Ripley sin repetir', () => {
@@ -485,51 +465,16 @@ test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', asy
   assert.equal(enqueued[0].orderId, 20);
 });
 
-test('marcar listo en bandeja valida ST26 solo en Ripley', async () => {
-  const rows = [{
-    id: 20,
-    company_id: 7,
-    external_order_id: 'R-20',
-    external_order_number: 'RP-10020',
-    fulfillment_status: 'pending',
-    ordered_at: '2026-09-02T10:00:00.000Z',
-    metadata: {},
-    channel_code: 'ripley',
-    ripley_api_key: 'api-key',
-    ripley_shop_id: '4362',
-  }];
-  const db = {
-    async query(sql, params) {
-      if (sql.includes('from orders o')) return { rows };
-      if (sql.includes('update orders')) {
-        return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
-      }
-      return { rows: [] };
-    },
-  };
-  let readCount = 0;
-  const result = await markLogisticsOrderReady({ orderId: 20 }, {
-    db,
-    miraklClient: {
-      listAllShipments: async () => [{
-        id: 'shipment-20', orderId: 'R-20', status: readCount++ === 0 ? 'SHIPPING' : 'READY_FOR_PICK_UP',
-      }],
-      validateShipmentsReadyForPickup: async (ids) => ({ successIds: ids, errors: [] }),
-    },
-    enqueue: async () => ({ enqueued: true }),
-  });
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.shipmentIds, ['shipment-20']);
-
+test('la bandeja no permite confirmar un pedido Ripley', async () => {
   await assert.rejects(
-    () => markLogisticsOrderReady({ orderId: 21 }, {
+    () => markLogisticsOrderReady({ orderId: 20 }, {
       db: {
         async query() {
-          return { rows: [{ ...rows[0], id: 21, channel_code: 'falabella' }] };
+          throw new Error('no debe consultar ni mutar la orden');
         },
       },
     }),
-    /no se agenda en Ripley/,
+    /La confirmación de pedidos Ripley está deshabilitada/,
   );
 });
 
@@ -686,21 +631,4 @@ test('cierra en la bandeja un Ripley ya shipped aunque siga pending local', asyn
   });
   assert.equal(result.updated, 1);
   assert.equal(updates[0].params[1], 'shipped');
-});
-
-test('un Ripley ya listo no vuelve a validar el recojo', async () => {
-  const result = await markLogisticsOrderReady({ orderId: 22 }, {
-    db: {
-      async query() {
-        return {
-          rows: [{
-            id: 22,
-            channel_code: 'ripley',
-            fulfillment_status: 'ready_to_ship',
-          }],
-        };
-      },
-    },
-  });
-  assert.deepEqual(result, { ok: true, alreadyReady: true, orderId: 22 });
 });
