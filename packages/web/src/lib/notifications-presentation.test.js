@@ -66,3 +66,16 @@ test('el aria-label del timbre incluye la cantidad sin leer', () => {
   assert.equal(notificationAriaLabel(1), 'Avisos, 1 sin leer');
   assert.equal(notificationAriaLabel(4), 'Avisos, 4 sin leer');
 });
+
+test('el frontend conserva el aviso anticipado y su contador', () => {
+  const parsed = parseOperatorNotificationsResponse({ items: [{
+    ...valid,
+    id: 'product_low_stock:22:1:warning',
+    kind: 'product_low_stock',
+    severity: 'warning',
+    title: 'Zapatera está por reponer',
+    href: '/productos',
+  }] });
+  assert.equal(parsed.items[0]?.kind, 'product_low_stock');
+  assert.equal(parsed.unreadCount, 1);
+});

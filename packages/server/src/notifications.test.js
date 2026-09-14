@@ -111,7 +111,7 @@ test('cada aviso exige el permiso del módulo que lo resuelve', () => {
     failedEmissions: { count: 2, updatedAt: '2026-09-10T12:00:00.000Z' },
     lowInsumos: [fill],
     overdueBandeja: { count: 3, oldestAt: '2026-09-01T15:00:00.000Z' },
-    soldOutProducts: [chair],
+    stockProducts: [chair],
   });
   assert.equal(live.length, 4);
   assert.deepEqual(
@@ -172,4 +172,54 @@ test('parsea ids de aviso y descarta vacíos o largos', () => {
   assert.deepEqual(parseNotificationIds([' emission_failed:1 ', '', 'emission_failed:1']), ['emission_failed:1']);
   assert.deepEqual(parseNotificationIds('bandeja_overdue:3'), ['bandeja_overdue:3']);
   assert.deepEqual(parseNotificationIds(['x'.repeat(161)]), []);
+});
+
+test('G-8 avisa antes de agotarse con una unidad y ventas recientes', () => {
+  const items = collectLiveNotifications({
+    stockProducts: [{ ...chair, mainSku: 'G-8', name: 'Zapatera', quantityOnHand: 1, unitsSold7d: 2, unitsSold30d: 9 }],
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, 'product_low_stock');
+  assert.match(items[0].body, /G-8 · Disponible 1 unidad · cobertura estimada: 4 días/);
+});
+
+const shoeRack = { ...chair, mainSku: 'G-8', quantityOnHand: 1, unitsSold7d: 0, unitsSold30d: 9 };
+const stockNotice = (product) => collectLiveNotifications({ stockProducts: [product] })[0];
+
+test('la venta lenta sigue avisando aunque no haya ventas en la última semana', () => {
+  assert.equal(stockNotice(shoeRack).kind, 'product_low_stock');
+  const empty = stockNotice({ ...shoeRack, quantityOnHand: 0 });
+  assert.equal(empty.kind, 'product_sold_out');
+  assert.match(empty.body, /9 unidades en 30 días/);
+});
+
+test('el aviso usa disponible, descontando reservas y devoluciones pendientes', () => {
+  const item = stockNotice({ ...shoeRack, quantityOnHand: 5, quantityReserved: 3, quantityPendingReturn: 1 });
+  assert.match(item.body, /Disponible 1 unidad/);
+});
+
+test('avisa hasta siete días de cobertura y sube a crítico hasta tres', () => {
+  const product = { ...shoeRack, unitsSold7d: 7, unitsSold30d: 30 };
+  assert.equal(stockNotice({ ...product, quantityOnHand: 7 }).severity, 'warning');
+  assert.equal(stockNotice({ ...product, quantityOnHand: 8 }), undefined);
+  assert.equal(stockNotice({ ...product, quantityOnHand: 3 }).severity, 'critical');
+  assert.equal(stockNotice({ ...product, quantityOnHand: 4 }).severity, 'warning');
+  assert.equal(stockNotice({ ...product, status: 'archived' }), undefined);
+  assert.equal(stockNotice({ ...product, unitsSold7d: 0, unitsSold30d: 0 }), undefined);
+});
+
+test('descartar no oculta un descenso de stock ni un aumento de urgencia', () => {
+  const product = { ...shoeRack, quantityOnHand: 2, unitsSold7d: 0 };
+  const initial = stockNotice(product);
+  const state = new Map([[initial.id, { dismissedAt: '2026-09-14T12:00:00Z' }]]);
+  assert.equal(applyNotificationState([stockNotice(product)], state).length, 0);
+  assert.equal(applyNotificationState([stockNotice({ ...product, quantityOnHand: 1 })], state).length, 1);
+  assert.equal(applyNotificationState([stockNotice({ ...product, unitsSold7d: 7 })], state).length, 1);
+});
+
+test('los avisos de reposición respetan los permisos de productos', () => {
+  const items = [stockNotice(shoeRack)];
+  assert.equal(filterNotificationsForUser(items, operator, userHasPermission).length, 1);
+  assert.equal(filterNotificationsForUser(items, billing, userHasPermission).length, 0);
+  assert.equal(filterNotificationsForUser(items, vendedor, userHasPermission).length, 0);
 });

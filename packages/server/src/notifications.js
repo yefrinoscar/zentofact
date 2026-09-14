@@ -10,6 +10,8 @@ import {
   NOTIFICATION_KINDS,
   parseNotificationIds,
   PRODUCT_SOLD_OUT_WINDOW_DAYS,
+  PRODUCT_STOCK_LOOKBACK_DAYS,
+  PRODUCT_LOW_STOCK_COVER_DAYS,
   publicNotification,
   sortNotifications,
   unreadNotificationCount,
@@ -122,20 +124,22 @@ async function loadStateById(userId, ids, db) {
   return stateById;
 }
 
-async function soldOutProducts(db) {
+async function stockAlertProducts(db) {
   if (!(await isCatalogInventoryEnabled(db))) return [];
   const result = await target(db).query(
     `select p.id, p.main_sku, p.name, p.status,
             i.quantity_on_hand, i.quantity_reserved,
             coalesce(i.quantity_pending_return, 0) as quantity_pending_return,
             i.updated_at,
-            sales.units as units_sold_7d,
+            sales.units_7d as units_sold_7d,
+            sales.units as units_sold_30d,
             sales.last_sold_at
      from products p
      join product_inventory i on i.product_id = p.id
      join (
        select oi.product_id,
               sum(oi.quantity)::numeric as units,
+              coalesce(sum(oi.quantity) filter (where coalesce(o.ordered_at, o.created_at) >= now() - ($2 * interval '1 day')), 0)::numeric as units_7d,
               max(coalesce(o.ordered_at, o.created_at)) as last_sold_at
          from order_items oi
          join orders o on o.id = oi.order_id
@@ -146,11 +150,20 @@ async function soldOutProducts(db) {
         group by oi.product_id
      ) sales on sales.product_id = p.id
      where p.status = 'active'
-       and (i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0)) <= 0
+       and (
+         ((i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0)) <= 0)
+         or (
+           (i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0)) > 0
+           and (i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))
+             <= greatest(sales.units_7d / $2, sales.units / $1) * $3
+         )
+       )
        and sales.units > 0
-     order by sales.units desc, sales.last_sold_at desc, p.id asc
-     limit 10`,
-    [PRODUCT_SOLD_OUT_WINDOW_DAYS],
+     order by (i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0))
+                / greatest(sales.units_7d / $2, sales.units / $1) asc,
+              sales.last_sold_at desc, p.id asc
+     limit 50`,
+    [PRODUCT_STOCK_LOOKBACK_DAYS, PRODUCT_SOLD_OUT_WINDOW_DAYS, PRODUCT_LOW_STOCK_COVER_DAYS],
   );
   return result.rows.map((row) => ({
     id: Number(row.id),
@@ -161,33 +174,34 @@ async function soldOutProducts(db) {
     quantityReserved: Number(row.quantity_reserved || 0),
     quantityPendingReturn: Number(row.quantity_pending_return || 0),
     unitsSold7d: Number(row.units_sold_7d || 0),
+    unitsSold30d: Number(row.units_sold_30d || 0),
     lastSoldAt: row.last_sold_at || null,
     updatedAt: row.updated_at || null,
   }));
 }
 
 function hrefForItem(item, user) {
-  if (item.kind !== NOTIFICATION_KINDS.productSoldOut) return item.href;
+  if (![NOTIFICATION_KINDS.productSoldOut, NOTIFICATION_KINDS.productLowStock].includes(item.kind)) return item.href;
   if (userHasPermission(user, 'productos')) return '/productos';
   return '/orders';
 }
 
 async function collectVisibleNotifications(user, db) {
   requireUserId(user);
-  const [failedEmissions, lowInsumos, overdueBandeja, soldOut] = await Promise.all([
+  const [failedEmissions, lowInsumos, overdueBandeja, stockProducts] = await Promise.all([
     safeSource('emission', () => failedEmissionSummary(db)),
     safeSource('insumos', () => lowStockInsumos(db)),
     safeSource('bandeja', async () => {
       const { countOpenOverdueOrders } = await import('./logistics-inbox.js');
       return countOpenOverdueOrders(db);
     }),
-    safeSource('products', () => soldOutProducts(db)),
+    safeSource('products', () => stockAlertProducts(db)),
   ]);
   const live = collectLiveNotifications({
     failedEmissions: failedEmissions || { count: 0 },
     lowInsumos: lowInsumos || [],
     overdueBandeja: overdueBandeja || { count: 0 },
-    soldOutProducts: soldOut || [],
+    stockProducts: stockProducts || [],
   }).map((item) => ({ ...item, href: hrefForItem(item, user) }));
   const scoped = filterNotificationsForUser(live, user, userHasPermission);
   const stateById = await loadStateById(requireUserId(user), scoped.map((item) => item.id), db);
