@@ -71,7 +71,7 @@ test('la entrega propia usa Express, no nosotros', () => {
   assert.equal(logisticsDeliveryLabel({ channelCode: 'falabella', shipping: {} }), 'Marketplace');
 });
 
-test('manual imprime siempre; Falabella solo si está listo; Ripley queda pausado; enviados no imprimen', () => {
+test('manual imprime siempre; Falabella solo si está listo; Ripley no se imprime ni confirma; enviados no imprimen', () => {
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);

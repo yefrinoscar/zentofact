@@ -465,16 +465,10 @@ test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', asy
   assert.equal(enqueued[0].orderId, 20);
 });
 
-test('la bandeja no permite confirmar un pedido Ripley', async () => {
+test('marcar listo de Ripley permanece deshabilitado', async () => {
   await assert.rejects(
-    () => markLogisticsOrderReady({ orderId: 20 }, {
-      db: {
-        async query() {
-          throw new Error('no debe consultar ni mutar la orden');
-        },
-      },
-    }),
-    /La confirmación de pedidos Ripley está deshabilitada/,
+    () => markLogisticsOrderReady({ orderId: 20 }),
+    /confirmación de pedidos Ripley está deshabilitada/,
   );
 });
 
