@@ -13,6 +13,9 @@ test('el filtro de ventas de productos usa el periodo de Lima y ordena por venta
   assert.equal(filters.sortBy, 'grossSales');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'falabellaTake' }).sortBy, 'falabellaTake');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'arrives' }).sortBy, 'arrives');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'unitsPerDay' }).sortBy, 'unitsPerDay');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'keepsPerDay' }).sortBy, 'keepsPerDay');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31' }).dayCount, 31);
   assert.equal(filters.sortDir, 'desc');
   assert.equal(filters.search, 'AG301');
   assert.equal(filters.minGrossSales, null);
@@ -241,6 +244,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.totals.settlementOrders, 3);
   assert.equal(result.totals.averageTicket, 2410.5 / 12);
   assert.equal(result.totalCount, 1);
+  assert.equal(result.products[0].unitsPerDay, 6 / 30);
+  assert.equal(result.products[0].restockQty, Math.ceil(6 / 30 * 30));
+  assert.equal(result.horizonDays, 30);
+  assert.equal(result.restock.items.length, 0);
   assert.equal(result.topProducts[0].sku, 'AG301');
   assert.equal(result.trackedBuyers[0].name, 'Max Preview');
   assert.equal(result.trackedBuyers[0].tracked, true);
@@ -263,8 +270,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /matched_gross >= pr.gross \* 0.1/);
   assert.match(pageSql, /settlement_status = 'paid'/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
-  assert.match(pageSql, /l\.channel_code='falabella'/);
-  assert.match(pageSql, /coalesce\(linked\.channel_code, listing\.channel_code, ch\.code\) = 'falabella'/);
+  assert.match(pageSql, /left join product_inventory i on i\.product_id=p\.id/);
+  assert.match(pageSql, /wholesale_price/);
+  assert.match(pageSql, /l\.channel_code = ch\.code/);
+  assert.doesNotMatch(pageSql, /coalesce\(linked\.channel_code, listing\.channel_code, ch\.code\) = 'falabella'/);
   assert.match(pageSql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\) is not null/);
   assert.match(pageSql, /left join order_channels ch/);
   assert.match(pageSql, /array_agg\(distinct channel_code\)/);
@@ -277,6 +286,9 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.doesNotMatch(pageSql, /promised_shipping_at/);
   const buyerSql = statements.find((statement) => compact(statement.sql).includes('units_bought > 5'))?.sql || '';
   assert.match(buyerSql, /buyer_phone/);
+  assert.match(buyerSql, /nullif\(trim\(b\.buyer_phone\), ''\) is not null/);
+  assert.match(buyerSql, /AddressBilling/);
+  assert.equal(result.daily.length, 30);
   assert.match(buyerSql, /buyer_companies as/);
   assert.match(buyerSql, /buyer_products as/);
   assert.equal(statements[0].params[0], '2026-08-09');
@@ -324,4 +336,3 @@ test('si el cruce del producto es poco, usa la tasa del seller', () => {
   });
   assert.equal(rate, 0.2);
 });
-

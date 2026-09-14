@@ -1,10 +1,26 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { BarChart3, Search, X } from 'lucide-react';
+import { BarChart3, ChevronDown, Search, X } from 'lucide-react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+  ZAxis,
+} from 'recharts';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
 import { CopyableSku } from '../components/CopyableSku';
+import { SalesOverview } from '../components/SalesOverview';
 import DocumentDateRangePicker from '../components/DocumentDateRangePicker';
 import { DataTablePagination } from '../components/ui/data-table';
 import { Input } from '../components/ui/input';
@@ -20,8 +36,12 @@ import {
   buyerPhoneLabel,
   buyerProductsLabel,
   formatBuyerLastOrder,
+  formatCoverDays,
+  formatKeepsPerDay,
   formatSalesCount,
   formatSalesMoney,
+  formatUnitsPerDay,
+  hasBuyerPhone,
   arrivesMoneyHint,
   falabellaMoneyHint,
   formatSalesMoneyOrDash,
@@ -30,14 +50,25 @@ import {
   pendingMoneyHint,
   productSalesKpis,
   publishedLabel,
+  restockFormula,
+  restockWhyLabel,
+  salesCurveNote,
   sellerChannelLabel,
   sellerSalesLabel,
+  skipDetail,
+  skipReasonLabel,
   sortSalesBuyers,
+  stockIsLow,
+  weekdayUnits,
   type BuyerSortBy,
   type ProductSaleBuyer,
   type ProductSaleBuyerCompany,
+  type ProductSalePoint,
   type ProductSaleRow,
+  type ProductSalesRestock,
   type ProductSalesTotals,
+  type RestockPoint,
+  type SalesDayPoint,
 } from '../lib/product-sales-presentation';
 import { sellerShortName } from '../lib/seller-name';
 
@@ -57,19 +88,23 @@ type ProductSalesResponse = {
   totalCount: number;
   totals: ProductSalesTotals;
   topProducts: ProductSaleRow[];
+  restock?: ProductSalesRestock;
+  daily?: SalesDayPoint[];
   trackedBuyers: ProductSaleBuyer[];
   topBuyers: ProductSaleBuyer[];
   limit: number;
   offset: number;
 };
 
-type SortBy = 'product' | 'units' | 'orders' | 'grossSales' | 'falabellaTake' | 'arrives' | 'sellers';
+type SortBy = 'product' | 'units' | 'unitsPerDay' | 'keepsPerDay' | 'restockQty' | 'orders' | 'grossSales' | 'falabellaTake' | 'arrives' | 'sellers';
 
 const COLUMN_CLASS = {
-  product: 'w-full sm:w-[32%]',
-  grossSales: 'w-[22%] sm:w-[16%] text-right',
-  falabella: 'hidden sm:table-cell sm:w-[14%] text-right',
-  arrives: 'w-[46%] sm:w-[38%]',
+  product: 'w-full sm:w-[34%]',
+  curve: 'hidden md:table-cell md:w-[12%]',
+  unitsPerDay: 'hidden sm:table-cell sm:w-[10%] text-right',
+  keepsPerDay: 'w-[22%] sm:w-[14%] text-right',
+  stock: 'hidden sm:table-cell sm:w-[14%] text-right',
+  restock: 'w-[16%] sm:w-[12%] text-right',
 } as const;
 
 const TONE = {
@@ -149,10 +184,14 @@ export default function VentasProductos() {
 
   const products = salesQuery.data?.products || [];
   const totals = salesQuery.data?.totals;
+  const restock = salesQuery.data?.restock;
+  const daily = salesQuery.data?.daily || [];
   const trackedBuyers = salesQuery.data?.trackedBuyers || [];
-  const topBuyers = salesQuery.data?.topBuyers || [];
   const totalCount = salesQuery.data?.totalCount || 0;
-  const selected = products.find((product) => product.productKey === selectedKey) || null;
+  const selected = products.find((product) => product.productKey === selectedKey)
+    || restock?.items.find((product) => product.productKey === selectedKey)
+    || restock?.skip.find((product) => product.productKey === selectedKey)
+    || null;
   const loading = salesQuery.isPending && !salesQuery.data;
   const fetching = salesQuery.isFetching;
 
@@ -171,56 +210,49 @@ export default function VentasProductos() {
       cell: ({ row }) => <ProductCell product={row.original} />,
     },
     {
-      id: 'grossSales',
-      accessorKey: 'grossSales',
-      header: () => <SortHeader label="Ventas brutas" active={sortBy === 'grossSales'} dir={sortDir} onClick={() => applySort('grossSales')} />,
-      cell: ({ row }) => (
-        <MoneySplit
-          value={row.original.grossSales}
-          left={Number(row.original.falabellaTake || 0)}
-          right={Number(row.original.arrives || 0)}
-          leftClass="bg-rose-400"
-          rightClass="bg-emerald-500"
-        />
-      ),
+      id: 'curve',
+      header: () => <span className="font-medium text-muted-foreground">Curva</span>,
+      cell: ({ row }) => <SalesSparkline series={row.original.series || []} />,
     },
     {
-      id: 'falabella',
-      accessorKey: 'falabellaTake',
+      id: 'unitsPerDay',
+      accessorKey: 'unitsPerDay',
+      header: () => <SortHeader label="u / día" active={sortBy === 'unitsPerDay'} dir={sortDir} onClick={() => applySort('unitsPerDay')} />,
+      cell: ({ row }) => <span className="tabular-nums">{formatUnitsPerDay(row.original.unitsPerDay)}</span>,
+    },
+    {
+      id: 'keepsPerDay',
+      accessorKey: 'keepsPerDay',
       header: () => (
         <SortHeader
-          label="Falabella"
-          active={sortBy === 'falabellaTake'}
+          label="Te deja / día"
+          active={sortBy === 'keepsPerDay'}
           dir={sortDir}
-          className={TONE.take}
-          onClick={() => applySort('falabellaTake')}
+          className={TONE.receive}
+          onClick={() => applySort('keepsPerDay')}
         />
       ),
       cell: ({ row }) => (
-        <span className={cn('tabular-nums', TONE.take)} title={falabellaMoneyHint(row.original)}>
-          {formatSalesMoneyOrDash(row.original.falabellaTake)}
+        <span className={cn('tabular-nums font-medium', TONE.receive)}>
+          {formatKeepsPerDay(row.original.keepsPerDay)}
         </span>
       ),
     },
     {
-      id: 'arrives',
-      accessorKey: 'arrives',
-      header: () => (
-        <span className="flex w-full items-end justify-between gap-4">
-          <SortHeader
-            label="Te llega"
-            active={sortBy === 'arrives'}
-            dir={sortDir}
-            className={TONE.receive}
-            onClick={() => applySort('arrives')}
-          />
-          <span className="hidden text-xs font-medium sm:flex sm:gap-4">
-            <span className={TONE.receive}>Pagado</span>
-            <span className={TONE.wait}>Pendiente</span>
-          </span>
+      id: 'stock',
+      accessorKey: 'available',
+      header: () => <span className="font-medium text-muted-foreground">Stock</span>,
+      cell: ({ row }) => <StockCell product={row.original} />,
+    },
+    {
+      id: 'restock',
+      accessorKey: 'restockQty',
+      header: () => <SortHeader label="Traer" active={sortBy === 'restockQty'} dir={sortDir} onClick={() => applySort('restockQty')} />,
+      cell: ({ row }) => (
+        <span className={cn('tabular-nums', Number(row.original.restockQty || 0) > 0 ? 'font-semibold' : 'text-muted-foreground')}>
+          {formatSalesCount(row.original.restockQty || 0)}
         </span>
       ),
-      cell: ({ row }) => <ArrivesCompare product={row.original} />,
     },
   ], [sortBy, sortDir]);
 
@@ -284,11 +316,20 @@ export default function VentasProductos() {
 
       {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
 
+      <SalesOverview daily={daily} loading={loading} />
+
+      <SalesAnalysis
+        restock={restock}
+        loading={loading}
+        selectedKey={selectedKey}
+        onSelect={(productKey) => setSelectedKey(productKey)}
+      />
+
       <TablePanel aria-label="Ventas de productos" aria-busy={loading || fetching}>
         {loading ? <SalesTableSkeleton /> : products.length === 0 ? (
           <div className="px-5 py-12 text-center">
             <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">Sin ventas Falabella en este periodo</p>
+            <p className="mt-3 text-sm font-medium">Sin ventas en este periodo</p>
             <p className="mt-1 text-xs text-muted-foreground">Cambia el rango o el seller para ver otros maestros.</p>
           </div>
         ) : (
@@ -353,7 +394,7 @@ export default function VentasProductos() {
         ) : null}
       </TablePanel>
 
-      <BuyersBoard tracked={trackedBuyers} others={topBuyers} loading={loading} />
+      <BuyersBoard tracked={trackedBuyers} loading={loading} />
 
       <SellerSalesDrawer
         product={selected}
@@ -413,6 +454,423 @@ function ProductCell({ product }: { product: ProductSaleRow }) {
   );
 }
 
+function SalesSparkline({ series }: { series: ProductSalePoint[] }) {
+  if (series.length < 2) return <span className="text-xs text-muted-foreground">—</span>;
+  const max = Math.max(...series.map((point) => point.units), 1);
+  const width = 108;
+  const height = 28;
+  const pad = 2;
+  const points = series.map((point, index) => {
+    const x = pad + (index / (series.length - 1)) * (width - pad * 2);
+    const y = height - pad - (point.units / max) * (height - pad * 2);
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-7 w-[108px] text-foreground" aria-hidden="true">
+      <polyline fill="none" stroke="currentColor" strokeWidth="1.6" points={points} />
+    </svg>
+  );
+}
+
+function StockCell({ product }: { product: ProductSaleRow }) {
+  const cover = formatCoverDays(product.coverDays);
+  return (
+    <span className={cn('tabular-nums', stockIsLow(product.coverDays) && 'font-semibold text-destructive')}>
+      {formatSalesCount(product.available || 0)} u
+      {cover ? ` · ${cover}` : ''}
+    </span>
+  );
+}
+
+const CHART = {
+  bring: '#047857',
+  skip: '#be123c',
+  watch: '#a8a29e',
+} as const;
+
+const SHOW_SPEED_MONEY_CHART = false;
+
+function SalesAnalysis({
+  restock,
+  loading,
+  selectedKey,
+  onSelect,
+}: {
+  restock?: ProductSalesRestock;
+  loading: boolean;
+  selectedKey: string | null;
+  onSelect: (productKey: string) => void;
+}) {
+  const items = restock?.items || [];
+  const skip = restock?.skip || [];
+  const points = restock?.points || [];
+  if (loading) return <Skeleton className="h-48 w-full" />;
+  if (items.length === 0 && skip.length === 0) return null;
+  return (
+    <div className="space-y-4">
+      {SHOW_SPEED_MONEY_CHART ? (
+        <section className="overflow-hidden rounded-md border border-border px-4 py-4 sm:px-5">
+          <SpeedMoneyChart points={points} selectedKey={selectedKey} onSelect={onSelect} />
+        </section>
+      ) : null}
+      <AnalysisRail
+        title="Traer"
+        hint="Se están acabando y te dejan plata. Pide estas unidades para 30 días."
+        empty="Nada que reponer en este periodo."
+        tone="bring"
+      >
+        {items.map((product) => (
+          <AnalysisCard
+            key={product.productKey}
+            product={product}
+            selected={product.productKey === selectedKey}
+            accent={CHART.bring}
+            value={formatSalesCount(product.restockQty || 0)}
+            valueHint="a traer"
+            money={formatKeepsPerDay(product.keepsPerDay)}
+            why={restockWhyLabel(product)}
+            onSelect={onSelect}
+          />
+        ))}
+      </AnalysisRail>
+      <AnalysisRail
+        title="No traer"
+        hint="Ya tienes de sobra, o venden y dejan poco. Si no está aquí ni en Traer, espera: todavía cubre el mes o se mueve poco."
+        empty="Ninguno parado en este periodo."
+        tone="skip"
+      >
+        {skip.map((product) => (
+          <AnalysisCard
+            key={product.productKey}
+            product={product}
+            selected={product.productKey === selectedKey}
+            accent={CHART.skip}
+            badge={skipReasonLabel(product.skipReason)}
+            value={formatCoverDays(product.coverDays) || '0 d'}
+            valueHint="de stock"
+            money={formatKeepsPerDay(product.keepsPerDay)}
+            why={skipDetail(product)}
+            onSelect={onSelect}
+          />
+        ))}
+      </AnalysisRail>
+    </div>
+  );
+}
+
+function AnalysisRail({
+  title,
+  hint,
+  empty,
+  tone,
+  children,
+}: {
+  title: string;
+  hint: string;
+  empty: string;
+  tone: 'bring' | 'skip';
+  children: ReactNode;
+}) {
+  const rows = Array.isArray(children) ? children : [children];
+  const hasRows = rows.filter(Boolean).length > 0;
+  return (
+    <section className="min-w-0">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+        <p className={cn('text-sm font-semibold', tone === 'bring' ? TONE.receive : TONE.take)}>{title}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+      {hasRows ? (
+        <div className="mt-3 flex gap-3 overflow-x-auto pb-1">{children}</div>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">{empty}</p>
+      )}
+    </section>
+  );
+}
+
+function AnalysisCard({
+  product,
+  selected,
+  accent,
+  badge,
+  value,
+  valueHint,
+  money,
+  why,
+  onSelect,
+}: {
+  product: ProductSaleRow;
+  selected: boolean;
+  accent: string;
+  badge?: string;
+  value: string;
+  valueHint: string;
+  money: string;
+  why: string;
+  onSelect: (productKey: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'w-[220px] shrink-0 rounded-md border border-border p-3 text-left hover:bg-muted/40',
+        selected && 'bg-muted/50',
+      )}
+      onClick={() => onSelect(product.productKey)}
+    >
+      <span className="grid size-16 place-items-center overflow-hidden rounded-md bg-muted">
+        {product.imageUrl
+          ? <img src={product.imageUrl} alt="" className="size-full object-contain" />
+          : <BarChart3 className="size-5 text-muted-foreground" />}
+      </span>
+      {badge ? (
+        <span className="mt-2 inline-flex rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{badge}</span>
+      ) : null}
+      <span className="mt-2 line-clamp-2 block text-sm font-medium leading-5">{product.name}</span>
+      <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{product.sku}</span>
+      <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">{why}</span>
+      <span className="mt-2 block h-12">
+        <MiniCurve series={product.series || []} color={accent} />
+      </span>
+      <span className="mt-2 flex items-end justify-between gap-2">
+        <span>
+          <span className="block text-lg font-semibold tabular-nums tracking-tight">{value}</span>
+          <span className="block text-[11px] text-muted-foreground">{valueHint}</span>
+        </span>
+        <span className="text-right">
+          <span className={cn('block text-sm font-semibold tabular-nums', TONE.receive)}>{money}</span>
+          <span className="block text-[11px] text-muted-foreground">/ día</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function MiniCurve({ series, color }: { series: ProductSalePoint[]; color: string }) {
+  if (!series.some((point) => point.units > 0)) {
+    return <span className="grid h-full place-items-center text-[11px] text-muted-foreground">Sin curva</span>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={series} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+        <Area type="monotone" dataKey="units" stroke={color} strokeWidth={1.6} fill={color} fillOpacity={0.12} dot={false} isAnimationActive={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function SpeedMoneyChart({
+  points,
+  selectedKey,
+  onSelect,
+}: {
+  points: RestockPoint[];
+  selectedKey: string | null;
+  onSelect: (productKey: string) => void;
+}) {
+  if (points.length === 0) {
+    return <div className="grid h-full place-items-center text-sm text-muted-foreground">Sin productos para graficar.</div>;
+  }
+  const groups = {
+    watch: points.filter((point) => point.group === 'watch'),
+    skip: points.filter((point) => point.group === 'skip'),
+    bring: points.filter((point) => point.group === 'bring'),
+  };
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ScatterChart margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
+        <CartesianGrid stroke="var(--border)" strokeDasharray="3 6" />
+        <XAxis
+          type="number"
+          dataKey="unitsPerDay"
+          name="u/día"
+          tickFormatter={(value) => formatUnitsPerDay(Number(value))}
+          tick={{ fontSize: 11 }}
+          tickMargin={8}
+          axisLine={false}
+          tickLine={false}
+          stroke="var(--muted-foreground)"
+        />
+        <YAxis
+          type="number"
+          dataKey="keepsPerDay"
+          name="te deja"
+          tickFormatter={(value) => formatKeepsPerDay(Number(value))}
+          tick={{ fontSize: 11 }}
+          tickMargin={8}
+          width={72}
+          axisLine={false}
+          tickLine={false}
+          stroke="var(--muted-foreground)"
+        />
+        <ZAxis type="number" range={[60, 60]} />
+        <Tooltip
+          cursor={{ strokeDasharray: '3 4' }}
+          content={({ active, payload }) => {
+            const point = payload?.[0]?.payload as RestockPoint | undefined;
+            if (!active || !point) return null;
+            return (
+              <div className="max-w-56 rounded-md bg-popover px-2.5 py-2 text-xs shadow-sm ring-1 ring-foreground/5">
+                <p className="font-medium">{point.name}</p>
+                <p className="mt-0.5 font-mono text-muted-foreground">{point.sku}</p>
+                <p className="mt-2 tabular-nums">{formatUnitsPerDay(point.unitsPerDay)} u/día</p>
+                <p className={cn('tabular-nums', TONE.receive)}>{formatKeepsPerDay(point.keepsPerDay)} / día</p>
+                {point.group === 'bring' ? (
+                  <p className="mt-1 font-medium">Trae {formatSalesCount(point.restockQty)} u</p>
+                ) : point.group === 'skip' ? (
+                  <p className="mt-1 font-medium text-rose-700">No traigas</p>
+                ) : null}
+              </div>
+            );
+          }}
+        />
+        {(['watch', 'skip', 'bring'] as const).map((group) => (
+          <Scatter
+            key={group}
+            name={group}
+            data={groups[group]}
+            fill={CHART[group]}
+            fillOpacity={group === 'watch' ? 0.55 : 0.9}
+            onClick={(entry) => {
+              const record = entry as { productKey?: string; payload?: { productKey?: string } };
+              const key = record.productKey || record.payload?.productKey;
+              if (key) onSelect(key);
+            }}
+          >
+            {groups[group].map((point) => (
+              <Cell
+                key={point.productKey}
+                fill={CHART[group]}
+                fillOpacity={point.productKey === selectedKey ? 1 : group === 'watch' ? 0.45 : 0.9}
+                stroke={point.productKey === selectedKey ? 'var(--foreground)' : 'transparent'}
+                strokeWidth={point.productKey === selectedKey ? 2 : 0}
+              />
+            ))}
+          </Scatter>
+        ))}
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+const curveDayLabel = new Intl.DateTimeFormat('es-PE', {
+  day: 'numeric',
+  month: 'short',
+  timeZone: 'UTC',
+});
+
+function ProductSalesCurve({ product }: { product: ProductSaleRow }) {
+  const series = product.series || [];
+  const week = weekdayUnits(series);
+  const note = salesCurveNote(product);
+  const restocking = Number(product.restockQty || 0) > 0;
+  return (
+    <div className="mt-6">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Curva del periodo</p>
+      <div className="mt-2 h-52 w-full">
+        {series.some((point) => point.units > 0) ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={series} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="productSalesFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--foreground)" stopOpacity={0.12} />
+                  <stop offset="92%" stopColor="var(--foreground)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) => curveDayLabel.format(new Date(`${value}T12:00:00.000Z`))}
+                axisLine={false}
+                tickLine={false}
+                tickMargin={10}
+                minTickGap={28}
+                fontSize={11}
+                stroke="var(--muted-foreground)"
+              />
+              <YAxis
+                orientation="right"
+                axisLine={false}
+                tickLine={false}
+                tickMargin={8}
+                width={28}
+                fontSize={11}
+                allowDecimals={false}
+                stroke="var(--muted-foreground)"
+              />
+              <Tooltip
+                content={({ active, payload }) => {
+                  const point = payload?.[0]?.payload as ProductSalePoint | undefined;
+                  if (!active || !point) return null;
+                  return (
+                    <div className="rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-sm ring-1 ring-foreground/5">
+                      <p className="font-medium">{curveDayLabel.format(new Date(`${point.date}T12:00:00.000Z`))}</p>
+                      <p className="tabular-nums text-muted-foreground">{formatSalesCount(point.units)} u</p>
+                    </div>
+                  );
+                }}
+              />
+              <Area type="monotone" dataKey="units" stroke="var(--foreground)" strokeWidth={2} fill="url(#productSalesFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="grid h-full place-items-center text-xs text-muted-foreground">Sin curva en este periodo.</div>
+        )}
+      </div>
+      <p className="mt-5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Por día de la semana</p>
+      <div className="mt-2 h-36 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={week} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 6" />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tickMargin={8} fontSize={11} stroke="var(--muted-foreground)" />
+            <YAxis
+              orientation="right"
+              axisLine={false}
+              tickLine={false}
+              tickMargin={8}
+              width={28}
+              fontSize={11}
+              allowDecimals={false}
+              stroke="var(--muted-foreground)"
+            />
+            <Tooltip
+              cursor={{ fill: 'var(--muted)', fillOpacity: 0.4 }}
+              content={({ active, payload }) => {
+                const day = payload?.[0]?.payload as { label: string; units: number } | undefined;
+                if (!active || !day) return null;
+                return (
+                  <div className="rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-sm ring-1 ring-foreground/5">
+                    <p className="font-medium">{day.label}</p>
+                    <p className="tabular-nums text-muted-foreground">{formatSalesCount(day.units)} u</p>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="units" fill="var(--foreground)" fillOpacity={0.78} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-4 rounded-md border border-border bg-muted/30 px-3 py-3">
+        <p className="text-sm font-medium">{note.title}</p>
+        {note.detail ? <p className="mt-1 text-xs text-muted-foreground">{note.detail}</p> : null}
+      </div>
+      <div className="mt-4 flex items-end justify-between gap-3 border-t border-border pt-4">
+        <div>
+          <p className="text-xs text-muted-foreground">
+            {restocking
+              ? `Para ${product.horizonDays || 30} días, con las ${formatSalesCount(product.available || 0)} que quedan`
+              : `Con ${formatSalesCount(product.available || 0)} u cubres el ritmo actual`}
+          </p>
+          <p className={cn('mt-1 text-2xl font-semibold tracking-tight', !restocking && TONE.take)}>
+            {restocking ? `Trae ${formatSalesCount(product.restockQty || 0)} u` : 'No traigas'}
+          </p>
+        </div>
+        <p className="text-xs tabular-nums text-muted-foreground">{restockFormula(product)}</p>
+      </div>
+    </div>
+  );
+}
+
 function PublishedBadge({ published }: { published: boolean }) {
   return (
     <span className={cn(
@@ -464,33 +922,43 @@ function SalesKpis({
 
 function BuyersBoard({
   tracked,
-  others,
   loading,
 }: {
   tracked: ProductSaleBuyer[];
-  others: ProductSaleBuyer[];
+  others?: ProductSaleBuyer[];
   loading: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const withPhone = tracked.filter(hasBuyerPhone);
   return (
-    <div className="space-y-8">
-      <section aria-label="Compradores de más de 5 unidades">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Más de 5 unidades</p>
-        <p className="mt-1 text-xs text-muted-foreground">Seguimiento. Teléfono y seller.</p>
-        {loading ? <Skeleton className="mt-3 h-40 w-full" /> : tracked.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">Nadie pasó de 5 u en este periodo.</p>
-        ) : (
-          <BuyersTable buyers={tracked} defaultSort="units" detailed />
-        )}
-      </section>
-      <section aria-label="Compradores más importantes">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Otros compradores</p>
-        {loading ? <Skeleton className="mt-3 h-32 w-full" /> : others.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">Nadie más compra en este periodo.</p>
-        ) : (
-          <BuyersTable buyers={others} defaultSort="grossSales" />
-        )}
-      </section>
-    </div>
+    <section aria-label="Compradores con teléfono">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-4 py-3 text-left hover:bg-muted/40"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>
+          <span className="block text-sm font-medium">Compradores con teléfono</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Más de 5 unidades. Solo si hay celular para contactarlos.
+          </span>
+        </span>
+        <span className="flex items-center gap-2 text-sm tabular-nums text-muted-foreground">
+          {loading ? '—' : formatSalesCount(withPhone.length)}
+          <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} />
+        </span>
+      </button>
+      {open ? (
+        <div className="mt-3">
+          {loading ? <Skeleton className="h-40 w-full" /> : withPhone.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nadie con teléfono pasó de 5 u en este periodo.</p>
+          ) : (
+            <BuyersTable buyers={withPhone} defaultSort="units" detailed />
+          )}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -623,6 +1091,13 @@ function SellerSalesDrawer({
         {product ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 sm:px-8">
             <div className="grid grid-cols-2 gap-4">
+              <Metric label="Unidades / día" value={formatUnitsPerDay(product.unitsPerDay)} />
+              <Metric label="Te deja / día" value={formatKeepsPerDay(product.keepsPerDay)} tone="receive" />
+              <Metric label="Stock" value={`${formatSalesCount(product.available || 0)} u`} />
+              <Metric label="Se acaba en" value={formatCoverDays(product.coverDays) || '—'} />
+            </div>
+            <ProductSalesCurve product={product} />
+            <div className="mt-5 grid grid-cols-2 gap-4">
               <Metric label="Ventas brutas" value={formatSalesMoney(product.grossSales)} />
               <Metric
                 label="Falabella"
@@ -631,17 +1106,15 @@ function SellerSalesDrawer({
                 tone="take"
               />
               <Metric label="Unidades" value={`${formatSalesCount(product.unitsSold)} u · ${formatSalesCount(product.ordersCount)} pedidos`} />
-            </div>
-            <div className="mt-5 flex items-start gap-6">
               <Metric
                 label="Te llega"
                 value={formatSalesMoneyOrDash(product.arrives)}
                 hint={arrivesMoneyHint(product)}
                 tone="receive"
               />
-              <div className="min-w-[11rem] flex-1 pt-5">
-                <PayoutCompare paid={product.paidArrives} pending={product.pendingArrives} />
-              </div>
+            </div>
+            <div className="mt-4">
+              <PayoutCompare paid={product.paidArrives} pending={product.pendingArrives} />
             </div>
             <p className="mt-8 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Por seller</p>
             {product.sellers.length === 0 ? (
@@ -710,49 +1183,6 @@ function Metric({
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={cn('mt-1 truncate text-lg font-semibold tabular-nums tracking-tight', tone && TONE[tone])}>{value}</p>
       {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
-  );
-}
-
-function MoneySplit({
-  value,
-  left,
-  right,
-  leftClass,
-  rightClass,
-}: {
-  value: number;
-  left: number;
-  right: number;
-  leftClass: string;
-  rightClass: string;
-}) {
-  const total = Math.max(0, left) + Math.max(0, right);
-  const leftPct = total > 0 ? (Math.max(0, left) / total) * 100 : 0;
-  return (
-    <span className="block">
-      <span className="tabular-nums font-medium">{formatSalesMoney(value)}</span>
-      <span className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-        <span className={leftClass} style={{ width: `${leftPct}%` }} />
-        <span className={rightClass} style={{ width: `${Math.max(0, 100 - leftPct)}%` }} />
-      </span>
-    </span>
-  );
-}
-
-function ArrivesCompare({
-  product,
-}: {
-  product: Pick<ProductSaleRow, 'arrives' | 'paidArrives' | 'pendingArrives'>;
-}) {
-  return (
-    <div className="flex items-start gap-4">
-      <span className={cn('shrink-0 tabular-nums text-base font-semibold', TONE.receive)} title={arrivesMoneyHint(product)}>
-        {formatSalesMoneyOrDash(product.arrives)}
-      </span>
-      <div className="min-w-0 flex-1">
-        <PayoutCompare paid={product.paidArrives} pending={product.pendingArrives} />
-      </div>
     </div>
   );
 }

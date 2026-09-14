@@ -19,6 +19,19 @@ export type ProductSaleSeller = {
   visits: number | null;
 };
 
+export type SalesPace = 'up' | 'down' | 'stable';
+
+export type ProductSalePoint = {
+  date: string;
+  units: number;
+};
+
+export type SalesDayPoint = {
+  date: string;
+  units: number;
+  revenue: number;
+};
+
 export type ProductSaleRow = {
   productKey: string;
   productId: number | null;
@@ -37,7 +50,43 @@ export type ProductSaleRow = {
   paidArrives: number | null;
   pendingArrives: number | null;
   visits: number | null;
+  wholesalePrice?: number | null;
+  available?: number | null;
+  unitsPerDay?: number;
+  keeps?: number | null;
+  keepsPerUnit?: number | null;
+  keepsPerDay?: number | null;
+  hasWholesaleCost?: boolean;
+  coverDays?: number | null;
+  restockQty?: number;
+  horizonDays?: number;
+  series?: ProductSalePoint[];
+  pace?: SalesPace;
+  weekendShare?: number;
+  skipReason?: RestockSkipReason | null;
   sellers: ProductSaleSeller[];
+};
+
+export type RestockSkipReason = 'overstock' | 'lowKeep' | 'slow';
+export type RestockGroup = 'bring' | 'skip' | 'watch';
+
+export type RestockPoint = {
+  productKey: string;
+  sku: string;
+  name: string;
+  unitsPerDay: number;
+  keepsPerDay: number | null;
+  restockQty: number;
+  coverDays: number | null;
+  available: number | null;
+  group: RestockGroup;
+};
+
+export type ProductSalesRestock = {
+  horizonDays: number;
+  items: ProductSaleRow[];
+  skip: ProductSaleRow[];
+  points?: RestockPoint[];
 };
 
 export type ProductSaleBuyerCompany = {
@@ -271,6 +320,10 @@ export function buyerPhoneLabel(buyer: Pick<ProductSaleBuyer, 'phone'>) {
   return formatBuyerPhone(buyer.phone) || 'Sin teléfono';
 }
 
+export function hasBuyerPhone(buyer: Pick<ProductSaleBuyer, 'phone'>) {
+  return buyerPhoneDigits(buyer.phone).length >= 6;
+}
+
 export function buyerCompanyNames(buyer: Pick<ProductSaleBuyer, 'companies'>) {
   return (buyer.companies || [])
     .map((company) => sellerShortName(company.companyName))
@@ -322,4 +375,110 @@ export function sortSalesBuyers(
       : String(a).localeCompare(String(b), 'es');
     return (cmp || left.name.localeCompare(right.name, 'es')) * direction;
   });
+}
+
+const unitsDay = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+const moneyDay = new Intl.NumberFormat('es-PE', {
+  style: 'currency',
+  currency: 'PEN',
+  maximumFractionDigits: 0,
+});
+
+export function formatUnitsPerDay(value: number | null | undefined) {
+  return unitsDay.format(Number(value || 0));
+}
+
+export function formatKeepsPerDay(value: number | null | undefined) {
+  if (value == null) return '—';
+  return moneyDay.format(Number(value));
+}
+
+export function formatCoverDays(value: number | null | undefined) {
+  if (value == null) return null;
+  if (value < 1) return '<1 d';
+  return `${integer.format(Math.round(value))} d`;
+}
+
+export function stockIsLow(coverDays: number | null | undefined) {
+  return coverDays != null && coverDays < 14;
+}
+
+export function restockWhyLabel(product: Pick<ProductSaleRow, 'unitsPerDay' | 'available' | 'coverDays' | 'pace'>) {
+  const pace = `${formatUnitsPerDay(product.unitsPerDay)} u/día`;
+  const stock = `${formatSalesCount(product.available || 0)} u en almacén`;
+  if (product.pace === 'up') return `${pace} · ${stock} · curva al alza`;
+  if (stockIsLow(product.coverDays) && product.coverDays != null) {
+    const days = product.coverDays < 1 ? 'menos de un día' : `${integer.format(Math.max(0, Math.floor(product.coverDays)))} días`;
+    return `${pace} · ${stock} · se acaba en ${days}`;
+  }
+  return `${pace} · ${stock}`;
+}
+
+export function skipWhyLabel(product: Pick<ProductSaleRow, 'sku' | 'name' | 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
+  if (product.skipReason === 'lowKeep' || (product.coverDays != null && product.coverDays < 45 && product.skipReason !== 'overstock')) {
+    return `${product.name} ${product.sku}: vende ${formatUnitsPerDay(product.unitsPerDay)} u/día pero te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+  }
+  return `${product.name} ${product.sku}: ${formatUnitsPerDay(product.unitsPerDay)} u/día y ${integer.format(Math.round(Number(product.coverDays || 0)))} días de stock`;
+}
+
+export function skipReasonLabel(reason?: RestockSkipReason | null) {
+  if (reason === 'lowKeep') return 'Vende, deja poco';
+  if (reason === 'overstock') return 'Stock de sobra';
+  if (reason === 'slow') return 'Se mueve poco';
+  return 'No traigas';
+}
+
+export function skipDetail(product: Pick<ProductSaleRow, 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
+  if (product.skipReason === 'lowKeep') {
+    return `${formatUnitsPerDay(product.unitsPerDay)} u/día · te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+  }
+  if (product.skipReason === 'slow') {
+    return `${formatUnitsPerDay(product.unitsPerDay)} u/día · venta lenta`;
+  }
+  const cover = formatCoverDays(product.coverDays) || '—';
+  return `${cover} de stock · ${formatUnitsPerDay(product.unitsPerDay)} u/día`;
+}
+
+const WEEKDAYS = [
+  { key: 1, label: 'Lun' },
+  { key: 2, label: 'Mar' },
+  { key: 3, label: 'Mié' },
+  { key: 4, label: 'Jue' },
+  { key: 5, label: 'Vie' },
+  { key: 6, label: 'Sáb' },
+  { key: 0, label: 'Dom' },
+] as const;
+
+export function weekdayUnits(series: ProductSalePoint[] = []) {
+  const totals = new Map<number, number>(WEEKDAYS.map((day) => [day.key, 0]));
+  for (const point of series) {
+    const date = new Date(`${point.date}T12:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) continue;
+    const weekday = date.getUTCDay();
+    totals.set(weekday, Number(totals.get(weekday) || 0) + Number(point.units || 0));
+  }
+  return WEEKDAYS.map((day) => ({
+    label: day.label,
+    units: Number(totals.get(day.key) || 0),
+  }));
+}
+
+export function restockFormula(product: Pick<ProductSaleRow, 'unitsPerDay' | 'horizonDays' | 'available' | 'restockQty'>) {
+  const horizon = Number(product.horizonDays || 30);
+  return `${formatUnitsPerDay(product.unitsPerDay)} × ${horizon} − ${formatSalesCount(product.available || 0)} = ${formatSalesCount(product.restockQty || 0)}`;
+}
+
+export function salesCurveNote(product: ProductSaleRow) {
+  const pace = formatUnitsPerDay(product.unitsPerDay);
+  let title = `Se vende ${pace} u/día.`;
+  if (product.pace === 'up') title = `Se está acelerando. Ahora ${pace} u/día.`;
+  if (product.pace === 'down') title = `Se está frenando. Ahora ${pace} u/día.`;
+  const bits: string[] = [];
+  if ((product.weekendShare || 0) >= 0.45) bits.push('Casi todo sale jueves a domingo.');
+  if (product.hasWholesaleCost && product.keepsPerUnit != null) {
+    bits.push(`Te llegan ${formatSalesMoney(product.keepsPerUnit)} por unidad.`);
+  } else if (product.keepsPerDay != null && product.hasWholesaleCost === false) {
+    bits.push('Sin precio por mayor: usamos lo que te llega.');
+  }
+  return { title, detail: bits.join(' ') };
 }

@@ -4,6 +4,7 @@ import {
   buyerCompaniesLabel,
   buyerIdentity,
   buyerPhoneLabel,
+  hasBuyerPhone,
   buyerProductsLabel,
   channelLabel,
   arrivesMoneyHint,
@@ -20,7 +21,15 @@ import {
   splitSalesBuyers,
   productSalesKpis,
   publishedLabel,
+  restockFormula,
+  restockWhyLabel,
+  salesCurveNote,
   sellerSalesLabel,
+  skipDetail,
+  skipReasonLabel,
+  skipWhyLabel,
+  stockIsLow,
+  weekdayUnits,
   TRACKED_BUYER_MIN_UNITS,
 } from './product-sales-presentation.ts';
 
@@ -130,8 +139,69 @@ test('agrupa compradores de más de 5 unidades y arma el detalle', () => {
   assert.deepEqual(splitSalesBuyers([other, tracked]).tracked.map((buyer) => buyer.name), ['Max Preview']);
   assert.equal(formatBuyerPhone('987654321'), '987 654 321');
   assert.equal(buyerPhoneLabel(tracked), '987 654 321');
+  assert.equal(hasBuyerPhone(tracked), true);
+  assert.equal(hasBuyerPhone({ phone: '' }), false);
+  assert.equal(hasBuyerPhone({ phone: '123' }), false);
   assert.equal(buyerCompaniesLabel(tracked), 'Limbo · Manta raya');
   assert.equal(buyerProductsLabel(tracked), 'BB220 · 7 u');
   assert.deepEqual(sortSalesBuyers([other, tracked], 'units', 'desc').map((buyer) => buyer.name), ['Max Preview', 'Ana Preview']);
   assert.deepEqual(sortSalesBuyers([other, tracked], 'name', 'asc').map((buyer) => buyer.name), ['Ana Preview', 'Max Preview']);
+});
+
+test('explica qué traer y qué no tocar', () => {
+  assert.equal(stockIsLow(3), true);
+  assert.equal(stockIsLow(20), false);
+  const normalize = (value) => String(value).replace(/\u00a0/g, ' ').replace(',', '.');
+  assert.equal(
+    normalize(restockWhyLabel({ unitsPerDay: 2.4, available: 8, coverDays: 3.3, pace: 'stable' })),
+    '2.4 u/día · 8 u en almacén · se acaba en 3 días',
+  );
+  assert.equal(
+    normalize(restockWhyLabel({ unitsPerDay: 1.8, available: 6, coverDays: 3.3, pace: 'up' })),
+    '1.8 u/día · 6 u en almacén · curva al alza',
+  );
+  assert.match(
+    skipWhyLabel({ sku: 'AG293', name: 'Guantes', unitsPerDay: 0.3, coverDays: 92, keepsPerDay: 6 }),
+    /92 días de stock/,
+  );
+  assert.equal(normalize(restockFormula({ unitsPerDay: 2.4, horizonDays: 30, available: 8, restockQty: 64 })), '2.4 × 30 − 8 = 64');
+  const note = salesCurveNote({
+    productKey: 'p:294',
+    productId: 294,
+    sku: 'AG294',
+    name: 'Coche',
+    published: true,
+    unitsSold: 72,
+    ordersCount: 61,
+    sellersCount: 2,
+    grossSales: 10000,
+    falabellaTake: 2000,
+    arrives: 8000,
+    paidArrives: 4000,
+    pendingArrives: 4000,
+    visits: null,
+    unitsPerDay: 2.4,
+    keepsPerUnit: 20,
+    hasWholesaleCost: true,
+    pace: 'up',
+    weekendShare: 0.6,
+    sellers: [],
+  });
+  assert.match(note.title, /acelerando/i);
+  assert.match(note.detail, /jueves a domingo/);
+  assert.match(note.detail.replace(/\u00a0/g, ' '), /S\/ 20/);
+  assert.equal(skipReasonLabel('overstock'), 'Stock de sobra');
+  assert.equal(skipReasonLabel('lowKeep'), 'Vende, deja poco');
+  assert.equal(skipReasonLabel('slow'), 'Se mueve poco');
+  assert.match(skipDetail({ unitsPerDay: 0.3, coverDays: 92, skipReason: 'overstock' }), /92/);
+  assert.match(skipDetail({ unitsPerDay: 0.2, coverDays: null, skipReason: 'slow' }), /venta lenta/);
+  const week = weekdayUnits([
+    { date: '2026-09-10', units: 2 },
+    { date: '2026-09-11', units: 5 },
+    { date: '2026-09-12', units: 1 },
+  ]);
+  assert.deepEqual(week.map((day) => day.label), ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']);
+  assert.equal(week.find((day) => day.label === 'Jue')?.units, 2);
+  assert.equal(week.find((day) => day.label === 'Vie')?.units, 5);
+  assert.equal(week.find((day) => day.label === 'Sáb')?.units, 1);
 });
