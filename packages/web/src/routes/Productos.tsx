@@ -290,7 +290,6 @@ const initialCreate = {
 };
 const initialAdjust: InventoryAdjustForm = { mode: 'absolute', value: '', reason: '' };
 const initialPublishVisual = {
-  listingId: null as number | null,
   channelCode: 'falabella',
   companyId: '',
   sellerSku: '',
@@ -616,6 +615,7 @@ export default function Productos() {
   const [sellerStockValue, setSellerStockValue] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
+  const [publicationBusyListingId, setPublicationBusyListingId] = useState<number | null>(null);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
   const [unpublishConfirmation, setUnpublishConfirmation] = useState('');
   const [associationProduct, setAssociationProduct] = useState<Product | null>(null);
@@ -788,8 +788,6 @@ export default function Productos() {
   });
   const companyOptions = useMemo(() => companies.map((company) => ({ id: company.id, name: companyName(company) })), [companies]);
   const products = useMemo(() => (productsQuery.data?.products || []) as Product[], [productsQuery.data?.products]);
-  const productsByIdRef = useRef(new Map<number, Product>());
-  productsByIdRef.current = new Map(products.map((product) => [product.id, product]));
   const totalCount = Number(productsQuery.data?.totalCount || 0);
   const inventorySummary = (summaryQuery.data || productsQuery.data?.summary || null) as CatalogInventorySummary | null;
   const detail = detailQuery.data as Product | undefined;
@@ -935,13 +933,13 @@ export default function Productos() {
     openModal('associate_listing');
   };
 
-  const runAction = async (action: () => Promise<any>, success: (result: any) => string) => {
+  const runAction = async (action: () => Promise<any>, success: (result: any) => string, reload = true) => {
     setBusy(true);
     setActionError('');
     try {
       const result = await action();
       setActionMessage(success(result));
-      await reloadAll();
+      if (reload) await reloadAll();
       return result;
     } catch (caught: any) {
       setActionError(caught?.message || 'No se pudo completar la operación.');
@@ -996,9 +994,8 @@ export default function Productos() {
     const listing = sellerStockListing;
     const updated = await runAction(
       () => api.updateProductListingSellerStock(listing.id, { quantity }),
-      (result) => result.requestId
-        ? `Stock confirmado en Falabella para ${sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}. Solicitud ${result.requestId}.`
-        : `Stock confirmado en Falabella para ${sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}.`,
+      () => 'Actualización enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
     );
     if (updated) {
       setModal(null);
@@ -1117,24 +1114,20 @@ export default function Productos() {
     }
   };
 
-  const openPublishVisual = (product: Product, listing?: Listing) => {
+  const openPublishVisual = (product: Product) => {
     setSelectedId(product.id);
     setPublishVisual({
-      listingId: listing?.id || null,
-      channelCode: listing?.channelCode || 'falabella',
-      companyId: listing ? String(listing.companyId) : '',
-      sellerSku: listing?.sellerSku || '',
-      price: String(listing
-        ? metadataNumber(listing, 'effectivePrice') ?? metadataNumber(listing, 'regularPrice') ?? metadataNumber(listing, 'price') ?? product.referencePrice ?? product.sellerPriceMin ?? ''
-        : product.referencePrice ?? product.sellerPriceMin ?? ''),
+      channelCode: 'falabella',
+      companyId: '',
+      sellerSku: '',
+      price: String(product.referencePrice ?? product.sellerPriceMin ?? ''),
       images: product.imageUrl ? [product.imageUrl] : [],
     });
     openModal('publish_visual');
   };
-  const openPublishVisualRef = useRef(openPublishVisual);
-  openPublishVisualRef.current = openPublishVisual;
 
-  const togglePublication = useCallback((listing: Listing) => {
+  const togglePublication = (listing: Listing) => {
+    if (busy || publicationBusyListingId != null) return;
     if (isActivelyPublished(listing)) {
       setUnpublishListing(listing);
       setUnpublishConfirmation('');
@@ -1143,24 +1136,17 @@ export default function Productos() {
       setModal('unpublish_visual');
       return;
     }
-    const product = productsByIdRef.current.get(listing.productId)
-      || (selectedProductRef.current?.id === listing.productId ? selectedProductRef.current : null);
-    if (product) openPublishVisualRef.current(product, listing);
-  }, []);
+    setActionMessage('');
+    setPublicationBusyListingId(listing.id);
+    void runAction(
+      () => api.updateProductListingPublication(listing.id, { visible: true }),
+      () => 'Publicación enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
+    ).finally(() => setPublicationBusyListingId(null));
+  };
 
-  const submitPublish = async (event: FormEvent) => {
+  const submitPublish = (event: FormEvent) => {
     event.preventDefault();
-    const listingId = publishVisual.listingId;
-    if (listingId) {
-      const updated = await runAction(
-        () => api.updateProductListingPublication(listingId, { visible: true }),
-        (result) => result.requestId
-          ? `Publicación confirmada en Falabella. Solicitud ${result.requestId}.`
-          : 'Publicación confirmada en Falabella.',
-      );
-      if (updated) setModal(null);
-      return;
-    }
     const seller = companies.find((company) => String(company.id) === publishVisual.companyId);
     const preview = simulatePublicationPreview({
       kind: 'publish',
@@ -1179,9 +1165,8 @@ export default function Productos() {
     }
     const updated = await runAction(
       () => api.updateProductListingPublication(unpublishListing.id, { visible: false }),
-      (result) => result.requestId
-        ? `Despublicación confirmada en Falabella. Solicitud ${result.requestId}.`
-        : 'Despublicación confirmada en Falabella.',
+      () => 'Despublicación enviada. Puedes continuar; te avisaremos cuando esté lista.',
+      false,
     );
     if (updated) {
       setModal(null);
@@ -1190,14 +1175,7 @@ export default function Productos() {
     }
   };
 
-  const publishCopy = publishVisual.listingId
-    ? {
-        title: 'Publicar en Falabella',
-        subtitle: 'El cambio se enviará al canal.',
-        submit: 'Publicar',
-        notice: 'Esperaremos hasta que Falabella confirme el nuevo estado de esta publicación.',
-      }
-    : publicationPreviewCopy('publish');
+  const publishCopy = publicationPreviewCopy('publish');
   const unpublishCopy = {
     title: 'Confirmar despublicación',
     subtitle: 'El cambio se enviará a Falabella.',
@@ -1205,8 +1183,7 @@ export default function Productos() {
   };
   const visibleError = error || (queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el catálogo.' : '');
   const visualListingExists = Boolean(selectedProduct?.listings?.some((listing) => (
-    listing.id !== publishVisual.listingId
-      && listing.channelCode === publishVisual.channelCode
+    listing.channelCode === publishVisual.channelCode
       && String(listing.companyId) === publishVisual.companyId
   )));
 
@@ -1406,6 +1383,7 @@ export default function Productos() {
       />
 
       {visibleError && <Notice tone="error">{visibleError}</Notice>}
+      {modal === null && (actionError || actionMessage) && <ActionFeedback error={actionError} message={actionMessage} />}
 
       <CatalogTable
         key={tableResetKey}
@@ -1423,6 +1401,7 @@ export default function Productos() {
         onOpenImage={openProductImage}
         onAssociateProduct={openListingAssociation}
         onTogglePublication={togglePublication}
+        publicationBusyListingId={publicationBusyListingId}
       />
 
       <ProductDrawer
@@ -1468,6 +1447,9 @@ export default function Productos() {
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
         onTogglePublication={togglePublication}
+        publicationBusyListingId={publicationBusyListingId}
+        publicationActionError={actionError}
+        publicationActionMessage={actionMessage}
         onEditSellerStock={openSellerStock}
       />
 
@@ -1528,10 +1510,6 @@ export default function Productos() {
               step={1}
               autoFocus
             />
-            <p className="text-xs text-muted-foreground">
-              FBF conserva {formatNumber(metadataNumber(sellerStockListing, 'fulfillmentQuantity') ?? 0)} u.
-            </p>
-            <Notice tone="info">Enviaremos el stock y volveremos a consultarlo hasta confirmarlo en Falabella.</Notice>
             <ActionFeedback error={actionError} message={actionMessage} />
             <Submit busy={busy}>Guardar stock</Submit>
           </form>
@@ -1622,19 +1600,18 @@ export default function Productos() {
         </DialogContent>
       </Dialog>
 
-      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? publishCopy.title : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={submitPublish} className="space-y-5">
+      {modal === 'publish_visual' && selectedProduct && <Modal title="Nueva publicación" subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={submitPublish} className="space-y-5">
         <Notice tone="info">{publishCopy.notice}</Notice>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="label">Canal<Select value={publishVisual.channelCode} onValueChange={(value) => {
             setActionMessage('');
-            setPublishVisual((current) => ({ ...current, listingId: null, channelCode: value }));
+            setPublishVisual((current) => ({ ...current, channelCode: value }));
           }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="falabella">Falabella</SelectItem><SelectItem value="ripley">Ripley</SelectItem><SelectItem value="mercadolibre">Mercado Libre</SelectItem></SelectContent></Select></label>
           <label className="label">Seller<Select value={publishVisual.companyId} onValueChange={(value) => {
             const company = companies.find((candidate) => String(candidate.id) === value);
             setActionMessage('');
             setPublishVisual((current) => ({
               ...current,
-              listingId: null,
               companyId: value,
               sellerSku: company ? suggestedSellerSku(selectedProduct, company) : '',
               price: current.price || String(selectedProduct.referencePrice ?? selectedProduct.sellerPriceMin ?? ''),
@@ -1672,7 +1649,7 @@ export default function Productos() {
         </div>
         {visualListingExists && <Notice tone="info">Este producto ya tiene una publicación asociada para esa empresa y canal.</Notice>}
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || (!publishVisual.listingId && (!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists))} className="primary-button" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{publishCopy.submit}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || !publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{publishCopy.submit}</button></div>
       </form></Modal>}
 
       {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={submitUnpublish} className="space-y-4">
@@ -1811,6 +1788,7 @@ const CatalogTable = memo(function CatalogTable({
   onOpenImage,
   onAssociateProduct,
   onTogglePublication,
+  publicationBusyListingId,
 }: {
   products: Product[];
   totalCount: number;
@@ -1826,6 +1804,7 @@ const CatalogTable = memo(function CatalogTable({
   onOpenImage: (product: Product) => void;
   onAssociateProduct: (product: Product) => void;
   onTogglePublication: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
 }) {
   const [expandedRows, setExpandedRows] = useState<ExpandedState>({});
   const toggleExpand = useCallback((productId: number) => {
@@ -1952,6 +1931,7 @@ const CatalogTable = memo(function CatalogTable({
                 onOpenDetail={onOpenProduct}
                 onAssociateProduct={onAssociateProduct}
                 onTogglePublication={onTogglePublication}
+                publicationBusyListingId={publicationBusyListingId}
               />}
             </Fragment>)}</TableBody>
           </Table>
@@ -1975,12 +1955,14 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   onOpenDetail,
   onAssociateProduct,
   onTogglePublication,
+  publicationBusyListingId,
 }: {
   product: Product;
   listings?: Listing[];
   onOpenDetail: (productId: number) => void;
   onAssociateProduct: (product: Product) => void;
   onTogglePublication: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
 }) {
   const shouldFetch = providedListings === undefined;
   const detailQuery = useQuery({
@@ -2007,6 +1989,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
     {listings.length ? listings.map((listing, index) => {
       const sellerName = sellerShortName(listing.companyName || `Empresa ${listing.companyId}`);
       const publication = publicationPresentation(listing);
+      const publicationPending = publicationBusyListingId === listing.id;
       const isLast = index === listings.length - 1;
       return <TableRow
         key={listing.id}
@@ -2037,11 +2020,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
               <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
               <div><span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
               <div className="col-span-2 flex items-center justify-between border-t border-border/60 pt-2">
-                <span className={cn('text-xs font-medium', publication.className)}>{publication.label}</span>
+                <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span>
                 <Switch
                   checked={publication.visible}
                   onCheckedChange={() => onTogglePublication(listing)}
-                  aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+                  disabled={publicationBusyListingId != null}
+                  aria-busy={publicationPending}
+                  aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} ${listing.sellerSku} de ${sellerName}`}
                 />
               </div>
             </div>
@@ -2052,11 +2037,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         <TableCell className="hidden py-2.5 align-middle sm:table-cell" />
         <TableCell className="hidden py-2.5 align-middle sm:table-cell">
           <div className="flex items-center gap-2">
-            <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
+            <span className={cn('hidden items-center gap-1.5 text-xs font-medium xl:inline-flex', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span>
             <Switch
               checked={publication.visible}
               onCheckedChange={() => onTogglePublication(listing)}
-              aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} ${listing.sellerSku} de ${sellerName}`}
+              disabled={publicationBusyListingId != null}
+              aria-busy={publicationPending}
+              aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} ${listing.sellerSku} de ${sellerName}`}
             />
           </div>
         </TableCell>
@@ -2082,7 +2069,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, onEditSellerStock, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
+  onDisassociate, onEditSellerStock, publicationBusyListingId, publicationActionError, publicationActionMessage, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
   onSaveDescription,
 }: {
   open: boolean;
@@ -2115,6 +2102,9 @@ function ProductDrawer({
   onDisassociate: (listing: Listing) => void;
   onTogglePublication: (listing: Listing) => void;
   onEditSellerStock: (listing: Listing) => void;
+  publicationBusyListingId: number | null;
+  publicationActionError: string;
+  publicationActionMessage: string;
   profitOwners: string[];
   savingField: ProductEditableField | null;
   savedField: ProductEditableField | null;
@@ -2287,10 +2277,12 @@ function ProductDrawer({
             />
             <ProductPublicationActions onAssociate={onAssociate} onPublish={onPublish} />
           </div>
+          {(publicationActionError || publicationActionMessage) && <div className="mt-3"><ActionFeedback error={publicationActionError} message={publicationActionMessage} /></div>}
           {!associatedListings.length ? <div className="py-12"><p className="text-sm font-medium">Sin publicaciones asociadas</p><p className="mt-1 text-[13px] text-muted-foreground">Asocia una publicación existente o prepara una nueva.</p></div>
             : !listingRows.length ? <p className="py-10 text-sm text-muted-foreground">{listingFilter === 'visible' ? 'Ninguna está visible.' : 'Ninguna está oculta.'}</p>
             : <div className="mt-2">{listingRows.map((listing) => {
               const publication = publicationPresentation(listing);
+              const publicationPending = publicationBusyListingId === listing.id;
               return <article key={listing.id} className="border-b border-border/70 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -2298,7 +2290,7 @@ function ProductDrawer({
                     <div className="mt-1"><ChannelBadge value={listing.channelCode} listing={listing} /></div>
                     <p className="mt-2 line-clamp-2 text-sm leading-5">{listing.title || product.name}</p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2"><span className={cn('text-[12px]', publication.className)}>{publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} aria-label={`${publication.visible ? 'Despublicar' : 'Preparar publicación'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
+                  <div className="flex shrink-0 items-center gap-2"><span className={cn('inline-flex items-center gap-1.5 text-[12px]', publication.className)}>{publicationPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{publicationPending ? 'Enviando…' : publication.label}</span><Switch checked={publication.visible} onCheckedChange={() => onTogglePublication(listing)} disabled={publicationBusyListingId != null} aria-busy={publicationPending} aria-label={`${publication.visible ? 'Despublicar' : 'Publicar'} en ${sellerShortName(listing.companyName)}`} /><ListingActions listing={listing} onDisassociate={onDisassociate} /></div>
                 </div>
                 <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_110px_130px]">
                   <dl className="grid min-w-0 grid-cols-2 gap-4">

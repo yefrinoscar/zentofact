@@ -37,6 +37,19 @@ test('acepta un aviso operativo y descarta filas rotas', () => {
   assert.equal(parseOperatorNotification({ ...valid, title: '' }), null);
 });
 
+test('acepta el resultado de una actualización Falabella', () => {
+  const parsed = parseOperatorNotification({
+    ...valid,
+    id: 'marketplace_mutation:41:succeeded',
+    kind: 'marketplace_mutation',
+    severity: 'success',
+    title: 'Stock actualizado en Falabella',
+    href: '/productos',
+  });
+  assert.equal(parsed?.kind, 'marketplace_mutation');
+  assert.equal(parsed?.severity, 'success');
+});
+
 test('el listado ignora ítems inválidos y recalcula el no leído si falta', () => {
   const parsed = parseOperatorNotificationsResponse({
     items: [valid, { id: 'x' }, { ...valid, id: 'insumo_low_stock:1:0', kind: 'insumo_low_stock', unread: false }],

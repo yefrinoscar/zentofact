@@ -9,6 +9,7 @@ export const NOTIFICATION_KINDS = Object.freeze({
   bandejaOverdue: 'bandeja_overdue',
   productSoldOut: 'product_sold_out',
   productLowStock: 'product_low_stock',
+  marketplaceMutation: 'marketplace_mutation',
 });
 
 export const PRODUCT_SOLD_OUT_WINDOW_DAYS = 7;
@@ -19,6 +20,7 @@ export const PRODUCT_LOW_STOCK_COVER_DAYS = 7;
 export const NOTIFICATION_SEVERITIES = Object.freeze({
   critical: 'critical',
   warning: 'warning',
+  success: 'success',
 });
 
 const KIND_PERMISSION = {
@@ -27,11 +29,13 @@ const KIND_PERMISSION = {
   [NOTIFICATION_KINDS.bandejaOverdue]: 'orders_inbox',
   [NOTIFICATION_KINDS.productSoldOut]: ['productos', 'order_management'],
   [NOTIFICATION_KINDS.productLowStock]: ['productos', 'order_management'],
+  [NOTIFICATION_KINDS.marketplaceMutation]: 'productos',
 };
 
 const SEVERITY_RANK = {
   [NOTIFICATION_SEVERITIES.critical]: 0,
   [NOTIFICATION_SEVERITIES.warning]: 1,
+  [NOTIFICATION_SEVERITIES.success]: 2,
 };
 
 export function notificationPermissionForKind(kind) {
