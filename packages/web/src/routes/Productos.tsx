@@ -217,6 +217,16 @@ type SalesSummary = ActivityResponse & {
     lastSaleAt?: string | null;
   };
   daily: Array<{ day: string; ordersCount: number; unitsSold: number; revenue: number }>;
+  sellers: Array<{
+    companyId: number;
+    companyName?: string | null;
+    channelCodes: string[];
+    ordersCount: number;
+    unitsSold: number;
+    revenue: number;
+    firstSaleAt?: string | null;
+    lastSaleAt?: string | null;
+  }>;
   recent: Array<{
     orderId: number;
     orderNumber?: string | null;
@@ -331,6 +341,14 @@ function activityCaption(activity: ActivityResponse, ordersLabel: string) {
       : `Cambios recientes verificados ${formatDate(coverage.liveQueriedAt)}`
     : `verificación en vivo incompleta${coverage.dataUpdatedThrough ? ` · datos locales hasta ${formatDate(coverage.dataUpdatedThrough)}` : ''}`;
   return `${sourceText} · ${reviewed} · ${formatDuration(activity.durationMs)}`;
+}
+
+function salesPeriodDays(sales: SalesSummary) {
+  if (sales.range !== 'all') return Number(sales.range);
+  if (!sales.summary.firstSaleAt) return 1;
+  const firstSale = new Date(sales.summary.firstSaleAt).getTime();
+  if (!Number.isFinite(firstSale)) return 1;
+  return Math.max(1, Math.ceil((Date.now() - firstSale) / 86_400_000));
 }
 
 function formatBasePrice(product: Product) {
@@ -2236,7 +2254,7 @@ function ProductDrawer({
               <Metric label="Ingresos" value={formatMoney(sales.summary.revenue)} />
               <Metric label="Precio promedio" value={formatMoney(sales.summary.averageUnitPrice)} />
             </MetricRow>
-            {sales.summary.ordersCount === 0 ? <div className="py-10 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <ProductSalesTable sales={sales.recent} />}
+            {sales.summary.ordersCount === 0 ? <div className="py-10 text-center"><BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">{sales.hydration.coverage.complete ? 'Sin ventas en este periodo' : 'Consulta todavía incompleta'}</p><p className="mt-1 text-xs text-muted-foreground">{sales.hydration.coverage.complete ? 'Se revisaron los pedidos disponibles de los sellers asociados.' : 'Faltan detalles de pedidos por revisar; vuelve a intentarlo.'}</p></div> : <><ProductSellerSales sales={sales} /><ProductSalesTable sales={sales.recent} /></>}
             {sales.hydration?.failed ? <p className="text-xs text-amber-700">No se pudieron consultar {sales.hydration.failed} pedidos; vuelve a intentar para completar el periodo.</p> : null}
           </div>}
         </TabsContent>
@@ -2260,6 +2278,47 @@ function ProductDrawer({
       </Tabs>}
     </SheetContent>
   </Sheet>;
+}
+
+function ProductSellerSales({ sales }: { sales: SalesSummary }) {
+  const leader = sales.sellers[0];
+  const totalUnits = sales.summary.unitsSold;
+  const periodDays = salesPeriodDays(sales);
+  if (!leader) return null;
+
+  return <section aria-labelledby="seller-sales-title">
+    <div className="flex items-end justify-between gap-4 px-1">
+      <div>
+        <h3 id="seller-sales-title" className="text-sm font-medium">Venta por seller</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">Compara qué cuenta mueve más unidades.</p>
+      </div>
+      <span className="text-xs text-muted-foreground">{formatNumber(periodDays, 0)} días</span>
+    </div>
+    {sales.sellers.length > 1 && leader.unitsSold > 0 ? <div className="mt-3 border-y border-border/70 bg-muted/35 px-3 py-3">
+      <p className="text-sm font-medium">Con poco stock, prioriza {sellerShortName(leader.companyName)}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Vendió {formatNumber(leader.unitsSold)} u, {formatNumber((leader.unitsSold / totalUnits) * 100, 0)}% del periodo.</p>
+    </div> : null}
+    <div className="mt-1 divide-y divide-border/70">
+      {sales.sellers.map((seller, index) => {
+        const share = totalUnits > 0 ? (seller.unitsSold / totalUnits) * 100 : 0;
+        const rate = seller.unitsSold / periodDays;
+        return <article key={seller.companyId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-5 gap-y-2 px-1 py-3.5">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="w-4 shrink-0 text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+              <p className="truncate text-sm font-medium">{sellerShortName(seller.companyName)}</p>
+            </div>
+            <p className="ml-6 mt-1 text-xs text-muted-foreground">{seller.channelCodes.map(channelLabel).join(' · ') || 'Sin canal'} · {formatNumber(seller.ordersCount)} {seller.ordersCount === 1 ? 'pedido' : 'pedidos'}</p>
+            <div className="ml-6 mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true"><div className="h-full rounded-full bg-foreground/65" style={{ width: `${share}%` }} /></div>
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-semibold tabular-nums">{formatNumber(seller.unitsSold)} u</p>
+            <p className="mt-1 text-xs tabular-nums text-muted-foreground">{formatNumber(rate, 1)} u/día · {formatNumber(share, 0)}%</p>
+          </div>
+        </article>;
+      })}
+    </div>
+  </section>;
 }
 
 function ProductSalesTable({ sales }: { sales: SalesSummary['recent'] }) {
