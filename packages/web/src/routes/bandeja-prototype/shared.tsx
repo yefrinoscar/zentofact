@@ -361,7 +361,7 @@ export function ActionButton({
         disabled={!view.canDispatch}
       >
         <PackageCheck />
-        {view.canDispatch ? 'Marcar listo' : 'Solo lectura'}
+        {view.canDispatch ? step.label : 'Solo lectura'}
       </Button>
     );
   }
