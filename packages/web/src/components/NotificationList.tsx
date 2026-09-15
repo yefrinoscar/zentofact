@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Clock, PackageOpen, PackageX, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock, PackageOpen, PackageX, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
   notificationElapsedLabel,
@@ -11,17 +11,22 @@ function iconForKind(kind: OperatorNotification['kind']) {
   if (kind === 'emission_failed') return AlertTriangle;
   if (kind === 'insumo_low_stock' || kind === 'product_low_stock') return PackageOpen;
   if (kind === 'product_sold_out') return PackageX;
+  if (kind === 'marketplace_mutation') return Check;
   return Clock;
 }
 
 function NotificationIcon({ item }: { item: OperatorNotification }) {
-  const Icon = iconForKind(item.kind);
+  const Icon = item.kind === 'marketplace_mutation' && item.severity === 'critical'
+    ? AlertTriangle
+    : iconForKind(item.kind);
   return (
     <span
       className={cn(
         'grid size-9 shrink-0 place-items-center rounded-md border',
         item.severity === 'critical'
           ? 'border-destructive/20 bg-destructive/10 text-destructive'
+          : item.severity === 'success'
+            ? 'border-success/20 bg-success/10 text-success'
           : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
       )}
       aria-hidden="true"

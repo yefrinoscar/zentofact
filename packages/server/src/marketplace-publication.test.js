@@ -71,119 +71,59 @@ function listingDb() {
   };
 }
 
-test('confirma UpdateStock con GetStock antes de guardar el snapshot local', async () => {
+test('encola el stock y responde sin llamar a Falabella dentro del request', async () => {
   const db = listingDb();
-  let sent;
-  let stockReads = 0;
+  let queued;
   const result = await updateMarketplaceSellerStock(18, { quantity: 7 }, {
     db,
     enabled: true,
-    updateStock: async (input) => {
-      sent = input;
-      return { ok: true, requestId: 'stock-request-1' };
+    userId: 'user-1',
+    enqueue: async (input) => {
+      queued = input;
+      return { id: 41, status: 'pending' };
     },
-    getStock: async () => {
-      stockReads += 1;
-      return {
-        ok: true,
-        stocks: [{
-          sellerSku: 'SKU-18',
-          sellerWarehouseQuantity: stockReads === 1 ? 3 : 7,
-          fulfillmentQuantity: 2,
-        }],
-      };
-    },
-    wait: async () => {},
-    confirmationAttempts: 2,
   });
 
-  assert.deepEqual(sent, {
-    companyId: 4,
-    sellerSku: 'SKU-18',
-    quantity: 7,
-    facilityId: 'GSC-PE-1',
+  assert.deepEqual(queued, {
+    listingId: 18,
+    userId: 'user-1',
+    kind: 'stock',
+    target: { quantity: 7 },
   });
-  assert.equal(stockReads, 2);
-  assert.equal(result.listing.marketplaceQuantity, 5);
-  assert.equal(result.listing.metadata.sellerWarehouseQuantity, 7);
-  assert.equal(result.listing.metadata.fulfillmentQuantity, 2);
-  assert.equal(result.listing.metadata.stockSource, 'falabella_get_stock_confirmed');
-  assert.equal(result.confirmed, true);
-  assert.equal(db.updates.length, 1);
-});
-
-test('no cambia el snapshot cuando Falabella acepta UpdateStock pero GetStock no lo confirma', async () => {
-  const db = listingDb();
-
-  await assert.rejects(
-    () => updateMarketplaceSellerStock(18, { quantity: 7 }, {
-      db,
-      enabled: true,
-      updateStock: async () => ({ ok: true, requestId: 'stock-request-2' }),
-      getStock: async () => ({
-        ok: true,
-        stocks: [{ sellerSku: 'SKU-18', sellerWarehouseQuantity: 3, fulfillmentQuantity: 2 }],
-      }),
-      wait: async () => {},
-      confirmationAttempts: 2,
-    }),
-    (error) => {
-      assert.equal(error.status, 504);
-      assert.match(error.message, /no confirmó/i);
-      return true;
-    },
-  );
+  assert.deepEqual(result, { queued: true, jobId: 41, status: 'pending' });
   assert.equal(db.updates.length, 0);
 });
 
-test('no cambia el snapshot si Falabella rechaza el stock', async () => {
-  const db = listingDb();
-
+test('rechaza stock inválido antes de encolarlo', async () => {
+  let called = false;
   await assert.rejects(
-    () => updateMarketplaceSellerStock(18, { quantity: 7 }, {
-      db,
+    () => updateMarketplaceSellerStock(18, { quantity: 1.5 }, {
       enabled: true,
-      updateStock: async () => ({ ok: false, error: { Head: { ErrorMessage: 'SKU inválido' } } }),
+      enqueue: async () => { called = true; },
     }),
-    /SKU inválido/,
+    /entero mayor o igual a 0/,
   );
-  assert.equal(db.updates.length, 0);
+  assert.equal(called, false);
 });
 
-test('confirma active o inactive con GetProducts antes de cambiar el switch local', async () => {
+test('encola el estado solicitado por el switch', async () => {
   const db = listingDb();
-  let sent;
-  let productReads = 0;
+  let queued;
   const result = await updateMarketplacePublication(18, { visible: false }, {
     db,
     enabled: true,
-    updateStatus: async (input) => {
-      sent = input;
-      return { ok: true, requestId: 'publication-request-1' };
+    userId: 'user-1',
+    enqueue: async (input) => {
+      queued = input;
+      return { id: 42, status: 'pending' };
     },
-    getProducts: async () => {
-      productReads += 1;
-      return {
-        ok: true,
-        products: [{
-          sellerSku: 'SKU-18',
-          status: 'active',
-          qcStatus: 'approved',
-          businessUnits: [{ operatorCode: 'fape', status: productReads === 1 ? 'active' : 'inactive', isPublished: productReads === 1 ? 'true' : 'false' }],
-        }],
-      };
-    },
-    wait: async () => {},
-    confirmationAttempts: 2,
   });
 
-  assert.deepEqual(sent, {
-    companyId: 4,
-    sellerSku: 'SKU-18',
-    status: 'inactive',
+  assert.deepEqual(queued, {
+    listingId: 18,
+    userId: 'user-1',
+    kind: 'publication',
+    target: { visible: false },
   });
-  assert.equal(productReads, 2);
-  assert.equal(result.listing.status, 'inactive');
-  assert.equal(result.listing.metadata.isPublished, false);
-  assert.equal(result.confirmed, true);
+  assert.deepEqual(result, { queued: true, jobId: 42, status: 'pending' });
 });

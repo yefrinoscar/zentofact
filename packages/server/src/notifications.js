@@ -63,7 +63,51 @@ export async function ensureTables(db) {
     );
     create index if not exists idx_operator_notification_state_user
       on operator_notification_state (user_id, updated_at desc);
+    create table if not exists operator_notifications (
+      id text primary key,
+      user_id text not null,
+      kind text not null,
+      severity text not null,
+      title text not null,
+      body text not null default '',
+      href text not null,
+      module_label text not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists idx_operator_notifications_user
+      on operator_notifications (user_id, created_at desc);
   `);
+}
+
+export async function publishForUser(input, db) {
+  await target(db).query(
+    `insert into operator_notifications (id, user_id, kind, severity, title, body, href, module_label)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do nothing`,
+    [input.id, input.userId, input.kind, input.severity, input.title, input.body || '', input.href, input.moduleLabel],
+  );
+}
+
+async function storedNotifications(userId, db) {
+  const result = await target(db).query(
+    `select id, kind, severity, title, body, href, module_label, created_at
+       from operator_notifications
+      where user_id=$1 and created_at >= now() - interval '30 days'
+      order by created_at desc limit 100`,
+    [userId],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    severity: row.severity,
+    permission: 'productos',
+    title: row.title,
+    body: row.body,
+    href: row.href,
+    moduleLabel: row.module_label,
+    count: 1,
+    createdAt: row.created_at,
+  }));
 }
 
 async function failedEmissionSummary(db) {
@@ -187,8 +231,8 @@ function hrefForItem(item, user) {
 }
 
 async function collectVisibleNotifications(user, db) {
-  requireUserId(user);
-  const [failedEmissions, lowInsumos, overdueBandeja, stockProducts] = await Promise.all([
+  const userId = requireUserId(user);
+  const [failedEmissions, lowInsumos, overdueBandeja, stockProducts, stored] = await Promise.all([
     safeSource('emission', () => failedEmissionSummary(db)),
     safeSource('insumos', () => lowStockInsumos(db)),
     safeSource('bandeja', async () => {
@@ -196,6 +240,7 @@ async function collectVisibleNotifications(user, db) {
       return countOpenOverdueOrders(db);
     }),
     safeSource('products', () => stockAlertProducts(db)),
+    safeSource('stored', () => storedNotifications(userId, db)),
   ]);
   const live = collectLiveNotifications({
     failedEmissions: failedEmissions || { count: 0 },
@@ -203,7 +248,7 @@ async function collectVisibleNotifications(user, db) {
     overdueBandeja: overdueBandeja || { count: 0 },
     stockProducts: stockProducts || [],
   }).map((item) => ({ ...item, href: hrefForItem(item, user) }));
-  const scoped = filterNotificationsForUser(live, user, userHasPermission);
+  const scoped = filterNotificationsForUser([...live, ...(stored || [])], user, userHasPermission);
   const stateById = await loadStateById(requireUserId(user), scoped.map((item) => item.id), db);
   return sortNotifications(applyNotificationState(scoped, stateById));
 }

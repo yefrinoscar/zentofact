@@ -24,7 +24,7 @@ export const SYSTEM_FLAGS = {
     key: 'marketplace_publication_mutation',
     envVar: 'MARKETPLACE_PUBLICATION_MUTATION_ENABLED',
     label: 'Escritura real en Falabella',
-    description: 'Permite enviar cambios de stock seller y de publicación al Seller API. Si está apagado, esas operaciones se bloquean y no modifican Falabella.',
+    description: 'Permite encolar cambios de stock seller y publicación. Falabella se verifica en segundo plano y el resultado llega a Avisos.',
     confirmWord: 'HABILITAR',
     requireListings: false,
     docsPath: null,

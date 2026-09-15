@@ -4,11 +4,12 @@ export const OPERATOR_NOTIFICATION_KINDS = [
   'bandeja_overdue',
   'product_sold_out',
   'product_low_stock',
+  'marketplace_mutation',
 ] as const;
 
 export type OperatorNotificationKind = (typeof OPERATOR_NOTIFICATION_KINDS)[number];
 
-export const OPERATOR_NOTIFICATION_SEVERITIES = ['critical', 'warning'] as const;
+export const OPERATOR_NOTIFICATION_SEVERITIES = ['critical', 'warning', 'success'] as const;
 
 export type OperatorNotificationSeverity = (typeof OPERATOR_NOTIFICATION_SEVERITIES)[number];
 

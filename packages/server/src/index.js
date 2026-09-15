@@ -77,6 +77,8 @@ const listingSnapshotService = await import('./catalog/listing-snapshot-service.
 const ripleyCatalog = await import('./ripley-catalog.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
+const marketplaceMutationJobs = await import('./catalog/marketplace-mutation-jobs.js');
+await marketplaceMutationJobs.ensureMarketplaceMutationJobTables(core.pool);
 const dashboard = await import('./dashboard.js');
 const productSalesReport = await import('./catalog/product-sales-report.js');
 const pagos = await import('./pagos.js');
@@ -729,10 +731,9 @@ app.patch('/product-listings/:id/seller-stock', async (c) => {
       {
         db: core.pool,
         enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
-        updateStock: core.falabellaUpdateStock,
-        getStock: core.falabellaGetStock,
+        userId: c.get('user')?.id,
       },
-    ));
+    ), 202);
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/product-listings/:id/publication', async (c) => {
@@ -743,10 +744,9 @@ app.patch('/product-listings/:id/publication', async (c) => {
       {
         db: core.pool,
         enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
-        updateStatus: core.falabellaUpdateProductStatus,
-        getProducts: core.falabellaGetProducts,
+        userId: c.get('user')?.id,
       },
-    ));
+    ), 202);
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/product-listings/:id/unlink', async (c) => {
@@ -1916,4 +1916,5 @@ serve({ fetch: app.fetch, port }, (info) => {
   orderSync.startOrderSyncScheduler();
   stockJobs.startStockReconciliationCron();
   stockJobs.startStockJobWorker();
+  marketplaceMutationJobs.startMarketplaceMutationWorker();
 });
