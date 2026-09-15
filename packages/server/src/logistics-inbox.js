@@ -847,11 +847,11 @@ function ripleyMiraklClient(order, dependencies) {
   });
 }
 
-async function persistRipleyMiraklReady(db, order, shipments) {
+async function persistRipleyMiraklReady(db, order, shipments, source) {
   const metadata = {
     ...objectMetadata(order.metadata),
     miraklShipmentStatus: 'READY_FOR_PICK_UP',
-    miraklShipmentSource: 'st26',
+    miraklShipmentSource: source,
     miraklShipmentObservedAt: new Date().toISOString(),
     miraklShipmentIds: shipments.map((shipment) => text(shipment.id)),
   };
@@ -883,6 +883,7 @@ export async function scheduleRipleyInboxReady(order, input = {}, dependencies =
   const pendingIds = actionable
     .filter((shipment) => !isRipleyShipmentReady(shipment.status))
     .map((shipment) => shipment.id);
+  let confirmedIds = [];
   if (pendingIds.length) {
     const validated = await client.validateShipmentsReadyForPickup(pendingIds);
     if (validated.errors.length) {
@@ -890,12 +891,18 @@ export async function scheduleRipleyInboxReady(order, input = {}, dependencies =
     }
     const missing = pendingIds.filter((id) => !validated.successIds.includes(id));
     if (missing.length) throw new Error('Mirakl no confirmó todos los shipments como listos para recojo.');
+    confirmedIds = validated.successIds;
   }
-  const verified = await client.listAllShipments({ orderIds: lookupIds });
-  const ready = verified.filter((shipment) => isRipleyShipmentReady(shipment.status));
-  const missingReady = actionable.map((shipment) => shipment.id).filter((id) => !ready.some((shipment) => shipment.id === id));
-  if (missingReady.length) throw new Error('Mirakl aún no confirma el recojo de todos los shipments. Intenta sincronizar nuevamente.');
-  const persisted = await persistRipleyMiraklReady(dependencies.db, order, ready);
+  const ready = actionable.filter((shipment) => (
+    isRipleyShipmentReady(shipment.status) || confirmedIds.includes(shipment.id)
+  ));
+  const alreadyReady = pendingIds.length === 0;
+  const persisted = await persistRipleyMiraklReady(
+    dependencies.db,
+    order,
+    ready,
+    alreadyReady ? 'st11' : 'st26',
+  );
   await enqueueRipleyStockJob({
     id: order.id,
     companyId: order.companyId,
@@ -906,7 +913,7 @@ export async function scheduleRipleyInboxReady(order, input = {}, dependencies =
   }, { source: 'user' }, dependencies.db, dependencies.enqueue);
   return {
     ok: true,
-    alreadyReady: false,
+    alreadyReady,
     orderId: Number(persisted.id),
     shipmentIds: ready.map((shipment) => shipment.id),
   };
@@ -916,10 +923,45 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
-export async function markLogisticsOrderReady(input = {}) {
+export async function markLogisticsOrderReady(input = {}, dependencies = {}) {
   const orderId = Number(input.orderId);
   if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
-  throw new Error('La confirmación de pedidos Ripley está deshabilitada.');
+  const core = dependencies.db ? null : await loadCore();
+  const db = dependencies.db || core.pool;
+  const result = await db.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+            o.fulfillment_status, o.ordered_at, o.metadata,
+            ch.code as channel_code,
+            c.ripley_api_key, c.ripley_shop_id
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     left join companies c on c.id = o.company_id
+     where o.id = $1`,
+    [orderId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('Pedido no encontrado.');
+  if (row.channel_code !== 'ripley') {
+    throw new Error('Solo los pedidos Ripley se confirman mediante Mirakl aquí.');
+  }
+  if (row.fulfillment_status === 'ready_to_ship') {
+    return { ok: true, alreadyReady: true, orderId: Number(row.id), shipmentIds: [] };
+  }
+  if (row.fulfillment_status !== 'pending' && row.fulfillment_status !== 'preparing') {
+    throw new Error('Este pedido ya no se puede marcar como listo.');
+  }
+  return scheduleRipleyInboxReady({
+    id: Number(row.id),
+    companyId: row.company_id == null ? null : Number(row.company_id),
+    externalOrderId: row.external_order_id,
+    externalOrderNumber: row.external_order_number,
+    fulfillmentStatus: row.fulfillment_status,
+    orderedAt: row.ordered_at,
+    metadata: row.metadata || {},
+    ripleyApiKey: row.ripley_api_key,
+    ripleyShopId: row.ripley_shop_id,
+  }, input, { ...dependencies, db });
 }
 
 export async function markLogisticsOrderDelivered(input = {}, dependencies = {}) {
