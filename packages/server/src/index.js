@@ -721,6 +721,34 @@ app.patch('/product-listings/:id', async (c) => {
   try { return ok(c, await listingService.updateListing(c.req.param('id'), await c.req.json())); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
+app.patch('/product-listings/:id/seller-stock', async (c) => {
+  try {
+    return ok(c, await marketplacePublication.updateMarketplaceSellerStock(
+      c.req.param('id'),
+      await c.req.json(),
+      {
+        db: core.pool,
+        enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
+        updateStock: core.falabellaUpdateStock,
+        getStock: core.falabellaGetStock,
+      },
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.patch('/product-listings/:id/publication', async (c) => {
+  try {
+    return ok(c, await marketplacePublication.updateMarketplacePublication(
+      c.req.param('id'),
+      await c.req.json(),
+      {
+        db: core.pool,
+        enabled: await systemConfig.isMarketplacePublicationMutationEnabled(),
+        updateStatus: core.falabellaUpdateProductStatus,
+        getProducts: core.falabellaGetProducts,
+      },
+    ));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 app.post('/product-listings/:id/unlink', async (c) => {
   try { return ok(c, await listingService.unlinkListing(c.req.param('id'))); }
   catch (e) { return fail(c, e, Number(e?.status || 400)); }
@@ -1215,6 +1243,7 @@ app.post('/falabella/:companyId/products', requirePermission('productos'), async
     return ok(c, await marketplacePublication.createMarketplaceProduct(
       core.falabellaCreateProduct,
       { companyId: Number(c.req.param('companyId')), product },
+      await systemConfig.isMarketplacePublicationMutationEnabled(),
     ));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });

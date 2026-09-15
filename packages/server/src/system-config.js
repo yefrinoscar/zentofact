@@ -23,8 +23,8 @@ export const SYSTEM_FLAGS = {
   marketplace_publication_mutation: {
     key: 'marketplace_publication_mutation',
     envVar: 'MARKETPLACE_PUBLICATION_MUTATION_ENABLED',
-    label: 'Mutación real de publicaciones Falabella',
-    description: 'Permite que publicar y despublicar llame al Seller API real. Sin este flag el flujo es visual-only y nunca muta el marketplace.',
+    label: 'Escritura real en Falabella',
+    description: 'Permite enviar cambios de stock seller y de publicación al Seller API. Si está apagado, esas operaciones se bloquean y no modifican Falabella.',
     confirmWord: 'HABILITAR',
     requireListings: false,
     docsPath: null,

@@ -436,6 +436,8 @@ const apiHttp = {
   listRipleyProducts: (companyId: number, filter: { max?: number; offset?: number } = {}) => req(`/ripley/${companyId}/products${qs(filter)}`),
   createProductListing: (id: number, data: any) => req(`/products/${id}/listings`, { method: 'POST', body: JSON.stringify(data) }),
   updateProductListing: (id: number, data: any) => req(`/product-listings/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateProductListingSellerStock: (id: number, data: { quantity: number }) => req(`/product-listings/${id}/seller-stock`, { method: 'PATCH', body: JSON.stringify(data) }),
+  updateProductListingPublication: (id: number, data: { visible: boolean }) => req(`/product-listings/${id}/publication`, { method: 'PATCH', body: JSON.stringify(data) }),
   unlinkProductListing: (id: number) => req(`/product-listings/${id}/unlink`, { method: 'POST', body: '{}' }),
   applyListingStockToOpenOrders: (id: number) => req(`/product-listings/${id}/apply-stock-to-open-orders`, { method: 'POST', body: '{}' }),
   getProductInventory: (id: number) => req(`/products/${id}/inventory`),

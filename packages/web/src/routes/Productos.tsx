@@ -603,7 +603,7 @@ export default function Productos() {
   const [productNavigationBusy, setProductNavigationBusy] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'listings' | 'inventory' | 'sales' | 'returns'>('overview');
   const [salesRange, setSalesRange] = useState<'30' | '90' | '365' | 'all'>('30');
-  const [modal, setModal] = useState<'create' | 'adjust' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
+  const [modal, setModal] = useState<'create' | 'adjust' | 'seller_stock' | 'image' | 'associate_listing' | 'publish_visual' | 'unpublish_visual' | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
@@ -612,6 +612,8 @@ export default function Productos() {
   const [savedField, setSavedField] = useState<ProductEditableField | null>(null);
   const [createForm, setCreateForm] = useState(initialCreate);
   const [adjustForm, setAdjustForm] = useState(initialAdjust);
+  const [sellerStockListing, setSellerStockListing] = useState<Listing | null>(null);
+  const [sellerStockValue, setSellerStockValue] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [publishVisual, setPublishVisual] = useState(initialPublishVisual);
   const [unpublishListing, setUnpublishListing] = useState<Listing | null>(null);
@@ -912,6 +914,15 @@ export default function Productos() {
     openModal('adjust');
   };
 
+  const openSellerStock = (listing: Listing) => {
+    const sellerQuantity = metadataNumber(listing, 'sellerWarehouseQuantity');
+    const fulfillmentQuantity = metadataNumber(listing, 'fulfillmentQuantity') ?? 0;
+    const fallbackQuantity = Math.max(0, (listing.marketplaceQuantity ?? 0) - fulfillmentQuantity);
+    setSellerStockListing(listing);
+    setSellerStockValue(String(sellerQuantity ?? fallbackQuantity));
+    openModal('seller_stock');
+  };
+
   const openListingAssociation = (product: Product) => {
     setAssociationProduct(product);
     setAssociationSearch('');
@@ -971,6 +982,27 @@ export default function Productos() {
     if (result) {
       setAdjustForm(inventoryAdjustFormFromOnHand(result.quantityOnHand));
       setModal(null);
+    }
+  };
+
+  const updateSellerStock = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!sellerStockListing) return;
+    const quantity = Number(sellerStockValue);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setActionError('El stock debe ser un entero mayor o igual a 0.');
+      return;
+    }
+    const listing = sellerStockListing;
+    const updated = await runAction(
+      () => api.updateProductListingSellerStock(listing.id, { quantity }),
+      (result) => result.requestId
+        ? `Stock confirmado en Falabella para ${sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}. Solicitud ${result.requestId}.`
+        : `Stock confirmado en Falabella para ${sellerShortName(listing.companyName || `Empresa ${listing.companyId}`)}.`,
+    );
+    if (updated) {
+      setModal(null);
+      setSellerStockListing(null);
     }
   };
 
@@ -1116,8 +1148,19 @@ export default function Productos() {
     if (product) openPublishVisualRef.current(product, listing);
   }, []);
 
-  const simulatePublish = (event: FormEvent) => {
+  const submitPublish = async (event: FormEvent) => {
     event.preventDefault();
+    const listingId = publishVisual.listingId;
+    if (listingId) {
+      const updated = await runAction(
+        () => api.updateProductListingPublication(listingId, { visible: true }),
+        (result) => result.requestId
+          ? `Publicación confirmada en Falabella. Solicitud ${result.requestId}.`
+          : 'Publicación confirmada en Falabella.',
+      );
+      if (updated) setModal(null);
+      return;
+    }
     const seller = companies.find((company) => String(company.id) === publishVisual.companyId);
     const preview = simulatePublicationPreview({
       kind: 'publish',
@@ -1127,18 +1170,39 @@ export default function Productos() {
     setActionMessage(preview.message || '');
   };
 
-  const simulateUnpublish = (event: FormEvent) => {
+  const submitUnpublish = async (event: FormEvent) => {
     event.preventDefault();
-    const preview = simulatePublicationPreview({
-      kind: 'unpublish',
-      confirmation: unpublishConfirmation,
-    });
-    setActionError(preview.error || '');
-    setActionMessage(preview.message || '');
+    if (!unpublishListing) return;
+    if (unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT) {
+      setActionError('Escribe DESPUBLICAR para confirmar.');
+      return;
+    }
+    const updated = await runAction(
+      () => api.updateProductListingPublication(unpublishListing.id, { visible: false }),
+      (result) => result.requestId
+        ? `Despublicación confirmada en Falabella. Solicitud ${result.requestId}.`
+        : 'Despublicación confirmada en Falabella.',
+    );
+    if (updated) {
+      setModal(null);
+      setUnpublishListing(null);
+      setUnpublishConfirmation('');
+    }
   };
 
-  const publishCopy = publicationPreviewCopy('publish');
-  const unpublishCopy = publicationPreviewCopy('unpublish');
+  const publishCopy = publishVisual.listingId
+    ? {
+        title: 'Publicar en Falabella',
+        subtitle: 'El cambio se enviará al canal.',
+        submit: 'Publicar',
+        notice: 'Esperaremos hasta que Falabella confirme el nuevo estado de esta publicación.',
+      }
+    : publicationPreviewCopy('publish');
+  const unpublishCopy = {
+    title: 'Confirmar despublicación',
+    subtitle: 'El cambio se enviará a Falabella.',
+    submit: 'Despublicar',
+  };
   const visibleError = error || (queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el catálogo.' : '');
   const visualListingExists = Boolean(selectedProduct?.listings?.some((listing) => (
     listing.id !== publishVisual.listingId
@@ -1383,7 +1447,7 @@ export default function Productos() {
         onPreviousProduct={() => void navigateProduct('previous')}
         onNextProduct={() => void navigateProduct('next')}
         onClose={() => { setSelectedId(null); setDetailTab('overview'); }}
-        holdOpen={modal === 'adjust' || modal === 'image' || modal === 'publish_visual' || modal === 'unpublish_visual'}
+        holdOpen={modal === 'adjust' || modal === 'seller_stock' || modal === 'image' || modal === 'publish_visual' || modal === 'unpublish_visual'}
         onOpenImage={openProductImage}
         onAdjust={openAdjust}
         onEditImage={() => {
@@ -1404,6 +1468,7 @@ export default function Productos() {
         onAssociate={() => selectedProduct && openListingAssociation(selectedProduct)}
         onDisassociate={setUnlinkListing}
         onTogglePublication={togglePublication}
+        onEditSellerStock={openSellerStock}
       />
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
@@ -1442,6 +1507,33 @@ export default function Productos() {
             <TextArea label="Motivo" value={adjustForm.reason} onChange={(value) => setAdjustForm({ ...adjustForm, reason: value })} required />
             <ActionFeedback error={actionError} message={actionMessage} />
             <Submit busy={busy}>Registrar ajuste</Submit>
+          </form>
+        </Modal>
+      )}
+
+      {modal === 'seller_stock' && sellerStockListing && (
+        <Modal
+          title={`Editar stock seller · ${sellerShortName(sellerStockListing.companyName || `Empresa ${sellerStockListing.companyId}`)}`}
+          subtitle={`SKU ${sellerStockListing.sellerSku}`}
+          onClose={() => { setModal(null); setSellerStockListing(null); }}
+        >
+          <form onSubmit={updateSellerStock} className="space-y-4">
+            <Field
+              label="Nuevo stock seller"
+              type="number"
+              value={sellerStockValue}
+              onChange={setSellerStockValue}
+              required
+              min={0}
+              step={1}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              FBF conserva {formatNumber(metadataNumber(sellerStockListing, 'fulfillmentQuantity') ?? 0)} u.
+            </p>
+            <Notice tone="info">Enviaremos el stock y volveremos a consultarlo hasta confirmarlo en Falabella.</Notice>
+            <ActionFeedback error={actionError} message={actionMessage} />
+            <Submit busy={busy}>Guardar stock</Submit>
           </form>
         </Modal>
       )}
@@ -1530,7 +1622,7 @@ export default function Productos() {
         </DialogContent>
       </Dialog>
 
-      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? 'Editar publicación' : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={simulatePublish} className="space-y-5">
+      {modal === 'publish_visual' && selectedProduct && <Modal title={publishVisual.listingId ? publishCopy.title : 'Nueva publicación'} subtitle={`${selectedProduct.name} · ${publishCopy.subtitle}`} onClose={() => setModal(null)}><form onSubmit={submitPublish} className="space-y-5">
         <Notice tone="info">{publishCopy.notice}</Notice>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="label">Canal<Select value={publishVisual.channelCode} onValueChange={(value) => {
@@ -1580,15 +1672,15 @@ export default function Productos() {
         </div>
         {visualListingExists && <Notice tone="info">Este producto ya tiene una publicación asociada para esa empresa y canal.</Notice>}
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists} className="primary-button" type="submit">{publishCopy.submit}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || (!publishVisual.listingId && (!publishVisual.companyId || !publishVisual.sellerSku.trim() || !(Number(publishVisual.price) > 0) || visualListingExists))} className="primary-button" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{publishCopy.submit}</button></div>
       </form></Modal>}
 
-      {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={simulateUnpublish} className="space-y-4">
+      {modal === 'unpublish_visual' && unpublishListing && <Modal title={unpublishCopy.title} subtitle={unpublishCopy.subtitle} onClose={() => { setModal(null); setUnpublishListing(null); setUnpublishConfirmation(''); }}><form onSubmit={submitUnpublish} className="space-y-4">
         <div className="rounded-lg bg-red-50 px-3 py-3 text-sm text-red-800"><ShieldAlert className="mr-2 inline h-4 w-4" />Despublicar puede detener ventas en <strong>{sellerShortName(unpublishListing.companyName)}</strong>. Requiere confirmación explícita.</div>
         <div className="grid grid-cols-2 gap-3 text-sm"><InfoValue label="Canal" value={channelLabel(unpublishListing.channelCode)} /><InfoValue label="SKU seller" value={unpublishListing.sellerSku} /></div>
         <Field label={`Escribe ${UNPUBLISH_CONFIRMATION_TEXT} para confirmar`} value={unpublishConfirmation} onChange={setUnpublishConfirmation} required />
         <ActionFeedback error={actionError} message={actionMessage} />
-        <div className="flex justify-end border-t border-border pt-4"><button disabled={unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT} className="inline-flex h-9 items-center justify-center rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">{unpublishCopy.submit}</button></div>
+        <div className="flex justify-end border-t border-border pt-4"><button disabled={busy || unpublishConfirmation !== UNPUBLISH_CONFIRMATION_TEXT} className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-red-600 px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{unpublishCopy.submit}</button></div>
       </form></Modal>}
     </div>
   );
@@ -1990,7 +2082,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
+  onDisassociate, onEditSellerStock, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
   onSaveDescription,
 }: {
   open: boolean;
@@ -2022,6 +2114,7 @@ function ProductDrawer({
   onAssociate: () => void;
   onDisassociate: (listing: Listing) => void;
   onTogglePublication: (listing: Listing) => void;
+  onEditSellerStock: (listing: Listing) => void;
   profitOwners: string[];
   savingField: ProductEditableField | null;
   savedField: ProductEditableField | null;
@@ -2213,7 +2306,7 @@ function ProductDrawer({
                     <div><dt className="text-xs text-muted-foreground">Shop SKU</dt><dd className="mt-0.5 truncate font-mono text-[13px] text-muted-foreground">{listing.shopSku || '—'}</dd></div>
                   </dl>
                   <div><span className="text-xs text-muted-foreground">Precio</span><SellerPrice listing={listing} /></div>
-                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} /></div>
+                  <div><span className="text-xs text-muted-foreground">Stock seller</span><SellerStock listing={listing} onEdit={() => onEditSellerStock(listing)} /></div>
                 </div>
               </article>;
             })}</div>}
@@ -2854,15 +2947,16 @@ function SellerPrice({ listing }: { listing: Listing }) {
   </div>;
 }
 
-function SellerStock({ listing }: { listing: Listing }) {
+function SellerStock({ listing, onEdit }: { listing: Listing; onEdit?: () => void }) {
   const sellerStock = metadataNumber(listing, 'sellerWarehouseQuantity');
   const fulfillmentStock = metadataNumber(listing, 'fulfillmentQuantity');
-  const fromGetStock = listing.metadata?.stockSource === 'falabella_get_stock';
+  const stockSource = listing.metadata?.stockSource;
+  const hasSplitStock = sellerStock != null || fulfillmentStock != null;
   const isSellable = listing.metadata?.isSellable;
   const publiclyUnavailable = listing.metadata?.publicAvailabilityStatus === 'unavailable';
   const contentScore = metadataNumber(listing, 'contentScore');
-  return <div>
-    <strong className="block text-sm">{formatNumber(listing.marketplaceQuantity)} u</strong>
+  const content = <div>
+    <strong className="block text-sm">{formatNumber(sellerStock ?? listing.marketplaceQuantity)} u</strong>
     {publiclyUnavailable && <small className="block leading-4 text-amber-700" title="La tienda pública de Falabella no ofrece esta publicación, aunque Seller Center reporte unidades.">
       Sin stock en Falabella
     </small>}
@@ -2870,11 +2964,22 @@ function SellerStock({ listing }: { listing: Listing }) {
       {sellabilityLabel(listing)}{contentScore != null ? ` · score ${formatNumber(contentScore, 0)}` : ''}
     </small>}
     <small className="block leading-4 text-muted-foreground">
-      {fromGetStock
-        ? `${publiclyUnavailable ? 'Seller Center reporta' : 'Seller'} ${formatNumber(sellerStock ?? 0)} · FBF ${formatNumber(fulfillmentStock ?? 0)}`
+      {hasSplitStock
+        ? `FBF ${formatNumber(fulfillmentStock ?? 0)}${stockSource === 'falabella_get_stock_confirmed' ? ' · confirmado' : ''}`
         : 'stock publicado'}
     </small>
   </div>;
+  if (!onEdit) return content;
+  return <button
+    type="button"
+    onClick={onEdit}
+    className="group -m-1 flex rounded-md p-1 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    aria-label={`Editar stock seller de ${listing.sellerSku}`}
+    title="Editar stock seller"
+  >
+    {content}
+    <Pencil className="ml-1.5 mt-0.5 size-3 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
+  </button>;
 }
 
 function ChannelBadge({ value, listing }: { value: string; listing?: Listing }) {
@@ -3029,6 +3134,7 @@ function Field({
   className,
   list,
   min,
+  step,
   autoFocus,
 }: {
   label: string;
@@ -3039,9 +3145,10 @@ function Field({
   className?: string;
   list?: string;
   min?: number | string;
+  step?: number | string;
   autoFocus?: boolean;
 }) {
-  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={type === 'number' ? 'any' : undefined} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
+  return <label className={cn('label', className)}>{label}{required && ' *'}<input className="field" type={type} step={step ?? (type === 'number' ? 'any' : undefined)} value={value} onChange={(event) => onChange(event.target.value)} onFocus={(event) => { if (type === 'number') event.currentTarget.select(); }} required={required} list={list} min={min} autoFocus={autoFocus} /></label>;
 }
 
 function ProfitOwnerOptions({ owners, id = 'profit-owner-options' }: { owners: string[]; id?: string }) {
