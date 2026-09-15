@@ -181,7 +181,7 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
 
 export function canMarkLogisticsReady(order: LogisticsOrderLike) {
   const channel = String(order.channelCode || '');
-  if (channel !== 'falabella') return false;
+  if (channel !== 'falabella' && channel !== 'ripley') return false;
   return order.companyId != null
     && Boolean(order.externalOrderId)
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
@@ -343,7 +343,10 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
-    return 'Gestiona la confirmación y la etiqueta directamente en Ripley. La bandeja no permite marcarlo listo ni imprimirlo.';
+    if (canMarkLogisticsReady(order)) {
+      return 'Empaca todos los productos y confirma en Mirakl que el pedido está listo para recojo. La etiqueta se obtiene en Seller Center.';
+    }
+    return 'El pedido ya está confirmado en Mirakl. La etiqueta se obtiene en Seller Center.';
   }
   if (canMarkLogisticsDelivered(order)) {
     return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';

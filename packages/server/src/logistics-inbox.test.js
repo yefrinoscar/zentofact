@@ -445,7 +445,7 @@ test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', asy
         return [{
           id: 'shipment-1',
           orderId: '7935614201-A',
-          status: readCount === 1 ? 'SHIPPING' : 'READY_FOR_PICK_UP',
+          status: 'SHIPPING',
         }];
       },
       validateShipmentsReadyForPickup: async (ids) => {
@@ -460,17 +460,94 @@ test('valida en Mirakl los shipments Ripley antes de dejar el pedido listo', asy
   });
   assert.equal(result.ok, true);
   assert.equal(result.alreadyReady, false);
+  assert.equal(readCount, 1);
   assert.deepEqual(validated, [['shipment-1']]);
   assert.deepEqual(result.shipmentIds, ['shipment-1']);
   assert.match(JSON.stringify(updates[0].params[1]), /READY_FOR_PICK_UP/);
   assert.equal(enqueued[0].orderId, 20);
 });
 
-test('marcar listo de Ripley permanece deshabilitado', async () => {
-  await assert.rejects(
-    () => markLogisticsOrderReady({ orderId: 20 }),
-    /confirmación de pedidos Ripley está deshabilitada/,
-  );
+test('un shipment Ripley ya listo se incorpora sin volver a confirmar ST26', async () => {
+  let validations = 0;
+  const result = await scheduleRipleyInboxReady({
+    id: 20,
+    companyId: 7,
+    externalOrderId: '7942151801-A',
+    externalOrderNumber: '7942151801',
+    ripleyApiKey: 'api-key',
+    ripleyShopId: '4362',
+    metadata: {},
+    orderedAt: '2026-09-12T10:00:00.000Z',
+  }, {}, {
+    db: {
+      async query(sql) {
+        if (sql.includes('update orders')) {
+          return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
+        }
+        return { rows: [] };
+      },
+    },
+    miraklClient: {
+      listAllShipments: async () => [{
+        id: '42af50a8-2446-4fdb-87e1-e75ee8a29bb2',
+        orderId: '7942151801-A',
+        status: 'READY_FOR_PICK_UP',
+      }],
+      validateShipmentsReadyForPickup: async () => {
+        validations += 1;
+        return { successIds: [], errors: [] };
+      },
+    },
+    enqueue: async () => ({ enqueued: true }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyReady, true);
+  assert.equal(validations, 0);
+  assert.deepEqual(result.shipmentIds, ['42af50a8-2446-4fdb-87e1-e75ee8a29bb2']);
+});
+
+test('Bandeja confirma un pedido Ripley mediante Mirakl', async () => {
+  const validated = [];
+  const db = {
+    async query(sql) {
+      if (sql.includes('from orders o')) {
+        return { rows: [{
+          id: 20,
+          company_id: 7,
+          external_order_id: '7935614201-A',
+          external_order_number: '7935614201',
+          fulfillment_status: 'preparing',
+          ordered_at: '2026-09-04T10:00:00.000Z',
+          metadata: {},
+          channel_code: 'ripley',
+          ripley_api_key: 'api-key',
+          ripley_shop_id: '4362',
+        }] };
+      }
+      if (sql.includes('update orders')) {
+        return { rows: [{ id: 20, fulfillment_status: 'ready_to_ship', metadata: {} }] };
+      }
+      return { rows: [] };
+    },
+  };
+  const result = await markLogisticsOrderReady({ orderId: 20 }, {
+    db,
+    miraklClient: {
+      listAllShipments: async () => [{
+        id: 'shipment-1', orderId: '7935614201-A', status: 'SHIPPING',
+      }],
+      validateShipmentsReadyForPickup: async (ids) => {
+        validated.push(ids);
+        return { successIds: ids, errors: [] };
+      },
+    },
+    enqueue: async () => ({ enqueued: true }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.orderId, 20);
+  assert.deepEqual(validated, [['shipment-1']]);
 });
 
 test('un propio se marca entregado sin pasar por marketplace', async () => {

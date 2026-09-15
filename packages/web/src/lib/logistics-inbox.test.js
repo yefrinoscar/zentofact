@@ -71,7 +71,7 @@ test('la entrega propia usa Express, no nosotros', () => {
   assert.equal(logisticsDeliveryLabel({ channelCode: 'falabella', shipping: {} }), 'Marketplace');
 });
 
-test('manual imprime siempre; Falabella solo si está listo; Ripley no se imprime ni confirma; enviados no imprimen', () => {
+test('manual imprime siempre; Falabella imprime listo; Ripley confirma pero no imprime; enviados no imprimen', () => {
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'pending' }), true);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
@@ -88,7 +88,10 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley no se imprim
   }), false);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 2, externalOrderId: 'R-1',
-  }), false);
+  }), true);
+  assert.equal(canMarkLogisticsReady({
+    channelCode: 'ripley', fulfillmentStatus: 'preparing', companyId: 2, externalOrderId: 'R-1',
+  }), true);
   assert.equal(canMarkLogisticsReady({
     channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 2, externalOrderId: 'R-1',
   }), false);
@@ -158,7 +161,7 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
-    { kind: 'wait', label: 'Gestionar en Ripley' },
+    { kind: 'ready', label: 'Marcar listo' },
   );
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),

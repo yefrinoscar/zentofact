@@ -71,9 +71,19 @@ export function mapRipleyShipmentFulfillmentStatus(value) {
 
 export function resolveRipleyIngestStatuses(providerStatus, _existing = null, shipmentStatus = null) {
   const mapped = mapRipleyCanonicalStatus(providerStatus);
-  // ST11 is diagnostic only. Its READY_FOR_PICK_UP value does not match the
-  // Seller Center workflow and must not advance the local fulfillment state.
-  void shipmentStatus;
+  if (['cancelled', 'returned', 'shipped', 'delivered'].includes(mapped.fulfillmentStatus)) {
+    return mapped;
+  }
+  const shipmentFulfillment = mapRipleyShipmentFulfillmentStatus(shipmentStatus);
+  if (shipmentFulfillment === 'ready_to_ship' || shipmentFulfillment === 'shipped') {
+    return { orderStatus: 'confirmed', fulfillmentStatus: shipmentFulfillment };
+  }
+  if (shipmentFulfillment === 'delivered') {
+    return { orderStatus: 'completed', fulfillmentStatus: 'delivered' };
+  }
+  if (shipmentFulfillment === 'cancelled') {
+    return { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' };
+  }
   return mapped;
 }
 
