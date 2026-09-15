@@ -240,13 +240,15 @@ export function applyNotificationState(items, stateById) {
 
 export function sortNotifications(items) {
   return [...(items || [])].sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt || '') || 0;
+    const rightTime = Date.parse(right.createdAt || '') || 0;
+    const timeDelta = rightTime - leftTime;
+    if (timeDelta) return timeDelta;
     const unreadDelta = Number(Boolean(right.unread)) - Number(Boolean(left.unread));
     if (unreadDelta) return unreadDelta;
     const severityDelta = (SEVERITY_RANK[left.severity] ?? 9) - (SEVERITY_RANK[right.severity] ?? 9);
     if (severityDelta) return severityDelta;
-    const leftTime = Date.parse(left.createdAt || '') || 0;
-    const rightTime = Date.parse(right.createdAt || '') || 0;
-    return rightTime - leftTime;
+    return String(left.id || '').localeCompare(String(right.id || ''));
   });
 }
 

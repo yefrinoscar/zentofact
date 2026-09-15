@@ -151,13 +151,22 @@ test('si el saldo del insumo cambia, el aviso descartado vuelve a aparecer', () 
   assert.equal(visible[0].unread, true);
 });
 
-test('los no leídos críticos van primero', () => {
+test('los avisos se ordenan del más reciente al más antiguo', () => {
   const sorted = sortNotifications([
     { id: 'w', severity: 'warning', unread: true, createdAt: '2026-09-10T14:00:00.000Z' },
     { id: 'old-critical', severity: 'critical', unread: false, createdAt: '2026-09-10T16:00:00.000Z' },
     { id: 'c', severity: 'critical', unread: true, createdAt: '2026-09-10T12:00:00.000Z' },
   ]);
-  assert.deepEqual(sorted.map((item) => item.id), ['c', 'w', 'old-critical']);
+  assert.deepEqual(sorted.map((item) => item.id), ['old-critical', 'w', 'c']);
+});
+
+test('el aviso más reciente va primero aunque sea de éxito', () => {
+  const sorted = sortNotifications([
+    { id: 'critical', severity: 'critical', unread: true, createdAt: '2026-09-15T15:00:00.000Z' },
+    { id: 'latest', severity: 'success', unread: true, createdAt: '2026-09-15T15:01:00.000Z' },
+    { id: 'warning', severity: 'warning', unread: true, createdAt: '2026-09-15T14:59:00.000Z' },
+  ]);
+  assert.deepEqual(sorted.map((item) => item.id), ['latest', 'critical', 'warning']);
 });
 
 test('el DTO público no expone el permiso interno', () => {

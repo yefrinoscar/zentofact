@@ -11,7 +11,7 @@ export function useOperatorNotifications() {
   return useQuery({
     queryKey: NOTIFICATIONS_QUERY_KEY,
     queryFn: () => api.listNotifications(),
-    refetchInterval: 30_000,
+    refetchInterval: 10_000,
   });
 }
 
