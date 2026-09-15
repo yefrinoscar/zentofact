@@ -290,7 +290,7 @@ export function logisticsUrgencyMeta(urgency: LogisticsUrgency) {
 export type LogisticsNextStep =
   | { kind: 'print'; label: 'Imprimir' | 'Reimprimir' }
   | { kind: 'soon'; label: 'Imprimir' }
-  | { kind: 'ready'; label: 'Marcar listo' }
+  | { kind: 'ready'; label: 'Marcar listo' | 'Agendar recojo' }
   | { kind: 'deliver'; label: 'Marcar entregado' }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
@@ -299,12 +299,24 @@ export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep 
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
   if (canMarkLogisticsDelivered(order)) return { kind: 'deliver', label: 'Marcar entregado' };
-  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: 'Marcar listo' };
+  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: logisticsReadyActionLabel(order) };
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
   if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Gestionar en Ripley' };
   return { kind: 'view', label: 'Ver detalle' };
+}
+
+export function logisticsReadyActionLabel(order: LogisticsOrderLike) {
+  return order.channelCode === 'ripley' ? 'Agendar recojo' : 'Marcar listo';
+}
+
+export function logisticsBulkReadyActionLabel(orders: LogisticsOrderLike[]) {
+  const count = orders.length;
+  if (count > 0 && orders.every((order) => order.channelCode === 'ripley')) {
+    return `Agendar ${count} ${count === 1 ? 'recojo' : 'recojos'}`;
+  }
+  return `Marcar ${count} ${count === 1 ? 'listo' : 'listos'}`;
 }
 
 export type LogisticsFlowStep = { label: string; state: 'done' | 'current' | 'todo' };

@@ -8,6 +8,8 @@ import {
   canPrintLogisticsLabel,
   logisticsItemSku,
   logisticsReadyConfirmCopy,
+  logisticsReadyActionLabel,
+  logisticsBulkReadyActionLabel,
   logisticsReadySuccessCopy,
   logisticsRipleyLabelSoon,
   RIPLEY_LABEL_SOON_COPY,
@@ -161,8 +163,12 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
-    { kind: 'ready', label: 'Marcar listo' },
+    { kind: 'ready', label: 'Agendar recojo' },
   );
+  assert.equal(logisticsReadyActionLabel({ channelCode: 'ripley' }), 'Agendar recojo');
+  assert.equal(logisticsReadyActionLabel({ channelCode: 'falabella' }), 'Marcar listo');
+  assert.equal(logisticsBulkReadyActionLabel([{ channelCode: 'ripley' }, { channelCode: 'ripley' }]), 'Agendar 2 recojos');
+  assert.equal(logisticsBulkReadyActionLabel([{ channelCode: 'ripley' }, { channelCode: 'falabella' }]), 'Marcar 2 listos');
   assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }),
     { kind: 'wait', label: 'Gestionar en Ripley' },
