@@ -74,7 +74,6 @@ export function ResumenStep({
     sellerShippingAmount: Number(view.sellerShippingInput) || null,
     dropoffPlace: view.dropoffPlace,
     shippingNote: view.shippingNote,
-    saleSource: view.saleSource,
     paymentMethod: view.paymentMethod,
     receivedBy: view.receivedBy,
     paidTo: view.paidTo,

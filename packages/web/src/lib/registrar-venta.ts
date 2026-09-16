@@ -11,14 +11,6 @@ import {
 } from './own-fleet-shipping.ts';
 import { isSellerPricedShipping, type ShippingCarrier } from './shipping-carrier.ts';
 
-export const SALE_SOURCES = [
-  { value: 'marketplace', label: 'Marketplace' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'telefono', label: 'Teléfono' },
-  { value: 'otro', label: 'Otro' },
-] as const;
-
 export const PAYMENT_METHODS = [
   { value: 'despues', label: 'Después' },
   { value: 'efectivo', label: 'Efectivo' },
@@ -64,7 +56,6 @@ export const SALE_STEPS = [
 
 export type SaleStepId = (typeof SALE_STEPS)[number]['id'];
 
-export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 export type PaymentRecipient = (typeof PAYMENT_RECIPIENTS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
@@ -120,7 +111,6 @@ export type ManualSaleInput = {
   sellerShippingAmount?: number | null;
   dropoffPlace: DropoffPlace | null;
   shippingNote?: string;
-  saleSource: SaleSource;
   paymentMethod: PaymentMethod;
   receivedBy?: string;
   paidTo?: PaymentRecipient | '';
@@ -301,13 +291,6 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
-function validateCustomerName(input: ManualSaleInput) {
-  if (!String(input.customerName || '').trim()) {
-    return 'Escribe el nombre del cliente.';
-  }
-  return null;
-}
-
 function validateCustomerPhone(input: ManualSaleInput) {
   const digits = customerPhoneDigits(input.customerPhone);
   if (digits.length < MIN_CUSTOMER_PHONE_DIGITS) return PHONE_REQUIRED_MESSAGE;
@@ -316,7 +299,7 @@ function validateCustomerPhone(input: ManualSaleInput) {
 
 function validateCustomer(input: ManualSaleInput) {
   if (!String(input.salespersonId || '').trim()) return 'Elige la vendedora.';
-  return validateCustomerName(input) ?? validateCustomerPhone(input);
+  return validateCustomerPhone(input);
 }
 
 function validateSaleLines(input: ManualSaleInput) {
@@ -467,7 +450,6 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
     },
     metadata: {
       origin: 'manual_ui',
-      saleSource: input.saleSource,
       delivery: input.delivery,
       deliveryDate,
       shippingCarrier: input.delivery === 'envio' ? input.shippingCarrier : '',
