@@ -1009,6 +1009,30 @@ test('ingresa created_by del actor y no lo pisa en actualizaciones posteriores',
   assert.equal(result.order.createdBy, 'seller-9');
 });
 
+test('atribuye la venta a la vendedora elegida y conserva al actor en la auditoría', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder(manualSale({
+    shipping: { type: 'recojo' },
+    actorUserId: 'operator-2',
+    createdByUserId: 'seller-9',
+  }), db);
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
+  assert.equal(insert.params[25], 'seller-9');
+  assert.equal(event.params[3], 'operator-2');
+  assert.equal(result.order.createdBy, 'seller-9');
+});
+
+test('un ingreso que no es venta manual no puede cambiar el usuario creador', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder(manualSale({
+    source: 'api',
+    actorUserId: 'operator-2',
+    createdByUserId: 'seller-9',
+  }), db);
+  assert.equal(result.order.createdBy, 'operator-2');
+});
+
 test('lista pedidos filtrando por createdBy', async () => {
   const db = {
     async query(sql, params) {

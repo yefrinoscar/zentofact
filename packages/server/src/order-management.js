@@ -644,6 +644,9 @@ async function ingestOrderInTransaction(input, db) {
   );
   const rawPayload = input.rawPayload === undefined ? null : jsonValue(input.rawPayload);
   const snapshotHash = rawPayload === null ? null : payloadHash(rawPayload);
+  const creatorUserId = String(input.source || '').trim().toLowerCase() === 'manual'
+    ? input.createdByUserId ?? input.actorUserId
+    : input.actorUserId;
 
   let persisted;
   if (isStale) {
@@ -750,7 +753,7 @@ async function ingestOrderInTransaction(input, db) {
         order.providerUpdatedAt,
         order.itemsStatus,
         order.itemsError,
-        optionalText(input.actorUserId, 300),
+        optionalText(creatorUserId, 300),
       ],
     );
     persisted = result.rows[0];

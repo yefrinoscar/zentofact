@@ -221,6 +221,18 @@ export async function listUsers() {
   return rows.map(serializeUser);
 }
 
+export async function listActiveSalespeople() {
+  const rows = await db
+    .select({ id: authUsers.id, name: authUsers.name })
+    .from(authUsers)
+    .where(and(eq(authUsers.role, 'vendedor'), eq(authUsers.active, true)))
+    .orderBy(asc(authUsers.name));
+  return rows.map((row) => ({
+    id: row.id,
+    name: String(row.name || '').trim() || 'Vendedora sin nombre',
+  }));
+}
+
 export async function getUserById(id) {
   return getUserByIdWith(db, id);
 }

@@ -109,6 +109,7 @@ export type DropoffPlace = {
 
 export type ManualSaleInput = {
   channelAccountId?: number | null;
+  salespersonId?: string;
   customerName: string;
   customerPhone?: string;
   lines: SaleLine[];
@@ -314,6 +315,7 @@ function validateCustomerPhone(input: ManualSaleInput) {
 }
 
 function validateCustomer(input: ManualSaleInput) {
+  if (!String(input.salespersonId || '').trim()) return 'Elige la vendedora.';
   return validateCustomerName(input) ?? validateCustomerPhone(input);
 }
 
@@ -432,6 +434,7 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
 
   return {
     channelAccountId: input.channelAccountId,
+    salespersonId: String(input.salespersonId).trim(),
     externalOrderId: orderNumber,
     externalOrderNumber: orderNumber,
     orderStatus: 'confirmed' as const,

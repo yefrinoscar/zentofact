@@ -530,6 +530,10 @@ app.get('/order-management/my-sales', requirePermission('salesperson'), async (c
     }));
   } catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/salespeople', requirePermission('order_management'), async (c) => {
+  try { return ok(c, await users.listActiveSalespeople()); }
+  catch (e) { return fail(c, e); }
+});
 app.post('/order-management/sync', requirePermission('order_management'), async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -594,6 +598,19 @@ app.post('/order-management/orders/ingest', requirePermission('order_management'
 app.post('/order-management/orders/manual', async (c) => {
   try {
     const body = await c.req.json();
+    const actorUserId = c.get('user')?.id;
+    const selfSalespersonId = salespersonOnlyUserId(c);
+    let createdByUserId = selfSalespersonId;
+    if (!createdByUserId) {
+      const requestedSalespersonId = String(body.salespersonId || '').trim();
+      const salesperson = requestedSalespersonId
+        ? await users.getUserById(requestedSalespersonId)
+        : null;
+      if (!salesperson?.active || salesperson.role !== 'vendedor') {
+        return c.json({ error: 'Elige una vendedora activa.' }, 400);
+      }
+      createdByUserId = salesperson.id;
+    }
     const idempotencyKey = String(
       c.req.header('idempotency-key') || body.idempotencyKey || '',
     ).trim();
@@ -604,7 +621,8 @@ app.post('/order-management/orders/manual', async (c) => {
       ...body,
       source: 'manual',
       automatic: false,
-      actorUserId: c.get('user')?.id,
+      actorUserId,
+      createdByUserId,
       idempotencyKey,
       rawPayload: body.rawPayload ?? body,
     });
