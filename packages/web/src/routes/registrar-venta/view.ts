@@ -5,7 +5,6 @@ import type {
   PaymentMethod,
   PaymentRecipient,
   SaleLine,
-  SaleSource,
   SaleStepId,
 } from '../../lib/registrar-venta';
 import type { ShippingCarrier } from '../../lib/shipping-carrier';
@@ -25,8 +24,6 @@ export type SaleFormView = {
   salespeopleError: string;
   salespersonId: string;
   setSalespersonId: (value: string) => void;
-  saleSource: SaleSource;
-  setSaleSource: (value: SaleSource) => void;
   customerName: string;
   setCustomerName: (value: string) => void;
   customerPhone: string;

@@ -25,7 +25,6 @@ import {
   type PaymentMethod,
   type PaymentRecipient,
   type SaleLine,
-  type SaleSource,
   type SaleStepId,
 } from '../lib/registrar-venta';
 import { OWN_FLEET_CARRIER, quoteOwnFleetShipping, saleTotals } from '../lib/own-fleet-shipping';
@@ -71,7 +70,6 @@ export default function RegistrarVenta() {
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [saleSource, setSaleSource] = useState<SaleSource>('marketplace');
   const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -170,7 +168,6 @@ export default function RegistrarVenta() {
     sellerShippingAmount,
     dropoffPlace,
     shippingNote,
-    saleSource,
     paymentMethod,
     receivedBy,
     paidTo,
@@ -365,8 +362,6 @@ export default function RegistrarVenta() {
       setSelectedSalespersonId(value);
       setStepError('');
     },
-    saleSource,
-    setSaleSource,
     customerName,
     setCustomerName: (value) => {
       setCustomerName(value);

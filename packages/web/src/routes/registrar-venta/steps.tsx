@@ -20,7 +20,6 @@ import {
   DOCUMENT_REQUESTS,
   PAYMENT_METHODS,
   PAYMENT_RECIPIENTS,
-  SALE_SOURCES,
   needsDigitalPayment,
   clampSaleQuantity,
   limaTodayKey,
@@ -199,10 +198,7 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
           ) : null}
         </FieldRow>
       ) : null}
-      <FieldRow label="Origen">
-        <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen de la venta" />
-      </FieldRow>
-      <FieldRow label="Nombre" htmlFor="customer-name">
+      <FieldRow label="Nombre (opcional)" htmlFor="customer-name">
         <Input
           id="customer-name"
           value={view.customerName}
