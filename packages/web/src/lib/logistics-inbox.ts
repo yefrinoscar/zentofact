@@ -713,9 +713,27 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
       }
       h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; }
       p { margin: 10px auto 0; max-width: 280px; color: #78716c; font-size: 14px; line-height: 1.5; }
+      .progress {
+        width: min(100%, 280px);
+        height: 5px;
+        margin: 20px auto 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e7e5e4;
+      }
+      .progress span {
+        display: block;
+        width: var(--progress, 0%);
+        height: 100%;
+        border-radius: inherit;
+        background: #2864f0;
+        transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
       .count {
         display: ${countLabel ? 'inline-flex' : 'none'};
-        margin-top: 22px;
+        min-width: 74px;
+        justify-content: center;
+        margin-top: 14px;
         padding: 6px 11px;
         border-radius: 999px;
         background: #f5f5f4;
@@ -737,6 +755,7 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
       }
       @media (prefers-reduced-motion: reduce) {
         .label, .mask { animation: none; }
+        .progress span { transition: none; }
         .label { opacity: 1; transform: none; }
         .mask { transform: translateY(100%); }
       }
@@ -756,9 +775,10 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
           <div class="mask"><div class="head"></div></div>
         </div>
       </div>
-      <h1>Armando las etiquetas</h1>
-      <p>Revisa e imprime desde esta pestaña.</p>
-      <span class="count">${countLabel}</span>
+      <h1 id="print-progress-title">Armando las etiquetas</h1>
+      <p id="print-progress-detail">Preparando el archivo de impresión.</p>
+      <div class="progress" aria-hidden="true"><span id="print-progress-bar"></span></div>
+      <span class="count" id="print-progress-count">${countLabel ? `0 de ${count}` : ''}</span>
     </main>
   </body>
 </html>`;
@@ -772,6 +792,30 @@ export function openPdfPreviewTab(labelCount = 0) {
   preview.document.write(pdfPreviewLoadingHtml(labelCount));
   preview.document.close();
   return preview;
+}
+
+export function updatePdfPreviewProgress(
+  preview: Window | null,
+  progress: { current: number; total: number; orderNumber?: string | null },
+) {
+  if (!preview || preview.closed) return;
+  const total = Math.max(1, Math.floor(progress.total));
+  const current = Math.min(total, Math.max(1, Math.floor(progress.current)));
+  try {
+    const title = preview.document.getElementById('print-progress-title');
+    const detail = preview.document.getElementById('print-progress-detail');
+    const count = preview.document.getElementById('print-progress-count');
+    const bar = preview.document.getElementById('print-progress-bar');
+    if (title) title.textContent = total === 1 ? 'Armando la etiqueta' : `Armando la etiqueta ${current} de ${total}`;
+    if (detail) detail.textContent = progress.orderNumber
+      ? `Pedido ${progress.orderNumber}`
+      : 'Preparando el archivo de impresión.';
+    if (count) count.textContent = `${current} de ${total}`;
+    bar?.style.setProperty('--progress', `${Math.round((current / total) * 100)}%`);
+    preview.document.title = total === 1 ? 'Armando la etiqueta' : `Etiqueta ${current} de ${total}`;
+  } catch {
+    // La pestaña puede cerrarse o navegar al PDF mientras llega el último evento.
+  }
 }
 
 export function pdfObjectUrlFromBase64(base64: string) {

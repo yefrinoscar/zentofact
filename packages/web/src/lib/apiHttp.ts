@@ -1,6 +1,6 @@
 // Cliente HTTP del frontend web. Vite redirige el API al backend manteniendo
 // las cookies bajo el mismo origen del navegador.
-import { apiErrorFromResponse } from './api-error';
+import { ApiError, apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
 import {
@@ -11,6 +11,19 @@ import {
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let csrfToken = '';
+
+export type LogisticsPrintProgress = {
+  current: number;
+  total: number;
+  orderNumber?: string | null;
+};
+
+export type LogisticsPrintResult = {
+  base64?: string;
+  filename?: string;
+  labelCount?: number;
+  skipped?: Array<{ id: number; reason: string }>;
+};
 
 export type OrderSyncAccountStatus = {
   channelAccountId: number;
@@ -161,6 +174,99 @@ async function req<T = any>(path: string, init?: RequestInit, attempt = 0): Prom
   if (!res.ok) throw apiErrorFromResponse(data, res.status, `HTTP ${res.status}`);
   return data;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function logisticsPrintResult(value: unknown): LogisticsPrintResult {
+  if (!isRecord(value)) throw new Error('La impresión terminó sin devolver el PDF.');
+  const skipped = Array.isArray(value.skipped)
+    ? value.skipped.flatMap((entry) => (
+      isRecord(entry) && typeof entry.id === 'number' && typeof entry.reason === 'string'
+        ? [{ id: entry.id, reason: entry.reason }]
+        : []
+    ))
+    : undefined;
+  return {
+    base64: typeof value.base64 === 'string' ? value.base64 : undefined,
+    filename: typeof value.filename === 'string' ? value.filename : undefined,
+    labelCount: typeof value.labelCount === 'number' ? value.labelCount : undefined,
+    skipped,
+  };
+}
+
+async function printLogisticsPackStream(
+  data: { orderIds: number[] },
+  onProgress?: (progress: LogisticsPrintProgress) => void,
+  attempt = 0,
+): Promise<LogisticsPrintResult> {
+  const token = await ensureCsrfToken();
+  const path = '/logistics-inbox/print-stream';
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': token },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    let payload: unknown = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
+    if (response.status === 401) handleUnauthorized(path);
+    const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : '';
+    if (response.status === 403 && attempt === 0 && message.toLowerCase().includes('csrf')) {
+      clearCsrfToken();
+      return printLogisticsPackStream(data, onProgress, 1);
+    }
+    throw apiErrorFromResponse(payload, response.status, text.trim() || `HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: LogisticsPrintResult | null = null;
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const event: unknown = JSON.parse(trimmed);
+    if (!isRecord(event) || typeof event.type !== 'string') return;
+    if (event.type === 'progress' && typeof event.current === 'number' && typeof event.total === 'number') {
+      onProgress?.({
+        current: event.current,
+        total: event.total,
+        orderNumber: typeof event.orderNumber === 'string' ? event.orderNumber : null,
+      });
+      return;
+    }
+    if (event.type === 'result') {
+      result = logisticsPrintResult(event.result);
+      return;
+    }
+    if (event.type === 'error') {
+      throw new ApiError(
+        typeof event.error === 'string' ? event.error : 'No se pudo armar la impresión.',
+        { logId: typeof event.logId === 'string' ? event.logId : undefined },
+      );
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let lineEnd = buffer.indexOf('\n');
+    while (lineEnd >= 0) {
+      handleLine(buffer.slice(0, lineEnd));
+      buffer = buffer.slice(lineEnd + 1);
+      lineEnd = buffer.indexOf('\n');
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer) handleLine(buffer);
+  if (!result) throw new Error('La impresión terminó sin devolver el PDF.');
+  return result;
+}
 const qs = (o: Record<string, any> = {}) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
@@ -296,8 +402,10 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/logistics-inbox${qs(filter)}`),
-  printLogisticsPack: (data: { orderIds: number[] }) =>
-    req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
+  printLogisticsPack: (
+    data: { orderIds: number[] },
+    onProgress?: (progress: LogisticsPrintProgress) => void,
+  ) => printLogisticsPackStream(data, onProgress),
   markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
     req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
   markLogisticsOrderDelivered: (data: { orderId: number }) =>

@@ -749,6 +749,17 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   const skipped = [];
   const pdfParts = [];
   let labelCount = 0;
+  let progressCurrent = 0;
+  const reportProgress = async (order) => {
+    progressCurrent += 1;
+    if (typeof dependencies.onProgress === 'function') {
+      await dependencies.onProgress({
+        current: progressCurrent,
+        total: orders.length,
+        orderNumber: order.externalOrderNumber || null,
+      });
+    }
+  };
 
   const falabella = orders.filter((order) => order.channelCode === 'falabella');
   if (falabella.length) {
@@ -756,6 +767,7 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (!getLabel) throw new Error('No hay generador de etiquetas Falabella.');
     const buffers = [];
     for (const order of falabella) {
+      await reportProgress(order);
       if (!order.companyId) {
         skipped.push({ id: order.id, reason: 'El pedido Falabella no tiene seller.' });
         continue;
@@ -779,12 +791,14 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
 
   const manual = orders.filter((order) => order.channelCode === 'manual');
   if (manual.length) {
+    for (const order of manual) await reportProgress(order);
     pdfParts.push(await buildManualLabelSheet(manual));
     labelCount += manual.length;
   }
 
   const unknown = orders.filter((order) => !CHANNELS.has(order.channelCode));
   for (const order of unknown) {
+    await reportProgress(order);
     skipped.push({ id: order.id, reason: `Canal ${order.channelCode} aún no imprime etiqueta.` });
   }
 
@@ -1030,6 +1044,7 @@ export async function printLogisticsPackWithDefaults(input = {}, dependencies = 
     downloadRipleyLabels: dependencies.downloadRipleyLabels || (({ companyId, documentIds, orderId }) => (
       ripleyLogistics.downloadRipleySvcLabels(companyId, { documentIds, orderId })
     )),
+    onProgress: dependencies.onProgress,
   });
 }
 

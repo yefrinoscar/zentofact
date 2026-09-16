@@ -39,6 +39,7 @@ import {
   DEFAULT_BANDEJA_URGENCY,
   RIPLEY_LABEL_SOON_COPY,
   showPdfInTab,
+  updatePdfPreviewProgress,
   type LogisticsChannel,
   type LogisticsStage,
   type LogisticsUrgency,
@@ -84,13 +85,6 @@ type InboxResponse = {
   totalCount: number;
   limit: number;
   offset: number;
-};
-
-type PrintResult = {
-  base64?: string;
-  filename?: string;
-  labelCount?: number;
-  skipped?: Array<{ id: number; reason: string }>;
 };
 
 const INBOX_BATCH_LIMIT = 300;
@@ -226,7 +220,10 @@ export default function BandejaLogistica() {
   };
 
   const printMutation = useMutation({
-    mutationFn: (orderIds: number[]) => api.printLogisticsPack({ orderIds }) as Promise<PrintResult>,
+    mutationFn: (orderIds: number[]) => api.printLogisticsPack(
+      { orderIds },
+      (progress) => updatePdfPreviewProgress(printPreviewRef.current, progress),
+    ),
     onSuccess: (result) => {
       const preview = printPreviewRef.current;
       printPreviewRef.current = null;
