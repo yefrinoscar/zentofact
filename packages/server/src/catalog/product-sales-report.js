@@ -24,16 +24,18 @@ const SETTLEMENT_SHARE = (field, saleId = 'settlement_sale_id') => `case
         end`;
 
 const PRODUCT_SORTS = {
-  product: 'min(name)',
-  units: 'sum(units_sold)',
-  unitsPerDay: 'sum(units_sold)',
-  orders: 'sum(orders_count)',
-  grossSales: 'sum(revenue)',
-  falabellaTake: 'sum(falabella_take)',
-  arrives: 'sum(arrives)',
+  product: 'name',
+  units: 'units_sold',
+  unitsPerDay: 'units_sold',
+  orders: 'orders_count',
+  grossSales: 'revenue',
+  falabellaTake: 'falabella_take',
+  arrives: 'arrives',
+  netSales: 'net_sales',
+  returnLoss: 'return_loss',
   keepsPerDay: 'keeps_per_day',
   restockQty: 'restock_qty',
-  sellers: 'count(distinct company_id)',
+  sellers: 'sellers_count',
 };
 
 const PAYOUT_FILTERS = new Set(['all', 'paid', 'pending']);
@@ -144,18 +146,64 @@ function productHavingSql(filters, values) {
 }
 
 function productOrderSql(filters) {
-  const direction = `${filters.sortDir} nulls last, min(name), min(sku)`;
+  const direction = `${filters.sortDir} nulls last, name, sku`;
   const days = Math.max(1, Number(filters.dayCount) || 1);
   if (filters.sortBy === 'keepsPerDay') {
     return `(case
-      when min(wholesale_price) is null then sum(arrives)
-      else sum(arrives) - min(wholesale_price) * sum(units_sold)
+      when wholesale_price is null then arrives
+      else arrives - wholesale_price * units_sold
     end) ${direction}`;
   }
   if (filters.sortBy === 'restockQty') {
-    return `greatest(0, ceil(sum(units_sold)::numeric / ${days} * ${RESTOCK_HORIZON_DAYS} - coalesce(min(available), 0))) ${direction}`;
+    return `greatest(0, ceil(units_sold::numeric / ${days} * ${RESTOCK_HORIZON_DAYS} - coalesce(available, 0))) ${direction}`;
   }
   return `${PRODUCT_SORTS[filters.sortBy]} ${direction}`;
+}
+
+function productReturnLossSql(filters) {
+  const companyClause = filters.companyId ? `and returned_order.company_id=${Number(filters.companyId)}` : '';
+  return `coalesce((
+    select sum(
+      greatest(0, coalesce(returned_settlement.commission, 0) + coalesce(returned_settlement.other_fees, 0))
+      / 1.18
+      * coalesce(returned_item.total, returned_item.unit_price * returned_item.quantity, 0)
+      / nullif(returned_total.gross, 0)
+    )
+    from orders returned_order
+    join falabella_orders returned_falabella
+      on returned_falabella.company_id=returned_order.company_id
+     and returned_falabella.order_id=returned_order.external_order_id
+    join sale_settlements returned_settlement
+      on returned_settlement.sale_source='falabella_order'
+     and returned_settlement.sale_id=returned_falabella.id
+    join order_items returned_item on returned_item.order_id=returned_order.id
+    join lateral (
+      select sum(coalesce(order_line.total, order_line.unit_price * order_line.quantity, 0)) as gross
+      from order_items order_line
+      where order_line.order_id=returned_order.id
+    ) returned_total on true
+    where (returned_order.ordered_at at time zone 'America/Lima')::date between $1::date and $2::date
+      ${companyClause}
+      and exists (
+        select 1
+        from settlement_lines return_line
+        where return_line.sale_source='falabella_order'
+          and return_line.sale_id=returned_falabella.id
+          and return_line.match_status='matched'
+          and (
+            return_line.kind='refund'
+            or lower(coalesce(return_line.transaction_type, '')) ~ '(reversa|devoluc|refund|reembolso)'
+            or (return_line.kind='sale' and return_line.neto < 0)
+          )
+      )
+      and (
+        (product_rows.product_id is not null and returned_item.product_id=product_rows.product_id)
+        or (
+          product_rows.product_id is null
+          and lower(coalesce(nullif(returned_item.sku, ''), nullif(returned_item.provider_sku, ''), 'sin-sku'))=lower(product_rows.sku)
+        )
+      )
+  ), 0)`;
 }
 
 const TAKE_RATE_SQL = `coalesce(
@@ -195,6 +243,7 @@ function moneyCtes() {
            base.*,
            base.line_take as falabella_take,
            base.line_arrives as arrives,
+           case when base.settlement_sale_id is not null then base.allocated_neto else null end as net_sales,
            case when base.settlement_status = 'paid' then coalesce(base.allocated_neto, 0) else 0 end as paid_arrives,
            base.line_arrives
              - case when base.settlement_status = 'paid' then coalesce(base.allocated_neto, 0) else 0 end
@@ -415,6 +464,7 @@ function mapSeller(seller = {}) {
 
 function mapProductRow(row = {}) {
   const arrives = row.arrives == null ? null : Number(row.arrives);
+  const netSales = row.net_sales == null ? null : Number(row.net_sales);
   return {
     productKey: row.product_key,
     productId: row.product_id == null ? null : Number(row.product_id),
@@ -428,10 +478,12 @@ function mapProductRow(row = {}) {
     ordersCount: Number(row.orders_count || 0),
     sellersCount: Number(row.sellers_count || 0),
     grossSales: Number(row.revenue || 0),
+    netSales,
     falabellaTake: row.falabella_take == null ? null : Number(row.falabella_take),
     arrives,
     paidArrives: settlementMoney(row.paid_arrives, arrives),
     pendingArrives: settlementMoney(row.pending_arrives, arrives),
+    returnLoss: Number(row.return_loss || 0),
     visits: row.visits == null ? null : Number(row.visits),
     wholesalePrice: row.wholesale_price == null ? null : Number(row.wholesale_price),
     available: row.available == null ? null : Number(row.available),
@@ -584,6 +636,7 @@ export async function listProductSalesReport(input = {}, db) {
              and pub.company_id=priced.company_id
              and ${publishedListingCondition('pub')}
          ))`;
+  const returnLossSql = productReturnLossSql(filters);
 
   const [pageResult, pageCountResult, totalsResult, topProductsResult, trackedBuyersResult, otherBuyersResult, restockResult, seriesResult, dailyResult] = await Promise.all([
     target.query(
@@ -597,6 +650,7 @@ export async function listProductSalesReport(input = {}, db) {
            sum(line_total) as revenue,
            sum(falabella_take) as falabella_take,
            sum(arrives) as arrives,
+           sum(net_sales) as net_sales,
            sum(paid_arrives) as paid_arrives,
            sum(pending_arrives) as pending_arrives,
            min(wholesale_price) as wholesale_price,
@@ -608,7 +662,8 @@ export async function listProductSalesReport(input = {}, db) {
            min(shop_sku) as shop_sku
          from priced
          group by 1,2,3,4,5,6,7,8
-       )
+       ),
+       product_rows as (
        select
          product_key,
          min(product_id) as product_id,
@@ -623,6 +678,7 @@ export async function listProductSalesReport(input = {}, db) {
          sum(revenue) as revenue,
          sum(falabella_take) as falabella_take,
          sum(arrives) as arrives,
+         sum(net_sales) as net_sales,
          sum(paid_arrives) as paid_arrives,
          sum(pending_arrives) as pending_arrives,
          min(wholesale_price) as wholesale_price,
@@ -649,6 +705,9 @@ export async function listProductSalesReport(input = {}, db) {
        from seller_rows
        group by product_key
        having ${havingSql}
+       )
+       select product_rows.*, ${returnLossSql} as return_loss
+       from product_rows
        order by ${productOrderSql(filters)}
        limit $${pageValues.length - 1} offset $${pageValues.length}`,
       pageValues,

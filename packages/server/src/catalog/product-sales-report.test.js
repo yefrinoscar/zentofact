@@ -13,6 +13,8 @@ test('el filtro de ventas de productos usa el periodo de Lima y ordena por venta
   assert.equal(filters.sortBy, 'grossSales');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'falabellaTake' }).sortBy, 'falabellaTake');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'arrives' }).sortBy, 'arrives');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'netSales' }).sortBy, 'netSales');
+  assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'returnLoss' }).sortBy, 'returnLoss');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'unitsPerDay' }).sortBy, 'unitsPerDay');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31', sortBy: 'keepsPerDay' }).sortBy, 'keepsPerDay');
   assert.equal(parseProductSalesFilters({ from: '2026-08-01', to: '2026-08-31' }).dayCount, 31);
@@ -70,6 +72,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
             arrives: 842.16,
             paid_arrives: 140.52,
             pending_arrives: 701.64,
+            return_loss: 18.25,
             visits: null,
             sellers: [
               {
@@ -225,8 +228,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.equal(result.products[0].grossSales, 1139.4);
   assert.equal(result.products[0].falabellaTake, 296.24);
   assert.equal(result.products[0].arrives, 842.16);
+  assert.equal(result.products[0].netSales, null);
   assert.equal(result.products[0].paidArrives, 140.52);
   assert.equal(result.products[0].pendingArrives, 701.64);
+  assert.equal(result.products[0].returnLoss, 18.25);
   assert.equal(result.products[0].sellers[0].pendingArrives, 561.2);
   assert.equal(result.products[0].sellers[1].paidArrives, 140.52);
   assert.equal(result.products[0].sellersCount, 2);
@@ -269,6 +274,7 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /settlement_sale_id is null/);
   assert.match(pageSql, /matched_gross >= pr.gross \* 0.1/);
   assert.match(pageSql, /settlement_status = 'paid'/);
+  assert.match(pageSql, /settlement_sale_id is not null then base\.allocated_neto else null end as net_sales/);
   assert.match(pageSql, /left join product_listings linked on linked\.id=oi\.listing_id/);
   assert.match(pageSql, /left join product_inventory i on i\.product_id=p\.id/);
   assert.match(pageSql, /wholesale_price/);
@@ -278,7 +284,10 @@ test('las ventas de productos suman asociaciones y detallan cada seller', async 
   assert.match(pageSql, /left join order_channels ch/);
   assert.match(pageSql, /array_agg\(distinct channel_code\)/);
   assert.match(pageSql, /coalesce\(oi\.product_id, linked\.product_id, listing\.product_id\)/);
-  assert.match(pageSql, /order by sum\(units_sold\) desc nulls last/);
+  assert.match(pageSql, /order by units_sold desc nulls last/);
+  assert.match(pageSql, /from settlement_lines return_line/);
+  assert.match(pageSql, /returned_settlement\.commission/);
+  assert.match(pageSql, /\/ 1\.18/);
   assert.match(pageSql, /customer->>'documentNumber'/);
   assert.match(pageSql, /customer->>'phone'/);
   assert.match(pageSql, /having true and sum\(revenue\) >= \$/);
@@ -336,4 +345,3 @@ test('si el cruce del producto es poco, usa la tasa del seller', () => {
   });
   assert.equal(rate, 0.2);
 });
-
