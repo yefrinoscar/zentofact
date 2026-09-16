@@ -127,7 +127,7 @@ export type ManualSaleInput = {
 export const MIN_CUSTOMER_PHONE_DIGITS = 9;
 export const NO_STOCK_MESSAGE = 'Ese producto no tiene stock.';
 export const STOCK_SHORT_MESSAGE = 'No hay stock para esa cantidad.';
-export const PHONE_REQUIRED_MESSAGE = 'Escribe un teléfono de 9 dígitos.';
+export const PHONE_INVALID_MESSAGE = 'Completa el teléfono de 9 dígitos.';
 export const SELLER_SHIPPING_REQUIRED_MESSAGE = 'Indica el precio de envío.';
 
 function digitsOnly(value: string | null | undefined) {
@@ -291,15 +291,11 @@ export function saleLinesTotal(lines: SaleLine[]) {
   return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 }
 
-function validateCustomerPhone(input: ManualSaleInput) {
-  const digits = customerPhoneDigits(input.customerPhone);
-  if (digits.length < MIN_CUSTOMER_PHONE_DIGITS) return PHONE_REQUIRED_MESSAGE;
-  return null;
-}
-
 function validateCustomer(input: ManualSaleInput) {
   if (!String(input.salespersonId || '').trim()) return 'Elige la vendedora.';
-  return validateCustomerPhone(input);
+  const phone = customerPhoneDigits(input.customerPhone);
+  if (phone && phone.length < MIN_CUSTOMER_PHONE_DIGITS) return PHONE_INVALID_MESSAGE;
+  return null;
 }
 
 function validateSaleLines(input: ManualSaleInput) {

@@ -49,6 +49,7 @@ import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
 import { Button } from '../components/ui/button';
 import { ClienteStep, EntregaStep, PagoStep, ProductosStep } from './registrar-venta/steps';
+import { NewSalespersonDialog } from './registrar-venta/NewSalespersonDialog';
 import { ResumenStep } from './registrar-venta/resumen';
 import { FieldHint, SaleStepper, type StepState } from './registrar-venta/widgets';
 import type { PaymentProof, SaleFormView, SalespersonOption } from './registrar-venta/view';
@@ -71,6 +72,7 @@ export default function RegistrarVenta() {
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
   const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
+  const [salespersonCreatorOpen, setSalespersonCreatorOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [documentRequest, setDocumentRequest] = useState<DocumentRequest>('none');
@@ -345,6 +347,16 @@ export default function RegistrarVenta() {
       : '';
   const submitDisabled = creating || !!loadError || channelMissing;
 
+  const addCreatedSalesperson = async (salesperson: SalespersonOption) => {
+    queryClient.setQueryData<SalespersonOption[]>(['active-salespeople'], (current = []) => (
+      [...current.filter((option) => option.id !== salesperson.id), salesperson]
+        .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+    ));
+    setSelectedSalespersonId(salesperson.id);
+    setStepError('');
+    showSnackbar({ message: `${salesperson.name} ya está disponible.`, tone: 'success' });
+  };
+
   const view: SaleFormView = {
     isAdmin,
     showSalespersonSelector: !salespersonOnly,
@@ -362,6 +374,8 @@ export default function RegistrarVenta() {
       setSelectedSalespersonId(value);
       setStepError('');
     },
+    canCreateSalesperson: can('users'),
+    openSalespersonCreator: () => setSalespersonCreatorOpen(true),
     customerName,
     setCustomerName: (value) => {
       setCustomerName(value);
@@ -434,7 +448,8 @@ export default function RegistrarVenta() {
   };
 
   return (
-    <form
+    <>
+      <form
       onSubmit={(event) => {
         event.preventDefault();
         if (isLastStep) {
@@ -532,6 +547,12 @@ export default function RegistrarVenta() {
         canSelect={(product) => remainingSaleStock(product, lines) > 0}
         showProfit
       />
-    </form>
+      </form>
+      <NewSalespersonDialog
+        open={salespersonCreatorOpen}
+        onOpenChange={setSalespersonCreatorOpen}
+        onCreated={addCreatedSalesperson}
+      />
+    </>
   );
 }

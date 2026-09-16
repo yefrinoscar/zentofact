@@ -24,6 +24,8 @@ export type SaleFormView = {
   salespeopleError: string;
   salespersonId: string;
   setSalespersonId: (value: string) => void;
+  canCreateSalesperson: boolean;
+  openSalespersonCreator: () => void;
   customerName: string;
   setCustomerName: (value: string) => void;
   customerPhone: string;
