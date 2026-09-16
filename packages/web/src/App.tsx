@@ -50,8 +50,8 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
   '/ventas': {
-    title: 'Ventas',
-    subtitle: 'Qué se vende, qué traer y qué no tocar.',
+    title: 'Desempeño de productos',
+    subtitle: 'Ventas, rotación y stock de todo tu catálogo.',
   },
   '/pagos': {
     title: 'Pagos',

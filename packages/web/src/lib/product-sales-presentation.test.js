@@ -33,7 +33,7 @@ import {
   TRACKED_BUYER_MIN_UNITS,
 } from './product-sales-presentation.ts';
 
-test('los kpis muestran el total de te llega y el desglose pagado/pendiente', () => {
+test('los kpis muestran ventas y unidades vendidas sin duplicar importes', () => {
   const kpis = productSalesKpis({
     productsCount: 4,
     unitsSold: 18,
@@ -49,36 +49,15 @@ test('los kpis muestran el total de te llega y el desglose pagado/pendiente', ()
     averageTicket: 200.875,
     visits: null,
   });
-  assert.deepEqual(kpis.map((item) => item.label), ['Ventas brutas', 'Te llega']);
+  assert.deepEqual(kpis.map((item) => item.label), ['Ventas', 'Unidades vendidas']);
   assert.equal(String(kpis[0].display).replace(/\u00a0/g, ' '), 'S/ 2,410.50');
-  assert.equal(String(kpis[1].display).replace(/\u00a0/g, ' '), 'S/ 1,783.77');
-  assert.equal(kpis[0].why, '18 u · 12 pedidos.');
-  assert.equal(kpis[1].why, 'Lo que entra a tu cuenta.');
-  assert.equal(kpis[1].paid, 421.56);
-  assert.equal(kpis[1].pending, 1362.21);
-  assert.equal(kpis[1].tone, 'receive');
+  assert.equal(kpis[1].display, '18');
+  assert.equal(kpis[0].why, 'Monto vendido en el periodo.');
+  assert.equal(kpis[1].why, '12 pedidos en el periodo.');
   assert.equal(paidShare(421.56, 1362.21).toFixed(4), (421.56 / (421.56 + 1362.21)).toFixed(4));
 });
 
-test('sin cruce de Pagos te llega queda vacío', () => {
-  const kpis = productSalesKpis({
-    productsCount: 1,
-    unitsSold: 2,
-    ordersCount: 1,
-    sellersCount: 1,
-    buyersCount: 1,
-    grossSales: 100,
-    falabellaTake: null,
-    arrives: null,
-    paidArrives: null,
-    pendingArrives: null,
-    settlementOrders: 0,
-    averageTicket: 100,
-    visits: null,
-  });
-  assert.equal(kpis[1].display, '—');
-  assert.equal(kpis[1].why, pagosHint());
-  assert.equal(kpis[1].paid, null);
+test('los textos de pagos explican los importes conciliados', () => {
   assert.equal(paidMoneyHint({ paidArrives: 140.52 }), 'Ya está en tu cuenta.');
   assert.equal(pendingMoneyHint({ pendingArrives: 421.56 }), 'Aún no depositan.');
   assert.equal(formatSalesMoneyOrDash(null), '—');
@@ -86,7 +65,7 @@ test('sin cruce de Pagos te llega queda vacío', () => {
     falabellaTake: null,
     sellers: [{ channelCode: 'manual', channelCodes: ['manual'] }],
   }), 'Sin cobro de Falabella.');
-  assert.equal(arrivesMoneyHint({ arrives: 140.52 }), 'Lo que entra a tu cuenta.');
+  assert.equal(arrivesMoneyHint({ arrives: 140.52 }), 'Después de cobros del canal.');
 });
 
 test('el seller usa el nombre corto', () => {
