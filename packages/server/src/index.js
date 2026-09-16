@@ -420,6 +420,36 @@ app.post('/logistics-inbox/print', async (c) => {
     });
   }
 });
+app.post('/logistics-inbox/print-stream', async (c) => {
+  let body = {};
+  try {
+    body = await c.req.json();
+  } catch (e) {
+    return fail(c, e, 400);
+  }
+  const user = c.get('user');
+  c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
+  c.header('Cache-Control', 'no-cache, no-transform');
+  c.header('X-Accel-Buffering', 'no');
+  return stream(c, async (s) => {
+    const write = (event) => s.write(`${JSON.stringify(event)}\n`);
+    try {
+      const result = await logisticsInbox.printLogisticsPackWithDefaults({
+        ...body,
+        printedBy: user?.email || user?.name || null,
+      }, {
+        onProgress: (progress) => write({ type: 'progress', ...progress }),
+      });
+      await write({ type: 'result', result });
+    } catch (e) {
+      await write({
+        type: 'error',
+        error: String(e?.message || e),
+        logId: e?.logId || null,
+      });
+    }
+  });
+});
 app.post('/logistics-inbox/:orderId/ready', async (c) => {
   try {
     const user = c.get('user');

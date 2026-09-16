@@ -213,6 +213,24 @@ test('imprime solo la etiqueta manual', async () => {
   assert.equal(record.params[1], 'operator@zentofact.local');
 });
 
+test('informa qué etiqueta está procesando mientras arma el PDF', async () => {
+  const progress = [];
+  await printLogisticsPack(
+    { orderIds: [10, 11] },
+    {
+      db: new PrintDb([
+        printRow({ id: 10, external_order_number: 'NUM-10' }),
+        printRow({ id: 11, external_order_number: 'NUM-11' }),
+      ]),
+      onProgress: async (event) => progress.push(event),
+    },
+  );
+  assert.deepEqual(progress, [
+    { current: 1, total: 2, orderNumber: 'NUM-10' },
+    { current: 2, total: 2, orderNumber: 'NUM-11' },
+  ]);
+});
+
 test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {
   const db = new InboxDb();
   await listLogisticsInbox({ stage: 'pending' }, db, { ripleyEnabled: true });

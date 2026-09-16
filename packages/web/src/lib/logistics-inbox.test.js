@@ -32,6 +32,7 @@ import {
   readyPrintHelper,
   remainingReadyToPrint,
   showPdfInTab,
+  updatePdfPreviewProgress,
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
@@ -309,11 +310,34 @@ test('el filtro de etapa resume plazo y lo que falta imprimir', () => {
 test('la pestaña de impresión muestra una hoja de etiquetas, no un texto suelto', () => {
   const html = pdfPreviewLoadingHtml(3);
   assert.match(html, /Armando las etiquetas/);
-  assert.match(html, /3 etiquetas/);
+  assert.match(html, /0 de 3/);
   assert.match(html, /class="press"/);
   assert.match(html, /class="head"/);
-  assert.equal(pdfPreviewLoadingHtml(1).includes('1 etiqueta'), true);
+  assert.match(html, /id="print-progress-bar"/);
+  assert.equal(pdfPreviewLoadingHtml(1).includes('0 de 1'), true);
   assert.equal(pdfPreviewLoadingHtml(0).includes('0 etiqueta'), false);
+});
+
+test('actualiza la pestaña con la etiqueta y el pedido en curso', () => {
+  const nodes = new Map([
+    ['print-progress-title', { textContent: '', style: { setProperty() {} } }],
+    ['print-progress-detail', { textContent: '', style: { setProperty() {} } }],
+    ['print-progress-count', { textContent: '', style: { setProperty() {} } }],
+    ['print-progress-bar', { textContent: '', style: { setProperty(name, value) { this[name] = value; } } }],
+  ]);
+  const preview = {
+    closed: false,
+    document: {
+      title: '',
+      getElementById(id) { return nodes.get(id) || null; },
+    },
+  };
+  updatePdfPreviewProgress(preview, { current: 18, total: 64, orderNumber: 'PV-10018' });
+  assert.equal(nodes.get('print-progress-title').textContent, 'Armando la etiqueta 18 de 64');
+  assert.equal(nodes.get('print-progress-detail').textContent, 'Pedido PV-10018');
+  assert.equal(nodes.get('print-progress-count').textContent, '18 de 64');
+  assert.equal(nodes.get('print-progress-bar').style['--progress'], '28%');
+  assert.equal(preview.document.title, 'Etiqueta 18 de 64');
 });
 
 test('el PDF de bandeja se abre en otra pestaña y no se descarga', () => {
