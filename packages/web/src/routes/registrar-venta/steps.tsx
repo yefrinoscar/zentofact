@@ -12,6 +12,7 @@ import {
   TriangleAlert,
   Truck,
   User,
+  UserPlus,
   Wallet,
   X,
 } from 'lucide-react';
@@ -46,6 +47,13 @@ import { PlacePicker } from '../../components/PlacePicker';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select';
 import { Choice, DeliveryDatePicker, FieldRow, NUMBER_INPUT, ProductPhoto, StepPanel } from './widgets';
 import type { SaleFormView } from './view';
 
@@ -178,21 +186,36 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
       <div className="space-y-4">
       {view.showSalespersonSelector ? (
         <FieldRow label="Vendedora" htmlFor="salesperson-id">
-          <select
-            id="salesperson-id"
-            className="daisy-select daisy-select-md w-full bg-background sm:h-9"
+          <div className="flex flex-col gap-2 sm:flex-row">
+          <Select
             value={view.salespersonId}
-            onChange={(event) => view.setSalespersonId(event.target.value)}
+            onValueChange={view.setSalespersonId}
             disabled={view.salespeopleLoading}
-            aria-invalid={Boolean(view.salespeopleError) || undefined}
           >
-            <option value="">
-              {view.salespeopleLoading ? 'Cargando vendedoras…' : 'Selecciona una vendedora'}
-            </option>
-            {view.salespeople.map((salesperson) => (
-              <option key={salesperson.id} value={salesperson.id}>{salesperson.name}</option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="salesperson-id"
+              className="h-11 w-full border-border bg-background shadow-sm sm:h-9"
+              aria-invalid={Boolean(view.salespeopleError) || undefined}
+            >
+              <SelectValue placeholder={view.salespeopleLoading ? 'Cargando vendedoras…' : 'Selecciona una vendedora'} />
+            </SelectTrigger>
+            <SelectContent>
+              {view.salespeople.map((salesperson) => (
+                <SelectItem key={salesperson.id} value={salesperson.id}>{salesperson.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {view.canCreateSalesperson ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 shrink-0 cursor-pointer sm:h-9"
+              onClick={view.openSalespersonCreator}
+            >
+              <UserPlus /> Nueva vendedora
+            </Button>
+          ) : null}
+          </div>
           {view.salespeopleError ? (
             <p className="mt-1.5 text-xs text-destructive">{view.salespeopleError}</p>
           ) : null}
@@ -207,7 +230,7 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
           autoComplete="name"
         />
       </FieldRow>
-      <FieldRow label="Teléfono" htmlFor="customer-phone">
+      <FieldRow label="Teléfono (opcional)" htmlFor="customer-phone">
           <Input
             id="customer-phone"
             value={view.customerPhone}

@@ -294,7 +294,15 @@ const apiHttp = {
       body: JSON.stringify({ id }),
     }).then(parseOperatorNotificationsResponse),
   listUsers: () => req('/users'),
-  createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
+  createUser: (data: {
+    name: string;
+    email: string;
+    password: string;
+    role: string;
+    permissions: string[];
+    active: boolean;
+    commissionPercent: number;
+  }) => req<{ id: string; name: string; email: string }>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteUser: (id: string) => req(`/users/${id}`, { method: 'DELETE' }),
   usersCatalog: () => req('/users/meta/catalog'),

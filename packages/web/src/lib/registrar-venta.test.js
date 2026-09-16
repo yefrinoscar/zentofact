@@ -153,10 +153,13 @@ test('validateManualSale permite registrar sin nombre del cliente', () => {
   assert.equal(validateManualSale(validSale({ customerName: '  ' })), null);
 });
 
-test('validateManualSale exige canal, teléfono, productos, fecha y datos de envío', () => {
+test('validateManualSale permite registrar sin teléfono del cliente', () => {
+  assert.equal(validateManualSale(validSale({ customerPhone: '' })), null);
+  assert.equal(validateManualSale(validSale({ customerPhone: '123' })), 'Completa el teléfono de 9 dígitos.');
+});
+
+test('validateManualSale exige canal, productos, fecha y datos de envío', () => {
   assert.equal(validateManualSale(validSale({ channelAccountId: null })), 'Todavía no hay un canal de venta manual habilitado.');
-  assert.equal(validateManualSale(validSale({ customerPhone: '343434' })), 'Escribe un teléfono de 9 dígitos.');
-  assert.equal(validateManualSale(validSale({ customerPhone: '' })), 'Escribe un teléfono de 9 dígitos.');
   assert.equal(validateManualSale(validSale({ lines: [] })), 'Agrega al menos un producto.');
   assert.equal(
     validateManualSale(validSale({ lines: [{ ...baseLine, quantity: 0 }] })),
@@ -519,8 +522,8 @@ test('cada paso solo bloquea por sus propios campos', () => {
   assert.equal(validateSaleStep('cliente', sinCliente), null);
   assert.equal(validateSaleStep('productos', sinCliente), null);
 
-  const sinTelefono = validSale({ customerPhone: '343434' });
-  assert.equal(validateSaleStep('cliente', sinTelefono), 'Escribe un teléfono de 9 dígitos.');
+  const sinTelefono = validSale({ customerPhone: '' });
+  assert.equal(validateSaleStep('cliente', sinTelefono), null);
   assert.equal(validateSaleStep('entrega', sinTelefono), null);
 
   // Falta la dirección: solo bloquea Entrega.
@@ -559,7 +562,7 @@ test('el resumen valida la venta completa antes de registrar', () => {
 test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () => {
   assert.equal(firstInvalidSaleStep(validSale()), null);
   assert.equal(firstInvalidSaleStep(validSale({ customerName: '' })), null);
-  assert.equal(firstInvalidSaleStep(validSale({ customerPhone: '123' })), 'cliente');
+  assert.equal(firstInvalidSaleStep(validSale({ customerPhone: '' })), null);
   assert.equal(firstInvalidSaleStep(validSale({ lines: [] })), 'productos');
   assert.equal(firstInvalidSaleStep(validSale({ shippingCarrier: '' })), 'entrega');
   assert.equal(firstInvalidSaleStep(validSale({ sellerShippingAmount: null })), 'entrega');
