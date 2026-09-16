@@ -345,6 +345,7 @@ const apiHttp = {
     sortDir?: 'asc' | 'desc';
   } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
+  listActiveSalespeople: () => req<Array<{ id: string; name: string }>>('/order-management/salespeople'),
   listRipleyLogisticsLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; find?: 'printed' | 'printable' | 'error'; sandbox?: boolean } = {}) =>
     req(`/ripley/${companyId}/logistics/labels${qs(filter)}`),
   listRipleyManifestLabels: (companyId: number, filter: { page?: number; limit?: number; orderId?: string; sandbox?: boolean } = {}) =>
@@ -374,7 +375,7 @@ const apiHttp = {
     method: 'PATCH',
     body: JSON.stringify(data),
   }),
-  createManagedOrder: (data: any) => {
+  createManagedOrder: (data: Record<string, unknown> & { idempotencyKey?: string }) => {
     const idempotencyKey = data.idempotencyKey || `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     return req('/order-management/orders/manual', {
       method: 'POST',

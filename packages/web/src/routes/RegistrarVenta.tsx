@@ -52,7 +52,7 @@ import { Button } from '../components/ui/button';
 import { ClienteStep, EntregaStep, PagoStep, ProductosStep } from './registrar-venta/steps';
 import { ResumenStep } from './registrar-venta/resumen';
 import { FieldHint, SaleStepper, type StepState } from './registrar-venta/widgets';
-import type { PaymentProof, SaleFormView } from './registrar-venta/view';
+import type { PaymentProof, SaleFormView, SalespersonOption } from './registrar-venta/view';
 
 type ChannelAccount = {
   id: number;
@@ -65,13 +65,14 @@ export default function RegistrarVenta() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSnackbar } = useOperatorSnackbar();
-  const { can, isAdmin } = usePermissions();
+  const { can, isAdmin, role, user } = usePermissions();
   const [searchParams] = useSearchParams();
   const afterSavePath = saleReturnPath(searchParams.get('from'), can('order_management'));
 
   const [accounts, setAccounts] = useState<ChannelAccount[]>([]);
   const [loadError, setLoadError] = useState('');
   const [saleSource, setSaleSource] = useState<SaleSource>('marketplace');
+  const [selectedSalespersonId, setSelectedSalespersonId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [documentRequest, setDocumentRequest] = useState<DocumentRequest>('none');
@@ -131,6 +132,15 @@ export default function RegistrarVenta() {
     staleTime: 30_000,
   });
   const fleetConfig = fleetQuery.data;
+  const salespersonOnly = role === 'vendedor';
+  const salespeopleQuery = useQuery({
+    queryKey: ['active-salespeople'],
+    queryFn: api.listActiveSalespeople,
+    enabled: !salespersonOnly,
+    staleTime: 30_000,
+  });
+  const salespeople = (salespeopleQuery.data || []) satisfies SalespersonOption[];
+  const salespersonId = salespersonOnly ? String(user?.id || '') : selectedSalespersonId;
 
   const manualAccount = useMemo(
     () => accounts.find((account) => account.channelCode === 'manual' && account.active) || null,
@@ -150,6 +160,7 @@ export default function RegistrarVenta() {
 
   const saleInput: ManualSaleInput = {
     channelAccountId: manualAccount?.id,
+    salespersonId,
     customerName,
     customerPhone,
     lines,
@@ -339,6 +350,21 @@ export default function RegistrarVenta() {
 
   const view: SaleFormView = {
     isAdmin,
+    showSalespersonSelector: !salespersonOnly,
+    salespeople,
+    salespeopleLoading: salespeopleQuery.isPending,
+    salespeopleError: salespeopleQuery.error
+      ? humanizeSaleError(
+        salespeopleQuery.error instanceof Error
+          ? salespeopleQuery.error.message
+          : 'No se pudieron cargar las vendedoras.',
+      )
+      : (!salespeopleQuery.isPending && salespeople.length === 0 ? 'No hay vendedoras activas.' : ''),
+    salespersonId,
+    setSalespersonId: (value) => {
+      setSelectedSalespersonId(value);
+      setStepError('');
+    },
     saleSource,
     setSaleSource,
     customerName,

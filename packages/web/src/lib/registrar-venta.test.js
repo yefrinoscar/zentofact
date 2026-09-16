@@ -37,6 +37,7 @@ const baseLine = {
 function validSale(overrides = {}) {
   return {
     channelAccountId: 22,
+    salespersonId: 'seller-9',
     customerName: 'Ana',
     customerPhone: '999111222',
     lines: [baseLine],
@@ -345,10 +346,15 @@ test('validateManualSale permite recojo sin repartidor ni mapa', () => {
   })), null);
 });
 
+test('validateManualSale exige vendedora para atribuir la venta', () => {
+  assert.equal(validateManualSale(validSale({ salespersonId: '' })), 'Elige la vendedora.');
+});
+
 test('buildManualSaleOrderPayload incluye fecha de entrega y promisedShippingAt', () => {
   const payload = buildManualSaleOrderPayload(validSale());
 
   assert.equal(payload.promisedShippingAt, '2026-08-25T12:00:00-05:00');
+  assert.equal(payload.salespersonId, 'seller-9');
   assert.equal(payload.metadata.deliveryDate, '2026-08-25');
   assert.equal(payload.metadata.origin, 'manual_ui');
   assert.equal(payload.fulfillmentStatus, 'ready_to_ship');

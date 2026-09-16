@@ -177,6 +177,28 @@ export function ClienteStep({ view }: { view: SaleFormView }) {
   return (
     <StepPanel title="Cliente" hint="Quién compra y qué comprobante pide." icon={User}>
       <div className="space-y-4">
+      {view.showSalespersonSelector ? (
+        <FieldRow label="Vendedora" htmlFor="salesperson-id">
+          <select
+            id="salesperson-id"
+            className="daisy-select daisy-select-md w-full bg-background sm:h-9"
+            value={view.salespersonId}
+            onChange={(event) => view.setSalespersonId(event.target.value)}
+            disabled={view.salespeopleLoading}
+            aria-invalid={Boolean(view.salespeopleError) || undefined}
+          >
+            <option value="">
+              {view.salespeopleLoading ? 'Cargando vendedoras…' : 'Selecciona una vendedora'}
+            </option>
+            {view.salespeople.map((salesperson) => (
+              <option key={salesperson.id} value={salesperson.id}>{salesperson.name}</option>
+            ))}
+          </select>
+          {view.salespeopleError ? (
+            <p className="mt-1.5 text-xs text-destructive">{view.salespeopleError}</p>
+          ) : null}
+        </FieldRow>
+      ) : null}
       <FieldRow label="Origen">
         <Choice value={view.saleSource} options={SALE_SOURCES} onChange={view.setSaleSource} ariaLabel="Origen de la venta" />
       </FieldRow>
