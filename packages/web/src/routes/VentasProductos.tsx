@@ -53,6 +53,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Skeleton } from '../components/ui/skeleton';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from '../components/ui/table';
+import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { documentDateRangeForLastDays, type DocumentDateRange } from '../lib/documentDateRange';
 import {
   buyerCompaniesLabel,
@@ -73,6 +74,8 @@ import {
   paidMoneyHint,
   paidShare,
   pendingMoneyHint,
+  productRestockAction,
+  productRestockExplanation,
   productSalesKpis,
   publishedLabel,
   restockFormula,
@@ -105,7 +108,7 @@ const COLUMN_LABELS = {
   netSales: 'Ventas netas',
   units: 'Unidades vendidas: total',
   unitsPerDay: 'Unidades vendidas por día',
-  returnLoss: 'Pérdida por devolución',
+  returnLoss: 'Devolución',
   stock: 'Stock disponible',
   coverDays: 'Días de stock',
   keepsPerDay: 'Margen diario',
@@ -152,12 +155,12 @@ type ProductSalesResponse = {
 type SortBy = 'product' | 'units' | 'unitsPerDay' | 'keepsPerDay' | 'orders' | 'grossSales' | 'falabellaTake' | 'netSales' | 'returnLoss' | 'sellers';
 
 const COLUMN_CLASS: Record<ProductSalesColumnId, string> = {
-  product: 'w-[52%] min-w-0 sm:w-[34%]',
+  product: 'w-[52%] min-w-0 sm:w-[39%]',
   grossSales: 'hidden sm:table-cell sm:w-[9%] text-right',
   netSales: 'hidden sm:table-cell sm:w-[9%] text-right',
   units: 'w-[13.5%] sm:w-[7%] text-right',
   unitsPerDay: 'w-[13.5%] sm:w-[7%] text-right',
-  returnLoss: 'hidden sm:table-cell sm:w-[15%] text-right',
+  returnLoss: 'hidden sm:table-cell sm:w-[10%] text-right',
   stock: 'w-[21%] sm:w-[10%] text-right',
   coverDays: 'hidden sm:table-cell sm:w-[9%] text-right',
   keepsPerDay: 'hidden md:table-cell md:w-[9%] text-right',
@@ -350,28 +353,6 @@ export default function VentasProductos() {
       ],
     },
     {
-      id: 'returnLoss',
-      accessorKey: 'returnLoss',
-      header: () => (
-        <SortHeader
-          label="pérdida por devolución: comisión y logística no revertidas"
-          displayLabel="Pérdida por devolución"
-          active={sortBy === 'returnLoss'}
-          dir={sortDir}
-          className="justify-end"
-          onClick={() => applySort('returnLoss')}
-        />
-      ),
-      cell: ({ row }) => {
-        const loss = Number(row.original.returnLoss || 0);
-        return (
-          <span className={cn('font-medium tabular-nums', loss > 0 ? TONE.take : 'text-muted-foreground')}>
-            {loss > 0 ? `− ${formatSalesMoney(loss)}` : formatSalesMoney(0)}
-          </span>
-        );
-      },
-    },
-    {
       id: 'stock',
       accessorKey: 'available',
       header: () => <span className="font-medium text-muted-foreground">Stock</span>,
@@ -421,6 +402,28 @@ export default function VentasProductos() {
       accessorKey: 'visits',
       header: () => <span className="font-medium text-muted-foreground">Visitas</span>,
       cell: ({ row }) => <span className="tabular-nums">{formatVisits(row.original.visits)}</span>,
+    },
+    {
+      id: 'returnLoss',
+      accessorKey: 'returnLoss',
+      header: () => (
+        <SortHeader
+          label="pérdida por devolución: comisión y logística no revertidas"
+          displayLabel="Devolución"
+          active={sortBy === 'returnLoss'}
+          dir={sortDir}
+          className="justify-end"
+          onClick={() => applySort('returnLoss')}
+        />
+      ),
+      cell: ({ row }) => {
+        const loss = Number(row.original.returnLoss || 0);
+        return (
+          <span className={cn('font-medium tabular-nums', loss > 0 ? TONE.take : 'text-muted-foreground')}>
+            {loss > 0 ? `− ${formatSalesMoney(loss)}` : formatSalesMoney(0)}
+          </span>
+        );
+      },
     },
   ], [sortBy, sortDir]);
 
@@ -675,6 +678,7 @@ function ProductCell({ product }: { product: ProductSaleRow }) {
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
           <CopyableSku sku={product.sku} />
           <PaceIcon pace={product.pace} />
+          <RestockTag product={product} />
         </div>
       </div>
     </div>
@@ -709,6 +713,38 @@ function PaceIcon({ pace }: { pace?: ProductSaleRow['pace'] }) {
     return <TrendingDown className="size-3.5 text-muted-foreground" aria-label="Ventas a la baja" />;
   }
   return null;
+}
+
+function RestockTag({ product }: { product: ProductSaleRow }) {
+  const action = productRestockAction(product);
+  const label = action === 'bringBack' ? 'Volver a traer' : 'No traer';
+  return (
+    <UiTooltip>
+      <TooltipTrigger asChild>
+        <Badge
+          asChild
+          variant={action === 'bringBack' ? 'destructive' : 'outline'}
+          className={cn(
+            'h-5 cursor-help rounded-md px-1.5 text-[10px] font-semibold leading-none',
+            action === 'bringBack' && 'hover:bg-destructive/20',
+            action === 'doNotBring' && 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+        >
+          <button
+            type="button"
+            aria-label={`Explicar recomendación: ${label}`}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            {label}
+          </button>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={6} className="max-w-80 leading-4">
+        {productRestockExplanation(product)}
+      </TooltipContent>
+    </UiTooltip>
+  );
 }
 
 function SalesSparkline({ series }: { series: ProductSalePoint[] }) {

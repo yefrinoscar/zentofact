@@ -402,6 +402,50 @@ export function stockIsLow(coverDays: number | null | undefined) {
   return coverDays != null && coverDays < 14;
 }
 
+const RESTOCK_MIN_UNITS_PER_DAY = 0.4;
+
+export type ProductRestockAction = 'bringBack' | 'doNotBring';
+
+export function productRestockAction(
+  product: Pick<ProductSaleRow, 'restockQty' | 'unitsPerDay'>,
+): ProductRestockAction {
+  if (
+    Number(product.restockQty || 0) > 0
+    && Number(product.unitsPerDay || 0) >= RESTOCK_MIN_UNITS_PER_DAY
+  ) return 'bringBack';
+  return 'doNotBring';
+}
+
+export function productRestockExplanation(
+  product: Pick<ProductSaleRow, 'available' | 'coverDays' | 'horizonDays' | 'restockQty' | 'unitsPerDay'>,
+) {
+  const action = productRestockAction(product);
+  const pace = formatUnitsPerDay(product.unitsPerDay);
+  const horizon = formatSalesCount(product.horizonDays || 30);
+
+  if (action === 'bringBack') {
+    const quantity = formatSalesCount(product.restockQty);
+    if (product.available != null && product.coverDays != null) {
+      const available = formatSalesCount(product.available);
+      const coverage = formatSalesCount(Math.round(product.coverDays));
+      return `Volver a traer. Tienes ${available} unidades: cubren ${coverage} días. Trae ${quantity} para cubrir ${horizon} días.`;
+    }
+    return `Volver a traer. Trae ${quantity} para cubrir ${horizon} días.`;
+  }
+
+  if (Number(product.unitsPerDay || 0) < RESTOCK_MIN_UNITS_PER_DAY) {
+    return `No traer. Se vende ${pace} u/día. Espera más movimiento antes de reponer.`;
+  }
+
+  if (product.available != null && product.coverDays != null) {
+    const available = formatSalesCount(product.available);
+    const coverage = formatSalesCount(Math.round(product.coverDays));
+    return `No traer. Vende ${pace} u/día, pero tienes ${available} unidades: cubren ${coverage} días.`;
+  }
+
+  return `No traer. Vende ${pace} u/día y no falta stock para cubrir ${horizon} días.`;
+}
+
 export function restockWhyLabel(product: Pick<ProductSaleRow, 'unitsPerDay' | 'available' | 'coverDays' | 'pace'>) {
   const pace = `${formatUnitsPerDay(product.unitsPerDay)} u/día`;
   const stock = `${formatSalesCount(product.available || 0)} u en almacén`;
