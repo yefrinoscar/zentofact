@@ -33,6 +33,7 @@ import {
   logisticsDeadlineLabel,
   logisticsDeliveryLabel,
   logisticsEmptyCopy,
+  logisticsFlowCopy,
   logisticsFlowSteps,
   logisticsNextStep,
   logisticsPrintSuccessCopy,
@@ -57,7 +58,8 @@ test('la bandeja inicia mostrando todos los plazos', () => {
 test('nombres cortos y colores por canal', () => {
   assert.equal(logisticsChannelLabel('falabella'), 'Falabella');
   assert.equal(logisticsChannelLabel('manual'), 'Propios');
-  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'manual']);
+  assert.equal(logisticsChannelLabel('mercado_libre'), 'Mercado Libre');
+  assert.deepEqual(visibleLogisticsChannels({ ripley: false }).map((item) => item.value), ['all', 'falabella', 'mercado_libre', 'manual']);
   assert.equal(visibleLogisticsChannels().some((item) => item.value === 'ripley'), true);
   assert.match(logisticsChannelClass('ripley'), /violet/);
   assert.match(logisticsChannelClass('manual'), /teal/);
@@ -76,6 +78,16 @@ test('manual imprime siempre; Falabella solo si está listo; Ripley no se imprim
   assert.equal(canPrintLogisticsLabel({ channelCode: 'manual', fulfillmentStatus: 'shipped' }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'pending', companyId: 1 }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'falabella', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), true);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1, metadata: { shippingId: '900000030' },
+  }), false);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1,
+    metadata: { shippingId: '900000031', shippingMode: 'me2', logisticType: 'drop_off', shippingSubstatus: 'ready_to_print' },
+  }), true);
+  assert.equal(canPrintLogisticsLabel({
+    channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1,
+  }), false);
   assert.equal(canPrintLogisticsLabel({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }), false);
   assert.equal(logisticsRipleyLabelSoon({ channelCode: 'ripley', fulfillmentStatus: 'shipped', companyId: 1 }), false);
@@ -157,6 +169,19 @@ test('el siguiente paso depende del canal, el estado y la impresión previa', ()
   );
   assert.deepEqual(logisticsNextStep({ channelCode: 'falabella', fulfillmentStatus: 'shipped', companyId: 1 }), { kind: 'view', label: 'Ver detalle' });
   assert.deepEqual(
+    logisticsNextStep({ channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1 }),
+    { kind: 'wait', label: 'Esperando etiqueta' },
+  );
+  assert.deepEqual(
+    logisticsNextStep({
+      channelCode: 'mercado_libre',
+      fulfillmentStatus: 'ready_to_ship',
+      companyId: 1,
+      metadata: { shippingId: '900000031', shippingMode: 'me2', logisticType: 'drop_off', shippingSubstatus: 'ready_to_print' },
+    }),
+    { kind: 'print', label: 'Imprimir' },
+  );
+  assert.deepEqual(
     logisticsNextStep({ channelCode: 'ripley', fulfillmentStatus: 'pending', companyId: 1, externalOrderId: 'R-1' }),
     { kind: 'wait', label: 'Gestionar en Ripley' },
   );
@@ -188,6 +213,31 @@ test('el flujo de despacho marca los pasos completados', () => {
   assert.deepEqual(
     logisticsFlowSteps({ channelCode: 'ripley', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => [step.label, step.state]),
     [['Empacar', 'done'], ['Confirmar recojo', 'done'], ['Etiqueta', 'todo']],
+  );
+});
+
+test('Mercado Libre espera ME2 y luego imprime 10×15', () => {
+  assert.match(
+    logisticsFlowCopy({ channelCode: 'mercado_libre', fulfillmentStatus: 'pending', companyId: 1 }),
+    /Espera a que Mercado Envíos/,
+  );
+  assert.match(
+    logisticsFlowCopy({
+      channelCode: 'mercado_libre',
+      fulfillmentStatus: 'ready_to_ship',
+      companyId: 1,
+      metadata: {
+        shippingId: '900000031',
+        shippingMode: 'me2',
+        logisticType: 'drop_off',
+        shippingSubstatus: 'ready_to_print',
+      },
+    }),
+    /10×15/,
+  );
+  assert.deepEqual(
+    logisticsFlowSteps({ channelCode: 'mercado_libre', fulfillmentStatus: 'ready_to_ship', companyId: 1 }).map((step) => step.label),
+    ['Preparar', 'Etiqueta ME2', 'Despachar'],
   );
 });
 

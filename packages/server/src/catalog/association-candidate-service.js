@@ -141,9 +141,9 @@ async function dependenciesFor(input) {
 function selectedChannels(filters) {
   const requested = filters.channelCode
     ? [filters.channelCode]
-    : String(filters.channelCodes || 'falabella,ripley').split(',');
+    : String(filters.channelCodes || 'falabella,ripley,mercado_libre').split(',');
   const channels = [...new Set(requested.map((value) => String(value).trim().toLowerCase()).filter(Boolean))];
-  if (!channels.length || channels.some((channel) => !['falabella', 'ripley'].includes(channel))) {
+  if (!channels.length || channels.some((channel) => !['falabella', 'ripley', 'mercado_libre'].includes(channel))) {
     throw httpError('Canal inválido.');
   }
   return new Set(channels);

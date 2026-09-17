@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ripley">
+  <rect width="64" height="64" rx="14" fill="#E3107B"/>
+  <path fill="#fff" d="M21 16h16.8c7.4 0 12.6 4.6 12.6 11.6 0 5.2-3.1 9.1-8.2 10.6L50 48h-9.6L33.6 38H29v10h-8V16zm8 16.2h8c3.5 0 5.6-1.9 5.6-4.8S40.5 22.6 37 22.6H29v9.6z"/>
+</svg>

@@ -13,7 +13,7 @@ import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
-const CHANNELS = new Set(['falabella', 'ripley', 'manual']);
+const CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre', 'manual']);
 const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
 const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);
@@ -777,6 +777,55 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
   }
 
+  const mercadoLibre = orders.filter((order) => order.channelCode === 'mercado_libre');
+  if (mercadoLibre.length) {
+    const getLabel = dependencies.getMercadoLibreLabel;
+    if (!getLabel) throw new Error('No hay generador de etiquetas Mercado Libre.');
+    const buffers = [];
+    const seenShipments = new Set();
+    for (const order of mercadoLibre) {
+      const shippingId = String(order.metadata?.shippingId || '').trim();
+      const shippingMode = String(order.metadata?.shippingMode || '').trim().toLowerCase();
+      const logisticType = String(order.metadata?.logisticType || '').trim().toLowerCase();
+      const substatus = String(order.metadata?.shippingSubstatus || '').trim().toLowerCase();
+      if (!order.companyId) {
+        skipped.push({ id: order.id, reason: 'El pedido Mercado Libre no tiene seller.' });
+        continue;
+      }
+      if (order.fulfillmentStatus !== 'ready_to_ship') {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía no habilitó el despacho.' });
+        continue;
+      }
+      if (!shippingId) {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía no asignó el envío.' });
+        continue;
+      }
+      if (shippingMode !== 'me2') {
+        skipped.push({ id: order.id, reason: 'Este envío no usa Mercado Envíos 2.' });
+        continue;
+      }
+      if (!['cross_docking', 'drop_off', 'xd_drop_off', 'self_service'].includes(logisticType)) {
+        skipped.push({ id: order.id, reason: 'Este envío no usa una etiqueta ME2 imprimible por el seller.' });
+        continue;
+      }
+      if (!['ready_to_print', 'printed', 'ready_for_dropoff', 'ready_for_pickup'].includes(substatus)) {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía está generando la etiqueta.' });
+        continue;
+      }
+      if (seenShipments.has(shippingId)) continue;
+      try {
+        const label = await getLabel({ companyId: order.companyId, shippingId });
+        const buffer = decodePdf(label?.base64 || label?.pdf || label);
+        if (!buffer?.length) throw new Error('La etiqueta Mercado Libre llegó vacía.');
+        seenShipments.add(shippingId);
+        buffers.push(buffer);
+        labelCount += 1;
+      } catch (error) {
+        skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta Mercado Libre.' });
+      }
+    }
+    if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
+  }
   const manual = orders.filter((order) => order.channelCode === 'manual');
   if (manual.length) {
     pdfParts.push(await buildManualLabelSheet(manual));
@@ -825,6 +874,15 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     labelCount,
     skipped,
   };
+}
+
+export async function getMercadoLibreLabel({ companyId, shippingId }, dependencies = {}) {
+  const core = dependencies.core || await loadCore();
+  const tokens = dependencies.tokens || await import('./mercado-libre-tokens.js');
+  const company = await (dependencies.getCompany || core.getCompany)(Number(companyId));
+  if (!company) throw new Error('No está la empresa de este pedido.');
+  const client = await tokens.mercadoLibreClientForCompany(company, dependencies);
+  return client.getShipmentLabels([String(shippingId)], 'pdf');
 }
 
 function ripleyShipmentStatus(value) {
@@ -982,6 +1040,7 @@ export async function printLogisticsPackWithDefaults(input = {}, dependencies = 
     getFalabellaLabel: dependencies.getFalabellaLabel || (({ companyId, orderId }) => (
       core.falabellaGetShippingLabel({ companyId, orderId, recordPrint: false })
     )),
+    getMercadoLibreLabel: dependencies.getMercadoLibreLabel || ((order) => getMercadoLibreLabel(order, dependencies)),
     listRipleyLabels: dependencies.listRipleyLabels || (({ companyId, orderId, find }) => (
       ripleyLogistics.listRipleySvcLabels(companyId, { orderId, find, limit: 25 })
     )),

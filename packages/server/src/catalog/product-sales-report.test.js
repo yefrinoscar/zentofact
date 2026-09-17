@@ -22,7 +22,6 @@ test('el filtro de ventas de productos usa el periodo de Lima y ordena por venta
   assert.equal(filters.payout, 'all');
   assert.equal(filters.limit, 20);
 });
-
 test('el reporte acepta filtros de columna de dinero y pago', () => {
   const filters = parseProductSalesFilters({
     from: '2026-08-01',
@@ -336,4 +335,3 @@ test('si el cruce del producto es poco, usa la tasa del seller', () => {
   });
   assert.equal(rate, 0.2);
 });
-

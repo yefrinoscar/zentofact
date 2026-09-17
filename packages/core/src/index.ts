@@ -81,17 +81,21 @@ export { runMigrations } from './db/migrate';
 export {
   listCompanies,
   getCompany,
+  getCompanyByMercadoLibreUserId,
   listPublicCompanies,
   getPublicCompany,
   toPublicCompany,
   createCompany,
   updateCompany,
   deleteCompany,
+  setMercadoLibreGrant,
+  clearMercadoLibreGrant,
   testSunatConnection,
 } from './services/company.service';
 export type {
   CreateCompanyInput,
   UpdateCompanyInput,
+  MercadoLibreGrantInput,
   PublicCompany,
   CompanyRecord,
   TestSunatConnectionResult,

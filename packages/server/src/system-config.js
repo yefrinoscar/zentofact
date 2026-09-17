@@ -48,6 +48,15 @@ export const SYSTEM_FLAGS = {
     requireListings: false,
     docsPath: null,
   },
+  mercado_libre_sync: {
+    key: 'mercado_libre_sync',
+    envVar: 'MERCADO_LIBRE_SYNC_ENABLED',
+    label: 'Sincronización periódica de Mercado Libre',
+    description: 'Pausa o reanuda la descarga automática de pedidos desde Mercado Libre. No afecta webhooks ni el sync manual.',
+    confirmWord: null,
+    requireListings: false,
+    docsPath: null,
+  },
 };
 
 function envBooleanRaw(name) {
@@ -259,6 +268,11 @@ export async function isFalabellaSyncEnabled(db) {
 /** Lectura runtime del scheduler periódico de Ripley. */
 export async function isRipleySyncEnabled(db) {
   return (await effectiveFlagState(SYSTEM_FLAGS.ripley_sync, db)).effective;
+}
+
+/** Lectura runtime del scheduler periódico de Mercado Libre. */
+export async function isMercadoLibreSyncEnabled(db) {
+  return (await effectiveFlagState(SYSTEM_FLAGS.mercado_libre_sync, db)).effective;
 }
 
 async function effectiveFlagState(meta, db) {

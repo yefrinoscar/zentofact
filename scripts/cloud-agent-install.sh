@@ -15,5 +15,6 @@ npm install --no-save --no-package-lock \
 npm run build -w @zentofact/falabella-api
 npm run build -w @zentofact/core
 npm run build -w @zentofact/ripley-api
+npm run build -w @zentofact/mercado-libre-api
 
 echo "cloud-agent-install=ok"
