@@ -45,6 +45,9 @@ type CompanyForm = {
   claveSol: string;
   sellerUsername: string;
   sellerPassword: string;
+  mercadoLibreAppId: string;
+  mercadoLibreClientSecret: string;
+  mercadoLibreRedirectUri: string;
   falabellaApiUserId: string;
   falabellaApiKey: string;
   ripleyApiKey: string;
@@ -76,6 +79,12 @@ type CompanyRow = {
   hasFalabellaCredentials?: boolean;
   hasRipleyCredentials?: boolean;
   hasRipleySvcCredentials?: boolean;
+  mercadoLibreAppId?: string | null;
+  mercadoLibreRedirectUri?: string | null;
+  hasMercadoLibreAppCredentials?: boolean;
+  mercadoLibreUserId?: string | null;
+  mercadoLibreSiteId?: string | null;
+  hasMercadoLibreCredentials?: boolean;
 };
 
 type ChannelAutoEmission = { falabella: boolean; ripley: boolean };
@@ -92,6 +101,8 @@ type OrderSyncStatus = {
   lastError?: string | null;
 };
 
+type CompanyEditorSection = 'company' | 'channels' | 'billing';
+
 const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false };
 const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true };
 
@@ -106,6 +117,9 @@ const initialForm: CompanyForm = {
   claveSol: '',
   sellerUsername: '',
   sellerPassword: '',
+  mercadoLibreAppId: '',
+  mercadoLibreClientSecret: '',
+  mercadoLibreRedirectUri: 'https://limbo.zentoolabs.com/integrations/mercado-libre/callback',
   falabellaApiUserId: '',
   falabellaApiKey: '',
   ripleyApiKey: '',
@@ -231,6 +245,7 @@ export default function Companies() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'nombre', desc: false }]);
   const [showClaveSol, setShowClaveSol] = useState(false);
   const [showSellerPassword, setShowSellerPassword] = useState(false);
+  const [showMercadoLibreClientSecret, setShowMercadoLibreClientSecret] = useState(false);
   const [showFalabellaApiKey, setShowFalabellaApiKey] = useState(false);
   const [showRipleyApiKey, setShowRipleyApiKey] = useState(false);
   const [showRipleySvcPassword, setShowRipleySvcPassword] = useState(false);
@@ -242,6 +257,9 @@ export default function Companies() {
   const [initialFalabellaAutoEmission, setInitialFalabellaAutoEmission] = useState(false);
   const [search, setSearch] = useState('');
   const [setupFilter, setSetupFilter] = useState('all');
+  const [mercadoLibreConfigured, setMercadoLibreConfigured] = useState(false);
+  const [mercadoLibreMessage, setMercadoLibreMessage] = useState('');
+  const [editorSection, setEditorSection] = useState<CompanyEditorSection>('company');
 
   const load = () => {
     setLoadingCompanies(true);
@@ -259,7 +277,31 @@ export default function Companies() {
 
   useEffect(() => {
     load();
+    const hashQuery = window.location.hash.split('?')[1] || '';
+    const query = new URLSearchParams(hashQuery);
+    if (query.get('ml') === 'connected') setMercadoLibreMessage('Mercado Libre quedó conectado.');
+    if (query.get('ml') === 'error') setMercadoLibreMessage(query.get('message') || 'No se pudo conectar Mercado Libre.');
   }, []);
+
+  const connectMercadoLibre = () => {
+    if (!editing) return;
+    window.location.assign(api.mercadoLibreConnectUrl(editing.id));
+  };
+
+  const disconnectMercadoLibre = async () => {
+    if (!editing || !window.confirm('¿Desconectar esta cuenta de Mercado Libre?')) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.disconnectMercadoLibre(editing.id);
+      setEditing({ ...editing, hasMercadoLibreCredentials: false, mercadoLibreUserId: null, mercadoLibreSiteId: null });
+      await load();
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo desconectar Mercado Libre.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const resetForm = () => {
     setForm(initialForm);
@@ -270,6 +312,7 @@ export default function Companies() {
     setError('');
     setShowClaveSol(false);
     setShowSellerPassword(false);
+    setShowMercadoLibreClientSecret(false);
     setShowFalabellaApiKey(false);
     setShowRipleyApiKey(false);
     setShowRipleySvcPassword(false);
@@ -279,6 +322,8 @@ export default function Companies() {
     setChannelSyncErrors({});
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
+    setMercadoLibreConfigured(false);
+    setEditorSection('company');
     if (certInputRef.current) certInputRef.current.value = '';
   };
 
@@ -426,6 +471,8 @@ export default function Companies() {
         ubigeo: nextForm.ubigeo,
         usuarioSol: nextForm.usuarioSol,
         sellerUsername: nextForm.sellerUsername,
+        mercadoLibreAppId: nextForm.mercadoLibreAppId,
+        mercadoLibreRedirectUri: nextForm.mercadoLibreRedirectUri,
         falabellaApiUserId: nextForm.falabellaApiUserId,
         ripleyShopId: nextForm.ripleyShopId,
         ripleySvcUsername: nextForm.ripleySvcUsername,
@@ -433,6 +480,9 @@ export default function Companies() {
       };
       if (nextForm.claveSol.trim()) updateData.claveSol = nextForm.claveSol;
       if (nextForm.sellerPassword.trim()) updateData.sellerPassword = nextForm.sellerPassword;
+      if (nextForm.mercadoLibreClientSecret.trim()) {
+        updateData.mercadoLibreClientSecret = nextForm.mercadoLibreClientSecret;
+      }
       if (nextForm.falabellaApiKey.trim()) updateData.falabellaApiKey = nextForm.falabellaApiKey;
       if (nextForm.ripleyApiKey.trim()) updateData.ripleyApiKey = nextForm.ripleyApiKey;
       if (nextForm.ripleySvcPassword.trim()) updateData.ripleySvcPassword = nextForm.ripleySvcPassword;
@@ -527,6 +577,21 @@ export default function Companies() {
       ),
     },
     {
+      id: 'mercado-libre',
+      header: 'Mercado Libre',
+      cell: ({ row }) => (
+        <SetupBadge
+          ok={row.original.hasMercadoLibreCredentials === true}
+          okTitle={`Cuenta ${row.original.mercadoLibreUserId || ''} conectada`}
+          badTitle={row.original.hasMercadoLibreAppCredentials
+            ? 'La aplicación está guardada; falta autorizar la cuenta'
+            : 'Faltan App ID, Client Secret o Redirect URI'}
+          okLabel="Cuenta conectada"
+          badLabel={row.original.hasMercadoLibreAppCredentials ? 'Lista para conectar' : 'Aplicación pendiente'}
+        />
+      ),
+    },
+    {
       id: 'estado',
       header: 'Estado',
       cell: ({ row }) => (
@@ -596,6 +661,10 @@ export default function Companies() {
       claveSol: '',
       sellerUsername: company.sellerUsername || '',
       sellerPassword: '',
+      mercadoLibreAppId: company.mercadoLibreAppId || '',
+      mercadoLibreClientSecret: '',
+      mercadoLibreRedirectUri: company.mercadoLibreRedirectUri
+        || 'https://limbo.zentoolabs.com/integrations/mercado-libre/callback',
       falabellaApiUserId: company.falabellaApiUserId || '',
       falabellaApiKey: '',
       ripleyApiKey: '',
@@ -609,7 +678,9 @@ export default function Companies() {
       api.listOrderChannelAccounts({ companyId: company.id }),
       api.autoEmitGetConfig(),
       api.getManagedOrderSyncStatus({ companyId: company.id }),
-    ]).then(([accounts, autoEmission, syncStatus]) => {
+      api.getMercadoLibreStatus(company.id),
+    ]).then(([accounts, autoEmission, syncStatus, mercadoLibreStatus]) => {
+      setMercadoLibreConfigured(mercadoLibreStatus?.configured === true);
       const channelAccounts = Array.isArray(accounts) ? accounts.filter(isChannelAccount) : [];
       const syncAccounts = Array.isArray(syncStatus?.accounts)
         ? syncStatus.accounts.filter(isOrderSyncStatus)
@@ -716,130 +787,185 @@ export default function Companies() {
       </div>
 
       {(showCreate || editing) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-xl border border-border bg-card p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
+          <div className="flex h-full w-full max-w-5xl flex-col border-l border-border bg-background shadow-2xl">
             <form
               ref={formRef}
+              className="flex min-h-0 flex-1 flex-col"
               onSubmit={(event) => {
                 event.preventDefault();
                 void (editing ? handleUpdate() : handleCreate());
               }}
             >
-              <h2 className="mb-4 text-lg font-semibold">{editing ? 'Editar Empresa' : 'Nueva Empresa'}</h2>
-
-              {error && (
-                <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{error}</span>
+              <header className="flex items-center justify-between border-b border-border px-6 py-5">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">{editing ? 'Configurar empresa' : 'Nueva empresa'}</h2>
+                  <p className="truncate text-sm text-muted-foreground">
+                    {form.nombre || form.razonSocial || 'Datos, canales y facturación'}{form.ruc ? ` · ${form.ruc}` : ''}
+                  </p>
                 </div>
-              )}
+                <Button type="button" variant="ghost" onClick={closeEditor} disabled={saving}>Cerrar</Button>
+              </header>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {field('RUC (11 dígitos)', 'ruc')}
-                {field('Nombre', 'nombre')}
-                {field('Razón Social', 'razonSocial')}
-                {field('Nombre Comercial', 'nombreComercial')}
-                {field('Ubigeo (6 dígitos)', 'ubigeo')}
-                <div className="md:col-span-2">{field('Dirección', 'direccion')}</div>
-                {field('Usuario SOL', 'usuarioSol')}
-                {field(
-                  'Clave SOL',
-                  'claveSol',
-                  'password',
-                  editing?.hasSolCredentials ? 'Dejar vacío para mantener la actual' : '',
-                  {
-                    revealable: true,
-                    revealed: showClaveSol,
-                    onToggleReveal: () => setShowClaveSol((value) => !value),
-                  },
-                )}
-              </div>
+              <nav className="flex gap-1 border-b border-border px-6" aria-label="Secciones de empresa">
+                {([
+                  ['company', 'Empresa'],
+                  ['channels', 'Canales'],
+                  ['billing', 'Facturación'],
+                ] as const).map(([section, label]) => (
+                  <button
+                    key={section}
+                    type="button"
+                    onClick={() => setEditorSection(section)}
+                    className={cn(
+                      'border-b-2 px-4 py-3 text-sm font-medium transition',
+                      editorSection === section
+                        ? 'border-primary text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </nav>
 
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella Seller</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Usuario Seller', 'sellerUsername')}
-                  {field(
-                    'Contraseña Seller',
-                    'sellerPassword',
-                    'password',
-                    editing?.hasSellerPassword ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showSellerPassword,
-                      onToggleReveal: () => setShowSellerPassword((value) => !value),
-                    },
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Falabella API</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('User ID API', 'falabellaApiUserId', 'text', 'Settings > Integration Management > API')}
-                  {field(
-                    'API Key',
-                    'falabellaApiKey',
-                    'password',
-                    editing?.hasFalabellaCredentials ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showFalabellaApiKey,
-                      onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
-                    },
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Credenciales Ripley (Mirakl)</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('Shop ID (opcional)', 'ripleyShopId', 'text', 'Se usa cuando la key accede a varias tiendas')}
-                  <div className="md:col-span-2">{field(
-                    'API Key',
-                    'ripleyApiKey',
-                    'password',
-                    editing?.hasRipleyCredentials ? 'Dejar vacío para mantener la actual' : '',
-                    {
-                      revealable: true,
-                      revealed: showRipleyApiKey,
-                      onToggleReveal: () => setShowRipleyApiKey((value) => !value),
-                    },
-                  )}</div>
-                </div>
-                <p className="mb-2 mt-4 text-sm font-medium text-muted-foreground">Logística Ripley (Seller Center)</p>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {field('URL de API SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
-                  {field('Usuario SVC', 'ripleySvcUsername', 'text', 'svc_limbo')}
-                  {field(
-                    'Contraseña SVC',
-                    'ripleySvcPassword',
-                    'password',
-                    editing?.hasRipleySvcCredentials ? 'Dejar vacío para mantener la actual' : 'Contraseña de Seller Center',
-                    {
-                      revealable: true,
-                      revealed: showRipleySvcPassword,
-                      onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
-                    },
-                  )}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Usa la URL y credenciales API de SVC.
-                </p>
-                {channelSyncErrors.ripley && (
-                  <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
-                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                    <div>
-                      <p className="font-medium">Error al sincronizar Ripley</p>
-                      <p className="mt-0.5 break-words">{channelSyncErrors.ripley}</p>
-                    </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+                {error && (
+                  <div className="mb-5 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{error}</span>
                   </div>
                 )}
-              </div>
 
-              <div className="mt-4 border-t border-border pt-4">
-                <p className="text-sm font-medium text-muted-foreground">Comprobantes por canal</p>
-                <div className="mt-1 divide-y divide-border">
+                {editorSection === 'company' && (
+                  <div className="mx-auto max-w-3xl space-y-8">
+                    <section>
+                      <h3 className="font-medium">Identidad</h3>
+                      <p className="mb-4 text-sm text-muted-foreground">Información legal y comercial de la empresa.</p>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {field('RUC (11 dígitos)', 'ruc')}
+                        {field('Nombre corto', 'nombre')}
+                        {field('Razón social', 'razonSocial')}
+                        {field('Nombre comercial', 'nombreComercial')}
+                        {field('Ubigeo (6 dígitos)', 'ubigeo')}
+                        <div className="md:col-span-2">{field('Dirección fiscal', 'direccion')}</div>
+                      </div>
+                    </section>
+
+                    <section className="border-t border-border pt-6">
+                      <h3 className="font-medium">SUNAT</h3>
+                      <p className="mb-4 text-sm text-muted-foreground">Credenciales SOL y certificado para emitir comprobantes.</p>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {field('Usuario SOL', 'usuarioSol')}
+                        {field('Clave SOL', 'claveSol', 'password', editing?.hasSolCredentials ? 'Dejar vacío para conservarla' : '', {
+                          revealable: true,
+                          revealed: showClaveSol,
+                          onToggleReveal: () => setShowClaveSol((value) => !value),
+                        })}
+                      </div>
+                      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-foreground">
+                            Certificado digital {!editing && <span className="text-red-500">*</span>}
+                          </label>
+                          <div className="flex gap-2">
+                            <input value={certFileName || (hasStoredCert ? 'Certificado almacenado' : '')} readOnly placeholder=".pfx o .p12" className="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm" />
+                            <input ref={certInputRef} type="file" accept=".pfx,.p12,application/x-pkcs12" className="hidden" onChange={(e) => void onCertFileChange(e.target.files?.[0] || null)} />
+                            <Button type="button" variant="outline" onClick={() => certInputRef.current?.click()}><Upload /> Examinar</Button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-foreground">Contraseña del certificado</label>
+                          <div className="relative">
+                            <input type={showCertPassword ? 'text' : 'password'} value={certPass} onChange={(e) => setCertPass(e.target.value)} placeholder={hasStoredCert ? 'Dejar vacío para conservarla' : ''} className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm" />
+                            <button type="button" onClick={() => setShowCertPassword((value) => !value)} className="absolute inset-y-0 right-0 px-3 text-muted-foreground" aria-label={showCertPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}>
+                              {showCertPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                )}
+
+                {editorSection === 'channels' && (
+                  <div className="mx-auto max-w-3xl divide-y divide-border">
+                    <section className="pb-7">
+                      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-medium">Mercado Libre</h3>
+                            <SetupBadge
+                              ok={editing?.hasMercadoLibreCredentials === true}
+                              okTitle="Cuenta autorizada"
+                              badTitle={mercadoLibreConfigured ? 'Aplicación lista; falta autorizar la cuenta' : 'Completa y guarda la aplicación'}
+                              okLabel="Cuenta conectada"
+                              badLabel={mercadoLibreConfigured ? 'Lista para conectar' : 'Aplicación pendiente'}
+                            />
+                          </div>
+                          <p className="mt-1 text-sm text-muted-foreground">Guarda la aplicación y autoriza la cuenta administradora.</p>
+                        </div>
+                        {editing?.hasMercadoLibreCredentials ? (
+                          <Button type="button" variant="outline" disabled={saving} onClick={() => void disconnectMercadoLibre()}>Desconectar</Button>
+                        ) : (
+                          <Button type="button" variant="outline" disabled={saving || !mercadoLibreConfigured} onClick={connectMercadoLibre}>Conectar cuenta</Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {field('App ID', 'mercadoLibreAppId', 'text', 'ID de la aplicación')}
+                        {field('Client Secret', 'mercadoLibreClientSecret', 'password', editing?.hasMercadoLibreAppCredentials ? 'Dejar vacío para conservarlo' : '', {
+                          revealable: true,
+                          revealed: showMercadoLibreClientSecret,
+                          onToggleReveal: () => setShowMercadoLibreClientSecret((value) => !value),
+                        })}
+                        <div className="md:col-span-2">{field('Redirect URI', 'mercadoLibreRedirectUri', 'url')}</div>
+                      </div>
+                      <p className="mt-3 text-xs text-muted-foreground">El Client Secret queda oculto después de guardar. La cuenta se conecta una sola vez y el acceso se renueva automáticamente.</p>
+                      {editing?.hasMercadoLibreCredentials && (
+                        <p className="mt-2 text-xs text-muted-foreground">Cuenta {editing.mercadoLibreUserId || 'autorizada'} · {editing.mercadoLibreSiteId || 'MPE'}</p>
+                      )}
+                      {channelSyncErrors.mercado_libre && <p className="mt-3 text-xs text-destructive">{channelSyncErrors.mercado_libre}</p>}
+                    </section>
+
+                    <section className="py-7">
+                      <h3 className="font-medium">Falabella</h3>
+                      <p className="mb-4 text-sm text-muted-foreground">Acceso de Seller Center y API.</p>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {field('Usuario Seller', 'sellerUsername')}
+                        {field('Contraseña Seller', 'sellerPassword', 'password', editing?.hasSellerPassword ? 'Dejar vacío para conservarla' : '', {
+                          revealable: true, revealed: showSellerPassword, onToggleReveal: () => setShowSellerPassword((value) => !value),
+                        })}
+                        {field('User ID API', 'falabellaApiUserId', 'text', 'Integration Management > API')}
+                        {field('API Key', 'falabellaApiKey', 'password', editing?.hasFalabellaCredentials ? 'Dejar vacío para conservarla' : '', {
+                          revealable: true, revealed: showFalabellaApiKey, onToggleReveal: () => setShowFalabellaApiKey((value) => !value),
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="pt-7">
+                      <h3 className="font-medium">Ripley</h3>
+                      <p className="mb-4 text-sm text-muted-foreground">Acceso de Mirakl y logística Seller Center.</p>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {field('Shop ID (opcional)', 'ripleyShopId')}
+                        {field('API Key', 'ripleyApiKey', 'password', editing?.hasRipleyCredentials ? 'Dejar vacío para conservarla' : '', {
+                          revealable: true, revealed: showRipleyApiKey, onToggleReveal: () => setShowRipleyApiKey((value) => !value),
+                        })}
+                        {field('URL de API SVC', 'ripleySvcBaseUrl', 'url', 'https://sellercenter.ripleylabs.com')}
+                        {field('Usuario SVC', 'ripleySvcUsername', 'text', 'svc_limbo')}
+                        {field('Contraseña SVC', 'ripleySvcPassword', 'password', editing?.hasRipleySvcCredentials ? 'Dejar vacío para conservarla' : '', {
+                          revealable: true, revealed: showRipleySvcPassword, onToggleReveal: () => setShowRipleySvcPassword((value) => !value),
+                        })}
+                      </div>
+                      {channelSyncErrors.ripley && <p className="mt-3 text-xs text-destructive">{channelSyncErrors.ripley}</p>}
+                    </section>
+                  </div>
+                )}
+
+                {editorSection === 'billing' && (
+                  <div className="mx-auto max-w-3xl">
+                    <h3 className="font-medium">Comprobantes por canal</h3>
+                    <p className="text-sm text-muted-foreground">Define cuándo ZentoFact debe emitir boletas y facturas.</p>
+                    <div className="mt-5 divide-y divide-border border-y border-border">
                   <div className="flex items-center justify-between gap-4 py-3">
                     <div>
                       <p className="text-sm font-medium">Falabella</p>
@@ -864,99 +990,30 @@ export default function Companies() {
                       aria-label="Emitir boletas y facturas automáticamente para Ripley"
                     />
                   </div>
-                </div>
-                {!falabellaCredentialsReady && (
-                  <p className="mt-1 text-xs text-muted-foreground">Configura la API de Falabella para activar la emisión automática.</p>
-                )}
-                <p className="mt-1 text-xs text-muted-foreground">Ripley se activará al sincronizar pedidos.</p>
-                {loadingBilling && (
-                  <p className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="size-3 animate-spin" /> Cargando configuración
-                  </p>
+                    </div>
+                    {!falabellaCredentialsReady && <p className="mt-3 text-xs text-muted-foreground">Configura la API de Falabella para activar su emisión automática.</p>}
+                    {loadingBilling && <p className="mt-3 inline-flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" /> Cargando configuración</p>}
+                  </div>
                 )}
               </div>
 
-              <div className="mt-4 space-y-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">
-                    Certificado digital {!editing && <span className="text-red-500">*</span>}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      value={
-                        certFileName
-                          || (hasStoredCert ? 'Certificado ya almacenado' : '')
-                      }
-                      readOnly
-                      placeholder=".pfx o .p12"
-                      className={`flex-1 rounded-lg border border-input px-3 py-2 text-sm ${
-                        hasStoredCert && !certFileName
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-background'
-                      }`}
-                    />
-                    <input
-                      ref={certInputRef}
-                      type="file"
-                      accept=".pfx,.p12,application/x-pkcs12"
-                      className="hidden"
-                      onChange={(e) => void onCertFileChange(e.target.files?.[0] || null)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => certInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm transition hover:bg-accent"
-                    >
-                      <Upload className="h-4 w-4" /> Examinar
-                    </button>
-                  </div>
-                  {certFileName ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Se subirá el archivo seleccionado al guardar.
-                    </p>
-                  ) : null}
+              <footer className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
+                <p className="hidden text-xs text-muted-foreground sm:block">Los secretos vacíos conservan el valor almacenado.</p>
+                <div className="ml-auto flex gap-2">
+                  <Button type="button" variant="outline" onClick={closeEditor} disabled={saving}>Cancelar</Button>
+                  <Button type="submit" disabled={saving || loadingBilling}>
+                    {saving ? <><Loader2 className="animate-spin" /> Guardando</> : editing ? 'Guardar cambios' : 'Crear empresa'}
+                  </Button>
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-foreground">Contraseña del certificado</label>
-                  <div className="relative">
-                    <input
-                      type={showCertPassword ? 'text' : 'password'}
-                      value={certPass}
-                      onChange={(e) => setCertPass(e.target.value)}
-                      placeholder={hasStoredCert ? 'Dejar vacío para mantener la actual' : ''}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 pr-10 text-sm shadow-sm outline-none transition focus:border-ring"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCertPassword((value) => !value)}
-                      className="absolute inset-y-0 right-0 inline-flex items-center px-3 text-muted-foreground hover:text-foreground"
-                      title={showCertPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                    >
-                      {showCertPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  disabled={saving}
-                  className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-accent disabled:opacity-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving || loadingBilling}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear empresa'}
-                </button>
-              </div>
+              </footer>
             </form>
           </div>
+        </div>
+      )}
+
+      {mercadoLibreMessage && (
+        <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground" role="status">
+          {mercadoLibreMessage}
         </div>
       )}
 

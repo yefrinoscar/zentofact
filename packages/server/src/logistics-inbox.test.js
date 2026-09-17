@@ -39,6 +39,7 @@ test('agrupa el estado de entrega en etapas de bandeja', () => {
 test('rechaza filtros de bandeja inválidos', () => {
   assert.equal(parseLogisticsInboxFilters({}).stage, 'pending');
   assert.equal(parseLogisticsInboxFilters({ channelCode: 'ripley' }).channelCode, 'ripley');
+  assert.equal(parseLogisticsInboxFilters({ channelCode: 'mercado_libre' }).channelCode, 'mercado_libre');
   assert.throws(() => parseLogisticsInboxFilters({ stage: 'hoy' }), /Etapa/);
   assert.throws(() => parseLogisticsInboxFilters({ channelCode: 'amazon' }), /Canal/);
   assert.throws(() => parseLogisticsInboxFilters({ companyId: 'x' }), /Tienda/);
@@ -229,6 +230,48 @@ test('informa qué etiqueta está procesando mientras arma el PDF', async () => 
     { current: 1, total: 2, orderNumber: 'NUM-10' },
     { current: 2, total: 2, orderNumber: 'NUM-11' },
   ]);
+});
+
+test('imprime una sola etiqueta Mercado Libre por shipment compartido', async () => {
+  let downloads = 0;
+  const result = await printLogisticsPack(
+    { orderIds: [71, 72], printedBy: 'operator@zentofact.local' },
+    {
+      db: new PrintDb([
+        printRow({ id: 71, channel_code: 'mercado_libre', channel_name: 'Mercado Libre', company_id: 7, metadata: { shippingId: 'SHIP-9', shippingMode: 'me2', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' } }),
+        printRow({ id: 72, channel_code: 'mercado_libre', channel_name: 'Mercado Libre', company_id: 7, metadata: { shippingId: 'SHIP-9', shippingMode: 'me2', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' } }),
+      ]),
+      getMercadoLibreLabel: async () => {
+        downloads += 1;
+        return stubLabelPdf('MERCADO LIBRE');
+      },
+    },
+  );
+  assert.equal(downloads, 1);
+  assert.equal(result.labelCount, 1);
+  assert.equal(result.orderCount, 2);
+});
+
+test('Mercado Libre no imprime sin una etiqueta ME2 explícitamente disponible', async () => {
+  await assert.rejects(
+    () => printLogisticsPack(
+      { orderIds: [73] },
+      {
+        db: new PrintDb([
+          printRow({
+            id: 73,
+            channel_code: 'mercado_libre',
+            channel_name: 'Mercado Libre',
+            metadata: { shippingId: 'SHIP-10', logisticType: 'cross_docking', shippingSubstatus: 'ready_to_print' },
+          }),
+        ]),
+        getMercadoLibreLabel: async () => {
+          throw new Error('no debe descargar');
+        },
+      },
+    ),
+    /no usa Mercado Envíos 2/,
+  );
 });
 
 test('la consulta de bandeja lee fotos Ripley de product_medias', async () => {

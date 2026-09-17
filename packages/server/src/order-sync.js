@@ -2,17 +2,21 @@ import { RipleyApiClient } from '@zentofact/ripley-api';
 import { operationalErrorBody } from './error-log.js';
 import { syncFalabellaOrders } from './falabella-sync.js';
 import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
+import { enrichMercadoLibreOrder } from './mercado-libre-webhook.js';
+import { mercadoLibreClientForCompany } from './mercado-libre-tokens.js';
+import { ingestMercadoLibreOrder } from './order-adapters/mercadolibre.js';
 import { ingestRipleyOrder, remapPersistedRipleyReadyOrders, withRipleyOrderLines } from './order-adapters/ripley.js';
 import { resolveIncrementalOrderWindow, resolveLookbackBackfillWindow, resolveOrderBackfillWindow } from './order-sync-policy.js';
 import { loadOrderSyncSettings } from './order-sync-settings.js';
 import { providerFetch } from './provider-request.js';
 import { ripleyApiUrl } from './ripley-api-url.js';
-import { isFalabellaSyncEnabled, isRipleySyncEnabled } from './system-config.js';
+import { isFalabellaSyncEnabled, isMercadoLibreSyncEnabled, isRipleySyncEnabled } from './system-config.js';
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
 const LOCK_NAMESPACE = 0x4f524452; // ORDR
 const DEFAULT_CONCURRENCY = 3;
+const SYNC_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
 let corePromise;
 
 function loadCore() {
@@ -42,10 +46,24 @@ function accountRow(row) {
     falabellaApiKey: row.falabella_api_key,
     ripleyApiKey: row.ripley_api_key,
     ripleyShopId: row.ripley_shop_id,
+    mercadoLibreAppId: row.mercado_libre_app_id,
+    mercadoLibreClientSecret: row.mercado_libre_client_secret,
+    mercadoLibreRedirectUri: row.mercado_libre_redirect_uri,
+    mercadoLibreUserId: row.mercado_libre_user_id,
+    mercadoLibreSiteId: row.mercado_libre_site_id,
+    mercadoLibreAccessToken: row.mercado_libre_access_token,
+    mercadoLibreRefreshToken: row.mercado_libre_refresh_token,
+    mercadoLibreTokenExpiresAt: row.mercado_libre_token_expires_at,
     nombre: row.nombre,
     nombreComercial: row.nombre_comercial,
     razonSocial: row.razon_social,
   };
+}
+
+export function mercadoLibreAccountHasGrant(account) {
+  const userId = String(account?.mercadoLibreUserId || '').trim();
+  const refreshToken = String(account?.mercadoLibreRefreshToken || '').trim();
+  return Boolean(userId && refreshToken && String(account?.externalAccountId || '').trim() === userId);
 }
 
 function hasCredentials(account) {
@@ -53,6 +71,7 @@ function hasCredentials(account) {
     return Boolean(account.falabellaApiUserId?.trim() && account.falabellaApiKey?.trim());
   }
   if (account.channelCode === 'ripley') return Boolean(account.ripleyApiKey?.trim());
+  if (account.channelCode === 'mercado_libre') return mercadoLibreAccountHasGrant(account);
   return false;
 }
 
@@ -89,7 +108,10 @@ async function loadAccount(db, accountId) {
        a.display_name, a.auto_create_orders, a.active,
        ch.code as channel_code,
        c.activo as company_active, c.nombre, c.nombre_comercial, c.razon_social,
-       c.falabella_api_user_id, c.falabella_api_key, c.ripley_api_key, c.ripley_shop_id
+       c.falabella_api_user_id, c.falabella_api_key, c.ripley_api_key, c.ripley_shop_id,
+       c.mercado_libre_app_id, c.mercado_libre_client_secret, c.mercado_libre_redirect_uri,
+       c.mercado_libre_user_id, c.mercado_libre_site_id, c.mercado_libre_access_token,
+       c.mercado_libre_refresh_token, c.mercado_libre_token_expires_at
      from order_channel_accounts a
      join order_channels ch on ch.id=a.channel_id
      join companies c on c.id=a.company_id
@@ -141,11 +163,14 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   const where = [
     'c.activo=true',
     'a.active=true',
-    "ch.code in ('falabella','ripley')",
+    "ch.code in ('falabella','ripley','mercado_libre')",
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      when 'mercado_libre' then nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id=trim(c.mercado_libre_user_id)
       else false end`,
   ];
   const companyId = positiveId(filters.companyId, 'companyId');
@@ -160,7 +185,7 @@ export async function listOrderSyncStatuses(filters = {}, db) {
     where.push(`a.id=$${values.length}`);
   }
   if (channelCode) {
-    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+    if (!SYNC_CHANNELS.has(channelCode)) {
       throw new Error('channelCode inválido.');
     }
     values.push(channelCode);
@@ -350,7 +375,89 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
   return { pages, received, upserted, failed, lastLogId };
 }
 
+export async function syncMercadoLibrePages(db, account, window, runId, dependencies = {}) {
+  const client = dependencies.mercadoLibreClient || await mercadoLibreClientForCompany({
+    id: account.companyId,
+    mercadoLibreUserId: account.mercadoLibreUserId,
+    mercadoLibreSiteId: account.mercadoLibreSiteId,
+    mercadoLibreAccessToken: account.mercadoLibreAccessToken,
+    mercadoLibreRefreshToken: account.mercadoLibreRefreshToken,
+    mercadoLibreTokenExpiresAt: account.mercadoLibreTokenExpiresAt,
+    mercadoLibreAppId: account.mercadoLibreAppId,
+    mercadoLibreClientSecret: account.mercadoLibreClientSecret,
+    mercadoLibreRedirectUri: account.mercadoLibreRedirectUri,
+  }, dependencies);
+  const pageSize = 50;
+  let pages = 0;
+  let received = 0;
+  let upserted = 0;
+  let failed = 0;
+  let lastLogId = null;
+  let completed = false;
+  for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
+    const page = await client.searchOrders({
+      sellerId: account.mercadoLibreUserId || account.externalAccountId,
+      offset,
+      limit: pageSize,
+      updatedFrom: window.from,
+      updatedTo: window.to,
+    });
+    pages += 1;
+    received += page.orders.length;
+    for (const listed of page.orders) {
+      try {
+        await db.query('begin');
+        const enriched = await (dependencies.enrichMercadoLibreOrder || enrichMercadoLibreOrder)(client, listed);
+        const result = await (dependencies.ingestMercadoLibreOrder || ingestMercadoLibreOrder)({
+          companyId: account.companyId,
+          displayName: account.displayName,
+          userId: account.mercadoLibreUserId || account.externalAccountId,
+          account: {
+            id: account.channelAccountId,
+            companyId: account.companyId,
+            channelCode: account.channelCode,
+            displayName: account.displayName,
+          },
+          normalized: enriched.order,
+          shipment: enriched.shipment,
+          billing: enriched.billing,
+          siteId: account.mercadoLibreSiteId,
+          correlationId: `order-sync:${runId}`,
+          eventId: `mercado-libre:${enriched.order.orderId}:${enriched.order.updatedAt || enriched.order.createdAt || 'observed'}`,
+          source: 'sync',
+        }, db);
+        await db.query('commit');
+        if (!result.skipped) upserted += 1;
+      } catch (error) {
+        await db.query('rollback').catch(() => {});
+        failed += 1;
+        const logged = operationalErrorBody(error, {
+          operation: 'order_sync_order',
+          context: {
+            seller: account.displayName,
+            companyId: account.companyId,
+            channelAccountId: account.channelAccountId,
+            channelCode: account.channelCode,
+            runId,
+            externalOrderId: listed.orderId,
+          },
+        });
+        lastLogId = logged.logId;
+      }
+    }
+    if (page.orders.length < pageSize || offset + page.limit >= page.total) {
+      completed = true;
+      break;
+    }
+  }
+  if (!completed) throw new Error('La sincronización de Mercado Libre excedió el límite seguro de páginas.');
+  return { pages, received, upserted, failed, lastLogId };
+}
+
 async function dispatchAccountSync(db, account, window, runId, dependencies) {
+  if (account.channelCode === 'mercado_libre') {
+    return syncMercadoLibrePages(db, account, window, runId, dependencies);
+  }
   if (account.channelCode === 'ripley') {
     return syncRipleyPages(db, account, window, runId, dependencies);
   }
@@ -542,11 +649,14 @@ async function eligibleAccountIds(filters = {}, db) {
     'c.activo=true',
     'a.active=true',
     'a.auto_create_orders=true',
-    "ch.code in ('falabella','ripley')",
+    "ch.code in ('falabella','ripley','mercado_libre')",
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
+      when 'mercado_libre' then nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id=trim(c.mercado_libre_user_id)
       else false end`,
   ];
   for (const [field, column] of [['companyId', 'a.company_id'], ['channelAccountId', 'a.id']]) {
@@ -557,7 +667,7 @@ async function eligibleAccountIds(filters = {}, db) {
   }
   const channelCode = String(filters.channelCode || '').trim().toLowerCase();
   if (channelCode) {
-    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+    if (!SYNC_CHANNELS.has(channelCode)) {
       throw new Error('channelCode inválido.');
     }
     values.push(channelCode);
@@ -566,7 +676,7 @@ async function eligibleAccountIds(filters = {}, db) {
   if (Array.isArray(filters.channelCodes) && filters.channelCodes.length) {
     const allowed = filters.channelCodes
       .map((code) => String(code || '').trim().toLowerCase())
-      .filter((code) => code === 'falabella' || code === 'ripley');
+      .filter((code) => SYNC_CHANNELS.has(code));
     if (!allowed.length) return [];
     where.push(`ch.code in (${allowed.map((_, index) => `$${values.length + index + 1}`).join(',')})`);
     values.push(...allowed);
@@ -617,7 +727,7 @@ function requestedSyncChannels(options = {}) {
   }
   const single = String(options.channelCode || '').trim().toLowerCase();
   if (single) return [single];
-  return ['falabella', 'ripley'];
+  return ['falabella', 'ripley', 'mercado_libre'];
 }
 
 export async function syncOrders(options = {}, dependencies = {}) {
@@ -628,7 +738,10 @@ export async function syncOrders(options = {}, dependencies = {}) {
   }
   const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
   const ripleyOn = await (dependencies.isRipleySyncEnabled || isRipleySyncEnabled)(dependencies.db);
-  const channelCodes = requestedSyncChannels(options).filter((code) => code !== 'ripley' || ripleyOn);
+  const mercadoLibreOn = await (dependencies.isMercadoLibreSyncEnabled || isMercadoLibreSyncEnabled)(dependencies.db);
+  const channelCodes = requestedSyncChannels(options).filter((code) => (
+    (code !== 'ripley' || ripleyOn) && (code !== 'mercado_libre' || mercadoLibreOn)
+  ));
   if (!channelCodes.length) return { results: [], settings };
   const ids = await eligibleAccountIds({
     ...options,
@@ -647,13 +760,15 @@ export function startOrderSyncScheduler(dependencies = {}) {
   let running = false;
   const tick = async () => {
     // El flag vive en BD (panel superadmin); la env solo actúa como kill-switch.
-    const [falabellaOn, ripleyOn] = await Promise.all([
+    const [falabellaOn, ripleyOn, mercadoLibreOn] = await Promise.all([
       isFalabellaSyncEnabled(dependencies.db),
       isRipleySyncEnabled(dependencies.db),
+      isMercadoLibreSyncEnabled(dependencies.db),
     ]);
     const channelCodes = [
       falabellaOn ? 'falabella' : null,
       ripleyOn ? 'ripley' : null,
+      mercadoLibreOn ? 'mercado_libre' : null,
     ].filter(Boolean);
     if (!channelCodes.length) return;
     if (running) return;

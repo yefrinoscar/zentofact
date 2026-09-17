@@ -30,6 +30,9 @@ export interface CreateCompanyInput {
   ripleySvcUsername?: string;
   ripleySvcPassword?: string;
   ripleySvcBaseUrl?: string;
+  mercadoLibreAppId?: string;
+  mercadoLibreClientSecret?: string;
+  mercadoLibreRedirectUri?: string;
 }
 
 export interface UpdateCompanyInput extends Partial<CreateCompanyInput> {}
@@ -56,6 +59,10 @@ export type PublicCompany = {
   ripleyShopId: string | null;
   ripleySvcUsername: string | null;
   ripleySvcBaseUrl: string | null;
+  mercadoLibreAppId: string | null;
+  mercadoLibreRedirectUri: string | null;
+  mercadoLibreUserId: string | null;
+  mercadoLibreSiteId: string | null;
   logoPath: string | null;
   activo: boolean | null;
   createdAt: number | null;
@@ -66,7 +73,17 @@ export type PublicCompany = {
   hasFalabellaCredentials: boolean;
   hasRipleyCredentials: boolean;
   hasRipleySvcCredentials: boolean;
+  hasMercadoLibreAppCredentials: boolean;
+  hasMercadoLibreCredentials: boolean;
 };
+
+export interface MercadoLibreGrantInput {
+  userId: string;
+  siteId?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
 
 export interface TestSunatConnectionResult {
   success: boolean;
@@ -101,6 +118,24 @@ function normalizeRipleySvcBaseUrl(value?: string | null): string | undefined {
   return parsed.origin;
 }
 
+function normalizeMercadoLibreRedirectUri(value?: string | null): string | undefined {
+  if (value == null) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('La Redirect URI de Mercado Libre es inválida.');
+  }
+  const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !localHttp) {
+    throw new Error('La Redirect URI de Mercado Libre debe usar HTTPS.');
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
 function hasText(value: unknown): boolean {
   return String(value ?? '').trim().length > 0;
 }
@@ -119,6 +154,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
   const hasFalabellaApiKey = hasText(row.falabellaApiKey);
   const hasRipleyApiKey = hasText(row.ripleyApiKey);
   const hasRipleySvcPassword = hasText(row.ripleySvcPassword);
+  const hasMercadoLibreClientSecret = hasText(row.mercadoLibreClientSecret);
   return {
     id: row.id,
     nombre: row.nombre ?? null,
@@ -138,6 +174,10 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     ripleyShopId: row.ripleyShopId ?? null,
     ripleySvcUsername: row.ripleySvcUsername ?? null,
     ripleySvcBaseUrl: row.ripleySvcBaseUrl ?? null,
+    mercadoLibreAppId: row.mercadoLibreAppId ?? null,
+    mercadoLibreRedirectUri: row.mercadoLibreRedirectUri ?? null,
+    mercadoLibreUserId: row.mercadoLibreUserId ?? null,
+    mercadoLibreSiteId: row.mercadoLibreSiteId ?? null,
     logoPath: row.logoPath ?? null,
     activo: row.activo ?? null,
     createdAt: row.createdAt ?? null,
@@ -148,6 +188,10 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
     hasRipleyCredentials: hasRipleyApiKey,
     hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword,
+    hasMercadoLibreAppCredentials: hasText(row.mercadoLibreAppId)
+      && hasMercadoLibreClientSecret
+      && hasText(row.mercadoLibreRedirectUri),
+    hasMercadoLibreCredentials: hasText(row.mercadoLibreRefreshToken),
   };
 }
 
@@ -159,6 +203,13 @@ export function listCompanies() {
 /** Uso interno del backend. No devolver por HTTP. */
 export async function getCompany(id: number) {
   const rows = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function getCompanyByMercadoLibreUserId(userId: string): Promise<CompanyRecord | undefined> {
+  const normalized = userId.trim();
+  if (!normalized) return undefined;
+  const rows = await db.select().from(companies).where(eq(companies.mercadoLibreUserId, normalized)).limit(1);
   return rows[0];
 }
 
@@ -199,6 +250,9 @@ export async function createCompany(data: CreateCompanyInput): Promise<PublicCom
     ripleySvcUsername: data.ripleySvcUsername,
     ripleySvcPassword: data.ripleySvcPassword,
     ripleySvcBaseUrl: normalizeRipleySvcBaseUrl(data.ripleySvcBaseUrl),
+    mercadoLibreAppId: data.mercadoLibreAppId?.trim(),
+    mercadoLibreClientSecret: nonEmptySecret(data.mercadoLibreClientSecret),
+    mercadoLibreRedirectUri: normalizeMercadoLibreRedirectUri(data.mercadoLibreRedirectUri),
     activo: true,
     createdAt: now,
     updatedAt: now,
@@ -256,6 +310,12 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
   if (ripleyApiKey !== undefined) updates.ripleyApiKey = ripleyApiKey;
   const ripleySvcPassword = nonEmptySecret(data.ripleySvcPassword);
   if (ripleySvcPassword !== undefined) updates.ripleySvcPassword = ripleySvcPassword;
+  if (data.mercadoLibreAppId !== undefined) updates.mercadoLibreAppId = data.mercadoLibreAppId.trim();
+  const mercadoLibreClientSecret = nonEmptySecret(data.mercadoLibreClientSecret);
+  if (mercadoLibreClientSecret !== undefined) updates.mercadoLibreClientSecret = mercadoLibreClientSecret;
+  if (data.mercadoLibreRedirectUri !== undefined) {
+    updates.mercadoLibreRedirectUri = normalizeMercadoLibreRedirectUri(data.mercadoLibreRedirectUri);
+  }
 
   const updated = await db.update(companies).set(updates).where(eq(companies.id, id)).returning();
   const row = updated[0];
@@ -265,6 +325,47 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
 export async function deleteCompany(id: number) {
   const now = Math.floor(Date.now() / 1000);
   return db.update(companies).set({ activo: false, updatedAt: now }).where(eq(companies.id, id));
+}
+
+export async function setMercadoLibreGrant(id: number, grant: MercadoLibreGrantInput): Promise<PublicCompany> {
+  const userId = grant.userId.trim();
+  const accessToken = grant.accessToken.trim();
+  const refreshToken = grant.refreshToken.trim();
+  if (!userId || !accessToken || !refreshToken || !Number.isFinite(grant.expiresAt)) {
+    throw new Error('Falta el grant de Mercado Libre.');
+  }
+  try {
+    const updated = await db.update(companies).set({
+      mercadoLibreUserId: userId,
+      mercadoLibreSiteId: grant.siteId?.trim() || 'MPE',
+      mercadoLibreAccessToken: accessToken,
+      mercadoLibreRefreshToken: refreshToken,
+      mercadoLibreTokenExpiresAt: Math.trunc(grant.expiresAt),
+      updatedAt: Math.floor(Date.now() / 1000),
+    }).where(eq(companies.id, id)).returning();
+    const row = updated[0];
+    if (!row) throw new Error('Empresa no encontrada.');
+    return toPublicCompany(row);
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+      throw new Error('Esa cuenta de Mercado Libre ya está conectada a otra empresa.');
+    }
+    throw error;
+  }
+}
+
+export async function clearMercadoLibreGrant(id: number): Promise<PublicCompany> {
+  const updated = await db.update(companies).set({
+    mercadoLibreUserId: null,
+    mercadoLibreSiteId: null,
+    mercadoLibreAccessToken: null,
+    mercadoLibreRefreshToken: null,
+    mercadoLibreTokenExpiresAt: null,
+    updatedAt: Math.floor(Date.now() / 1000),
+  }).where(eq(companies.id, id)).returning();
+  const row = updated[0];
+  if (!row) throw new Error('Empresa no encontrada.');
+  return toPublicCompany(row);
 }
 
 export async function testSunatConnection(companyId: number, environment: SunatEnvironment = 'beta'): Promise<TestSunatConnectionResult> {

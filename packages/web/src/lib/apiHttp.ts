@@ -80,7 +80,7 @@ export type ProductAssociationCandidate = {
   productId: number;
   companyId: number;
   companyName: string;
-  channelCode: 'falabella' | 'ripley';
+  channelCode: 'falabella' | 'ripley' | 'mercado_libre';
   sellerSku: string;
   shopSku: string | null;
   title: string | null;
@@ -391,8 +391,8 @@ const apiHttp = {
   }),
   configureOrderChannelAccount: (data: {
     companyId: number;
-    channelCode: 'falabella' | 'ripley';
-    externalAccountId: 'default';
+    channelCode: 'falabella' | 'ripley' | 'mercado_libre';
+    externalAccountId: string;
     displayName: string;
     autoCreateOrders: boolean;
     documentRequirement: 'disabled' | 'required';
@@ -564,6 +564,7 @@ const apiHttp = {
   importFalabellaCatalog: (data: { companyId: number; mode: 'listings_only' | 'create_products_from_seller_sku'; limit?: number }) => req('/catalog/import/falabella', { method: 'POST', body: JSON.stringify(data) }),
   syncFalabellaCatalog: () => req('/catalog/sync/falabella', { method: 'POST', body: '{}' }),
   syncRipleyCatalog: (data: { dryRun?: boolean } = {}) => req('/catalog/sync/ripley', { method: 'POST', body: JSON.stringify(data) }),
+  syncMercadoLibreCatalog: (data: { dryRun?: boolean; createProductsFromSellerSku?: boolean } = {}) => req('/catalog/sync/mercado-libre', { method: 'POST', body: JSON.stringify(data) }),
   refreshCatalogListingSnapshots: (data: { productId?: number } = {}) => req('/catalog/refresh-listing-snapshots', { method: 'POST', body: JSON.stringify(data) }),
   ripleyApiGetProducts: (companyId: number, filters: { all?: boolean; max?: number; offset?: number; offerStateCodes?: string; sku?: string; productId?: string } = {}) => req(`/ripley/${companyId}/products${qs(filters)}`),
   ripleyApiGetOrders: (companyId: number, filters: { max?: number; offset?: number; orderStateCodes?: string; startUpdateDate?: string; endUpdateDate?: string } = {}) => req(`/ripley/${companyId}/orders${qs(filters)}`),
@@ -616,6 +617,9 @@ const apiHttp = {
   createCompany: (data: any) => req('/companies', { method: 'POST', body: JSON.stringify(data) }),
   updateCompany: (id: number, data: any) => req(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCompany: (id: number) => req(`/companies/${id}`, { method: 'DELETE' }),
+  getMercadoLibreStatus: (companyId?: number) => req(`/integrations/mercado-libre/status${qs({ companyId })}`),
+  mercadoLibreConnectUrl: (companyId: number) => `/integrations/mercado-libre/${companyId}/connect`,
+  disconnectMercadoLibre: (companyId: number) => req(`/companies/${companyId}/mercado-libre/disconnect`, { method: 'POST' }),
   testSunatConnection: (id: number, environment: 'beta' | 'produccion') => req(`/companies/${id}/test-sunat`, { method: 'POST', body: JSON.stringify({ environment }) }),
   // Empresa activa: estado del cliente (localStorage en web)
   getActiveCompanyId: async () => { const v = localStorage.getItem('activeCompanyId'); return v ? Number(v) : null; },
