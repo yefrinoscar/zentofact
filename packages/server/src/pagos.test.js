@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importSettlementCsv, settlementSalesLimit, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
+import { importSettlementCsv, listSettlementSales, loadSettlementSalesForOrders, settlementSalesLimit, SETTLEMENT_SALES_LIST_MAX, SETTLEMENT_SALES_PAGE_DEFAULT, SETTLEMENT_SALES_PAGE_MAX } from './pagos.js';
 
 const CSV = [
   'Fecha de transacción;Tipo de transacción;N.° de pedido;SKU del vendedor;Monto',
@@ -145,13 +145,16 @@ test('No Pagado cruza el pedido e inserta liquidación pendiente', async () => {
   assert.match(settlement.sql, /sale_settlements\.status = 'pending'/);
 });
 
-test('la página de ventas de Pagos admite hasta 2000 filas', () => {
-  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 2000);
-  assert.equal(settlementSalesLimit(undefined), 50);
+test('Pagos pagina las ventas y no entrega el catálogo entero', () => {
+  assert.equal(SETTLEMENT_SALES_LIST_MAX, 20000);
+  assert.equal(SETTLEMENT_SALES_PAGE_DEFAULT, 80);
+  assert.equal(SETTLEMENT_SALES_PAGE_MAX, 200);
+  assert.equal(settlementSalesLimit(undefined), 80);
   assert.equal(settlementSalesLimit(100), 100);
-  assert.equal(settlementSalesLimit(2000), 2000);
-  assert.equal(settlementSalesLimit(9000), 2000);
-  assert.equal(settlementSalesLimit(0), 50);
+  assert.equal(settlementSalesLimit(200), 200);
+  assert.equal(settlementSalesLimit(20000), 200);
+  assert.equal(settlementSalesLimit(90000), 200);
+  assert.equal(settlementSalesLimit(0), 80);
 });
 
 test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async () => {
@@ -229,4 +232,146 @@ test('reemplazar un CSV ya cruzado borra las líneas y vuelve a cruzar', async (
   assert.equal(calls.some((sql) => sql.includes('update settlement_imports')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into settlement_lines')), true);
   assert.equal(calls.some((sql) => sql.includes('insert into sale_settlements')), true);
+});
+
+test('Pagos agrega todas las líneas del estado de cuenta, sin tope de 10000', async () => {
+  const extra = 12;
+  const lineCount = 10000 + extra;
+  const rows = Array.from({ length: lineCount }, (_, index) => ({
+    id: index + 1,
+    import_id: 1,
+    row_number: index + 1,
+    match_status: 'matched',
+    match_method: 'order_id',
+    match_reason: null,
+    order_ref: `ORD-${String(index + 1).padStart(5, '0')}`,
+    sku: 'AG301',
+    sale_date: '2026-08-01',
+    transaction_type: 'Pago por precio del producto',
+    kind: 'sale',
+    payment_status: 'Pagado',
+    item_id: `item-${index + 1}`,
+    bruto: 10,
+    commission: 0,
+    other_fees: 0,
+    neto: 10,
+    raw: {},
+    sale_order_number: `ORD-${String(index + 1).padStart(5, '0')}`,
+    match_company_id: 1,
+    import_company_id: 1,
+  }));
+  let listSql = '';
+  const result = await listSettlementSales({ limit: 50 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        listSql = sql;
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.match(listSql, /from settlement_lines/);
+  assert.equal(/limit\s+10000\b/i.test(listSql), false);
+  assert.equal(/sl\.raw,/.test(listSql), false);
+  assert.equal(result.summary.saleCount, lineCount);
+  assert.equal(result.totalCount, lineCount);
+  assert.equal(result.summary.bruto, lineCount * 10);
+  assert.equal(result.items.length, 50);
+  assert.equal(result.items[0].charges, undefined);
+  assert.equal(result.items[0].items, undefined);
+  assert.equal(result.items[0].invoiceCharges, undefined);
+  assert.ok(Array.isArray(result.days));
+  assert.equal(result.days.length, 1);
+  assert.equal(result.days[0].facturado, lineCount * 10);
+
+  const defaultPage = await listSettlementSales({}, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(defaultPage.items.length, SETTLEMENT_SALES_PAGE_DEFAULT);
+  assert.equal(defaultPage.totalCount, lineCount);
+  assert.equal(defaultPage.summary.saleCount, lineCount);
+  assert.equal(defaultPage.items[0].charges, undefined);
+
+  const firstPage = await listSettlementSales({ limit: 80 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  const secondPage = await listSettlementSales({ limit: 80, offset: 80 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(firstPage.items.length, 80);
+  assert.equal(secondPage.items.length, 80);
+  assert.equal(firstPage.summary.saleCount, lineCount);
+  assert.equal(secondPage.summary.saleCount, lineCount);
+  assert.equal(firstPage.summary.bruto, secondPage.summary.bruto);
+  assert.notEqual(firstPage.items[0].orderId, secondPage.items[0].orderId);
+
+  const augustRows = rows.map((row, index) => ({
+    ...row,
+    sale_date: index % 4 === 0 ? '2026-07-15' : '2026-08-01',
+  }));
+  const august = await listSettlementSales({ orderMonth: '2026-08', limit: 80 }, {
+    query: async (sql) => {
+      if (sql.includes('from settlement_lines') && sql.includes('sale_order_number')) {
+        return { rows: augustRows };
+      }
+      return { rows: [] };
+    },
+  });
+  assert.equal(august.totalCount, lineCount - Math.ceil(lineCount / 4));
+  assert.equal(august.items.length, 80);
+  assert.ok(august.items.every((sale) => String(sale.date).startsWith('2026-08')));
+  assert.deepEqual(august.orderMonths, ['2026-08', '2026-07']);
+});
+
+test('carga las ventas del estado de cuenta por pedido de la factura', async () => {
+  const sales = await loadSettlementSalesForOrders(['3249715842'], {
+    query: async (sql, params) => {
+      assert.match(sql, /order_ref = any/);
+      assert.deepEqual(params[0], ['3249715842']);
+      return {
+        rows: [{
+          id: 1,
+          import_id: 3,
+          row_number: 1,
+          match_status: 'matched',
+          match_method: 'order_id',
+          match_reason: null,
+          order_ref: '3249715842',
+          sku: 'MN1',
+          sale_date: '2026-08-22',
+          transaction_type: 'Cobro por comisión por venta',
+          kind: 'commission',
+          payment_status: 'Pagado',
+          item_id: 'item-1',
+          bruto: 0,
+          commission: 17.69,
+          other_fees: 0,
+          neto: -17.69,
+          raw: { 'Nombre del producto': 'Mesa de Noche' },
+          sale_order_number: '3249715842',
+          match_company_id: 1,
+          import_company_id: 1,
+        }],
+      };
+    },
+  });
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].orderId, '3249715842');
+  assert.equal(sales[0].commission, 17.69);
+  assert.deepEqual(await loadSettlementSalesForOrders([]), []);
 });

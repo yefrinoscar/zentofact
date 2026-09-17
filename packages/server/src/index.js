@@ -28,11 +28,15 @@ if (shouldSeedPreview() && bootstrapEmailEarly && bootstrapPasswordEarly) {
 }
 
 const { auth, requireAuth, requireCsrf, requirePermission, requireAnyPermission, requireAdmin, requireSuperadmin, csrfTokenForSession } = await import('./auth.js');
-const { localWebOrigins } = await import('./local-web-origins.js');
+const { allowCorsOrigin, resolveWebOrigins } = await import('./web-origins.js');
 const users = await import('./users.js');
 const { PERMISSIONS, ROLE_PRESETS, userHasPermission } = await import('./permissions.js');
 const insumos = await import('./insumos.js');
+const insumoLowStockAlert = await import('./insumo-low-stock-alert.js');
+const { sendEmail } = await import('./mailer.js');
 await insumos.ensureTables();
+const notifications = await import('./notifications.js');
+await notifications.ensureTables();
 if (shouldSeedPreview()) {
   const { bootstrapPreviewIfNeeded } = await import('./seed-preview.js');
   await bootstrapPreviewIfNeeded();
@@ -59,6 +63,7 @@ const logisticsInbox = await import('./logistics-inbox.js');
 const orderManagement = await import('./order-management.js');
 const ownFleetConfig = await import('./own-fleet-config.js');
 const orderSync = await import('./order-sync.js');
+const orderSyncSettings = await import('./order-sync-settings.js');
 const productService = await import('./catalog/product-service.js');
 const listingService = await import('./catalog/listing-service.js');
 const associationCandidateService = await import('./catalog/association-candidate-service.js');
@@ -74,10 +79,10 @@ const catalogOperations = await import('./catalog/catalog-operations.js');
 const catalogSales = await import('./catalog/catalog-sales.js');
 const listingSnapshotService = await import('./catalog/listing-snapshot-service.js');
 const ripleyCatalog = await import('./ripley-catalog.js');
-const ripleyOrders = await import('./ripley-orders.js');
 const ripleyLogistics = await import('./ripley-logistics.js');
 const marketplacePublication = await import('./catalog/marketplace-publication.js');
 const dashboard = await import('./dashboard.js');
+const productSalesReport = await import('./catalog/product-sales-report.js');
 const pagos = await import('./pagos.js');
 const invoiceReports = await import('./pagos-invoice.js');
 const shippingLabelSheet = await import('./shipping-label-sheet.js');
@@ -95,16 +100,11 @@ const manifestJobs = await import('./falabella-manifest-jobs.js');
 const app = new Hono();
 
 // CORS con credenciales (cookies de sesión) para el front web.
-const railwayOrigin = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : '';
-const webOrigins = Array.from(new Set([
-  ...(process.env.WEB_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
-  railwayOrigin,
-  'http://localhost:3011',
-  'http://127.0.0.1:3011',
-  'http://localhost:3000',
-  ...localWebOrigins(),
-].filter(Boolean)));
-app.use('*', cors({ origin: webOrigins, credentials: true }));
+const webOrigins = resolveWebOrigins();
+app.use('*', cors({
+  origin: (origin) => allowCorsOrigin(origin, webOrigins),
+  credentials: true,
+}));
 
 // Log de todas las requests (para diagnóstico).
 app.use('*', async (c, next) => {
@@ -250,9 +250,9 @@ app.use('/falabella', falabellaAccessGuard);
 app.use('/falabella/*', falabellaAccessGuard);
 
 const ok = (c, data, status = 200) => c.json(data, status);
-const fail = (c, e, status = 500) => c.json(operationalErrorBody(e, {
-  operation: 'api',
-  context: { method: c.req.method, path: c.req.path, status },
+const fail = (c, e, status = 500, extra = {}) => c.json(operationalErrorBody(e, {
+  operation: extra.operation || 'api',
+  context: { method: c.req.method, path: c.req.path, status, ...extra.context },
 }), status);
 
 function salespersonOnlyUserId(c) {
@@ -290,6 +290,20 @@ app.get('/me', async (c) => {
     });
   } catch (e) { return fail(c, e); }
 });
+app.get('/notifications', async (c) => {
+  try { return ok(c, await notifications.listForUser(c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/notifications/read', async (c) => {
+  try {
+    return ok(c, await notifications.markRead(c.get('user'), await c.req.json().catch(() => ({}))));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.post('/notifications/dismiss', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await notifications.dismiss(c.get('user'), body.id ?? body.ids));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
 // Logout total: revoca TODAS las sesiones del usuario (otros tabs/dispositivos) y
 // fuerza nuevo login. El cliente limpia cookies + localStorage después.
 app.post('/me/logout', async (c) => {
@@ -308,6 +322,13 @@ app.get('/dashboard', async (c) => {
     c.header('Cache-Control', 'private, no-store');
     return ok(c, data);
   } catch (e) { return fail(c, e, 400); }
+});
+app.get('/dashboard/product-sales', async (c) => {
+  try {
+    const data = await productSalesReport.listProductSalesReport(c.req.query());
+    c.header('Cache-Control', 'private, no-store');
+    return ok(c, data);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/dashboard/refresh', async (c) => {
   try {
@@ -344,8 +365,17 @@ app.get('/pagos/invoices', async (c) => {
   catch (e) { return fail(c, e, e.status || 400); }
 });
 app.get('/pagos/invoices/:id', async (c) => {
-  try { return ok(c, await invoiceReports.getInvoiceDocument(c.req.param('id'))); }
-  catch (e) { return fail(c, e, e.status || 400); }
+  try {
+    const document = await invoiceReports.getInvoiceDocument(c.req.param('id'));
+    const orderIds = [...new Set((document.lines || [])
+      .map((line) => String(line.orderNumber || '').trim())
+      .filter(Boolean))];
+    const sales = await pagos.loadSettlementSalesForOrders(orderIds);
+    return ok(c, {
+      ...document,
+      reconciliation: invoiceReports.compareInvoiceToSettlements(document, sales),
+    });
+  } catch (e) { return fail(c, e, e.status || 400); }
 });
 app.post('/pagos/invoices', async (c) => {
   try {
@@ -390,15 +420,48 @@ app.get('/logistics-inbox', async (c) => {
   catch (e) { return fail(c, e, 400); }
 });
 app.post('/logistics-inbox/print', async (c) => {
+  let body = {};
   try {
-    const body = await c.req.json();
+    body = await c.req.json();
     const user = c.get('user');
     return ok(c, await logisticsInbox.printLogisticsPackWithDefaults({
       ...body,
       printedBy: user?.email || user?.name || null,
     }));
+  } catch (e) {
+    return fail(c, e, 400, {
+      operation: 'logistics.print',
+      context: {
+        orderIds: Array.isArray(body?.orderIds) ? body.orderIds : undefined,
+      },
+    });
   }
-  catch (e) { return fail(c, e, 400); }
+});
+app.post('/logistics-inbox/:orderId/ready', async (c) => {
+  try {
+    const user = c.get('user');
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await logisticsInbox.markLogisticsOrderReady({
+      ...body,
+      orderId: c.req.param('orderId'),
+      markedBy: user?.email || user?.name || null,
+    }));
+  } catch (e) {
+    return fail(c, e, 400, { operation: 'logistics.ripley-ready' });
+  }
+});
+app.post('/logistics-inbox/:orderId/delivered', async (c) => {
+  try {
+    const user = c.get('user');
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await logisticsInbox.markLogisticsOrderDelivered({
+      ...body,
+      orderId: c.req.param('orderId'),
+      markedBy: user?.email || user?.name || null,
+    }));
+  } catch (e) {
+    return fail(c, e, 400, { operation: 'logistics.manual-delivered' });
+  }
 });
 
 app.get('/order-management/geo/maps-key', async (c) => {
@@ -435,6 +498,15 @@ app.get('/order-management/sync-status', requirePermission('order_management'), 
   try { return ok(c, await orderSync.listOrderSyncStatuses(c.req.query())); }
   catch (e) { return fail(c, e, 400); }
 });
+app.get('/order-management/sync-settings', requireSuperadmin(), async (c) => {
+  try { return ok(c, await orderSyncSettings.loadOrderSyncSettings()); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.put('/order-management/sync-settings', requireSuperadmin(), async (c) => {
+  try {
+    return ok(c, await orderSyncSettings.saveOrderSyncSettings(null, await c.req.json().catch(() => ({})), c.get('user')?.id));
+  } catch (e) { return fail(c, e, 400); }
+});
 app.post('/order-management/accounts', requirePermission('companies'), async (c) => {
   try { return ok(c, await orderManagement.configureOrderChannelAccount(await c.req.json()), 201); }
   catch (e) { return fail(c, e, 400); }
@@ -450,6 +522,16 @@ app.patch('/order-management/accounts/:id', requirePermission('companies'), asyn
 app.get('/order-management/orders', async (c) => {
   try { return ok(c, await orderManagement.listOrders(scopedOrderFilters(c, c.req.query()))); }
   catch (e) { return fail(c, e, 400); }
+});
+app.get('/order-management/canceled-orders', async (c) => {
+  try { return ok(c, await orderManagement.listCanceledOrders(scopedOrderFilters(c, c.req.query()))); }
+  catch (e) { return fail(c, e, 400); }
+});
+app.post('/order-management/canceled-orders/:id/approve-return', requirePermission('return_stock_approve'), async (c) => {
+  try {
+    const payload = await c.req.json().catch(() => ({}));
+    return ok(c, await orderManagement.approveReturnStock(c.req.param('id'), c.get('user')?.id, undefined, payload));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/order-management/sales-pulse', requirePermission('order_management'), async (c) => {
   try { return ok(c, await orderManagement.getSalesPulse(c.req.query())); }
@@ -754,8 +836,8 @@ app.get('/catalog/unmapped-skus', async (c) => {
 app.get('/catalog/image', async (c) => {
   try {
     const imageUrl = new URL(c.req.query('url') || '');
-    if (imageUrl.protocol !== 'https:' || !/(^|\.)falabella\.com$/i.test(imageUrl.hostname)) {
-      return c.json({ error: 'La imagen solicitada no pertenece a Falabella.' }, 400);
+    if (imageUrl.protocol !== 'https:' || !/(^|\.)(falabella\.com|ripley\.com(\.pe)?|mirakl\.net|mirakl\.com)$/i.test(imageUrl.hostname)) {
+      return c.json({ error: 'La imagen solicitada no pertenece a un marketplace permitido.' }, 400);
     }
     const response = await fetch(imageUrl, {
       headers: { accept: 'image/png,image/jpeg,image/webp;q=0.9,*/*;q=0.1' },
@@ -885,6 +967,24 @@ app.put('/system/config/:key', requireSuperadmin(), async (c) => {
   }
 });
 
+async function notifyInsumoLowStock(result) {
+  const current = result?.insumo;
+  const previous = result?.previous;
+  if (!current) return;
+  try {
+    const stored = await insumos.getAlertEmails();
+    await insumoLowStockAlert.notifyInsumoLowStockIfNeeded({ previous, current }, {
+      sendEmail,
+      listUsers: users.listUsers,
+      configuredEmails: stored.length ? stored : process.env.INSUMO_LOW_STOCK_ALERT_EMAIL,
+      fallbackEmail: process.env.ADMIN_EMAIL,
+      log: (...args) => console.warn('[insumos]', ...args),
+    });
+  } catch (error) {
+    console.warn('[insumos] aviso stock bajo:', error?.message || error);
+  }
+}
+
 app.get('/insumos', async (c) => {
   try {
     return ok(c, await insumos.listInsumos({
@@ -895,6 +995,15 @@ app.get('/insumos', async (c) => {
       limit: c.req.query('limit'),
       offset: c.req.query('offset'),
     }));
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.get('/insumos/alerts', async (c) => {
+  try { return ok(c, { alertEmails: await insumos.getAlertEmails() }); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+});
+app.put('/insumos/alerts', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return ok(c, await insumos.setAlertEmails(body.emails ?? body.alertEmails ?? ''));
   } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.get('/insumos/movements', async (c) => {
@@ -910,10 +1019,19 @@ app.post('/insumos', async (c) => {
   try { return ok(c, await insumos.createInsumo(await c.req.json(), c.get('user')), 201); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.patch('/insumos/:id', async (c) => {
-  try { return ok(c, await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try {
+    const result = await insumos.updateInsumo(c.req.param('id'), await c.req.json(), c.get('user'));
+    await notifyInsumoLowStock(result);
+    return ok(c, result.insumo);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 app.post('/insumos/:id/adjust', async (c) => {
-  try { return ok(c, await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'))); } catch (e) { return fail(c, e, Number(e?.status || 400)); }
+  try {
+    const result = await insumos.adjustInsumo(c.req.param('id'), await c.req.json(), c.get('user'));
+    await notifyInsumoLowStock(result);
+    const { previous: _previous, ...publicResult } = result;
+    return ok(c, publicResult);
+  } catch (e) { return fail(c, e, Number(e?.status || 400)); }
 });
 
 // ── Empresas (DTO público: nunca expone secretos; solo flags has*) ──

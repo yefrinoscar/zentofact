@@ -6,9 +6,11 @@ import {
   DEFAULT_INSUMOS,
   listInsumoMovements,
   limaLookbackStart,
+  getAlertEmails,
   listInsumos,
   mapInsumo,
   quantityCapFor,
+  setAlertEmails,
   slugifyInsumoName,
   suggestInsumoPurchases,
   updateInsumo,
@@ -39,6 +41,7 @@ class InsumosDb {
     this.rows = rows.map((row) => ({ ...row }));
     this.movements = [];
     this.users = [];
+    this.alertEmails = null;
     this.nextId = this.rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
     this.nextMovementId = 1;
   }
@@ -208,6 +211,15 @@ class InsumosDb {
       return { rows: user ? [{ name: user.name }] : [] };
     }
 
+    if (compact.includes('from insumo_alert_state')) {
+      return { rows: this.alertEmails != null ? [{ alert_emails: this.alertEmails }] : [] };
+    }
+
+    if (compact.includes('insert into insumo_alert_state')) {
+      this.alertEmails = params[0];
+      return { rows: [] };
+    }
+
     throw new Error(`Query no simulada: ${compact}`);
   }
 }
@@ -268,6 +280,7 @@ test('sumar o restar cambia el saldo actual', async () => {
   const db = new InsumosDb([seedRow({ quantity_on_hand: 4 })]);
   const result = await adjustInsumo(1, { delta: -1, pin: CHANGE_PIN }, 'user-1', db);
   assert.equal(result.insumo.quantityOnHand, 3);
+  assert.equal(result.previous.quantityOnHand, 4);
   assert.equal(db.movements[0].quantity_delta, -1);
 });
 
@@ -315,9 +328,20 @@ test('rechaza un insumo duplicado', async () => {
 test('actualiza unidad y punto de reposición', async () => {
   const db = new InsumosDb([seedRow()]);
   const updated = await updateInsumo(1, { unit: 'kg', reorderPoint: 5, pin: CHANGE_PIN }, 'user-1', db);
-  assert.equal(updated.unit, 'kg');
-  assert.equal(updated.reorderPoint, 5);
-  assert.equal(updated.lowStock, true);
+  assert.equal(updated.insumo.unit, 'kg');
+  assert.equal(updated.insumo.reorderPoint, 5);
+  assert.equal(updated.insumo.lowStock, true);
+  assert.equal(updated.previous.lowStock, false);
+  assert.equal(updated.previous.unit, 'rollos');
+});
+
+test('guarda y lee los correos de aviso', async () => {
+  const db = new InsumosDb([seedRow()]);
+  assert.deepEqual(await getAlertEmails(db), []);
+  const saved = await setAlertEmails('compras@zentofact.local, ops@zentofact.local', db);
+  assert.deepEqual(saved.alertEmails, ['compras@zentofact.local', 'ops@zentofact.local']);
+  assert.deepEqual(await getAlertEmails(db), ['compras@zentofact.local', 'ops@zentofact.local']);
+  await assert.rejects(() => setAlertEmails('hola', db), /inválidas/);
 });
 
 test('mapInsumo calcula reposición con el saldo actual', () => {

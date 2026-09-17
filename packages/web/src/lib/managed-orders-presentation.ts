@@ -51,3 +51,97 @@ export function deliveryLabel(order: ManagedOrderDeliveryInput) {
 export function deliveryShowsAsTag(label: string) {
   return label !== '—';
 }
+
+export const MANAGED_ORDER_LIST_LIMIT = 500;
+
+export type ManagedOrderListFilterInput = {
+  companyId: string;
+  channelCode: string;
+  fulfillmentStatus: string;
+  date: string;
+  search: string;
+};
+
+export function managedOrdersDateAfterDayChange(input: {
+  selectedDate: string;
+  previousToday: string;
+  currentToday: string;
+}) {
+  return input.selectedDate === input.previousToday
+    ? input.currentToday
+    : input.selectedDate;
+}
+
+function trimmedSearch(search: string) {
+  return String(search || '').trim();
+}
+
+/** Una búsqueda localiza el pedido en cualquier día. La tira de fechas solo cubre el pulso del día. */
+export function buildManagedOrderListFilters(input: ManagedOrderListFilterInput) {
+  const search = trimmedSearch(input.search);
+  return {
+    companyId: input.companyId === 'all' ? undefined : Number(input.companyId),
+    channelCode: input.channelCode === 'all' ? undefined : input.channelCode,
+    fulfillmentStatus: input.fulfillmentStatus === 'all' ? undefined : input.fulfillmentStatus,
+    ...(search ? {} : { from: input.date, to: input.date }),
+    search: search || undefined,
+    limit: MANAGED_ORDER_LIST_LIMIT,
+    offset: 0,
+  };
+}
+
+export function managedOrderSearchIgnoresDate(search: string) {
+  return Boolean(trimmedSearch(search));
+}
+
+export function managedOrdersTableLabel(dateLabel: string, search: string) {
+  const query = trimmedSearch(search);
+  if (query) return `Pedidos con ${query}`;
+  return `Pedidos de ${dateLabel}`;
+}
+
+export function managedOrdersEmptyTitle(search: string) {
+  return trimmedSearch(search)
+    ? 'No hay pedidos con esa búsqueda'
+    : 'No hay pedidos para estos filtros';
+}
+
+export function managedOrdersEmptyHint(search: string) {
+  return trimmedSearch(search)
+    ? 'La búsqueda ignora la fecha. Prueba otro dato.'
+    : 'Prueba otra búsqueda o registra una venta manual.';
+}
+
+export function managedOrdersSearchHelper(search: string) {
+  return trimmedSearch(search) ? 'Busca en todos los días.' : '';
+}
+
+export type ManagedOrderSellerInput = {
+  companyId?: number | null;
+  channelCode?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
+};
+
+function salespersonName(order: ManagedOrderSellerInput) {
+  return String(order.createdByName || '').trim();
+}
+
+/** Venta de vendedor: su nombre. Pedido de marketplace: el seller. */
+export function isSalespersonOrder(order: ManagedOrderSellerInput) {
+  return order.channelCode === 'manual' || order.createdByRole === 'vendedor';
+}
+
+export function sellerCellShowsPerson(order: ManagedOrderSellerInput) {
+  return isSalespersonOrder(order) && Boolean(salespersonName(order));
+}
+
+export function sellerCellLabel(
+  order: ManagedOrderSellerInput,
+  companyById: Map<number, string>,
+) {
+  const name = salespersonName(order);
+  if (sellerCellShowsPerson(order)) return name;
+  if (order.companyId == null) return '';
+  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
+}

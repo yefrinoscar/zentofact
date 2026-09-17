@@ -10,6 +10,10 @@ import {
   limaDateToIso,
   limaTodayKey,
   productPrice,
+  productProfit,
+  saleLineProfit,
+  saleProfit,
+  sellerBasePrice,
   productStock,
   remainingSaleStock,
   canSelectProductForSale,
@@ -55,20 +59,27 @@ function validSale(overrides = {}) {
   };
 }
 
-test('el precio de venta prioriza el mínimo seller sobre el de referencia', () => {
+test('el precio de venta usa el registrado y no el mínimo de marketplace', () => {
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
     name: 'X',
-    sellerPriceMin: 120,
-    referencePrice: 200,
-  }), 120);
+    sellerPriceMin: 23.97,
+    referencePrice: 25,
+  }), 25);
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
     name: 'X',
     referencePrice: 200,
   }), 200);
+  assert.equal(productPrice({
+    id: 1,
+    mainSku: 'A',
+    name: 'X',
+    sellerPriceMin: 23.97,
+    referencePrice: null,
+  }), 23.97);
   assert.equal(productPrice({
     id: 1,
     mainSku: 'A',
@@ -376,6 +387,21 @@ test('buildManualSaleOrderPayload marca pagado cuando el cobro no es después', 
 
   assert.equal(payload.paymentStatus, 'paid');
   assert.equal(payload.metadata.receivedBy, 'Luis');
+  assert.equal(payload.metadata.paidTo, '');
+});
+
+test('Yape / Plin guarda a quién pagaron y deja la constancia opcional', () => {
+  const empresa = buildManualSaleOrderPayload(validSale({ paymentMethod: 'yape_plin' }));
+  assert.equal(empresa.metadata.paidTo, 'empresa');
+  assert.equal(empresa.metadata.paymentProof, null);
+
+  const vendedor = buildManualSaleOrderPayload(validSale({
+    paymentMethod: 'yape_plin',
+    paidTo: 'vendedor',
+    paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
+  }));
+  assert.equal(vendedor.metadata.paidTo, 'vendedor');
+  assert.equal(vendedor.metadata.paymentProof.name, 'yape.jpg');
 });
 
 test('regresión: la venta manual siempre envía fecha de entrega al backend', () => {
@@ -533,4 +559,43 @@ test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () 
   assert.equal(firstInvalidSaleStep(validSale({ customerName: '', lines: [] })), 'cliente');
   // El canal es un error de configuración, no un paso del recorrido.
   assert.equal(firstInvalidSaleStep(validSale({ channelAccountId: null })), null);
+});
+
+
+test('el regreso respeta el origen aun cuando el usuario puede acceder a ambas pantallas', async () => {
+  const { saleReturnPath } = await import('./registrar-venta.ts');
+  assert.equal(saleReturnPath('mis-ventas', true), '/mis-ventas');
+  assert.equal(saleReturnPath('orders', true), '/orders');
+  assert.equal(saleReturnPath(null, false), '/mis-ventas');
+  assert.equal(saleReturnPath('orders', false), '/mis-ventas');
+  assert.equal(saleReturnPath(null, true), '/orders');
+});
+
+test('la comisión del producto se multiplica por unidades y distingue cero de sin configurar', async () => {
+  const { saleProductCommission } = await import('./registrar-venta.ts');
+  assert.equal(saleProductCommission([{ commissionAmount: 7.5, quantity: 2 }, { commissionAmount: 3, quantity: 1 }]), 18);
+  assert.equal(saleProductCommission([{ commissionAmount: 0, quantity: 2 }]), 0);
+  assert.equal(saleProductCommission([{ quantity: 2 }]), undefined);
+});
+
+test('el vendedor gana la comisión fija y lo que sube sobre su precio', () => {
+  assert.equal(sellerBasePrice(25, 5), 20);
+  assert.equal(productProfit({
+    id: 1,
+    mainSku: 'G-48',
+    name: 'Escáner',
+    referencePrice: 25,
+    sellerPriceMin: 23.97,
+    commissionAmount: 5,
+  }), 5);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 25, quantity: 1, commissionAmount: 5 }), 5);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 28, quantity: 1, commissionAmount: 5 }), 8);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 23, quantity: 1, commissionAmount: 5 }), 3);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 23, quantity: 2, commissionAmount: 5 }), 6);
+  assert.equal(saleLineProfit({ catalogPrice: 25, unitPrice: 25, quantity: 1 }), null);
+  assert.equal(saleProfit([
+    { catalogPrice: 25, unitPrice: 28, quantity: 1, commissionAmount: 5 },
+    { catalogPrice: 10, unitPrice: 10, quantity: 1, commissionAmount: 2 },
+  ]), 10);
+  assert.equal(saleProfit([{ catalogPrice: 25, unitPrice: 25, quantity: 1 }]), null);
 });

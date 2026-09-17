@@ -1,0 +1,481 @@
+import { sellerShortName } from './seller-name.ts';
+
+export type ProductSaleSeller = {
+  companyId: number | null;
+  companyName?: string | null;
+  channelCode?: string | null;
+  channelCodes?: string[] | null;
+  title?: string | null;
+  sellerSku?: string | null;
+  shopSku?: string | null;
+  published: boolean;
+  unitsSold: number;
+  ordersCount: number;
+  grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
+  visits: number | null;
+};
+
+export type SalesPace = 'up' | 'down' | 'stable';
+
+export type ProductSalePoint = {
+  date: string;
+  units: number;
+};
+
+export type SalesDayPoint = {
+  date: string;
+  units: number;
+  revenue: number;
+};
+
+export type ProductSaleRow = {
+  productKey: string;
+  productId: number | null;
+  sku: string;
+  name: string;
+  imageUrl?: string | null;
+  brand?: string | null;
+  mapped?: boolean;
+  published: boolean;
+  unitsSold: number;
+  ordersCount: number;
+  sellersCount: number;
+  grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
+  visits: number | null;
+  wholesalePrice?: number | null;
+  available?: number | null;
+  unitsPerDay?: number;
+  keeps?: number | null;
+  keepsPerUnit?: number | null;
+  keepsPerDay?: number | null;
+  hasWholesaleCost?: boolean;
+  coverDays?: number | null;
+  restockQty?: number;
+  horizonDays?: number;
+  series?: ProductSalePoint[];
+  pace?: SalesPace;
+  weekendShare?: number;
+  skipReason?: RestockSkipReason | null;
+  sellers: ProductSaleSeller[];
+};
+
+export type RestockSkipReason = 'overstock' | 'slow' | 'lowKeep';
+export type RestockGroup = 'bring' | 'skip' | 'watch';
+
+export type RestockPoint = {
+  productKey: string;
+  sku: string;
+  name: string;
+  unitsPerDay: number;
+  keepsPerDay: number | null;
+  restockQty: number;
+  coverDays: number | null;
+  available: number | null;
+  group: RestockGroup;
+};
+
+export type ProductSalesRestock = {
+  horizonDays: number;
+  items: ProductSaleRow[];
+  skip: ProductSaleRow[];
+  points?: RestockPoint[];
+};
+
+export type ProductSaleBuyerCompany = {
+  companyId: number | null;
+  companyName?: string | null;
+  unitsBought: number;
+  ordersCount: number;
+  grossSales: number;
+};
+
+export type ProductSaleBuyerProduct = {
+  productKey?: string | null;
+  sku: string;
+  name: string;
+  unitsBought: number;
+  grossSales: number;
+};
+
+export type ProductSaleBuyer = {
+  buyerKey: string;
+  name: string;
+  documentNumber?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  tracked?: boolean;
+  companies?: ProductSaleBuyerCompany[];
+  products?: ProductSaleBuyerProduct[];
+  ordersCount: number;
+  unitsBought: number;
+  grossSales: number;
+  lastOrderedAt?: string | null;
+};
+
+export const TRACKED_BUYER_MIN_UNITS = 5;
+
+export type BuyerSortBy = 'name' | 'phone' | 'company' | 'units' | 'grossSales';
+
+export type ProductSalesTotals = {
+  productsCount: number;
+  unitsSold: number;
+  ordersCount: number;
+  sellersCount: number;
+  buyersCount: number;
+  grossSales: number;
+  falabellaTake: number | null;
+  arrives: number | null;
+  paidArrives: number | null;
+  pendingArrives: number | null;
+  settlementOrders: number;
+  averageTicket: number;
+  visits: number | null;
+};
+
+const money = new Intl.NumberFormat('es-PE', {
+  style: 'currency',
+  currency: 'PEN',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const integer = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 0 });
+
+export function formatSalesMoney(value: number | null | undefined) {
+  return money.format(Number(value || 0));
+}
+
+export function formatSalesMoneyOrDash(value: number | null | undefined) {
+  return value == null ? '—' : formatSalesMoney(value);
+}
+
+export function pagosHint() {
+  return 'Cruza Pagos para verlo.';
+}
+
+function channelCodesOf(row?: {
+  channelCode?: string | null;
+  channelCodes?: string[] | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  const own = row?.channelCodes?.length ? row.channelCodes : row?.channelCode ? [row.channelCode] : [];
+  const nested = (row?.sellers || []).flatMap((seller) => (
+    seller.channelCodes?.length ? seller.channelCodes : seller.channelCode ? [seller.channelCode] : []
+  ));
+  return [...own, ...nested];
+}
+
+export function falabellaMoneyHint(row?: {
+  falabellaTake?: number | null;
+  channelCode?: string | null;
+  channelCodes?: string[] | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  if (row?.falabellaTake != null) return 'Comisión y logística.';
+  const channels = channelCodesOf(row);
+  if (channels.length && channels.every((code) => String(code || '').toLowerCase() !== 'falabella')) {
+    return 'Sin cobro de Falabella.';
+  }
+  return pagosHint();
+}
+
+export function arrivesMoneyHint(row?: {
+  arrives?: number | null;
+  sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
+} | null) {
+  if (row?.arrives != null) return 'Lo que entra a tu cuenta.';
+  return falabellaMoneyHint({ falabellaTake: null, sellers: row?.sellers });
+}
+
+export function paidMoneyHint(row?: { paidArrives?: number | null } | null) {
+  if (row?.paidArrives == null) return pagosHint();
+  return 'Ya está en tu cuenta.';
+}
+
+export function pendingMoneyHint(row?: { pendingArrives?: number | null } | null) {
+  if (row?.pendingArrives == null) return pagosHint();
+  return 'Aún no depositan.';
+}
+
+export function paidPendingCompact(row?: {
+  paidArrives?: number | null;
+  pendingArrives?: number | null;
+} | null) {
+  if (row?.paidArrives == null && row?.pendingArrives == null) return '';
+  return `${formatSalesMoneyOrDash(row?.paidArrives)} pagado · ${formatSalesMoneyOrDash(row?.pendingArrives)} pendiente`;
+}
+
+export function formatSalesCount(value: number | null | undefined) {
+  return integer.format(Number(value || 0));
+}
+
+export function formatVisits(value: number | null | undefined) {
+  return value == null ? '—' : integer.format(value);
+}
+
+export function visitsHint() {
+  return 'El canal no envía visitas.';
+}
+
+export function publishedLabel(published: boolean) {
+  return published ? 'Sí' : 'No';
+}
+
+export function channelLabel(value?: string | null) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'falabella') return 'Falabella';
+  if (normalized === 'ripley') return 'Ripley';
+  if (normalized === 'manual') return 'Manual';
+  if (normalized === 'mercado_libre') return 'Mercado Libre';
+  return normalized ? normalized : 'Canal';
+}
+
+export function sellerChannelLabel(seller: Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>) {
+  const codes = (seller.channelCodes && seller.channelCodes.length
+    ? seller.channelCodes
+    : seller.channelCode ? [seller.channelCode] : [])
+    .filter(Boolean);
+  return codes.map((code) => channelLabel(code)).join(' · ') || 'Canal';
+}
+
+export function sellerSalesLabel(seller: Pick<ProductSaleSeller, 'companyName'>) {
+  return sellerShortName(seller.companyName);
+}
+
+export function paidShare(paid?: number | null, pending?: number | null) {
+  const received = Number(paid || 0);
+  const waiting = Number(pending || 0);
+  const total = received + waiting;
+  return total > 0 ? received / total : 0;
+}
+
+export function productSalesKpis(totals?: ProductSalesTotals | null) {
+  const grossSales = Number(totals?.grossSales || 0);
+  const unitsSold = Number(totals?.unitsSold || 0);
+  const ordersCount = Number(totals?.ordersCount || 0);
+  const falabellaTake = totals?.falabellaTake ?? null;
+  const arrives = totals?.arrives ?? null;
+
+  return [
+    {
+      key: 'grossSales' as const,
+      label: 'Ventas brutas',
+      why: `${formatSalesCount(unitsSold)} u · ${formatSalesCount(ordersCount)} pedidos.`,
+      display: formatSalesMoney(grossSales),
+      tone: 'neutral' as const,
+      paid: null,
+      pending: null,
+    },
+    {
+      key: 'arrives' as const,
+      label: 'Te llega',
+      why: arrives == null ? pagosHint() : 'Lo que entra a tu cuenta.',
+      display: formatSalesMoneyOrDash(arrives),
+      tone: 'receive' as const,
+      paid: totals?.paidArrives ?? null,
+      pending: totals?.pendingArrives ?? null,
+      take: falabellaTake,
+    },
+  ];
+}
+
+export function buyerIdentity(buyer: ProductSaleBuyer) {
+  return buyer.documentNumber || buyer.email || 'Sin documento';
+}
+
+export function isTrackedBuyer(buyer: Pick<ProductSaleBuyer, 'tracked' | 'unitsBought'>) {
+  if (buyer.tracked != null) return Boolean(buyer.tracked);
+  return Number(buyer.unitsBought || 0) > TRACKED_BUYER_MIN_UNITS;
+}
+
+export function splitSalesBuyers(buyers: ProductSaleBuyer[]) {
+  const tracked: ProductSaleBuyer[] = [];
+  const others: ProductSaleBuyer[] = [];
+  for (const buyer of buyers) {
+    (isTrackedBuyer(buyer) ? tracked : others).push(buyer);
+  }
+  return { tracked, others };
+}
+
+export function formatBuyerPhone(phone?: string | null) {
+  const raw = String(phone || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  return raw;
+}
+
+export function buyerPhoneDigits(phone?: string | null) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+export function buyerPhoneLabel(buyer: Pick<ProductSaleBuyer, 'phone'>) {
+  return formatBuyerPhone(buyer.phone) || 'Sin teléfono';
+}
+
+export function hasBuyerPhone(buyer: Pick<ProductSaleBuyer, 'phone'>) {
+  return buyerPhoneDigits(buyer.phone).length >= 6;
+}
+
+export function buyerCompanyNames(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  return (buyer.companies || [])
+    .map((company) => sellerShortName(company.companyName))
+    .filter((name) => name && name !== 'Seller');
+}
+
+export function buyerCompaniesLabel(buyer: Pick<ProductSaleBuyer, 'companies'>) {
+  const names = buyerCompanyNames(buyer);
+  return names.length ? names.join(' · ') : 'Sin seller';
+}
+
+export function buyerProductsLabel(buyer: Pick<ProductSaleBuyer, 'products'>) {
+  return (buyer.products || [])
+    .map((product) => `${product.sku || product.name} · ${formatSalesCount(product.unitsBought)} u`)
+    .join(' · ');
+}
+
+export function formatBuyerLastOrder(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-PE', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'America/Lima',
+  }).format(date);
+}
+
+export function buyerSortValue(buyer: ProductSaleBuyer, sortBy: BuyerSortBy) {
+  if (sortBy === 'name') return buyer.name || '';
+  if (sortBy === 'phone') return buyerPhoneDigits(buyer.phone);
+  if (sortBy === 'company') return buyerCompaniesLabel(buyer);
+  if (sortBy === 'units') return Number(buyer.unitsBought || 0);
+  return Number(buyer.grossSales || 0);
+}
+
+export function sortSalesBuyers(
+  buyers: ProductSaleBuyer[],
+  sortBy: BuyerSortBy,
+  sortDir: 'asc' | 'desc',
+) {
+  const direction = sortDir === 'asc' ? 1 : -1;
+  return buyers.slice().sort((left, right) => {
+    const a = buyerSortValue(left, sortBy);
+    const b = buyerSortValue(right, sortBy);
+    const cmp = typeof a === 'number' && typeof b === 'number'
+      ? a - b
+      : String(a).localeCompare(String(b), 'es');
+    return (cmp || left.name.localeCompare(right.name, 'es')) * direction;
+  });
+}
+
+const unitsDay = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+const moneyDay = new Intl.NumberFormat('es-PE', {
+  style: 'currency',
+  currency: 'PEN',
+  maximumFractionDigits: 0,
+});
+
+export function formatUnitsPerDay(value: number | null | undefined) {
+  return unitsDay.format(Number(value || 0));
+}
+
+export function formatKeepsPerDay(value: number | null | undefined) {
+  if (value == null) return '—';
+  return moneyDay.format(Number(value));
+}
+
+export function formatCoverDays(value: number | null | undefined) {
+  if (value == null) return null;
+  if (value < 1) return '<1 d';
+  return `${integer.format(Math.round(value))} d`;
+}
+
+export function stockIsLow(coverDays: number | null | undefined) {
+  return coverDays != null && coverDays < 14;
+}
+
+export function restockWhyLabel(product: Pick<ProductSaleRow, 'unitsPerDay' | 'available' | 'coverDays' | 'pace'>) {
+  const pace = `${formatUnitsPerDay(product.unitsPerDay)} u/día`;
+  const stock = `${formatSalesCount(product.available || 0)} u en almacén`;
+  if (product.pace === 'up') return `${pace} · ${stock} · curva al alza`;
+  if (stockIsLow(product.coverDays) && product.coverDays != null) {
+    const days = product.coverDays < 1 ? 'menos de un día' : `${integer.format(Math.max(0, Math.floor(product.coverDays)))} días`;
+    return `${pace} · ${stock} · se acaba en ${days}`;
+  }
+  return `${pace} · ${stock}`;
+}
+
+export function skipWhyLabel(product: Pick<ProductSaleRow, 'sku' | 'name' | 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
+  if (product.skipReason === 'lowKeep' || (product.coverDays != null && product.coverDays < 45 && product.skipReason !== 'overstock')) {
+    return `${product.name} ${product.sku}: vende ${formatUnitsPerDay(product.unitsPerDay)} u/día pero te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+  }
+  return `${product.name} ${product.sku}: ${formatUnitsPerDay(product.unitsPerDay)} u/día y ${integer.format(Math.round(Number(product.coverDays || 0)))} días de stock`;
+}
+
+export function skipReasonLabel(reason?: RestockSkipReason | null) {
+  if (reason === 'slow') return 'Se mueve poco';
+  if (reason === 'lowKeep') return 'Vende, deja poco';
+  if (reason === 'overstock') return 'Stock de sobra';
+  return 'No traigas';
+}
+
+export function skipDetail(product: Pick<ProductSaleRow, 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
+  if (product.skipReason === 'lowKeep') {
+    return `${formatUnitsPerDay(product.unitsPerDay)} u/día · te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+  }
+  const cover = formatCoverDays(product.coverDays) || '—';
+  return `${cover} de stock · ${formatUnitsPerDay(product.unitsPerDay)} u/día`;
+}
+
+const WEEKDAYS = [
+  { key: 1, label: 'Lun' },
+  { key: 2, label: 'Mar' },
+  { key: 3, label: 'Mié' },
+  { key: 4, label: 'Jue' },
+  { key: 5, label: 'Vie' },
+  { key: 6, label: 'Sáb' },
+  { key: 0, label: 'Dom' },
+] as const;
+
+export function weekdayUnits(series: ProductSalePoint[] = []) {
+  const totals = new Map<number, number>(WEEKDAYS.map((day) => [day.key, 0]));
+  for (const point of series) {
+    const date = new Date(`${point.date}T12:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) continue;
+    const weekday = date.getUTCDay();
+    totals.set(weekday, Number(totals.get(weekday) || 0) + Number(point.units || 0));
+  }
+  return WEEKDAYS.map((day) => ({
+    label: day.label,
+    units: Number(totals.get(day.key) || 0),
+  }));
+}
+
+export function restockFormula(product: Pick<ProductSaleRow, 'unitsPerDay' | 'horizonDays' | 'available' | 'restockQty'>) {
+  const horizon = Number(product.horizonDays || 30);
+  return `${formatUnitsPerDay(product.unitsPerDay)} × ${horizon} − ${formatSalesCount(product.available || 0)} = ${formatSalesCount(product.restockQty || 0)}`;
+}
+
+export function salesCurveNote(product: ProductSaleRow) {
+  const pace = formatUnitsPerDay(product.unitsPerDay);
+  let title = `Se vende ${pace} u/día.`;
+  if (product.pace === 'up') title = `Se está acelerando. Ahora ${pace} u/día.`;
+  if (product.pace === 'down') title = `Se está frenando. Ahora ${pace} u/día.`;
+  const bits: string[] = [];
+  if ((product.weekendShare || 0) >= 0.45) bits.push('Casi todo sale jueves a domingo.');
+  if (product.hasWholesaleCost && product.keepsPerUnit != null) {
+    bits.push(`Te llegan ${formatSalesMoney(product.keepsPerUnit)} por unidad.`);
+  } else if (product.keepsPerDay != null && product.hasWholesaleCost === false) {
+    bits.push('Sin precio por mayor: usamos lo que te llega.');
+  }
+  return { title, detail: bits.join(' ') };
+}

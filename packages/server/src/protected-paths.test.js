@@ -9,11 +9,18 @@ test('la bandeja de pedidos exige sesión para lectura y sincronización', () =>
   assert.equal(isProtectedPath('/order-management/accounts'), true);
   assert.equal(isProtectedPath('/logistics-inbox'), true);
   assert.equal(isProtectedPath('/logistics-inbox/print'), true);
+  assert.equal(isProtectedPath('/logistics-inbox/44/delivered'), true);
 });
 
 test('insumos exige sesión para lectura y ajustes', () => {
   assert.equal(isProtectedPath('/insumos'), true);
   assert.equal(isProtectedPath('/insumos/3/adjust'), true);
+});
+
+test('los avisos operativos exigen sesión', () => {
+  assert.equal(isProtectedPath('/notifications'), true);
+  assert.equal(isProtectedPath('/notifications/read'), true);
+  assert.equal(isProtectedPath('/notifications/dismiss'), true);
 });
 
 test('pagos exige sesión para historial y carga de CSV', () => {

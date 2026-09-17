@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { markFalabellaOrderReadyToShip } from './falabella-ready-to-ship-operation.js';
+import {
+  markFalabellaOrderReadyToShip,
+  syncUnifiedReadyFulfillment,
+  unifiedReadyFulfillment,
+} from './falabella-ready-to-ship-operation.js';
 
 function deferred() {
   let resolve;
@@ -289,6 +293,77 @@ test('un succeeded local no es éxito si el pedido ya no está listo', async () 
   assert.equal(outcome.kind, 'success');
   assert.equal(providerCalls, 1);
   assert.equal(pool.operationState, 'succeeded');
+});
+
+test('el pedido unificado pasa de pending a ready_to_ship al confirmar listo', async () => {
+  const orders = new Map([['7:ORDER-UNIFIED', { fulfillment_status: 'pending', order_status: 'confirmed' }]]);
+  const pool = {
+    async query(sql, params = []) {
+      const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (compact.includes('ready-to-ship:claim')) return { rows: [{ state: 'processing' }] };
+      if (compact.includes('ready-to-ship:complete')) return { rows: [{ state: 'succeeded' }] };
+      if (compact.includes('ready-to-ship:unified')) {
+        const row = orders.get(`${params[0]}:${params[1]}`);
+        if (row && ['pending', 'preparing', 'ready_to_ship'].includes(row.fulfillment_status)) {
+          row.fulfillment_status = params[2];
+          row.order_status = params[3];
+          row.provider_status = params[4];
+          return { rows: [{ id: 80, fulfillment_status: row.fulfillment_status }] };
+        }
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const outcome = await markFalabellaOrderReadyToShip({
+    pool,
+    companyId: 7,
+    orderId: 'ORDER-UNIFIED',
+    setReadyToShip: async () => ({ ok: true, alreadyReady: false }),
+  });
+
+  assert.equal(outcome.kind, 'success');
+  assert.equal(orders.get('7:ORDER-UNIFIED').fulfillment_status, 'ready_to_ship');
+  assert.equal(orders.get('7:ORDER-UNIFIED').provider_status, 'ready_to_ship');
+});
+
+test('un alreadyReady también sincroniza el pedido unificado pendiente', async () => {
+  const seen = [];
+  const pool = new IncidentPool(10, { operationState: 'succeeded', orderStatus: 'ready_to_ship' });
+  const originalQuery = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    seen.push(sql);
+    return originalQuery(sql, params);
+  };
+
+  const outcome = await markFalabellaOrderReadyToShip({
+    pool,
+    companyId: 7,
+    orderId: 'ORDER-STILL-PENDING-UNIFIED',
+    setReadyToShip: async () => assert.fail('no debe repetir el POST'),
+  });
+
+  assert.equal(outcome.kind, 'success');
+  assert.equal(outcome.result.alreadyReady, true);
+  assert.ok(seen.some((sql) => sql.includes('ready-to-ship:unified')));
+});
+
+test('syncUnifiedReadyFulfillment no pisa un pedido ya enviado', async () => {
+  assert.deepEqual(unifiedReadyFulfillment('ready_to_ship'), {
+    fulfillmentStatus: 'ready_to_ship',
+    orderStatus: 'confirmed',
+    providerStatus: 'ready_to_ship',
+  });
+  const updates = [];
+  await syncUnifiedReadyFulfillment({
+    async query(sql, params) {
+      updates.push({ sql, params });
+      return { rows: [] };
+    },
+  }, 7, 'ORDER-80', 'shipped');
+  assert.match(updates[0].sql, /ready-to-ship:unified/);
+  assert.deepEqual(updates[0].params, [7, 'ORDER-80', 'shipped', 'confirmed', 'shipped']);
 });
 
 test('un succeeded con pedido listo sigue siendo idempotente', async () => {

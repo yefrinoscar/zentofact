@@ -52,6 +52,7 @@ test('el catálogo separa secciones y subsecciones del menú', () => {
 
 test('pathPermission separa el listado de notas de la anulación masiva', () => {
   assert.equal(pathPermission('/orders'), 'order_management');
+  assert.equal(pathPermission('/cancelados'), 'order_management');
   assert.equal(pathPermission('/bandeja'), 'orders_inbox');
   assert.equal(pathPermission('/pedidos'), 'orders_inbox');
   assert.equal(pathPermission('/bandeja'), 'orders_inbox');
@@ -64,7 +65,9 @@ test('pathPermission separa el listado de notas de la anulación masiva', () => 
   assert.equal(pathPermission('/credit-notes/bulk'), 'credit_notes_bulk');
   assert.equal(pathPermission('/credit-notes/bulk/confirm'), 'credit_notes_bulk');
   assert.equal(pathPermission('/insumos'), 'insumos');
+  assert.equal(pathPermission('/avisos'), null);
   assert.equal(pathPermission('/pagos'), 'pagos');
+  assert.equal(pathPermission('/ventas'), 'dashboard');
   assert.equal(pathPermission('/productos'), 'productos');
 });
 
@@ -81,7 +84,7 @@ test('los permisos antiguos se expanden al catálogo nuevo', () => {
 
 test('los perfiles representan áreas reales de trabajo', () => {
   assert.deepEqual(SELECTABLE_ROLES, ['superadmin', 'admin', 'operator', 'billing', 'vendedor']);
-  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'orders_inbox', 'orders_scanner', 'insumos']);
+  assert.deepEqual(ROLE_PRESETS.operator.permissions, ['order_management', 'return_stock_approve', 'orders_inbox', 'orders_scanner', 'insumos']);
   assert.deepEqual(ROLE_PRESETS.vendedor.permissions, ['salesperson']);
   assert.equal(ROLE_PRESETS.vendedor.label, 'Vendedor');
   assert.deepEqual(ROLE_PRESETS.billing.permissions, [
@@ -117,6 +120,7 @@ test('un perfil básico con permisos vacíos recupera su preset', () => {
 test('la matriz final de perfiles permite y rechaza los módulos correctos', () => {
   const operator = { role: 'operator', active: true, permissions: ROLE_PRESETS.operator.permissions };
   assert.equal(userHasPermission(operator, 'order_management'), true);
+  assert.equal(userHasPermission(operator, 'return_stock_approve'), true);
   assert.equal(userHasPermission(operator, 'orders_inbox'), true);
   assert.equal(userHasPermission(operator, 'orders_scanner'), true);
   assert.equal(userHasPermission(operator, 'insumos'), true);
@@ -132,6 +136,7 @@ test('la matriz final de perfiles permite y rechaza los módulos correctos', () 
   assert.equal(userHasPermission(billing, 'credit_notes_bulk'), true);
   assert.equal(userHasPermission(billing, 'orders_inbox'), false);
   assert.equal(userHasPermission(billing, 'falabella_sellers'), false);
+  assert.equal(userHasPermission(billing, 'return_stock_approve'), false);
 
   for (const role of ['admin', 'superadmin']) {
     const administrative = { role, active: true, permissions: [] };
@@ -165,6 +170,10 @@ test('los presets generales anteriores migran a los nuevos perfiles acotados', (
   );
   assert.deepEqual(
     normalizePermissions(['order_management', 'orders_inbox', 'orders_scanner'], 'operator'),
+    ROLE_PRESETS.operator.permissions,
+  );
+  assert.deepEqual(
+    normalizePermissions(['order_management', 'orders_inbox', 'orders_scanner', 'insumos'], 'operator'),
     ROLE_PRESETS.operator.permissions,
   );
   assert.deepEqual(

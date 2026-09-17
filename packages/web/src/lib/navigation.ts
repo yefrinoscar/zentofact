@@ -1,5 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Ban,
+  BarChart3,
+  Bell,
   Building2,
   ChartNoAxesCombined,
   CircleDollarSign,
@@ -37,6 +40,7 @@ export type NavItem = {
   adminOnly?: boolean;
   superadminOnly?: boolean;
   hiddenInProduction?: boolean;
+  alwaysVisible?: boolean;
 };
 
 export type NavGroup = {
@@ -50,7 +54,15 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'ops',
     label: 'Operación',
     items: [
+      {
+        to: '/avisos',
+        icon: Bell,
+        label: 'Avisos',
+        alwaysVisible: true,
+        description: 'Lo que necesita tu atención ahora.',
+      },
       { to: '/dashboard', icon: ChartNoAxesCombined, label: 'Dashboard', permission: 'dashboard' },
+      { to: '/ventas', icon: BarChart3, label: 'Ventas', permission: 'dashboard' },
       { to: '/pagos', icon: CircleDollarSign, label: 'Pagos', permission: 'pagos' },
       { to: '/falabella-api', icon: ShoppingBag, img: falabellaIcon as string, label: 'Falabella', permission: 'falabella_sellers' },
       { to: '/productos', icon: PackageSearch, label: 'Productos', permission: 'productos', hiddenInProduction: true },
@@ -64,7 +76,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/mis-ventas', icon: Wallet, label: 'Mis ventas', permission: 'salesperson' },
       { to: '/bandeja', icon: Inbox, label: 'Bandeja', permission: 'orders_inbox' },
       { to: '/orders', icon: ListOrdered, label: 'Todos los pedidos', permission: 'order_management' },
-      { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox' },
+      { to: '/cancelados', icon: Ban, label: 'Devoluciones', permission: 'order_management' },
+      { to: '/pedidos', icon: Inbox, label: 'Bandeja Falabella', permission: 'orders_inbox', hiddenInProduction: true },
       { to: '/scanner', icon: ScanLine, label: 'Preparación y escaneo', permission: 'orders_scanner' },
       { to: '/insumos', icon: PackageOpen, label: 'Insumos', permission: 'insumos' },
     ],

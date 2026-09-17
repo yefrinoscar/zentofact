@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+interface Window {
+  webkitAudioContext?: typeof AudioContext;
+}
+
 interface ImportMetaEnv {
   readonly VITE_APP_ENV?: string;
   readonly VITE_SUNAT_ENV?: string;

@@ -30,6 +30,9 @@ export function OrdersVirtualTable<TData>({
   table,
   loading = false,
   fetching = false,
+  fetchingMore = false,
+  hasMore = false,
+  onEndReached,
   empty,
   footer,
   onRowClick,
@@ -37,12 +40,16 @@ export function OrdersVirtualTable<TData>({
   stickyRightId = 'actions',
   rowHeight = ROW_HEIGHT,
   compact = false,
+  overscan = 16,
   scrollClassName = 'h-[min(70vh,36rem)]',
   'aria-label': ariaLabel,
 }: {
   table: TanstackTable<TData>;
   loading?: boolean;
   fetching?: boolean;
+  fetchingMore?: boolean;
+  hasMore?: boolean;
+  onEndReached?: () => void;
   empty: ReactNode;
   footer?: ReactNode;
   onRowClick?: (row: TData) => void;
@@ -50,19 +57,38 @@ export function OrdersVirtualTable<TData>({
   stickyRightId?: string;
   rowHeight?: number;
   compact?: boolean;
+  overscan?: number;
   scrollClassName?: string;
   'aria-label'?: string;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const requestedMore = useRef(false);
+  const loadedCount = useRef(0);
   const rows = table.getRowModel().rows;
   const headerGroup = table.getHeaderGroups()[0];
   const columns = table.getVisibleLeafColumns();
   const tableWidth = columns.reduce((sum, column) => sum + column.getSize(), 0);
+  if (loadedCount.current !== rows.length) {
+    loadedCount.current = rows.length;
+    requestedMore.current = false;
+  }
+
+  function maybeLoadMore() {
+    if (!onEndReached || !hasMore || fetchingMore || fetching || requestedMore.current) return;
+    const el = parentRef.current;
+    if (el) {
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (remaining > rowHeight * 10) return;
+    }
+    requestedMore.current = true;
+    onEndReached();
+  }
+
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
-    overscan: 16,
+    overscan,
   });
   const virtualRows = virtualizer.getVirtualItems();
 
@@ -93,7 +119,12 @@ export function OrdersVirtualTable<TData>({
       {loading ? (
         <OrdersTableSkeleton columnCount={columns.length || 8} />
       ) : rows.length === 0 ? empty : (
-        <div ref={parentRef} className={cn('overflow-auto', scrollClassName)} aria-busy={fetching}>
+        <div
+          ref={parentRef}
+          className={cn('overflow-auto', scrollClassName)}
+          aria-busy={fetching || fetchingMore}
+          onScroll={onEndReached ? maybeLoadMore : undefined}
+        >
           <div style={{ width: tableWidth, minWidth: '100%' }}>
             <div className="sticky top-0 z-20 flex border-b border-border bg-muted" role="row">
               {headerGroup?.headers.map((header) => {

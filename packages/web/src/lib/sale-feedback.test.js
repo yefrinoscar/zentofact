@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyOptimisticSale,
+  buildOptimisticSale,
   humanizeSaleError,
   registeredFromMisVentasState,
   saleSavedSnackbarMessage,
@@ -118,4 +119,14 @@ test('registeredFromMisVentasState acepta string legacy y objeto', () => {
   assert.deepEqual(registeredFromMisVentasState({
     registered: { number: '1', customer: 'Ana', total: 10 },
   }), { number: '1', customer: 'Ana', total: 10 });
+});
+
+test('la actualización inmediata suma la comisión del pedido sin recalcular las anteriores', () => {
+  const sale = buildOptimisticSale({ orderNumber: 'COM-1', customerName: 'Ana', total: 200, commission: 18 });
+  const home = applyOptimisticSale({
+    today: { orders: 1, total: 400, commission: 0 },
+    month: { orders: 1, total: 400, commission: 0 },
+  }, sale, 10);
+  assert.equal(home.today.commission, 18);
+  assert.equal(home.orders[0].commission, 18);
 });

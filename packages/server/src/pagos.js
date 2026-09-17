@@ -1,12 +1,17 @@
 import { createHash } from 'crypto';
 import { classifyChargeKind, isPaidSettlementStatus, lineFingerprint, paidDateFromLine, parseSettlementCsv, rawValueByHeader } from './pagos-csv.js';
 import { matchSettlementLines } from './pagos-match.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
-import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceChargesForOrders, loadInvoiceRefsForOrders } from './pagos-invoice.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, filterAggregatedSales, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
+import { attachInvoicesToSales, csvIsInvoiceReport, isInvoiceReportFilename, loadInvoiceRefsForOrders, uniqueSaleRefs } from './pagos-invoice.js';
 
 const MAX_CSV_BYTES = 8 * 1024 * 1024;
 
 let defaultPoolPromise;
+let aggregatedSalesCache = null;
+
+export function clearSettlementSalesCache() {
+  aggregatedSalesCache = null;
+}
 
 async function resolvePool(db) {
   if (db) return db;
@@ -170,7 +175,7 @@ function mapLine(row) {
     reason: row.match_reason || null,
     orderId: row.order_ref || '',
     sku: row.sku || '',
-    shopSku: rawValueByHeader(row.raw, (header) => (
+    shopSku: row.shop_sku || rawValueByHeader(row.raw, (header) => (
       header === 'sku falabella' || header === 'shop sku' || header === 'shopsku'
     )),
     date: row.sale_date ? String(row.sale_date).slice(0, 10) : null,
@@ -178,7 +183,9 @@ function mapLine(row) {
       raw: row.raw || {},
       paymentStatus: row.payment_status || '',
       paid: isPaidSettlementStatus(row.payment_status),
-    }),
+    }) || (isPaidSettlementStatus(row.payment_status) && row.sale_date
+      ? String(row.sale_date).slice(0, 10)
+      : null),
     type: row.transaction_type || '',
     kind: row.kind || '',
     chargeKind: classifyChargeKind(row.transaction_type || ''),
@@ -315,10 +322,76 @@ export async function listSettlementLines(filter = {}, db) {
   };
 }
 
-export const SETTLEMENT_SALES_PAGE_MAX = 2000;
+export const SETTLEMENT_SALES_LIST_MAX = 20000;
+export const SETTLEMENT_SALES_PAGE_MAX = 200;
+export const SETTLEMENT_SALES_PAGE_DEFAULT = 80;
 
 export function settlementSalesLimit(raw) {
-  return Math.min(Math.max(Number(raw) || 50, 1), SETTLEMENT_SALES_PAGE_MAX);
+  if (raw === undefined || raw === null || raw === '') return SETTLEMENT_SALES_PAGE_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return SETTLEMENT_SALES_PAGE_DEFAULT;
+  return Math.min(Math.floor(parsed), SETTLEMENT_SALES_PAGE_MAX);
+}
+
+const SETTLEMENT_SALES_LINE_SQL = `
+       select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
+              sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
+              sl.payment_status, sl.item_id,
+              sl.bruto, sl.commission, sl.other_fees, sl.neto,
+              coalesce(sl.raw->>'Nombre del producto', sl.raw->>'Nombre del Producto') as product_name,
+              coalesce(sl.raw->>'SKU Falabella', sl.raw->>'Shop SKU') as shop_sku,
+              fo.order_number as sale_order_number,
+              fo.company_id as match_company_id,
+              si.company_id as import_company_id
+         from settlement_lines sl
+         left join falabella_orders fo
+           on sl.sale_source = 'falabella_order' and sl.sale_id = fo.id
+         left join settlement_imports si
+           on si.id = sl.import_id`;
+
+function cacheKey(stamp) {
+  return `${Number(stamp?.lineCount || 0)}:${Number(stamp?.maxId || 0)}:${Number(stamp?.importMax || 0)}`;
+}
+
+async function loadAggregatedSettlementSales(target, { useCache, importId } = {}) {
+  if (useCache && !importId && aggregatedSalesCache?.sales) {
+    const stamp = await target.query(`
+      select
+        (select count(*)::int from settlement_lines) as line_count,
+        (select coalesce(max(id), 0)::bigint from settlement_lines) as max_id,
+        (select coalesce(max(id), 0)::bigint from settlement_imports) as import_max
+    `);
+    const key = cacheKey(stamp.rows[0]);
+    if (aggregatedSalesCache.key === key) return aggregatedSalesCache.sales;
+  }
+  const values = [];
+  const where = [];
+  if (importId) {
+    values.push(importId);
+    where.push(`sl.import_id = $${values.length}`);
+  }
+  const query = await target.query(
+    `${SETTLEMENT_SALES_LINE_SQL}
+      ${where.length ? `where ${where.join(' and ')}` : ''}
+      order by sl.import_id desc, sl.row_number asc`,
+    values,
+  );
+  const sales = await attachSaleOrderShipping(
+    aggregateSettlementSales(
+      await attachCompaniesToLines(query.rows.map(mapLine), target),
+    ),
+    target,
+  );
+  if (useCache && !importId) {
+    const stamp = await target.query(`
+      select
+        (select count(*)::int from settlement_lines) as line_count,
+        (select coalesce(max(id), 0)::bigint from settlement_lines) as max_id,
+        (select coalesce(max(id), 0)::bigint from settlement_imports) as import_max
+    `);
+    aggregatedSalesCache = { key: cacheKey(stamp.rows[0]), sales };
+  }
+  return sales;
 }
 
 export async function listSettlementSales(filter = {}, db) {
@@ -342,12 +415,34 @@ export async function listSettlementSales(filter = {}, db) {
   const companyId = optionalPositiveInt(filter.companyId);
   const limit = settlementSalesLimit(filter.limit);
   const offset = Math.max(Number(filter.offset) || 0, 0);
-  const values = [];
-  const where = [];
-  if (importId) {
-    values.push(importId);
-    where.push(`sl.import_id = $${values.length}`);
-  }
+  let sales = await loadAggregatedSettlementSales(target, {
+    useCache: db == null,
+    importId,
+  });
+  const months = settlementMonthOptions(sales);
+  sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth, companyId });
+  const summary = summarizeSettlementSales(sales);
+  const days = settlementDailySeries(sales);
+  const page = sales.slice(offset, offset + limit).map(slimSettlementSale);
+  const withDocuments = await attachSaleDocuments(page, target);
+  const withShipping = await attachSaleOrderShipping(withDocuments, target);
+  const refs = await loadInvoiceRefsForOrders(withShipping.flatMap((sale) => uniqueSaleRefs(sale)), target);
+  const items = attachInvoicesToSales(withShipping, refs, []).map(slimSettlementSale);
+  return {
+    items,
+    summary,
+    days,
+    totalCount: sales.length,
+    limit,
+    offset,
+    ...months,
+  };
+}
+
+export async function loadSettlementSalesForOrders(orderIds, db) {
+  const refs = [...new Set((orderIds || []).map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!refs.length) return [];
+  const target = await resolvePool(db);
   const query = await target.query(
     `select sl.id, sl.import_id, sl.row_number, sl.match_status, sl.match_method, sl.match_reason,
             sl.order_ref, sl.sku, sl.sale_date::text as sale_date, sl.transaction_type, sl.kind,
@@ -361,34 +456,14 @@ export async function listSettlementSales(filter = {}, db) {
          on sl.sale_source = 'falabella_order' and sl.sale_id = fo.id
        left join settlement_imports si
          on si.id = sl.import_id
-      ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by sl.import_id desc, sl.row_number asc
-      limit 10000`,
-    values,
+      where sl.order_ref = any($1::text[])
+         or fo.order_number = any($1::text[])
+      order by sl.import_id desc, sl.row_number asc`,
+    [refs],
   );
-  let sales = aggregateSettlementSales(
+  return aggregateSettlementSales(
     await attachCompaniesToLines(query.rows.map(mapLine), target),
   );
-  const months = settlementMonthOptions(sales);
-  sales = filterAggregatedSales(sales, { paid, search, orderMonth, paidMonth, companyId });
-  const summary = summarizeSettlementSales(sales);
-  const page = sales.slice(offset, offset + limit);
-  const withDocuments = await attachSaleDocuments(page, target);
-  const withShipping = await attachSaleOrderShipping(withDocuments, target);
-  const orderIds = withShipping.flatMap((sale) => [sale.orderId, ...(sale.orderNumbers || [])]);
-  const [refs, charges] = await Promise.all([
-    loadInvoiceRefsForOrders(orderIds, target),
-    loadInvoiceChargesForOrders(orderIds, target),
-  ]);
-  const items = attachInvoicesToSales(withShipping, refs, charges);
-  return {
-    items,
-    summary,
-    totalCount: sales.length,
-    limit,
-    offset,
-    ...months,
-  };
 }
 
 async function attachSaleDocuments(sales, db) {
@@ -422,40 +497,16 @@ async function attachSaleOrderShipping(sales, db) {
   const query = await db.query(
     `select o.external_order_id as order_id,
             o.external_order_number as order_number,
-            o.shipping_amount,
-            coalesce((
-              select jsonb_agg(oi.raw_data)
-                from order_items oi
-               where oi.order_id = o.id
-            ), '[]'::jsonb) as item_raws,
-            fo.raw_data as falabella_raw
+            o.shipping_amount
        from orders o
-       left join falabella_orders fo
-         on fo.company_id = o.company_id
-        and (fo.order_id = o.external_order_id or fo.order_number = o.external_order_number)
       where o.external_order_id = any($1::text[])
-         or o.external_order_number = any($1::text[])
-      union all
-     select fo.order_id,
-            fo.order_number,
-            null::numeric,
-            '[]'::jsonb,
-            fo.raw_data
-       from falabella_orders fo
-      where (fo.order_id = any($1::text[]) or fo.order_number = any($1::text[]))
-        and not exists (
-          select 1 from orders o
-           where o.company_id = fo.company_id
-             and (o.external_order_id = fo.order_id or o.external_order_number = fo.order_number)
-        )`,
+         or o.external_order_number = any($1::text[])`,
     [refs],
   );
   return attachOrderShippingToSales(sales, query.rows.map((row) => ({
     orderId: row.order_id,
     orderNumber: row.order_number,
     shippingAmount: row.shipping_amount,
-    itemRaws: row.item_raws || [],
-    falabellaRaw: row.falabella_raw || {},
   })));
 }
 
@@ -601,6 +652,7 @@ export async function importSettlementCsv(input = {}, db) {
       await upsertSaleSettlement(client, sale, 'pending', importId);
     }
     await client.query('commit');
+    clearSettlementSalesCache();
     return mapImport(importRow);
   } catch (error) {
     await client.query('rollback');

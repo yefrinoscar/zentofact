@@ -44,13 +44,45 @@ export function syncStatusLabel(status: string) {
   return labels[status] || status || 'Sin actividad';
 }
 
+export const DEFAULT_ORDER_SYNC_INTERVAL_MINUTES = 15;
+export const DEFAULT_ORDER_SYNC_LOOKBACK_DAYS = 5;
+export const ORDER_SYNC_INTERVAL_OPTIONS = [1, 5, 15, 30, 60, 120] as const;
+export const ORDER_SYNC_LOOKBACK_OPTIONS = [1, 2, 3, 5, 7, 15, 31] as const;
+
+export function clampOrderSyncIntervalMinutes(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_ORDER_SYNC_INTERVAL_MINUTES;
+  return Math.min(1440, Math.max(1, Math.round(parsed)));
+}
+
+export function clampOrderSyncLookbackDays(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_ORDER_SYNC_LOOKBACK_DAYS;
+  return Math.min(31, Math.max(1, Math.round(parsed)));
+}
+
+export function orderSyncIntervalLabel(minutes: number) {
+  const value = clampOrderSyncIntervalMinutes(minutes);
+  if (value < 60) return `${value} min`;
+  const hours = value / 60;
+  return Number.isInteger(hours) ? `${hours} h` : `${value} min`;
+}
+
+export function orderSyncLookbackLabel(days: number) {
+  const value = clampOrderSyncLookbackDays(days);
+  return value === 1 ? '1 día' : `${value} días`;
+}
+
+export function isFailedOrderSyncResult(result: { status?: string; failed?: number }) {
+  const status = String(result.status || '');
+  return status === 'failed'
+    || status === 'error'
+    || status === 'partial'
+    || Number(result.failed || 0) > 0;
+}
+
 export function syncResultNote(results: ReadonlyArray<{ status?: string; failed?: number }>) {
-  const hasFailure = results.some((result) => (
-    result.status === 'failed'
-    || result.status === 'error'
-    || result.status === 'partial'
-    || Number(result.failed || 0) > 0
-  ));
+  const hasFailure = results.some(isFailedOrderSyncResult);
   if (hasFailure) return 'Incompleto';
   const stillRunning = results.some((result) => result.status === 'already_running' || result.status === 'running');
   return stillRunning ? 'En curso' : 'Actualizado';

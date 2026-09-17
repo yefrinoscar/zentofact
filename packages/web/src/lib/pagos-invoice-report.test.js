@@ -6,6 +6,9 @@ import {
   invoiceChargeAmount,
   invoiceConceptAmounts,
   invoiceConceptLabel,
+  invoiceCruceHint,
+  invoiceCruceStatusLabel,
+  invoiceCruceSummary,
   invoiceDocumentAmounts,
   invoiceLinesForItem,
   invoiceAmountInWords,
@@ -87,6 +90,19 @@ test('el papel de la factura cobra IGV 18% por ítem como SUNAT', () => {
     invoiceDocumentAmounts('factura', [{ net: -684.71 }, { net: -184.16 }, { net: -546.27 }]),
     { net: 1415.14, igv: 254.73, gross: 1669.87 },
   );
+});
+
+test('el cruce nombra cuadra, no cuadra y sin pago', () => {
+  assert.equal(invoiceCruceStatusLabel('match'), 'Cuadra');
+  assert.equal(invoiceCruceStatusLabel('mismatch'), 'No cuadra');
+  assert.equal(invoiceCruceStatusLabel('no_pago'), 'Sin pago');
+  assert.equal(invoiceCruceStatusLabel('pass_through'), 'No se descuenta');
+  assert.equal(invoiceCruceSummary({ matchCount: 80, mismatchCount: 4, missingPagoCount: 20 }), '80 cuadran · 4 no · 20 sin pago');
+  assert.equal(invoiceCruceHint({ orderCount: 0 }), 'Esta factura no trae pedidos.');
+  assert.equal(invoiceCruceHint({ orderCount: 10, missingPagoCount: 10, deducted: 0 }), 'Sube el estado de cuenta para cruzar.');
+  assert.equal(invoiceCruceHint({ orderCount: 10, mismatchCount: 2, missingPagoCount: 1 }), 'Hay pedidos que no cuadran.');
+  assert.equal(invoiceCruceHint({ orderCount: 10, matchCount: 8, missingPagoCount: 2 }), 'Hay pedidos sin estado de cuenta.');
+  assert.equal(invoiceCruceHint({ orderCount: 10, matchCount: 10 }), 'Cuadra con el pago.');
 });
 
 test('el ítem de la factura deja solo esas líneas', () => {

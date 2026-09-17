@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   mapRipleyCanonicalStatus,
-  mapRipleyOrder,
   mapRipleyOrderItems,
+  resolveRipleyOperationalDeadline,
+  remapPersistedRipleyReadyOrders,
+  closeStaleRipleyShippedFulfillment,
+  resolveRipleyIngestStatuses,
 } from './ripley.js';
 
 const raw = {
@@ -29,13 +32,34 @@ const raw = {
   }],
 };
 
-test('mapea estados Ripley conocidos y conserva los desconocidos como sin mapear', () => {
+test('usa el agendamiento Mirakl como vencimiento y no el compromiso seller', () => {
+  assert.equal(resolveRipleyOperationalDeadline({
+    shipping_deadline: '2026-09-14T05:00:00Z',
+    latest_shipping_date: '2026-09-11T05:00:00Z',
+    order_additional_fields: [{
+      code: 'commiteddate',
+      type: 'DATE',
+      value: '2026-09-11T05:00:00Z',
+    }],
+  }), '2026-09-14T05:00:00.000Z');
+});
+
+test('Mirakl SHIPPING es pendiente de preparar, no listo para enviar', () => {
   assert.deepEqual(mapRipleyCanonicalStatus('SHIPPING'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'ready_to_ship',
+    orderStatus: 'confirmed', fulfillmentStatus: 'preparing',
+  });
+  assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
+  });
+  assert.deepEqual(mapRipleyCanonicalStatus('WAITING_DEBIT_PAYMENT'), {
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
   assert.deepEqual(mapRipleyCanonicalStatus('NUEVO_ESTADO'), {
-    orderStatus: 'confirmed', fulfillmentStatus: 'unmapped',
+    orderStatus: 'confirmed', fulfillmentStatus: 'pending',
   });
+  assert.deepEqual(resolveRipleyIngestStatuses('SHIPPING', {
+    metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'preparing' });
 });
 
 test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
@@ -47,21 +71,65 @@ test('mapea líneas Mirakl con los SKU del seller y del canal', () => {
     quantity: 2,
     unitPrice: 60,
     discountAmount: null,
-    taxAmount: null,
     total: 120,
     providerStatus: 'SHIPPING',
-    metadata: {},
+    metadata: { categoryCode: '', categoryLabel: '', imageUrl: null },
     rawData: raw.order_lines[0],
   });
 });
 
-test('mapea cabecera, cliente, envío, totales e integridad de items', () => {
-  const mapped = mapRipleyOrder({ raw, orderId: 'RIP-100', orderNumber: 'R-100' });
-  assert.equal(mapped.externalOrderId, 'RIP-100');
-  assert.equal(mapped.customer.name, 'Ana Pérez');
-  assert.equal(mapped.shipping.address, 'Av. Lima 123');
-  assert.equal(mapped.shipping.trackingCode, 'TRACK-1');
-  assert.equal(mapped.itemsComplete, true);
-  assert.equal(mapped.items.length, 1);
-  assert.equal(mapped.total, 129.9);
+test('baja de listos un Ripley SHIPPING persistido sin evidencia ST11', async () => {
+  const updates = [];
+  const db = {
+    async query(sql, params = []) {
+      if (sql.includes('from orders o')) {
+        return {
+          rows: [
+            { id: 11, provider_status: 'SHIPPING', fulfillment_status: 'ready_to_ship', metadata: {} },
+            {
+              id: 12,
+              provider_status: 'SHIPPING',
+              fulfillment_status: 'ready_to_ship',
+              metadata: { ripleySvc: { statusManagement: 'TO_PICKUP' } },
+            },
+            { id: 13, provider_status: 'READY_TO_SHIP', fulfillment_status: 'ready_to_ship', metadata: {} },
+          ],
+        };
+      }
+      updates.push({ sql, params });
+      return { rowCount: 1 };
+    },
+  };
+  const result = await remapPersistedRipleyReadyOrders(db);
+  assert.equal(result.updated, 2);
+  assert.deepEqual(updates, [{
+    sql: updates[0]?.sql,
+    params: [11, 'preparing'],
+  }, { sql: updates[1]?.sql, params: [12, 'preparing'] }]);
+  assert.match(updates[0].sql, /fulfillment_status = \$2/);
+});
+
+test('no cierra un Ripley SHIPPING: sigue siendo por preparar', async () => {
+  const updates = [];
+  const result = await closeStaleRipleyShippedFulfillment({
+    async query(sql, params = []) {
+      if (sql.includes('from orders o')) {
+        return { rows: [{ id: 14, provider_status: 'SHIPPING', fulfillment_status: 'pending', metadata: {} }] };
+      }
+      updates.push({ sql, params });
+      return { rowCount: 1 };
+    },
+  });
+  assert.equal(result.updated, 0);
+  assert.deepEqual(updates, []);
+});
+
+test('guarda la foto de product_medias en la línea Ripley', () => {
+  const line = mapRipleyOrderItems({
+    order_lines: [{
+      ...raw.order_lines[0],
+      product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg', type: 'SMALL' }],
+    }],
+  })[0];
+  assert.equal(line.metadata.imageUrl, 'https://home.ripley.com.pe/desk.jpg');
 });

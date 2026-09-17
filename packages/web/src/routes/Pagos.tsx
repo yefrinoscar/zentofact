@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { AlertCircle, Check, CheckCircle2, ChevronDown, Copy, FileSpreadsheet, Info, Search, Upload, X } from 'lucide-react';
 import api from '../lib/api';
@@ -28,9 +28,9 @@ import {
   saleDatesHint,
   saleIgvStory,
   salesPageNote,
+  settlementSalesNextOffset,
   returnProductPair,
   settlementPair,
-  settlementStatementTotals,
   shortProductName,
   skuLabel,
   teLlegaHint,
@@ -47,12 +47,14 @@ import { sellerShortName } from '../lib/seller-name';
 import { cn } from '@/lib/utils';
 import { OrdersVirtualTable } from '@/components/OrdersVirtualTable';
 import { WorkLoaderMark } from '@/components/WorkLoader';
+import { PagosSkeleton } from '@/components/PagosSkeleton';
 import { SettlementKpiStrip } from '@/components/SettlementCharts';
+import { waitForDevLoadingDelay } from '../config/dev';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToolbarSelect } from '@/components/ToolbarSelect';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
@@ -149,6 +151,22 @@ type SettlementSale = {
     buyer_shipping?: { net?: number; igv?: number; gross?: number } | null;
     ads?: { net?: number; igv?: number; gross?: number } | null;
   } | null;
+  statement?: {
+    productNet: number;
+    productGross: number;
+    envioNet: number;
+    envioGross: number;
+    envioMissing?: boolean;
+    boletaNet: number;
+    boletaGross: number;
+    commissionNet: number;
+    commissionGross: number;
+    logisticsNet: number;
+    logisticsGross: number;
+    facturaNet: number;
+    facturaGross: number;
+    queda: number;
+  };
 };
 
 const cobroCol = 'bg-muted/40';
@@ -600,6 +618,27 @@ function StatementAmount({
   );
 }
 
+function saleSheet(sale: SettlementSale) {
+  if (sale.statement) return sale.statement;
+  const story = saleIgvStory(sale);
+  return {
+    productNet: story.productSplit.net,
+    productGross: story.product,
+    envioNet: story.envioSplit.net,
+    envioGross: story.envio,
+    envioMissing: story.envio <= 0 && sale.orderShipping == null,
+    boletaNet: story.boleta.net,
+    boletaGross: story.boleta.gross,
+    commissionNet: story.commissionSplit.net,
+    commissionGross: story.commissionSplit.gross,
+    logisticsNet: story.logisticsSplit.net,
+    logisticsGross: story.logisticsSplit.gross,
+    facturaNet: story.factura.net,
+    facturaGross: story.factura.gross,
+    queda: story.queda,
+  };
+}
+
 function saleTitle(sale: SettlementSale) {
   return shortProductName(sale.productName) || skuLabel(sale.skus) || sale.orderId;
 }
@@ -644,6 +683,7 @@ export default function Pagos() {
   const fileInput = useRef<HTMLInputElement>(null);
   const invoiceFileInput = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [paid, setPaid] = useState<PaymentFilterValue>('all');
   const [orderMonth, setOrderMonth] = useState('all');
   const [companyId, setCompanyId] = useState('all');
@@ -657,8 +697,15 @@ export default function Pagos() {
   const lastInvoiceRef = useRef<{ filename: string; csv: string; xlsxBase64?: string } | null>(null);
   const lastUploadFileRef = useRef<File | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bootStartedAt = useRef(Date.now());
+  const delayedBoot = useRef(false);
   const reading = Boolean(readingName);
   const invoiceBusy = Boolean(readingInvoice);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   function openInvoice(id: number, orderId?: string | null) {
     setSelected(null);
@@ -705,15 +752,26 @@ export default function Pagos() {
     enabled: Number.isInteger(invoiceId) && Number(invoiceId) > 0,
   });
 
-  const salesQuery = useQuery({
-    queryKey: ['pagos-sales', search, paid, orderMonth, companyId],
-    queryFn: () => api.listSettlementSales({
-      search: search.trim() || undefined,
-      paid: paid === 'all' ? undefined : paid,
-      orderMonth: orderMonth === 'all' ? undefined : orderMonth,
-      companyId: companyId === 'all' ? undefined : Number(companyId),
-      limit: PAGOS_SALES_PAGE,
-    }),
+  const salesQuery = useInfiniteQuery({
+    queryKey: ['pagos-sales', debouncedSearch, paid, orderMonth, companyId],
+    queryFn: async ({ pageParam }) => {
+      const result = await api.listSettlementSales({
+        search: debouncedSearch || undefined,
+        paid: paid === 'all' ? undefined : paid,
+        orderMonth: orderMonth === 'all' ? undefined : orderMonth,
+        companyId: companyId === 'all' ? undefined : Number(companyId),
+        limit: PAGOS_SALES_PAGE,
+        offset: pageParam,
+      });
+      if (!delayedBoot.current && pageParam === 0) {
+        await waitForDevLoadingDelay(bootStartedAt.current);
+        delayedBoot.current = true;
+      }
+      return result;
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => settlementSalesNextOffset(lastPage),
+    staleTime: 60_000,
     placeholderData: keepPreviousData,
   });
 
@@ -842,7 +900,9 @@ export default function Pagos() {
     },
   });
 
-  const sales = (salesQuery.data?.items || []) as SettlementSale[];
+  const salesPages = salesQuery.data?.pages || [];
+  const salesHead = salesPages[0];
+  const sales = salesPages.flatMap((page) => (page.items || []) as SettlementSale[]);
   const invoices = (invoicesQuery.data?.items || []) as Array<{
     id: number;
     number: string;
@@ -850,15 +910,49 @@ export default function Pagos() {
     issuedOn?: string | null;
     gross?: number | null;
   }>;
-  const summary = salesQuery.data?.summary;
-  const orderMonths = (salesQuery.data?.orderMonths || []) as string[];
-  const companies = ((companiesQuery.data || []) as CompanyOption[])
-    .filter((company) => (company as { activo?: boolean | null }).activo !== false)
-    .slice()
-    .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'));
-  const selectedCompany = companies.find((company) => String(company.id) === companyId);
-  const totalCount = Number(salesQuery.data?.totalCount || sales.length);
-  const footerTotals = settlementStatementTotals(sales);
+  const summary = salesHead?.summary as {
+    saleCount?: number;
+    returnCount?: number;
+    returnLoss?: number;
+    envio?: number;
+    bruto?: number | null;
+    neto?: number | null;
+    take?: number | null;
+    commission?: number | null;
+    shipping?: number | null;
+    paidNeto?: number | null;
+    pendingNeto?: number | null;
+    paidCount?: number | null;
+    pendingCount?: number | null;
+    takeRate?: number | null;
+    matchedCount?: number | null;
+  } | undefined;
+  const days = (salesHead?.days || []) as Array<{ date: string; facturado: number; neto: number }>;
+  const orderMonths = (salesHead?.orderMonths || []) as string[];
+  const companies = useMemo(() => (
+    ((companiesQuery.data || []) as CompanyOption[])
+      .filter((company) => (company as { activo?: boolean | null }).activo !== false)
+      .slice()
+      .sort((left, right) => companyLabel(left).localeCompare(companyLabel(right), 'es'))
+  ), [companiesQuery.data]);
+  const companyOptions = useMemo(() => [
+    { value: 'all', label: 'Todos' },
+    ...companies.map((company) => ({ value: String(company.id), label: companyLabel(company) })),
+  ], [companies]);
+  const monthOptions = useMemo(() => {
+    const months = orderMonth !== 'all' && !orderMonths.includes(orderMonth)
+      ? [orderMonth, ...orderMonths]
+      : orderMonths;
+    return [
+      { value: 'all', label: 'Mes orden' },
+      ...months.map((month) => ({ value: month, label: monthLabel(month) })),
+    ];
+  }, [orderMonth, orderMonths]);
+  const paidOptions = useMemo(() => PAYMENT_FILTERS.map((item) => ({
+    value: item.value,
+    label: item.trigger,
+  })), []);
+  const totalCount = Number(salesHead?.totalCount || 0);
   const loadError = salesQuery.error as Error | undefined;
 
   const columns = useMemo<ColumnDef<SettlementSale>[]>(() => [
@@ -935,12 +1029,12 @@ export default function Pagos() {
     },
     {
       id: 'precio',
-      accessorFn: (sale) => saleIgvStory(sale).productSplit.net,
+      accessorFn: (sale) => saleSheet(sale).productNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.precio} />,
       size: 92,
       meta: { align: 'end', headerClassName: ventaHeadStart, cellClassName: ventaCellStart },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = returnProductPair(
             row.original.brutoCharged,
@@ -955,47 +1049,47 @@ export default function Pagos() {
             />
           );
         }
-        return <StatementAmount net={story.productSplit.net} gross={story.product} />;
+        return <StatementAmount net={sheet.productNet} gross={sheet.productGross} />;
       },
     },
     {
       id: 'envio',
-      accessorFn: (sale) => saleIgvStory(sale).envioSplit.net,
+      accessorFn: (sale) => saleSheet(sale).envioNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.envio} />,
       size: 84,
       meta: { align: 'end' },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
-        if (row.original.returned || (story.envio <= 0 && row.original.orderShipping == null)) {
+        const sheet = saleSheet(row.original);
+        if (row.original.returned || sheet.envioMissing) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
-          <StatementAmount net={story.envioSplit.net} gross={story.envio} />
+          <StatementAmount net={sheet.envioNet} gross={sheet.envioGross} />
         );
       },
     },
     {
       id: 'boleta',
-      accessorFn: (sale) => saleIgvStory(sale).boleta.net,
+      accessorFn: (sale) => saleSheet(sale).boletaNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.boleta} />,
       size: 108,
       meta: { align: 'end', headerClassName: ventaHeadEnd, cellClassName: ventaCellEnd },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
-        return <StatementAmount net={story.boleta.net} gross={story.boleta.gross} />;
+        return <StatementAmount net={sheet.boletaNet} gross={sheet.boletaGross} />;
       },
     },
     {
       id: 'comision',
-      accessorFn: (sale) => saleIgvStory(sale).commissionSplit.net,
+      accessorFn: (sale) => saleSheet(sale).commissionNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.comision} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadStart, cellClassName: cobroCellStart },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = settlementPair(row.original.commissionCharged, row.original.commissionReversed);
           return (
@@ -1009,8 +1103,8 @@ export default function Pagos() {
         }
         return (
           <StatementAmount
-            net={story.commissionSplit.net}
-            gross={story.commissionSplit.gross}
+            net={sheet.commissionNet}
+            gross={sheet.commissionGross}
             className={takeText}
           />
         );
@@ -1018,12 +1112,12 @@ export default function Pagos() {
     },
     {
       id: 'logistica',
-      accessorFn: (sale) => saleIgvStory(sale).logisticsSplit.net,
+      accessorFn: (sale) => saleSheet(sale).logisticsNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.logistica} />,
       size: 92,
       meta: { align: 'end', headerClassName: cobroHeadMid, cellClassName: cobroCellMid },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           const pair = settlementPair(row.original.shippingCharged, row.original.shippingReversed);
           return (
@@ -1037,8 +1131,8 @@ export default function Pagos() {
         }
         return (
           <StatementAmount
-            net={story.logisticsSplit.net}
-            gross={story.logisticsSplit.gross}
+            net={sheet.logisticsNet}
+            gross={sheet.logisticsGross}
             className={takeText}
           />
         );
@@ -1046,19 +1140,19 @@ export default function Pagos() {
     },
     {
       id: 'total',
-      accessorFn: (sale) => saleIgvStory(sale).factura.net,
+      accessorFn: (sale) => saleSheet(sale).facturaNet,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.total} />,
       size: 108,
       meta: { align: 'end', headerClassName: cobroHeadEnd, cellClassName: cobroCellEnd },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         if (row.original.returned) {
           return <p className="text-right text-[13px] text-muted-foreground">—</p>;
         }
         return (
           <StatementAmount
-            net={story.factura.net}
-            gross={story.factura.gross}
+            net={sheet.facturaNet}
+            gross={sheet.facturaGross}
             className={takeText}
           />
         );
@@ -1066,17 +1160,17 @@ export default function Pagos() {
     },
     {
       id: 'ganas',
-      accessorFn: (sale) => saleIgvStory(sale).queda,
+      accessorFn: (sale) => saleSheet(sale).queda,
       header: () => <TwoLineHead {...PAGOS_COLUMN_COPY.ganas} />,
       size: 108,
       meta: { align: 'end', headerClassName: llegaHead, cellClassName: llegaCell },
       cell: ({ row }) => {
-        const story = saleIgvStory(row.original);
+        const sheet = saleSheet(row.original);
         return (
           <StatementAmount
-            net={story.queda}
-            gross={row.original.returned ? -story.factura.gross : undefined}
-            className={cn('font-semibold', amountToneClass('receive', story.queda))}
+            net={sheet.queda}
+            gross={row.original.returned ? -sheet.facturaGross : undefined}
+            className={cn('font-semibold', amountToneClass('receive', sheet.queda))}
           />
         );
       },
@@ -1089,10 +1183,13 @@ export default function Pagos() {
     getCoreRowModel: getCoreRowModel(),
     getRowId: (sale) => sale.orderId,
   });
+  const pageLoading = salesQuery.isLoading && !sales.length && !loadError;
+
+  if (pageLoading) return <PagosSkeleton />;
 
   return (
     <div className="space-y-4 pb-8">
-      <SettlementKpiStrip summary={summary} sales={sales} />
+      <SettlementKpiStrip summary={summary} days={days} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-44 shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1104,44 +1201,27 @@ export default function Pagos() {
             className="pl-8"
           />
         </div>
-        <Select value={companyId} onValueChange={setCompanyId}>
-          <SelectTrigger className="w-[8.75rem]" aria-label="Compañía">
-            <SelectValue>
-              {companyId === 'all' ? 'Todos' : (selectedCompany ? companyLabel(selectedCompany) : 'Todos')}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            {companies.map((company) => (
-              <SelectItem key={company.id} value={String(company.id)}>{companyLabel(company)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={orderMonth} onValueChange={setOrderMonth}>
-          <SelectTrigger className="w-[8.25rem]" aria-label="Mes de la orden">
-            <SelectValue>
-              {orderMonth === 'all' ? 'Mes orden' : monthLabel(orderMonth)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Mes orden</SelectItem>
-            {(orderMonth !== 'all' && !orderMonths.includes(orderMonth) ? [orderMonth, ...orderMonths] : orderMonths).map((month) => (
-              <SelectItem key={`orden-${month}`} value={month}>{monthLabel(month)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={paid} onValueChange={(value) => setPaid(value as PaymentFilterValue)}>
-          <SelectTrigger className="w-[11.25rem]" aria-label="Estado de pago">
-            <SelectValue>
-              {paymentFilterLabel(paid, 'trigger')}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="w-max min-w-[14.5rem]">
-            {PAYMENT_FILTERS.map((item) => (
-              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <ToolbarSelect
+          className="w-[8.75rem]"
+          aria-label="Compañía"
+          value={companyId}
+          options={companyOptions}
+          onValueChange={setCompanyId}
+        />
+        <ToolbarSelect
+          className="w-[8.25rem]"
+          aria-label="Mes de la orden"
+          value={orderMonth}
+          options={monthOptions}
+          onValueChange={setOrderMonth}
+        />
+        <ToolbarSelect
+          className="w-[11.25rem]"
+          aria-label="Estado de pago"
+          value={paid}
+          options={paidOptions}
+          onValueChange={(value) => setPaid(value as PaymentFilterValue)}
+        />
         <input
           ref={fileInput}
           type="file"
@@ -1257,10 +1337,17 @@ export default function Pagos() {
         table={table}
         compact
         rowHeight={52}
+        overscan={6}
         scrollClassName="h-[min(78dvh,52rem)]"
         stickyRightId=""
         loading={salesQuery.isLoading && !sales.length}
-        fetching={salesQuery.isFetching}
+        fetching={salesQuery.isFetching && !salesQuery.isFetchingNextPage}
+        fetchingMore={salesQuery.isFetchingNextPage}
+        hasMore={Boolean(salesQuery.hasNextPage)}
+        onEndReached={() => {
+          if (!salesQuery.hasNextPage || salesQuery.isFetchingNextPage) return;
+          void salesQuery.fetchNextPage();
+        }}
         onRowClick={setSelected}
         aria-label="Cobros de Falabella por venta"
         empty={(
@@ -1272,14 +1359,14 @@ export default function Pagos() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
             <p className="text-muted-foreground">
               {salesPageNote(sales.length, totalCount)}
-              {footerTotals.returnCount
-                ? ` · ${footerTotals.returnCount === 1 ? '1 devolución' : `${footerTotals.returnCount} devoluciones`}`
+              {summary.returnCount
+                ? ` · ${summary.returnCount === 1 ? '1 devolución' : `${summary.returnCount} devoluciones`}`
                 : ''}
             </p>
             <p className="tabular-nums">
-              Pérdida <span className={cn('font-medium', amountToneClass('receive', footerTotals.returnLoss))} title="Suma de Ganas en rojo de las devoluciones">{money.format(footerTotals.returnLoss)}</span>
+              Pérdida <span className={cn('font-medium', amountToneClass('receive', Number(summary.returnLoss || 0)))} title="Suma de Ganas en rojo de las devoluciones">{money.format(Number(summary.returnLoss || 0))}</span>
               <span className="text-muted-foreground"> · </span>
-              Envío {money.format(footerTotals.envio)}
+              Envío {money.format(Number(summary.envio || 0))}
             </p>
           </div>
         ) : undefined}

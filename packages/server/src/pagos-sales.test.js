@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSettlementCsv } from './pagos-csv.js';
-import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, filterAggregatedSales, groupSaleCharges, groupSaleProducts, settlementMonthOptions, summarizeSettlementSales } from './pagos-sales.js';
+import { aggregateSettlementSales, attachDocumentsToSales, attachOrderShippingToSales, chooseLinesPerOrder, downsampleDailySeries, filterAggregatedSales, groupSaleCharges, groupSaleProducts, saleEnvioNet, saleStatement, SETTLEMENT_CHART_POINTS, settlementDailySeries, settlementMonthOptions, slimSettlementSale, summarizeSettlementSales } from './pagos-sales.js';
 
 const HEADER = [
   '"Fecha creación de la orden"',
@@ -92,6 +92,71 @@ test('agrega comisión envío y porcentaje por pedido sin inflar el envío compr
   assert.equal(sale.takeRate, 0.584);
   assert.equal(sale.items.length, 1);
   assert.equal(parsed.lines.filter((line) => line.chargeKind === 'buyer_shipping').every((line) => line.other === 0), true);
+});
+
+test('el 25.9% del facturado es comisión más logística de las tres líneas reales', () => {
+  const csv = [
+    HEADER,
+    row({
+      'N° del orden': '3249715842',
+      'Tipo de transacción': 'Pago por precio del producto',
+      'Monto con IVA': '99.9',
+    }),
+    row({
+      'N° del orden': '3249715842',
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-14.99',
+      '% comisión': '0.15',
+    }),
+    row({
+      'N° del orden': '3249715842',
+      'Tipo de transacción': 'Cobro por cofinanciamiento logístico',
+      'Monto con IVA': '-10.9',
+    }),
+  ].join('\n');
+  const [sale] = aggregateSettlementSales(parseSettlementCsv(csv).lines);
+  const summary = summarizeSettlementSales([sale]);
+  assert.equal(sale.bruto, 99.9);
+  assert.equal(sale.commission, 14.99);
+  assert.equal(sale.shipping, 10.9);
+  assert.equal(sale.neto, 74.01);
+  assert.equal(sale.take, 25.89);
+  assert.equal(sale.commissionRate, 0.15);
+  assert.equal(sale.shippingRate, 0.1091);
+  assert.equal(sale.takeRate, 0.2592);
+  assert.equal(summary.takeRate, 0.2592);
+  assert.equal(summary.commissionRate, 0.1501);
+  assert.equal(saleEnvioNet({ buyerShippingPaid: 50 }), 42.37);
+  assert.equal(saleEnvioNet({ orderShipping: 50, buyerShippingPaid: 10 }), 42.37);
+  assert.equal(saleEnvioNet({ returned: true, buyerShippingPaid: 50 }), 0);
+  assert.equal(summarizeSettlementSales([{
+    paid: true,
+    bruto: 100,
+    commission: 20,
+    shipping: 10,
+    neto: 70,
+    take: 30,
+    buyerShippingPaid: 50,
+    itemCount: 1,
+    matched: true,
+  }]).envio, 42.37);
+});
+
+test('la serie diaria del gráfico no lleva un punto por cada día del catálogo', () => {
+  const days = Array.from({ length: 400 }, (_, index) => ({
+    date: `2025-01-01`,
+    facturado: index,
+    neto: index,
+  })).map((row, index) => ({
+    ...row,
+    date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+  }));
+  const compact = downsampleDailySeries(days);
+  assert.equal(SETTLEMENT_CHART_POINTS, 72);
+  assert.ok(compact.length <= SETTLEMENT_CHART_POINTS);
+  assert.equal(compact[0].date, days[0].date);
+  assert.equal(compact.at(-1).date, days.at(-1).date);
+  assert.deepEqual(downsampleDailySeries(days.slice(0, 10)).length, 10);
 });
 
 test('el porcentaje de comisión no es fijo entre ventas', () => {
@@ -569,6 +634,42 @@ test('el pedido muestra boleta o factura si ya se emitió', () => {
   );
   assert.equal(sale.document.kind, 'boleta');
   assert.equal(sale.document.number, 'B001-12');
+});
+
+test('la venta del listado no lleva cargos ni ítems crudos', () => {
+  const [sale] = aggregateSettlementSales(parseSettlementCsv([
+    HEADER,
+    row(),
+    row({
+      'Tipo de transacción': 'Cobro por comisión por venta',
+      'Monto con IVA': '-1.35',
+      'Falabella-Id': 'item-1',
+    }),
+  ].join('\n')).lines);
+  const slim = slimSettlementSale({
+    ...sale,
+    document: { kind: 'boleta', number: 'B001-1' },
+    invoiceCharges: { commission: { net: 1 } },
+  });
+  assert.equal(slim.orderId, sale.orderId);
+  assert.equal(slim.charges, undefined);
+  assert.equal(slim.chargeGroups, undefined);
+  assert.equal(slim.items, undefined);
+  assert.equal(slim.invoiceCharges, undefined);
+  assert.equal(slim.falabellaInvoices, undefined);
+  assert.ok(Array.isArray(slim.products));
+  assert.equal(slim.statement.commissionNet, 1);
+  assert.equal(saleStatement({
+    bruto: 100,
+    buyerShippingPaid: 50,
+    commission: 20,
+    shipping: 50,
+  }).queda, 67.8);
+  assert.deepEqual(settlementDailySeries([sale]), [{
+    date: '2026-08-19',
+    facturado: sale.bruto,
+    neto: sale.neto,
+  }]);
 });
 
 test('el envío de Pagos sale de la orden cruzada', () => {

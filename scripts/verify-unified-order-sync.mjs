@@ -14,7 +14,7 @@ const checks = [
     'packages/server/src/order-management.test.js',
     'packages/server/src/falabella-sync.test.js',
     'packages/server/src/catalog/stock-jobs.test.js',
-    'packages/server/src/ripley-orders.test.js',
+    'packages/server/src/ripley-order-adapter.test.js',
     'packages/server/src/protected-paths.test.js',
   ]],
   ['Web tests', 'npm', ['test', '-w', '@zentofact/web']],

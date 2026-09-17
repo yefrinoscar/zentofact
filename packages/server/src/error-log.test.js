@@ -1,11 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clientErrorMessage, createLogId, operationalErrorBody } from './error-log.js';
+import { clientErrorMessage, createLogId, existingLogId, operationalErrorBody } from './error-log.js';
 
 test('createLogId returns a short copyable identifier', () => {
   const logId = createLogId();
   assert.match(logId, /^log_[0-9a-f]{12}$/);
   assert.notEqual(createLogId(), logId);
+  assert.equal(existingLogId(logId), logId);
+  assert.equal(existingLogId('log_not-valid'), '');
+});
+
+test('operationalErrorBody reutiliza el logId y los details del error de impresión', () => {
+  const lines = [];
+  const error = new Error('El pedido Ripley no tiene seller.');
+  error.logId = 'log_cccccccccccc';
+  error.details = {
+    orderIds: [88],
+    skipped: [{ id: 88, reason: 'El pedido Ripley no tiene seller.' }],
+    orders: [{ id: 88, channel: 'ripley', externalOrderNumber: '7935256701' }],
+  };
+  const body = operationalErrorBody(error, {
+    operation: 'logistics.print',
+    context: { method: 'POST', path: '/logistics-inbox/print', status: 400 },
+  }, {
+    createLogId: () => 'log_should_not_win',
+    log: (line) => lines.push(line),
+  });
+
+  assert.deepEqual(body, {
+    error: 'El pedido Ripley no tiene seller.',
+    logId: 'log_cccccccccccc',
+  });
+  const payload = JSON.parse(lines[0].slice('[ZF_LOG] log_cccccccccccc '.length));
+  assert.equal(payload.logId, 'log_cccccccccccc');
+  assert.equal(payload.operation, 'logistics.print');
+  assert.deepEqual(payload.orderIds, [88]);
+  assert.equal(payload.skipped[0].id, 88);
+  assert.equal(payload.orders[0].externalOrderNumber, '7935256701');
 });
 
 test('operationalErrorBody logs context and returns the same logId', () => {

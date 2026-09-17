@@ -1,7 +1,11 @@
-import { RipleySvcClient } from '@zentofact/ripley-api';
+import { resolveRipleySvcBaseUrl, RipleySvcClient } from '@zentofact/ripley-api';
+import { shouldListenStockOrder } from './catalog/stock-commitment.js';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
 
 let corePromise;
 const sandboxStates = new Map();
+const RIPLEY_SVC_LISTEN_STATUSES = ['TO_PICKUP', 'SHIPPED', undefined];
+
 function loadCore() {
   corePromise ||= import('@zentofact/core');
   return corePromise;
@@ -15,14 +19,24 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function companyField(company, camel, snake) {
+  return text(company?.[camel] || company?.[snake]);
+}
+
 function svcClientFor(company, fetchImpl) {
-  if (!company?.ripleySvcBaseUrl?.trim() || !company?.ripleySvcUsername?.trim() || !company?.ripleySvcPassword) {
+  if (process.env.RIPLEY_SVC_ENABLED !== 'true') {
+    throw new Error('Seller Center Ripley está pausado. Los pedidos se consultan mediante Mirakl.');
+  }
+  const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
+  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '');
+  if (!username || !password.trim()) {
     throw new Error('La empresa no tiene configuradas las credenciales productivas de Seller Center Ripley.');
   }
   return new RipleySvcClient({
-    baseUrl: company.ripleySvcBaseUrl,
-    username: company.ripleySvcUsername,
-    password: company.ripleySvcPassword,
+    baseUrl: resolveRipleySvcBaseUrl(companyField(company, 'ripleySvcBaseUrl', 'ripley_svc_base_url')),
+    username,
+    password,
+    country: 'PE',
     fetchImpl,
   });
 }
@@ -44,10 +58,37 @@ export function mapRipleySvcFulfillmentStatus(value) {
   return null;
 }
 
-export async function listAllRipleySvcOrders(client) {
+export function hasRipleySvcCredentials(company) {
+  const username = companyField(company, 'ripleySvcUsername', 'ripley_svc_username');
+  const password = String(company?.ripleySvcPassword || company?.ripley_svc_password || '');
+  return Boolean(username && password.trim());
+}
+
+export function ripleyOrderIdentityKeys(...values) {
+  const keys = [];
+  const seen = new Set();
+  const add = (value) => {
+    const id = text(value);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    keys.push(id);
+  };
+  for (const value of values) {
+    add(value);
+    add(text(value).replace(/-[A-Za-z]$/, ''));
+  }
+  return keys;
+}
+
+export async function listAllRipleySvcOrders(client, options = {}) {
   const orders = [];
   for (let page = 1; ; page += 1) {
-    const data = pageData(await client.listLogisticsOrders({ page, limit: 200 }));
+    const data = pageData(await client.listLogisticsOrders({
+      page,
+      limit: 200,
+      ...(options.statusManagement ? { statusManagement: options.statusManagement } : {}),
+      ...(options.orderId ? { orderId: options.orderId } : {}),
+    }));
     const batch = Array.isArray(data.orders) ? data.orders : [];
     orders.push(...batch);
     const total = Number(data.total);
@@ -55,36 +96,58 @@ export async function listAllRipleySvcOrders(client) {
   }
 }
 
+async function listRipleySvcOrdersForListen(client) {
+  const orders = [];
+  const seen = new Set();
+  for (const status of RIPLEY_SVC_LISTEN_STATUSES) {
+    for (const order of await listAllRipleySvcOrders(client, { statusManagement: status })) {
+      const orderId = text(order?.order_id);
+      if (!orderId || seen.has(orderId)) continue;
+      seen.add(orderId);
+      orders.push(order);
+    }
+  }
+  return orders;
+}
+
 export async function syncRipleyLogistics(company, dependencies = {}) {
   const core = dependencies.db ? null : await loadCore();
   const db = dependencies.db || core.pool;
   const client = dependencies.client || svcClientFor(company, dependencies.fetchImpl);
-  const remoteOrders = await listAllRipleySvcOrders(client);
+  const enqueue = dependencies.enqueue || enqueueStockJob;
+  const remoteOrders = await listRipleySvcOrdersForListen(client);
   let matched = 0;
   for (const remote of remoteOrders) {
     const orderId = text(remote?.order_id);
     if (!orderId) continue;
-    const svcStatus = text(remote?._status_management || remote?.status_management);
+    const identities = ripleyOrderIdentityKeys(orderId, remote?.commercial_id);
+    const svcStatus = text(
+      remote?._status_management || remote?.status_management || remote?.statusManagement,
+    );
     const fulfillment = mapRipleySvcFulfillmentStatus(svcStatus);
     const result = await db.query(
       `update orders o set
-         fulfillment_status=coalesce($4, o.fulfillment_status),
+         fulfillment_status=coalesce($3, o.fulfillment_status),
          shipping=coalesce(o.shipping, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
-           'trackingCode', nullif($5, ''),
-           'carrier', nullif($6, '')
+           'trackingCode', nullif($4, ''),
+           'carrier', nullif($5, '')
          )),
-         metadata=coalesce(o.metadata, '{}'::jsonb) || jsonb_build_object('ripleySvc', $7::jsonb),
+         metadata=coalesce(o.metadata, '{}'::jsonb) || jsonb_build_object('ripleySvc', $6::jsonb),
          updated_at=now()
        from order_channel_accounts account
        join order_channels channel on channel.id=account.channel_id
        where o.channel_account_id=account.id
          and o.company_id=$1 and channel.code='ripley'
-         and (o.external_order_id=$2 or o.external_order_number=$2 or o.external_order_number=$3)
-       returning o.id`,
+         and (
+           o.external_order_id = any($2::text[])
+           or o.external_order_number = any($2::text[])
+           or regexp_replace(o.external_order_id, '-[A-Za-z]$', '') = any($2::text[])
+           or regexp_replace(coalesce(o.external_order_number, ''), '-[A-Za-z]$', '') = any($2::text[])
+         )
+       returning o.id, o.external_order_id, o.external_order_number, o.ordered_at, o.fulfillment_status`,
       [
         company.id,
-        orderId,
-        text(remote?.commercial_id),
+        identities,
         fulfillment,
         text(remote?.shipping_tracking || remote?.tracking_code),
         text(remote?.courier || remote?.shipping_company),
@@ -98,7 +161,31 @@ export async function syncRipleyLogistics(company, dependencies = {}) {
         }),
       ],
     );
-    matched += result.rowCount || result.rows?.length || 0;
+    const row = result.rows?.[0];
+    const applied = Number(result.rowCount || result.rows?.length || 0);
+    matched += applied;
+    if (applied && fulfillment) {
+      console.log(JSON.stringify({
+        event: 'ripley.logistics.applied',
+        companyId: company.id,
+        orderId,
+        identities,
+        statusManagement: svcStatus,
+        fulfillment,
+      }));
+    }
+    if (row && (fulfillment === 'ready_to_ship' || fulfillment === 'shipped') && shouldListenStockOrder({
+      status: fulfillment,
+      orderedAt: row.ordered_at,
+    })) {
+      await enqueue({
+        orderId: row.id,
+        companyId: company.id,
+        externalOrderId: row.external_order_id,
+        orderNumber: row.external_order_number,
+        source: 'listen',
+      }, db);
+    }
   }
   return { received: remoteOrders.length, matched };
 }

@@ -11,6 +11,9 @@ import UsersPage from './routes/Users';
 import FalabellaApi from './routes/FalabellaApi';
 import Productos from './routes/Productos';
 import Insumos from './routes/Insumos';
+import Avisos from './routes/Avisos';
+import { NotificationBell } from './components/NotificationBell';
+import { ProductSoldOutAlertSound } from './hooks/useProductSoldOutAlertSound';
 import IndividualInvoice from './routes/IndividualInvoice';
 import AutoEmision from './routes/AutoEmision';
 import DescuentosCola from './routes/DescuentosCola';
@@ -18,6 +21,7 @@ import Documentos from './routes/Documentos';
 import Pedidos from './routes/Pedidos';
 import BandejaLogistica from './routes/BandejaLogistica';
 import PedidosMulticanal from './routes/PedidosMulticanal';
+import Cancelados from './routes/Cancelados';
 import RegistrarVenta from './routes/RegistrarVenta';
 import MisVentas from './routes/MisVentas';
 import MobileMenu from './routes/MobileMenu';
@@ -28,8 +32,11 @@ import { firstAllowedPath, pathPermission } from './lib/permissions';
 import { Button } from './components/ui/button';
 import { PanelLeft } from 'lucide-react';
 import { documentDateRangeForLastDays } from './lib/documentDateRange';
+import { PagosSkeleton } from './components/PagosSkeleton';
+import { isProductionApp } from './lib/runtimeEnv';
 
 const Dashboard = lazy(() => import('./routes/Dashboard'));
+const VentasProductos = lazy(() => import('./routes/VentasProductos'));
 const Pagos = lazy(() => import('./routes/Pagos'));
 const ScannerArmado = lazy(() => import('./routes/ScannerArmado'));
 const SystemConfig = lazy(() => import('./routes/SystemConfig'));
@@ -43,9 +50,17 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Dashboard',
     subtitle: 'Comportamiento financiero y rendimiento de todas tus tiendas.',
   },
+  '/ventas': {
+    title: 'Ventas',
+    subtitle: 'Qué se vende, qué traer y qué no tocar.',
+  },
   '/pagos': {
     title: 'Pagos',
     subtitle: 'Cuánto te cobra Falabella por cada venta.',
+  },
+  '/avisos': {
+    title: 'Avisos',
+    subtitle: 'Lo que necesita tu atención ahora.',
   },
   '/menu': {
     title: 'Menú',
@@ -53,7 +68,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/bandeja': {
     title: 'Bandeja',
-    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley, Mercado Libre y manuales.',
+    subtitle: 'Prepara e imprime pedidos de Falabella, Ripley, Mercado Libre y propios.',
   },
   '/pedidos': {
     title: 'Bandeja Falabella',
@@ -62,6 +77,10 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   '/orders': {
     title: 'Pedidos',
     subtitle: 'Revisa qué se vendió hoy y gestiona los pedidos de todos tus canales.',
+  },
+  '/cancelados': {
+    title: 'Devoluciones',
+    subtitle: 'Pedidos que volvieron, con la fecha del cambio.',
   },
   '/mis-ventas': {
     title: 'Mis ventas',
@@ -101,7 +120,7 @@ const routeMeta: Record<string, { title: string; subtitle: string }> = {
   },
   '/descuentos-stock': {
     title: 'Cola de descuentos',
-    subtitle: 'Desde pendiente. El stock queda reservado hasta listo para enviar.',
+    subtitle: 'Reservado hasta listo para enviar. Cancelado no descuenta.',
   },
   '/insumos': {
     title: 'Insumos',
@@ -244,6 +263,7 @@ function AppLayout() {
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+      <ProductSoldOutAlertSound />
       <Sidebar hideOnMobile />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -267,6 +287,7 @@ function AppLayout() {
                 <p className="truncate text-sm text-muted-foreground">{currentRoute.subtitle}</p>
               </div>
             </div>
+            <NotificationBell />
           </div>
         </header>
 
@@ -275,15 +296,18 @@ function AppLayout() {
             <Routes>
               <Route path="/" element={<HomeRedirect user={user} loading={loading} isMobile={isMobile} />} />
               <Route path="/menu" element={<MobileMenu isMobile={isMobile} />} />
+              <Route path="/avisos" element={<Avisos />} />
               <Route path="/dashboard" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Dashboard /></Suspense></RequirePermission>} />
-              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><Pagos /></Suspense></RequirePermission>} />
+              <Route path="/ventas" element={<RequirePermission permission="dashboard" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><VentasProductos /></Suspense></RequirePermission>} />
+              <Route path="/pagos" element={<RequirePermission permission="pagos" {...permissionState}><Suspense fallback={<PagosSkeleton />}><Pagos /></Suspense></RequirePermission>} />
               <Route path="/bandeja" element={<RequirePermission permission="orders_inbox" {...permissionState}><BandejaLogistica /></RequirePermission>} />
-              <Route path="/pedidos" element={<RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
+              <Route path="/pedidos" element={isProductionApp() ? <Navigate to="/bandeja" replace /> : <RequirePermission permission="orders_inbox" {...permissionState}><Pedidos /></RequirePermission>} />
               <Route path="/pedidos-ripley" element={<Navigate to="/orders" replace />} />
               <Route path="/orders/nueva" element={<RequirePermission permissions={['order_management', 'salesperson']} {...permissionState}><RegistrarVenta /></RequirePermission>} />
               <Route path="/envio-propio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders/envio" element={<Navigate to="/settings" replace />} />
               <Route path="/orders" element={<RequirePermission permission="order_management" {...permissionState}><PedidosMulticanal /></RequirePermission>} />
+              <Route path="/cancelados" element={<RequirePermission permission="order_management" {...permissionState}><Cancelados /></RequirePermission>} />
               <Route path="/mis-ventas" element={<RequirePermission permission="salesperson" {...permissionState}><MisVentas /></RequirePermission>} />
               <Route path="/scanner" element={<RequirePermission permission="orders_scanner" {...permissionState}><Suspense fallback={<div className="h-80 animate-pulse rounded-2xl bg-muted" />}><ScannerArmado /></Suspense></RequirePermission>} />
               <Route path="/scanner-armado" element={<Navigate to="/scanner" replace />} />

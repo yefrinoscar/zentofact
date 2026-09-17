@@ -81,7 +81,7 @@ export async function applyInventoryMovement(db, input) {
     [productId],
   );
   const inventoryResult = await db.query(
-    `select quantity_on_hand, quantity_reserved from product_inventory
+    `select quantity_on_hand, quantity_reserved, quantity_pending_return from product_inventory
      where product_id=$1 for update`,
     [productId],
   );
@@ -148,19 +148,20 @@ export async function applyInventoryReservation(db, input) {
     [productId],
   );
   const inventoryResult = await db.query(
-    `select quantity_on_hand, quantity_reserved from product_inventory
+    `select quantity_on_hand, quantity_reserved, quantity_pending_return from product_inventory
      where product_id=$1 for update`,
     [productId],
   );
   if (!inventoryResult.rows.length) throw httpError('Producto no encontrado.', 404);
   const onHand = Number(inventoryResult.rows[0].quantity_on_hand);
   const reserved = Number(inventoryResult.rows[0].quantity_reserved);
+  const pendingReturn = Number(inventoryResult.rows[0].quantity_pending_return || 0);
   const projectedReserved = reserved + quantityDelta;
   if (projectedReserved < 0) {
     throw httpError(`Reserva inválida para el producto ${productId}.`);
   }
-  const available = onHand - reserved;
-  const projectedAvailable = onHand - projectedReserved;
+  const available = onHand - reserved - pendingReturn;
+  const projectedAvailable = onHand - projectedReserved - pendingReturn;
   if (quantityDelta > 0 && projectedAvailable < 0 && input.allowNegative !== true) {
     throw new InsufficientStockError({
       productId,
@@ -177,7 +178,45 @@ export async function applyInventoryReservation(db, input) {
     applied: true,
     quantityOnHand: onHand,
     quantityReserved: projectedReserved,
+    quantityPendingReturn: pendingReturn,
     available: projectedAvailable,
+  };
+}
+
+export async function applyInventoryPendingReturn(db, input) {
+  if (!db?.query) throw new Error('applyInventoryPendingReturn requiere una transacción abierta.');
+  const productId = positiveInt(input.productId, 'productId');
+  const quantityDelta = finiteNumber(input.quantityDelta, 'quantityDelta');
+  if (quantityDelta === 0) throw httpError('quantityDelta no puede ser cero.');
+
+  await db.query(
+    `insert into product_inventory (product_id, quantity_on_hand, quantity_reserved)
+     values ($1,0,0) on conflict (product_id) do nothing`,
+    [productId],
+  );
+  const inventoryResult = await db.query(
+    `select quantity_on_hand, quantity_reserved, quantity_pending_return from product_inventory
+     where product_id=$1 for update`,
+    [productId],
+  );
+  if (!inventoryResult.rows.length) throw httpError('Producto no encontrado.', 404);
+  const onHand = Number(inventoryResult.rows[0].quantity_on_hand);
+  const reserved = Number(inventoryResult.rows[0].quantity_reserved);
+  const pendingReturn = Number(inventoryResult.rows[0].quantity_pending_return || 0);
+  const projectedPending = pendingReturn + quantityDelta;
+  if (projectedPending < 0) {
+    throw httpError(`Devolución por aprobar inválida para el producto ${productId}.`);
+  }
+  await db.query(
+    'update product_inventory set quantity_pending_return=$1, updated_at=now() where product_id=$2',
+    [projectedPending, productId],
+  );
+  return {
+    applied: true,
+    quantityOnHand: onHand,
+    quantityReserved: reserved,
+    quantityPendingReturn: projectedPending,
+    available: onHand - reserved - projectedPending,
   };
 }
 
@@ -185,8 +224,8 @@ export async function getInventory(productIdInput, db) {
   const target = db || (await loadCore()).pool;
   const productId = positiveInt(productIdInput, 'productId');
   const result = await target.query(
-    `select i.product_id, i.quantity_on_hand, i.quantity_reserved, i.reorder_point,
-       i.quantity_on_hand - i.quantity_reserved as available, i.updated_at
+    `select i.product_id, i.quantity_on_hand, i.quantity_reserved, i.quantity_pending_return, i.reorder_point,
+       i.quantity_on_hand - i.quantity_reserved - coalesce(i.quantity_pending_return, 0) as available, i.updated_at
      from product_inventory i where i.product_id=$1`,
     [productId],
   );
@@ -196,6 +235,7 @@ export async function getInventory(productIdInput, db) {
     productId,
     quantityOnHand: Number(row.quantity_on_hand),
     quantityReserved: Number(row.quantity_reserved),
+    quantityPendingReturn: Number(row.quantity_pending_return || 0),
     available: Number(row.available),
     reorderPoint: row.reorder_point == null ? null : Number(row.reorder_point),
     updatedAt: row.updated_at,

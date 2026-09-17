@@ -191,7 +191,7 @@ function normalizeOrder(row) {
     createdAt: row.falabella_created_at,
     updatedAt: row.falabella_updated_at,
     firstSeenAt: row.first_seen_at,
-    promisedShippingAt: falabellaUtcDate(row.promised_shipping_time),
+    promisedShippingAt: resolveInboxPromisedShippingAt(row),
     shippingType: row.shipping_type || '',
     falabellaStatus: row.falabella_status,
     invoiceRequired: row.invoice_required,
@@ -437,6 +437,10 @@ export async function listFalabellaInboxCompanies(dependencies = {}) {
       name: String(company.nombre || company.nombreComercial || company.razonSocial || company.ruc || `Tienda ${company.id}`),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+export function resolveInboxPromisedShippingAt(row = {}) {
+  return falabellaUtcDate(row.promised_shipping_time);
 }
 
 function falabellaUtcDate(value) {

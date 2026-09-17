@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import {
   formatProductStock,
   productPrice,
+  productProfit,
   productStock,
   type CatalogProductForSale,
 } from '../lib/registrar-venta';
@@ -148,12 +149,15 @@ const ProductRow = memo(function ProductRow({
   product,
   disabled,
   onSelect,
+  showProfit,
 }: {
   product: CatalogProductForSale;
   disabled: boolean;
   onSelect: (product: CatalogProductForSale) => void;
+  showProfit?: boolean;
 }) {
   const outOfStock = productStock(product) <= 0;
+  const profit = showProfit ? productProfit(product) : null;
   return (
     <li>
       <button
@@ -188,6 +192,11 @@ const ProductRow = memo(function ProductRow({
           <span className="block text-[15px] font-semibold tabular-nums sm:text-sm sm:font-medium">
             {formatMoney(productPrice(product))}
           </span>
+          {profit != null ? (
+            <span className="mt-0.5 block text-xs tabular-nums text-emerald-700 sm:text-[11px] dark:text-emerald-400">
+              Ganas {formatMoney(profit)}
+            </span>
+          ) : null}
           <span className={cn(
             'mt-0.5 block text-xs tabular-nums sm:text-[11px]',
             outOfStock ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground',
@@ -207,12 +216,14 @@ function ProductResults({
   submittedSearch,
   onSelect,
   canSelect,
+  showProfit,
 }: {
   products: CatalogProductForSale[];
   isFetching: boolean;
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
   canSelect: (product: CatalogProductForSale) => boolean;
+  showProfit?: boolean;
 }) {
   if (isFetching && !products.length) {
     return (
@@ -239,6 +250,7 @@ function ProductResults({
           product={product}
           disabled={!canSelect(product)}
           onSelect={onSelect}
+          showProfit={showProfit}
         />
       ))}
     </ul>
@@ -306,6 +318,7 @@ function DesktopPickerBody({
   onSelect,
   canSelect,
   searchInputRef,
+  showProfit,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
@@ -316,6 +329,7 @@ function DesktopPickerBody({
   onSelect: (product: CatalogProductForSale) => void;
   canSelect: (product: CatalogProductForSale) => boolean;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
+  showProfit?: boolean;
 }) {
   return (
     <>
@@ -334,6 +348,7 @@ function DesktopPickerBody({
           submittedSearch={submittedSearch}
           onSelect={onSelect}
           canSelect={canSelect}
+          showProfit={showProfit}
         />
       </div>
     </>
@@ -351,6 +366,7 @@ export function ProductSearchPicker({
   submittedSearch,
   onSelect,
   canSelect,
+  showProfit = false,
   title = 'Elegir producto',
   description = 'Busca por nombre o SKU. Sin stock no se agrega.',
 }: {
@@ -364,6 +380,7 @@ export function ProductSearchPicker({
   submittedSearch: string;
   onSelect: (product: CatalogProductForSale) => void;
   canSelect?: (product: CatalogProductForSale) => boolean;
+  showProfit?: boolean;
   title?: string;
   description?: string;
 }) {
@@ -413,6 +430,7 @@ export function ProductSearchPicker({
               submittedSearch={submittedSearch}
               onSelect={onSelect}
               canSelect={productSelectable}
+              showProfit={showProfit}
             />
           </div>
         </SheetContent>
@@ -437,6 +455,7 @@ export function ProductSearchPicker({
           onSelect={onSelect}
           canSelect={productSelectable}
           searchInputRef={searchRef}
+          showProfit={showProfit}
         />
       </DialogContent>
     </Dialog>

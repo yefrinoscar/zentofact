@@ -1,3 +1,4 @@
+import { MARKETPLACE_RAW_IMAGE_SQL } from './item-image.js';
 import { applyReadyOrderStock } from './catalog-operations.js';
 import { catalogInventoryFlagState, isCatalogInventoryEnabled } from '../system-config.js';
 import { limaDate, limaDaySql, limaToday } from './product-service.js';
@@ -243,10 +244,20 @@ export async function getConfig(db) {
     catalogInventoryFlagState(db),
     getPaused(db),
     client.query(
-      `select j.status, count(*)::int as n
+      `select
+            case
+              when j.status = 'done'
+               and (
+                 order_row.order_status in ('cancelled', 'failed')
+                 or order_row.fulfillment_status in ('cancelled', 'returned', 'failed')
+               )
+              then 'cancelled'
+              else j.status
+            end as status,
+            count(*)::int as n
          from inventory_stock_jobs j
          left join lateral (
-           select ordered_at
+           select ordered_at, order_status, fulfillment_status
            from orders
            where id=j.order_id
               or (
@@ -258,7 +269,7 @@ export async function getConfig(db) {
            limit 1
          ) order_row on true
         where order_row.ordered_at >= $1::timestamptz
-        group by j.status`,
+        group by 1`,
       [INVENTORY_LISTEN_FROM_AT],
     ),
     client.query(`select last_reconciled_at, last_reconciliation, last_reconciliation_error
@@ -293,6 +304,9 @@ export async function recentJobs(limit = 60, db) {
             j.external_order_id as order_id, j.status, j.source, j.attempts, j.result, j.last_error,
             j.created_at, j.updated_at,
             order_row.ordered_at,
+            order_row.order_status,
+            order_row.fulfillment_status,
+            order_row.channel_code,
             coalesce(item_summary.items, '[]'::jsonb) as items,
             coalesce(item_summary.reserved_units, 0) as reserved_units,
             coalesce(item_summary.applied_units, 0) as applied_units,
@@ -301,7 +315,8 @@ export async function recentJobs(limit = 60, db) {
      from inventory_stock_jobs j
      left join companies c on c.id=j.company_id
      left join lateral (
-       select orders.id, orders.external_order_number, orders.ordered_at, channel.code as channel_code
+       select orders.id, orders.external_order_number, orders.ordered_at,
+              orders.order_status, orders.fulfillment_status, channel.code as channel_code
        from orders
        join order_channel_accounts account on account.id=orders.channel_account_id
        join order_channels channel on channel.id=account.channel_id
@@ -327,8 +342,7 @@ export async function recentJobs(limit = 60, db) {
                   nullif(listing.metadata->'images'->0->>'Url', ''),
                   nullif(listing.metadata->'images'->0->>'url', ''),
                   nullif(listing.metadata->>'imageUrl', ''),
-                  nullif(oi.raw_data->>'ImageUrl', ''),
-                  nullif(oi.raw_data->>'ImageURL', ''),
+                  ${MARKETPLACE_RAW_IMAGE_SQL},
                   case when order_row.channel_code='falabella'
                     and coalesce(nullif(trim(listing.shop_sku), ''), nullif(trim(oi.provider_sku), '')) ~ '^[A-Za-z0-9_-]+$'
                   then 'https://media.falabella.com/falabellaPE/'
@@ -388,16 +402,19 @@ export async function jobOrderPreview(id, db) {
     `select o.id, o.external_order_number, o.order_status, o.fulfillment_status,
             o.items_status, o.items_error, o.total,
             o.ordered_at, o.promised_shipping_at,
+            channel.code as channel_code,
             count(oi.id)::int as items_count,
             coalesce(sum(oi.stock_applied_quantity), 0)::int as stock_applied
      from orders o
+     left join order_channel_accounts account on account.id=o.channel_account_id
+     left join order_channels channel on channel.id=account.channel_id
      left join order_items oi on oi.order_id=o.id
      where o.id=coalesce($3::bigint, (
        select id from orders
        where company_id=$1 and external_order_id=$2
        order by id limit 1
      ))
-     group by o.id
+     group by o.id, channel.code
      limit 1`,
     [job.company_id, job.external_order_id, job.order_id],
   );
@@ -417,8 +434,7 @@ export async function jobOrderPreview(id, db) {
               nullif(listing.metadata->'images'->0->>'Url', ''),
               nullif(listing.metadata->'images'->0->>'url', ''),
               nullif(listing.metadata->>'imageUrl', ''),
-              nullif(oi.raw_data->>'ImageUrl', ''),
-              nullif(oi.raw_data->>'ImageURL', '')
+              ${MARKETPLACE_RAW_IMAGE_SQL}
             ) as image_url,
             oi.stock_state
        from order_items oi
@@ -431,9 +447,12 @@ export async function jobOrderPreview(id, db) {
   const result = job.result || {};
   return {
     source: job.source,
+    channelCode: order?.channel_code || null,
     order: order ? {
       orderNumber: order.external_order_number || job.order_number,
       status: [order.order_status, order.fulfillment_status].filter(Boolean).join(' · '),
+      orderStatus: order.order_status,
+      fulfillmentStatus: order.fulfillment_status,
       itemsStatus: order.items_status,
       itemsError: order.items_error || null,
       total: order.total,

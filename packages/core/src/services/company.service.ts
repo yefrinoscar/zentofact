@@ -95,6 +95,22 @@ export interface TestSunatConnectionResult {
 const SUNAT_BETA_ENDPOINT = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
 const SUNAT_PROD_ENDPOINT = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
 const PRODUCTION_DUMMY_TICKETS = ['202620699999999', '202600000000001'];
+function normalizeRipleySvcBaseUrl(value?: string | null): string | undefined {
+  if (value == null) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('La URL de SVC Ripley es inválida.');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
+  if (parsed.hostname === 'mirakl.net' || parsed.hostname.endsWith('.mirakl.net')) {
+    throw new Error('La URL de Mirakl no corresponde a SVC. Configura la URL de API entregada por Ripley.');
+  }
+  return parsed.origin;
+}
 
 function hasText(value: unknown): boolean {
   return String(value ?? '').trim().length > 0;
@@ -144,7 +160,7 @@ export function toPublicCompany(row: CompanyRecord): PublicCompany {
     hasSellerPassword,
     hasFalabellaCredentials: hasText(row.falabellaApiUserId) && hasFalabellaApiKey,
     hasRipleyCredentials: hasRipleyApiKey,
-    hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword && hasText(row.ripleySvcBaseUrl),
+    hasRipleySvcCredentials: hasText(row.ripleySvcUsername) && hasRipleySvcPassword,
     hasMercadoLibreCredentials: hasText(row.mercadoLibreRefreshToken),
   };
 }
@@ -204,7 +220,7 @@ export async function createCompany(data: CreateCompanyInput): Promise<PublicCom
     ripleyShopId: data.ripleyShopId,
     ripleySvcUsername: data.ripleySvcUsername,
     ripleySvcPassword: data.ripleySvcPassword,
-    ripleySvcBaseUrl: data.ripleySvcBaseUrl,
+    ripleySvcBaseUrl: normalizeRipleySvcBaseUrl(data.ripleySvcBaseUrl),
     activo: true,
     createdAt: now,
     updatedAt: now,
@@ -257,7 +273,7 @@ export async function updateCompany(id: number, data: UpdateCompanyInput): Promi
   if (falabellaApiKey !== undefined) updates.falabellaApiKey = falabellaApiKey;
   if (data.ripleyShopId !== undefined) updates.ripleyShopId = data.ripleyShopId;
   if (data.ripleySvcUsername !== undefined) updates.ripleySvcUsername = data.ripleySvcUsername;
-  if (data.ripleySvcBaseUrl !== undefined) updates.ripleySvcBaseUrl = data.ripleySvcBaseUrl;
+  if (data.ripleySvcBaseUrl !== undefined) updates.ripleySvcBaseUrl = normalizeRipleySvcBaseUrl(data.ripleySvcBaseUrl);
   const ripleyApiKey = nonEmptySecret(data.ripleyApiKey);
   if (ripleyApiKey !== undefined) updates.ripleyApiKey = ripleyApiKey;
   const ripleySvcPassword = nonEmptySecret(data.ripleySvcPassword);

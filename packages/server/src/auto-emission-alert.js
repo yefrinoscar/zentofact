@@ -84,16 +84,15 @@ export function buildFailedEmissionAlertEmail({
   return { subject, text, html };
 }
 
-export async function notifyFailedEmissionIfNeeded(job, {
+export async function deliverAlertEmail({
+  email,
   sendEmail,
   listUsers,
   configuredEmails,
   extraEmails,
   fallbackEmail,
-  markAlerted,
   log = () => {},
 } = {}) {
-  if (!shouldSendFailedEmissionAlert(job)) return { notified: false, skipped: true };
   const configured = parseAlertEmails(configuredEmails ?? extraEmails);
   const users = configured.length || typeof listUsers !== 'function' ? [] : await listUsers();
   const to = resolveFailedEmissionAlertRecipients({ users, configuredEmails: configured, fallbackEmail });
@@ -105,18 +104,45 @@ export async function notifyFailedEmissionIfNeeded(job, {
     log('aviso de emisión: no hay envío configurado');
     return { notified: false, reason: 'no-mailer' };
   }
-  const email = buildFailedEmissionAlertEmail(job);
   const result = await sendEmail({
     to,
-    subject: email.subject,
-    html: email.html,
-    text: email.text,
+    subject: email?.subject,
+    html: email?.html,
+    text: email?.text,
     logLabel: 'auto-emit',
   });
   const delivered = result?.sent === true || result?.logged === true;
   if (!delivered) return { notified: false, reason: 'send-failed', to };
-  if (typeof markAlerted === 'function') await markAlerted(job);
-  return { notified: true, sent: result?.sent === true, logged: result?.logged === true, to };
+  return {
+    notified: true,
+    sent: result?.sent === true,
+    logged: result?.logged === true,
+    to,
+    subject: email?.subject || '',
+  };
+}
+
+export async function notifyFailedEmissionIfNeeded(job, {
+  sendEmail,
+  listUsers,
+  configuredEmails,
+  extraEmails,
+  fallbackEmail,
+  markAlerted,
+  log = () => {},
+} = {}) {
+  if (!shouldSendFailedEmissionAlert(job)) return { notified: false, skipped: true };
+  const result = await deliverAlertEmail({
+    email: buildFailedEmissionAlertEmail(job),
+    sendEmail,
+    listUsers,
+    configuredEmails,
+    extraEmails,
+    fallbackEmail,
+    log,
+  });
+  if (result.notified && typeof markAlerted === 'function') await markAlerted(job);
+  return result;
 }
 
 function escapeHtml(value) {

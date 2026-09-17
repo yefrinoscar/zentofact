@@ -26,7 +26,7 @@ const SEED_ORDERS = [
   {
     key: 'pending',
     orderNumber: 'PV-10001',
-    customer: { name: 'Ana Preview', firstName: 'Ana', lastName: 'Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local' },
+    customer: { name: 'Ana Preview', firstName: 'Ana', lastName: 'Preview', documentNumber: '12345678', email: 'ana@preview.zentofact.local', phone: '999111001' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     falabellaStatus: 'pending',
@@ -36,7 +36,7 @@ const SEED_ORDERS = [
   {
     key: 'ready',
     orderNumber: 'PV-10003',
-    customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912' },
+    customer: { name: 'Carla Preview', firstName: 'Carla', lastName: 'Preview', documentNumber: '45678912', phone: '999111003' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'ready_to_ship',
     falabellaStatus: 'ready_to_ship',
@@ -46,12 +46,47 @@ const SEED_ORDERS = [
   {
     key: 'shipped',
     orderNumber: 'PV-10002',
-    customer: { name: 'Luis Preview', firstName: 'Luis', lastName: 'Preview', documentNumber: '87654321' },
+    customer: { name: 'Luis Preview', firstName: 'Luis', lastName: 'Preview', documentNumber: '87654321', phone: '999111002' },
     orderStatus: 'completed',
     fulfillmentStatus: 'shipped',
     falabellaStatus: 'shipped',
     stockState: 'applied',
     stockApplied: 1,
+  },
+  {
+    key: 'canceled',
+    orderNumber: 'PV-10004',
+    customer: { name: 'Marta Preview', firstName: 'Marta', lastName: 'Preview', documentNumber: '33445566' },
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+    falabellaStatus: 'canceled',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'returned',
+    orderNumber: 'PV-10005',
+    customer: { name: 'Nora Preview', firstName: 'Nora', lastName: 'Preview', documentNumber: '77889900' },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    falabellaStatus: 'returned',
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'returned-multi',
+    orderNumber: 'PV-10006',
+    customer: { name: 'Olga Preview', firstName: 'Olga', lastName: 'Preview', documentNumber: '99001122' },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    falabellaStatus: 'returned',
+    stockState: 'reversed',
+    stockApplied: 0,
+    needsReturnApproval: true,
+    items: [
+      { sku: 'AG301', quantity: 2 },
+      { sku: 'HOG025', quantity: 1 },
+    ],
   },
 ];
 
@@ -80,9 +115,35 @@ const SEED_LOGISTICS_ORDERS = [
     stockApplied: 0,
   },
   {
+    key: 'manual-yape-multi',
+    orderNumber: 'VTA-10012',
+    channel: 'manual',
+    customer: {
+      name: 'Alexander Preview',
+      firstName: 'Alexander',
+      lastName: 'Preview',
+      phone: '999222333',
+      documentNumber: '22334455',
+    },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'ready_to_ship',
+    payment: {
+      method: 'yape_plin',
+      paidTo: 'vendedor',
+    },
+    items: [
+      { sku: 'AG301', quantity: 1 },
+      { sku: 'HOG025', quantity: 2 },
+      { sku: 'BB110', quantity: 1 },
+    ],
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
     key: 'ripley-pending',
     orderNumber: 'RP-10020',
     channel: 'ripley',
+    sku: 'HOG025',
     customer: {
       name: 'Marco Preview',
       firstName: 'Marco',
@@ -117,7 +178,7 @@ const SEED_LOGISTICS_ORDERS = [
     channel: 'falabella',
     companyRuc: '20990001002',
     sku: 'AG301',
-    customer: { name: 'Diego Preview', firstName: 'Diego', lastName: 'Preview', documentNumber: '33445566' },
+    customer: { name: 'Diego Preview', firstName: 'Diego', lastName: 'Preview', documentNumber: '33445566', phone: '999111011' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     promisedOffsetDays: 0,
@@ -130,7 +191,8 @@ const SEED_LOGISTICS_ORDERS = [
     orderNumber: 'RP-10021',
     channel: 'ripley',
     companyRuc: '20990001002',
-    sku: 'HOG025',
+    sku: 'HOG099',
+    productMediaUrl: '/seed/hog099.svg',
     customer: { name: 'Pilar Preview', firstName: 'Pilar', lastName: 'Preview', documentNumber: '44556677' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
@@ -160,10 +222,71 @@ const SEED_LOGISTICS_ORDERS = [
     channel: 'falabella',
     companyRuc: '20990001003',
     sku: 'BB110',
-    customer: { name: 'Inés Preview', firstName: 'Inés', lastName: 'Preview', documentNumber: '77889900' },
+    customer: { name: 'Inés Preview', firstName: 'Inés', lastName: 'Preview', documentNumber: '77889900', phone: '999111012' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'pending',
     promisedOffsetDays: 4,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-limbo-overdue',
+    orderNumber: 'PV-10013',
+    channel: 'falabella',
+    companyRuc: '20990001001',
+    sku: 'AG301',
+    customer: { name: 'Raúl Preview', firstName: 'Raúl', lastName: 'Preview', documentNumber: '11220033', phone: '999111013' },
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'pending',
+    falabellaStatus: 'shipped',
+    promisedOffsetDays: -1,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-max-limbo',
+    orderNumber: 'PV-10030',
+    channel: 'falabella',
+    companyRuc: '20990001001',
+    sku: 'BB220',
+    items: [{ sku: 'BB220', quantity: 4 }],
+    customer: {
+      name: 'Max Preview',
+      firstName: 'Max',
+      lastName: 'Preview',
+      documentNumber: '74561743',
+      phone: '987654321',
+      email: 'max@preview.zentofact.local',
+    },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'shipped',
+    falabellaStatus: 'shipped',
+    promisedOffsetDays: -2,
+    shipping: { type: 'envio' },
+    stockState: 'none',
+    stockApplied: 0,
+  },
+  {
+    key: 'falabella-max-manta',
+    orderNumber: 'PV-10031',
+    channel: 'falabella',
+    companyRuc: '20990001002',
+    sku: 'BB220',
+    items: [{ sku: 'BB220', quantity: 3 }],
+    customer: {
+      name: 'Max Preview',
+      firstName: 'Max',
+      lastName: 'Preview',
+      documentNumber: '74561743',
+      phone: '987654321',
+      email: 'max@preview.zentofact.local',
+    },
+    orderStatus: 'completed',
+    fulfillmentStatus: 'shipped',
+    falabellaStatus: 'shipped',
+    promisedOffsetDays: -1,
     shipping: { type: 'envio' },
     stockState: 'none',
     stockApplied: 0,
@@ -176,6 +299,7 @@ const SEED_LOGISTICS_ORDERS = [
     customer: { name: 'Nora Preview', firstName: 'Nora', lastName: 'Preview', documentNumber: '88990011' },
     orderStatus: 'confirmed',
     fulfillmentStatus: 'ready_to_ship',
+    ripleySvc: { statusManagement: 'TO_PICKUP' },
     promisedOffsetDays: 0,
     itemLines: 2,
     shipping: { type: 'envio' },
@@ -282,10 +406,13 @@ const SEED_PRODUCTS = [
     name: 'Coche Bastón tipo Paraguas Liviano plegable Celeste',
     brand: 'Zento',
     referencePrice: 189.9,
+    wholesalePrice: 160,
+    commissionAmount: 20,
     stock: 12,
+    imageUrl: '/seed/ag301.svg',
     listings: [
-      { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-AG301', title: 'Coche bastón celeste · LIMBO' },
-      { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-AG301', title: 'Coche bastón celeste · MANTA RAYA' },
+      { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-AG301', title: 'Coche bastón celeste · LIMBO', effectivePrice: 170.5 },
+      { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-AG301', title: 'Coche bastón celeste · MANTA RAYA', effectivePrice: 170.5 },
     ],
   },
   {
@@ -293,12 +420,26 @@ const SEED_PRODUCTS = [
     name: 'Silla de comer evolutiva gris',
     brand: 'Zento',
     referencePrice: 249.0,
+    wholesalePrice: 210,
     stock: 8,
+    imageUrl: '/seed/hog025.svg',
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-HOG025', title: 'Silla evolutiva gris · LIMBO' },
+      { companyRuc: '20990001001', channelCode: 'ripley', sellerSku: 'S126718', title: 'Silla evolutiva gris · Ripley' },
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG025', title: 'Silla evolutiva gris · YAKURUNA' },
       { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S166285', title: 'Silla evolutiva gris · Ripley' },
       { companyRuc: '20990001001', channelCode: 'mercado_libre', sellerSku: 'HOG025', title: 'Silla evolutiva gris · Mercado Libre' },
+    ],
+  },
+  {
+    mainSku: 'HOG099',
+    name: 'Escritorio gamer negro diseño ergonómico oficina',
+    brand: 'Zento',
+    referencePrice: 399,
+    wholesalePrice: 340,
+    stock: 6,
+    listings: [
+      { companyRuc: '20990001002', channelCode: 'ripley', sellerSku: 'S793615', title: 'Escritorio gamer negro · Ripley' },
     ],
   },
   {
@@ -306,6 +447,7 @@ const SEED_PRODUCTS = [
     name: 'Almohada de lactancia multifunción',
     brand: 'Zento',
     referencePrice: 79.9,
+    wholesalePrice: 68,
     stock: 25,
     listings: [
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-BB110', title: 'Almohada lactancia · YAKURUNA' },
@@ -316,9 +458,11 @@ const SEED_PRODUCTS = [
     name: 'Set de platos antideslizantes 3 piezas',
     brand: 'Zento',
     referencePrice: 45.5,
+    wholesalePrice: 38,
     stock: 40,
     listings: [
       { companyRuc: '20990001001', channelCode: 'falabella', sellerSku: 'LIMBO-BB220', title: 'Set platos · LIMBO' },
+      { companyRuc: '20990001001', channelCode: 'ripley', sellerSku: 'S220991', title: 'Set platos · Ripley' },
       { companyRuc: '20990001002', channelCode: 'falabella', sellerSku: 'MR-BB220', title: 'Set platos · MANTA RAYA' },
     ],
   },
@@ -327,12 +471,21 @@ const SEED_PRODUCTS = [
     name: 'Organizador de pañales beige',
     brand: 'Zento',
     referencePrice: 59.0,
+    wholesalePrice: 49,
     stock: 15,
     listings: [
       { companyRuc: '20990001003', channelCode: 'falabella', sellerSku: 'YAK-HOG040', title: 'Organizador pañales · YAKURUNA' },
     ],
   },
 ];
+
+function seedListingSellerSku(spec, lineProduct, company) {
+  if ((spec.channel || 'falabella') === 'manual') return null;
+  const seedProduct = SEED_PRODUCTS.find((row) => row.mainSku === lineProduct.mainSku);
+  return seedProduct?.listings?.find((row) => (
+    row.companyRuc === company.ruc && row.channelCode === (spec.channel || 'falabella')
+  ))?.sellerSku || null;
+}
 
 function newId() {
   return randomBytes(24).toString('base64url');
@@ -552,11 +705,35 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
       name: spec.name,
       brand: spec.brand,
       referencePrice: spec.referencePrice,
+      wholesalePrice: spec.wholesalePrice,
+      commissionAmount: spec.commissionAmount,
       status: 'active',
       description: `Producto demo del seed preview (${SEED_MARKER}).`,
+      imageUrl: spec.imageUrl || null,
     }, actorUserId);
     productId = Number(product.id);
     created = true;
+  }
+
+  if (spec.imageUrl) {
+    await pool.query(
+      'UPDATE products SET image_url = $1, updated_at = now() WHERE id = $2',
+      [spec.imageUrl, productId],
+    );
+  }
+
+  if (spec.commissionAmount != null) {
+    await pool.query(
+      'UPDATE products SET commission_amount = $1, updated_at = now() WHERE id = $2',
+      [spec.commissionAmount, productId],
+    );
+  }
+
+  if (spec.wholesalePrice != null) {
+    await pool.query(
+      'UPDATE products SET wholesale_price = $1, updated_at = now() WHERE id = $2',
+      [spec.wholesalePrice, productId],
+    );
   }
 
   await adjustInventory(productId, {
@@ -579,7 +756,13 @@ async function ensureProduct(spec, actorUserId, companiesByRuc) {
       title: listing.title,
       status: 'active',
       marketplaceQuantity: Math.max(1, Math.floor(spec.stock / Math.max(spec.listings.length, 1))),
-      metadata: { origin: SEED_MARKER },
+      metadata: {
+        origin: SEED_MARKER,
+        ...(listing.effectivePrice != null ? {
+          effectivePrice: listing.effectivePrice,
+          price: listing.effectivePrice,
+        } : {}),
+      },
     });
     listings.push(saved);
   }
@@ -620,6 +803,10 @@ async function ensureClients(companies) {
     if (result?.rows?.length) created += 1;
   }
   return created;
+}
+
+function promisedAtForSpec(spec, now = new Date()) {
+  return new Date(limaNoonToday(now).getTime() + (Number(spec.promisedOffsetDays) || 0) * 24 * 60 * 60 * 1000);
 }
 
 function limaNoonToday(now = new Date()) {
@@ -676,7 +863,10 @@ async function ensureSampleOrders(companiesByRuc, products) {
   if (!limbo || !products[0]) return { orders: 0 };
 
   await replacePreviewOrders(limbo.id);
-  const promisedAt = limaNoonToday();
+  const vendedorEmail = SEED_USERS.find((user) => user.role === 'vendedor')?.email;
+  const vendedor = vendedorEmail
+    ? (await pool.query('SELECT id FROM "user" WHERE lower(email)=lower($1) LIMIT 1', [vendedorEmail])).rows[0]
+    : null;
   const specs = [
     ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
     ...SEED_LOGISTICS_ORDERS,
@@ -688,19 +878,29 @@ async function ensureSampleOrders(companiesByRuc, products) {
     if (!company || !product) continue;
     const channelAccount = await ensureChannelAccount(company, spec.channel || 'falabella');
     if (!channelAccount) continue;
+    const promisedAt = promisedAtForSpec(spec);
     const externalOrderId = previewOrderId(spec.key);
+    const lineSpecs = Array.isArray(spec.items) && spec.items.length
+      ? spec.items
+      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
+    const orderTotal = lineSpecs.reduce((sum, lineSpec) => {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      return sum + (Number(lineProduct.referencePrice) || 100) * Math.max(1, Number(lineSpec.quantity || 1));
+    }, 0);
     const orderResult = await pool.query(
       `INSERT INTO orders (
          company_id, channel_account_id, external_order_id, external_order_number,
          order_status, payment_status, fulfillment_status, document_status, provider_status,
          document_requirement, document_type_policy, currency, subtotal, total,
          customer, shipping, metadata, ordered_at, promised_shipping_at, provider_updated_at,
-         items_status, created_by
+         items_status, created_by, cancelled_at, returned_at
        ) VALUES (
          $1,$2,$3,$4,
          $5,'paid',$6,'not_requested',$6,
          'optional','automatic','PEN',$7,$7,
-         $8::jsonb,$9::jsonb,$10::jsonb,$11,$11,$11,'complete',$12
+         $8::jsonb,$9::jsonb,$10::jsonb,$11::timestamptz,$11::timestamptz,$11::timestamptz,'complete',$12,
+         CASE WHEN $5 = 'cancelled' OR $6 = 'cancelled' THEN $11::timestamptz ELSE NULL END,
+         CASE WHEN $6 = 'returned' THEN $11::timestamptz ELSE NULL END
        )
        ON CONFLICT (channel_account_id, external_order_id) DO UPDATE SET
          order_status = EXCLUDED.order_status,
@@ -708,6 +908,8 @@ async function ensureSampleOrders(companiesByRuc, products) {
          shipping = EXCLUDED.shipping,
          metadata = EXCLUDED.metadata,
          promised_shipping_at = EXCLUDED.promised_shipping_at,
+         cancelled_at = coalesce(orders.cancelled_at, EXCLUDED.cancelled_at),
+         returned_at = coalesce(orders.returned_at, EXCLUDED.returned_at),
          last_seen_at = NOW(),
          updated_at = NOW()
        RETURNING id`,
@@ -718,7 +920,7 @@ async function ensureSampleOrders(companiesByRuc, products) {
         spec.orderNumber,
         spec.orderStatus,
         spec.fulfillmentStatus,
-        product.referencePrice || 100,
+        orderTotal,
         JSON.stringify(spec.customer),
         JSON.stringify(spec.shipping || {}),
         JSON.stringify({
@@ -728,41 +930,212 @@ async function ensureSampleOrders(companiesByRuc, products) {
             siteId: 'MPE',
             logisticType: spec.logisticType || 'drop_off',
           } : {}),
+          ...(spec.ripleySvc ? { ripleySvc: spec.ripleySvc } : {}),
+          ...(spec.payment ? {
+            paymentMethod: spec.payment.method,
+            paidTo: spec.payment.paidTo || '',
+            receivedBy: spec.payment.receivedBy || '',
+            paymentProof: spec.payment.proof || null,
+          } : {}),
         }),
         new Date(promisedAt.getTime() + (spec.promisedOffsetDays || 0) * 24 * 60 * 60 * 1000),
-        'preview-seed',
+        spec.channel === 'manual' && vendedor?.id ? vendedor.id : 'preview-seed',
       ],
     );
     const orderId = Number(orderResult.rows[0].id);
-    // Los marketplaces mandan una línea por unidad; la bandeja debe agruparlas.
-    for (let line = 1; line <= (spec.itemLines || 1); line += 1) {
-      await pool.query(
+    const insertedItems = [];
+    let line = 0;
+    for (const lineSpec of lineSpecs) {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      const quantity = Math.max(1, Number(lineSpec.quantity || 1));
+      const unitPrice = lineProduct.referencePrice || 100;
+      line += 1;
+      const ripleyImage = spec.productMediaUrl || lineProduct.imageUrl || null;
+      const sellerSku = seedListingSellerSku(spec, lineProduct, company);
+      const itemSku = sellerSku || lineProduct.mainSku;
+      const rawData = spec.channel === 'ripley' && ripleyImage
+        ? {
+            offer_sku: itemSku,
+            product_sku: lineProduct.mainSku,
+            product_title: lineProduct.name,
+            product_medias: [{ media_url: ripleyImage, type: 'SMALL', mime_type: 'image/svg+xml' }],
+          }
+        : {};
+      const itemResult = await pool.query(
         `INSERT INTO order_items (
            order_id, external_item_id, sku, provider_sku, description, quantity,
-           unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata
-         ) VALUES ($1,$2,$3,$3,$4,1,$5,$5,$6,$3,$7,$8,$9::jsonb)
-         ON CONFLICT (order_id, external_item_id) DO NOTHING`,
+           unit_price, total, product_id, main_sku, stock_state, stock_applied_quantity, metadata, raw_data
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb)
+         ON CONFLICT (order_id, external_item_id) DO UPDATE SET
+           sku = EXCLUDED.sku,
+           provider_sku = EXCLUDED.provider_sku,
+           main_sku = EXCLUDED.main_sku,
+           description = EXCLUDED.description,
+           raw_data = EXCLUDED.raw_data
+         RETURNING id, product_id, quantity, (xmax = 0) AS inserted`,
         [
           orderId,
           `${externalOrderId}-item-${line}`,
-          product.mainSku,
-          product.name,
-          product.referencePrice || 100,
-          product.productId,
+          itemSku,
+          sellerSku || lineProduct.mainSku,
+          lineProduct.name,
+          quantity,
+          unitPrice,
+          unitPrice * quantity,
+          lineProduct.productId,
+          lineProduct.mainSku,
           spec.stockState,
           spec.stockApplied,
-          JSON.stringify({ origin: SEED_MARKER }),
+          JSON.stringify({ origin: SEED_MARKER, imageUrl: ripleyImage }),
+          JSON.stringify(rawData),
         ],
       );
+      if (itemResult.rows[0]?.inserted) insertedItems.push(itemResult.rows[0]);
+    }
+    if (spec.needsReturnApproval) {
+      for (const item of insertedItems) {
+        await pool.query(
+          `INSERT INTO return_stock_approvals (
+             order_id, order_item_id, product_id, quantity, status, returned_at
+           ) VALUES ($1,$2,$3,$4,'pending',$5)
+           ON CONFLICT (order_item_id) DO NOTHING`,
+          [orderId, item.id, item.product_id, item.quantity, promisedAt],
+        );
+        await pool.query(
+          `INSERT INTO product_inventory (product_id, quantity_on_hand, quantity_reserved, quantity_pending_return)
+           VALUES ($1, 0, 0, $2)
+           ON CONFLICT (product_id) DO UPDATE SET
+             quantity_pending_return = product_inventory.quantity_pending_return + EXCLUDED.quantity_pending_return,
+             updated_at = NOW()`,
+          [item.product_id, item.quantity],
+        );
+      }
     }
     inserted += 1;
   }
+  await pool.query(`
+    UPDATE product_inventory i
+       SET quantity_pending_return = coalesce((
+         SELECT sum(rsa.quantity)
+           FROM return_stock_approvals rsa
+          WHERE rsa.product_id = i.product_id AND rsa.status = 'pending'
+       ), 0),
+           updated_at = NOW()
+  `);
   return { orders: inserted };
+}
+
+function previewSettlementAmounts(bruto) {
+  const sold = Math.round((Number(bruto) || 0) * 100) / 100;
+  const commission = Math.round(sold * 0.14 * 100) / 100;
+  const otherFees = Math.round(sold * 0.12 * 100) / 100;
+  return {
+    bruto: sold,
+    commission,
+    otherFees,
+    neto: Math.round((sold - commission - otherFees) * 100) / 100,
+  };
+}
+
+async function ensurePreviewFalabellaOrders(companiesByRuc, products) {
+  const specs = [
+    ...SEED_ORDERS.map((spec) => ({ ...spec, channel: spec.channel || 'falabella' })),
+    ...SEED_LOGISTICS_ORDERS.filter((spec) => (spec.channel || 'falabella') === 'falabella'),
+  ];
+  let inserted = 0;
+  for (const spec of specs) {
+    const company = companiesByRuc.get(spec.companyRuc || '20990001001');
+    const product = products.find((row) => row.mainSku === spec.sku) || products[0];
+    if (!company || !product) continue;
+    const orderId = previewOrderId(spec.key);
+    const lineSpecs = Array.isArray(spec.items) && spec.items.length
+      ? spec.items
+      : Array.from({ length: spec.itemLines || 1 }, () => ({ sku: spec.sku, quantity: 1 }));
+    const grandTotal = lineSpecs.reduce((sum, lineSpec) => {
+      const lineProduct = products.find((row) => row.mainSku === (lineSpec.sku || spec.sku)) || product;
+      return sum + (Number(lineProduct.referencePrice) || 100) * Math.max(1, Number(lineSpec.quantity || 1));
+    }, 0);
+    const raw = {
+      OrderId: orderId,
+      OrderNumber: spec.orderNumber,
+      CustomerFirstName: spec.customer.firstName,
+      CustomerLastName: spec.customer.lastName,
+      CustomerPhone: spec.customer.phone || '',
+      NationalRegistrationNumber: spec.customer.documentNumber || '',
+      PromisedShippingTime: promisedAtForSpec(spec).toISOString(),
+      ItemsCount: String(lineSpecs.reduce((sum, lineSpec) => sum + Math.max(1, Number(lineSpec.quantity || 1)), 0)),
+      Statuses: spec.falabellaStatus || spec.fulfillmentStatus,
+    };
+    await pool.query(
+      `INSERT INTO falabella_orders (
+         company_id, order_id, order_number, falabella_created_at, falabella_updated_at,
+         status, invoice_required, grand_total, currency, raw_data
+       ) VALUES ($1,$2,$3,NOW(),NOW(),$4,false,$5,'PEN',$6::jsonb)
+       ON CONFLICT (company_id, order_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         order_number = EXCLUDED.order_number,
+         grand_total = EXCLUDED.grand_total,
+         raw_data = EXCLUDED.raw_data,
+         last_seen_at = NOW()`,
+      [
+        company.id,
+        orderId,
+        spec.orderNumber,
+        spec.falabellaStatus || spec.fulfillmentStatus,
+        grandTotal,
+        JSON.stringify(raw),
+      ],
+    );
+    inserted += 1;
+  }
+  return { falabellaOrders: inserted };
+}
+
+async function ensurePreviewSettlements() {
+  const { rows } = await pool.query(
+    `SELECT fo.id, fo.grand_total, fo.status, o.order_status, o.fulfillment_status
+       FROM falabella_orders fo
+       JOIN orders o
+         ON o.company_id = fo.company_id
+        AND o.external_order_id = fo.order_id
+      WHERE fo.order_id LIKE $1
+        AND o.order_status IN ('confirmed', 'completed')
+        AND coalesce(o.fulfillment_status, '') NOT IN ('returned', 'cancelled', 'failed')
+        AND lower(coalesce(fo.status, '')) !~ '(return|cancel|failed)'`,
+    [`${SEED_MARKER}-%`],
+  );
+  for (const row of rows) {
+    const amounts = previewSettlementAmounts(row.grand_total);
+    const paid = row.fulfillment_status === 'shipped' || row.order_status === 'completed';
+    await pool.query(
+      `INSERT INTO sale_settlements (
+         sale_source, sale_id, status, bruto, commission, other_fees, neto, match_method, paid_at
+       ) VALUES ('falabella_order', $1, $2, $3, $4, $5, $6, 'order_id', $7)
+       ON CONFLICT (sale_source, sale_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         bruto = EXCLUDED.bruto,
+         commission = EXCLUDED.commission,
+         other_fees = EXCLUDED.other_fees,
+         neto = EXCLUDED.neto,
+         match_method = EXCLUDED.match_method,
+         paid_at = EXCLUDED.paid_at,
+         updated_at = now()`,
+      [
+        row.id,
+        paid ? 'paid' : 'pending',
+        amounts.bruto,
+        amounts.commission,
+        amounts.otherFees,
+        amounts.neto,
+        paid ? new Date() : null,
+      ],
+    );
+  }
+  return { settlements: rows.length };
 }
 
 async function ensureFalabellaInboxOrders(limbo, product) {
   if (!limbo || !product) return { falabellaOrders: 0 };
-  const promised = limaNoonToday().toISOString();
   for (const spec of SEED_ORDERS) {
     const orderId = previewOrderId(spec.key);
     const raw = {
@@ -770,7 +1143,7 @@ async function ensureFalabellaInboxOrders(limbo, product) {
       OrderNumber: spec.orderNumber,
       CustomerFirstName: spec.customer.firstName,
       CustomerLastName: spec.customer.lastName,
-      PromisedShippingTime: promised,
+      PromisedShippingTime: promisedAtForSpec(spec).toISOString(),
       ItemsCount: '1',
       Statuses: spec.falabellaStatus,
     };
@@ -789,15 +1162,19 @@ async function ensureFalabellaInboxOrders(limbo, product) {
     await pool.query(
       `INSERT INTO falabella_order_lifecycle (
          company_id, order_id, order_number, current_status, pending_at,
-         ready_to_ship_at, shipped_at, first_observed_at, last_observed_at
+         ready_to_ship_at, shipped_at, canceled_at, returned_at, first_observed_at, last_observed_at
        ) VALUES (
          $1,$2,$3,$4,NOW(),
          CASE WHEN $4 IN ('ready_to_ship','shipped') THEN NOW() ELSE NULL END,
          CASE WHEN $4 = 'shipped' THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'canceled' THEN NOW() ELSE NULL END,
+         CASE WHEN $4 = 'returned' THEN NOW() ELSE NULL END,
          NOW(), NOW()
        )
        ON CONFLICT (company_id, order_id) DO UPDATE SET
          current_status = EXCLUDED.current_status,
+         canceled_at = coalesce(falabella_order_lifecycle.canceled_at, EXCLUDED.canceled_at),
+         returned_at = coalesce(falabella_order_lifecycle.returned_at, EXCLUDED.returned_at),
          last_observed_at = NOW()`,
       [limbo.id, orderId, spec.orderNumber, spec.falabellaStatus],
     );
@@ -842,11 +1219,23 @@ async function ensurePreviewFixtures() {
     name: row.name,
     referencePrice: Number(row.reference_price || 100),
   }));
+  for (const spec of SEED_PRODUCTS) {
+    if (products.some((row) => row.mainSku === spec.mainSku)) continue;
+    const created = await ensureProduct(spec, admin.id, companiesByRuc);
+    products.push({
+      productId: created.productId,
+      mainSku: spec.mainSku,
+      name: spec.name,
+      referencePrice: spec.referencePrice || 100,
+    });
+  }
   const limbo = companiesByRuc.get('20990001001');
   if (limbo && products[0]) {
     await applyMercadoLibreSandboxPreview(companiesByRuc);
     await ensureSampleOrders(companiesByRuc, products);
     await ensureFalabellaInboxOrders(limbo, products[0]);
+    await ensurePreviewFalabellaOrders(companiesByRuc, products);
+    await ensurePreviewSettlements();
   }
   return admin;
 }
@@ -916,6 +1305,8 @@ export async function seedPreviewData({ force = false } = {}) {
   const clientsCreated = await ensureClients(companies);
   const orders = await ensureSampleOrders(companiesByRuc, products);
   const inbox = await ensureFalabellaInboxOrders(companiesByRuc.get('20990001001'), products[0]);
+  const previewInbox = await ensurePreviewFalabellaOrders(companiesByRuc, products);
+  const settlements = await ensurePreviewSettlements();
   const insumosModule = await import('./insumos.js');
   await insumosModule.ensureTables();
   await bumpInsumosStock();

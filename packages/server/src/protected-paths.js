@@ -23,6 +23,7 @@ export const PROTECTED_PATHS = [
   '/users',
   '/me',
   '/insumos',
+  '/notifications',
 ];
 
 export function isProtectedPath(path) {

@@ -7,6 +7,10 @@ export function createLogId() {
   return `log_${randomBytes(6).toString('hex')}`;
 }
 
+export function existingLogId(value) {
+  return typeof value === 'string' && /^log_[0-9a-f]{12}$/.test(value) ? value : '';
+}
+
 function collectCause(error) {
   const parts = [];
   let current = error?.cause;
@@ -26,7 +30,7 @@ export function clientErrorMessage(error) {
 export function operationalErrorBody(error, details = {}, dependencies = {}) {
   const makeId = dependencies.createLogId || createLogId;
   const writeLog = dependencies.log || ((line) => console.error(line));
-  const logId = details.logId || makeId();
+  const logId = existingLogId(details.logId) || existingLogId(error?.logId) || makeId();
   const rawMessage = String(error?.message || error || 'Error no informado.').slice(0, MAX_MESSAGE);
   const message = clientErrorMessage(error);
   const payload = {
@@ -37,11 +41,13 @@ export function operationalErrorBody(error, details = {}, dependencies = {}) {
   };
   const cause = collectCause(error);
   if (cause) payload.cause = cause;
-  if (details.context && typeof details.context === 'object') {
-    for (const [key, value] of Object.entries(details.context)) {
-      if (value === undefined || value === null || value === '' || RESERVED_PAYLOAD_KEYS.has(key)) continue;
-      payload[key] = value;
-    }
+  const extras = {
+    ...(error?.details && typeof error.details === 'object' && !Array.isArray(error.details) ? error.details : {}),
+    ...(details.context && typeof details.context === 'object' ? details.context : {}),
+  };
+  for (const [key, value] of Object.entries(extras)) {
+    if (value === undefined || value === null || value === '' || RESERVED_PAYLOAD_KEYS.has(key)) continue;
+    payload[key] = value;
   }
   if (error?.stack) payload.stack = error.stack;
   writeLog(`[ZF_LOG] ${logId} ${JSON.stringify(payload)}`);

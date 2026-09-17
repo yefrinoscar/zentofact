@@ -51,13 +51,15 @@ export function mapProduct(row) {
     barcode: row.barcode,
     imageUrl: row.image_url,
     referencePrice: row.reference_price == null ? null : Number(row.reference_price),
+    wholesalePrice: row.wholesale_price == null ? null : Number(row.wholesale_price),
     commissionAmount: row.commission_amount == null ? null : Number(row.commission_amount),
     profitOwner: row.profit_owner || null,
     unit: row.unit,
     quantityOnHand: row.quantity_on_hand == null ? 0 : Number(row.quantity_on_hand),
     quantityReserved: row.quantity_reserved == null ? 0 : Number(row.quantity_reserved),
+    quantityPendingReturn: row.quantity_pending_return == null ? 0 : Number(row.quantity_pending_return),
     available: row.available == null
-      ? Number(row.quantity_on_hand || 0) - Number(row.quantity_reserved || 0)
+      ? Number(row.quantity_on_hand || 0) - Number(row.quantity_reserved || 0) - Number(row.quantity_pending_return || 0)
       : Number(row.available),
     reorderPoint: row.reorder_point == null ? null : Number(row.reorder_point),
     listingsCount: row.listings_count == null ? undefined : Number(row.listings_count),
@@ -66,6 +68,8 @@ export function mapProduct(row) {
     sellerPriceMin: row.seller_price_min == null ? null : Number(row.seller_price_min),
     sellerPriceMax: row.seller_price_max == null ? null : Number(row.seller_price_max),
     sellerStockTotal: row.seller_stock_total == null ? 0 : Number(row.seller_stock_total),
+    unitsSold7d: row.units_sold_7d == null ? 0 : Number(row.units_sold_7d),
+    lastSoldAt: row.last_sold_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by,

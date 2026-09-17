@@ -7,7 +7,8 @@ import {
   listMovements,
 } from './catalog/inventory-service.js';
 import { resolveListing } from './catalog/sku-resolver.js';
-import { stockPhase } from './catalog/stock-phase.js';
+import { needsReturnStockApproval, RETURN_STOCK_APPROVAL_FROM_AT, stockPhase } from './catalog/stock-phase.js';
+import { approveReturnStock } from './order-management.js';
 import { INVENTORY_LISTEN_FROM_AT } from './catalog/stock-commitment.js';
 import {
   falabellaCanonicalIdentity,
@@ -24,7 +25,7 @@ import {
   refreshFalabellaListingSnapshots,
   refreshRipleyListingSnapshots,
 } from './catalog/listing-snapshot-service.js';
-import { getCatalogSummary, listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { getCatalogSummary, getProduct, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
@@ -36,6 +37,8 @@ class InventoryDb {
   constructor(quantity = 10) {
     this.quantity = quantity;
     this.reserved = 0;
+    this.pendingReturn = 0;
+    this.approvals = new Map();
     this.movements = new Map();
     this.items = new Map();
     this.listings = [];
@@ -47,8 +50,12 @@ class InventoryDb {
     const compact = sql.replace(/\s+/g, ' ').trim().toLowerCase();
     this.queries.push({ sql: compact, params });
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
-    if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
-      return { rows: [{ quantity_on_hand: this.quantity, quantity_reserved: this.reserved }] };
+    if (compact.startsWith('select quantity_on_hand, quantity_reserved')) {
+      return { rows: [{
+        quantity_on_hand: this.quantity,
+        quantity_reserved: this.reserved,
+        quantity_pending_return: this.pendingReturn,
+      }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -73,6 +80,40 @@ class InventoryDb {
     }
     if (compact.startsWith('update product_inventory set quantity_reserved')) {
       this.reserved = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_pending_return')) {
+      this.pendingReturn = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('insert into return_stock_approvals')) {
+      const itemId = Number(params[1]);
+      if (this.approvals.has(itemId)) return { rows: [] };
+      this.approvals.set(itemId, {
+        id: this.approvals.size + 1,
+        order_id: params[0],
+        order_item_id: itemId,
+        product_id: params[2],
+        quantity: params[3],
+        status: 'pending',
+      });
+      return { rows: [{ id: this.approvals.get(itemId).id }] };
+    }
+    if (compact.includes('from return_stock_approvals') && compact.includes("status='pending'") && compact.includes('for update')) {
+      return {
+        rows: [...this.approvals.values()]
+          .filter((row) => Number(row.order_id) === Number(params[0]) && row.status === 'pending')
+          .map((row) => ({ ...row, external_order_number: '3249612124' })),
+      };
+    }
+    if (compact.startsWith('update return_stock_approvals')) {
+      const row = [...this.approvals.values()].find((item) => item.id === Number(params[0]));
+      if (row) {
+        row.status = 'approved';
+        row.reviewed_by = params[1];
+        row.stock_quantity = params[2];
+        row.merma_quantity = params[3];
+      }
       return { rows: [] };
     }
     if (compact.startsWith('select id from orders')) return { rows: [{ id: params[0] }] };
@@ -480,6 +521,27 @@ test('un pedido pending anterior al corte no reserva ni descuenta', async () => 
   assert.equal(db.items.get(101).stock_state, 'skipped_policy');
 });
 
+test('bajar de listo a pendiente reintegra el almacén y vuelve a reservar', async () => {
+  const db = new InventoryDb(8);
+  db.items.set(101, item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  }));
+  const result = await stockPhase(phaseInput(db, [{ ...db.items.get(101) }], {
+    existing: { order_status: 'confirmed', fulfillment_status: 'ready_to_ship' },
+    persisted: {
+      id: 20, company_id: 1, order_status: 'confirmed', fulfillment_status: 'pending',
+      external_order_number: '3999111222', ordered_at: INVENTORY_LISTEN_FROM_AT,
+    },
+  }));
+  assert.equal(result.reversed, 1);
+  assert.equal(result.reserved, 1);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.reserved, 2);
+  assert.equal(db.items.get(101).stock_state, 'pending');
+  assert.equal(db.items.get(101).stock_applied_quantity, 2);
+});
+
 test('al pasar a listo para enviar la reserva deja de estar reservada y descuenta el almacén', async () => {
   const db = new InventoryDb(10);
   db.reserved = 2;
@@ -699,12 +761,14 @@ test('cancelación y devolución revierten cantidades aplicadas una sola vez', a
   const cancelledMovement = cancelledDb.movements.get('sale_reversal:order_item:101:rev:2');
   assert.equal(cancelledMovement.quantity_delta, 2);
   assert.equal(cancelledMovement.reason, 'Cancelación del pedido 3248709095');
+  assert.equal(cancelledDb.pendingReturn, 0);
 
   const returnedDb = new InventoryDb(8);
   returnedDb.items.set(101, { ...applied });
   const returnedOrder = {
     id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
     external_order_number: '3248709095',
+    returned_at: '2026-09-03T18:59:59.000Z',
   };
   await stockPhase(phaseInput(returnedDb, [], {
     existing: { order_status: 'completed', fulfillment_status: 'ready_to_ship' },
@@ -719,6 +783,100 @@ test('cancelación y devolución revierten cantidades aplicadas una sola vez', a
   assert.deepEqual([...returnedDb.movements.keys()], ['return:order_item:101:rev:2']);
   assert.equal(returnedMovement.quantity_delta, 2);
   assert.equal(returnedMovement.reason, 'Devolución del pedido 3248709095');
+  assert.equal(returnedDb.pendingReturn, 0);
+  assert.equal(returnedDb.approvals.size, 0);
+});
+
+test('una devolución anterior al corte de aprobación entra al stock vendible', () => {
+  assert.equal(needsReturnStockApproval('2026-09-03T18:59:59.000Z'), false);
+  assert.equal(needsReturnStockApproval(RETURN_STOCK_APPROVAL_FROM_AT), true);
+  assert.equal(needsReturnStockApproval('2026-09-04T12:00:00.000Z'), true);
+  assert.equal(needsReturnStockApproval(null), false);
+});
+
+test('una devolución desde el 3 set. 14:00 Lima queda por aprobar y no se vende', async () => {
+  const db = new InventoryDb(8);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  });
+  db.items.set(101, { ...applied });
+  const persisted = {
+    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
+    external_order_number: '3249612124',
+    returned_at: '2026-09-03T20:00:00.000Z',
+  };
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'delivered' },
+    persisted,
+  }));
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'returned' },
+    persisted,
+  }));
+  assert.equal(db.quantity, 10);
+  assert.equal(db.pendingReturn, 2);
+  assert.equal(db.approvals.get(101)?.quantity, 2);
+  assert.equal(db.movements.get('return:order_item:101:rev:2').reason, 'Devolución del pedido 3249612124');
+
+  const approved = await approveReturnStock(20, 'operator-1', db);
+  assert.equal(approved.approvedLines, 1);
+  assert.equal(approved.approvedQuantity, 2);
+  assert.equal(approved.mermaQuantity, 0);
+  assert.equal(db.pendingReturn, 0);
+  assert.equal(db.quantity, 10);
+  assert.equal(db.approvals.get(101).stock_quantity, 2);
+  assert.equal(db.approvals.get(101).merma_quantity, 0);
+});
+
+test('al revisar una devolución se puede mandar parte a merma', async () => {
+  const db = new InventoryDb(8);
+  const applied = item({
+    product_id: 5, listing_id: 71, main_sku: 'ZEN-CAMISETA-M',
+    stock_state: 'applied', stock_applied_quantity: 2, stock_revision: 1,
+  });
+  db.items.set(101, { ...applied });
+  const persisted = {
+    id: 20, company_id: 1, order_status: 'completed', fulfillment_status: 'returned',
+    external_order_number: '3249612124',
+    returned_at: '2026-09-03T20:00:00.000Z',
+  };
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'delivered' },
+    persisted,
+  }));
+  await stockPhase(phaseInput(db, [], {
+    existing: { order_status: 'completed', fulfillment_status: 'returned' },
+    persisted,
+  }));
+  assert.equal(db.pendingReturn, 2);
+
+  const reviewed = await approveReturnStock(20, 'operator-1', db, {
+    lines: [{ orderItemId: 101, stockQuantity: 1, mermaQuantity: 1 }],
+  });
+  assert.equal(reviewed.approvedQuantity, 1);
+  assert.equal(reviewed.mermaQuantity, 1);
+  assert.equal(db.pendingReturn, 0);
+  assert.equal(db.quantity, 9);
+  const merma = [...db.movements.values()].find((row) => row.movement_type === 'adjustment_out');
+  assert.equal(merma.quantity_delta, -1);
+  assert.match(merma.reason, /Merma/);
+  assert.equal(db.approvals.get(101).stock_quantity, 1);
+  assert.equal(db.approvals.get(101).merma_quantity, 1);
+});
+
+test('rechaza una revisión cuya merma no cuadra con la línea', async () => {
+  const db = new InventoryDb(8);
+  db.approvals.set(101, {
+    id: 1, order_id: 20, order_item_id: 101, product_id: 5, quantity: 2, status: 'pending',
+  });
+  await assert.rejects(
+    () => approveReturnStock(20, 'operator-1', db, {
+      lines: [{ orderItemId: 101, stockQuantity: 2, mermaQuantity: 1 }],
+    }),
+    /sumar la cantidad/,
+  );
+  assert.equal(db.approvals.get(101).status, 'pending');
 });
 
 test('una línea cancelada o devuelta reintegra stock aunque el pedido siga listo para enviar', async () => {
@@ -1516,7 +1674,7 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   assert.doesNotMatch(filtered.sql, /p\.status <> 'archived'/);
   assert.match(filtered.sql, /company_listing\.company_id=any\(\$1::int\[\]\)/);
   assert.deepEqual(filtered.params[0], [2, 7]);
-  assert.match(filtered.sql, /quantity_on_hand - i\.quantity_reserved\) <= 0/);
+  assert.match(filtered.sql, /quantity_on_hand - i\.quantity_reserved - coalesce\(i\.quantity_pending_return, 0\)\) <= 0/);
   assert.match(filtered.sql, /not exists[\s\S]*publication_listing\.company_id=any\(\$1::int\[\]\)[\s\S]*metadata->>'isPublished'[\s\S]*metadata->>'status'[\s\S]*metadata->>'marketplaceStatus'[\s\S]*metadata->>'qcStatus'/);
   assert.match(filtered.sql, /order by listing_stats\.sellers_count asc nulls last, p\.id desc/);
   const allStatusSummary = statements.find((statement) => statement.sql.includes('as single_seller'))?.sql || '';
@@ -1525,7 +1683,7 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   statements.length = 0;
   await listProducts({ inventoryStatus: 'lowStock', publicationStatus: 'published' }, db);
   const lowStock = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
-  assert.match(lowStock, /quantity_on_hand - i\.quantity_reserved\) > 0[\s\S]*reorder_point is not null/);
+  assert.match(lowStock, /quantity_on_hand - i\.quantity_reserved - coalesce\(i\.quantity_pending_return, 0\)\) > 0[\s\S]*reorder_point is not null/);
   assert.match(lowStock, /exists[\s\S]*metadata->>'isPublished'[\s\S]*='true'/);
 
   statements.length = 0;
@@ -1538,7 +1696,20 @@ test('el catálogo combina facetas profesionales y ordenamiento desde SQL', asyn
   statements.length = 0;
   await listProducts({ sortBy: 'available', sortDir: 'asc' }, db);
   const sortedByAvailable = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
-  assert.match(sortedByAvailable, /order by \(i\.quantity_on_hand - i\.quantity_reserved\) asc nulls last, p\.id desc/);
+  assert.match(sortedByAvailable, /order by \(i\.quantity_on_hand - i\.quantity_reserved - coalesce\(i\.quantity_pending_return, 0\)\) asc nulls last, p\.id desc/);
+
+  statements.length = 0;
+  await listProducts({ sortBy: 'price', sortDir: 'desc' }, db);
+  const sortedByPrice = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(sortedByPrice, /order by coalesce\(p\.reference_price, listing_stats\.seller_price_min\) desc nulls last, p\.id desc/);
+  assert.match(sortedByPrice, /cross join lateral/);
+
+  statements.length = 0;
+  await listProducts({ sortBy: 'salesPace', sortDir: 'desc' }, db);
+  const sortedByPace = statements.find((statement) => statement.sql.includes('count(*) over()'))?.sql || '';
+  assert.match(sortedByPace, /order by coalesce\(sales7\.sold, 0\) desc nulls last, p\.id desc/);
+  assert.match(sortedByPace, /left join sales7 on sales7\.product_id=p\.id/);
+  assert.doesNotMatch(sortedByPace, /left join sales7 on sales7\.product_id=page\.id/);
 
   await assert.rejects(() => listProducts({ inventoryStatus: 'unknown' }, db), /inventoryStatus inválido/);
   await assert.rejects(() => listProducts({ publicationStatus: 'unknown' }, db), /publicationStatus inválido/);
@@ -1575,6 +1746,8 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
             seller_price_min: 19.9,
             seller_price_max: 19.9,
             seller_stock_total: 4,
+            units_sold_7d: 14,
+            last_sold_at: '2026-08-11T00:00:00.000Z',
             created_at: '2026-08-01T00:00:00.000Z',
             updated_at: '2026-08-12T00:00:00.000Z',
             created_by: null,
@@ -1644,6 +1817,11 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
   assert.match(pageQuery.sql, /sum\(l\.marketplace_quantity\) filter/);
   assert.deepEqual(listingsQuery.params[0], [5]);
   assert.equal(listed.products.length, 1);
+  assert.equal(listed.products[0].unitsSold7d, 14);
+  assert.equal(listed.products[0].lastSoldAt, '2026-08-11T00:00:00.000Z');
+  assert.match(pageQuery.sql, /sales7 as/);
+  assert.match(pageQuery.sql, /units_sold_7d/);
+  assert.match(pageQuery.sql, /interval '7 days'/);
   assert.equal(listed.products[0].listings.length, 1);
   const listing = listed.products[0].listings[0];
   assert.equal(listing.id, 71);
@@ -1680,6 +1858,36 @@ test('el catálogo adjunta todas las publicaciones compactas después de paginar
   });
   assert.equal(Object.hasOwn(listing.metadata, 'images'), false);
   assert.equal(Object.hasOwn(listing.metadata, 'marketplaceSyncedAt'), false);
+});
+
+test('la ficha de producto incluye el ritmo de ventas de 7 días', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('from product_listings l join companies')) return { rows: [] };
+      return {
+        rows: [{
+          id: 5,
+          main_sku: 'AG301',
+          name: 'Camiseta',
+          status: 'active',
+          quantity_on_hand: 10,
+          quantity_reserved: 1,
+          available: 9,
+          units_sold_7d: 21,
+          last_sold_at: '2026-09-11T15:00:00.000Z',
+        }],
+      };
+    },
+  };
+  const product = await getProduct(5, db);
+  const detailSql = statements.find((statement) => statement.sql.includes('from products p'))?.sql || '';
+  assert.match(detailSql, /sales7 as/);
+  assert.match(detailSql, /units_sold_7d/);
+  assert.match(detailSql, /interval '7 days'/);
+  assert.equal(product.unitsSold7d, 21);
+  assert.equal(product.lastSoldAt, '2026-09-11T15:00:00.000Z');
 });
 
 test('el catálogo resume grupos y aplica filtros especiales desde SQL', async () => {

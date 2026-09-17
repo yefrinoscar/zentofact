@@ -29,15 +29,20 @@ import {
   logisticsUrgencyMeta,
   parseLogisticsDate,
   pendingDeadlineHelper,
-  productImageSrc,
+  productImageCandidates,
   readyPrintHelper,
-  LOGISTICS_CHANNELS,
+  RIPLEY_LABEL_SOON_COPY,
+  BANDEJA_DEADLINE_FILTERS,
+  formatBandejaDeadlineDate,
   LOGISTICS_URGENCIES,
+  visibleLogisticsChannels,
   type LogisticsChannel,
+  type LogisticsEnabledChannels,
   type LogisticsStage,
   type LogisticsUrgency,
 } from '../../lib/logistics-inbox';
 import type { InboxNotice } from '../../lib/inbox-notice';
+import { useOperatorSnackbar } from '../../components/OperatorSnackbar';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
@@ -45,6 +50,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 export type LogisticsItem = {
   id: number;
   sku?: string | null;
+  mainSku?: string | null;
   shopSku?: string | null;
   description: string;
   quantity: number;
@@ -74,6 +80,7 @@ export type LogisticsOrder = {
   updatedAt?: string | null;
   itemsCount: number;
   items: LogisticsItem[];
+  warehouseAddress?: string | null;
   labelPrint?: { printCount: number; lastPrintedAt: string | null } | null;
 };
 
@@ -83,12 +90,22 @@ export type BandejaView = {
   setStage: (stage: LogisticsStage) => void;
   channelCode: 'all' | LogisticsChannel;
   setChannelCode: (code: 'all' | LogisticsChannel) => void;
+  channels?: LogisticsEnabledChannels | null;
   urgency: LogisticsUrgency | null;
   setUrgency: (urgency: LogisticsUrgency | null) => void;
+  deadlineDate: string | null;
+  setDeadlineDate: (date: string | null) => void;
   searchInput: string;
   setSearchInput: (value: string) => void;
   orders: LogisticsOrder[];
-  counts: { pending: number; ready: number; shipped: number; urgency: Record<LogisticsUrgency, number> };
+  counts: {
+    pending: number;
+    ready: number;
+    readyUnprinted?: number;
+    shipped: number;
+    urgency: Record<LogisticsUrgency, number>;
+    dates: Array<{ date: string; count: number }>;
+  };
   totalCount: number;
   loading: boolean;
   fetching: boolean;
@@ -96,6 +113,8 @@ export type BandejaView = {
   notice: InboxNotice | null;
   canDispatch: boolean;
   canSync: boolean;
+  syncing?: boolean;
+  syncStep?: 'fetching-orders' | 'refreshing-inbox' | null;
   refreshing: boolean;
   refresh: () => void;
   printing: boolean;
@@ -103,6 +122,8 @@ export type BandejaView = {
   printOrders: (orders: LogisticsOrder[]) => void;
   requestReady: (order: LogisticsOrder) => void;
   requestBulkReady: (orders: LogisticsOrder[]) => void;
+  requestDeliver: (order: LogisticsOrder) => void;
+  requestBulkDeliver: (orders: LogisticsOrder[]) => void;
   labelSelection: Set<number> | null;
   setLabelSelection: (selection: Set<number> | null) => void;
   toggleLabel: (order: LogisticsOrder) => void;
@@ -137,15 +158,7 @@ export function deadlineColumnLabel(key: string, now: Date) {
   if (key === 'today') return 'Vencen hoy';
   if (key === 'tomorrow') return 'Vencen mañana';
   if (key === 'no-date') return 'Sin fecha';
-  const [year, month, day] = key.split('-').map(Number);
-  if (!year || !month || !day) return key;
-  const label = new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'UTC',
-    day: 'numeric',
-    month: 'long',
-    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
-  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
-  return label.replace('septiembre', 'setiembre');
+  return formatBandejaDeadlineDate(key, now);
 }
 
 export function deadlineColumnTone(key: string): LogisticsUrgency {
@@ -163,9 +176,9 @@ export function buildDeadlineColumns(orders: LogisticsOrder[], now: Date) {
     groups.set(key, list);
   }
   const later = [...groups.keys()]
-    .filter((key) => key !== 'today' && key !== 'tomorrow')
+    .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'tomorrow')
     .sort((left, right) => left.localeCompare(right));
-  const keys = ['today', 'tomorrow', ...later].filter((key) => (groups.get(key) || []).length);
+  const keys = ['overdue', 'today', 'tomorrow', ...later].filter((key) => (groups.get(key) || []).length);
   return keys.map((key) => ({
     key,
     label: deadlineColumnLabel(key, now),
@@ -185,14 +198,15 @@ export function ProductThumb({
   className?: string;
   onOpen?: (preview: ProductPreview) => void;
 }) {
-  const [failed, setFailed] = useState(false);
-  const src = productImageSrc(item.imageUrl, item.shopSku || item.sku);
+  const candidates = productImageCandidates(item.imageUrl, item.shopSku || item.sku);
+  const [failedCount, setFailedCount] = useState(0);
+  const src = candidates[failedCount] || '';
   const canOpen = Boolean(onOpen);
   const body = (
     <>
       <ImageIcon className="size-4 text-muted-foreground/40" />
-      {src && !failed && (
-        <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain" onError={() => setFailed(true)} />
+      {src && (
+        <img src={src} alt="" loading="lazy" className="absolute inset-0 size-full object-contain" onError={() => setFailedCount((current) => current + 1)} />
       )}
     </>
   );
@@ -200,7 +214,7 @@ export function ProductThumb({
     return (
       <button
         type="button"
-        onClick={() => onOpen?.({ src: src && !failed ? src : '', name: item.description })}
+        onClick={() => onOpen?.({ src, name: item.description })}
         aria-label={`Ver foto de ${item.description}`}
         className={cn('relative grid shrink-0 place-items-center overflow-hidden bg-muted hover:ring-2 hover:ring-foreground/20', className)}
       >
@@ -303,6 +317,25 @@ export function ActionButton({
   const step = logisticsNextStep(order);
   const busy = view.busyOrderId === order.id && view.printing;
   const width = full ? 'w-full' : '';
+  const { showSnackbar } = useOperatorSnackbar();
+  if (step.kind === 'soon') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn('inline-flex', full && 'w-full')}
+            onClick={() => showSnackbar({ message: RIPLEY_LABEL_SOON_COPY })}
+          >
+            <Button size={size} variant="outline" className={width} disabled>
+              <Printer />
+              {step.label}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{RIPLEY_LABEL_SOON_COPY}</TooltipContent>
+      </Tooltip>
+    );
+  }
   if (step.kind === 'print') {
     const printed = labelWasPrinted(order);
     return (
@@ -387,14 +420,14 @@ function stageFilterModel(view: BandejaView, density: 'full' | 'compact'): Stage
     pendingLabel: 'Pendientes',
     readyLabel: density === 'compact' ? 'Listos' : 'Listos para enviar',
     pendingHelper: loadingPending ? 'Cargando…' : view.stage === 'pending' ? pendingDeadlineHelper(view.orders, view.now) : 'Por preparar',
-    readyHelper: loadingReady ? 'Cargando…' : view.stage === 'ready' ? readyPrintHelper(view.orders) : 'Listos para imprimir',
+    readyHelper: loadingReady ? 'Cargando…' : view.stage === 'ready' ? readyPrintHelper(view.orders) : 'Confirmado',
     clock: logisticsUpdatedClock(view.updatedAt),
   };
 }
 
 function StageTools({ view, tools }: { view: BandejaView; tools?: ReactNode }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-1">
       {tools}
       <Button size="icon-sm" variant="ghost" onClick={view.refresh} disabled={view.refreshing} aria-label={view.canSync ? 'Sincronizar' : 'Actualizar'}>
         <RefreshCw className={cn(view.refreshing && 'animate-spin')} />
@@ -584,7 +617,7 @@ function StageFilterQueue({
       </div>
       {density === 'full' && (
         <div role="group" aria-label="Canal" className="flex items-center gap-0.5 text-xs">
-          {LOGISTICS_CHANNELS.map((channel) => {
+          {visibleLogisticsChannels(view.channels).map((channel) => {
             const active = view.channelCode === channel.value;
             return (
               <button
@@ -596,7 +629,7 @@ function StageFilterQueue({
                   active ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                {channel.value !== 'all' && channel.value !== 'manual' ? <ChannelMark code={channel.value} size="xs" /> : null}
+                {channel.value !== 'all' && <ChannelMark code={channel.value} className="size-3.5" />}
                 {channel.label}
               </button>
             );
@@ -641,7 +674,7 @@ export function UrgencyTabs({ view }: { view: BandejaView }) {
   if (view.stage === 'shipped') return null;
   return (
     <div role="tablist" aria-label="Plazo de entrega" className="flex flex-wrap gap-5 border-b border-border">
-      {LOGISTICS_URGENCIES.filter((tab) => tab.value !== 'overdue').map((tab) => {
+      {BANDEJA_DEADLINE_FILTERS.map((tab) => {
         const active = view.urgency === tab.value;
         return (
           <button

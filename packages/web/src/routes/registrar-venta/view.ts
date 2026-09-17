@@ -3,6 +3,7 @@ import type {
   BoletaIdentity,
   DocumentRequest,
   PaymentMethod,
+  PaymentRecipient,
   SaleLine,
   SaleSource,
   SaleStepId,
@@ -53,6 +54,8 @@ export type SaleFormView = {
   setPaymentMethod: (value: PaymentMethod) => void;
   receivedBy: string;
   setReceivedBy: (value: string) => void;
+  paidTo: PaymentRecipient | '';
+  setPaidTo: (value: PaymentRecipient | '') => void;
   paymentProof: PaymentProof | null;
   setPaymentProof: (value: PaymentProof | null) => void;
   attachProof: (file: File | undefined) => void;

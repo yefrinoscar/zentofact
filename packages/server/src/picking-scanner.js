@@ -231,6 +231,38 @@ async function snapshotInventory(db, companyId, orderId) {
   };
 }
 
+async function syncedItemMatch(db, code) {
+  const result = await db.query(
+    `select o.company_id, o.external_order_id order_id,
+       case when oi.raw_data->>'TrackingCode'=$1 or oi.raw_data->>'TrackingNumber'=$1
+         then 'tracking' else 'package' end match_type
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id and a.company_id=o.company_id
+     join order_channels ch on ch.id=a.channel_id and ch.code='falabella'
+     join order_items oi on oi.order_id=o.id
+     where oi.raw_data->>'TrackingCode'=$1 or oi.raw_data->>'TrackingNumber'=$1
+       or oi.raw_data->>'PackageId'=$1
+     order by o.last_seen_at desc, oi.id
+     limit 1`,
+    [code],
+  );
+  return result.rows[0] || null;
+}
+
+async function syncedInventory(db, companyId, orderId) {
+  const result = await db.query(
+    `select oi.raw_data
+     from order_items oi
+     join orders o on o.id=oi.order_id
+     join order_channel_accounts a on a.id=o.channel_account_id and a.company_id=o.company_id
+     join order_channels ch on ch.id=a.channel_id and ch.code='falabella'
+     where o.company_id=$1 and o.external_order_id=$2
+     order by oi.id`,
+    [Number(companyId), text(orderId)],
+  );
+  return { ok: true, orderItems: result.rows.map((row) => objectValue(row.raw_data)), items: [] };
+}
+
 function itemMatchesCode(item, code) {
   return item.trackingCode === code || item.packageId === code;
 }
@@ -380,6 +412,14 @@ export async function lookupPickingScan({ db, getOrderItems, getShippingLabel, i
   }
 
   if (!stored) {
+    const synced = await syncedItemMatch(db, code);
+    if (synced) {
+      stored = await orderRow(db, synced.company_id, synced.order_id);
+      matchType = synced.match_type;
+    }
+  }
+
+  if (!stored) {
     const legacy = await findLegacyPrintedTicket({ db, getOrderItems, getShippingLabel, code });
     if (legacy) {
       stored = await orderRow(db, legacy.candidate.company_id, legacy.candidate.order_id);
@@ -408,6 +448,9 @@ export async function lookupPickingScan({ db, getOrderItems, getShippingLabel, i
       }, inventory);
     } catch {
       inventory = await snapshotInventory(db, stored.company_id, stored.order_id);
+      if (!inventory.orderItems.length) {
+        inventory = await syncedInventory(db, stored.company_id, stored.order_id);
+      }
       if (!inventory.orderItems.length) throw new Error('No pudimos consultar los productos de esta orden.');
     }
   }

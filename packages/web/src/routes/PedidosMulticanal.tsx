@@ -27,12 +27,26 @@ import {
   Store,
   Tags,
   Truck,
+  UserRound,
   X,
 } from 'lucide-react';
 import { ChannelMark } from '../components/channel-mark';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
-import { deliveryLabel, deliveryShowsAsTag, MANAGED_ORDER_TABLE_COLUMNS } from '../lib/managed-orders-presentation';
+import {
+  buildManagedOrderListFilters,
+  deliveryLabel,
+  deliveryShowsAsTag,
+  managedOrderSearchIgnoresDate,
+  managedOrdersDateAfterDayChange,
+  managedOrdersEmptyHint,
+  managedOrdersEmptyTitle,
+  managedOrdersSearchHelper,
+  managedOrdersTableLabel,
+  sellerCellLabel,
+  sellerCellShowsPerson,
+  MANAGED_ORDER_TABLE_COLUMNS,
+} from '../lib/managed-orders-presentation';
 import {
   generateDocumentLabel,
   generateDocumentPath,
@@ -174,12 +188,17 @@ type ManagedOrder = {
     zoneLabel?: string;
     priceZone?: string;
   };
+  createdBy?: string | null;
+  createdByName?: string | null;
+  createdByRole?: string | null;
   metadata?: {
     paymentMethod?: string;
     saleSource?: string;
     delivery?: string;
     shippingCarrier?: string;
     receivedBy?: string;
+    paidTo?: string;
+    paymentProof?: { name?: string; type?: string; dataUrl?: string; hasData?: boolean } | null;
     ripleySvc?: {
       orderId?: string;
       statusManagement?: string;
@@ -258,7 +277,6 @@ type SalesPulse = {
   };
 };
 
-const DAY_LIMIT = 500;
 const RANKING_SIZE = 6;
 const SEARCH_DELAY_MS = 250;
 
@@ -351,11 +369,6 @@ function companyName(company: Company) {
       .trim());
   const name = candidates.sort((left, right) => left.length - right.length)[0];
   return name ? titleCaseSeller(name) : `Empresa ${company.id}`;
-}
-
-function sellerCellLabel(order: { companyId: number | null }, companyById: Map<number, string>) {
-  if (order.companyId == null) return '';
-  return companyById.get(order.companyId) || `Empresa ${order.companyId}`;
 }
 
 function formatMoney(value: number | null | undefined, currency = 'PEN') {
@@ -583,8 +596,8 @@ function productImageSrc(url?: string | null, shopSku?: string | null, sku?: str
   return value;
 }
 
-function dayLabel(date: string) {
-  if (date === todayInLima()) return 'hoy';
+function dayLabel(date: string, today = todayInLima()) {
+  if (date === today) return 'hoy';
   return new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short' }).format(new Date(`${date}T12:00:00`));
 }
 
@@ -592,8 +605,8 @@ function pedidoCountLabel(count: number) {
   return `${count} ${count === 1 ? 'pedido' : 'pedidos'}`;
 }
 
-function ordersHeading(count: number, date: string) {
-  const when = date === todayInLima() ? 'hoy' : `el ${dayLabel(date)}`;
+function ordersHeading(count: number, date: string, today = todayInLima()) {
+  const when = date === today ? 'hoy' : `el ${dayLabel(date, today)}`;
   return `${pedidoCountLabel(count)} ${when}`;
 }
 
@@ -612,6 +625,7 @@ export default function PedidosMulticanal() {
   const [companyId, setCompanyId] = useState('all');
   const [channelCode, setChannelCode] = useState('all');
   const [fulfillmentStatus, setFulfillmentStatus] = useState('all');
+  const [today, setToday] = useState(todayInLima);
   const [date, setDate] = useState(todayInLima);
   const [search, setSearch] = useState('');
   const [submittedSearch, setSubmittedSearch] = useState('');
@@ -630,10 +644,32 @@ export default function PedidosMulticanal() {
   const [paymentOrder, setPaymentOrder] = useState<ManagedOrder | null>(null);
   const syncNoteTimer = useRef(0);
   const searchTimer = useRef(0);
+  const todayRef = useRef(today);
 
-  useEffect(() => () => {
-    if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
-    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+  useEffect(() => {
+    const refreshToday = () => {
+      const currentToday = todayInLima();
+      const previousToday = todayRef.current;
+      if (currentToday === previousToday) return;
+      todayRef.current = currentToday;
+      setToday(currentToday);
+      setDate((selectedDate) => managedOrdersDateAfterDayChange({
+        selectedDate,
+        previousToday,
+        currentToday,
+      }));
+    };
+    const todayTimer = window.setInterval(refreshToday, 60_000);
+    window.addEventListener('focus', refreshToday);
+    document.addEventListener('visibilitychange', refreshToday);
+
+    return () => {
+      if (syncNoteTimer.current) window.clearTimeout(syncNoteTimer.current);
+      if (searchTimer.current) window.clearTimeout(searchTimer.current);
+      window.clearInterval(todayTimer);
+      window.removeEventListener('focus', refreshToday);
+      document.removeEventListener('visibilitychange', refreshToday);
+    };
   }, []);
 
   const applySearch = (value: string) => {
@@ -652,16 +688,14 @@ export default function PedidosMulticanal() {
     queryFn: () => api.listOrderChannels(),
     staleTime: 5 * 60_000,
   });
-  const orderFilters = useMemo(() => ({
-    companyId: companyId === 'all' ? undefined : Number(companyId),
-    channelCode: channelCode === 'all' ? undefined : channelCode,
-    fulfillmentStatus: fulfillmentStatus === 'all' ? undefined : fulfillmentStatus,
-    from: date,
-    to: date,
-    search: submittedSearch || undefined,
-    limit: DAY_LIMIT,
-    offset: 0,
+  const orderFilters = useMemo(() => buildManagedOrderListFilters({
+    companyId,
+    channelCode,
+    fulfillmentStatus,
+    date,
+    search: submittedSearch,
   }), [channelCode, companyId, date, fulfillmentStatus, submittedSearch]);
+  const searchIgnoresDate = managedOrderSearchIgnoresDate(submittedSearch);
   const ordersQuery = useQuery({
     queryKey: ['managed-orders', orderFilters],
     queryFn: () => api.listManagedOrders(orderFilters),
@@ -920,7 +954,7 @@ export default function PedidosMulticanal() {
   };
 
   const syncMutation = useMutation({
-    mutationFn: () => api.syncManagedOrders(),
+    mutationFn: () => api.syncManagedOrders({ mode: 'backfill' }),
     onMutate: () => {
       setSyncNote('');
     },
@@ -945,10 +979,12 @@ export default function PedidosMulticanal() {
       order: ManagedOrder;
       paymentMethod: string;
       receivedBy: string;
+      paidTo?: string;
       paymentProof: { name: string; type: string; dataUrl: string } | null;
     }) => api.updateManagedOrderPayment(input.order.id, {
       paymentMethod: input.paymentMethod,
       receivedBy: input.receivedBy || undefined,
+      paidTo: input.paidTo || undefined,
       paymentProof: input.paymentProof,
     }),
     onSuccess: (updated, input) => {
@@ -970,14 +1006,20 @@ export default function PedidosMulticanal() {
     {
       id: 'seller',
       header: 'Seller',
-      size: 132,
+      size: 156,
       cell: ({ row }) => {
         const seller = sellerCellLabel(row.original, companyById);
         if (!seller) return null;
+        const person = sellerCellShowsPerson(row.original);
+        const Icon = person ? UserRound : Store;
         return (
-          <Badge variant="outline" className="max-w-full truncate rounded-md bg-muted/45 px-2 py-0.5 font-medium text-foreground" title={seller}>
-            {seller}
-          </Badge>
+          <span
+            className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border bg-muted/45 px-2 py-0.5 text-xs font-medium text-foreground"
+            title={seller}
+          >
+            <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">{seller}</span>
+          </span>
         );
       },
     },
@@ -1023,10 +1065,12 @@ export default function PedidosMulticanal() {
     },
     {
       id: 'time',
-      header: 'Hora',
-      size: 72,
+      header: searchIgnoresDate ? 'Fecha' : 'Hora',
+      size: searchIgnoresDate ? 120 : 72,
       cell: ({ row }) => (
-        <span className="tabular-nums text-muted-foreground">{formatTime(row.original.orderedAt)}</span>
+        <span className="tabular-nums text-muted-foreground">
+          {searchIgnoresDate ? formatDate(row.original.orderedAt) : formatTime(row.original.orderedAt)}
+        </span>
       ),
     },
     {
@@ -1108,7 +1152,7 @@ export default function PedidosMulticanal() {
       throw new Error('Columnas de la bandeja de pedidos desincronizadas con MANAGED_ORDER_TABLE_COLUMNS.');
     }
     return defs;
-  }, [companyById, goToGenerateDocument]);
+  }, [companyById, goToGenerateDocument, searchIgnoresDate]);
 
   const table = useReactTable({
     data: orders,
@@ -1122,7 +1166,7 @@ export default function PedidosMulticanal() {
 
   return (
     <div className="space-y-4">
-      <DayStrip value={date} onChange={setDate} />
+      <DayStrip value={date} onChange={setDate} max={today} />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
@@ -1131,7 +1175,7 @@ export default function PedidosMulticanal() {
               <div className="h-8 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
             ) : (
               <h2 className="text-2xl font-semibold tracking-tight tabular-nums">
-                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date)}
+                {ordersHeading(salesPulse ? salesPulse.ordersCount : totalCount, date, today)}
               </h2>
             )}
           </div>
@@ -1150,7 +1194,7 @@ export default function PedidosMulticanal() {
             </Button>
           )}
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0 sm:flex-wrap sm:items-center">
           <Button
             type="button"
             variant="outline"
@@ -1166,7 +1210,7 @@ export default function PedidosMulticanal() {
             {syncing ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : syncNote === 'Actualizado' ? <Check /> : <RefreshCw />}
             {syncing ? 'Actualizando…' : syncNote || 'Actualizar'}
           </Button>
-          <Button onClick={() => navigate('/orders/nueva')} className="h-11 min-w-0 cursor-pointer sm:h-9">
+          <Button onClick={() => navigate('/orders/nueva?from=orders')} className="h-11 min-w-0 cursor-pointer sm:h-9">
             <Plus /> Registrar venta
           </Button>
         </div>
@@ -1271,22 +1315,25 @@ export default function PedidosMulticanal() {
             {selectedSellerName && <FilterChip label={selectedSellerName} onRemove={() => setCompanyId('all')} />}
             {selectedChannelName && <FilterChip label={selectedChannelName} onRemove={() => setChannelCode('all')} />}
             {selectedStatusLabel && <FilterChip label={selectedStatusLabel} onRemove={() => setFulfillmentStatus('all')} />}
+            {managedOrdersSearchHelper(search) && (
+              <p className="self-center text-xs text-muted-foreground">{managedOrdersSearchHelper(search)}</p>
+            )}
           </div>
         )}
       </div>
 
       <OrdersVirtualTable
         table={table}
-        aria-label={`Pedidos de ${dayLabel(date)}`}
+        aria-label={managedOrdersTableLabel(dayLabel(date, today), submittedSearch)}
         loading={loading}
         fetching={fetching}
         onRowClick={openDetail}
         empty={(
           <div className="flex flex-col items-center gap-2 py-14 text-center">
             <Store className="size-8 text-muted-foreground/50" />
-            <p className="text-sm font-medium">No hay pedidos para estos filtros</p>
-            <p className="text-sm text-muted-foreground">Prueba otra búsqueda o registra una venta manual.</p>
-            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva')}><Plus /> Registrar venta</Button>
+            <p className="text-sm font-medium">{managedOrdersEmptyTitle(submittedSearch)}</p>
+            <p className="text-sm text-muted-foreground">{managedOrdersEmptyHint(submittedSearch)}</p>
+            <Button size="sm" className="mt-2 cursor-pointer" onClick={() => navigate('/orders/nueva?from=orders')}><Plus /> Registrar venta</Button>
           </div>
         )}
         footer={(
@@ -1302,7 +1349,7 @@ export default function PedidosMulticanal() {
           <SheetHeader className="border-b border-border px-5 py-4 pr-16">
             <SheetTitle>Productos vendidos</SheetTitle>
             <SheetDescription>
-              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date)}
+              {soldProducts.length} {soldProducts.length === 1 ? 'producto' : 'productos'} · {dayLabel(date, today)}
             </SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1325,7 +1372,7 @@ export default function PedidosMulticanal() {
                   <div className="min-w-0">
                     <SheetTitle>Pedido {detail.externalOrderNumber}</SheetTitle>
                     <SheetDescription className="mt-1 truncate">
-                      {detail.channelName}{detail.companyId == null ? '' : ` · ${sellerCellLabel(detail, companyById)}`}
+                      {[detail.channelName, sellerCellLabel(detail, companyById)].filter(Boolean).join(' · ')}
                     </SheetDescription>
                   </div>
                 </div>
@@ -1706,11 +1753,13 @@ function RegisterPaymentDialog({
   onSubmit: (input: {
     paymentMethod: string;
     receivedBy: string;
+    paidTo?: string;
     paymentProof: { name: string; type: string; dataUrl: string } | null;
   }) => void;
 }) {
   const [paymentMethod, setPaymentMethod] = useState<(typeof RECORD_PAYMENT_METHODS)[number]['value']>('efectivo');
   const [receivedBy, setReceivedBy] = useState('');
+  const [paidTo, setPaidTo] = useState<'empresa' | 'vendedor'>('empresa');
   const [paymentProof, setPaymentProof] = useState<{ name: string; type: string; dataUrl: string } | null>(null);
   const [localError, setLocalError] = useState('');
 
@@ -1718,6 +1767,7 @@ function RegisterPaymentDialog({
     if (!order) return;
     setPaymentMethod('efectivo');
     setReceivedBy('');
+    setPaidTo('empresa');
     setPaymentProof(null);
     setLocalError('');
   }, [order]);
@@ -1763,6 +1813,7 @@ function RegisterPaymentDialog({
                 setPaymentMethod(method.value);
                 if (method.value === 'efectivo') setPaymentProof(null);
                 if (method.value !== 'efectivo') setReceivedBy('');
+                if (method.value !== 'yape_plin' && method.value !== 'transferencia') setPaidTo('empresa');
               }}
               className={cn(
                 'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
@@ -1777,6 +1828,27 @@ function RegisterPaymentDialog({
           <div className="space-y-1.5">
             <Label htmlFor="pay-received-by">¿Quién cobró?</Label>
             <Input id="pay-received-by" value={receivedBy} onChange={(event) => setReceivedBy(event.target.value)} placeholder="Opcional" />
+          </div>
+        )}
+        {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
+          <div className="space-y-1.5">
+            <Label>Pagaron a</Label>
+            <div className="flex flex-wrap gap-2">
+              {[{ value: 'empresa', label: 'Empresa' }, { value: 'vendedor', label: 'Vendedor' }].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPaidTo(option.value as 'empresa' | 'vendedor')}
+                  className={cn(
+                    'inline-flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm font-medium',
+                    paidTo === option.value ? 'border-foreground bg-foreground text-background' : 'border-border bg-background hover:bg-muted',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">A veces pagan al vendedor.</p>
           </div>
         )}
         {(paymentMethod === 'yape_plin' || paymentMethod === 'transferencia') && (
@@ -1805,7 +1877,12 @@ function RegisterPaymentDialog({
             type="button"
             className="cursor-pointer"
             disabled={busy}
-            onClick={() => onSubmit({ paymentMethod, receivedBy, paymentProof })}
+            onClick={() => onSubmit({
+              paymentMethod,
+              receivedBy,
+              paidTo: paymentMethod === 'yape_plin' || paymentMethod === 'transferencia' ? paidTo : undefined,
+              paymentProof,
+            })}
           >
             {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Banknote />}
             {busy ? 'Guardando…' : 'Registrar pago'}

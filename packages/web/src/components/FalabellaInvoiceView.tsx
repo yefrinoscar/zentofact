@@ -5,6 +5,9 @@ import {
   invoiceChargeAmount,
   invoiceConceptAmounts,
   invoiceConceptLabel,
+  invoiceCruceHint,
+  invoiceCruceStatusLabel,
+  invoiceCruceSummary,
   invoiceDocumentAmounts,
   invoiceElectronicTitle,
   invoiceKindLabel,
@@ -27,6 +30,44 @@ export type FalabellaInvoiceLine = {
   gross?: number;
 };
 
+export type FalabellaInvoiceCruceConcept = {
+  key: string;
+  billed: number;
+  deducted: number;
+  delta: number;
+  status: string;
+};
+
+export type FalabellaInvoiceCruceOrder = {
+  orderNumber: string;
+  productName?: string;
+  sellerSku?: string;
+  statementNumber?: string;
+  paid?: boolean;
+  paymentStatus?: string;
+  hasPago?: boolean;
+  concepts: FalabellaInvoiceCruceConcept[];
+  billed: number;
+  deducted: number;
+  delta: number;
+  status: string;
+};
+
+export type FalabellaInvoiceReconciliation = {
+  orders: FalabellaInvoiceCruceOrder[];
+  summary: {
+    orderCount: number;
+    matchCount: number;
+    mismatchCount: number;
+    missingPagoCount: number;
+    passThroughCount: number;
+    billed: number;
+    deducted: number;
+    delta: number;
+    passThrough: number;
+  };
+};
+
 export type FalabellaInvoiceDocument = {
   id: number;
   number: string;
@@ -44,6 +85,7 @@ export type FalabellaInvoiceDocument = {
   statements?: string[];
   concepts?: Array<{ key: string; count: number; net: number; igv: number; gross: number }>;
   lines?: FalabellaInvoiceLine[];
+  reconciliation?: FalabellaInvoiceReconciliation | null;
 };
 
 function soles(signed: number, kind: string) {
@@ -77,6 +119,136 @@ function MetaCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+function cruceTone(status: string) {
+  if (status === 'mismatch') return 'text-red-700';
+  if (status === 'no_pago') return 'text-amber-800';
+  if (status === 'match') return 'text-emerald-700';
+  return 'text-zinc-500';
+}
+
+function InvoiceCruce({
+  document,
+  focusedOrder,
+  onFocusOrder,
+}: {
+  document: FalabellaInvoiceDocument;
+  focusedOrder: string;
+  onFocusOrder: (orderNumber: string) => void;
+}) {
+  const reconciliation = document.reconciliation;
+  const [filter, setFilter] = useState('');
+  const summary = reconciliation?.summary;
+  const orders = (reconciliation?.orders || []).filter((order) => {
+    if (filter === 'mismatch') return order.status === 'mismatch';
+    if (filter === 'no_pago') return order.status === 'no_pago';
+    return true;
+  });
+  const hint = invoiceCruceHint(summary);
+  const counts = invoiceCruceSummary(summary);
+
+  return (
+    <div className="mt-5 border-t border-zinc-100 pt-4">
+      <p className="text-[10px] font-medium tracking-wide text-zinc-400">Cruce con el pago</p>
+      <p className="mt-0.5 text-[13px] font-medium text-zinc-900">{hint}</p>
+      {counts ? <p className="mt-0.5 text-[11px] text-zinc-500">{counts}</p> : null}
+      {summary && (summary.billed || summary.passThrough) ? (
+        <p className="mt-0.5 text-[11px] text-zinc-500">
+          Facturado {money.format(summary.billed)}
+          {' · '}
+          Descontado {money.format(summary.deducted)}
+          {summary.passThrough ? ` · ${money.format(summary.passThrough)} no se descuenta` : ''}
+        </p>
+      ) : null}
+      {Number(summary?.mismatchCount || 0) || Number(summary?.missingPagoCount || 0) ? (
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
+          {[
+            { key: '', label: 'Todos' },
+            Number(summary?.mismatchCount || 0) ? { key: 'mismatch', label: 'No cuadran' } : null,
+            Number(summary?.missingPagoCount || 0) ? { key: 'no_pago', label: 'Sin pago' } : null,
+          ].filter(Boolean).map((item) => (
+            <button
+              key={item!.key || 'all'}
+              type="button"
+              onClick={() => setFilter(item!.key)}
+              className={cn(
+                'underline-offset-4',
+                filter === item!.key ? 'font-medium text-zinc-900 underline' : 'text-zinc-500 hover:text-zinc-800',
+              )}
+            >
+              {item!.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {orders.length ? (
+        <div className="mt-2 max-h-[min(40vh,22rem)] overflow-y-auto">
+          <table className="w-full text-[13px]">
+            <thead className="sticky top-0 bg-white text-[10px] font-medium tracking-wide text-zinc-400">
+              <tr className="border-b border-zinc-100">
+                <th className="py-1.5 pr-2 text-left">Pedido</th>
+                <th className="py-1.5 pr-2 text-right">Facturado</th>
+                <th className="py-1.5 pr-2 text-right">Descontado</th>
+                <th className="py-1.5 text-right">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order) => {
+                const selected = focusedOrder === order.orderNumber;
+                return (
+                  <tr
+                    key={order.orderNumber}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={selected}
+                    onClick={() => onFocusOrder(selected ? '' : order.orderNumber)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      onFocusOrder(selected ? '' : order.orderNumber);
+                    }}
+                    className={cn(
+                      'cursor-pointer border-b border-zinc-50 align-top hover:bg-zinc-50',
+                      selected && 'bg-zinc-50',
+                    )}
+                  >
+                    <td className="py-1.5 pr-2">
+                      <p className="font-mono text-[11px] text-zinc-600">{order.orderNumber}</p>
+                      <p className="line-clamp-1 text-[11px] leading-4 text-zinc-500">
+                        {order.productName || invoiceConceptLabel(order.concepts[0]?.key)}
+                      </p>
+                      {order.concepts.map((row) => (
+                        <p key={row.key} className="text-[11px] leading-4 text-zinc-500">
+                          {invoiceConceptLabel(row.key)}
+                          {' '}
+                          {money.format(row.billed)}
+                          {row.status === 'pass_through' || row.status === 'no_pago'
+                            ? ''
+                            : ` → ${money.format(row.deducted)}`}
+                        </p>
+                      ))}
+                    </td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums">
+                      {money.format(order.billed || order.concepts.reduce((sum, row) => sum + Number(row.billed || 0), 0))}
+                    </td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums text-zinc-600">
+                      {order.status === 'pass_through' || order.status === 'no_pago'
+                        ? '—'
+                        : money.format(order.deducted)}
+                    </td>
+                    <td className={cn('py-1.5 text-right text-[12px]', cruceTone(order.status))}>
+                      {invoiceCruceStatusLabel(order.status)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function FalabellaInvoiceView({
   document,
   highlightOrder,
@@ -88,7 +260,8 @@ export function FalabellaInvoiceView({
   const period = invoicePeriodLabel(document.periodFrom, document.periodTo);
   const issued = invoiceLongDate(document.issuedOn || document.periodTo)
     || invoicePeriodLabel(document.issuedOn || document.periodTo, document.issuedOn || document.periodTo);
-  const orderId = String(highlightOrder || '').trim();
+  const [focusedOrder, setFocusedOrder] = useState(String(highlightOrder || '').trim());
+  const orderId = focusedOrder;
   const concepts = document.concepts || [];
   const conceptKeys = new Set(concepts.map((row) => row.key));
   const [conceptKey, setConceptKey] = useState<string>('');
@@ -96,9 +269,14 @@ export function FalabellaInvoiceView({
   const orderLines = orderId
     ? (document.lines || []).filter((line) => String(line.orderNumber || '').trim() === orderId)
     : [];
-  const itemLines = invoiceLinesForItem(document.lines, activeConcept);
+  const itemLines = invoiceLinesForItem(
+    orderId
+      ? (document.lines || []).filter((line) => String(line.orderNumber || '').trim() === orderId)
+      : document.lines,
+    activeConcept,
+  );
   const lineCount = document.lineCount || document.lines?.length || 0;
-  const itemCount = activeConcept ? itemLines.length : lineCount;
+  const itemCount = (activeConcept || orderId) ? itemLines.length : lineCount;
   const paper = invoiceDocumentAmounts(kind, concepts);
   const gross = paper.gross;
 
@@ -216,6 +394,14 @@ export function FalabellaInvoiceView({
         </div>
       </div>
 
+      {document.reconciliation ? (
+        <InvoiceCruce
+          document={document}
+          focusedOrder={orderId}
+          onFocusOrder={setFocusedOrder}
+        />
+      ) : null}
+
       {orderLines.length && !activeConcept ? (
         <div className="mt-5 border-t border-zinc-100 pt-4">
           <p className="text-[10px] font-medium tracking-wide text-zinc-400">Este pedido {orderId}</p>
@@ -241,6 +427,7 @@ export function FalabellaInvoiceView({
         </p>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           {itemCount} {itemCount === 1 ? 'línea' : 'líneas'}
+          {orderId ? ` · pedido ${orderId}` : ''}
           {document.statements?.length ? ` · ${document.statements.length} estados de cuenta` : ''}
         </p>
         <div className="mt-2 max-h-[min(52vh,28rem)] overflow-y-auto">
@@ -359,7 +546,11 @@ export function FalabellaInvoiceSheet({
           </nav>
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
             {document ? (
-              <FalabellaInvoiceView key={document.id} document={document} highlightOrder={highlightOrder} />
+              <FalabellaInvoiceView
+                key={`${document.id}-${highlightOrder || ''}`}
+                document={document}
+                highlightOrder={highlightOrder}
+              />
             ) : (
               <p className="px-5 py-10 text-center text-sm text-muted-foreground">Cargando factura…</p>
             )}

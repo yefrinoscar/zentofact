@@ -205,6 +205,44 @@ export function invoiceDocumentAmounts(
   );
 }
 
+export function invoiceCruceStatusLabel(status: string | null | undefined) {
+  if (status === 'match') return 'Cuadra';
+  if (status === 'mismatch') return 'No cuadra';
+  if (status === 'no_pago') return 'Sin pago';
+  if (status === 'pass_through') return 'No se descuenta';
+  return '';
+}
+
+export function invoiceCruceSummary(summary: {
+  matchCount?: number | null;
+  mismatchCount?: number | null;
+  missingPagoCount?: number | null;
+} | null | undefined) {
+  const parts = [
+    Number(summary?.matchCount || 0) ? `${summary?.matchCount} cuadran` : '',
+    Number(summary?.mismatchCount || 0) ? `${summary?.mismatchCount} no` : '',
+    Number(summary?.missingPagoCount || 0) ? `${summary?.missingPagoCount} sin pago` : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+export function invoiceCruceHint(summary: {
+  orderCount?: number | null;
+  matchCount?: number | null;
+  mismatchCount?: number | null;
+  missingPagoCount?: number | null;
+  deducted?: number | null;
+} | null | undefined) {
+  const orders = Number(summary?.orderCount || 0);
+  if (!orders) return 'Esta factura no trae pedidos.';
+  if (Number(summary?.missingPagoCount || 0) === orders && !Number(summary?.deducted || 0)) {
+    return 'Sube el estado de cuenta para cruzar.';
+  }
+  if (Number(summary?.mismatchCount || 0) > 0) return 'Hay pedidos que no cuadran.';
+  if (Number(summary?.missingPagoCount || 0) > 0) return 'Hay pedidos sin estado de cuenta.';
+  return 'Cuadra con el pago.';
+}
+
 export function invoiceLinesForItem<T extends { concept?: string | null }>(
   lines: T[] | null | undefined,
   concept?: string | null,

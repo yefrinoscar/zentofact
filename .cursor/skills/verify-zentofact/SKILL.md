@@ -73,6 +73,7 @@ Browser (T3 preview tools, Playwright, or any CDP session) — stable handles fr
 | Catalog | `http://127.0.0.1:3011/#/productos` | header `h1` `Catálogo de productos`; sidebar link `Productos`; search `role=textbox[name='Buscar por producto, SKU o marca']`; table `aria-label='Catálogo de productos'` |
 | Inbox | `http://127.0.0.1:3011/#/pedidos` | header `h1` `Bandeja Falabella`; tablist `Flujo de pedidos`; tabs `Pendientes`, `Listos para enviar`; search `Buscar pedidos`; **do not** click `Marcar listo para enviar` |
 | Dashboard | `http://127.0.0.1:3011/#/dashboard` | header `h1` `Dashboard` |
+| Product sales | `http://127.0.0.1:3011/#/ventas` | header `h1` `Ventas`; search `Buscar por nombre, SKU u otros criterios`; table `aria-label='Ventas de productos'` |
 
 Prefer ARIA role + accessible name. The router is HashRouter; `preview_navigate` to `/#/productos`, not `/productos`.
 

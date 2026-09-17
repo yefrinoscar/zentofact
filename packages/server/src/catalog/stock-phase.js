@@ -1,5 +1,6 @@
 import {
   applyInventoryMovement,
+  applyInventoryPendingReturn,
   applyInventoryReservation,
   InsufficientStockError,
   inventoryConfig,
@@ -13,6 +14,7 @@ import {
 } from './stock-commitment.js';
 
 export const STOCK_ELIGIBLE_FULFILLMENT = new Set(['ready_to_ship', 'shipped', 'delivered']);
+export const RETURN_STOCK_APPROVAL_FROM_AT = '2026-09-03T19:00:00.000Z';
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed']);
 const MARKETPLACE_SOURCES = new Set(['provider', 'webhook', 'sync']);
 const MARKETPLACE_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
@@ -23,6 +25,12 @@ export function isStockEligibleFulfillment(status) {
 
 function orderRef(persisted) {
   return persisted?.external_order_number || persisted?.external_order_id || persisted?.id;
+}
+
+export function needsReturnStockApproval(returnedAt) {
+  if (!returnedAt) return false;
+  const at = new Date(returnedAt).getTime();
+  return Number.isFinite(at) && at >= Date.parse(RETURN_STOCK_APPROVAL_FROM_AT);
 }
 
 function restockReason(kind, persisted) {
@@ -38,6 +46,7 @@ function restockReason(kind, persisted) {
   }
   if (kind === 'items_complete_delete') return `Línea eliminada del pedido ${pedido}`;
   if (kind === 'invalid_quantity') return `Cantidad inválida del pedido ${pedido}`;
+  if (kind === 'fulfillment_correction') return `Corrección de estado del pedido ${pedido}`;
   return `Reintegro de stock del pedido ${pedido}`;
 }
 
@@ -170,6 +179,22 @@ async function reverseItem(db, itemInput, context, movementType = 'sale_reversal
     await writeStock(db, item, {
       stockState: 'reversed', appliedQuantity: 0, revision: nextRevision,
     });
+    if (movementType === 'return' && needsReturnStockApproval(context.returnedAt) && item.product_id) {
+      const queued = await db.query(
+        `insert into return_stock_approvals (
+           order_id, order_item_id, product_id, quantity, status, returned_at
+         ) values ($1,$2,$3,$4,'pending',$5)
+         on conflict (order_item_id) do nothing
+         returning id`,
+        [context.orderId, item.id, item.product_id, already, context.returnedAt],
+      );
+      if (queued.rows.length) {
+        await applyInventoryPendingReturn(db, {
+          productId: item.product_id,
+          quantityDelta: already,
+        });
+      }
+    }
   } else {
     console.warn(JSON.stringify({ event: 'catalog.stock.idempotency_mismatch', key, already, target: 0, itemId: item.id }));
   }
@@ -443,6 +468,7 @@ export async function stockPhase(input) {
     source,
     actorUserId,
     persisted,
+    returnedAt: persisted.returned_at || persisted.provider_updated_at || null,
   };
   const stats = {
     enabled: Boolean(saleEnabled),
@@ -543,6 +569,15 @@ export async function stockPhase(input) {
     if (!await resolveItemProduct(db, item, itemInput)) continue;
 
     if (action === 'reserve') {
+      if (item.stock_state === 'applied') {
+        const reversed = await reverseItem(db, item, {
+          ...context,
+          reason: restockReason('fulfillment_correction', persisted),
+        });
+        if (reversed.applied) stats.reversed += 1;
+        item.stock_state = 'reversed';
+        item.stock_applied_quantity = 0;
+      }
       await reserveItem(db, item, itemInput);
       continue;
     }

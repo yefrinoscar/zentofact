@@ -2,6 +2,7 @@
 // No forma parte del catálogo vendible: un insumo se consume, no se publica.
 import { timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
+import { parseAlertEmailInput, parseAlertEmails } from './auto-emission-alert.js';
 
 export const INSUMO_UNITS = ['unidades', 'rollos', 'resmas', 'kg', 'cajas'];
 export const INSUMO_ICON_KEYS = [
@@ -288,7 +289,15 @@ export async function ensureTables(db) {
     create index if not exists idx_insumo_movements_insumo
       on insumo_movements(insumo_id, created_at desc);
     alter table insumo_movements add column if not exists actor_name text;
+    create table if not exists insumo_alert_state (
+      id integer primary key default 1,
+      alert_emails text,
+      updated_at timestamptz not null default now()
+    );
   `);
+  await client.query(
+    'insert into insumo_alert_state (id) values (1) on conflict (id) do nothing',
+  );
 
   await client.query(`
     do $$ declare
@@ -459,6 +468,21 @@ export async function createInsumo(input = {}, actorUserId, db) {
   });
 }
 
+export async function getAlertEmails(db) {
+  const result = await target(db).query('select alert_emails from insumo_alert_state where id=1');
+  return parseAlertEmails(result.rows[0]?.alert_emails);
+}
+
+export async function setAlertEmails(value, db) {
+  const emails = parseAlertEmailInput(value);
+  await target(db).query(
+    `insert into insumo_alert_state (id, alert_emails, updated_at) values (1, $1, now())
+     on conflict (id) do update set alert_emails=excluded.alert_emails, updated_at=now()`,
+    [emails.join(', ')],
+  );
+  return { alertEmails: emails };
+}
+
 export async function updateInsumo(idInput, input = {}, actorUserId, db) {
   assertInsumoPin(input.pin);
   const id = positiveInt(idInput);
@@ -467,6 +491,7 @@ export async function updateInsumo(idInput, input = {}, actorUserId, db) {
     const current = await client.query('select * from insumos where id=$1 for update', [id]);
     if (!current.rows.length) throw httpError('Insumo no encontrado.', 404);
     const row = current.rows[0];
+    const previous = mapInsumo(row);
     const name = input.name == null ? row.name : text(input.name, 'name', 80);
     const unit = input.unit == null ? row.unit : oneOf(input.unit, INSUMO_UNITS, 'unit');
     const iconKey = input.iconKey == null ? row.icon_key : oneOf(input.iconKey, INSUMO_ICON_KEYS, 'iconKey');
@@ -491,7 +516,7 @@ export async function updateInsumo(idInput, input = {}, actorUserId, db) {
        returning *`,
       [name, unit, iconKey, reorderPoint, status, actor.id, id],
     );
-    return mapInsumo(updated.rows[0]);
+    return { insumo: mapInsumo(updated.rows[0]), previous };
   });
 }
 
@@ -507,11 +532,12 @@ export async function adjustInsumo(idInput, input = {}, actorUserId, db) {
   return inTransaction(db, async (client) => {
     const locked = await client.query('select * from insumos where id=$1 for update', [id]);
     if (!locked.rows.length) throw httpError('Insumo no encontrado.', 404);
+    const previous = mapInsumo(locked.rows[0]);
     const current = Number(locked.rows[0].quantity_on_hand);
     const absoluteTarget = hasAbsolute ? finiteNumber(input.absoluteTarget, 'absoluteTarget') : null;
     const delta = hasAbsolute ? absoluteTarget - current : finiteNumber(input.delta, 'delta');
     if (delta === 0) {
-      return { applied: false, noChange: true, insumo: mapInsumo(locked.rows[0]) };
+      return { applied: false, noChange: true, insumo: previous, previous };
     }
     const projected = current + delta;
     if (projected < 0) {
@@ -534,7 +560,7 @@ export async function adjustInsumo(idInput, input = {}, actorUserId, db) {
       actorId: actor.id,
       actorName,
     });
-    return { applied: true, noChange: false, insumo: mapInsumo(updated.rows[0]) };
+    return { applied: true, noChange: false, insumo: mapInsumo(updated.rows[0]), previous };
   });
 }
 

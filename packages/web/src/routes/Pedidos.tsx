@@ -786,9 +786,10 @@ function overdueLabel(value: string | null | undefined, now: Date) {
 function urgencyFor(order: InboxOrder, now: Date): UrgencyKey {
   const deadline = parseDate(order.promisedShippingAt);
   if (!deadline) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const deadlineDay = limaDateKey(deadline);
-  if (deadlineDay === limaDateKey(now)) return 'today';
+  const today = limaDateKey(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === tomorrowKey(now)) return 'tomorrow';
   return 'later';
 }
@@ -801,10 +802,12 @@ function isDueToday(order: InboxOrder, now: Date) {
 function pendingDeadlineKey(order: InboxOrder, now: Date) {
   const deadline = parseDate(order.promisedShippingAt);
   if (!deadline) return 'no-date';
+  if (urgencyFor(order, now) === 'overdue') return 'overdue';
   return isDueToday(order, now) ? 'today' : limaDateKey(deadline);
 }
 
 function pendingDeadlineTabLabel(key: string, now: Date) {
+  if (key === 'overdue') return 'Vencidos';
   if (key === 'today') return 'Vencen hoy';
   if (key === 'all') return 'Todos';
   if (key === 'no-date') return 'Sin fecha';
@@ -1403,7 +1406,7 @@ export default function Pedidos() {
     unresolvedErrors: historicalManifestErrors.filter(({ resolved }) => !resolved).length,
   }), [historicalManifestErrors, latestManifestRun]);
   const pendingDeadlineGroups = useMemo(() => {
-    const groups: Record<string, InboxOrder[]> = { today: [] };
+    const groups: Record<string, InboxOrder[]> = { overdue: [], today: [] };
     for (const order of flowGroups.pending) {
       const key = pendingDeadlineKey(order, now);
       (groups[key] ||= []).push(order);
@@ -1413,14 +1416,10 @@ export default function Pedidos() {
   const pendingDeadlineTabs = useMemo(() => {
     const todayKey = limaDateKey(now);
     const datedKeys = Object.keys(pendingDeadlineGroups)
-      .filter((key) => key !== 'today' && key !== 'no-date')
-      .sort((left, right) => {
-        const leftIsPast = left < todayKey;
-        const rightIsPast = right < todayKey;
-        if (leftIsPast !== rightIsPast) return leftIsPast ? 1 : -1;
-        return leftIsPast ? right.localeCompare(left) : left.localeCompare(right);
-      });
-    const keys = ['today', ...datedKeys];
+      .filter((key) => key !== 'overdue' && key !== 'today' && key !== 'no-date')
+      .filter((key) => key >= todayKey)
+      .sort((left, right) => left.localeCompare(right));
+    const keys = ['overdue', 'today', ...datedKeys];
     if (pendingDeadlineGroups['no-date']?.length) keys.push('no-date');
     return [{
       value: 'all',
@@ -2370,8 +2369,17 @@ export default function Pedidos() {
             { value: 'later', label: 'Próximos', description: 'Después de mañana', count: globalDeadlineCounts.later, className: 'border-slate-200 bg-slate-100 text-slate-900' },
           ] as Array<{ value: UrgencyKey; label: string; description: string; count: number; className: string }>).map((item) => (
             <article key={item.value} aria-label={`${item.label}: ${item.count}`} className={`rounded-xl border px-4 py-3 ${item.className}`}>
-              <div className="flex items-start justify-between gap-3"><span className="text-sm font-medium">{item.label}</span><span className="text-xl font-semibold tabular-nums">{item.count}</span></div>
-              <p className="mt-1 text-xs opacity-75">{item.description}</p>
+              <button
+                type="button"
+                className="block w-full text-left"
+                onClick={() => {
+                  setFlowStage('pending');
+                  setPendingDeadlineTab(item.value === 'later' ? 'all' : item.value);
+                }}
+              >
+                <div className="flex items-start justify-between gap-3"><span className="text-sm font-medium">{item.label}</span><span className="text-xl font-semibold tabular-nums">{item.count}</span></div>
+                <p className="mt-1 text-xs opacity-75">{item.description}</p>
+              </button>
             </article>
           ))}
         </div>

@@ -8,13 +8,23 @@ import {
 } from 'lucide-react';
 import { ProductSearchPicker } from '../components/ProductSearchPicker';
 import { useOperatorSnackbar } from '../components/OperatorSnackbar';
+import falabellaLogo from '../assets/falabella.png';
+import ripleyLogo from '../assets/logo-blanco.svg';
 import api from '../lib/api';
 import { cn } from '../lib/cn';
+import { logisticsChannelClass, productImageSrc } from '../lib/logistics-inbox';
 import type { CatalogProductForSale } from '../lib/registrar-venta';
+import { sellerShortName } from '../lib/seller-name';
 import {
   isListableStockJob,
   shouldShowStockJobAttempts,
+  stockItemReason,
+  stockJobChannelLabel,
   stockJobDetail,
+  stockJobFilterBucket,
+  stockJobSourceLabel,
+  stockOrderStatusLabel,
+  stockPreviewFooter,
   visibleStockJobStatus,
 } from '../lib/stock-job-presentation';
 
@@ -43,6 +53,7 @@ type UnmatchedStockItem = {
   sellerSku: string;
   shopSku: string | null;
   title: string;
+  imageUrl?: string | null;
   lineCount: number;
   quantity: number;
   orderNumbers: string[];
@@ -51,6 +62,7 @@ type UnmatchedStockItem = {
 type Job = {
   id: number;
   company: string;
+  channel_code?: string | null;
   order_number: string;
   order_id: string | null;
   status: string;
@@ -73,14 +85,19 @@ type Job = {
   applied_units?: string | number;
   unmatched_items?: number;
   insufficient_items?: number;
+  order_status?: string | null;
+  fulfillment_status?: string | null;
 };
 
 type OrderPreview = {
   error?: string;
   company?: string;
+  channelCode?: string | null;
   order?: {
     orderNumber?: string;
     status?: string;
+    orderStatus?: string;
+    fulfillmentStatus?: string;
     itemsStatus?: string;
     itemsError?: string | null;
     total?: string | number | null;
@@ -108,14 +125,14 @@ type OrderPreview = {
   }>;
 };
 
-type OrderPreviewItem = NonNullable<OrderPreview['items']>[number];
-
 const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: string }> = {
   done: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2, label: 'Descontado' },
   reserved: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Clock, label: 'Reservado' },
   unmatched: { cls: 'bg-amber-50 text-amber-800 border-amber-300', icon: Link2, label: 'Sin asociación' },
   insufficient: { cls: 'bg-red-50 text-red-700 border-red-200', icon: AlertTriangle, label: 'Sin stock' },
   processed: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: CheckCircle2, label: 'Procesado' },
+  cancelled: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Cancelado' },
+  returned: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: RotateCcw, label: 'Devuelto' },
   outside_window: { cls: 'bg-slate-100 text-slate-700 border-slate-200', icon: XCircle, label: 'Fuera del período' },
   pending: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock, label: 'En cola' },
   processing: { cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: Loader2, label: 'Procesando' },
@@ -126,6 +143,7 @@ const STATUS_STYLES: Record<string, { cls: string; icon: typeof Clock; label: st
 const FILTERS = [
   ['all', 'Todas'],
   ['done', 'Procesados'],
+  ['cancelled', 'Cancelados'],
   ['pending', 'En cola'],
   ['processing', 'Procesando'],
   ['failed', 'Requieren atención'],
@@ -144,18 +162,46 @@ function StatusBadge({ job, listenFromAt }: { job: Job; listenFromAt?: string | 
   );
 }
 
-function SourceBadge({ source }: { source: string }) {
-  const labels: Record<string, string> = {
-    webhook: 'Webhook',
-    cron: 'Cron',
-    catchup: 'Recuperación',
-    listen: 'Escucha',
-    association: 'Asociación',
-    manual: 'Venta manual',
-    system: 'Sistema',
-  };
-  const label = labels[source] || source || 'Sistema';
+function ChannelBadge({ code }: { code?: string | null }) {
+  const label = stockJobChannelLabel(code);
+  if (!label) return null;
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') {
+    return <img src={falabellaLogo} alt="Falabella" title="Falabella" className="size-5 shrink-0 rounded-sm object-contain" />;
+  }
+  if (value === 'ripley') {
+    return (
+      <span className="grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950" title="Ripley" aria-label="Ripley">
+        <img src={ripleyLogo} alt="" className="h-4 w-auto" />
+      </span>
+    );
+  }
+  return (
+    <span className={cn(
+      'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+      logisticsChannelClass(code),
+    )}>
+      {label}
+    </span>
+  );
+}
+
+function SellerCell({ company, channelCode }: { company?: string | null; channelCode?: string | null }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate font-medium text-foreground">{sellerShortName(company)}</p>
+      <div className="mt-1"><ChannelBadge code={channelCode} /></div>
+    </div>
+  );
+}
+
+function SourceBadge({ source, channelCode }: { source: string; channelCode?: string | null }) {
+  const sourceLabel = stockJobSourceLabel(source);
+  const channelLabel = stockJobChannelLabel(channelCode);
   const fromWebhook = source === 'webhook';
+  const title = channelLabel
+    ? (fromWebhook ? `Pedido ${channelLabel} encolado al entrar` : `Pedido ${channelLabel} encolado por ${sourceLabel.toLowerCase()}`)
+    : (fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo');
   return (
     <span
       className={cn(
@@ -164,9 +210,9 @@ function SourceBadge({ source }: { source: string }) {
           ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
           : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
-      title={fromWebhook ? 'Encolado al entrar el pedido' : 'Encolado por otro flujo'}
+      title={title}
     >
-      {label}
+      {sourceLabel}
     </span>
   );
 }
@@ -191,18 +237,12 @@ function fullDateTime(value?: string) {
   });
 }
 
-function itemStockReason(item: OrderPreviewItem) {
-  if (!item.productId && !item.mainSku) return 'No tiene producto maestro.';
-  const labels: Record<string, string> = {
-    pending: 'Reservado; descuenta al quedar listo para enviar.',
-    applied: 'Descontado del almacén.',
-    skipped_unmapped: 'No tiene producto maestro.',
-    skipped_insufficient: 'El producto maestro no tiene stock disponible.',
-    skipped_policy: 'Fuera del corte de descuentos.',
-    reversed: 'Stock reintegrado.',
-    none: 'Pendiente de procesar.',
-  };
-  return labels[item.stockState] || 'Estado de stock no reconocido.';
+function previewOrderStatus(order: NonNullable<OrderPreview['order']>) {
+  return stockOrderStatusLabel({
+    status: order.status,
+    orderStatus: order.orderStatus,
+    fulfillmentStatus: order.fulfillmentStatus,
+  });
 }
 
 function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
@@ -211,13 +251,14 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
   size?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const canShowImage = Boolean(imageUrl) && !failed;
+  const src = productImageSrc(imageUrl);
+  const canShowImage = Boolean(src) && !failed;
   return (
-    <div className={cn('daisy-avatar shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
+    <div className={cn('daisy-avatar relative z-0 shrink-0', !canShowImage && 'daisy-avatar-placeholder')}>
       <div className={cn(size, 'overflow-hidden rounded-md bg-muted text-muted-foreground')}>
         {canShowImage ? (
           <img
-            src={imageUrl || undefined}
+            src={src || undefined}
             alt={`Foto de ${title}`}
             className="h-full w-full object-cover"
             loading="lazy"
@@ -236,6 +277,8 @@ function StockProductImage({ imageUrl, title, size = 'h-10 w-10' }: {
 function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; loading: boolean }) {
   const order = preview?.order;
   const items = preview?.items || [];
+  const statusLabel = order ? previewOrderStatus(order) : '';
+  const terminal = statusLabel === 'Cancelado' || statusLabel === 'Devuelto';
   return (
     <div className="w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl">
       {loading ? (
@@ -253,17 +296,22 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
         <div className="space-y-3">
           <div>
             <p className="font-mono text-sm font-semibold text-foreground">{order.orderNumber || '-'}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{preview?.company || 'Empresa'}</p>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              <p className="truncate text-xs text-muted-foreground">{sellerShortName(preview?.company) || 'Empresa'}</p>
+              <ChannelBadge code={preview?.channelCode} />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
             <span className="text-muted-foreground">Estado</span>
-            <span className="truncate text-right font-medium text-foreground">{order.status || '-'}</span>
+            <span className="truncate text-right font-medium text-foreground">{statusLabel}</span>
             <span className="text-muted-foreground">Total</span>
             <span className="text-right font-medium text-foreground">{money(order.total)}</span>
             <span className="text-muted-foreground">Items</span>
             <span className="text-right text-foreground">{order.itemsCount ?? '-'}</span>
-            <span className="text-muted-foreground">Stock aplicado</span>
-            <span className="text-right font-medium text-foreground">{order.stockApplied ?? 0} u</span>
+            <span className="text-muted-foreground">Descuento</span>
+            <span className="text-right font-medium text-foreground">
+              {terminal ? 'No' : `${order.stockApplied ?? 0} u`}
+            </span>
           </div>
           {items.length > 0 ? (
             <div className="divide-y divide-border rounded-md border border-border">
@@ -286,10 +334,15 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
                     <p className={cn(
                       'mt-1',
                       item.stockState === 'skipped_unmapped' || item.stockState === 'skipped_insufficient'
+                        || (item.stockState === 'pending' && terminal)
                         ? 'font-medium text-amber-700'
                         : 'text-muted-foreground',
                     )}>
-                      {itemStockReason(item)}
+                      {stockItemReason(item, {
+                        status: order.status,
+                        orderStatus: order.orderStatus,
+                        fulfillmentStatus: order.fulfillmentStatus,
+                      })}
                     </p>
                   </div>
                 </div>
@@ -303,13 +356,7 @@ function OrderPreviewCard({ preview, loading }: { preview: OrderPreview | null; 
           ) : null}
           {preview?.stock && (
             <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs">
-              <p className="font-medium text-foreground">
-                {Number(preview.stock.applied || 0) > 0
-                  ? `${preview.stock.applied} línea${Number(preview.stock.applied) === 1 ? '' : 's'} descontada${Number(preview.stock.applied) === 1 ? '' : 's'}`
-                  : items.some((item) => item.stockState === 'pending')
-                    ? 'Stock reservado; aún no sale del almacén.'
-                    : 'Sin descuento de almacén.'}
-              </p>
+              <p className="font-medium text-foreground">{stockPreviewFooter(preview)}</p>
               {preview.stock.skipped != null && Number(preview.stock.skipped) > 0 && (
                 <p className="mt-0.5 text-muted-foreground">{preview.stock.skipped} omitidas</p>
               )}
@@ -551,7 +598,9 @@ export default function DescuentosCola() {
   }
 
   const listableJobs = jobs.filter((job) => isListableStockJob(job, config.listenFromAt));
-  const shownJobs = filter === 'all' ? listableJobs : listableJobs.filter((job) => job.status === filter);
+  const shownJobs = filter === 'all'
+    ? listableJobs
+    : listableJobs.filter((job) => stockJobFilterBucket(job, config.listenFromAt) === filter);
 
   return (
     <div className="space-y-5">
@@ -647,13 +696,19 @@ export default function DescuentosCola() {
           <div className="divide-y divide-border">
             {unmatched.map((item) => (
               <div key={`${item.companyId}-${item.channelCode}-${item.sellerSku}`} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                <StockProductImage
+                  imageUrl={item.imageUrl}
+                  title={item.title || 'Producto sin nombre'}
+                  size="h-12 w-12"
+                />
                 <div className="min-w-[16rem] flex-1">
                   <p className="line-clamp-2 text-sm font-medium text-foreground">{item.title || 'Producto sin nombre'}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{item.company}</span>
-                    {' · '}Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span>
-                    {item.shopSku ? <> · Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></> : null}
-                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{sellerShortName(item.company)}</span>
+                    <ChannelBadge code={item.channelCode} />
+                    <span>Seller SKU <span className="font-mono text-foreground">{item.sellerSku}</span></span>
+                    {item.shopSku ? <span>Shop SKU <span className="font-mono text-foreground">{item.shopSku}</span></span> : null}
+                  </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {item.quantity} u sin descontar · pedidos {item.orderNumbers.join(', ')}
                   </p>
@@ -676,7 +731,7 @@ export default function DescuentosCola() {
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Descuentos de stock</h2>
-            <p className="text-xs text-muted-foreground">Desde pendiente. El stock queda reservado hasta listo para enviar.</p>
+            <p className="text-xs text-muted-foreground">Reservado hasta listo para enviar. Cancelado no descuenta.</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="La lista se refresca cada 3 s. No indica si el descuento está encendido.">
@@ -739,7 +794,7 @@ export default function DescuentosCola() {
           </div>
         </div>
 
-        <div className="max-h-[520px] overflow-auto">
+        <div className="relative z-0 max-h-[520px] overflow-auto">
           {refreshing && listableJobs.length === 0 ? <SkeletonRows /> : null}
           {!refreshing && listableJobs.length === 0 ? (
             <p className="p-10 text-center text-sm text-muted-foreground">Aún no hay descuentos en cola.</p>
@@ -749,15 +804,15 @@ export default function DescuentosCola() {
           ) : null}
           {shownJobs.length > 0 ? (
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
+              <thead className="sticky top-0 z-20 bg-card text-left text-xs text-muted-foreground">
                 <tr className="border-b border-border">
-                  <th className="px-5 py-2.5 font-medium">Empresa</th>
-                  <th className="px-5 py-2.5 font-medium">Orden</th>
-                  <th className="px-5 py-2.5 font-medium">Producto</th>
-                  <th className="px-5 py-2.5 font-medium">Estado</th>
-                  <th className="px-5 py-2.5 font-medium">Origen</th>
-                  <th className="px-5 py-2.5 font-medium">Detalle</th>
-                  <th className="px-5 py-2.5 font-medium">Cuándo</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Empresa</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Orden</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Producto</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Estado</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Origen</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Detalle</th>
+                  <th className="sticky top-0 z-20 bg-card px-5 py-2.5 font-medium">Cuándo</th>
                 </tr>
               </thead>
               <tbody>
@@ -768,11 +823,11 @@ export default function DescuentosCola() {
                   const shownAttempts = Math.min(job.attempts, config.maxAttempts || 3);
                   return (
                     <tr key={job.id} className="border-b border-border/50 last:border-0 hover:bg-accent/30">
-                      <td className="px-5 py-2.5 text-foreground">{job.company}</td>
+                      <td className="px-5 py-2.5"><SellerCell company={job.company} channelCode={job.channel_code} /></td>
                       <td className="px-5 py-2.5"><SearchableOrderNumber job={job} /></td>
                       <td className="px-5 py-2.5"><JobProducts job={job} /></td>
                       <td className="px-5 py-2.5"><StatusBadge job={job} listenFromAt={config.listenFromAt} /></td>
-                      <td className="px-5 py-2.5"><SourceBadge source={job.source} /></td>
+                      <td className="px-5 py-2.5"><SourceBadge source={job.source} channelCode={job.channel_code} /></td>
                       <td className="px-5 py-2.5 text-xs">
                         <span className={failed ? 'text-red-600' : 'text-muted-foreground'} title={job.last_error || undefined}>
                           {stockJobDetail(job, config.listenFromAt)}

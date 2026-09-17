@@ -1,3 +1,6 @@
+import { needsDigitalPayment, paymentRecipientLabel } from './registrar-venta.ts';
+import { paymentProofPreview } from './payment-proof.ts';
+
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   despues: 'Después',
   efectivo: 'Efectivo',
@@ -48,16 +51,37 @@ export type SalespersonHome = {
   commissionPercent?: number;
 };
 
+export type SalespersonSaleItem = {
+  name?: string | null;
+  sku?: string | null;
+  quantity?: number | null;
+  imageUrl?: string | null;
+  shopSku?: string | null;
+};
+
 export type SalespersonSale = {
+  id?: number | null;
   externalOrderNumber?: string | null;
   customer?: { name?: string | null } | null;
   total?: number | null;
-  metadata?: { paymentMethod?: string | null } | null;
+  commission?: number | null;
+  metadata?: {
+    paymentMethod?: string | null;
+    receivedBy?: string | null;
+    paidTo?: string | null;
+    paymentProof?: {
+      name?: string | null;
+      type?: string | null;
+      dataUrl?: string | null;
+      hasData?: boolean | null;
+    } | null;
+  } | null;
   orderedAt?: string | null;
   createdAt?: string | null;
+  items?: SalespersonSaleItem[] | null;
 };
 
-export type SalesSortBy = 'orderedAt' | 'total';
+export type SalesSortBy = 'orderedAt' | 'total' | 'commission';
 export type SalesSortDir = 'asc' | 'desc';
 
 export type MisVentasQuery = {
@@ -210,14 +234,75 @@ export function dayKeyLabel(dateKey?: string | null) {
   return DAY_LABEL.format(new Date(`${key}T12:00:00.000Z`)).replace('.', '');
 }
 
+export function saleProducts(items?: SalespersonSaleItem[] | null) {
+  return (items || [])
+    .map((item) => ({
+      name: String(item?.name || '').trim() || String(item?.sku || '').trim(),
+      sku: String(item?.sku || '').trim(),
+      quantity: Math.max(1, Math.floor(Number(item?.quantity) || 1)),
+      imageUrl: String(item?.imageUrl || '').trim() || null,
+      shopSku: String(item?.shopSku || '').trim() || null,
+    }))
+    .filter((item) => item.name || item.sku);
+}
+
+export function saleProductSummary(items?: SalespersonSaleItem[] | null) {
+  const lines = saleProducts(items);
+  const first = lines[0];
+  if (!first) {
+    return { name: '', sku: '', imageUrl: null as string | null, shopSku: null as string | null, extraCount: 0 };
+  }
+  return {
+    name: first.name,
+    sku: first.sku,
+    imageUrl: first.imageUrl,
+    shopSku: first.shopSku,
+    extraCount: Math.max(lines.length - 1, 0),
+  };
+}
+
+export function saleProductTitle(product: string, extraCount = 0) {
+  const name = String(product || '').trim();
+  if (!name) return '';
+  if (extraCount <= 0) return name;
+  return `${name} y ${extraCount} más`;
+}
+
+export function saleMoreProductsLabel(extraCount: number, expanded = false) {
+  if (expanded) return 'Ver menos';
+  const extra = Math.max(0, Math.floor(Number(extraCount) || 0));
+  if (extra <= 0) return '';
+  return extra === 1 ? 'Ver 1 más' : `Ver ${extra} más`;
+}
+
 export function saleListRow(order: SalespersonSale, commissionPercent = 0) {
   const total = Number(order.total) || 0;
+  const products = saleProducts(order.items);
+  const product = saleProductSummary(products);
+  const method = String(order.metadata?.paymentMethod || '').trim();
+  const proof = paymentProofPreview(order.metadata?.paymentProof);
   return {
+    id: Number(order.id) || 0,
     number: String(order.externalOrderNumber || '').trim() || '—',
     customer: String(order.customer?.name || '').trim() || 'Sin nombre',
+    products,
+    product: product.name,
+    productTitle: saleProductTitle(product.name, product.extraCount),
+    sku: product.sku,
+    imageUrl: product.imageUrl,
+    shopSku: product.shopSku,
+    extraCount: product.extraCount,
     total,
-    commission: estimateCommission(total, commissionPercent),
-    payment: paymentMethodLabel(order.metadata?.paymentMethod),
+    commission: order.commission ?? estimateCommission(total, commissionPercent),
+    payment: paymentMethodLabel(method),
+    paymentMethod: method,
+    receivedBy: String(order.metadata?.receivedBy || '').trim(),
+    paidTo: paymentRecipientLabel(order.metadata?.paidTo),
+    paidToValue: String(order.metadata?.paidTo || '').trim(),
+    needsProof: needsDigitalPayment(method),
+    hasProof: proof.hasProof,
+    proofName: proof.name,
+    proofUrl: proof.dataUrl,
     date: saleDateLabel(order.orderedAt || order.createdAt),
   };
 }

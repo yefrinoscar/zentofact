@@ -6,13 +6,25 @@ import {
   downloadRipleySvcManifest,
   editRipleySvcPackages,
   getRipleySvcManifest,
+  hasRipleySvcCredentials,
   listAllRipleySvcOrders,
   listRipleySvcEligibleLabels,
   listRipleySvcLabels,
   listRipleySvcManifests,
   mapRipleySvcFulfillmentStatus,
+  ripleyOrderIdentityKeys,
   scheduleRipleySvcManifest,
+  syncRipleyLogistics,
 } from './ripley-logistics.js';
+
+function enableSvc(t) {
+  const previous = process.env.RIPLEY_SVC_ENABLED;
+  process.env.RIPLEY_SVC_ENABLED = 'true';
+  t.after(() => {
+    if (previous === undefined) delete process.env.RIPLEY_SVC_ENABLED;
+    else process.env.RIPLEY_SVC_ENABLED = previous;
+  });
+}
 
 test('permite consultar el historial sandbox vacío sin credenciales productivas SVC', async () => {
   const result = await listRipleySvcManifests(7, { sandbox: true, orderId: 'TEST-100-A' }, {
@@ -37,7 +49,50 @@ test('el sandbox logístico inicia con una etiqueta elegible y sin manifiesto', 
   assert.equal(labels.environment, 'simulated');
 });
 
-test('sin sandbox conserva el bloqueo cuando faltan credenciales SVC', async () => {
+test('rechaza una URL Mirakl como SVC antes de enviar credenciales', async (t) => {
+  enableSvc(t);
+  await assert.rejects(() => listRipleySvcLabels(7, {}, {
+    getCompany: async () => ({ id: 7, activo: true,
+      ripley_svc_base_url: 'https://ripleyperu-prod.mirakl.net',
+      ripley_svc_username: 'seller', ripley_svc_password: 'clave',
+    }),
+    fetchImpl: async () => { assert.fail('No debe autenticar en otro host'); },
+  }), /Mirakl no corresponde a SVC/);
+});
+
+test('acepta credenciales SVC guardadas en snake_case', async (t) => {
+  enableSvc(t);
+  const paths = [];
+  const result = await listRipleySvcLabels(7, { orderId: 'R-1', limit: 25 }, {
+    getCompany: async () => ({
+      id: 7,
+      activo: true,
+      ripley_svc_base_url: 'https://sellercenter.ripley.test',
+      ripley_svc_username: 'seller',
+      ripley_svc_password: ' clave ',
+    }),
+    fetchImpl: async (url, init) => {
+      paths.push(new URL(url).pathname);
+      if (String(url).includes('/auth/login/vendor')) {
+        assert.equal(init.headers.Authorization, `Basic ${btoa('seller: clave ')}`);
+        return new Response(JSON.stringify({ access_token: 'token-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ labels: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.deepEqual(result, { labels: [] });
+  assert.ok(paths.includes('/api/current/auth/login/vendor'));
+  assert.ok(paths.includes('/api/v7/label/labels'));
+});
+
+test('sin sandbox conserva el bloqueo cuando faltan credenciales SVC', async (t) => {
+  enableSvc(t);
   await assert.rejects(
     () => listRipleySvcManifests(7, {}, {
       getCompany: async () => ({ id: 7, activo: true, nombre: 'Seller sin SVC' }),
@@ -106,4 +161,97 @@ test('pagina la bandeja SVC hasta alcanzar el total', async () => {
   });
   assert.equal(orders.length, 201);
   assert.deepEqual(calls, [{ page: 1, limit: 200 }, { page: 2, limit: 200 }]);
+});
+
+test('el id comercial de Ripley y el sufijo de bulto son la misma identidad', () => {
+  assert.deepEqual(ripleyOrderIdentityKeys('7937596201-A', '7937596201'), [
+    '7937596201-A',
+    '7937596201',
+  ]);
+  assert.deepEqual(ripleyOrderIdentityKeys('7937873401'), ['7937873401']);
+  assert.equal(hasRipleySvcCredentials({
+    ripleySvcUsername: 'limbo',
+    ripleySvcPassword: 'clave',
+  }), true);
+  assert.equal(hasRipleySvcCredentials({ id: 4 }), false);
+});
+
+test('escucha TO_PICKUP aunque el listado general solo traiga Para preparar', async () => {
+  const calls = [];
+  const updates = [];
+  const enqueued = [];
+  const result = await syncRipleyLogistics({
+    id: 7,
+    ripleySvcUsername: 'limbo',
+    ripleySvcPassword: 'clave',
+  }, {
+    db: {
+      async query(sql, params) {
+        updates.push({ sql, params });
+        const externalOrderId = (params[1] || []).find((id) => !String(id).includes('-')) || params[1]?.[0];
+        return {
+          rowCount: 1,
+          rows: [{
+            id: externalOrderId === '7937873401' ? 89 : 88,
+            external_order_id: externalOrderId,
+            external_order_number: externalOrderId,
+            ordered_at: '2026-09-07T15:00:00.000Z',
+            fulfillment_status: 'ready_to_ship',
+          }],
+        };
+      },
+    },
+    enqueue: async (job) => {
+      enqueued.push(job);
+      return { enqueued: true };
+    },
+    client: {
+      async listLogisticsOrders(options) {
+        calls.push(options);
+        if (options.statusManagement === 'TO_PICKUP') {
+          return {
+            data: {
+              total: 2,
+              orders: [
+                {
+                  order_id: '7937596201-A',
+                  commercial_id: '7937596201',
+                  _status_management: 'TO_PICKUP',
+                },
+                {
+                  order_id: '7937873401-A',
+                  commercial_id: '7937873401',
+                  status_management: 'TO_PICKUP',
+                },
+              ],
+            },
+          };
+        }
+        return { data: { total: 0, orders: [] } };
+      },
+    },
+  });
+
+  assert.deepEqual(calls.map((call) => call.statusManagement), ['TO_PICKUP', 'SHIPPED', undefined]);
+  assert.equal(result.received, 2);
+  assert.equal(result.matched, 2);
+  assert.deepEqual(updates[0].params[1], ['7937596201-A', '7937596201']);
+  assert.equal(updates[0].params[2], 'ready_to_ship');
+  assert.match(updates[0].sql, /external_order_id = any\(\$2::text\[\]\)/);
+  assert.equal(updates[1].params[2], 'ready_to_ship');
+  assert.deepEqual(enqueued.map((job) => job.externalOrderId), ['7937596201', '7937873401']);
+  assert.equal(enqueued[0].source, 'listen');
+});
+
+test('SVC pausado no autentica aunque existan credenciales guardadas', async (t) => {
+  const previous = process.env.RIPLEY_SVC_ENABLED;
+  delete process.env.RIPLEY_SVC_ENABLED;
+  t.after(() => { if (previous !== undefined) process.env.RIPLEY_SVC_ENABLED = previous; });
+  const dependencies = {
+    getCompany: async () => ({ id: 1, activo: true, ripleySvcUsername: 'seller', ripleySvcPassword: 'clave' }),
+    fetchImpl: async () => { assert.fail('SVC no debe recibir solicitudes'); },
+  };
+  for (const list of [listRipleySvcLabels, listRipleySvcEligibleLabels, listRipleySvcManifests]) {
+    await assert.rejects(() => list(1, {}, dependencies), /Seller Center Ripley está pausado/);
+  }
 });

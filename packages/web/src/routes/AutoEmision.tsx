@@ -27,6 +27,7 @@ type Config = {
   globalEnabled: boolean; dryRun: boolean; sunatEnv: 'beta' | 'produccion'; reconcileEnabled: boolean;
   paused: boolean; stats: Record<string, number>; cron: CronCfg;
   alertEmails?: string[];
+  mailer?: { configured: boolean };
   companies: CompanyCfg[]; webhookBase: string;
 };
 type Job = {
@@ -901,6 +902,9 @@ export default function AutoEmision() {
                   </button>
                   {alertEmailsSaved && <span className="text-xs font-medium text-emerald-700">Guardado</span>}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  {config.mailer?.configured ? 'Resend listo. Avisa si una boleta no sale tras 3 intentos.' : 'Sin Resend. Si una boleta no sale tras 3 intentos, el aviso queda en logs.'}
+                </p>
               </TabsContent>
 
               {/* Cron */}

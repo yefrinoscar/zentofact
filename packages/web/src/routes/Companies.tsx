@@ -145,6 +145,11 @@ type ChannelAccount = {
   settings?: { autoEmitDocuments?: boolean };
 };
 
+type OrderSyncStatus = {
+  channelCode?: string;
+  lastError?: string | null;
+};
+
 const initialAutoEmission: ChannelAutoEmission = { falabella: false, ripley: false, mercado_libre: false };
 const initialAutoCreateOrders: ChannelAutoCreateOrders = { falabella: true, ripley: true, mercado_libre: true };
 
@@ -230,6 +235,14 @@ function isChannelAccount(value: unknown): value is ChannelAccount {
     && (autoEmitDocuments === undefined || typeof autoEmitDocuments === 'boolean');
 }
 
+function isOrderSyncStatus(value: unknown): value is OrderSyncStatus {
+  if (!value || typeof value !== 'object') return false;
+  const channelCode = Reflect.get(value, 'channelCode');
+  const lastError = Reflect.get(value, 'lastError');
+  return (channelCode === undefined || typeof channelCode === 'string')
+    && (lastError === undefined || lastError === null || typeof lastError === 'string');
+}
+
 function billingInput(
   companyId: number,
   channelCode: 'falabella' | 'ripley' | 'mercado_libre',
@@ -291,6 +304,7 @@ export default function Companies() {
   const [showCertPassword, setShowCertPassword] = useState(false);
   const [channelAutoEmission, setChannelAutoEmission] = useState<ChannelAutoEmission>(initialAutoEmission);
   const [channelAutoCreateOrders, setChannelAutoCreateOrders] = useState<ChannelAutoCreateOrders>(initialAutoCreateOrders);
+  const [channelSyncErrors, setChannelSyncErrors] = useState<Record<string, string>>({});
   const [loadingBilling, setLoadingBilling] = useState(false);
   const [initialFalabellaAutoEmission, setInitialFalabellaAutoEmission] = useState(false);
   const [search, setSearch] = useState('');
@@ -355,6 +369,7 @@ export default function Companies() {
     setShowCertPassword(false);
     setChannelAutoEmission(initialAutoEmission);
     setChannelAutoCreateOrders(initialAutoCreateOrders);
+    setChannelSyncErrors({});
     setLoadingBilling(false);
     setInitialFalabellaAutoEmission(false);
     setChannelTab('falabella');
@@ -689,15 +704,19 @@ export default function Companies() {
       ripleyApiKey: '',
       ripleyShopId: company.ripleyShopId || '',
       ripleySvcUsername: company.ripleySvcUsername || '',
-      ripleySvcPassword: '',
       ripleySvcBaseUrl: company.ripleySvcBaseUrl || '',
+      ripleySvcPassword: '',
     });
     setLoadingBilling(true);
     void Promise.all([
       api.listOrderChannelAccounts({ companyId: company.id }),
       api.autoEmitGetConfig(),
-    ]).then(([accounts, autoEmission]) => {
+      api.getManagedOrderSyncStatus({ companyId: company.id }),
+    ]).then(([accounts, autoEmission, syncStatus]) => {
       const channelAccounts = Array.isArray(accounts) ? accounts.filter(isChannelAccount) : [];
+      const syncAccounts = Array.isArray(syncStatus?.accounts)
+        ? syncStatus.accounts.filter(isOrderSyncStatus)
+        : [];
       const falabella = channelAccounts.find((account) => account.channelCode === 'falabella');
       const ripley = channelAccounts.find((account) => account.channelCode === 'ripley');
       const mercadoLibre = channelAccounts.find((account) => account.channelCode === 'mercado_libre');
@@ -714,6 +733,13 @@ export default function Companies() {
         mercado_libre: mercadoLibre?.settings?.autoEmitDocuments === true,
       });
       setInitialFalabellaAutoEmission(automatic);
+      setChannelSyncErrors(Object.fromEntries(
+        syncAccounts.flatMap((account) => (
+          account.channelCode && account.lastError?.trim()
+            ? [[account.channelCode, account.lastError]]
+            : []
+        )),
+      ));
     }).catch((caught: unknown) => {
       const message = caught instanceof Error ? caught.message : 'No se pudo cargar la configuración de canales.';
       setError(message);

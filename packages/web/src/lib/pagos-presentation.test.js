@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, PAYMENT_FILTERS, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentFilterLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
+import { CSV_UPLOAD_MIN_MS, PAGOS_COLUMN_COPY, PAGOS_SALES_PAGE, PAYMENT_FILTERS, SUCCESS_NOTICE_MS, chargeKindLabel, csvReadError, decodeSettlementCsv, decodeSettlementSpreadsheet, documentLabel, filterSettlementSales, formatElapsed, formatLivelineDay, igvSplit, importSummary, isSettlementSpreadsheet, livelinePointsFromDays, livelinePointsFromValues, livelineWindowSecs, monthLabel, paymentFilterLabel, paymentStatusLabel, paymentStatusTone, remainingHoldMs, repairProductText, reusedImportNotice, returnProductPair, saleDatesHint, saleIgvStory, saleOverview, salesPageNote, settlementCash, settlementCharts, settlementDailySeries, settlementIndicators, settlementMethodLabel, settlementPair, settlementSalesNextOffset, settlementStatementTotals, settlementStatusLabel, settlementTrendPoints, shortImportFilename, shortProductName, skuLabel, summarizeSettlementSales, teLlegaHint, unmatchedReasonLabel, unitsLabel, waffleOutOf100 } from './pagos-presentation.ts';
 
 test('el resumen de importación no habla de duplicados cuando reusa el archivo', () => {
   assert.equal(importSummary({ reused: true, matchedCount: 3, unmatchedCount: 1 }), 'Este archivo ya está cruzado.');
@@ -121,6 +121,33 @@ test('el resumen de importación no habla de duplicados cuando reusa el archivo'
   assert.equal(invoiced.logisticsSplit.gross, 13.8);
   assert.equal(invoiced.factura.net, 23.88);
   assert.equal(invoiced.queda, 103.24);
+  const realOrder = saleIgvStory({
+    bruto: 99.9,
+    commission: 14.99,
+    shipping: 10.9,
+    invoiceCharges: {
+      commission: { net: 12.7, igv: 2.29, gross: 14.99 },
+      logistics: { net: 9.24, igv: 1.66, gross: 10.9 },
+    },
+  });
+  assert.equal(realOrder.commissionSplit.net, 12.7);
+  assert.equal(realOrder.commissionSplit.gross, 14.99);
+  assert.equal(realOrder.logisticsSplit.net, 9.24);
+  assert.equal(realOrder.logisticsSplit.gross, 10.9);
+  const charts = settlementCharts({
+    saleCount: 1,
+    bruto: 99.9,
+    neto: 74.01,
+    take: 25.89,
+    commission: 14.99,
+    shipping: 10.9,
+    paidNeto: 74.01,
+    paidCount: 1,
+    takeRate: 0.2592,
+  });
+  assert.equal(charts[1].hint, '25.9% del facturado');
+  assert.equal(charts[1].items[0].withoutIgv, 12.7);
+  assert.equal(charts[1].items[1].withoutIgv, 9.24);
   assert.deepEqual(settlementPair(100, -100), { amount: 100, reversal: -100 });
   assert.deepEqual(settlementPair(10, -10), { amount: 10, reversal: -10 });
   assert.deepEqual(settlementPair(50, 0), { amount: 50, reversal: null });
@@ -368,9 +395,34 @@ test('las cabeceras de dinero caben en título y una explicación', () => {
   assert.equal(PAGOS_COLUMN_COPY.ganas.hint, 'Lo que te queda');
   assert.equal(PAGOS_COLUMN_COPY.factura.label, 'Factura');
   assert.equal(PAGOS_COLUMN_COPY.factura.hint, 'Falabella');
+  assert.equal(PAGOS_SALES_PAGE, 80);
   assert.equal(salesPageNote(27, 27), '27 ventas');
   assert.equal(salesPageNote(1, 1), '1 venta');
-  assert.equal(salesPageNote(2000, 5432), 'Mostrando 2000 de 5432. Afina la búsqueda.');
+  assert.equal(salesPageNote(4608, 4608), '4608 ventas');
+  assert.equal(salesPageNote(80, 4608), 'Mostrando 80 de 4608');
+  assert.equal(settlementSalesNextOffset({ offset: 0, limit: 80, totalCount: 4608, items: Array(80) }), 80);
+  assert.equal(settlementSalesNextOffset({ offset: 80, limit: 80, totalCount: 4608, items: Array(80) }), 160);
+  assert.equal(settlementSalesNextOffset({ offset: 4560, limit: 80, totalCount: 4608, items: Array(48) }), undefined);
+  assert.equal(settlementSalesNextOffset({ offset: 0, limit: 80, totalCount: 12, items: Array(12) }), undefined);
+  assert.equal(filterSettlementSales([
+    { orderId: 'A', companyId: 1, paid: true, date: '2026-08-01', skus: ['AG301'] },
+    { orderId: 'B', companyId: 2, paid: false, date: '2026-09-01', skus: ['BB110'] },
+  ], { companyId: 1 }).map((sale) => sale.orderId).join(','), 'A');
+  assert.equal(filterSettlementSales([
+    { orderId: 'A', paid: true, productName: 'Manta', skus: ['AG301'] },
+    { orderId: 'B', paid: true, productName: 'Bolso', skus: ['BB110'] },
+  ], { search: 'ag301' }).map((sale) => sale.orderId).join(','), 'A');
+  assert.equal(summarizeSettlementSales([
+    { paid: true, bruto: 100, commission: 20, shipping: 10, neto: 70, take: 30, itemCount: 1, matched: true },
+    { paid: false, bruto: 50, commission: 10, shipping: 5, neto: 35, take: 15, itemCount: 1, matched: true },
+  ]).saleCount, 2);
+  assert.equal(summarizeSettlementSales([
+    { paid: true, bruto: 100, commission: 20, shipping: 10, neto: 70, take: 30, itemCount: 1, matched: true },
+    { paid: false, bruto: 50, commission: 10, shipping: 5, neto: 35, take: 15, itemCount: 1, matched: true },
+  ]).pendingCount, 1);
+  assert.equal(summarizeSettlementSales([
+    { paid: true, bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 10, neto: 70, take: 30, itemCount: 1, matched: true },
+  ]).envio, igvSplit(50).net);
   assert.deepEqual(
     settlementStatementTotals([
       { bruto: 100, buyerShippingPaid: 50, commission: 20, shipping: 50 },

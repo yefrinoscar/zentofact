@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { RipleyApiClient, RipleySvcClient } from '../dist/index.js';
+import { resolveRipleySvcBaseUrl, RipleyApiClient, RipleySvcClient } from '../dist/index.js';
 
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -41,6 +41,21 @@ test('obtiene imágenes con P11 y prefiere dam_url', async () => {
   assert.equal(request.pathname, '/api/products/offers');
   assert.equal(request.searchParams.get('product_ids'), 'P-1');
   assert.equal(products[0].imageUrl, 'https://dam.ripley.test/p-1.jpg');
+});
+
+test('lee product_medias cuando P11 devuelve un arreglo', async () => {
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret',
+    fetchImpl: async () => response({
+      products: [{
+        product_sku: 'P-2',
+        product_title: 'Escritorio',
+        product_medias: [{ media_url: 'https://home.ripley.com.pe/desk.jpg', type: 'SMALL' }],
+      }],
+    }),
+  });
+  const products = await client.listProductContents(['P-2']);
+  assert.equal(products[0].imageUrl, 'https://home.ripley.com.pe/desk.jpg');
 });
 
 test('trae todas las páginas de ofertas', async () => {
@@ -110,6 +125,101 @@ test('trae todas las páginas de pedidos', async () => {
   const orders = await client.listAllOrders({ startDate: '2026-08-01T00:00:00Z' });
   assert.equal(orders.length, 101);
   assert.deepEqual(calls, [0, 100]);
+});
+
+test('lista shipments Mirakl ST11 filtrando por order_id repetido', async () => {
+  let request;
+  const raw = {
+    id: 'shipment-1', order_id: 'R-100-A', status: 'READY_FOR_PICK_UP',
+    created_date: '2026-09-12T10:00:00Z', last_updated_date: '2026-09-12T11:00:00Z',
+    shipped_date: null, shipment_lines: [],
+  };
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret', shopId: 17,
+    fetchImpl: async (url, init) => {
+      request = { url: new URL(url), init };
+      return response({ data: [raw], next_page_token: null, previous_page_token: null });
+    },
+  });
+
+  const page = await client.listShipments({ orderIds: ['R-100-A', 'R-200-A'], limit: 50 });
+  assert.equal(request.url.pathname, '/api/shipments');
+  assert.deepEqual(request.url.searchParams.getAll('order_id'), ['R-100-A', 'R-200-A']);
+  assert.equal(request.url.searchParams.get('limit'), '50');
+  assert.equal(request.url.searchParams.get('shop_id'), '17');
+  assert.equal(request.init.headers.Authorization, 'secret');
+  assert.deepEqual(page.shipments[0], {
+    id: 'shipment-1', orderId: 'R-100-A', status: 'READY_FOR_PICK_UP',
+    createdAt: '2026-09-12T10:00:00.000Z', updatedAt: '2026-09-12T11:00:00.000Z',
+    shippedAt: null, raw,
+  });
+});
+
+test('valida shipments listos para recojo mediante Mirakl ST26', async () => {
+  let request;
+  const client = new RipleyApiClient({
+    baseUrl: 'https://marketplace.ripley.test', apiKey: 'secret', shopId: 17,
+    fetchImpl: async (url, init) => {
+      request = { url: new URL(url), init };
+      return response({ shipment_success: [{ id: 'shipment-1' }], shipment_errors: [] });
+    },
+  });
+
+  const result = await client.validateShipmentsReadyForPickup(['shipment-1']);
+  assert.equal(request.url.pathname, '/api/shipments/ready_for_pick_up');
+  assert.equal(request.url.searchParams.get('shop_id'), '17');
+  assert.equal(request.init.method, 'PUT');
+  assert.equal(request.init.headers.Authorization, 'secret');
+  assert.equal(request.init.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(request.init.body), { shipments: [{ id: 'shipment-1' }] });
+  assert.deepEqual(result, { successIds: ['shipment-1'], errors: [] });
+});
+test('si el login vendor falla, no usa el login web y reporta el Basic enviado', async () => {
+  const paths = [];
+  const client = new RipleySvcClient({
+    baseUrl: 'https://sellercenter.ripley.test',
+    username: 'seller_limbo',
+    password: 'clave-invalida',
+    country: 'PE',
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url);
+      paths.push(parsed.pathname);
+      if (parsed.pathname.endsWith('/auth/login/vendor')) {
+        assert.equal(parsed.host, 'sellercenter.ripley.test');
+        assert.equal(init.headers['X-Country'], 'PE');
+        assert.equal(init.headers.Authorization, `Basic ${btoa('seller_limbo:clave-invalida')}`);
+        assert.equal(init.body, undefined);
+        return response({ message: 'Invalid authentication credentials' }, 403);
+      }
+      return response({ message: 'no debe llamarse el login web' }, 500);
+    },
+  });
+
+  await assert.rejects(
+    () => client.listLabels({ orderId: '7935614201' }),
+    (error) => {
+      assert.deepEqual(paths, ['/api/current/auth/login/vendor']);
+      assert.match(error.message, /HTTP 403: Invalid authentication credentials/);
+      assert.match(error.message, /POST \/api\/current\/auth\/login\/vendor \(sellercenter.ripley.test\)/);
+      assert.match(error.message, /Authorization Basic \(usuario seller_limbo, clave de 14 caracteres\)/);
+      assert.match(error.message, /X-Country PE/);
+      assert.match(error.message, /no uses la API key de Mirakl/);
+      assert.equal(error.details.ripleyAuth.username, 'seller_limbo');
+      assert.equal(error.details.ripleyAuth.passwordLength, 14);
+      assert.equal(error.details.ripleyAuth.sent.officialApi.path, '/api/current/auth/login/vendor');
+      assert.equal(error.details.ripleyAuth.sent.officialApi.body, null);
+      assert.equal(error.details.ripleyAuth.sent.webFallback, undefined);
+      assert.deepEqual(error.details.ripleyAuth.attempts, [{
+        step: 'vendor',
+        method: 'POST',
+        path: '/api/current/auth/login/vendor',
+        host: 'sellercenter.ripley.test',
+        status: 403,
+        ripley: 'Invalid authentication credentials',
+      }]);
+      return true;
+    },
+  );
 });
 
 test('autentica SVC y lista la bandeja logística Fast Management', async () => {
@@ -246,4 +356,35 @@ test('desvincula etiquetas de un manifiesto', async () => {
   await client.detachManifestLabels('manifest-1', ['label-1']);
   assert.equal(calls[1].init.method, 'PATCH');
   assert.deepEqual(JSON.parse(calls[1].init.body), { labels: [{ _id: 'label-1' }] });
+});
+
+test('usa SVC por defecto y rechaza una URL comercial Mirakl', () => {
+  assert.equal(resolveRipleySvcBaseUrl(''), 'https://sellercenter.ripleylabs.com');
+  assert.throws(() => resolveRipleySvcBaseUrl('https://ripleyperu-prod.mirakl.net'), /Mirakl/);
+});
+
+test('conserva la contraseña exacta al construir Basic Auth', async () => {
+  const password = ' clave-con-espacios ';
+  const client = new RipleySvcClient({
+    baseUrl: 'https://sellercenter.ripley.test', username: 'seller', password,
+    fetchImpl: async (url, init) => {
+      if (new URL(url).pathname.endsWith('/auth/login/vendor')) {
+        assert.equal(init.headers.Authorization, `Basic ${btoa(`seller:${password}`)}`);
+        return response({ status_code: 200, access_token: 'token' });
+      }
+      assert.equal(init.headers.Authorization, 'Bearer token');
+      return response({ labels: [] });
+    },
+  });
+  await client.listLabels();
+});
+
+test('una página HTML de login no se presenta como una lista SVC vacía', async () => {
+  const client = new RipleySvcClient({
+    baseUrl: '', username: 'seller', password: 'clave',
+    fetchImpl: async (url) => new URL(url).pathname.endsWith('/auth/login/vendor')
+      ? response({ access_token: 'token' })
+      : new Response('<html>Iniciar sesión</html>', { headers: { 'content-type': 'text/html' } }),
+  });
+  await assert.rejects(() => client.listLabels(), /respuesta JSON/);
 });

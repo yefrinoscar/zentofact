@@ -3,6 +3,10 @@
 import { apiErrorFromResponse } from './api-error';
 import { clearClientStorageOnLogout, forceReauthAndReload } from './clearClientStorage';
 import type { OwnFleetConfig, OwnFleetConfigInput } from './own-fleet-shipping';
+import {
+  parseOperatorNotificationsResponse,
+  type OperatorNotificationsResponse,
+} from './notifications-presentation';
 
 const BASE = '';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -37,9 +41,12 @@ export type OrderSyncResult = {
   channelAccountId: number;
   companyId: number;
   channelCode: string;
+  companyName?: string;
+  displayName?: string;
   status: string;
   runId?: number | null;
   logId?: string | null;
+  error?: string;
   pages?: number;
   received?: number;
   upserted?: number;
@@ -48,6 +55,11 @@ export type OrderSyncResult = {
 
 export type OrderSyncResponse = {
   results?: OrderSyncResult[];
+};
+
+export type OrderSyncSettings = {
+  intervalMinutes: number;
+  lookbackDays: number;
 };
 
 export type ProductAssociationCandidate = {
@@ -164,6 +176,17 @@ const apiHttp = {
   getMe: () => req('/me'),
   /** Revoca todas las sesiones del usuario en el servidor (todos los dispositivos). */
   logoutAll: () => req('/me/logout', { method: 'POST' }),
+  listNotifications: () => req('/notifications').then(parseOperatorNotificationsResponse),
+  markNotificationsRead: (input: { ids?: string[]; all?: boolean } = {}) =>
+    req<OperatorNotificationsResponse>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then(parseOperatorNotificationsResponse),
+  dismissNotification: (id: string) =>
+    req<OperatorNotificationsResponse>('/notifications/dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    }).then(parseOperatorNotificationsResponse),
   listUsers: () => req('/users'),
   createUser: (data: any) => req('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => req(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -184,6 +207,20 @@ const apiHttp = {
   // Dashboard consolidado
   getDashboard: (filter: { from?: string; to?: string; companyId?: number; branchId?: number } = {}) =>
     req(`/dashboard${qs(filter)}`),
+  listProductSalesReport: (filter: {
+    from?: string;
+    to?: string;
+    search?: string;
+    companyId?: number;
+    minGrossSales?: number;
+    minFalabellaTake?: number;
+    minArrives?: number;
+    payout?: 'all' | 'paid' | 'pending';
+    sortBy?: string;
+    sortDir?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/dashboard/product-sales${qs(filter)}`),
   refreshDashboard: () => req('/dashboard/refresh', { method: 'POST' }),
   listSettlementImports: (filter: { limit?: number; offset?: number } = {}) =>
     req(`/pagos/imports${qs(filter)}`),
@@ -221,12 +258,19 @@ const apiHttp = {
     req(`/order-management/accounts${qs(filter)}`),
   getManagedOrderSyncStatus: (filter: { companyId?: number; channelAccountId?: number } = {}) =>
     req<OrderSyncStatusResponse>(`/order-management/sync-status${qs(filter)}`),
+  getOrderSyncSettings: () => req<OrderSyncSettings>('/order-management/sync-settings'),
+  updateOrderSyncSettings: (data: Partial<OrderSyncSettings>) =>
+    req<OrderSyncSettings>('/order-management/sync-settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
   syncManagedOrders: (data: {
     companyId?: number;
     channelAccountId?: number;
     mode?: 'incremental' | 'backfill';
     from?: string;
     to?: string;
+    lookbackDays?: number;
   } = {}) => req<OrderSyncResponse>('/order-management/sync', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -247,12 +291,17 @@ const apiHttp = {
     channelCode?: string;
     stage?: 'pending' | 'ready' | 'shipped';
     urgency?: 'overdue' | 'today' | 'tomorrow' | 'later';
+    deadline?: string;
     search?: string;
     limit?: number;
     offset?: number;
   } = {}) => req(`/logistics-inbox${qs(filter)}`),
-  printLogisticsPack: (data: { orderIds: number[]; includePacking?: boolean }) =>
+  printLogisticsPack: (data: { orderIds: number[] }) =>
     req('/logistics-inbox/print', { method: 'POST', body: JSON.stringify(data) }),
+  markLogisticsOrderReady: (data: { orderId: number; pickupDate?: string; warehouseAddress?: string }) =>
+    req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/ready`, { method: 'POST', body: JSON.stringify(data) }),
+  markLogisticsOrderDelivered: (data: { orderId: number }) =>
+    req(`/logistics-inbox/${encodeURIComponent(String(data.orderId))}/delivered`, { method: 'POST', body: JSON.stringify(data) }),
   listManagedOrders: (filter: {
     companyId?: number;
     channelAccountId?: number;
@@ -267,6 +316,24 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/order-management/orders${qs(filter)}`),
+  listCanceledOrders: (filter: {
+    companyId?: number;
+    channelCode?: string;
+    kind?: 'cancelled' | 'returned';
+    approval?: 'pending' | 'approved';
+    from?: string;
+    to?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => req(`/order-management/canceled-orders${qs(filter)}`),
+  approveReturnStock: (orderId: number, data: {
+    lines?: Array<{ orderItemId: number; stockQuantity: number; mermaQuantity: number }>;
+  } = {}) =>
+    req(`/order-management/canceled-orders/${orderId}/approve-return`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   getManagedOrderSalesPulse: (filter: { date?: string } = {}) =>
     req(`/order-management/sales-pulse${qs(filter)}`),
   getSalespersonHome: (filter: {
@@ -274,7 +341,7 @@ const apiHttp = {
     to?: string;
     limit?: number;
     offset?: number;
-    sortBy?: 'orderedAt' | 'total';
+    sortBy?: 'orderedAt' | 'total' | 'commission';
     sortDir?: 'asc' | 'desc';
   } = {}) =>
     req(`/order-management/my-sales${qs(filter)}`),
@@ -301,6 +368,7 @@ const apiHttp = {
     paymentMethod: string;
     paymentStatus?: string;
     receivedBy?: string;
+    paidTo?: string;
     paymentProof?: { name: string; type: string; dataUrl: string } | null;
   }) => req(`/order-management/orders/${id}/payment`, {
     method: 'PATCH',
@@ -420,6 +488,11 @@ const apiHttp = {
     limit?: number;
     offset?: number;
   } = {}) => req(`/insumos/movements${qs(filter)}`),
+  getInsumoAlertEmails: () => req('/insumos/alerts'),
+  setInsumoAlertEmails: (emails: string | string[]) => req('/insumos/alerts', {
+    method: 'PUT',
+    body: JSON.stringify({ emails }),
+  }),
 
   // Empresas
   listCompanies: () => req('/companies'),

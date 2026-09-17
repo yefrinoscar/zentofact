@@ -1,13 +1,23 @@
 import { PDFDocument } from 'pdf-lib';
-import { appendTicketInventoryPages, composeA4ShippingLabelSheet, ticketCode } from './shipping-label-sheet.js';
+import { RipleyApiClient } from '@zentofact/ripley-api';
+import { composeA4ShippingLabelSheet } from './shipping-label-sheet.js';
 import { buildManualLabelSheet } from './manual-shipping-label.js';
+import { createLogId } from './error-log.js';
+import { MARKETPLACE_RAW_IMAGE_SQL, marketplaceItemImageUrl } from './catalog/item-image.js';
+import { enqueueStockJob } from './catalog/stock-jobs.js';
+import { shouldListenStockOrder } from './catalog/stock-commitment.js';
+import { closeStaleMarketplaceFulfillment } from './close-stale-marketplace-orders.js';
+import { enqueueRipleyStockJob, remapPersistedRipleyReadyOrders } from './order-adapters/ripley.js';
+import { isRipleySyncEnabled } from './system-config.js';
+import { providerFetch } from './provider-request.js';
+import { ripleyApiUrl } from './ripley-api-url.js';
 
 const STAGES = new Set(['pending', 'ready', 'shipped']);
 const CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre', 'manual']);
 const URGENCIES = new Set(['overdue', 'today', 'tomorrow', 'later']);
 const LIMA = 'America/Lima';
 const OPEN_STATUSES = new Set(['pending', 'preparing', 'ready_to_ship', 'shipped', 'delivered']);
-const MAX_PRINT = 80;
+const MAX_PRINT = 300;
 
 let corePromise;
 function loadCore() {
@@ -51,10 +61,23 @@ export function parseLogisticsInboxFilters(input = {}) {
     stage,
     channelCode: channelCode || null,
     urgency: urgency || null,
+    deadline: parseDeadlineDate(input.deadline),
     search: String(input.search || '').trim().slice(0, 120),
     limit: positiveInt(input.limit, 80, 300),
     offset: Math.max(Number.isInteger(Number(input.offset)) ? Number(input.offset) : 0, 0),
   };
+}
+
+function parseDeadlineDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Fecha inválida.');
+  const [year, month, day] = text.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+    throw new Error('Fecha inválida.');
+  }
+  return text;
 }
 
 function fulfillmentFilter(stage) {
@@ -64,19 +87,18 @@ function fulfillmentFilter(stage) {
 }
 
 function itemImage(row) {
-  const raw = row.raw_data || {};
-  const meta = row.metadata || {};
-  return String(
-    row.image_url
-    || raw.Image || raw.ImageUrl || raw.ImageURL || raw.ProductImage || raw.MainImage
-    || meta.imageUrl || '',
-  ).trim();
+  return marketplaceItemImageUrl(row.raw_data || {}, {
+    imageUrl: row.image_url,
+    metaImageUrl: row.metadata?.imageUrl,
+  });
 }
 
 function normalizeItem(row) {
+  const mainSku = String(row.main_sku || '').trim() || null;
   return {
     id: Number(row.id),
-    sku: row.sku || row.provider_sku || null,
+    sku: mainSku || row.sku || row.provider_sku || null,
+    mainSku,
     providerSku: row.provider_sku || null,
     shopSku: row.shop_sku || null,
     description: row.description || row.product_name || 'Producto',
@@ -110,10 +132,11 @@ export function urgencyForDeadline(value, now = new Date()) {
   if (!value) return 'later';
   const deadline = new Date(value);
   if (Number.isNaN(deadline.getTime())) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const dayOf = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: LIMA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
   const deadlineDay = dayOf(deadline);
-  if (deadlineDay === dayOf(now)) return 'today';
+  const today = dayOf(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === dayOf(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return 'tomorrow';
   return 'later';
 }
@@ -123,13 +146,14 @@ export function urgencyForDeadline(value, now = new Date()) {
 export function groupLogisticsItems(items) {
   const groups = new Map();
   for (const item of items) {
-    const key = String(item.sku || item.description || item.id).trim().toLowerCase();
+    const key = String(item.mainSku || item.sku || item.description || item.id).trim().toLowerCase();
     const existing = groups.get(key);
     if (existing) {
       existing.quantity += item.quantity;
       existing.lineCount += 1;
       if (!existing.imageUrl && item.imageUrl) existing.imageUrl = item.imageUrl;
       if (!existing.shopSku && item.shopSku) existing.shopSku = item.shopSku;
+      if (!existing.mainSku && item.mainSku) existing.mainSku = item.mainSku;
       continue;
     }
     groups.set(key, { ...item, lineCount: 1 });
@@ -164,25 +188,68 @@ function normalizeInboxOrder(row) {
     updatedAt: row.updated_at,
     itemsCount: items.reduce((total, item) => total + item.quantity, 0),
     items,
+    warehouseAddress: String(row.warehouse_address || '').trim() || null,
+    hasRipleySvcCredentials: row.has_ripley_svc_credentials === true,
     labelPrints: Array.isArray(row.label_prints) ? row.label_prints : [],
     labelPrint: normalizeLabelPrint(row),
   };
 }
 
+const LIMA_DEADLINE_DATE = `(o.promised_shipping_at at time zone '${LIMA}')::date`;
+const LIMA_TODAY_DATE = `(now() at time zone '${LIMA}')::date`;
+
 const URGENCY_SQL = {
-  overdue: `o.promised_shipping_at is not null and o.promised_shipping_at < now()`,
-  today: `o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date`,
-  tomorrow: `o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date = (now() at time zone '${LIMA}')::date + 1`,
-  later: `o.promised_shipping_at is not null
-    and o.promised_shipping_at >= now()
-    and (o.promised_shipping_at at time zone '${LIMA}')::date > (now() at time zone '${LIMA}')::date + 1`,
+  overdue: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} < ${LIMA_TODAY_DATE}`,
+  today: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} = ${LIMA_TODAY_DATE}`,
+  tomorrow: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} = ${LIMA_TODAY_DATE} + 1`,
+  later: `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} > ${LIMA_TODAY_DATE} + 1`,
 };
 
-const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and o.promised_shipping_at >= now()`;
+const DATED_UPCOMING_SQL = `o.promised_shipping_at is not null and ${LIMA_DEADLINE_DATE} >= ${LIMA_TODAY_DATE}`;
+const MANUAL_UNDATED_SQL = `ch.code = 'manual' and o.promised_shipping_at is null`;
+const WORKING_QUEUE_SQL = `((${DATED_UPCOMING_SQL}) or (${MANUAL_UNDATED_SQL}))`;
+const LATER_OR_UNDATED_SQL = `((${URGENCY_SQL.later}) or (${MANUAL_UNDATED_SQL}))`;
+const CLOSED_CHANNEL_STATUS_SQL = `'(^|\\|)(shipped|delivered|canceled|cancelled|returned|failed)(\\||$)'`;
+const MARKETPLACE_ALREADY_SENT_SQL = `(
+  lower(coalesce(o.provider_status, '')) ~ ${CLOSED_CHANNEL_STATUS_SQL}
+  or (
+    ch.code = 'falabella'
+    and exists (
+      select 1 from falabella_orders fo
+      where fo.company_id = o.company_id
+        and fo.order_id = o.external_order_id
+        and lower(coalesce(fo.status, '')) ~ ${CLOSED_CHANNEL_STATUS_SQL}
+    )
+  )
+  or (
+    ch.code = 'ripley'
+    and lower(replace(coalesce(o.provider_status, ''), '-', '_'))
+      ~ '(^|\\|)(shipped|delivered|to_collect|collected|closed|received|canceled|cancelled|returned)(\\||$)'
+  )
+)`;
+const OPEN_UNSENT_SQL = `o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and not (${MARKETPLACE_ALREADY_SENT_SQL})`;
 
-function whereClause(filters, values, { forStage } = {}) {
+export async function countOpenOverdueOrders(db) {
+  const target = db || (await loadCore()).pool;
+  const result = await target.query(
+    `select count(*)::int as count,
+            min(o.promised_shipping_at) as oldest_at
+     from orders o
+     join order_channel_accounts a on a.id=o.channel_account_id
+     join order_channels ch on ch.id=a.channel_id
+     where o.order_status not in ('cancelled', 'failed')
+       and o.fulfillment_status not in ('cancelled', 'returned', 'failed')
+       and ${OPEN_UNSENT_SQL}
+       and ${URGENCY_SQL.overdue}`,
+  );
+  const row = result.rows[0] || {};
+  return {
+    count: Number(row.count || 0),
+    oldestAt: row.oldest_at || null,
+  };
+}
+
+function whereClause(filters, values, { forStage, ignoreDeadline } = {}) {
   const where = [
     `o.order_status not in ('cancelled', 'failed')`,
     `o.fulfillment_status not in ('cancelled', 'returned', 'failed')`,
@@ -194,6 +261,9 @@ function whereClause(filters, values, { forStage } = {}) {
   if (filters.channelCode) {
     values.push(filters.channelCode);
     where.push(`ch.code=$${values.length}`);
+  }
+  if (filters.ripleyEnabled === false) {
+    where.push(`ch.code <> 'ripley'`);
   }
   if (filters.search) {
     values.push(filters.search);
@@ -207,6 +277,7 @@ function whereClause(filters, values, { forStage } = {}) {
         where oi.order_id=o.id
           and (
             coalesce(oi.sku, '') ilike '%' || $${values.length} || '%'
+            or coalesce(oi.main_sku, '') ilike '%' || $${values.length} || '%'
             or coalesce(oi.description, '') ilike '%' || $${values.length} || '%'
           )
       )
@@ -218,8 +289,19 @@ function whereClause(filters, values, { forStage } = {}) {
     if (forStage === 'shipped') {
       where.push(`coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'`);
     } else {
-      where.push(DATED_UPCOMING_SQL);
-      if (filters.urgency) where.push(`(${URGENCY_SQL[filters.urgency]})`);
+      where.push(`not (${MARKETPLACE_ALREADY_SENT_SQL})`);
+      if (ignoreDeadline) {
+        where.push(WORKING_QUEUE_SQL);
+      } else if (filters.urgency === 'overdue') {
+        where.push(`(${URGENCY_SQL.overdue})`);
+      } else if (filters.deadline) {
+        values.push(filters.deadline);
+        where.push(`(o.promised_shipping_at at time zone '${LIMA}')::date = $${values.length}::date`);
+      } else if (filters.urgency) {
+        where.push(`(${URGENCY_SQL[filters.urgency]})`);
+      } else {
+        where.push(WORKING_QUEUE_SQL);
+      }
     }
   }
   return where;
@@ -228,7 +310,8 @@ function whereClause(filters, values, { forStage } = {}) {
 const ITEMS_SQL = `coalesce((
   select jsonb_agg(jsonb_build_object(
     'id', oi.id,
-    'sku', oi.sku,
+    'sku', nullif(trim(coalesce(p.main_sku, psku.main_sku, oi.main_sku, oi.sku, oi.provider_sku, '')), ''),
+    'main_sku', nullif(trim(coalesce(p.main_sku, psku.main_sku, oi.main_sku, '')), ''),
     'provider_sku', oi.provider_sku,
     'shop_sku', coalesce(
       nullif(trim(listing.shop_sku), ''),
@@ -244,7 +327,8 @@ const ITEMS_SQL = `coalesce((
       nullif(listing.metadata->'images'->>0, ''),
       nullif(listing.metadata->'images'->0->>'Url', ''),
       nullif(listing.metadata->'images'->0->>'url', ''),
-      nullif(listing.metadata->>'imageUrl', '')
+      nullif(listing.metadata->>'imageUrl', ''),
+      ${MARKETPLACE_RAW_IMAGE_SQL}
     ),
     'raw_data', oi.raw_data,
     'metadata', oi.metadata
@@ -266,24 +350,52 @@ const LABEL_PRINT_SQL = `(
   where lp.order_id=o.id
 ) as label_print`;
 
-export async function listLogisticsInbox(filtersInput = {}, db) {
+const LABEL_PRINT_COUNT_SQL = `coalesce(
+  (select lp.print_count from logistics_label_prints lp where lp.order_id = o.id),
+  (
+    select sum(prints.print_count)::int
+    from falabella_label_prints prints
+    where prints.company_id = o.company_id
+      and prints.order_id = o.external_order_id
+  ),
+  0
+)`;
+const PRINTABLE_READY_SQL = `(
+  ch.code = 'manual'
+  or (ch.code = 'falabella' and o.company_id is not null)
+)`;
+
+export async function listLogisticsInbox(filtersInput = {}, db, options = {}) {
   const filters = parseLogisticsInboxFilters(filtersInput);
   const target = db || (await loadCore()).pool;
+  const ripleyEnabled = Object.hasOwn(options, 'ripleyEnabled')
+    ? options.ripleyEnabled === true
+    : await isRipleySyncEnabled(target);
+  if (!ripleyEnabled) filters.ripleyEnabled = false;
+  await closeStaleMarketplaceFulfillment(target);
+  if (ripleyEnabled) await remapPersistedRipleyReadyOrders(target);
 
   const countValues = [];
   const countWhere = whereClause(filters, countValues);
   const countResult = await target.query(
     `select
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${DATED_UPCOMING_SQL})::int as pending_count,
-       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and ${DATED_UPCOMING_SQL})::int as ready_count,
+       count(*) filter (where o.fulfillment_status in ('pending', 'preparing') and ${WORKING_QUEUE_SQL} and not (${MARKETPLACE_ALREADY_SENT_SQL}))::int as pending_count,
+       count(*) filter (where o.fulfillment_status = 'ready_to_ship' and ${WORKING_QUEUE_SQL} and not (${MARKETPLACE_ALREADY_SENT_SQL}))::int as ready_count,
+       count(*) filter (
+         where o.fulfillment_status = 'ready_to_ship'
+           and ${WORKING_QUEUE_SQL}
+           and not (${MARKETPLACE_ALREADY_SENT_SQL})
+           and ${PRINTABLE_READY_SQL}
+           and ${LABEL_PRINT_COUNT_SQL} = 0
+       )::int as ready_unprinted_count,
        count(*) filter (
          where o.fulfillment_status in ('shipped', 'delivered')
            and coalesce(o.updated_at, o.ordered_at, o.created_at) >= now() - interval '7 days'
        )::int as shipped_count,
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.overdue})::int as overdue_count,
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.today})::int as today_count,
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
-       count(*) filter (where o.fulfillment_status in ('pending', 'preparing', 'ready_to_ship') and ${URGENCY_SQL.later})::int as later_count
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.overdue})::int as overdue_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.today})::int as today_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${URGENCY_SQL.tomorrow})::int as tomorrow_count,
+       count(*) filter (where ${OPEN_UNSENT_SQL} and ${LATER_OR_UNDATED_SQL})::int as later_count
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
      join order_channels ch on ch.id=a.channel_id
@@ -303,6 +415,9 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
+       nullif(trim(c.direccion), '') as warehouse_address,
+       (nullif(trim(c.ripley_svc_username), '') is not null
+         and nullif(trim(c.ripley_svc_password), '') is not null) as has_ripley_svc_credentials,
        ${ITEMS_SQL},
        coalesce((
          select jsonb_agg(jsonb_build_object(
@@ -327,12 +442,37 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
     listValues,
   );
 
+  const dateValues = [];
+  const dateWhere = filters.stage === 'shipped'
+    ? []
+    : whereClause(filters, dateValues, { forStage: filters.stage, ignoreDeadline: true });
+  const dateResult = filters.stage === 'shipped'
+    ? { rows: [] }
+    : await target.query(
+      `select to_char((o.promised_shipping_at at time zone '${LIMA}')::date, 'YYYY-MM-DD') as date,
+              count(*)::int as count
+       from orders o
+       join order_channel_accounts a on a.id=o.channel_account_id
+       join order_channels ch on ch.id=a.channel_id
+       left join companies c on c.id=o.company_id
+       where ${dateWhere.join(' and ')}
+       group by 1
+       order by 1`,
+      dateValues,
+    );
+
   const counts = countResult.rows[0] || {};
   return {
     orders: listResult.rows.map(normalizeInboxOrder),
+    channels: {
+      falabella: true,
+      ripley: ripleyEnabled,
+      manual: true,
+    },
     counts: {
       pending: Number(counts.pending_count || 0),
       ready: Number(counts.ready_count || 0),
+      readyUnprinted: Number(counts.ready_unprinted_count || 0),
       shipped: Number(counts.shipped_count || 0),
       urgency: {
         overdue: Number(counts.overdue_count || 0),
@@ -340,6 +480,10 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
         tomorrow: Number(counts.tomorrow_count || 0),
         later: Number(counts.later_count || 0),
       },
+      dates: (dateResult.rows || []).map((row) => ({
+        date: String(row.date),
+        count: Number(row.count || 0),
+      })),
     },
     totalCount: Number(listResult.rows[0]?.total_count || 0),
     limit: filters.limit,
@@ -350,12 +494,19 @@ export async function listLogisticsInbox(filtersInput = {}, db) {
 
 function decodePdf(value) {
   if (!value) return null;
-  if (Buffer.isBuffer(value)) return value;
-  if (value instanceof Uint8Array) return Buffer.from(value);
-  const text = String(value);
-  const base64 = text.includes(',') ? text.split(',').pop() : text;
-  if (!base64) return null;
-  return Buffer.from(base64, 'base64');
+  let buffer = null;
+  if (Buffer.isBuffer(value)) buffer = value;
+  else if (value instanceof Uint8Array) buffer = Buffer.from(value);
+  else {
+    const text = String(value);
+    const base64 = text.includes(',') ? text.split(',').pop() : text;
+    if (!base64) return null;
+    buffer = Buffer.from(base64, 'base64');
+  }
+  if (!buffer?.length) return null;
+  const header = buffer.subarray(0, 8).toString('utf8');
+  if (!header.includes('%PDF')) return null;
+  return buffer;
 }
 
 async function mergePdfBuffers(buffers) {
@@ -368,25 +519,6 @@ async function mergePdfBuffers(buffers) {
   return output.save();
 }
 
-function packingTicket(order, index) {
-  return {
-    code: ticketCode(index + 1),
-    ticketNumber: index + 1,
-    labelIndex: 1,
-    labelCount: 1,
-    inventory: {
-      customerName: String(order.customer?.name || '').trim() || 'Cliente no informado',
-      items: (order.items || []).map((item) => ({
-        name: item.description,
-        sellerSku: item.sku,
-        sku: item.sku,
-        quantity: item.quantity,
-        imageUrl: item.imageUrl,
-      })),
-    },
-  };
-}
-
 export function parsePrintSelection(input = {}) {
   const ids = [...new Set(
     (Array.isArray(input.orderIds) ? input.orderIds : [])
@@ -395,10 +527,7 @@ export function parsePrintSelection(input = {}) {
   )];
   if (!ids.length) throw new Error('Selecciona al menos un pedido para imprimir.');
   if (ids.length > MAX_PRINT) throw new Error(`Puedes imprimir hasta ${MAX_PRINT} pedidos por vez.`);
-  return {
-    orderIds: ids,
-    includePacking: input.includePacking !== false,
-  };
+  return { orderIds: ids };
 }
 
 async function loadPrintOrders(orderIds, db) {
@@ -410,6 +539,9 @@ async function loadPrintOrders(orderIds, db) {
        ch.code as channel_code, ch.name as channel_name,
        a.display_name as channel_account_name,
        coalesce(nullif(c.nombre_comercial, ''), nullif(c.nombre, ''), c.razon_social, 'Tienda') as company_name,
+       nullif(trim(c.direccion), '') as warehouse_address,
+       (nullif(trim(c.ripley_svc_username), '') is not null
+         and nullif(trim(c.ripley_svc_password), '') is not null) as has_ripley_svc_credentials,
        ${ITEMS_SQL}
      from orders o
      join order_channel_accounts a on a.id=o.channel_account_id
@@ -438,17 +570,172 @@ async function recordLabelPrints(db, orderIds, printedBy) {
   );
 }
 
-function svcLabelId(label) {
-  return String(label?._id || label?.id || label?.document_id || '').trim();
+function svcPayload(value) {
+  const root = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return root.data && typeof root.data === 'object' && !Array.isArray(root.data) ? root.data : root;
+}
+
+function uniqueTexts(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function objectMetadata(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function svcDownloadIdBatches(labels) {
+  const documentIds = uniqueTexts(labels.map((label) => label?.document_id || label?.documentId));
+  const internalIds = uniqueTexts(labels.map((label) => label?._id || label?.id));
+  const batches = [];
+  if (documentIds.length) batches.push(documentIds);
+  if (internalIds.length && internalIds.join('\0') !== documentIds.join('\0')) batches.push(internalIds);
+  return batches;
 }
 
 function svcLabels(payload) {
+  const data = svcPayload(payload);
   const root = payload && typeof payload === 'object' ? payload : {};
-  const data = root.data && typeof root.data === 'object' ? root.data : root;
-  const list = Array.isArray(data.labels) ? data.labels
-    : Array.isArray(root.labels) ? root.labels
-      : [];
-  return list;
+  if (Array.isArray(data.labels)) return data.labels;
+  if (Array.isArray(root.labels)) return root.labels;
+  return [];
+}
+
+function labelsForOrder(payload, orderId) {
+  const wanted = String(orderId || '').trim();
+  const labels = svcLabels(payload);
+  if (!wanted) return labels;
+  const matching = labels.filter((label) => {
+    const labelOrder = String(
+      label?.order_id || label?.orderId || label?.order_data?.order_id || '',
+    ).trim();
+    return !labelOrder || labelOrder === wanted;
+  });
+  return matching.length ? matching : labels;
+}
+
+function svcPdfValue(value, keys = ['labels_generated', 'pdf', 'base64', 'document']) {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (!value || typeof value !== 'object') return null;
+  for (const key of keys) {
+    if (typeof value[key] === 'string' && value[key].trim()) return value[key];
+  }
+  if (value.data && value.data !== value) return svcPdfValue(value.data, keys);
+  return null;
+}
+
+export function ripleyOrderLookupIds(order = {}) {
+  const metadata = objectMetadata(order.metadata);
+  return uniqueTexts([
+    order.externalOrderId,
+    order.externalOrderNumber,
+    metadata.commercialId,
+    metadata.ripleySvc?.orderId,
+  ]);
+}
+
+function isRipleyAuthFailure(reason) {
+  return /credenciales|HTTP 401|HTTP 403|Authorization Basic|Invalid authentication|CredentialsSignin/i.test(String(reason || ''));
+}
+
+function printFailureMessage(skipped) {
+  if (skipped.length === 1) return skipped[0].reason;
+  if (skipped.length) return skipped.map((entry) => entry.reason).filter(Boolean).join(' ');
+  return 'No hay nada para imprimir en esta selección.';
+}
+
+function summarizePrintOrders(orders) {
+  return orders.map((order) => ({
+    id: order.id,
+    channel: order.channelCode,
+    companyId: order.companyId || null,
+    companyName: order.companyName || null,
+    externalOrderId: order.externalOrderId || null,
+    externalOrderNumber: order.externalOrderNumber || null,
+  }));
+}
+
+function throwPrintFailure(skipped, extra = {}, dependencies = {}) {
+  const logId = (dependencies.createLogId || createLogId)();
+  const details = { skipped, ...extra };
+  const write = dependencies.log || console.error;
+  write(JSON.stringify({ event: 'logistics.print.failed', logId, ...details }));
+  const error = new Error(printFailureMessage(skipped));
+  error.logId = logId;
+  error.details = details;
+  throw error;
+}
+
+async function listRipleyLabelsForId(order, orderId, listLabels) {
+  const listed = await listLabels({
+    companyId: order.companyId,
+    orderId,
+  });
+  const labels = labelsForOrder(listed, orderId);
+  if (labels.length) return labels;
+  const found = await listLabels({
+    companyId: order.companyId,
+    find: orderId,
+  });
+  return labelsForOrder(found, orderId);
+}
+
+async function downloadRipleyOrderLabel(order, listLabels, downloadLabels) {
+  const lookupIds = ripleyOrderLookupIds(order);
+  if (!lookupIds.length) {
+    const error = new Error('El pedido Ripley no tiene número para buscar la etiqueta.');
+    error.details = { lookupIds };
+    throw error;
+  }
+  const attempts = [];
+  let lastEmpty = `Ripley no tiene etiqueta oficial para ${lookupIds[0]} (busqué ${lookupIds.join(', ')}).`;
+  for (const orderId of lookupIds) {
+    try {
+      const labels = await listRipleyLabelsForId(order, orderId, listLabels);
+      const batches = svcDownloadIdBatches(labels);
+      if (!batches.length) {
+        attempts.push({ orderId, labels: 0, reason: 'lista vacía' });
+        continue;
+      }
+      for (const documentIds of batches) {
+        try {
+          const downloaded = await downloadLabels({
+            companyId: order.companyId,
+            documentIds,
+            orderId,
+          });
+          const buffer = decodePdf(svcPdfValue(downloaded));
+          if (buffer?.length) return { buffer, labelCount: documentIds.length };
+          attempts.push({ orderId, documentIds, reason: 'La etiqueta Ripley llegó vacía.' });
+        } catch (error) {
+          const reason = error.message || 'No se pudo bajar la etiqueta Ripley.';
+          attempts.push({ orderId, documentIds, reason, ripleyAuth: error.details?.ripleyAuth });
+          if (isRipleyAuthFailure(reason)) {
+            error.details = { ...(error.details || {}), lookupIds, attempts };
+            throw error;
+          }
+          lastEmpty = reason;
+        }
+      }
+    } catch (error) {
+      const reason = error.message || lastEmpty;
+      if (!error.details?.attempts) attempts.push({ orderId, reason, ripleyAuth: error.details?.ripleyAuth });
+      if (isRipleyAuthFailure(reason)) {
+        error.details = { ...(error.details || {}), lookupIds, attempts };
+        throw error;
+      }
+      lastEmpty = reason;
+    }
+  }
+  const error = new Error(lastEmpty);
+  error.details = { lookupIds, attempts };
+  throw error;
 }
 
 export async function printLogisticsPack(input = {}, dependencies = {}) {
@@ -456,6 +743,9 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
   const core = dependencies.db ? null : await loadCore();
   const db = dependencies.db || core.pool;
   const orders = await loadPrintOrders(selection.orderIds, db);
+  if (orders.some((order) => order.channelCode === 'ripley')) {
+    throw new Error('La impresión de pedidos Ripley está deshabilitada.');
+  }
   const skipped = [];
   const pdfParts = [];
   let labelCount = 0;
@@ -487,71 +777,55 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
   }
 
-  const ripley = orders.filter((order) => order.channelCode === 'ripley');
-  if (ripley.length) {
-    const listLabels = dependencies.listRipleyLabels;
-    const downloadLabels = dependencies.downloadRipleyLabels;
-    if (!listLabels || !downloadLabels) throw new Error('No hay generador de etiquetas Ripley.');
-    for (const order of ripley) {
-      if (!order.companyId) {
-        skipped.push({ id: order.id, reason: 'El pedido Ripley no tiene seller.' });
-        continue;
-      }
-      try {
-        const listed = await listLabels({
-          companyId: order.companyId,
-          orderId: order.externalOrderId,
-        });
-        const documentIds = svcLabels(listed).map(svcLabelId).filter(Boolean);
-        if (!documentIds.length) throw new Error('Ripley aún no tiene etiqueta.');
-        const downloaded = await downloadLabels({
-          companyId: order.companyId,
-          documentIds,
-          orderId: order.externalOrderId,
-        });
-        const buffer = decodePdf(downloaded?.labels_generated || downloaded?.pdf || downloaded?.base64);
-        if (!buffer?.length) throw new Error('La etiqueta Ripley llegó vacía.');
-        pdfParts.push(buffer);
-        labelCount += documentIds.length;
-      } catch (error) {
-        skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta Ripley.' });
-      }
-    }
-  }
-
   const mercadoLibre = orders.filter((order) => order.channelCode === 'mercado_libre');
   if (mercadoLibre.length) {
     const getLabel = dependencies.getMercadoLibreLabel;
     if (!getLabel) throw new Error('No hay generador de etiquetas Mercado Libre.');
     const buffers = [];
+    const seenShipments = new Set();
     for (const order of mercadoLibre) {
       const shippingId = String(order.metadata?.shippingId || '').trim();
+      const shippingMode = String(order.metadata?.shippingMode || '').trim().toLowerCase();
+      const logisticType = String(order.metadata?.logisticType || '').trim().toLowerCase();
+      const substatus = String(order.metadata?.shippingSubstatus || '').trim().toLowerCase();
       if (!order.companyId) {
         skipped.push({ id: order.id, reason: 'El pedido Mercado Libre no tiene seller.' });
         continue;
       }
-      if (!shippingId) {
-        skipped.push({ id: order.id, reason: 'Falta el envío ME2 para imprimir la etiqueta.' });
+      if (order.fulfillmentStatus !== 'ready_to_ship') {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía no habilitó el despacho.' });
         continue;
       }
+      if (!shippingId) {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía no asignó el envío.' });
+        continue;
+      }
+      if (shippingMode !== 'me2') {
+        skipped.push({ id: order.id, reason: 'Este envío no usa Mercado Envíos 2.' });
+        continue;
+      }
+      if (!['cross_docking', 'drop_off', 'xd_drop_off', 'self_service'].includes(logisticType)) {
+        skipped.push({ id: order.id, reason: 'Este envío no usa una etiqueta ME2 imprimible por el seller.' });
+        continue;
+      }
+      if (!['ready_to_print', 'printed', 'ready_for_dropoff', 'ready_for_pickup'].includes(substatus)) {
+        skipped.push({ id: order.id, reason: 'Mercado Envíos todavía está generando la etiqueta.' });
+        continue;
+      }
+      if (seenShipments.has(shippingId)) continue;
       try {
-        const label = await getLabel({
-          companyId: order.companyId,
-          shippingId,
-          orderId: order.externalOrderId,
-          orderNumber: order.externalOrderNumber,
-        });
+        const label = await getLabel({ companyId: order.companyId, shippingId });
         const buffer = decodePdf(label?.base64 || label?.pdf || label);
-        if (!buffer?.length) throw new Error('La etiqueta llegó vacía.');
+        if (!buffer?.length) throw new Error('La etiqueta Mercado Libre llegó vacía.');
+        seenShipments.add(shippingId);
         buffers.push(buffer);
         labelCount += 1;
       } catch (error) {
-        skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta de Mercado Envíos.' });
+        skipped.push({ id: order.id, reason: error.message || 'No se pudo bajar la etiqueta Mercado Libre.' });
       }
     }
     if (buffers.length) pdfParts.push(await composeA4ShippingLabelSheet(buffers));
   }
-
   const manual = orders.filter((order) => order.channelCode === 'manual');
   if (manual.length) {
     pdfParts.push(await buildManualLabelSheet(manual));
@@ -563,23 +837,28 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     skipped.push({ id: order.id, reason: `Canal ${order.channelCode} aún no imprime etiqueta.` });
   }
 
-  if (!pdfParts.length && !selection.includePacking) {
-    throw new Error('No se pudo armar ninguna etiqueta.');
+  if (!pdfParts.length) {
+    throwPrintFailure(skipped, {
+      orderIds: selection.orderIds,
+      labelCount,
+      pdfPartCount: pdfParts.length,
+      orders: summarizePrintOrders(orders),
+    }, dependencies);
   }
 
-  const printable = orders.filter((order) => !skipped.some((entry) => entry.id === order.id));
-  let packingPageCount = 0;
-  if (selection.includePacking && printable.length) {
-    const packingPdf = await PDFDocument.create();
-    const stats = await appendTicketInventoryPages(
-      packingPdf,
-      printable.map(packingTicket),
-    );
-    packingPageCount = stats.inventoryPageCount || 0;
-    if (packingPageCount) pdfParts.push(await packingPdf.save());
+  const printable = orders.filter((order) => {
+    const skip = skipped.find((entry) => entry.id === order.id);
+    if (!skip) return CHANNELS.has(order.channelCode);
+    return skip.printed === true;
+  });
+  if (!pdfParts.length) {
+    throwPrintFailure(skipped, {
+      orderIds: selection.orderIds,
+      labelCount,
+      pdfPartCount: pdfParts.length,
+      orders: summarizePrintOrders(orders),
+    }, dependencies);
   }
-
-  if (!pdfParts.length) throw new Error('No hay nada para imprimir en esta selección.');
 
   const bytes = await mergePdfBuffers(pdfParts);
   if (printable.length && dependencies.recordPrints !== false) {
@@ -593,7 +872,6 @@ export async function printLogisticsPack(input = {}, dependencies = {}) {
     filename: `bandeja-${date}.pdf`,
     orderCount: printable.length,
     labelCount,
-    packingPageCount,
     skipped,
   };
 }
@@ -607,6 +885,153 @@ export async function getMercadoLibreLabel({ companyId, shippingId }, dependenci
   return client.getShipmentLabels([String(shippingId)], 'pdf');
 }
 
+function ripleyShipmentStatus(value) {
+  return text(value).toUpperCase().replace(/[ -]+/g, '_');
+}
+
+function isRipleyShipmentReady(value) {
+  return ripleyShipmentStatus(value) === 'READY_FOR_PICK_UP';
+}
+
+function ripleyMiraklClient(order, dependencies) {
+  if (dependencies.miraklClient) return dependencies.miraklClient;
+  const apiKey = text(order.ripleyApiKey);
+  if (!apiKey) throw new Error('Falta la API key de Mirakl para este seller Ripley.');
+  return new RipleyApiClient({
+    baseUrl: ripleyApiUrl(),
+    apiKey,
+    shopId: order.ripleyShopId || undefined,
+    fetchImpl: providerFetch(fetch),
+  });
+}
+
+async function persistRipleyMiraklReady(db, order, shipments) {
+  const metadata = {
+    ...objectMetadata(order.metadata),
+    miraklShipmentStatus: 'READY_FOR_PICK_UP',
+    miraklShipmentSource: 'st26',
+    miraklShipmentObservedAt: new Date().toISOString(),
+    miraklShipmentIds: shipments.map((shipment) => text(shipment.id)),
+  };
+  const result = await db.query(
+    `update orders
+     set fulfillment_status = 'ready_to_ship',
+         order_status = 'confirmed',
+         metadata = $2::jsonb,
+         updated_at = now()
+     where id = $1
+       and fulfillment_status in ('pending', 'preparing')
+     returning id, fulfillment_status, metadata`,
+    [order.id, JSON.stringify(metadata)],
+  );
+  if (!result.rows[0]) throw new Error('El pedido ya no está en preparación.');
+  return result.rows[0];
+}
+
+export async function scheduleRipleyInboxReady(order, input = {}, dependencies = {}) {
+  if (!order?.companyId) throw new Error('El pedido Ripley no tiene seller.');
+  const lookupIds = ripleyOrderLookupIds(order);
+  if (!lookupIds.length) throw new Error('El pedido Ripley no tiene número para validar en Mirakl.');
+  const client = ripleyMiraklClient(order, dependencies);
+  const current = await client.listAllShipments({ orderIds: lookupIds });
+  const actionable = current.filter((shipment) => (
+    ripleyShipmentStatus(shipment.status) === 'SHIPPING' || isRipleyShipmentReady(shipment.status)
+  ));
+  if (!actionable.length) throw new Error('Mirakl no devolvió un shipment disponible para este pedido.');
+  const pendingIds = actionable
+    .filter((shipment) => !isRipleyShipmentReady(shipment.status))
+    .map((shipment) => shipment.id);
+  if (pendingIds.length) {
+    const validated = await client.validateShipmentsReadyForPickup(pendingIds);
+    if (validated.errors.length) {
+      throw new Error(validated.errors.map((error) => error.message).join(' '));
+    }
+    const missing = pendingIds.filter((id) => !validated.successIds.includes(id));
+    if (missing.length) throw new Error('Mirakl no confirmó todos los shipments como listos para recojo.');
+  }
+  const verified = await client.listAllShipments({ orderIds: lookupIds });
+  const ready = verified.filter((shipment) => isRipleyShipmentReady(shipment.status));
+  const missingReady = actionable.map((shipment) => shipment.id).filter((id) => !ready.some((shipment) => shipment.id === id));
+  if (missingReady.length) throw new Error('Mirakl aún no confirma el recojo de todos los shipments. Intenta sincronizar nuevamente.');
+  const persisted = await persistRipleyMiraklReady(dependencies.db, order, ready);
+  await enqueueRipleyStockJob({
+    id: order.id,
+    companyId: order.companyId,
+    externalOrderId: order.externalOrderId,
+    externalOrderNumber: order.externalOrderNumber,
+    fulfillmentStatus: 'ready_to_ship',
+    orderedAt: order.orderedAt,
+  }, { source: 'user' }, dependencies.db, dependencies.enqueue);
+  return {
+    ok: true,
+    alreadyReady: false,
+    orderId: Number(persisted.id),
+    shipmentIds: ready.map((shipment) => shipment.id),
+  };
+}
+
+function text(value) {
+  return String(value ?? '').trim();
+}
+
+export async function markLogisticsOrderReady(input = {}) {
+  const orderId = Number(input.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
+  throw new Error('La confirmación de pedidos Ripley está deshabilitada.');
+}
+
+export async function markLogisticsOrderDelivered(input = {}, dependencies = {}) {
+  const orderId = Number(input.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) throw new Error('Pedido inválido.');
+  const core = dependencies.db ? null : await loadCore();
+  const db = dependencies.db || core.pool;
+  const result = await db.query(
+    `select o.id, o.company_id, o.external_order_id, o.external_order_number,
+            o.fulfillment_status, o.ordered_at,
+            ch.code as channel_code
+     from orders o
+     join order_channel_accounts a on a.id = o.channel_account_id
+     join order_channels ch on ch.id = a.channel_id
+     where o.id = $1`,
+    [orderId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('Pedido no encontrado.');
+  if (row.channel_code !== 'manual') {
+    throw new Error('Solo los pedidos propios se marcan como entregados aquí.');
+  }
+  const status = String(row.fulfillment_status || '');
+  if (status === 'delivered' || status === 'shipped') {
+    return { ok: true, alreadyDelivered: true, orderId: Number(row.id) };
+  }
+  if (status !== 'pending' && status !== 'preparing' && status !== 'ready_to_ship') {
+    throw new Error('Este pedido ya no se puede marcar como entregado.');
+  }
+  const persisted = await db.query(
+    `update orders
+     set fulfillment_status = 'delivered',
+         order_status = 'completed',
+         updated_at = now()
+     where id = $1
+       and fulfillment_status in ('pending', 'preparing', 'ready_to_ship')
+     returning id, company_id, external_order_id, external_order_number, fulfillment_status, ordered_at`,
+    [orderId],
+  );
+  const order = persisted.rows[0];
+  if (!order) throw new Error('El pedido ya no está disponible.');
+  if (shouldListenStockOrder({ status: 'delivered', orderedAt: order.ordered_at })) {
+    const enqueue = dependencies.enqueue || enqueueStockJob;
+    await enqueue({
+      orderId: Number(order.id),
+      companyId: order.company_id == null ? null : Number(order.company_id),
+      externalOrderId: order.external_order_id,
+      orderNumber: order.external_order_number,
+      source: 'user',
+    }, db);
+  }
+  return { ok: true, alreadyDelivered: false, orderId: Number(order.id) };
+}
+
 export async function printLogisticsPackWithDefaults(input = {}, dependencies = {}) {
   const core = dependencies.core || await loadCore();
   const ripleyLogistics = dependencies.ripleyLogistics || await import('./ripley-logistics.js');
@@ -616,8 +1041,8 @@ export async function printLogisticsPackWithDefaults(input = {}, dependencies = 
       core.falabellaGetShippingLabel({ companyId, orderId, recordPrint: false })
     )),
     getMercadoLibreLabel: dependencies.getMercadoLibreLabel || ((order) => getMercadoLibreLabel(order, dependencies)),
-    listRipleyLabels: dependencies.listRipleyLabels || (({ companyId, orderId }) => (
-      ripleyLogistics.listRipleySvcLabels(companyId, { orderId, limit: 25 })
+    listRipleyLabels: dependencies.listRipleyLabels || (({ companyId, orderId, find }) => (
+      ripleyLogistics.listRipleySvcLabels(companyId, { orderId, find, limit: 25 })
     )),
     downloadRipleyLabels: dependencies.downloadRipleyLabels || (({ companyId, documentIds, orderId }) => (
       ripleyLogistics.downloadRipleySvcLabels(companyId, { documentIds, orderId })

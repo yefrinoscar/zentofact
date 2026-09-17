@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser';
+import { type IScannerControls } from '@zxing/browser';
+import { PickingQrReader } from '../lib/picking-reader';
 import {
   AlertTriangle,
   Camera,
@@ -172,7 +173,7 @@ export default function ScannerArmado() {
       return;
     }
 
-    const reader = new BrowserMultiFormatReader();
+    const reader = new PickingQrReader();
     let cancelled = false;
     reader.decodeFromConstraints({
       audio: false,

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#dbeafe"/>
+      <stop offset="1" stop-color="#bfdbfe"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="640" fill="url(#bg)"/>
+  <g fill="none" stroke="#1d4ed8" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 430c90-10 210-10 300 0"/>
+    <path d="M210 430 V250 c0-70 70-110 150-110 s150 40 150 110 v40"/>
+    <circle cx="230" cy="470" r="42"/>
+    <circle cx="430" cy="470" r="42"/>
+    <path d="M250 250 h180"/>
+  </g>
+  <text x="320" y="580" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#1e3a8a">AG301</text>
+</svg>

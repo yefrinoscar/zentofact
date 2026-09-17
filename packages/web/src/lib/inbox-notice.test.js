@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from './api-error.ts';
-import { inboxBulkReadyErrorNotice, inboxSyncNotice, noticeFromError } from './inbox-notice.ts';
+import { inboxBulkReadyErrorNotice, inboxSyncNotice, logisticsSyncNotice, noticeFromError } from './inbox-notice.ts';
 
 test('sync notice stays successful when every store updates', () => {
   assert.deepEqual(inboxSyncNotice({ successful: 9, failed: 0, results: [{ ok: true }] }), {
@@ -18,8 +18,8 @@ test('sync notice becomes an error when no store updates', () => {
     results: [{ ok: false, companyName: 'LIMBO', logId: 'log_eeeeeeeeeeee' }],
   }), {
     tone: 'error',
-    message: '1 tienda no pudo sincronizarse.',
-    refs: [{ label: 'LIMBO', logId: 'log_eeeeeeeeeeee' }],
+    message: 'Limbo no pudo sincronizarse.',
+    refs: [{ label: 'Limbo', logId: 'log_eeeeeeeeeeee' }],
   });
 });
 
@@ -33,9 +33,51 @@ test('sync notice exposes a copyable logId per failed store', () => {
     ],
   }), {
     tone: 'warning',
-    message: '9 tiendas actualizadas; 1 no pudo sincronizarse.',
-    refs: [{ label: 'INVERSIONES YAKURUNA S.A.C.', logId: 'log_bbbbbbbbbbbb' }],
+    message: 'Yakuruna no pudo sincronizarse.',
+    refs: [{ label: 'Yakuruna', logId: 'log_bbbbbbbbbbbb' }],
   });
+});
+
+test('la bandeja unificada nombra la tienda que falló', () => {
+  assert.deepEqual(logisticsSyncNotice({
+    results: [
+      { status: 'success', companyName: 'LIMBO' },
+      { status: 'error', companyName: 'BEAUTY HOME E.I.R.L', companyId: 8, logId: 'log_beautyhome' },
+    ],
+  }), {
+    tone: 'warning',
+    message: 'Beauty home no pudo sincronizarse.',
+    refs: [{ label: 'Beauty home', logId: 'log_beautyhome' }],
+  });
+});
+
+test('la bandeja unificada nombra la tienda ocupada', () => {
+  assert.deepEqual(logisticsSyncNotice({
+    results: [
+      { status: 'success', companyName: 'STINGRAY' },
+      { status: 'already_running', companyName: 'BEAUTY HOMEHOLD', companyId: 8 },
+    ],
+  }), {
+    tone: 'warning',
+    message: 'Beauty homehold ya se estaba sincronizando.',
+    refs: [],
+  });
+});
+
+test('una sincronización incompleta no se presenta como actualizada', () => {
+  assert.deepEqual(logisticsSyncNotice({
+    results: [{ status: 'partial', companyName: 'STINGRAY', failed: 2, logId: 'log_stingray' }],
+  }), {
+    tone: 'error',
+    message: 'Stingray no pudo sincronizarse.',
+    refs: [{ label: 'Stingray', logId: 'log_stingray' }],
+  });
+});
+
+test('si el sync no manda el nombre, la bandeja usa el de los pedidos visibles', () => {
+  assert.equal(logisticsSyncNotice({
+    results: [{ status: 'error', companyId: 8, logId: 'log_mapped' }],
+  }, new Map([[8, 'Beauty homehold']])).message, 'Beauty homehold no pudo sincronizarse.');
 });
 
 test('bulk ready failures keep order numbers and tracking ids', () => {

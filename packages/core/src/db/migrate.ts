@@ -615,6 +615,22 @@ const DDL = `
     ON falabella_order_lifecycle(company_id, shipped_at DESC);
   CREATE INDEX IF NOT EXISTS idx_falabella_lifecycle_shipped
     ON falabella_order_lifecycle(shipped_at DESC);
+  ALTER TABLE falabella_order_lifecycle ADD COLUMN IF NOT EXISTS canceled_at TIMESTAMPTZ;
+  ALTER TABLE falabella_order_lifecycle ADD COLUMN IF NOT EXISTS returned_at TIMESTAMPTZ;
+  CREATE INDEX IF NOT EXISTS idx_falabella_lifecycle_canceled
+    ON falabella_order_lifecycle(canceled_at DESC)
+    WHERE canceled_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_falabella_lifecycle_returned
+    ON falabella_order_lifecycle(returned_at DESC)
+    WHERE returned_at IS NOT NULL;
+  UPDATE falabella_order_lifecycle
+     SET canceled_at = coalesce(last_provider_update_at, last_observed_at)
+   WHERE current_status = 'canceled'
+     AND canceled_at IS NULL;
+  UPDATE falabella_order_lifecycle
+     SET returned_at = coalesce(last_provider_update_at, last_observed_at)
+   WHERE current_status = 'returned'
+     AND returned_at IS NULL;
   INSERT INTO falabella_order_lifecycle (
     company_id, order_id, order_number, current_status, pending_at,
     ready_to_ship_at, shipped_at, last_provider_update_at,
@@ -864,19 +880,7 @@ const DDL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
 
-  CREATE TABLE IF NOT EXISTS ripley_sync_state (
-    company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    status TEXT NOT NULL DEFAULT 'pending',
-    last_attempt_at TIMESTAMPTZ,
-    last_started_at TIMESTAMPTZ,
-    last_finished_at TIMESTAMPTZ,
-    last_successful_sync_at TIMESTAMPTZ,
-    last_error TEXT,
-    last_orders_received INTEGER NOT NULL DEFAULT 0,
-    sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
+  DROP TABLE IF EXISTS ripley_sync_state;
   DO $$
   BEGIN
     IF EXISTS (
@@ -1105,6 +1109,23 @@ const DDL = `
   -- Las ventas manuales nacen sin seller asociado; el campo queda disponible
   -- para asociarlo más adelante.
   ALTER TABLE orders ALTER COLUMN company_id DROP NOT NULL;
+  -- Primera vez que el pedido pasa a cancelado o devuelto. No se pisa en syncs posteriores.
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS returned_at TIMESTAMPTZ;
+  CREATE INDEX IF NOT EXISTS idx_orders_cancelled_at
+    ON orders(cancelled_at DESC)
+    WHERE cancelled_at IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_orders_returned_at
+    ON orders(returned_at DESC)
+    WHERE returned_at IS NOT NULL;
+  UPDATE orders
+     SET cancelled_at = coalesce(provider_updated_at, updated_at)
+   WHERE (order_status = 'cancelled' OR fulfillment_status = 'cancelled')
+     AND cancelled_at IS NULL;
+  UPDATE orders
+     SET returned_at = coalesce(provider_updated_at, updated_at)
+   WHERE fulfillment_status = 'returned'
+     AND returned_at IS NULL;
 
   CREATE TABLE IF NOT EXISTS order_items (
     id BIGSERIAL PRIMARY KEY,
@@ -1150,6 +1171,7 @@ const DDL = `
     barcode TEXT,
     image_url TEXT,
     reference_price NUMERIC(14,2),
+    wholesale_price NUMERIC(14,2),
     commission_amount NUMERIC(14,2),
     profit_owner TEXT,
     unit TEXT NOT NULL DEFAULT 'each',
@@ -1161,20 +1183,29 @@ const DDL = `
     CHECK (status IN ('active', 'inactive', 'archived')),
     CHECK (unit IN ('each')),
     CHECK (commission_amount IS NULL OR commission_amount >= 0),
+    CHECK (wholesale_price IS NULL OR wholesale_price >= 0),
     CHECK (profit_owner IS NULL OR char_length(trim(profit_owner)) BETWEEN 1 AND 80)
   );
   CREATE INDEX IF NOT EXISTS idx_products_status_updated
     ON products(status, updated_at DESC, id DESC);
 
-  -- Comisión y beneficiario en productos existentes.
+  -- Comisión, precio por mayor y beneficiario en productos existentes.
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(14,2);
+  ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(14,2);
   ALTER TABLE products
     ADD COLUMN IF NOT EXISTS profit_owner TEXT;
   DO $$ BEGIN
     ALTER TABLE products
       ADD CONSTRAINT products_commission_amount_nonnegative
       CHECK (commission_amount IS NULL OR commission_amount >= 0);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END $$;
+  DO $$ BEGIN
+    ALTER TABLE products
+      ADD CONSTRAINT products_wholesale_price_nonnegative
+      CHECK (wholesale_price IS NULL OR wholesale_price >= 0);
   EXCEPTION WHEN duplicate_object THEN NULL;
   END $$;
   DO $$ BEGIN
@@ -1237,6 +1268,11 @@ const DDL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (quantity_reserved >= 0)
   );
+  ALTER TABLE product_inventory
+    ADD COLUMN IF NOT EXISTS quantity_pending_return NUMERIC(14,4) NOT NULL DEFAULT 0;
+  ALTER TABLE product_inventory DROP CONSTRAINT IF EXISTS product_inventory_pending_return_check;
+  ALTER TABLE product_inventory ADD CONSTRAINT product_inventory_pending_return_check
+    CHECK (quantity_pending_return >= 0);
 
   ALTER TABLE order_items
     ADD COLUMN IF NOT EXISTS product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
@@ -1300,6 +1336,56 @@ const DDL = `
     ON inventory_movements(order_id) WHERE order_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_item
     ON inventory_movements(order_item_id) WHERE order_item_id IS NOT NULL;
+
+  -- Devoluciones físicas desde 2026-09-03 14:00 Lima: entran al almacén
+  -- pero no son vendibles hasta que un operador las apruebe.
+  CREATE TABLE IF NOT EXISTS return_stock_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    order_item_id BIGINT NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+    product_id BIGINT NOT NULL REFERENCES products(id),
+    quantity NUMERIC(14,4) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    returned_at TIMESTAMPTZ,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMPTZ,
+    reviewed_by TEXT,
+    UNIQUE (order_item_id),
+    CHECK (quantity > 0),
+    CHECK (status IN ('pending', 'approved'))
+  );
+  ALTER TABLE return_stock_approvals ADD COLUMN IF NOT EXISTS stock_quantity NUMERIC(14,4);
+  ALTER TABLE return_stock_approvals ADD COLUMN IF NOT EXISTS merma_quantity NUMERIC(14,4);
+  CREATE INDEX IF NOT EXISTS idx_return_stock_approvals_pending
+    ON return_stock_approvals(status, requested_at DESC)
+    WHERE status = 'pending';
+  CREATE INDEX IF NOT EXISTS idx_return_stock_approvals_order
+    ON return_stock_approvals(order_id, status);
+
+  INSERT INTO return_stock_approvals (
+    order_id, order_item_id, product_id, quantity, status, returned_at, requested_at
+  )
+  SELECT oi.order_id, oi.id, oi.product_id, m.quantity_delta, 'pending',
+         coalesce(o.returned_at, o.provider_updated_at, m.effective_at, m.created_at),
+         coalesce(o.returned_at, o.provider_updated_at, m.effective_at, m.created_at)
+    FROM order_items oi
+    JOIN orders o ON o.id = oi.order_id
+    JOIN inventory_movements m ON m.order_item_id = oi.id AND m.movement_type = 'return'
+   WHERE oi.product_id IS NOT NULL
+     AND oi.stock_state = 'reversed'
+     AND m.quantity_delta > 0
+     AND coalesce(o.returned_at, o.provider_updated_at) >= TIMESTAMPTZ '2026-09-03 19:00:00+00'
+  ON CONFLICT (order_item_id) DO NOTHING;
+
+  INSERT INTO product_inventory (product_id, quantity_pending_return)
+  SELECT product_id, sum(quantity)
+    FROM return_stock_approvals
+   WHERE status = 'pending'
+   GROUP BY product_id
+  ON CONFLICT (product_id) DO UPDATE SET
+    quantity_pending_return = EXCLUDED.quantity_pending_return,
+    updated_at = NOW()
+  WHERE product_inventory.quantity_pending_return IS DISTINCT FROM EXCLUDED.quantity_pending_return;
 
   -- An applied reconciliation is immutable evidence. Current stock remains in
   -- product_inventory and every delta remains in inventory_movements.
@@ -1880,6 +1966,11 @@ export async function runMigrations(pool: Pool): Promise<void> {
       ALTER COLUMN net TYPE NUMERIC(14,6),
       ALTER COLUMN igv TYPE NUMERIC(14,6),
       ALTER COLUMN gross TYPE NUMERIC(14,6)
+  `);
+  await pool.query(`
+    ALTER TABLE return_stock_approvals
+      ADD COLUMN IF NOT EXISTS stock_quantity NUMERIC(14,4),
+      ADD COLUMN IF NOT EXISTS merma_quantity NUMERIC(14,4)
   `);
   // El modo SUNAT lo define el ambiente (SUNAT_FORCE_ENV), no la empresa.
   await pool.query(`ALTER TABLE companies DROP COLUMN IF EXISTS modo_produccion`);

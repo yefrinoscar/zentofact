@@ -29,7 +29,7 @@ Sign in with `.cursor/skills/verify-zentofact/scripts/control-zentofact login <e
 | `admin@zentofact.local` | superadmin | catalog, users, companies, dashboard, anything |
 | `admin@preview.zentofact.local` | admin | same modules without the superadmin seat |
 | `operator@preview.zentofact.local` | operator | `#/pedidos`, `#/scanner`, `#/insumos`, `#/orders` |
-| `vendedor@preview.zentofact.local` | vendedor | `#/mis-ventas` |
+| `vendedor@preview.zentofact.local` | vendedor | `#/mis-ventas` · VTA-10012 is a Yape sale to the seller with AG301, HOG025 ×2 and BB110, no constancia |
 | `billing@preview.zentofact.local` | billing | `#/boletas`, `#/facturas`, `#/credit-notes` |
 
 Default `login` without an email uses `ADMIN_EMAIL` (`admin@zentofact.local`).
@@ -46,7 +46,7 @@ Companies: LIMBO `20990001001`, MANTA RAYA `20990001002`, YAKURUNA `20990001003`
 | BB220 | 40 | LIMBO + MANTA RAYA Falabella |
 | HOG040 | 15 | YAKURUNA Falabella |
 
-Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockOnHand` 12. Open `#/productos` as superadmin or admin. Seller publications live in the product drawer, not on the master row.
+Proof: `GET /products?search=AG301&limit=5` returns `mainSku=AG301` with `stockOnHand` 12, `referencePrice` 189.9, `wholesalePrice` 160 and `commissionAmount` 20. Admin `#/ventas` and `GET /dashboard/product-sales` list master products and sum only Falabella sales of AG301 across LIMBO and MANTA RAYA. Falabella + Te llega cover the same sales as Ventas brutas; Pagado and Pendiente split Te llega. Max Preview (`74561743`) bought 7 u of BB220 across LIMBO and MANTA RAYA and appears under Más de 5 unidades with phone `987654321`. Listings may show 170.5; Nueva venta must still start from 189.9 and show `Ganas S/ 20.00` (the fixed commission). If the seller raises the price, Ganas grows from that seller base (`189.9 − 20`). Open `#/productos` as superadmin or admin. Seller publications live in the product drawer, not on the master row. The master row and the product drawer show `Por mayor` from `wholesalePrice`; it does not change Nueva venta.
 
 Do not POST inventory adjust or click publication switches unless the task explicitly enables marketplace mutation.
 
@@ -67,14 +67,15 @@ Unified sample orders on LIMBO:
 | Order | Channel | Fulfillment | Screen |
 |---|---|---|---|
 | PV-10001 | Falabella | `pending` | `#/bandeja` tab Pendientes |
-| QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · printable label |
-| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · three unit lines shown as one product `x3` |
+| QNC-10010 | Manual | `pending` | `#/bandeja` tab Pendientes · `Marcar entregado` · `#/orders` Seller = Vendedor Preview |
+| RP-10020 | Ripley | `pending` | `#/bandeja` tab Pendientes · manage in Ripley · master SKU `HOG025` · three unit lines shown as one product `x3` |
 | ML-10030 | Mercado Libre | `pending` | `#/bandeja` tab Pendientes · espera etiqueta ME2 |
 | ML-10031 | Mercado Libre | `ready_to_ship` | `#/bandeja` tab Listos · etiqueta ME2 10×15 imprimible |
 | PV-10003 | Falabella | `ready_to_ship` | `#/bandeja` tab Listos |
 | PV-10002 | Falabella | `shipped` | `#/bandeja` tab Enviados |
+| PV-10013 | Falabella | stale `pending` / channel `shipped` | must not stay in Vencidos after bandeja load or Sincronizar |
 
-Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, RP-10020, and ML-10030. `GET /logistics-inbox?stage=ready` includes ML-10031. Print QNC-10010 (etiqueta ZentoFact) and ML-10031 (PDF ME2 del sandbox). Falabella y Ripley siguen necesitando APIs vivas.
+Proof: `GET /logistics-inbox?stage=pending` includes PV-10001, QNC-10010, RP-10020, and ML-10030. `GET /logistics-inbox?stage=ready` includes ML-10031. Own orders use `Marcar entregado`; print stays secondary. Print QNC-10010 (etiqueta ZentoFact) and ML-10031 (PDF ME2 del sandbox). Falabella labels and `Marcar listo` need live seller APIs. Ripley confirmation and printing stay paused in the inbox.
 
 Cómo entra un pedido ML: webhook `POST /webhooks/mercadolibre` (`orders_v2` / `shipments`) o sync si el flag está on. En este VM el sandbox local (`MERCADO_LIBRE_SANDBOX=true`) imita la API: `POST /sandbox/mercadolibre/dev/push-order` crea la orden y dispara el webhook. LIMBO queda con `user_id` `200000001` y tokens `SANDBOX-*` que nunca salen a `api.mercadolibre.com`. Health: `GET /sandbox/mercadolibre/health`.
 

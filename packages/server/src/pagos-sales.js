@@ -137,9 +137,191 @@ function finalizeTotals(row) {
   };
 }
 
+function igvNet(gross) {
+  return round2((Number(gross) || 0) / 1.18);
+}
+
+function igvParts(gross) {
+  const amount = round2(gross || 0);
+  const net = igvNet(amount);
+  return { gross: amount, net, igv: round2(amount - net) };
+}
+
+function invoiceParts(row) {
+  if (!row) return null;
+  const gross = round2(row.gross);
+  const net = round2(row.net);
+  const igv = round2(row.igv);
+  if (!gross && !net && !igv) return null;
+  return { gross, net, igv };
+}
+
+function addParts(left, right) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return {
+    gross: round2(left.gross + right.gross),
+    net: round2(left.net + right.net),
+    igv: round2(left.igv + right.igv),
+  };
+}
+
+export function saleStatement(sale) {
+  const returned = Boolean(sale?.returned);
+  const product = returned ? 0 : round2(sale?.bruto);
+  const envio = returned
+    ? 0
+    : sale?.orderShipping != null && Number.isFinite(Number(sale.orderShipping))
+      ? Math.max(0, round2(sale.orderShipping))
+      : Math.max(0, round2(sale?.buyerShippingPaid));
+  const productSplit = igvParts(product);
+  const envioSplit = igvParts(envio);
+  const boleta = igvParts(product + envio);
+  const invoice = returned ? null : sale?.invoiceCharges || null;
+  const commissionSplit = invoiceParts(invoice?.commission) || igvParts(sale?.commission);
+  const logisticsSplit = addParts(
+    invoiceParts(invoice?.logistics) || igvParts(sale?.shipping),
+    invoiceParts(invoice?.buyer_shipping),
+  ) || igvParts(sale?.shipping);
+  const adsSplit = invoiceParts(invoice?.ads);
+  const factura = invoice
+    ? addParts(addParts(commissionSplit, logisticsSplit), adsSplit) || commissionSplit
+    : igvParts(round2(Number(sale?.commission || 0) + Number(sale?.shipping || 0)));
+  return {
+    productNet: productSplit.net,
+    productGross: product,
+    envioNet: envioSplit.net,
+    envioGross: envio,
+    envioMissing: envio <= 0 && sale?.orderShipping == null,
+    boletaNet: boleta.net,
+    boletaGross: boleta.gross,
+    commissionNet: commissionSplit.net,
+    commissionGross: commissionSplit.gross,
+    logisticsNet: logisticsSplit.net,
+    logisticsGross: logisticsSplit.gross,
+    facturaNet: factura.net,
+    facturaGross: factura.gross,
+    queda: round2(boleta.net - factura.net),
+  };
+}
+
+function slimProducts(products) {
+  return (products || []).map((product) => ({
+    sku: product.sku,
+    shopSku: product.shopSku,
+    productName: product.productName,
+    quantity: product.quantity,
+    unitBruto: product.unitBruto,
+    unitCommission: product.unitCommission,
+    unitShipping: product.unitShipping,
+    unitNeto: product.unitNeto,
+    commissionRate: product.commissionRate,
+    shippingRate: product.shippingRate,
+    takeRate: product.takeRate,
+  }));
+}
+
+function slimInvoice(invoice) {
+  if (!invoice) return null;
+  return {
+    id: invoice.id,
+    number: invoice.number,
+    kind: invoice.kind,
+  };
+}
+
+export function saleReturnLoss(sale) {
+  if (!sale?.returned) return 0;
+  const queda = round2(0 - igvNet(Number(sale.commission || 0) + Number(sale.shipping || 0)));
+  return queda < 0 ? queda : 0;
+}
+
+export function saleEnvioNet(sale) {
+  if (sale?.returned) return 0;
+  const fromOrder = sale?.orderShipping;
+  const gross = fromOrder != null && Number.isFinite(Number(fromOrder))
+    ? Math.max(0, round2(fromOrder))
+    : Math.max(0, round2(sale?.buyerShippingPaid));
+  return igvNet(gross);
+}
+
+export function settlementDailySeries(sales) {
+  const days = new Map();
+  for (const sale of sales || []) {
+    const date = String(sale.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const current = days.get(date) || { date, facturado: 0, neto: 0 };
+    current.facturado = round2(current.facturado + Number(sale.bruto || 0));
+    current.neto = round2(current.neto + Number(sale.neto || 0));
+    days.set(date, current);
+  }
+  return downsampleDailySeries([...days.values()].sort((left, right) => left.date.localeCompare(right.date)));
+}
+
+export const SETTLEMENT_CHART_POINTS = 72;
+
+export function downsampleDailySeries(days, maxPoints = SETTLEMENT_CHART_POINTS) {
+  const rows = days || [];
+  const limit = Math.max(Number(maxPoints) || SETTLEMENT_CHART_POINTS, 2);
+  if (rows.length <= limit) return rows;
+  const step = (rows.length - 1) / (limit - 1);
+  const picked = [];
+  const seen = new Set();
+  for (let index = 0; index < limit; index += 1) {
+    const at = Math.round(index * step);
+    if (seen.has(at)) continue;
+    seen.add(at);
+    picked.push(rows[at]);
+  }
+  return picked;
+}
+
+export function slimSettlementSale(sale) {
+  if (!sale) return sale;
+  const invoice = slimInvoice(sale.falabellaInvoice);
+  return {
+    orderId: sale.orderId,
+    date: sale.date,
+    paidDate: sale.paidDate || null,
+    companyId: sale.companyId || null,
+    paid: sale.paid,
+    returned: sale.returned,
+    paymentStatus: sale.paymentStatus,
+    matched: sale.matched,
+    productName: sale.productName,
+    skus: sale.skus,
+    orderNumbers: sale.orderNumbers,
+    itemCount: sale.itemCount,
+    bruto: sale.bruto,
+    commission: sale.commission,
+    shipping: sale.shipping,
+    buyerShipping: sale.buyerShipping,
+    buyerShippingPaid: sale.buyerShippingPaid,
+    buyerShippingReversed: sale.buyerShippingReversed,
+    other: sale.other,
+    neto: sale.neto,
+    take: sale.take,
+    commissionRate: sale.commissionRate,
+    shippingRate: sale.shippingRate,
+    takeRate: sale.takeRate,
+    brutoCharged: sale.brutoCharged,
+    brutoReversed: sale.brutoReversed,
+    commissionCharged: sale.commissionCharged,
+    commissionReversed: sale.commissionReversed,
+    shippingCharged: sale.shippingCharged,
+    shippingReversed: sale.shippingReversed,
+    products: slimProducts(sale.products),
+    document: sale.document || null,
+    orderShipping: sale.orderShipping ?? null,
+    falabellaInvoice: invoice,
+    statement: saleStatement(sale),
+  };
+}
+
 export function summarizeSettlementSales(sales) {
   const summary = sales.reduce((totals, sale) => {
     const paid = Boolean(sale.paid);
+    const returned = Boolean(sale.returned);
     return {
       saleCount: totals.saleCount + 1,
       paidCount: totals.paidCount + (paid ? 1 : 0),
@@ -155,6 +337,9 @@ export function summarizeSettlementSales(sales) {
       pendingNeto: round2(totals.pendingNeto + (paid ? 0 : sale.neto)),
       itemCount: totals.itemCount + Number(sale.itemCount || 0),
       matchedCount: totals.matchedCount + (sale.matched ? 1 : 0),
+      returnCount: totals.returnCount + (returned ? 1 : 0),
+      returnLoss: round2(totals.returnLoss + saleReturnLoss(sale)),
+      envio: round2(totals.envio + saleEnvioNet(sale)),
     };
   }, {
     saleCount: 0,
@@ -171,6 +356,9 @@ export function summarizeSettlementSales(sales) {
     pendingNeto: 0,
     itemCount: 0,
     matchedCount: 0,
+    returnCount: 0,
+    returnLoss: 0,
+    envio: 0,
   });
   return {
     ...summary,

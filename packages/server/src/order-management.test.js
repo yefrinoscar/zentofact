@@ -5,12 +5,22 @@ import {
   fillDailySales,
   getSalesPulse,
   getSalespersonHome,
+  getOrder,
   ingestOrder,
+  listCanceledOrders,
   listOrders,
   resolveDocumentDecision,
   updateOrderPayment,
 } from './order-management.js';
-import { mapFalabellaCanonicalStatus, mapFalabellaOrderItems, mapFalabellaShipping, falabellaOrderShippingAmount } from './order-adapters/falabella.js';
+import {
+  alignFalabellaHeaderWithClosedFulfillment,
+  closeOverdueFalabellaFulfillment,
+  mapFalabellaCanonicalStatus,
+  mapFalabellaOrderItems,
+  mapFalabellaShipping,
+  falabellaOrderShippingAmount,
+  resolveFalabellaIngestStatus,
+} from './order-adapters/falabella.js';
 
 function account(overrides = {}) {
   return {
@@ -45,9 +55,13 @@ class IngestDb {
     if (compact.startsWith('select a.*, ch.code as channel_code')) return { rows: [this.account] };
     if (compact.startsWith('select * from orders')) return { rows: [] };
     if (compact.startsWith('insert into product_inventory')) return { rows: [] };
-    if (compact.startsWith('select quantity_on_hand, quantity_reserved from product_inventory')) {
+    if (compact.startsWith('select quantity_on_hand, quantity_reserved')) {
       const onHand = this.inventory.get(Number(params[0])) ?? 100;
-      return { rows: [{ quantity_on_hand: onHand, quantity_reserved: this.reserved || 0 }] };
+      return { rows: [{
+        quantity_on_hand: onHand,
+        quantity_reserved: this.reserved || 0,
+        quantity_pending_return: this.pendingReturn || 0,
+      }] };
     }
     if (compact.startsWith('update product_inventory set quantity_on_hand')) {
       this.inventory.set(Number(params[1]), Number(params[0]));
@@ -56,6 +70,17 @@ class IngestDb {
     if (compact.startsWith('update product_inventory set quantity_reserved')) {
       this.reserved = Number(params[0]);
       return { rows: [] };
+    }
+    if (compact.startsWith('update product_inventory set quantity_pending_return')) {
+      this.pendingReturn = Number(params[0]);
+      return { rows: [] };
+    }
+    if (compact.startsWith('insert into return_stock_approvals')) {
+      const itemId = Number(params[1]);
+      if (this.approvals?.has?.(itemId)) return { rows: [] };
+      this.approvals = this.approvals || new Map();
+      this.approvals.set(itemId, { id: this.approvals.size + 1 });
+      return { rows: [{ id: this.approvals.get(itemId).id }] };
     }
     if (compact.startsWith('select * from inventory_movements where idempotency_key')) {
       const row = this.movements.get(params[0]);
@@ -104,6 +129,8 @@ class IngestDb {
         items_status: params[23],
         items_error: params[24],
         created_by: params[25] ?? null,
+        cancelled_at: params[4] === 'cancelled' || params[6] === 'cancelled' ? params[22] : null,
+        returned_at: params[6] === 'returned' ? params[22] : null,
         first_seen_at: '2026-07-30T15:00:00Z',
         last_seen_at: '2026-07-30T15:00:00Z',
         created_at: '2026-07-30T15:00:00Z',
@@ -204,6 +231,66 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
   assert.equal(event.params[1], 'order.created');
   assert.equal(event.params[4], 'request-100');
+});
+
+test('la actualización reemplaza la evidencia logística vigente del canal', async () => {
+  const db = new IngestDb();
+  await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: 'RIPLEY-STATE-100',
+    orderStatus: 'confirmed',
+    fulfillmentStatus: 'preparing',
+    providerStatus: 'SHIPPING',
+    metadata: {
+      miraklShipmentStatus: 'SHIPPING',
+      miraklShipmentSource: 'st11',
+      miraklShipmentObservedAt: '2026-09-14T04:00:00.000Z',
+    },
+    source: 'sync',
+  }, db);
+
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.ok(insert);
+  assert.match(insert.sql, /miraklShipmentStatus/);
+  assert.match(insert.sql, /miraklShipmentSource/);
+  assert.match(insert.sql, /miraklShipmentObservedAt/);
+});
+
+test('al cancelar o devolver un pedido guarda la fecha del cambio una sola vez', async () => {
+  const canceledDb = new IngestDb();
+  const canceled = await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: '3249111405',
+    externalOrderNumber: '3249111405',
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+    providerUpdatedAt: '2026-08-21T15:40:00Z',
+    total: 8.98,
+    source: 'sync',
+  }, canceledDb);
+  const canceledInsert = canceledDb.queries.find((query) => query.sql.startsWith('insert into orders'));
+  assert.match(canceledInsert.sql, /cancelled_at/);
+  assert.match(canceledInsert.sql, /returned_at/);
+  assert.match(canceledInsert.sql, /coalesce\(\s*orders.cancelled_at/);
+  assert.equal(canceled.order.cancelledAt, '2026-08-21T15:40:00.000Z');
+  assert.equal(canceled.order.returnedAt, null);
+
+  const returnedDb = new IngestDb();
+  const returned = await ingestOrder({
+    companyId: 7,
+    channelAccountId: 22,
+    externalOrderId: '3249038634',
+    externalOrderNumber: '3249038634',
+    orderStatus: 'completed',
+    fulfillmentStatus: 'returned',
+    providerUpdatedAt: '2026-08-20T17:36:00Z',
+    total: 71.84,
+    source: 'sync',
+  }, returnedDb);
+  assert.equal(returned.order.returnedAt, '2026-08-20T17:36:00.000Z');
+  assert.equal(returned.order.cancelledAt, null);
 });
 
 test('persiste una cabecera con items pendientes sin ejecutar efectos de stock', async () => {
@@ -308,6 +395,57 @@ test('mapea los estados de Falabella sin contaminar el modelo canónico', () => 
     orderStatus: 'cancelled',
     fulfillmentStatus: 'cancelled',
   });
+  assert.deepEqual(mapFalabellaCanonicalStatus('pending|canceled'), {
+    orderStatus: 'cancelled',
+    fulfillmentStatus: 'cancelled',
+  });
+});
+
+test('GetOrder shipped no se pisa con GetOrderItems pending', () => {
+  assert.equal(
+    resolveFalabellaIngestStatus('shipped', [{ Status: 'pending' }]),
+    'shipped',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('delivered', [{ Status: 'ready_to_ship' }]),
+    'delivered',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('pending', [{ Status: 'ready_to_ship' }]),
+    'ready_to_ship',
+  );
+  assert.equal(
+    resolveFalabellaIngestStatus('ready_to_ship', [{ Status: 'shipped' }]),
+    'shipped',
+  );
+});
+
+test('saca de vencidos un Falabella con plazo vencido que GetOrder ya envió', async () => {
+  const sql = [];
+  const result = await closeOverdueFalabellaFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update orders') ? 7 : 7, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 7);
+  assert.match(sql[0], /update orders o/);
+  assert.match(sql[0], /America\/Lima/);
+  assert.match(sql[1], /update falabella_orders/);
+});
+
+test('alinea todos los padres Falabella abiertos cuya bandeja ya está enviada', async () => {
+  const sql = [];
+  const result = await alignFalabellaHeaderWithClosedFulfillment({
+    async query(query) {
+      sql.push(query.replace(/\s+/g, ' ').trim());
+      return { rowCount: query.includes('update falabella_orders') ? 4 : 2, rows: [] };
+    },
+  });
+  assert.equal(result.updated, 4);
+  assert.match(sql[0], /update falabella_orders/);
+  assert.match(sql[0], /fulfillment_status in \('shipped', 'delivered'\)/);
+  assert.match(sql[1], /update falabella_order_lifecycle/);
 });
 
 test('arma la dirección oficial de Falabella desde AddressShipping', () => {
@@ -448,6 +586,108 @@ test('la vista por defecto limita marketplaces a sellers activos y conectados', 
   await listOrders({ connectedOnly: true }, db);
 });
 
+test('lista pedidos con el nombre del vendedor que registró la venta', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /left join "user" creator on creator\.id = o\.created_by/i);
+      assert.match(sql, /created_by_name/i);
+      assert.match(sql, /created_by_role/i);
+      if (sql.includes('ilike')) assert.match(sql, /coalesce\(creator\.name, ''\) ilike/i);
+      return {
+        rows: [{
+          id: 88,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: 'VTA-88',
+          external_order_number: 'VTA-88',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'disabled',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 50,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 50,
+          customer: { name: 'Ana' },
+          shipping: { type: 'recojo' },
+          metadata: { origin: 'manual_ui' },
+          ordered_at: '2026-09-05T15:00:00.000Z',
+          promised_shipping_at: null,
+          provider_updated_at: null,
+          items_status: 'complete',
+          items_error: null,
+          first_seen_at: '2026-09-05T15:00:00.000Z',
+          last_seen_at: '2026-09-05T15:00:00.000Z',
+          created_at: '2026-09-05T15:00:00.000Z',
+          updated_at: '2026-09-05T15:00:00.000Z',
+          created_by: 'seller-9',
+          created_by_name: 'Vendedor Preview',
+          created_by_role: 'vendedor',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ search: 'Vendedor', limit: 20 }, db);
+  assert.equal(result.orders[0].createdBy, 'seller-9');
+  assert.equal(result.orders[0].createdByName, 'Vendedor Preview');
+  assert.equal(result.orders[0].createdByRole, 'vendedor');
+});
+
+test('el detalle del pedido incluye el nombre del vendedor', async () => {
+  const db = {
+    async query(sql) {
+      if (sql.includes('from orders o')) {
+        assert.match(sql, /left join "user" creator on creator\.id = o\.created_by/i);
+        return {
+          rows: [{
+            id: 88,
+            company_id: 7,
+            channel_account_id: 22,
+            external_order_id: 'VTA-88',
+            external_order_number: 'VTA-88',
+            order_status: 'confirmed',
+            payment_status: 'paid',
+            fulfillment_status: 'pending',
+            document_status: 'pending',
+            provider_status: null,
+            document_requirement: 'disabled',
+            document_type_policy: 'automatic',
+            requested_document_type: 'boleta',
+            currency: 'PEN',
+            subtotal: 50,
+            shipping_amount: null,
+            discount_amount: null,
+            total: 50,
+            customer: { name: 'Ana' },
+            shipping: { type: 'recojo' },
+            metadata: {},
+            ordered_at: '2026-09-05T15:00:00.000Z',
+            created_by: 'seller-9',
+            created_by_name: 'Vendedor Preview',
+            created_by_role: 'vendedor',
+            channel_code: 'manual',
+            channel_name: 'Venta manual',
+            channel_account_name: 'Mostrador',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const order = await getOrder(88, db);
+  assert.equal(order.createdByName, 'Vendedor Preview');
+  assert.equal(order.createdByRole, 'vendedor');
+});
+
 test('regresión: lista ventas manuales aunque no tengan seller (company_id null)', async () => {
   const db = {
     async query(sql) {
@@ -557,15 +797,78 @@ test('registra el pago de un pedido pendiente y deja el método en metadata', as
   const result = await updateOrderPayment(91, {
     paymentMethod: 'yape_plin',
     receivedBy: '',
+    paidTo: 'vendedor',
+    paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
     actorUserId: 'user-1',
   }, db);
 
   assert.equal(result.paymentStatus, 'paid');
   assert.equal(result.metadata.paymentMethod, 'yape_plin');
+  assert.equal(result.metadata.paidTo, 'vendedor');
+  assert.equal(result.metadata.paymentProof.name, 'yape.jpg');
   assert.equal(result.metadata.paymentMethod === 'despues', false);
   assert.match(queries[1].sql, /payment_status/);
   assert.equal(queries[2].params[1], 'order.payment_recorded');
   assert.equal(queries[2].params[3], 'user-1');
+});
+
+test('rechaza un destinatario de pago que no existe', async () => {
+  await assert.rejects(
+    () => updateOrderPayment(91, { paymentMethod: 'yape_plin', paidTo: 'cliente' }, { query: async () => ({ rows: [] }) }),
+    /paidTo inválido/,
+  );
+});
+
+test('la lista de ventas oculta la foto de la constancia', async () => {
+  const db = {
+    async query() {
+      return {
+        rows: [{
+          id: 91,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: '2609050246',
+          external_order_number: '2609050246',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'optional',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 25,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 25,
+          customer: { name: 'Alexander' },
+          shipping: { type: 'recojo' },
+          metadata: {
+            paymentMethod: 'yape_plin',
+            paidTo: 'vendedor',
+            paymentProof: { name: 'yape.jpg', type: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,xx' },
+          },
+          ordered_at: '2026-09-05T15:15:00Z',
+          promised_shipping_at: null,
+          first_seen_at: '2026-09-05T15:15:00Z',
+          last_seen_at: '2026-09-05T15:15:00Z',
+          created_at: '2026-09-05T15:15:00Z',
+          updated_at: '2026-09-05T15:15:00Z',
+          created_by: 'seller-9',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          items: [],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ createdBy: 'seller-9', salesOnly: true, limit: 10 }, db);
+  assert.equal(result.orders[0].metadata.paidTo, 'vendedor');
+  assert.equal(result.orders[0].metadata.paymentProof.hasData, true);
+  assert.equal(result.orders[0].metadata.paymentProof.dataUrl, undefined);
 });
 
 test('rechaza un método de pago que no se puede registrar después', async () => {
@@ -735,6 +1038,77 @@ test('lista pedidos ordenando por total o fecha con una lista blanca', async () 
   assert.doesNotMatch(seen[2], /drop table/);
 });
 
+test('lista solo devoluciones por la fecha en que pasaron a ese estado', async () => {
+  const seen = [];
+  const db = {
+    async query(sql, params) {
+      seen.push({ sql: sql.replace(/\s+/g, ' '), params });
+      return { rows: [] };
+    },
+  };
+  await listCanceledOrders({ from: '2026-08-01', to: '2026-08-31', limit: 50 }, db);
+  assert.match(seen[0].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
+  assert.doesNotMatch(seen[0].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+  assert.doesNotMatch(seen[0].sql, /o\.order_status='cancelled'/);
+  assert.match(seen[0].sql, /cancelled_at/);
+  assert.match(seen[0].sql, /returned_at/);
+  assert.match(seen[0].sql, /from order_items oi/);
+  assert.match(seen[0].sql, /left join products p on p.id=oi.product_id/);
+  assert.match(seen[0].sql, /p\.image_url/);
+  assert.match(seen[0].sql, /listing\.shop_sku/);
+  assert.match(seen[0].sql, /rsa\.stock_quantity/);
+  assert.match(seen[0].sql, /'approvalId', rsa.id/);
+  assert.deepEqual(seen[0].params, ['2026-08-01', '2026-08-31', 50, 0]);
+
+  await listCanceledOrders({ kind: 'returned', from: '2026-08-20', to: '2026-08-20' }, db);
+  assert.match(seen[1].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
+  assert.doesNotMatch(seen[1].sql, /fulfillment_status in \('cancelled', 'returned'\)/);
+
+  await listCanceledOrders({ approval: 'pending', from: '2026-09-03', to: '2026-09-04' }, db);
+  assert.match(seen[2].sql, /o\.fulfillment_status='returned' or exists \(select 1 from return_stock_approvals rsa where rsa.order_id=o.id\)/);
+  assert.match(seen[2].sql, /return_stock_approvals rsa where rsa.order_id=o.id and rsa.status='pending'/);
+
+  await listCanceledOrders({ kind: 'cancelled', from: '2026-08-01', to: '2026-08-31' }, db);
+  assert.match(seen[3].sql, /o\.order_status='cancelled' or o\.fulfillment_status='cancelled'/);
+  assert.doesNotMatch(seen[3].sql, /o\.fulfillment_status='returned' or exists/);
+});
+
+test('expone la foto y el shop sku de cada ítem cancelado', async () => {
+  const db = {
+    async query() {
+      return {
+        rows: [{
+          id: 44,
+          company_id: 7,
+          nombre: 'LIMBO SAC',
+          nombre_comercial: 'LIMBO',
+          razon_social: 'LIMBO SAC',
+          channel_code: 'falabella',
+          channel_name: 'Falabella',
+          external_order_id: 'PV-10004',
+          external_order_number: 'PV-10004',
+          order_status: 'cancelled',
+          fulfillment_status: 'cancelled',
+          currency: 'PEN',
+          total: '189.90',
+          items: [{
+            name: 'Coche bastón',
+            sku: 'AG301',
+            quantity: 1,
+            imageUrl: 'https://img.example/ag301.jpg',
+            shopSku: '118765881',
+          }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listCanceledOrders({}, db);
+  assert.equal(result.orders[0].items[0].imageUrl, 'https://img.example/ag301.jpg');
+  assert.equal(result.orders[0].items[0].shopSku, '118765881');
+  assert.equal(result.orders[0].companyName, 'Limbo');
+});
+
 test('la serie diaria rellena con cero los días sin venta y estima comisión', () => {
   const daily = fillDailySales(
     [
@@ -810,6 +1184,13 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
         channel_code: 'manual',
         channel_name: 'Venta manual',
         channel_account_name: 'Mostrador',
+        items: [{
+          name: 'Manta térmica AG301',
+          sku: 'AG301',
+          quantity: 1,
+          imageUrl: '/seed/ag301.svg',
+          shopSku: null,
+        }],
         total_count: 1,
       }] };
     },
@@ -835,6 +1216,13 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
     { method: 'yape_plin', orders: 2, total: 300 },
   ]);
   assert.equal(result.orders[0].createdBy, 'seller-9');
+  assert.deepEqual(result.orders[0].items, [{
+    name: 'Manta térmica AG301',
+    sku: 'AG301',
+    quantity: 1,
+    imageUrl: '/seed/ag301.svg',
+    shopSku: null,
+  }]);
   assert.equal(result.ordersTotal, 1);
   assert.equal(result.limit, 10);
   assert.equal(result.offset, 10);
@@ -845,7 +1233,69 @@ test('el home del vendedor resume hoy, mes y pedidos propios', async () => {
   }
   const list = queries.find((query) => query.sql.includes('total_count'));
   assert.match(list.sql, /order by o\.total asc/);
+  assert.match(list.sql, /lines\.items/);
+  assert.match(list.sql, /p\.image_url/);
   assert.deepEqual(list.params.slice(-2), [10, 10]);
+});
+
+test('la lista de ventas del vendedor incluye el producto y su foto', async () => {
+  const db = {
+    async query(sql) {
+      assert.match(sql, /lines\.items/);
+      assert.match(sql, /p\.image_url/);
+      assert.match(sql, /p\.name/);
+      return {
+        rows: [{
+          id: 91,
+          company_id: 7,
+          channel_account_id: 22,
+          external_order_id: '2609050246',
+          external_order_number: '2609050246',
+          order_status: 'confirmed',
+          payment_status: 'paid',
+          fulfillment_status: 'pending',
+          document_status: 'pending',
+          provider_status: null,
+          document_requirement: 'optional',
+          document_type_policy: 'automatic',
+          requested_document_type: 'boleta',
+          currency: 'PEN',
+          subtotal: 25,
+          shipping_amount: null,
+          discount_amount: null,
+          total: 25,
+          customer: { name: 'Alexander' },
+          shipping: { type: 'recojo' },
+          metadata: { paymentMethod: 'efectivo' },
+          ordered_at: '2026-09-05T15:15:00Z',
+          promised_shipping_at: null,
+          provider_updated_at: null,
+          items_status: 'complete',
+          items_error: null,
+          first_seen_at: '2026-09-05T15:15:00Z',
+          last_seen_at: '2026-09-05T15:15:00Z',
+          created_at: '2026-09-05T15:15:00Z',
+          updated_at: '2026-09-05T15:15:00Z',
+          created_by: 'seller-9',
+          channel_code: 'manual',
+          channel_name: 'Venta manual',
+          channel_account_name: 'Mostrador',
+          items: [{
+            name: 'Manta térmica AG301',
+            sku: 'AG301',
+            quantity: 1,
+            imageUrl: '/seed/ag301.svg',
+            shopSku: null,
+          }],
+          total_count: 1,
+        }],
+      };
+    },
+  };
+  const result = await listOrders({ createdBy: 'seller-9', salesOnly: true, limit: 10 }, db);
+  assert.equal(result.orders[0].externalOrderNumber, '2609050246');
+  assert.equal(result.orders[0].items[0].name, 'Manta térmica AG301');
+  assert.equal(result.orders[0].items[0].imageUrl, '/seed/ag301.svg');
 });
 
 test('el home del vendedor rechaza un rango invertido', async () => {

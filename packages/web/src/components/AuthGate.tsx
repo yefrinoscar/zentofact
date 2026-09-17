@@ -210,9 +210,8 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
     setLoading(true);
     clearClientStorageOnLogout();
     const mobileEntry = window.matchMedia('(max-width: 767px)').matches;
-    const callbackURL = mobileEntry
-      ? `${window.location.origin}${window.location.pathname}${window.location.search}#/menu`
-      : window.location.href;
+    // Better Auth rechaza callbackURL con hash (#/ruta) como Invalid callbackURL.
+    const callbackURL = window.location.origin;
     const { data, error: nextError } = await authClient.signIn.email({
       email,
       password,

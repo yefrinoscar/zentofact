@@ -8,14 +8,13 @@
 
 ## Pull request target
 
-<!-- Regular feature and fix pull requests target `dev`. Railway does not deploy pull requests; prove on the Cloud Agent VM. Production releases use `dev` -> `main`. -->
+<!-- Feature and fix pull requests target `main`. Railway does not deploy pull requests; prove on the Cloud Agent VM. A pull request into `main` is a production release. -->
 
-- [ ] Integration — feature or fix targeting `dev`; no release label or version increment
-- [ ] Production release — `dev` targeting `main`; complete the release section below
+- [ ] Production — feature or fix targeting `main`; complete the release section below
 
-## Release type (dev -> main only)
+## Release type
 
-<!-- For a production release, select one option and apply exactly one matching release label. -->
+<!-- Select one option and apply exactly one matching release label. -->
 
 - [ ] Patch — fixes or maintenance that preserve existing behavior (`release:patch`)
 - [ ] Minor — new backward-compatible functionality (`release:minor`)

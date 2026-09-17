@@ -1,36 +1,35 @@
 # Repository workflow
 
 - `main` is the canonical production branch. Railway **production** (`zentofact-web` and `zentofact-api` in the `production` environment) must deploy from `main` only.
-- `dev` is the permanent development and integration branch. Railway **development** (`zentofact-web` and `zentofact-api` in the `development` environment) deploys from `dev` only. Do not delete `dev` or point production services at it.
+- `dev` is the permanent development branch. Railway **development** (`zentofact-web` and `zentofact-api` in the `development` environment) deploys from `dev` only. Do not delete `dev` or point production services at it.
 - Keep `dev` synchronized with `main`. After every merge or hotfix on `main`, merge `main` back into `dev` before starting more work.
-- Every new feature or fix must be developed on its own short-lived branch created from the latest `dev`. Do not implement regular work directly on `dev` or `main`.
-- All feature and fix pull requests must target `dev`. Merging a pull request into `dev` does not create a production release.
-- Production releases use a pull request from `dev` to `main`. Do not merge another branch directly into `main` unless the user explicitly authorizes an emergency hotfix; immediately merge any such hotfix back into `dev`.
-- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, and open a pull request targeting `dev`. Do **not** merge that pull request. Merging into `dev` is manual and only happens when the user explicitly asks to merge it.
-- Only release to production when the user explicitly asks to release, deploy to production, or merge `dev` into `main`.
-- The phrase "release please" is explicit authorization to run the complete production release workflow: synchronize `dev` from `main`, open and merge the `dev` to `main` release pull request, verify the GitHub Release, and verify the Railway production deployment from `main`.
-- Railway does not deploy pull requests. PR Environments stay off. Do not wait for a Railway GitHub check, preview URL, or green deploy status on a feature PR. Prove the change on this Cloud Agent VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+- Every new feature or fix must be developed on its own short-lived branch created from the latest `main`. Do not implement regular work directly on `dev` or `main`.
+- All feature and fix pull requests must target `main`. A pull request into `main` is a production release: apply exactly one release label and the matching version increment.
+- Do not merge into `main` unless the user explicitly asks to merge, release, or deploy to production. After that merge, merge `main` back into `dev`.
+- When the user says "commit and push", commit the relevant work on the current feature branch, push that branch, and open a pull request targeting `main` with the release label and version increment. Do **not** merge that pull request. Merging into `main` is manual and only happens when the user explicitly asks to merge it.
+- The phrase "release please" is explicit authorization to merge the open `main` pull request, or to open one if needed, then verify the GitHub Release and the Railway production deployment from `main`.
+- Railway does not deploy pull requests. PR Environments stay off. Do not wait for a Railway GitHub check, preview URL, or green deploy status on a feature PR. Prove the change on this Cloud Agent VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after `main` is merged back into `dev`. Railway **production** still deploys from `main` after a merge into `main`.
 - A Cloud Agent must not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. It must not create a Railway environment, PR environment, or preview deploy. Postgres, `.env`, fixture users, catalog, inbox, API, and web are created only on this Cloud Agent VM.
 - For now, do not add or run security checks, security reviews, or security gates as part of this workflow unless the user explicitly asks for them. Do not remove or weaken existing security controls.
 
 ## Versioning and releases
 
 - `packages/web/package.json` is the source of truth for the application version. Keep its matching entry in `package-lock.json` synchronized.
-- Every release pull request from `dev` to `main` must contain exactly one Semantic Versioning increment and produce exactly one GitHub Release. Pull requests merged only into `dev`, or closed without merging, do not create a release.
-- Apply exactly one release label to every release pull request before merging into `main`:
+- Every pull request into `main` must contain exactly one Semantic Versioning increment and produce exactly one GitHub Release. Pull requests merged only into `dev`, or closed without merging, do not create a release.
+- Apply exactly one release label to every pull request targeting `main` before merging:
   - `release:patch` for fixes and internal changes that preserve existing behavior, including bug fixes, refactors, tests, documentation, dependency updates, performance improvements, and minor UI corrections.
   - `release:minor` for new backward-compatible functionality that does not require existing users or integrations to change.
   - `release:major` for breaking changes that require users, integrations, configuration, or stored data to change.
 - When a pull request contains more than one change type, use the highest-impact increment: `release:major` over `release:minor` over `release:patch`.
-- Compare the version on `dev` with the current version on `main` before opening the release pull request and update it as follows:
+- Compare the version on the feature branch with the current version on `main` before opening the pull request and update it as follows:
   - Patch: `X.Y.Z` becomes `X.Y.(Z+1)`.
   - Minor: `X.Y.Z` becomes `X.(Y+1).0`.
   - Major: `X.Y.Z` becomes `(X+1).0.0`.
-- Update `dev` from the latest `main` immediately before final release validation. Recalculate the version if `main` changed while the release pull request was open.
+- Recalculate the version if `main` changed while the pull request was open. After merge, update `dev` from the latest `main`.
 - Never reuse an existing version, create a release tag from a feature branch, or manually create an additional version after a release job fails.
 - The release pull request description must state the selected release type and why it applies.
 - After merge, the release workflow tags the merged commit as `vX.Y.Z` and creates the corresponding GitHub Release. If it fails, rerun the same workflow for the same commit.
-- When the user explicitly asks to release or merge `dev` into `main`, apply the appropriate release label, wait for version validation to pass, merge the release pull request, verify that the GitHub Release was created, and confirm Railway production deployed the merged `main` commit successfully.
+- When the user explicitly asks to release or merge into `main`, apply the appropriate release label, wait for version validation to pass, merge the pull request, verify that the GitHub Release was created, and confirm Railway production deployed the merged `main` commit successfully.
 
 ## UI composition
 
@@ -87,7 +86,7 @@ When proving a UI or API change on this VM, or when the task names a role, catal
 
 The Cloud Agent VM is the only test appliance. Postgres, `.env`, fixture users, catalog, Falabella inbox, API (`3010`), and web (`3011`) are created here by `scripts/cloud-agent-start.sh` and the configured terminals. Do not provision Neon, Railway Postgres, a GitHub pull request, or a Railway PR environment to make this app start.
 
-Do not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. Do not create a Railway environment, PR environment, or preview deploy. Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after a merge into `dev`. Railway **production** still deploys from `main` after a release.
+Do not open a GitHub pull request unless the user explicitly asks to commit, push, or open one. Do not create a Railway environment, PR environment, or preview deploy. Prove operator flows on this VM at `http://127.0.0.1:3011`. Railway **development** still deploys from `dev` after `main` is merged back into `dev`. Railway **production** still deploys from `main` after a merge into `main`.
 
 1. `bash scripts/cloud-agent-start.sh` — done when it prints `cloud-agent-start=ok`. Local Postgres is up and DB `zentofact` accepts `zento` on `127.0.0.1:5432`. If `.env` was missing, the script wrote one with `SEED_PREVIEW=true`.
 2. `.cursor/skills/verify-zentofact/scripts/control-zentofact launch` then `doctor` — done when doctor prints `api_health=ok` (`service=zentofact-api`) and `web_health=ok`.

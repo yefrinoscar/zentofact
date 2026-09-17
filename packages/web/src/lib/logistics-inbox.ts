@@ -2,6 +2,8 @@ export type LogisticsStage = 'pending' | 'ready' | 'shipped';
 export type LogisticsChannel = 'falabella' | 'ripley' | 'mercado_libre' | 'manual';
 export type LogisticsUrgency = 'overdue' | 'today' | 'tomorrow' | 'later';
 
+export const DEFAULT_BANDEJA_URGENCY: LogisticsUrgency | null = null;
+
 export type LogisticsOrderLike = {
   channelCode?: string | null;
   fulfillmentStatus?: string | null;
@@ -9,7 +11,7 @@ export type LogisticsOrderLike = {
   externalOrderId?: string | null;
   promisedShippingAt?: string | null;
   shipping?: { type?: string | null; carrier?: string | null; trackingCode?: string | null } | null;
-  metadata?: { delivery?: string | null; shippingCarrier?: string | null; shippingId?: string | null } | null;
+  metadata?: { delivery?: string | null; shippingCarrier?: string | null; shippingId?: string | null; logisticType?: string | null; shippingMode?: string | null; shippingSubstatus?: string | null } | null;
   labelPrint?: { printCount?: number | null; lastPrintedAt?: string | null } | null;
 };
 
@@ -18,8 +20,21 @@ export const LOGISTICS_CHANNELS: Array<{ value: 'all' | LogisticsChannel; label:
   { value: 'falabella', label: 'Falabella' },
   { value: 'ripley', label: 'Ripley' },
   { value: 'mercado_libre', label: 'Mercado Libre' },
-  { value: 'manual', label: 'Manual' },
+  { value: 'manual', label: 'Propios' },
 ];
+
+export type LogisticsEnabledChannels = {
+  falabella?: boolean;
+  ripley?: boolean;
+  mercado_libre?: boolean;
+  manual?: boolean;
+};
+
+export function visibleLogisticsChannels(enabled?: LogisticsEnabledChannels | null) {
+  return LOGISTICS_CHANNELS.filter((channel) => (
+    channel.value === 'all' || enabled?.[channel.value] !== false
+  ));
+}
 
 export const LOGISTICS_STAGES: Array<{
   value: LogisticsStage;
@@ -47,6 +62,44 @@ export const LOGISTICS_URGENCIES: Array<{
   { value: 'later', label: 'Próximos', description: 'Después de mañana o sin fecha', dotClass: 'bg-slate-300', railClass: 'border-l-slate-300', textClass: 'text-slate-600', pillClass: 'bg-slate-100 text-slate-600' },
 ];
 
+export const BANDEJA_DEADLINE_FILTERS = LOGISTICS_URGENCIES.filter((item) => (
+  item.value === 'today' || item.value === 'tomorrow'
+));
+
+export function bandejaDeadlineFilter(urgency: LogisticsUrgency | null): 'today' | 'tomorrow' | null {
+  if (urgency === 'today' || urgency === 'tomorrow') return urgency;
+  return null;
+}
+
+export type BandejaDeadlineDateCount = { date: string; count: number };
+
+export function limaDeadlineKey(date: Date) {
+  return limaDateKey(date);
+}
+
+export function formatBandejaDeadlineDate(key: string, now: Date) {
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return key;
+  const label = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+    ...(year === Number(limaDateKey(now).slice(0, 4)) ? {} : { year: 'numeric' as const }),
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+  return label.replace('septiembre', 'setiembre');
+}
+
+export function laterBandejaDeadlineDates(dates: BandejaDeadlineDateCount[], now: Date) {
+  const tomorrow = limaDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+  return dates
+    .filter((item) => item.count > 0 && item.date > tomorrow)
+    .sort((left, right) => left.date.localeCompare(right.date));
+}
+
+export function bandejaDeadlineDateCount(dates: BandejaDeadlineDateCount[], key: string) {
+  return dates.find((item) => item.date === key)?.count || 0;
+}
+
 // Agrupa la página visible por urgencia en el orden operativo (vencidos primero).
 export function groupLogisticsByUrgency<T extends LogisticsOrderLike>(orders: T[], now: Date) {
   const buckets = new Map<LogisticsUrgency, T[]>(LOGISTICS_URGENCIES.map((item) => [item.value, []]));
@@ -62,7 +115,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   falabella: 'Falabella',
   ripley: 'Ripley',
   mercado_libre: 'Mercado Libre',
-  manual: 'Manual',
+  manual: 'Propios',
 };
 
 const CARRIER_LABELS: Record<string, string> = {
@@ -109,27 +162,58 @@ export function logisticsDeliveryLabel(order: LogisticsOrderLike) {
   return '—';
 }
 
-export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
-  const channel = String(order.channelCode || '');
+export const RIPLEY_LABEL_SOON_COPY = 'Muy pronto.';
+
+function logisticsPrintableStatus(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'cancelled' || status === 'failed' || status === 'returned') return false;
   if (status === 'shipped' || status === 'delivered') return false;
+  return true;
+}
+
+export function logisticsRipleyLabelSoon(order: LogisticsOrderLike) {
+  return false;
+}
+
+export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
+  const channel = String(order.channelCode || '');
+  const status = String(order.fulfillmentStatus || '');
+  if (!logisticsPrintableStatus(order)) return false;
   if (channel === 'manual') return true;
   if (channel === 'falabella') return status === 'ready_to_ship' && order.companyId != null;
-  if (channel === 'ripley') return order.companyId != null && (status === 'ready_to_ship' || status === 'preparing' || status === 'pending');
   if (channel === 'mercado_libre') {
-    return status === 'ready_to_ship'
-      && order.companyId != null
-      && Boolean(String(order.metadata?.shippingId || '').trim());
+    const shippingId = String(order.metadata?.shippingId || '').trim();
+    const shippingMode = String(order.metadata?.shippingMode || '').trim().toLowerCase();
+    const logisticType = String(order.metadata?.logisticType || '').trim().toLowerCase();
+    const substatus = String(order.metadata?.shippingSubstatus || '').trim().toLowerCase();
+    return status === 'ready_to_ship' && order.companyId != null && Boolean(shippingId)
+      && shippingMode === 'me2'
+      && ['cross_docking', 'drop_off', 'xd_drop_off', 'self_service'].includes(logisticType)
+      && ['ready_to_print', 'printed', 'ready_for_dropoff', 'ready_for_pickup'].includes(substatus);
   }
   return false;
 }
 
-export function canMarkFalabellaReady(order: LogisticsOrderLike) {
-  return order.channelCode === 'falabella'
-    && order.companyId != null
+export function canMarkLogisticsReady(order: LogisticsOrderLike) {
+  const channel = String(order.channelCode || '');
+  if (channel !== 'falabella') return false;
+  return order.companyId != null
     && Boolean(order.externalOrderId)
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
+}
+
+export function canMarkLogisticsDelivered(order: LogisticsOrderLike) {
+  if (String(order.channelCode || '') !== 'manual') return false;
+  const status = String(order.fulfillmentStatus || '');
+  return status === 'pending' || status === 'preparing' || status === 'ready_to_ship';
+}
+
+export function canMarkFalabellaReady(order: LogisticsOrderLike) {
+  return order.channelCode === 'falabella' && canMarkLogisticsReady(order);
+}
+
+export function logisticsItemSku(item: { mainSku?: string | null; sku?: string | null }) {
+  return String(item.mainSku || item.sku || '').trim() || null;
 }
 
 export function labelWasPrinted(order: LogisticsOrderLike) {
@@ -174,18 +258,16 @@ export function formatLogisticsTime(value?: string | null) {
 export function logisticsUrgency(order: LogisticsOrderLike, now: Date): LogisticsUrgency {
   const deadline = parseLogisticsDate(order.promisedShippingAt);
   if (!deadline) return 'later';
-  if (deadline.getTime() < now.getTime()) return 'overdue';
   const deadlineDay = limaDateKey(deadline);
-  if (deadlineDay === limaDateKey(now)) return 'today';
+  const today = limaDateKey(now);
+  if (deadlineDay < today) return 'overdue';
+  if (deadlineDay === today) return 'today';
   if (deadlineDay === limaDateKey(new Date(now.getTime() + 24 * 60 * 60 * 1000))) return 'tomorrow';
   return 'later';
 }
 
-// Por ahora la bandeja no muestra vencidos ni pedidos sin plazo.
-export function isActiveLogisticsDeadline(order: LogisticsOrderLike, now: Date) {
-  const deadline = parseLogisticsDate(order.promisedShippingAt);
-  if (!deadline) return false;
-  return logisticsUrgency(order, now) !== 'overdue';
+export function isActiveLogisticsDeadline(order: LogisticsOrderLike, _now?: Date) {
+  return Boolean(parseLogisticsDate(order.promisedShippingAt));
 }
 
 export function logisticsElapsedLabel(value: string | null | undefined, now: Date) {
@@ -222,17 +304,21 @@ export function logisticsUrgencyMeta(urgency: LogisticsUrgency) {
 
 export type LogisticsNextStep =
   | { kind: 'print'; label: 'Imprimir' | 'Reimprimir' }
+  | { kind: 'soon'; label: 'Imprimir' }
   | { kind: 'ready'; label: 'Marcar listo' }
+  | { kind: 'deliver'; label: 'Marcar entregado' }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
 
 export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
+  if (canMarkLogisticsDelivered(order)) return { kind: 'deliver', label: 'Marcar entregado' };
+  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: 'Marcar listo' };
+  if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
-  if (canMarkFalabellaReady(order)) return { kind: 'ready', label: 'Marcar listo' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
-  if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Sin seller' };
+  if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Gestionar en Ripley' };
   if (order.channelCode === 'mercado_libre') {
     if (order.companyId == null) return { kind: 'wait', label: 'Sin seller' };
     return { kind: 'wait', label: 'Esperando etiqueta' };
@@ -253,6 +339,14 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Etiqueta', state: shipped ? 'done' : ready ? 'current' : 'todo' },
     ];
   }
+  if (order.channelCode === 'ripley') {
+    const ready = status === 'ready_to_ship' || shipped;
+    return [
+      { label: 'Empacar', state: ready ? 'done' : 'current' },
+      { label: 'Confirmar recojo', state: ready ? 'done' : 'todo' },
+      { label: 'Etiqueta', state: shipped ? 'done' : 'todo' },
+    ];
+  }
   if (order.channelCode === 'mercado_libre') {
     const ready = status === 'ready_to_ship' || shipped;
     const printed = labelWasPrinted(order);
@@ -262,11 +356,9 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
       { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
     ];
   }
-  const printed = labelWasPrinted(order);
   return [
-    { label: 'Empacar', state: printed || shipped ? 'done' : 'current' },
-    { label: 'Etiqueta', state: shipped ? 'done' : printed ? 'done' : 'current' },
-    { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
+    { label: 'Empacar', state: shipped ? 'done' : 'current' },
+    { label: 'Entregar', state: shipped ? 'done' : 'todo' },
   ];
 }
 
@@ -274,12 +366,15 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return 'El pedido ya salió del almacén. No hace falta volver a imprimir.';
   if (order.channelCode === 'falabella') {
-    if (canPrintLogisticsLabel(order)) return 'Falabella confirmó el pedido como listo. Imprime la etiqueta y la guía de armado.';
+    if (canPrintLogisticsLabel(order)) return 'Falabella confirmó el pedido como listo. Imprime la etiqueta.';
     if (canMarkFalabellaReady(order)) return 'Empaca todos los productos y confirma que está listo para habilitar la etiqueta de Falabella.';
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
-    return 'Ripley genera la etiqueta desde Seller Center. Si aún no existe, la impresión avisará.';
+    return 'Gestiona la confirmación y la etiqueta directamente en Ripley. La bandeja no permite marcarlo listo ni imprimirlo.';
+  }
+  if (canMarkLogisticsDelivered(order)) {
+    return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';
   }
   if (order.channelCode === 'mercado_libre') {
     if (canPrintLogisticsLabel(order)) {
@@ -291,7 +386,7 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido de Mercado Libre no tiene seller conectado; revísalo en Empresas.';
   }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
-  return 'Empaca los productos e imprime la etiqueta ZentoFact con la guía de armado.';
+  return 'Empaca los productos. Si necesitas guía, puedes imprimirla.';
 }
 
 export function logisticsCountLabel(stage: LogisticsStage, count: number) {
@@ -300,17 +395,20 @@ export function logisticsCountLabel(stage: LogisticsStage, count: number) {
 }
 
 export function pendingDeadlineHelper(orders: LogisticsOrderLike[], now: Date) {
+  let overdue = 0;
   let today = 0;
   let tomorrow = 0;
   let later = 0;
   for (const order of orders) {
     if (!isActiveLogisticsDeadline(order, now)) continue;
     const urgency = logisticsUrgency(order, now);
-    if (urgency === 'today') today += 1;
+    if (urgency === 'overdue') overdue += 1;
+    else if (urgency === 'today') today += 1;
     else if (urgency === 'tomorrow') tomorrow += 1;
     else later += 1;
   }
   const parts: string[] = [];
+  if (overdue) parts.push(`${overdue} vencido${overdue === 1 ? '' : 's'}`);
   if (today) parts.push(`${today} hoy`);
   if (tomorrow) parts.push(`${tomorrow} mañana`);
   if (!parts.length && later) parts.push(`${later} próximo${later === 1 ? '' : 's'}`);
@@ -335,14 +433,22 @@ export function logisticsUpdatedClock(updatedAt?: Date | null) {
   }).format(updatedAt);
 }
 
-export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null) {
+export function logisticsEmptyCopy(stage: LogisticsStage, urgency?: LogisticsUrgency | null, deadlineLabel?: string | null) {
+  if (deadlineLabel && stage !== 'shipped') {
+    return `Ningún pedido el ${deadlineLabel}. Quita el filtro de fecha para ver el resto.`;
+  }
   if (urgency && stage !== 'shipped') {
     const meta = logisticsUrgencyMeta(urgency);
     return `Ningún pedido en “${meta.label}”. Quita el filtro de prioridad para ver el resto.`;
   }
   if (stage === 'pending') return 'Nada que preparar con estos filtros.';
-  if (stage === 'ready') return 'No hay pedidos listos para imprimir.';
+  if (stage === 'ready') return 'No hay pedidos confirmados.';
   return 'No hay envíos recientes.';
+}
+
+export function remainingReadyToPrint(counts: { readyUnprinted?: number | null; ready?: number | null }) {
+  if (counts.readyUnprinted == null) return Math.max(0, Number(counts.ready || 0));
+  return Math.max(0, Number(counts.readyUnprinted) || 0);
 }
 
 export function logisticsSkippedNotice(skipped: Array<{ id: number; reason: string }>) {
@@ -351,18 +457,152 @@ export function logisticsSkippedNotice(skipped: Array<{ id: number; reason: stri
   return `${skipped.length} pedidos no se imprimieron.`;
 }
 
-export function logisticsPrintSuccessCopy(result: { labelCount?: number; packingPageCount?: number }) {
+export function logisticsPrintSuccessCopy(result: { labelCount?: number }) {
   const labels = Number(result.labelCount || 0);
-  const packing = Number(result.packingPageCount || 0);
   const labelCopy = `${labels} etiqueta${labels === 1 ? '' : 's'}`;
-  if (!packing) return `Listo. ${labelCopy}.`;
-  return `Listo. ${labelCopy} y ${packing} hoja${packing === 1 ? '' : 's'} de armado.`;
+  return `Listo. ${labelCopy}.`;
 }
 
 export function logisticsBulkReadySummary(total: number, failed: number) {
   if (!failed) return `${total} pedido${total === 1 ? '' : 's'} marcado${total === 1 ? '' : 's'} listo${total === 1 ? '' : 's'} para enviar.`;
   const ok = total - failed;
   return `${ok} marcado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
+}
+
+export type LogisticsInboxSnapshot = {
+  orders: Array<{
+    id: number;
+    promisedShippingAt?: string | null;
+    fulfillmentStatus?: string | null;
+    labelPrint?: { printCount?: number | null } | null;
+  }>;
+  counts: {
+    pending: number;
+    ready: number;
+    readyUnprinted?: number;
+    shipped: number;
+    dates?: BandejaDeadlineDateCount[];
+  };
+  totalCount: number;
+};
+
+// Quita de pendientes los pedidos que ya se marcaron listos, como en la bandeja Falabella.
+export function applyLogisticsReadyToInbox<T extends LogisticsInboxSnapshot>(
+  inbox: T | undefined,
+  orderIds: Iterable<number>,
+): T | undefined {
+  if (!inbox) return inbox;
+  const ids = new Set(orderIds);
+  if (!ids.size) return inbox;
+  const remaining = inbox.orders.filter((order) => !ids.has(order.id));
+  const removed = inbox.orders.filter((order) => ids.has(order.id));
+  if (!removed.length) return inbox;
+  const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
+  for (const order of removed) {
+    const deadline = parseLogisticsDate(order.promisedShippingAt);
+    if (!deadline) continue;
+    const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
+    if (item) item.count = Math.max(0, item.count - 1);
+  }
+  return {
+    ...inbox,
+    orders: remaining,
+    totalCount: Math.max(0, Number(inbox.totalCount) - removed.length),
+    counts: {
+      ...inbox.counts,
+      pending: Math.max(0, Number(inbox.counts.pending) - removed.length),
+      ready: Number(inbox.counts.ready) + removed.length,
+      readyUnprinted: Number(inbox.counts.readyUnprinted || 0) + removed.length,
+      dates: dates.filter((item) => item.count > 0),
+    },
+  };
+}
+
+export function applyLogisticsDeliveredToInbox<T extends LogisticsInboxSnapshot>(
+  inbox: T | undefined,
+  orderIds: Iterable<number>,
+): T | undefined {
+  if (!inbox) return inbox;
+  const ids = new Set(orderIds);
+  if (!ids.size) return inbox;
+  const remaining = inbox.orders.filter((order) => !ids.has(order.id));
+  const removed = inbox.orders.filter((order) => ids.has(order.id));
+  if (!removed.length) return inbox;
+  const dates = (inbox.counts.dates || []).map((item) => ({ ...item }));
+  let pendingRemoved = 0;
+  let readyRemoved = 0;
+  let readyUnprintedRemoved = 0;
+  for (const order of removed) {
+    if (String(order.fulfillmentStatus || '') === 'ready_to_ship') {
+      readyRemoved += 1;
+      if (!labelWasPrinted(order)) readyUnprintedRemoved += 1;
+    } else pendingRemoved += 1;
+    const deadline = parseLogisticsDate(order.promisedShippingAt);
+    if (!deadline) continue;
+    const item = dates.find((row) => row.date === limaDeadlineKey(deadline));
+    if (item) item.count = Math.max(0, item.count - 1);
+  }
+  return {
+    ...inbox,
+    orders: remaining,
+    totalCount: Math.max(0, Number(inbox.totalCount) - removed.length),
+    counts: {
+      ...inbox.counts,
+      pending: Math.max(0, Number(inbox.counts.pending) - pendingRemoved),
+      ready: Math.max(0, Number(inbox.counts.ready) - readyRemoved),
+      readyUnprinted: Math.max(0, Number(inbox.counts.readyUnprinted || 0) - readyUnprintedRemoved),
+      shipped: Number(inbox.counts.shipped || 0) + removed.length,
+      dates: dates.filter((item) => item.count > 0),
+    },
+  };
+}
+
+export function logisticsDeliverConfirmCopy() {
+  return 'Confirmas que este pedido propio ya se entregó. Sale de la bandeja.';
+}
+
+export function logisticsDeliverSuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }) {
+  const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
+  return `${number} quedó entregado.`;
+}
+
+export function logisticsBulkDeliverConfirmCopy(count: number) {
+  return `Confirma que ${count === 1 ? 'este pedido propio ya se entregó' : `estos ${count} pedidos propios ya se entregaron`}.`;
+}
+
+export function logisticsBulkDeliverSummary(total: number, failed: number) {
+  if (!failed) return `${total} pedido${total === 1 ? '' : 's'} marcado${total === 1 ? '' : 's'} como entregado${total === 1 ? '' : 's'}.`;
+  const ok = total - failed;
+  return `${ok} entregado${ok === 1 ? '' : 's'}; ${failed} no pudo${failed === 1 ? '' : 'ieron'} actualizarse.`;
+}
+
+export function logisticsReadyConfirmCopy(order: LogisticsOrderLike) {
+  if (order.channelCode === 'ripley') {
+    return 'Mirakl confirmará el pedido como listo para recojo en Ripley.';
+  }
+  return 'Falabella dejará este pedido en listo para enviar y descontará el stock.';
+}
+
+export function logisticsReadySuccessCopy(order: LogisticsOrderLike & { externalOrderNumber?: string | null }) {
+  const number = String(order.externalOrderNumber || '').trim() || 'El pedido';
+  if (order.channelCode === 'ripley') {
+    return `${number} quedó confirmado en Ripley y listo para recojo.`;
+  }
+  return `${number} quedó listo para enviar. Ya puedes imprimir la etiqueta.`;
+}
+
+export function logisticsBulkReadyConfirmCopy(orders: LogisticsOrderLike[]) {
+  const ripley = orders.filter((order) => order.channelCode === 'ripley').length;
+  const falabella = orders.filter((order) => order.channelCode === 'falabella').length;
+  if (ripley && falabella) return 'Falabella confirma listo. Ripley confirma el recojo en Mirakl.';
+  if (ripley) return 'Ripley confirma estos pedidos como listos para recojo en Mirakl.';
+  return 'Falabella descontará el stock y habilitará las etiquetas.';
+}
+
+const MARKETPLACE_IMAGE_HOST = /(^|\.)(falabella\.com|ripley\.com(\.pe)?|mirakl\.net|mirakl\.com)$/i;
+
+export function isMarketplaceImageHost(hostname: string) {
+  return MARKETPLACE_IMAGE_HOST.test(hostname);
 }
 
 export function productImageSrc(url?: string | null, shopSku?: string | null) {
@@ -372,7 +612,7 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
   if (!value) return '';
   try {
     const parsed = new URL(value);
-    if (parsed.protocol === 'https:' && /(^|\.)falabella\.com$/i.test(parsed.hostname)) {
+    if (parsed.protocol === 'https:' && isMarketplaceImageHost(parsed.hostname)) {
       return `/catalog/image?url=${encodeURIComponent(value)}`;
     }
   } catch {
@@ -381,17 +621,197 @@ export function productImageSrc(url?: string | null, shopSku?: string | null) {
   return value;
 }
 
-export function openPdfFromBase64(base64: string, filename: string) {
+export function productImageCandidates(url?: string | null, shopSku?: string | null) {
+  const sku = String(shopSku || '').trim();
+  const falabellaVariants = sku && /^[A-Za-z0-9_-]+$/.test(sku)
+    ? [
+        `https://media.falabella.com/falabellaPE/${sku}_01`,
+        `https://media.falabella.com/falabellaPE/${sku}_1`,
+      ]
+    : [];
+  return [...new Set([
+    productImageSrc(url),
+    ...falabellaVariants.map((imageUrl) => productImageSrc(imageUrl)),
+  ].filter(Boolean))];
+}
+
+export const PDF_POPUP_BLOCKED_COPY = 'Permite las ventanas emergentes para ver el PDF.';
+
+export function pdfPreviewLoadingHtml(labelCount = 0) {
+  const count = Number.isFinite(labelCount) ? Math.max(0, Math.floor(labelCount)) : 0;
+  const countLabel = count === 1 ? '1 etiqueta' : count > 1 ? `${count} etiquetas` : '';
+  const bars = [2, 1, 3, 1, 1, 2, 1, 4, 1, 2, 1, 1, 3, 2, 1, 2, 1, 4, 1, 1, 2, 3, 1, 2, 1, 1, 3, 1]
+    .map((width) => `<i style="width:${width}px"></i>`)
+    .join('');
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Armando las etiquetas</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: #f5f5f4;
+        color: #1c1917;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(92vw, 420px);
+        padding: 44px 36px 32px;
+        border: 1px solid #e7e5e4;
+        border-radius: 20px;
+        background: #fff;
+        box-shadow: 0 24px 60px rgba(28, 25, 23, .10);
+        text-align: center;
+      }
+      .press {
+        position: relative;
+        width: 112px;
+        height: 148px;
+        margin: 0 auto 28px;
+      }
+      .ghost {
+        position: absolute;
+        inset: 8px 6px -8px;
+        border-radius: 10px;
+        background: #fff;
+        border: 1px solid #e7e5e4;
+        transform: rotate(4deg);
+      }
+      .ghost:first-child { transform: rotate(-5deg); inset: 10px 8px -6px; background: #fafaf9; }
+      .label {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #fff;
+        border: 1px solid #d6d3d1;
+        box-shadow: 0 10px 24px rgba(28, 25, 23, .10);
+        animation: feed 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+      }
+      .band {
+        height: 18px;
+        background: #132238;
+      }
+      .pad { padding: 10px 12px 12px; }
+      .barcode {
+        display: flex;
+        align-items: stretch;
+        justify-content: space-between;
+        height: 42px;
+        margin-bottom: 12px;
+      }
+      .barcode i { display: block; height: 100%; background: #132238; border-radius: 0.5px; }
+      .lines { display: grid; gap: 7px; }
+      .lines b {
+        display: block;
+        height: 6px;
+        border-radius: 3px;
+        background: #e7e5e4;
+      }
+      .lines b:nth-child(1) { width: 82%; }
+      .lines b:nth-child(2) { width: 64%; }
+      .lines b:nth-child(3) { width: 46%; }
+      .mask {
+        position: absolute;
+        inset: 0;
+        background: #fff;
+        animation: wipe 2.4s linear infinite;
+      }
+      .head {
+        position: absolute;
+        top: 0;
+        left: -10px;
+        right: -10px;
+        height: 2px;
+        background: #2864F0;
+        box-shadow: 0 0 12px 2px rgba(40, 100, 240, .45);
+      }
+      h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; }
+      p { margin: 10px auto 0; max-width: 280px; color: #78716c; font-size: 14px; line-height: 1.5; }
+      .count {
+        display: ${countLabel ? 'inline-flex' : 'none'};
+        margin-top: 22px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: #f5f5f4;
+        color: #57534e;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      @keyframes feed {
+        0% { opacity: 0; transform: translateY(12px); }
+        12% { opacity: 1; transform: translateY(0); }
+        78% { opacity: 1; transform: translateY(0); }
+        92% { opacity: 0; transform: translateY(-10px); }
+        100% { opacity: 0; transform: translateY(12px); }
+      }
+      @keyframes wipe {
+        0%, 12% { transform: translateY(0); }
+        70% { transform: translateY(100%); }
+        100% { transform: translateY(100%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .label, .mask { animation: none; }
+        .label { opacity: 1; transform: none; }
+        .mask { transform: translateY(100%); }
+      }
+    </style>
+  </head>
+  <body>
+    <main role="status" aria-live="polite">
+      <div class="press" aria-hidden="true">
+        <div class="ghost"></div>
+        <div class="ghost"></div>
+        <div class="label">
+          <div class="band"></div>
+          <div class="pad">
+            <div class="barcode">${bars}</div>
+            <div class="lines"><b></b><b></b><b></b></div>
+          </div>
+          <div class="mask"><div class="head"></div></div>
+        </div>
+      </div>
+      <h1>Armando las etiquetas</h1>
+      <p>Revisa e imprime desde esta pestaña.</p>
+      <span class="count">${countLabel}</span>
+    </main>
+  </body>
+</html>`;
+}
+
+export function openPdfPreviewTab(labelCount = 0) {
+  const preview = window.open('', '_blank');
+  if (!preview) return null;
+  preview.opener = null;
+  preview.document.open();
+  preview.document.write(pdfPreviewLoadingHtml(labelCount));
+  preview.document.close();
+  return preview;
+}
+
+export function pdfObjectUrlFromBase64(base64: string) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-  const preview = window.open(url, '_blank', 'noopener');
-  if (!preview) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
+  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
+
+export function showPdfInTab(preview: Window | null, base64: string) {
+  const url = pdfObjectUrlFromBase64(base64);
+  if (preview && !preview.closed) {
+    preview.location.replace(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+    return true;
   }
-  return url;
+  const next = window.open(url, '_blank');
+  if (next) next.opener = null;
+  window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+  return Boolean(next);
 }

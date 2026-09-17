@@ -7,6 +7,9 @@ import {
   BadgeDollarSign,
   BarChart3,
   Boxes,
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ArrowUpNarrowWide,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -30,6 +33,7 @@ import {
   Store,
   Tag,
   UserRound,
+  Wallet,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
@@ -42,6 +46,13 @@ import {
   simulatePublicationPreview,
 } from '../lib/publication-preview';
 import { marketplaceProductUrl } from '../lib/marketplace-url';
+import { catalogSalesPace, catalogStockHint, type CatalogSalesPaceTone } from '../lib/catalog-product-pace';
+import {
+  catalogColumnSortAria,
+  catalogColumnSortState,
+  nextCatalogColumnSort,
+  type CatalogSortColumn,
+} from '../lib/catalog-sort';
 import {
   eventFromStackedOverlay,
   inventoryAdjustFormFromOnHand,
@@ -118,6 +129,7 @@ type Product = {
   status: 'active' | 'inactive' | 'archived';
   imageUrl?: string | null;
   referencePrice?: number | null;
+  wholesalePrice?: number | null;
   commissionAmount?: number | null;
   profitOwner?: string | null;
   sellerPriceMin?: number | null;
@@ -125,7 +137,10 @@ type Product = {
   sellerStockTotal?: number;
   quantityOnHand: number;
   quantityReserved: number;
+  quantityPendingReturn?: number;
   available: number;
+  unitsSold7d?: number;
+  lastSoldAt?: string | null;
   reorderPoint?: number | null;
   listingsCount?: number;
   sellersCount?: number;
@@ -239,11 +254,19 @@ const PAGE_SIZE = 20;
 const ASSOCIATION_PAGE_SIZE = 20;
 const SEARCH_DELAY_MS = 300;
 const CATALOG_COLUMN_CLASS_NAMES = {
-  product: 'w-full sm:w-[48%]',
-  price: 'hidden sm:table-cell sm:w-[14%]',
-  stock: 'hidden sm:table-cell sm:w-[18%]',
-  status: 'hidden whitespace-normal sm:table-cell sm:w-[20%]',
+  product: 'w-full sm:w-[38%]',
+  price: 'hidden sm:table-cell sm:w-[12%]',
+  stock: 'hidden sm:table-cell sm:w-[16%]',
+  pace: 'hidden sm:table-cell sm:w-[16%]',
+  status: 'hidden whitespace-normal sm:table-cell sm:w-[18%]',
 } as const;
+const CATALOG_COLUMN_COUNT = 5;
+const PACE_TONE_CLASS: Record<CatalogSalesPaceTone, string> = {
+  muted: 'text-muted-foreground',
+  ok: '',
+  warn: 'text-amber-700 dark:text-amber-400',
+  danger: 'text-rose-700 dark:text-rose-400',
+};
 
 const initialCreate = {
   mainSku: '',
@@ -251,6 +274,7 @@ const initialCreate = {
   brand: '',
   description: '',
   referencePrice: '',
+  wholesalePrice: '',
   commissionAmount: '',
   profitOwner: '',
   imageUrl: '',
@@ -317,6 +341,111 @@ function formatBasePrice(product: Product) {
     return `${formatMoney(product.sellerPriceMin)} – ${formatMoney(product.sellerPriceMax)}`;
   }
   return formatMoney(product.sellerPriceMin);
+}
+
+function CatalogPriceCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  return (
+    <span className="block min-w-0">
+      <span className={cn(compact ? 'mt-1 block truncate text-xs font-semibold' : 'block text-sm font-medium tabular-nums')}>
+        {formatBasePrice(product)}
+      </span>
+      {product.wholesalePrice != null ? (
+        <span className={cn('block tabular-nums text-muted-foreground', compact ? 'mt-0.5 truncate text-[11px]' : 'mt-0.5 text-[11px]')}>
+          Por mayor {formatMoney(product.wholesalePrice)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function CatalogStockCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const hint = catalogStockHint(product);
+  const empty = Number(product.available) <= 0;
+  return (
+    <span className="block min-w-0">
+      <span className={cn(
+        'tabular-nums',
+        compact ? 'mt-1 block text-xs font-semibold' : 'block text-lg font-semibold leading-none',
+        empty && 'text-rose-700 dark:text-rose-400',
+      )}>
+        {formatNumber(product.available)}{compact ? ' u' : <> <span className="text-xs font-normal text-muted-foreground">u</span></>}
+      </span>
+      <span className={cn('block text-muted-foreground', compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[11px]')}>
+        {hint || (empty ? 'sin stock' : 'disponible')}
+      </span>
+    </span>
+  );
+}
+
+function CatalogSortGlyph({ active, dir, always }: { active: boolean; dir: 'asc' | 'desc'; always?: boolean }) {
+  const Icon = !active ? ArrowUpDown : dir === 'asc' ? ArrowUpNarrowWide : ArrowDownWideNarrow;
+  return (
+    <Icon
+      className={cn(
+        'size-3.5 shrink-0 transition-opacity',
+        active ? 'text-foreground' : 'text-muted-foreground',
+        active || always ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+      )}
+      aria-hidden="true"
+    />
+  );
+}
+
+function CatalogSortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+  compact = false,
+}: {
+  label: string;
+  column: CatalogSortColumn;
+  sort: CatalogSort;
+  onSort: (column: CatalogSortColumn) => void;
+  compact?: boolean;
+}) {
+  const state = catalogColumnSortState(sort);
+  const active = state?.column === column;
+  const dir = active ? state.dir : 'desc';
+  return (
+    <button
+      type="button"
+      className={cn(
+        'group inline-flex items-center gap-1 rounded-sm font-medium transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        compact ? 'h-8 rounded-md px-2 text-xs hover:bg-muted' : '-ml-1 px-1 text-sm',
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+      )}
+      aria-label={catalogColumnSortAria(column, sort)}
+      aria-pressed={active}
+      title={catalogColumnSortAria(column, sort)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSort(column);
+      }}
+    >
+      {label}
+      <CatalogSortGlyph active={active} dir={dir} always={compact} />
+    </button>
+  );
+}
+
+function CatalogPaceCell({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const pace = catalogSalesPace(product);
+  return (
+    <span className="block min-w-0">
+      <span className={cn(
+        'tabular-nums',
+        compact ? 'mt-1 block text-xs font-semibold' : 'block text-sm font-medium',
+        PACE_TONE_CLASS[pace.tone],
+      )}>
+        {pace.rateLabel}
+      </span>
+      <span className={cn('block text-muted-foreground', compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[11px]', pace.tone === 'danger' && PACE_TONE_CLASS.danger, pace.tone === 'warn' && PACE_TONE_CLASS.warn)}>
+        {pace.coverLabel}
+      </span>
+    </span>
+  );
 }
 
 function formatDate(value?: string | null) {
@@ -390,8 +519,8 @@ function usableBrand(value?: string | null) {
   return /^(?:generic|gen[eé]rico)$/i.test(brand) ? '' : brand;
 }
 
-type ProductEditableField = 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name';
-type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'name'>>;
+type ProductEditableField = 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'wholesalePrice' | 'name';
+type ProductFieldPatch = Partial<Pick<Product, 'commissionAmount' | 'description' | 'profitOwner' | 'referencePrice' | 'wholesalePrice' | 'name'>>;
 
 type UpdateProductFieldVariables = {
   id: number;
@@ -449,7 +578,7 @@ export default function Productos() {
   const [sellerCoverage, setSellerCoverage] = useState<SellerCoverageFilter>('all');
   const [companyIds, setCompanyIds] = useState<number[]>([]);
   const [profitOwner, setProfitOwner] = useState('all');
-  const [sort] = useState<CatalogSort>('updated_desc');
+  const [sort, setSort] = useState<CatalogSort>('updated_desc');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -499,6 +628,11 @@ export default function Productos() {
     setOffset(0);
   };
 
+  const applyColumnSort = useCallback((column: CatalogSortColumn) => {
+    setSort((current) => nextCatalogColumnSort(current, column));
+    resetListView();
+  }, []);
+
   const applyAssociationSearch = (value: string, immediate = false) => {
     setAssociationSearch(value);
     window.clearTimeout(associationSearchTimer.current);
@@ -532,7 +666,6 @@ export default function Productos() {
     sellerCoverage,
     companyIds,
     profitOwner,
-    sort,
   });
   const listRequest = useMemo(() => ({
     search: submittedSearch,
@@ -795,6 +928,7 @@ export default function Productos() {
     const created = await runAction(() => api.createCatalogProduct({
       ...createForm,
       referencePrice: createForm.referencePrice || null,
+      wholesalePrice: createForm.wholesalePrice || null,
       commissionAmount: createForm.commissionAmount || null,
       profitOwner: createForm.profitOwner || null,
     }), (result) => `Producto ${result.mainSku} creado con stock inicial 0.`);
@@ -1087,6 +1221,23 @@ export default function Productos() {
     });
   }, [selectedId, selectedProduct, updateProductField]);
 
+  const saveWholesalePrice = useCallback((raw: string) => {
+    if (!selectedId || !selectedProduct) return;
+    const trimmed = raw.trim();
+    const current = selectedProduct.wholesalePrice == null ? '' : String(selectedProduct.wholesalePrice);
+    if (trimmed === current) return;
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && (parsed == null || !Number.isFinite(parsed) || parsed < 0)) {
+      setFieldError('El precio por mayor debe ser un número válido.');
+      return;
+    }
+    updateProductField.mutate({
+      id: selectedId,
+      patch: { wholesalePrice: parsed },
+      optimistic: { field: 'wholesalePrice', patch: { wholesalePrice: parsed } },
+    });
+  }, [selectedId, selectedProduct, updateProductField]);
+
   const saveName = useCallback((raw: string) => {
     if (!selectedId || !selectedProduct) return;
     const trimmed = raw.trim();
@@ -1183,6 +1334,8 @@ export default function Productos() {
         fetching={productsQuery.isFetching}
         pageIndex={Math.floor(offset / PAGE_SIZE)}
         pageSize={PAGE_SIZE}
+        sort={sort}
+        onSort={applyColumnSort}
         onPageChange={handleCatalogPageChange}
         onPrefetch={handleCatalogPrefetch}
         onOpenProduct={openProduct}
@@ -1227,6 +1380,7 @@ export default function Productos() {
         onSaveCommission={saveCommission}
         onSaveProfitOwner={saveProfitOwner}
         onSavePrice={savePrice}
+        onSaveWholesalePrice={saveWholesalePrice}
         onSaveName={saveName}
         onSaveDescription={saveDescription}
         onPublish={() => selectedProduct && openPublishVisual(selectedProduct)}
@@ -1237,7 +1391,7 @@ export default function Productos() {
 
       <ProductImageDialog preview={imagePreview} onClose={() => setImagePreview(null)} />
 
-      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
+      {modal === 'create' && <Modal title="Nuevo producto" subtitle="Crea el producto; el stock empieza en cero." onClose={() => setModal(null)}><form onSubmit={createProduct} className="space-y-4"><div className="grid gap-3 md:grid-cols-2"><Field label="SKU interno (ej. AG3)" value={createForm.mainSku} onChange={(value) => setCreateForm({ ...createForm, mainSku: value })} required /><Field label="Nombre" value={createForm.name} onChange={(value) => setCreateForm({ ...createForm, name: value })} required /><Field label="Marca" value={createForm.brand} onChange={(value) => setCreateForm({ ...createForm, brand: value })} /><Field label="Precio" type="number" value={createForm.referencePrice} onChange={(value) => setCreateForm({ ...createForm, referencePrice: value })} /><Field label="Precio por mayor" type="number" value={createForm.wholesalePrice} onChange={(value) => setCreateForm({ ...createForm, wholesalePrice: value })} /><Field label="Comisión" type="number" value={createForm.commissionAmount} onChange={(value) => setCreateForm({ ...createForm, commissionAmount: value })} /><Field label="Beneficiario" value={createForm.profitOwner} onChange={(value) => setCreateForm({ ...createForm, profitOwner: value })} list="profit-owner-options" /><Field label="Imagen URL" value={createForm.imageUrl} onChange={(value) => setCreateForm({ ...createForm, imageUrl: value })} className="md:col-span-2" /></div><ProfitOwnerOptions owners={profitOwnersQuery.data?.items || []} /><TextArea label="Descripción" value={createForm.description} onChange={(value) => setCreateForm({ ...createForm, description: value })} /><ActionFeedback error={actionError} message={actionMessage} /><Submit busy={busy}>Crear producto</Submit></form></Modal>}
 
       {modal === 'adjust' && selectedProduct && (
         <Modal
@@ -1515,15 +1669,17 @@ const CatalogProductIdentity = memo(function CatalogProductIdentity({
       <span className="col-span-3 grid grid-cols-2 gap-x-5 gap-y-2 border-t border-border/60 pt-3 sm:hidden">
         <span className="min-w-0">
           <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Precio</span>
-          <span className="mt-1 block truncate text-xs font-semibold">{formatBasePrice(product)}</span>
+          <CatalogPriceCell product={product} compact />
         </span>
         <span className="min-w-0">
-          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock maestro</span>
-          <span className="mt-1 block text-xs font-semibold tabular-nums">{formatNumber(product.available)} u</span>
-          <span className="mt-0.5 block text-[11px] text-muted-foreground">disponible</span>
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Stock</span>
+          <CatalogStockCell product={product} compact />
         </span>
-        <span className="col-span-2 flex min-w-0 items-center justify-between gap-3">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Estado del producto</span>
+        <span className="min-w-0">
+          <span className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Ritmo</span>
+          <CatalogPaceCell product={product} compact />
+        </span>
+        <span className="flex min-w-0 items-end justify-end">
           <ProductStatusBadge product={product} compact />
         </span>
       </span>
@@ -1538,6 +1694,8 @@ const CatalogTable = memo(function CatalogTable({
   fetching,
   pageIndex,
   pageSize,
+  sort,
+  onSort,
   onPageChange,
   onPrefetch,
   onOpenProduct,
@@ -1551,6 +1709,8 @@ const CatalogTable = memo(function CatalogTable({
   fetching: boolean;
   pageIndex: number;
   pageSize: number;
+  sort: CatalogSort;
+  onSort: (column: CatalogSortColumn) => void;
   onPageChange: (nextPage: number) => void;
   onPrefetch: (nextPage: number) => void;
   onOpenProduct: (productId: number) => void;
@@ -1585,26 +1745,25 @@ const CatalogTable = memo(function CatalogTable({
     },
     {
       id: 'price',
-      header: 'Precio',
-      cell: ({ row }) => <span className="text-sm font-medium">{formatBasePrice(row.original)}</span>,
+      header: () => <CatalogSortHeader label="Precio" column="price" sort={sort} onSort={onSort} />,
+      cell: ({ row }) => <CatalogPriceCell product={row.original} />,
     },
     {
       id: 'stock',
-      header: 'Stock maestro',
-      cell: ({ row }) => {
-        const product = row.original;
-        return <div>
-          <p className="text-lg font-semibold leading-none">{formatNumber(product.available)} <span className="text-xs font-normal text-muted-foreground">u</span></p>
-          <p className="mt-1 text-[11px] text-muted-foreground">disponible</p>
-        </div>;
-      },
+      header: () => <CatalogSortHeader label="Stock" column="stock" sort={sort} onSort={onSort} />,
+      cell: ({ row }) => <CatalogStockCell product={row.original} />,
+    },
+    {
+      id: 'pace',
+      header: () => <CatalogSortHeader label="Ritmo" column="pace" sort={sort} onSort={onSort} />,
+      cell: ({ row }) => <CatalogPaceCell product={row.original} />,
     },
     {
       id: 'status',
       header: 'Estado del producto',
       cell: ({ row }) => <ProductStatusBadge product={row.original} />,
     },
-  ], [onOpenImage, onOpenProduct, toggleExpand]);
+  ], [onOpenImage, onOpenProduct, onSort, sort, toggleExpand]);
 
   const table = useReactTable({
     data: products,
@@ -1625,23 +1784,39 @@ const CatalogTable = memo(function CatalogTable({
     },
   });
 
+  const sortState = catalogColumnSortState(sort);
+
   return (
     <TablePanel aria-label="Catálogo de productos">
+      <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-2 sm:hidden">
+        <CatalogSortHeader label="Precio" column="price" sort={sort} onSort={onSort} compact />
+        <CatalogSortHeader label="Stock" column="stock" sort={sort} onSort={onSort} compact />
+        <CatalogSortHeader label="Ritmo" column="pace" sort={sort} onSort={onSort} compact />
+      </div>
       {loading ? <CatalogTableSkeleton /> : products.length === 0 ? <EmptyBlock /> : (
         <div className="min-w-0" aria-busy={fetching}>
           <Table className="table-fixed">
             <colgroup>
-              <col className="w-full sm:w-[48%]" />
-              <col className="hidden sm:table-column sm:w-[14%]" />
+              <col className="w-full sm:w-[38%]" />
+              <col className="hidden sm:table-column sm:w-[12%]" />
+              <col className="hidden sm:table-column sm:w-[16%]" />
+              <col className="hidden sm:table-column sm:w-[16%]" />
               <col className="hidden sm:table-column sm:w-[18%]" />
-              <col className="hidden sm:table-column sm:w-[20%]" />
             </colgroup>
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
-                {headerGroup.headers.map((header) => <TableHead
-                  key={header.id}
-                  className={cn('min-w-0', CATALOG_COLUMN_CLASS_NAMES[header.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES])}
-                >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>)}
+                {headerGroup.headers.map((header) => {
+                  const columnId = header.column.id;
+                  const sortable = columnId === 'price' || columnId === 'stock' || columnId === 'pace';
+                  const ariaSort = sortable && sortState?.column === columnId
+                    ? (sortState.dir === 'asc' ? 'ascending' : 'descending')
+                    : sortable ? 'none' : undefined;
+                  return <TableHead
+                    key={header.id}
+                    aria-sort={ariaSort}
+                    className={cn('min-w-0', CATALOG_COLUMN_CLASS_NAMES[header.column.id as keyof typeof CATALOG_COLUMN_CLASS_NAMES])}
+                  >{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</TableHead>;
+                })}
               </TableRow>)}
             </TableHeader>
             <TableBody>{table.getRowModel().rows.map((row) => <Fragment key={row.id}>
@@ -1710,13 +1885,13 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
   const listings = useMemo(() => sourceListings.filter((listing) => listing.status !== 'unlinked'), [sourceListings]);
 
   if (shouldFetch && detailQuery.isPending) return <TableRow className="bg-muted/15 hover:bg-muted/15" onClick={(event) => event.stopPropagation()}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
+    <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-xs text-muted-foreground">
       <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando publicaciones…</span>
     </TableCell>
   </TableRow>;
 
   if (shouldFetch && detailQuery.isError) return <TableRow className="bg-red-50/60 hover:bg-red-50/60" onClick={(event) => event.stopPropagation()}>
-    <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
+    <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-sm text-red-700">No se pudieron cargar las publicaciones.</TableCell>
   </TableRow>;
 
   return <>
@@ -1765,6 +1940,7 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         </TableCell>
         <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerPrice listing={listing} /></TableCell>
         <TableCell className="hidden py-2.5 align-middle sm:table-cell"><SellerStock listing={listing} /></TableCell>
+        <TableCell className="hidden py-2.5 align-middle sm:table-cell" />
         <TableCell className="hidden py-2.5 align-middle sm:table-cell">
           <div className="flex items-center gap-2">
             <span className={cn('hidden text-xs font-medium xl:inline', publication.className)}>{publication.label}</span>
@@ -1777,10 +1953,10 @@ const ExpandedProductPublications = memo(function ExpandedProductPublications({
         </TableCell>
       </TableRow>;
     }) : <TableRow className={cn(sellerPublicationRowBorderClass(false), 'bg-muted/15 hover:bg-muted/15')} onClick={(event) => event.stopPropagation()}>
-      <TableCell colSpan={4} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
+      <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-14 py-2 pl-[6.5rem] text-sm text-muted-foreground">Sin publicaciones asociadas.</TableCell>
     </TableRow>}
     <TableRow className={cn(sellerPublicationRowBorderClass(true), 'bg-muted/15 hover:bg-muted/30')} onClick={(event) => event.stopPropagation()}>
-      <TableCell colSpan={4} className="h-11 py-0 pl-[6.5rem]">
+      <TableCell colSpan={CATALOG_COLUMN_COUNT} className="h-11 py-0 pl-[6.5rem]">
         <button
           type="button"
           onClick={() => onAssociateProduct(product)}
@@ -1797,7 +1973,7 @@ function ProductDrawer({
   open, product, loading, tab, onTabChange, movements, movementsLoading, sales, salesLoading, returns, returnsLoading,
   salesRange, onSalesRangeChange, hasPreviousProduct, hasNextProduct, productPosition, totalProducts, productNavigationBusy,
   onPreviousProduct, onNextProduct, onClose, holdOpen = false, onOpenImage, onAdjust, onEditImage, onPublish, onAssociate, onTogglePublication,
-  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveName,
+  onDisassociate, profitOwners, savingField, savedField, fieldError, onSaveCommission, onSaveProfitOwner, onSavePrice, onSaveWholesalePrice, onSaveName,
   onSaveDescription,
 }: {
   open: boolean;
@@ -1836,12 +2012,14 @@ function ProductDrawer({
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
   onSavePrice: (value: string) => void;
+  onSaveWholesalePrice: (value: string) => void;
   onSaveName: (value: string) => void;
   onSaveDescription: (value: string) => void;
 }) {
   const [listingFilter, setListingFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const associatedListings = product?.listings || [];
   const publishedListings = associatedListings.filter(isActivelyPublished);
+  const salesPace = product ? catalogSalesPace(product) : null;
   const listingRows = listingFilter === 'visible'
     ? publishedListings
     : listingFilter === 'hidden'
@@ -1974,6 +2152,7 @@ function ProductDrawer({
               profitOwners={profitOwners}
               savingField={savingField}
               onSavePrice={onSavePrice}
+              onSaveWholesalePrice={onSaveWholesalePrice}
               onAdjust={onAdjust}
               onSaveCommission={onSaveCommission}
               onSaveProfitOwner={onSaveProfitOwner}
@@ -2024,10 +2203,15 @@ function ProductDrawer({
         </TabsContent>
 
         <TabsContent value="inventory" className="min-h-0 overflow-y-auto px-6 py-6 sm:px-10">
-          <MetricRow columns={3}>
-            <Metric label="Stock" value={`${formatNumber(product.available)} u`} />
+          <MetricRow columns={4}>
+            <Metric label="Stock" value={`${formatNumber(product.available)} u`} hint={catalogStockHint(product) || undefined} />
             <Metric label="Reservado" value={`${formatNumber(product.quantityReserved)} u`} />
             <Metric label="En almacén" value={`${formatNumber(product.quantityOnHand)} u`} />
+            <Metric
+              label="Ritmo"
+              value={salesPace?.rateLabel || 'Sin venta'}
+              hint={salesPace?.coverLabel}
+            />
           </MetricRow>
           <div className="mt-6 flex items-center justify-between gap-3">
             <div>
@@ -2107,6 +2291,7 @@ function CatalogTableSkeleton() {
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.product}><Skeleton className="h-4 w-20" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.price}><Skeleton className="h-4 w-14" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.stock}><Skeleton className="h-4 w-14" /></TableHead>
+          <TableHead className={CATALOG_COLUMN_CLASS_NAMES.pace}><Skeleton className="h-4 w-16" /></TableHead>
           <TableHead className={CATALOG_COLUMN_CLASS_NAMES.status}><Skeleton className="h-4 w-24" /></TableHead>
         </TableRow>
       </TableHeader>
@@ -2119,12 +2304,14 @@ function CatalogTableSkeleton() {
               <div className="col-span-2 grid grid-cols-2 gap-5 border-t border-border/60 pt-3 sm:hidden">
                 <Skeleton className="h-8 w-full" />
                 <Skeleton className="h-8 w-full" />
-                <Skeleton className="col-span-2 h-7 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-7 w-20 rounded-full" />
               </div>
             </div>
           </TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-5 w-16" /></TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-8 w-24" /></TableCell>
+          <TableCell className="hidden sm:table-cell"><Skeleton className="h-8 w-20" /></TableCell>
           <TableCell className="hidden sm:table-cell"><Skeleton className="h-7 w-20 rounded-full" /></TableCell>
         </TableRow>)}
       </TableBody>
@@ -2312,6 +2499,7 @@ function ProductProperties({
   profitOwners,
   savingField,
   onSavePrice,
+  onSaveWholesalePrice,
   onAdjust,
   onSaveCommission,
   onSaveProfitOwner,
@@ -2321,6 +2509,7 @@ function ProductProperties({
   profitOwners: string[];
   savingField: ProductEditableField | null;
   onSavePrice: (value: string) => void;
+  onSaveWholesalePrice: (value: string) => void;
   onAdjust: () => void;
   onSaveCommission: (value: string) => void;
   onSaveProfitOwner: (value: string) => void;
@@ -2349,6 +2538,9 @@ function ProductProperties({
           <OverviewRow icon={<Clock3 />} label="Reservado">
             <span className="text-sm tabular-nums">{formatNumber(product.quantityReserved)} u</span>
           </OverviewRow>
+          <OverviewRow icon={<BarChart3 />} label="Ritmo">
+            <CatalogPaceCell product={product} />
+          </OverviewRow>
           <OverviewRow icon={<Store />} label="Sellers">
             <span className="text-sm tabular-nums">{formatNumber(product.sellersCount ?? new Set(listings.map((listing) => listing.companyId)).size)}</span>
           </OverviewRow>
@@ -2366,6 +2558,18 @@ function ProductProperties({
             placeholder="Sin precio"
             saving={savingField === 'referencePrice'}
             onSave={onSavePrice}
+          />
+          <OverviewField
+            icon={<Wallet />}
+            label="Por mayor"
+            productId={product.id}
+            field="wholesalePrice"
+            value={product.wholesalePrice == null ? '' : String(product.wholesalePrice)}
+            display={product.wholesalePrice == null ? '' : formatMoney(product.wholesalePrice)}
+            type="number"
+            placeholder="Sin precio"
+            saving={savingField === 'wholesalePrice'}
+            onSave={onSaveWholesalePrice}
           />
           <OverviewField
             icon={<CircleDollarSign />}
@@ -2693,6 +2897,7 @@ function ProductStatusBadge({ product, compact = false }: { product: Product; co
 
 function movementLabel(type: string, reason?: string | null) {
   if (type === 'return') return 'Devolución';
+  if (type === 'adjustment_out' && /^Merma\b/i.test(String(reason || ''))) return 'Merma';
   if (type === 'sale_reversal') {
     return String(reason || '').startsWith('Cancelación') ? 'Cancelación' : 'Reintegro';
   }

@@ -1,12 +1,16 @@
 import type {
   ListOffersOptions,
   ListOrdersOptions,
+  ListShipmentsOptions,
   RipleyApiClientOptions,
   RipleyOffer,
   RipleyOfferPage,
   RipleyProductContent,
+  RipleyReadyForPickupResult,
   RipleyOrder,
   RipleyOrderPage,
+  RipleyShipment,
+  RipleyShipmentPage,
   RipleySvcClientOptions,
   RipleySvcLabelOptions,
   RipleySvcLogisticsOrderOptions,
@@ -118,6 +122,53 @@ export class RipleyApiClient {
     }
   }
 
+  async listShipments(options: ListShipmentsOptions = {}): Promise<RipleyShipmentPage> {
+    const url = new URL('/api/shipments', this.baseUrl);
+    this.addShopId(url);
+    addRepeated(url, 'order_id', options.orderIds);
+    addRepeated(url, 'shipment_state_code', options.shipmentStateCodes);
+    addText(url, 'last_updated_from', options.lastUpdatedFrom);
+    addText(url, 'last_updated_to', options.lastUpdatedTo);
+    addText(url, 'page_token', options.pageToken);
+    const limit = validPageSize(options.limit);
+    url.searchParams.set('limit', String(limit));
+
+    const body = await this.getJson(url);
+    const page = objectRecord(body);
+    if (!page || !Array.isArray(page.data)) throw new Error('Ripley no devolvió la lista de shipments.');
+    return {
+      shipments: page.data.map(normalizeShipment).filter((shipment): shipment is RipleyShipment => shipment !== null),
+      nextPageToken: nonEmptyText(page.next_page_token ?? page.nextPageToken),
+      previousPageToken: nonEmptyText(page.previous_page_token ?? page.previousPageToken),
+    };
+  }
+
+  async listAllShipments(options: Omit<ListShipmentsOptions, 'pageToken' | 'limit'> = {}): Promise<RipleyShipment[]> {
+    const shipments: RipleyShipment[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listShipments({ ...options, pageToken, limit: MAX_PAGE_SIZE });
+      shipments.push(...page.shipments);
+      pageToken = page.nextPageToken || undefined;
+    } while (pageToken);
+    return shipments;
+  }
+
+  /** Mirakl ST26: validates one or more shipments as ready for pickup. */
+  async validateShipmentsReadyForPickup(shipmentIds: string[]): Promise<RipleyReadyForPickupResult> {
+    const ids = [...new Set(shipmentIds.map((id) => id.trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('Indica al menos un shipment de Ripley.');
+    const url = new URL('/api/shipments/ready_for_pick_up', this.baseUrl);
+    this.addShopId(url);
+    const body = await this.putJson(url, { shipments: ids.map((id) => ({ id })) });
+    const result = objectRecord(body);
+    if (!result) throw new Error('Ripley devolvió una respuesta ST26 inválida.');
+    return {
+      successIds: readShipmentIds(result.shipment_success),
+      errors: readShipmentErrors(result.shipment_errors),
+    };
+  }
+
   private addShopId(url: URL) {
     if (this.options.shopId != null && String(this.options.shopId).trim()) {
       url.searchParams.set('shop_id', String(this.options.shopId).trim());
@@ -132,19 +183,73 @@ export class RipleyApiClient {
     if (!response.ok) throw providerError(response.status, body);
     return body;
   }
+
+  private async putJson(url: URL, payload: unknown): Promise<unknown> {
+    const response = await this.fetchImpl(url, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        Authorization: this.options.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await readJson(response);
+    if (!response.ok) throw providerError(response.status, body);
+    return body;
+  }
+}
+
+function readShipmentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => nonEmptyText(objectRecord(entry)?.id)).filter((id): id is string => Boolean(id));
+}
+
+function readShipmentErrors(value: unknown): Array<{ id: string | null; message: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const error = objectRecord(entry) || {};
+    return {
+      id: nonEmptyText(error.id),
+      message: nonEmptyText(error.message ?? error.error_message ?? error.code) || 'Ripley rechazó el shipment.',
+    };
+  });
+}
+
+export const RIPLEY_SVC_DEFAULT_BASE_URL = 'https://sellercenter.ripleylabs.com';
+
+/** SVC and Mirakl use separate hosts and credentials. */
+export function resolveRipleySvcBaseUrl(value?: string | null): string {
+  const raw = String(value || '').trim();
+  if (!raw) return RIPLEY_SVC_DEFAULT_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('La URL de SVC Ripley es inválida.');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
+  if (parsed.hostname === 'mirakl.net' || parsed.hostname.endsWith('.mirakl.net')) {
+    throw new Error('La URL de Mirakl no corresponde a SVC. Configura la URL de API entregada por Ripley.');
+  }
+  return parsed.origin;
 }
 
 /** Client for Ripley's separate Seller Vendor Center logistics API. */
 export class RipleySvcClient {
   private readonly baseUrl: URL;
+  private readonly username: string;
+  private readonly password: string;
+  private readonly country: string;
   private readonly fetchImpl: typeof fetch;
   private accessToken = '';
 
-  constructor(private readonly options: RipleySvcClientOptions) {
-    const baseUrl = new URL(options.baseUrl.trim());
-    if (baseUrl.protocol !== 'https:') throw new Error('La URL de SVC Ripley debe usar HTTPS.');
-    if (!options.username.trim() || !options.password) throw new Error('Faltan las credenciales de SVC Ripley.');
-    this.baseUrl = baseUrl;
+  constructor(options: RipleySvcClientOptions) {
+    this.baseUrl = new URL(resolveRipleySvcBaseUrl(options.baseUrl));
+    this.username = options.username.trim();
+    this.password = String(options.password ?? '');
+    this.country = (options.country || 'PE').toUpperCase();
+    if (!this.username || !this.password.trim()) throw new Error('Faltan las credenciales de SVC Ripley.');
     this.fetchImpl = options.fetchImpl || fetch;
   }
 
@@ -236,16 +341,59 @@ export class RipleySvcClient {
   }
 
   private async login() {
+    const attempts: Record<string, unknown>[] = [];
+    try {
+      await this.loginVendor(attempts);
+    } catch (error) {
+      throw withAuthDetails(error, this.authDetails(attempts));
+    }
+  }
+
+  private authDetails(attempts: Record<string, unknown>[]) {
+    return {
+      host: this.baseUrl.host,
+      username: this.username,
+      passwordLength: this.password.length,
+      country: this.country,
+      sent: {
+        officialApi: {
+          method: 'POST',
+          path: '/api/current/auth/login/vendor',
+          headers: {
+            Accept: 'application/json',
+            Authorization: 'Basic <usuario:contraseña en Base64>',
+            'X-Country': this.country,
+          },
+          body: null,
+        },
+      },
+      attempts,
+    };
+  }
+
+  private async loginVendor(attempts: Record<string, unknown>[] = []) {
     const url = this.url('/api/current/auth/login/vendor');
-    const credentials = encodeBasicCredentials(this.options.username, this.options.password);
+    const credentials = encodeBasicCredentials(this.username, this.password);
     const response = await this.fetchImpl(url, {
       method: 'POST',
-      headers: { Accept: 'application/json', Authorization: `Basic ${credentials}` },
+      redirect: 'manual',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${credentials}`,
+        'X-Country': this.country,
+      },
     });
     const body = await readJson(response);
-    if (!response.ok) throw providerError(response.status, body);
-    const record = objectRecord(body);
-    const token = nonEmptyText(record?.access_token ?? record?.accessToken ?? record?.token);
+    attempts.push({
+      step: 'vendor',
+      method: 'POST',
+      path: url.pathname,
+      host: url.host,
+      status: response.status,
+      ripley: ripleyMessage(body),
+    });
+    if (!response.ok) throw vendorLoginError(response.status, body, url, this.username, this.password.length, this.country);
+    const token = extractAccessToken(body);
     if (!token) throw new Error('SVC Ripley no devolvió un token de acceso.');
     this.accessToken = token;
   }
@@ -258,14 +406,18 @@ export class RipleySvcClient {
       await this.login();
       response = await this.fetchImpl(url, this.authorizedInit(init));
     }
-    const body = await readJson(response);
-    if (!response.ok) throw providerError(response.status, body);
+    const body = await readJson(response, response.ok);
+    if (!response.ok) throw providerError(response.status, body, url);
+    if (body === null && (!init.method || init.method === 'GET')) {
+      throw new Error(`SVC Ripley no devolvió una respuesta JSON en ${url.pathname}.`);
+    }
     return body;
   }
 
   private authorizedInit(init: RequestInit): RequestInit {
     return {
       ...init,
+      redirect: 'manual',
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${this.accessToken}`,
@@ -294,6 +446,13 @@ function encodeBasicCredentials(username: string, password: string) {
 function addCsv(url: URL, key: string, values: string[] | undefined) {
   const normalized = values?.map((value) => String(value).trim()).filter(Boolean);
   if (normalized?.length) url.searchParams.set(key, normalized.join(','));
+}
+
+function addRepeated(url: URL, key: string, values: string[] | undefined) {
+  for (const value of values || []) {
+    const normalized = String(value).trim();
+    if (normalized) url.searchParams.append(key, normalized);
+  }
 }
 
 function addText(url: URL, key: string, value: string | undefined) {
@@ -348,16 +507,26 @@ function normalizeOffer(value: unknown): RipleyOffer | null {
   };
 }
 
+function productContentImageUrl(product: Record<string, unknown>): string | null {
+  const media = product.product_media ?? product.productMedia ?? product.product_medias ?? product.productMedias;
+  const entries = Array.isArray(media) ? media : [media];
+  for (const entry of entries) {
+    const record = objectRecord(entry);
+    const url = httpsUrl(record?.dam_url ?? record?.damUrl) ?? httpsUrl(record?.media_url ?? record?.mediaUrl);
+    if (url) return url;
+  }
+  return null;
+}
+
 function normalizeProductContent(value: unknown): RipleyProductContent | null {
   const product = objectRecord(value);
   if (!product) return null;
   const productSku = nonEmptyText(product.product_sku ?? product.productSku);
   if (!productSku) return null;
-  const media = objectRecord(product.product_media ?? product.productMedia);
   return {
     productSku,
     productTitle: nonEmptyText(product.product_title ?? product.productTitle),
-    imageUrl: httpsUrl(media?.dam_url ?? media?.damUrl) ?? httpsUrl(media?.media_url ?? media?.mediaUrl),
+    imageUrl: productContentImageUrl(product),
     raw: value,
   };
 }
@@ -384,6 +553,23 @@ function normalizeOrder(value: unknown): RipleyOrder | null {
   };
 }
 
+function normalizeShipment(value: unknown): RipleyShipment | null {
+  const shipment = objectRecord(value);
+  if (!shipment) return null;
+  const id = nonEmptyText(shipment.id);
+  const orderId = nonEmptyText(shipment.order_id ?? shipment.orderId);
+  if (!id || !orderId) return null;
+  return {
+    id,
+    orderId,
+    status: nonEmptyText(shipment.status) || 'UNKNOWN',
+    createdAt: isoDate(shipment.created_date ?? shipment.createdAt),
+    updatedAt: isoDate(shipment.last_updated_date ?? shipment.updatedAt),
+    shippedAt: isoDate(shipment.shipped_date ?? shipment.shippedAt),
+    raw: value,
+  };
+}
+
 function isoDate(value: unknown): string | null {
   const text = nonEmptyText(value);
   if (!text) return null;
@@ -391,15 +577,72 @@ function isoDate(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-async function readJson(response: Response): Promise<unknown> {
+async function readJson(response: Response, requireJson = false): Promise<unknown> {
   const text = await response.text();
   if (!text.trim()) return null;
   try { return JSON.parse(text); }
-  catch { return { message: text }; }
+  catch {
+    if (requireJson) throw new Error('SVC Ripley no devolvió una respuesta JSON válida. Revisa la conexión de Seller Center.');
+    return { message: text };
+  }
 }
 
-function providerError(status: number, body: unknown) {
+function providerError(status: number, body: unknown, url?: URL) {
+  const message = ripleyMessage(body);
+  const host = url?.host ? ` (${url.host})` : '';
+  const path = url?.pathname ? ` ${url.pathname}` : '';
+  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}${path}${host}`);
+}
+
+function vendorLoginError(
+  status: number,
+  body: unknown,
+  url: URL,
+  username: string,
+  passwordLength: number,
+  country: string,
+) {
+  const message = ripleyMessage(body);
+  return new Error(
+    `Ripley respondió HTTP ${status}${message ? `: ${message}` : ''} en POST /api/current/auth/login/vendor (${url.host}). `
+    + `Enviamos Authorization Basic (usuario ${username}, clave de ${passwordLength} caracteres) y X-Country ${country}, sin body. `
+    + 'Verifica la URL y las credenciales de API SVC entregadas por Ripley; no uses la API key de Mirakl.',
+  );
+}
+
+function ripleyMessage(body: unknown) {
   const record = objectRecord(body);
-  const message = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
-  return new Error(`Ripley respondió HTTP ${status}${message ? `: ${message}` : ''}`);
+  const direct = nonEmptyText(record?.message ?? record?.error_description ?? record?.error);
+  if (direct && direct !== 'Unauthorized') return direct;
+  const location = nonEmptyText(record?.url);
+  if (location) {
+    try {
+      const error = new URL(location).searchParams.get('error');
+      if (error) return error;
+    } catch { /* ignore invalid next-auth urls */ }
+  }
+  return nonEmptyText(record?.provider) || direct;
+}
+
+function withAuthDetails(error: unknown, details: Record<string, unknown>) {
+  const next = error instanceof Error ? error : new Error(String(error));
+  (next as Error & { details?: unknown }).details = {
+    ...(((next as Error & { details?: Record<string, unknown> }).details) || {}),
+    ripleyAuth: details,
+  };
+  return next;
+}
+
+function extractAccessToken(value: unknown): string | null {
+  const record = objectRecord(value);
+  if (!record) return null;
+  const nested = objectRecord(record.data) || objectRecord(record.user);
+  return nonEmptyText(
+    record.access_token
+    ?? record.accessToken
+    ?? record.token
+    ?? nested?.access_token
+    ?? nested?.accessToken
+    ?? nested?.token,
+  );
 }

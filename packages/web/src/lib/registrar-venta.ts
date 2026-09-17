@@ -26,6 +26,20 @@ export const PAYMENT_METHODS = [
   { value: 'transferencia', label: 'Transferencia' },
 ] as const;
 
+export const PAYMENT_RECIPIENTS = [
+  { value: 'empresa', label: 'Empresa' },
+  { value: 'vendedor', label: 'Vendedor' },
+] as const;
+
+export function needsDigitalPayment(method?: string | null) {
+  return method === 'yape_plin' || method === 'transferencia';
+}
+
+export function paymentRecipientLabel(value?: string | null) {
+  const key = String(value || '').trim();
+  return PAYMENT_RECIPIENTS.find((option) => option.value === key)?.label || '';
+}
+
 export const PICKUP_ADDRESS: string = OWN_FLEET_ORIGIN.address;
 
 export const DOCUMENT_REQUESTS = [
@@ -52,6 +66,7 @@ export type SaleStepId = (typeof SALE_STEPS)[number]['id'];
 
 export type SaleSource = (typeof SALE_SOURCES)[number]['value'];
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
+export type PaymentRecipient = (typeof PAYMENT_RECIPIENTS)[number]['value'];
 export type DeliveryMethod = 'recojo' | 'envio';
 export type DocumentRequest = (typeof DOCUMENT_REQUESTS)[number]['value'];
 export type BoletaIdentity = (typeof BOLETA_IDENTITIES)[number]['value'];
@@ -62,6 +77,7 @@ export type CatalogProductForSale = {
   mainSku: string;
   name: string;
   imageUrl?: string | null;
+  commissionAmount?: number | null;
   referencePrice?: number | null;
   sellerPriceMin?: number | null;
   available?: number | null;
@@ -74,6 +90,7 @@ export type SaleLine = {
   sku: string;
   name: string;
   imageUrl?: string | null;
+  commissionAmount?: number | null;
   shopSku?: string | null;
   catalogPrice: number;
   unitPrice: number;
@@ -105,6 +122,7 @@ export type ManualSaleInput = {
   saleSource: SaleSource;
   paymentMethod: PaymentMethod;
   receivedBy?: string;
+  paidTo?: PaymentRecipient | '';
   paymentProof?: { name: string; type: string; dataUrl: string } | null;
   documentRequest?: DocumentRequest;
   boletaIdentity?: BoletaIdentity;
@@ -187,9 +205,41 @@ export function customerTaxPayload(input: ManualSaleInput) {
   return { name, phone };
 }
 
+function money2(value: number) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+/** Precio que ve el vendedor: el registrado del catálogo. El mínimo de marketplace solo si no hay precio maestro. */
 export function productPrice(product: CatalogProductForSale) {
-  const value = Number(product.sellerPriceMin ?? product.referencePrice ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  const reference = Number(product.referencePrice);
+  if (Number.isFinite(reference) && reference > 0) return reference;
+  const seller = Number(product.sellerPriceMin);
+  return Number.isFinite(seller) && seller > 0 ? seller : 0;
+}
+
+/** Precio del vendedor: el de catálogo menos la comisión fija. */
+export function sellerBasePrice(catalogPrice: number, commissionAmount: number) {
+  return money2(Number(catalogPrice) - Number(commissionAmount));
+}
+
+/** En el precio de catálogo el vendedor gana solo la comisión fija. */
+export function productProfit(product: CatalogProductForSale) {
+  if (product.commissionAmount == null) return null;
+  return money2(Number(product.commissionAmount));
+}
+
+/** Lo extra sobre el precio del vendedor (catálogo − comisión) es del vendedor. */
+export function saleLineProfit(line: Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount' | 'catalogPrice'>) {
+  if (line.commissionAmount == null) return null;
+  const catalog = Number(line.catalogPrice);
+  const list = Number.isFinite(catalog) && catalog > 0 ? catalog : Number(line.unitPrice);
+  const sellerBase = sellerBasePrice(list, Number(line.commissionAmount));
+  return money2((Number(line.unitPrice) - sellerBase) * Number(line.quantity || 0));
+}
+
+export function saleProfit(lines: Array<Pick<SaleLine, 'unitPrice' | 'quantity' | 'commissionAmount' | 'catalogPrice'>>) {
+  if (!lines.some((line) => line.commissionAmount != null)) return null;
+  return money2(lines.reduce((sum, line) => sum + (saleLineProfit(line) ?? 0), 0));
 }
 
 export function productStock(product: CatalogProductForSale) {
@@ -420,6 +470,9 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       shippingCarrier: input.delivery === 'envio' ? input.shippingCarrier : '',
       paymentMethod: input.paymentMethod,
       receivedBy: input.paymentMethod === 'efectivo' ? String(input.receivedBy || '').trim() : '',
+      paidTo: needsDigitalPayment(input.paymentMethod)
+        ? (input.paidTo === 'vendedor' ? 'vendedor' : 'empresa')
+        : '',
       paymentProof: input.paymentProof || null,
       catalog: 'real',
     },
@@ -436,4 +489,15 @@ export function buildManualSaleOrderPayload(input: ManualSaleInput, fleetConfig?
       metadata: { productId: line.productId, catalogPrice: line.catalogPrice },
     })),
   };
+}
+
+export function saleReturnPath(origin: string | null, canManageOrders: boolean) {
+  if (origin === 'mis-ventas') return '/mis-ventas';
+  if (origin === 'orders' && canManageOrders) return '/orders';
+  return canManageOrders ? '/orders' : '/mis-ventas';
+}
+
+export function saleProductCommission(lines: SaleLine[]): number | undefined {
+  if (!lines.some((line) => line.commissionAmount != null)) return undefined;
+  return Math.round(lines.reduce((sum, line) => sum + (line.commissionAmount ?? 0) * line.quantity, 0) * 100) / 100;
 }
