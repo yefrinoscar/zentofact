@@ -77,6 +77,7 @@ export async function syncMercadoLibreCatalog(input = {}, actorUserId, db) {
   const target = db || core.pool;
   const companies = (input.companies || (await target.query(
     `select id, coalesce(nullif(nombre_comercial,''),nullif(nombre,''),razon_social) as name,
+            mercado_libre_app_id, mercado_libre_client_secret, mercado_libre_redirect_uri,
             mercado_libre_user_id, mercado_libre_site_id, mercado_libre_access_token,
             mercado_libre_refresh_token, mercado_libre_token_expires_at
      from companies
@@ -85,6 +86,9 @@ export async function syncMercadoLibreCatalog(input = {}, actorUserId, db) {
   )).rows).map((company) => ({
     id: Number(company.id),
     name: company.name || company.nombre || `Empresa ${company.id}`,
+    mercadoLibreAppId: company.mercado_libre_app_id || company.mercadoLibreAppId,
+    mercadoLibreClientSecret: company.mercado_libre_client_secret || company.mercadoLibreClientSecret,
+    mercadoLibreRedirectUri: company.mercado_libre_redirect_uri || company.mercadoLibreRedirectUri,
     mercadoLibreUserId: company.mercado_libre_user_id || company.mercadoLibreUserId,
     mercadoLibreSiteId: company.mercado_libre_site_id || company.mercadoLibreSiteId,
     mercadoLibreAccessToken: company.mercado_libre_access_token || company.mercadoLibreAccessToken,

@@ -3,7 +3,11 @@ const test = require('node:test');
 
 process.env.DATABASE_URL_POSTGRES ||= 'postgresql://test:test@127.0.0.1:5432/test';
 
-const { parseFalabellaXmlResponse } = require('../dist/services/falabella.service.js');
+const {
+  falabellaProductStatusUpdateXml,
+  falabellaStockUpdateXml,
+  parseFalabellaXmlResponse,
+} = require('../dist/services/falabella.service.js');
 
 test('convierte productos XML de Falabella a la forma esperada por el catálogo', () => {
   const parsed = parseFalabellaXmlResponse(`<?xml version="1.0" encoding="UTF-8"?>
@@ -42,4 +46,28 @@ test('rechaza documentos que no son una respuesta de Seller Center', () => {
     () => parseFalabellaXmlResponse('<!-- proxy --><html><body>upstream error</body></html>'),
     /respuesta de catálogo inválida/,
   );
+});
+
+test('arma ProductUpdate mínimo para publicar o despublicar en Perú', () => {
+  const xml = falabellaProductStatusUpdateXml({
+    sellerSku: 'SKU<&>',
+    status: 'inactive',
+  });
+
+  assert.match(xml, /<SellerSku>SKU&lt;&amp;&gt;<\/SellerSku>/);
+  assert.match(xml, /<OperatorCode>fape<\/OperatorCode>/);
+  assert.match(xml, /<Status>inactive<\/Status>/);
+});
+
+test('arma el XML requerido por UpdateStock sin tocar FBF', () => {
+  const xml = falabellaStockUpdateXml({
+    sellerSku: 'SKU-1',
+    quantity: 17,
+    facilityId: 'GSC-PE-1',
+  });
+
+  assert.match(xml, /<GSCFacilityId>GSC-PE-1<\/GSCFacilityId>/);
+  assert.match(xml, /<SellerSku>SKU-1<\/SellerSku>/);
+  assert.match(xml, /<Quantity>17<\/Quantity>/);
+  assert.doesNotMatch(xml, /Fulfillment/i);
 });

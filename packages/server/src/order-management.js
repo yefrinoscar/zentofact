@@ -644,6 +644,9 @@ async function ingestOrderInTransaction(input, db) {
   );
   const rawPayload = input.rawPayload === undefined ? null : jsonValue(input.rawPayload);
   const snapshotHash = rawPayload === null ? null : payloadHash(rawPayload);
+  const creatorUserId = String(input.source || '').trim().toLowerCase() === 'manual'
+    ? input.createdByUserId ?? input.actorUserId
+    : input.actorUserId;
 
   let persisted;
   if (isStale) {
@@ -672,7 +675,14 @@ async function ingestOrderInTransaction(input, db) {
          external_order_number=excluded.external_order_number,
          order_status=excluded.order_status,
          payment_status=excluded.payment_status,
-         fulfillment_status=excluded.fulfillment_status,
+         fulfillment_status=case
+           when orders.fulfillment_status='ready_to_ship'
+             and excluded.fulfillment_status='preparing'
+             and orders.metadata->>'miraklShipmentSource' in ('st11','st26')
+             and nullif(orders.metadata->>'miraklShipmentObservedAt', '') is not null
+             then orders.fulfillment_status
+           else excluded.fulfillment_status
+         end,
          document_status=case
            when orders.document_status in ('issued','accepted','rejected','cancelled')
              then orders.document_status
@@ -696,12 +706,16 @@ async function ingestOrderInTransaction(input, db) {
          total=coalesce(excluded.total, orders.total),
          customer=orders.customer || excluded.customer,
          shipping=orders.shipping || excluded.shipping,
-         metadata=orders.metadata || excluded.metadata || case
-           when nullif(excluded.metadata->>'miraklShipmentStatus', '') is not null then
+         metadata=(orders.metadata || excluded.metadata) || case
+           when orders.fulfillment_status='ready_to_ship'
+             and excluded.fulfillment_status='preparing'
+             and orders.metadata->>'miraklShipmentSource' in ('st11','st26')
+             and nullif(orders.metadata->>'miraklShipmentObservedAt', '') is not null then
              jsonb_build_object(
-               'miraklShipmentStatus', excluded.metadata->'miraklShipmentStatus',
-               'miraklShipmentSource', excluded.metadata->'miraklShipmentSource',
-               'miraklShipmentObservedAt', excluded.metadata->'miraklShipmentObservedAt'
+               'miraklShipmentStatus', orders.metadata->'miraklShipmentStatus',
+               'miraklShipmentSource', orders.metadata->'miraklShipmentSource',
+               'miraklShipmentObservedAt', orders.metadata->'miraklShipmentObservedAt',
+               'miraklShipmentIds', orders.metadata->'miraklShipmentIds'
              )
            else '{}'::jsonb
          end,
@@ -750,7 +764,7 @@ async function ingestOrderInTransaction(input, db) {
         order.providerUpdatedAt,
         order.itemsStatus,
         order.itemsError,
-        optionalText(input.actorUserId, 300),
+        optionalText(creatorUserId, 300),
       ],
     );
     persisted = result.rows[0];

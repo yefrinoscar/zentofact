@@ -2,7 +2,6 @@ import {
   BOLETA_IDENTITIES,
   PAYMENT_METHODS,
   PICKUP_ADDRESS,
-  SALE_SOURCES,
   limaTodayKey,
   needsDigitalPayment,
   paymentRecipientLabel,
@@ -49,10 +48,6 @@ export function formatSaleDate(dateKey: string, nowKey = limaTodayKey()) {
   return label.replace(/\.$/, '').toLocaleLowerCase('es-PE');
 }
 
-export function saleSourceLabel(value?: string | null) {
-  return labelFrom(SALE_SOURCES, value) || EMPTY;
-}
-
 export function paymentMethodLabel(value?: string | null) {
   return labelFrom(PAYMENT_METHODS, value) || EMPTY;
 }
@@ -74,7 +69,6 @@ export function documentSummary(input: ManualSaleInput) {
 
 export function customerSummaryRows(input: ManualSaleInput): SummaryRow[] {
   return [
-    { label: 'Origen', value: saleSourceLabel(input.saleSource) },
     { label: 'Nombre', value: String(input.customerName || '').trim() || EMPTY },
     { label: 'Teléfono', value: String(input.customerPhone || '').trim() || EMPTY },
     { label: 'Comprobante', value: documentSummary(input) },

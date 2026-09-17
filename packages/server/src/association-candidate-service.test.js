@@ -201,3 +201,48 @@ test('una búsqueda explícita muestra publicaciones vinculadas a otro master pa
     productName: 'Producto asociado previamente',
   });
 });
+
+test('busca publicaciones de Mercado Libre de las empresas conectadas', async () => {
+  const calls = [];
+  const result = await listLiveAssociationCandidates({
+    productId: 99,
+    channelCode: 'mercado_libre',
+    search: 'zapatera',
+    availability: 'recommended',
+  }, {
+    db: { async query() { return { rows: [] }; } },
+    async listCompanies() {
+      return [{
+        id: 7,
+        activo: true,
+        nombreComercial: 'LIMBO',
+        mercadoLibreUserId: '123456',
+        mercadoLibreRefreshToken: 'refresh-token',
+      }];
+    },
+    async listMercadoLibreItems(company) {
+      calls.push(company.id);
+      return [{
+        itemId: 'MPE123456789',
+        sellerSku: 'G9',
+        title: 'Zapatera blanca moderna 4 niveles',
+        status: 'active',
+        availableQuantity: 12,
+        price: 89.9,
+        permalink: 'https://articulo.mercadolibre.com.pe/MPE-123456789',
+        pictureUrl: 'https://http2.mlstatic.com/example.jpg',
+        variationId: null,
+      }];
+    },
+    cache: new Map(),
+  });
+
+  assert.deepEqual(calls, [7]);
+  assert.equal(result.totalCount, 1);
+  assert.equal(result.candidates[0].channelCode, 'mercado_libre');
+  assert.equal(result.candidates[0].companyName, 'LIMBO');
+  assert.equal(result.candidates[0].sellerSku, 'G9');
+  assert.equal(result.candidates[0].shopSku, 'MPE123456789');
+  assert.equal(result.candidates[0].marketplaceQuantity, 12);
+  assert.equal(result.candidates[0].metadata.permalink, 'https://articulo.mercadolibre.com.pe/MPE-123456789');
+});

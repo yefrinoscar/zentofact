@@ -55,6 +55,9 @@ export async function findCompanyByMercadoLibreUserId(userId, db) {
     nombre: row.nombre,
     nombreComercial: row.nombre_comercial,
     razonSocial: row.razon_social,
+    mercadoLibreAppId: row.mercado_libre_app_id,
+    mercadoLibreClientSecret: row.mercado_libre_client_secret,
+    mercadoLibreRedirectUri: row.mercado_libre_redirect_uri,
     mercadoLibreUserId: row.mercado_libre_user_id,
     mercadoLibreSiteId: row.mercado_libre_site_id,
     mercadoLibreAccessToken: row.mercado_libre_access_token,
@@ -71,9 +74,26 @@ export async function enrichMercadoLibreOrder(client, listed) {
     try { shipment = await client.getShipment(order.shippingId); }
     catch { shipment = null; }
   }
-  try { billing = await client.getBillingInfo(order.orderId); }
-  catch { billing = null; }
+  const raw = objectRecord(order.raw) || {};
+  const buyer = objectRecord(raw.buyer) || {};
+  const billingInfo = objectRecord(buyer.billing_info) || {};
+  const billingInfoId = text(billingInfo.id);
+  if (billingInfoId) {
+    try { billing = await client.getBillingInfo(billingInfoId); }
+    catch { billing = null; }
+  }
   return { order, shipment, billing };
+}
+
+export async function storedOrderIdsForShipment(companyId, shipmentId, db) {
+  const target = db || (await loadCore()).pool;
+  const result = await target.query(
+    `select external_order_id from orders
+     where company_id=$1 and metadata->>'shippingId'=$2
+     order by id`,
+    [Number(companyId), text(shipmentId)],
+  );
+  return [...new Set(result.rows.map((row) => text(row.external_order_id)).filter(Boolean))];
 }
 
 export async function ingestMercadoLibreNotification(payload, dependencies = {}) {
@@ -99,6 +119,13 @@ export async function ingestMercadoLibreNotification(payload, dependencies = {})
   } else {
     const shipment = await client.getShipment(parsed.id);
     orderIds.push(...shipmentOrderIds(shipment));
+    if (!orderIds.length) {
+      orderIds.push(...await (dependencies.storedOrderIdsForShipment || storedOrderIdsForShipment)(
+        company.id,
+        parsed.id,
+        dependencies.db,
+      ));
+    }
   }
   const ingested = [];
   for (const orderId of orderIds) {

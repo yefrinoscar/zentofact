@@ -11,8 +11,9 @@ import { sellerShortName } from '../lib/seller-name';
 import {
   BANDEJA_DEADLINE_FILTERS, bandejaDeadlineDateCount, canMarkLogisticsDelivered, canMarkLogisticsReady, canPrintLogisticsLabel,
   formatBandejaDeadlineDate, groupLogisticsByUrgency, labelWasPrinted, laterBandejaDeadlineDates,
-  limaDeadlineKey, logisticsDeadlineLabel, logisticsItemSku, logisticsUpdatedClock,
-  remainingReadyToPrint, LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
+  limaDeadlineKey, logisticsBulkReadyActionLabel, logisticsDeadlineLabel, logisticsItemSku,
+  logisticsReadyActionLabel, logisticsUpdatedClock, remainingReadyToPrint,
+  LOGISTICS_URGENCIES, visibleLogisticsChannels, type LogisticsStage,
 } from '../lib/logistics-inbox';
 import {
   ChannelMark, CopyableOrderNumber, ProductThumb, ProductImageLightbox, QuantityTag,
@@ -191,12 +192,12 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
                             <QuantityTag item={item} />
                           </div>) : <span className="text-sm text-muted-foreground">Sin detalle de productos</span>}
                         </div>
-                        <div className={cn("col-start-2 hidden items-center justify-between gap-2 sm:flex", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
+                        <div className={cn("flex items-center justify-between gap-2 sm:col-start-2", isCard ? 'mt-2 flex-wrap border-t pt-3' : layout === '5' ? "lg:col-start-3" : "md:col-start-auto md:flex-col md:items-end")}>
                           <span className={cn('text-xs font-medium', tone)}>{view.stage === 'shipped' ? 'Enviado' : logisticsDeadlineLabel(order, view.now)}</span>
                           {canMarkLogisticsReady(order) && isChecklist ? <span className="text-xs text-muted-foreground">Por comprobar</span>
                             : <span className="flex flex-wrap items-center justify-end gap-2">
                               {canMarkLogisticsDelivered(order) && <Button size="sm" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(order)}><Truck />Marcar entregado</Button>}
-                              {canMarkLogisticsReady(order) && <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />Marcar listo</Button>}
+                              {canMarkLogisticsReady(order) && <Button size="sm" variant="outline" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(order)}><PackageCheck />{logisticsReadyActionLabel(order)}</Button>}
                               {canPrintLogisticsLabel(order) && <Button size="sm" variant={canMarkLogisticsDelivered(order) ? 'ghost' : 'outline'} disabled={locked} onClick={() => view.printOrders([order])}>{printed ? <Check /> : <Printer />}{printed ? 'Reimprimir' : 'Imprimir'}</Button>}
                               {!canMarkLogisticsDelivered(order) && !canMarkLogisticsReady(order) && !canPrintLogisticsLabel(order) && view.stage !== 'shipped' && <span className="text-xs text-muted-foreground">{order.channelCode === 'ripley' ? 'Etiqueta no disponible' : 'Sin acción disponible'}</span>}
                             </span>}
@@ -282,7 +283,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
         </div>
         {view.stage !== 'shipped' && layout !== '5' && layout !== '4' && layout !== '14' && !isChecklist && <div className="flex flex-wrap gap-2">
           {readyTargets.length > 0 && <Button onClick={() => view.requestBulkReady(readyTargets)} disabled={locked || !view.canDispatch}>
-            <PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}
+            <PackageCheck />{logisticsBulkReadyActionLabel(readyTargets)}
           </Button>}
           {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} onClick={() => view.requestBulkDeliver(deliverTargets)} disabled={locked || !view.canDispatch}>
             <Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}
@@ -316,7 +317,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
         <section className="min-w-0">
           <div className="mb-5 flex flex-wrap justify-between gap-3 border-b pb-4"><div><p className="mb-1 text-xs text-muted-foreground">{isPending ? 'PEDIDO EN PREPARACIÓN' : isReady ? 'PEDIDO PARA IMPRIMIR' : 'PEDIDO ENVIADO'}</p><CopyableOrderNumber value={focused.externalOrderNumber} /><p className="mt-1 text-sm text-muted-foreground">{sellerShortName(focused.companyName)}</p></div><p className="text-sm font-medium">{logisticsDeadlineLabel(focused, view.now)}</p></div>
           <div className="space-y-5">{focused.items.map((item) => <div key={item.id} className="flex flex-wrap items-center gap-5 border-b pb-5"><ProductThumb item={item} className="size-36 rounded-lg bg-white sm:size-44" onOpen={setPreview} /><div className="min-w-0 flex-1"><p className="text-lg font-semibold">{item.description}</p>{logisticsItemSku(item) && <p className="my-2 font-mono text-sm text-muted-foreground">{logisticsItemSku(item)}</p>}<QuantityTag item={item} /></div></div>)}</div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsDelivered(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(focused)}><Truck />Marcar pedido entregado</Button> : canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />Marcar pedido listo</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Revisa los productos antes de continuar.</span>{canMarkLogisticsDelivered(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestDeliver(focused)}><Truck />Marcar pedido entregado</Button> : canMarkLogisticsReady(focused) ? <Button size="lg" disabled={locked || !view.canDispatch} onClick={() => view.requestReady(focused)}><PackageCheck />{logisticsReadyActionLabel(focused)}</Button> : canPrintLogisticsLabel(focused) ? <Button size="lg" disabled={locked} onClick={() => view.printOrders([focused])}><Printer />{labelWasPrinted(focused) ? 'Reimprimir etiqueta' : 'Imprimir etiqueta'}</Button> : <span className="text-sm text-muted-foreground">Etiqueta no disponible</span>}</div>
         </section>
       </div> : error ? <div role="alert" className="py-12 text-center"><p>No se pudieron cargar los pedidos. Vuelve a actualizar.</p></div>
         : view.loading ? <div role="status" className="flex justify-center gap-2 py-16 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Cargando pedidos…</div>
@@ -338,7 +339,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
         <p className="mt-3 text-3xl font-semibold tabular-nums">{selectedOrders.length} <span className="text-sm font-normal text-muted-foreground">seleccionados</span></p>
         <p className="mt-1 text-sm text-muted-foreground">{selectedOrders.reduce((sum, order) => sum + order.items.reduce((units, item) => units + item.quantity, 0), 0)} unidades · {new Set(selectedOrders.map((order) => order.companyId)).size} tiendas</p>
         <div className="my-5 max-h-72 space-y-3 overflow-y-auto border-y py-4">{selectedOrders.length ? selectedOrders.map((order) => <div key={order.id} className="flex justify-between gap-2 text-xs"><span className="min-w-0"><span className="block font-mono font-semibold">{order.externalOrderNumber}</span><span className="text-muted-foreground">{sellerShortName(order.companyName)}</span></span><button type="button" onClick={() => toggle(order)} className="text-muted-foreground underline" aria-label={`Quitar pedido ${order.externalOrderNumber}`}>Quitar</button></div>) : <p className="text-sm text-muted-foreground">Selecciona pedidos de la lista para formar el lote.</p>}</div>
-        {readyTargets.length > 0 && <Button className="w-full" disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}</Button>}
+        {readyTargets.length > 0 && <Button className="w-full" disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{logisticsBulkReadyActionLabel(readyTargets)}</Button>}
         {deliverTargets.length > 0 && <Button className="mt-2 w-full" variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}
         {isReady && printTargets.length > 0 && <Button className="mt-2 w-full" variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}><Printer />{`Imprimir ${printTargets.length} pedidos`}</Button>}
         <p className="mt-3 text-xs text-muted-foreground">{isPending ? 'Confirma que el lote está empacado o entregado.' : 'Imprime marketplaces o marca entregados los propios.'}</p>
@@ -348,7 +349,7 @@ export function BandejaOperativa({ view, error, busy, layout = '1', resetKey }: 
       {layout === '14' && view.stage !== 'shipped' && <div className="fixed inset-x-4 bottom-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4 shadow-lg xl:left-72">
         <div><p className="text-sm font-semibold">{selectedOrders.length ? `${selectedOrders.length} pedidos seleccionados` : `${eligible.length} pedidos disponibles con este filtro`}</p><p className="text-xs text-muted-foreground">{eligible.reduce((sum, order) => sum + orderUnits(order), 0)} unidades · {isPending ? 'Confirma listo o entregado.' : 'Imprime o marca entregados.'}</p></div>
         <div className="flex flex-wrap gap-2">
-          {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{`Marcar ${readyTargets.length} ${readyTargets.length === 1 ? 'listo' : 'listos'}`}</Button>}
+          {readyTargets.length > 0 && <Button disabled={locked || !view.canDispatch} onClick={() => view.requestBulkReady(readyTargets)}><PackageCheck />{logisticsBulkReadyActionLabel(readyTargets)}</Button>}
           {deliverTargets.length > 0 && <Button variant={readyTargets.length ? 'outline' : 'default'} disabled={locked || !view.canDispatch} onClick={() => view.requestBulkDeliver(deliverTargets)}><Truck />{`Marcar ${deliverTargets.length} ${deliverTargets.length === 1 ? 'entregado' : 'entregados'}`}</Button>}
           {isReady && printTargets.length > 0 && <Button variant={deliverTargets.length ? 'outline' : 'default'} disabled={locked} onClick={printAction}>{view.printing ? <Loader2 className="animate-spin" /> : <Printer />}{`Imprimir ${printTargets.length} pedidos`}</Button>}
         </div>

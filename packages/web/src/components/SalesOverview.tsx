@@ -1,123 +1,105 @@
-import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { cn } from '../lib/cn';
+import { CalendarDays } from 'lucide-react';
 import { formatSalesCount, formatSalesMoney, type SalesDayPoint } from '../lib/product-sales-presentation';
+import { Badge } from './ui/badge';
 import { Skeleton } from './ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TablePanel, TableRow } from './ui/table';
 
-const dayLabel = new Intl.DateTimeFormat('es-PE', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-const fullDayLabel = new Intl.DateTimeFormat('es-PE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
-const compactNumber = new Intl.NumberFormat('es-PE', { notation: 'compact', maximumFractionDigits: 1 });
-const weekdays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const fullDayLabel = new Intl.DateTimeFormat('es-PE', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
 const parseDate = (date: string) => new Date(`${date}T12:00:00Z`);
+const sentenceCaseDay = (date: string) => {
+  const label = fullDayLabel.format(parseDate(date));
+  return `${label.charAt(0).toLocaleUpperCase('es-PE')}${label.slice(1)}`;
+};
 
 export function SalesOverview({ daily, loading }: { daily: SalesDayPoint[]; loading: boolean }) {
-  const formatValue = formatSalesMoney;
-  const ordered = [...daily].sort((a, b) => a.date.localeCompare(b.date));
-  const series = ordered.map((point, index) => ({
-    ...point,
-    value: point.revenue,
-    average: index < 6 ? null : ordered.slice(index - 6, index + 1).reduce((sum, item) => sum + item.revenue, 0) / 7,
-  }));
-  const total = series.reduce((sum, point) => sum + point.value, 0);
-  const priceSeries = ordered.map((point) => ({ ...point, unitPrice: point.units > 0 ? point.revenue / point.units : null }));
-  const average = series.length ? total / series.length : 0;
-  const peak = series.reduce<(typeof series)[number] | undefined>((best, point) => !best || point.value > best.value ? point : best, undefined);
-  const week = weekdays.map((label, index) => {
-    const days = series.filter((point) => (parseDate(point.date).getUTCDay() + 6) % 7 === index);
-    return { label, count: days.length, value: days.length ? days.reduce((sum, point) => sum + point.value, 0) / days.length : 0 };
-  });
-  const bestWeekday = week.reduce((best, day) => day.value > best.value ? day : best, week[0]);
-  const hasSales = ordered.some((point) => point.revenue > 0 || point.units > 0);
-
-  if (loading) return <Skeleton className="h-[390px] w-full" />;
+  const rows = [...daily].sort((left, right) => right.date.localeCompare(left.date));
+  const peakRevenue = rows.reduce((peak, row) => Math.max(peak, row.revenue), 0);
 
   return (
-    <section className="min-w-0 bg-background" aria-label="Ventas del periodo">
-      {!hasSales ? <div className="grid h-64 place-items-center px-6 text-sm text-muted-foreground">Sin ventas en este periodo.</div> : (
-        <>
-          <div className="grid min-w-0 gap-y-4 border-y border-border py-4 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="min-w-0 px-2 sm:px-4">
-              <h3 className="px-2 text-xs font-semibold">Ventas diarias</h3>
-              <div className="mb-2 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-2 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-sky-500" />Soles</span>
-                {series.length >= 7 && <span className="flex items-center gap-2"><span className="h-0.5 w-4 bg-sky-800 dark:bg-sky-200" />Media 7 días</span>}
-              </div>
-              <div className="h-40 w-full" role="img" aria-label={`Ventas diarias. Total ${formatValue(total)}, promedio diario ${formatValue(average)}. Usa las flechas del gráfico para explorar cada día.`}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart accessibilityLayer data={series} margin={{ top: 12, right: 12, bottom: 0, left: 0 }} barCategoryGap="28%">
-                    <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 5" />
-                    <XAxis dataKey="date" tickFormatter={(value: string) => dayLabel.format(parseDate(value))} axisLine={false} tickLine={false} tickMargin={12} minTickGap={36} fontSize={11} stroke="var(--muted-foreground)" />
-                    <YAxis domain={[0, 'auto']} tickFormatter={(value: number) => `S/ ${compactNumber.format(value)}`} width={58} axisLine={false} tickLine={false} tickMargin={8} tickCount={4} allowDecimals fontSize={10} stroke="var(--muted-foreground)" />
-                    <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.6 }} content={({ active, label }) => {
-                      const point = series.find((item) => item.date === label);
-                      if (!active || !point) return null;
-                      return <div className="min-w-48 rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-lg">
-                        <p className="mb-3 font-medium capitalize">{fullDayLabel.format(parseDate(point.date))}</p>
-                        <div className="flex justify-between gap-5"><span className="text-muted-foreground">Ventas</span><strong className="tabular-nums">{formatSalesMoney(point.revenue)}</strong></div>
-                        <div className="mt-2 flex justify-between gap-5"><span className="text-muted-foreground">Unidades</span><strong className="tabular-nums">{formatSalesCount(point.units)}</strong></div>
-                        {point.average !== null && <div className="mt-3 flex justify-between gap-5 border-t border-border pt-2"><span className="text-muted-foreground">Promedio de 7 días</span><span className="tabular-nums">{formatValue(point.average)}</span></div>}
-                        {point.date === peak?.date && <p className="mt-2 font-medium text-amber-700 dark:text-amber-400">Mayor venta del periodo</p>}
-                      </div>;
-                    }} />
-                    <Bar dataKey="value" name="Venta diaria" maxBarSize={32} radius={[3, 3, 0, 0]} isAnimationActive={false}>
-                      {series.map((point) => <Cell key={point.date} fill={point.date === peak?.date ? '#f59e0b' : '#0ea5e9'} fillOpacity={point.date === peak?.date ? 1 : 0.65} />)}
-                    </Bar>
-                    <Line type="linear" dataKey="average" className="text-sky-800 dark:text-sky-200" stroke="currentColor" strokeWidth={2.5} dot={false} activeDot={{ r: 4, stroke: 'var(--background)', strokeWidth: 2 }} connectNulls={false} isAnimationActive={false} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            <CompactSalesChart title="Unidades vendidas" subtitle="Productos vendidos por día" data={ordered} dataKey="units" color="#0ea5e9" />
-            <CompactSalesChart title="Precio medio de venta" subtitle="Ventas ÷ unidades de cada día" data={priceSeries} dataKey="unitPrice" color="#059669" money area />
-            <div className="border-border px-5 sm:border-l">
-              <h3 className="text-xs font-semibold">¿Qué días se vende más?</h3>
-              <p className="mt-1 text-[11px] text-muted-foreground">Promedio por día de la semana</p>
-              <div className="mt-3 space-y-2">
-                {week.map((day) => <div key={day.label} className="grid grid-cols-[24px_minmax(0,1fr)_76px] items-center gap-2 text-[11px]" aria-label={`${day.label}: ${day.count ? formatValue(day.value) : 'sin datos'}`}>
-                  <span className={cn('text-muted-foreground', day.label === bestWeekday?.label && 'font-semibold text-foreground')}>{day.label}</span>
-                  <div className="h-2 overflow-hidden rounded-sm bg-muted"><div className={cn('h-full rounded-sm bg-sky-500/45', day.label === bestWeekday?.label && 'bg-sky-600')} style={{ width: `${bestWeekday?.value ? day.value / bestWeekday.value * 100 : 0}%` }} /></div>
-                  <span className="text-right tabular-nums">{day.count ? formatValue(day.value) : '—'}</span>
-                </div>)}
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Incluye días sin ventas.</p>
-            </div>
+    <section aria-labelledby="daily-sales-title">
+      <div className="mb-2 flex items-end justify-between gap-3">
+        <div>
+          <h2 id="daily-sales-title" className="flex items-center gap-2 text-sm font-semibold">
+            <CalendarDays className="size-4 text-muted-foreground" aria-hidden="true" />
+            Venta por día
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">Fecha, ventas y unidades del periodo.</p>
+        </div>
+        {!loading && rows.length > 0 ? (
+          <span className="text-xs tabular-nums text-muted-foreground">{formatSalesCount(rows.length)} días</span>
+        ) : null}
+      </div>
+
+      <TablePanel aria-label="Venta por día" aria-busy={loading}>
+        {loading ? <DailySalesSkeleton /> : rows.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-muted-foreground">Sin ventas en este periodo.</div>
+        ) : (
+          <div className="max-h-[25rem] overflow-y-auto">
+            <Table className="daisy-table daisy-table-sm">
+              <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-9 w-[52%] px-3 text-xs">Fecha</TableHead>
+                  <TableHead className="h-9 w-[28%] px-3 text-right text-xs">Ventas</TableHead>
+                  <TableHead className="h-9 w-[20%] px-3 text-right text-xs">Uds. vendidas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => {
+                  const isPeak = peakRevenue > 0 && row.revenue === peakRevenue;
+                  return (
+                    <TableRow key={row.date} className="hover:bg-muted/30">
+                      <TableCell className="px-3 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <time dateTime={row.date}>
+                            {sentenceCaseDay(row.date)}
+                          </time>
+                          {isPeak ? <Badge variant="secondary" className="h-5 text-[10px]">Mayor venta</Badge> : null}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-3 py-2.5 text-right font-medium tabular-nums">
+                        {formatSalesMoney(row.revenue)}
+                      </TableCell>
+                      <TableCell className="px-3 py-2.5 text-right tabular-nums">
+                        {formatSalesCount(row.units)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
-        </>
-      )}
+        )}
+      </TablePanel>
     </section>
   );
 }
 
-function CompactSalesChart({ title, subtitle, data, dataKey, color, money = false, area = false }: {
-  title: string;
-  subtitle: string;
-  data: (SalesDayPoint & { unitPrice?: number | null })[];
-  dataKey: 'unitPrice' | 'units';
-  color: string;
-  money?: boolean;
-  area?: boolean;
-}) {
-  return <div className={cn('min-w-0 border-border px-4', area ? 'xl:border-l' : 'sm:border-l')}>
-    <h3 className="text-xs font-semibold">{title}</h3>
-    <p className="mb-2 mt-2 text-[10px] text-muted-foreground">{subtitle}</p>
-    <div className="h-40 w-full" aria-label={title}>
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart accessibilityLayer data={data} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 5" />
-          <XAxis dataKey="date" tickFormatter={(value: string) => dayLabel.format(parseDate(value))} axisLine={false} tickLine={false} minTickGap={32} tickMargin={12} fontSize={10} stroke="var(--muted-foreground)" />
-          <YAxis width={money ? 58 : 32} tickCount={4} allowDecimals={money} tickFormatter={(value: number) => `${money ? 'S/ ' : ''}${compactNumber.format(value)}`} axisLine={false} tickLine={false} fontSize={10} stroke="var(--muted-foreground)" />
-          <Tooltip content={({ active, label }) => {
-            const point = data.find((item) => item.date === label);
-            const value = point?.[dataKey];
-            if (!active || !point || value == null) return null;
-            return <div className="rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-lg">
-              <p className="font-medium">{dayLabel.format(parseDate(point.date))}</p>
-              <p className="mt-2 tabular-nums">{title}: {money ? formatSalesMoney(value) : `${formatSalesCount(value)} u`}</p>
-            </div>;
-          }} />
-          {area ? <Area type="linear" dataKey={dataKey} stroke={color} fill={color} fillOpacity={0.1} strokeWidth={2} isAnimationActive={false} />
-            : <Bar dataKey={dataKey} fill={color} fillOpacity={0.65} radius={[2, 2, 0, 0]} maxBarSize={18} isAnimationActive={false} />}
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  </div>;
+function DailySalesSkeleton() {
+  return (
+    <Table className="table-fixed" aria-label="Cargando venta por día">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-[52%]"><Skeleton className="h-4 w-16" /></TableHead>
+          <TableHead className="w-[28%]"><Skeleton className="ml-auto h-4 w-14" /></TableHead>
+          <TableHead className="w-[20%]"><Skeleton className="ml-auto h-4 w-16" /></TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {Array.from({ length: 7 }, (_, index) => (
+          <TableRow key={index} className="hover:bg-transparent">
+            <TableCell><Skeleton className="h-4 w-40 max-w-full" /></TableCell>
+            <TableCell><Skeleton className="ml-auto h-4 w-20" /></TableCell>
+            <TableCell><Skeleton className="ml-auto h-4 w-10" /></TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
 }

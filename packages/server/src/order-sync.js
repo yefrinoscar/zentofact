@@ -16,6 +16,7 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
 const LOCK_NAMESPACE = 0x4f524452; // ORDR
 const DEFAULT_CONCURRENCY = 3;
+const SYNC_CHANNELS = new Set(['falabella', 'ripley', 'mercado_libre']);
 let corePromise;
 
 function loadCore() {
@@ -28,19 +29,6 @@ function positiveId(value, field) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} inválido.`);
   return parsed;
-}
-
-const DEFAULT_SYNC_CHANNELS = ['falabella', 'ripley', 'mercado_libre'];
-
-function syncChannelSql(channelCodes) {
-  const requested = Array.isArray(channelCodes)
-    ? channelCodes
-    : String(channelCodes || '').split(',');
-  const allowed = [...new Set(requested.map((value) => String(value || '').trim()).filter(Boolean))];
-  const channels = (allowed.length ? allowed : DEFAULT_SYNC_CHANNELS)
-    .filter((code) => DEFAULT_SYNC_CHANNELS.includes(code));
-  if (!channels.length) throw new Error('Canal de sincronización inválido.');
-  return channels.map((code) => `'${code}'`).join(',');
 }
 
 function accountRow(row) {
@@ -58,6 +46,9 @@ function accountRow(row) {
     falabellaApiKey: row.falabella_api_key,
     ripleyApiKey: row.ripley_api_key,
     ripleyShopId: row.ripley_shop_id,
+    mercadoLibreAppId: row.mercado_libre_app_id,
+    mercadoLibreClientSecret: row.mercado_libre_client_secret,
+    mercadoLibreRedirectUri: row.mercado_libre_redirect_uri,
     mercadoLibreUserId: row.mercado_libre_user_id,
     mercadoLibreSiteId: row.mercado_libre_site_id,
     mercadoLibreAccessToken: row.mercado_libre_access_token,
@@ -69,15 +60,10 @@ function accountRow(row) {
   };
 }
 
-const MERCADO_LIBRE_GRANT_SQL = `nullif(trim(c.mercado_libre_refresh_token), '') is not null
-        and nullif(trim(c.mercado_libre_user_id), '') is not null
-        and a.external_account_id = trim(c.mercado_libre_user_id)`;
-
 export function mercadoLibreAccountHasGrant(account) {
   const userId = String(account?.mercadoLibreUserId || '').trim();
   const refreshToken = String(account?.mercadoLibreRefreshToken || '').trim();
-  const externalAccountId = String(account?.externalAccountId || '').trim();
-  return Boolean(userId && refreshToken && externalAccountId === userId);
+  return Boolean(userId && refreshToken && String(account?.externalAccountId || '').trim() === userId);
 }
 
 function hasCredentials(account) {
@@ -123,6 +109,7 @@ async function loadAccount(db, accountId) {
        ch.code as channel_code,
        c.activo as company_active, c.nombre, c.nombre_comercial, c.razon_social,
        c.falabella_api_user_id, c.falabella_api_key, c.ripley_api_key, c.ripley_shop_id,
+       c.mercado_libre_app_id, c.mercado_libre_client_secret, c.mercado_libre_redirect_uri,
        c.mercado_libre_user_id, c.mercado_libre_site_id, c.mercado_libre_access_token,
        c.mercado_libre_refresh_token, c.mercado_libre_token_expires_at
      from order_channel_accounts a
@@ -176,12 +163,14 @@ export async function listOrderSyncStatuses(filters = {}, db) {
   const where = [
     'c.activo=true',
     'a.active=true',
-    `ch.code in (${syncChannelSql(filters.channelCodes)})`,
+    "ch.code in ('falabella','ripley','mercado_libre')",
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
-      when 'mercado_libre' then ${MERCADO_LIBRE_GRANT_SQL}
+      when 'mercado_libre' then nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id=trim(c.mercado_libre_user_id)
       else false end`,
   ];
   const companyId = positiveId(filters.companyId, 'companyId');
@@ -196,7 +185,7 @@ export async function listOrderSyncStatuses(filters = {}, db) {
     where.push(`a.id=$${values.length}`);
   }
   if (channelCode) {
-    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+    if (!SYNC_CHANNELS.has(channelCode)) {
       throw new Error('channelCode inválido.');
     }
     values.push(channelCode);
@@ -387,22 +376,24 @@ export async function syncRipleyPages(db, account, window, runId, dependencies =
 }
 
 export async function syncMercadoLibrePages(db, account, window, runId, dependencies = {}) {
-  const client = dependencies.mercadoLibreClient
-    || await mercadoLibreClientForCompany({
-      id: account.companyId,
-      mercadoLibreUserId: account.mercadoLibreUserId,
-      mercadoLibreSiteId: account.mercadoLibreSiteId,
-      mercadoLibreAccessToken: account.mercadoLibreAccessToken,
-      mercadoLibreRefreshToken: account.mercadoLibreRefreshToken,
-      mercadoLibreTokenExpiresAt: account.mercadoLibreTokenExpiresAt,
-    }, dependencies);
+  const client = dependencies.mercadoLibreClient || await mercadoLibreClientForCompany({
+    id: account.companyId,
+    mercadoLibreUserId: account.mercadoLibreUserId,
+    mercadoLibreSiteId: account.mercadoLibreSiteId,
+    mercadoLibreAccessToken: account.mercadoLibreAccessToken,
+    mercadoLibreRefreshToken: account.mercadoLibreRefreshToken,
+    mercadoLibreTokenExpiresAt: account.mercadoLibreTokenExpiresAt,
+    mercadoLibreAppId: account.mercadoLibreAppId,
+    mercadoLibreClientSecret: account.mercadoLibreClientSecret,
+    mercadoLibreRedirectUri: account.mercadoLibreRedirectUri,
+  }, dependencies);
+  const pageSize = 50;
   let pages = 0;
   let received = 0;
   let upserted = 0;
   let failed = 0;
   let lastLogId = null;
   let completed = false;
-  const pageSize = 50;
   for (let offset = 0; pages < MAX_PAGES; offset += pageSize) {
     const page = await client.searchOrders({
       sellerId: account.mercadoLibreUserId || account.externalAccountId,
@@ -437,24 +428,6 @@ export async function syncMercadoLibrePages(db, account, window, runId, dependen
         }, db);
         await db.query('commit');
         if (!result.skipped) upserted += 1;
-        if (result.itemsPending) {
-          failed += 1;
-          const logged = operationalErrorBody(
-            new Error(result.itemsError || 'Mercado Libre no devolvió los items del pedido.'),
-            {
-              operation: 'order_sync_items',
-              context: {
-                seller: account.displayName,
-                companyId: account.companyId,
-                channelAccountId: account.channelAccountId,
-                channelCode: account.channelCode,
-                runId,
-                externalOrderId: enriched.order.orderId,
-              },
-            },
-          );
-          lastLogId = logged.logId;
-        }
       } catch (error) {
         await db.query('rollback').catch(() => {});
         failed += 1;
@@ -676,12 +649,14 @@ async function eligibleAccountIds(filters = {}, db) {
     'c.activo=true',
     'a.active=true',
     'a.auto_create_orders=true',
-    `ch.code in (${syncChannelSql(filters.channelCodes)})`,
+    "ch.code in ('falabella','ripley','mercado_libre')",
     `case ch.code
       when 'falabella' then nullif(trim(c.falabella_api_user_id), '') is not null
         and nullif(trim(c.falabella_api_key), '') is not null
       when 'ripley' then nullif(trim(c.ripley_api_key), '') is not null
-      when 'mercado_libre' then ${MERCADO_LIBRE_GRANT_SQL}
+      when 'mercado_libre' then nullif(trim(c.mercado_libre_refresh_token), '') is not null
+        and nullif(trim(c.mercado_libre_user_id), '') is not null
+        and a.external_account_id=trim(c.mercado_libre_user_id)
       else false end`,
   ];
   for (const [field, column] of [['companyId', 'a.company_id'], ['channelAccountId', 'a.id']]) {
@@ -692,7 +667,7 @@ async function eligibleAccountIds(filters = {}, db) {
   }
   const channelCode = String(filters.channelCode || '').trim().toLowerCase();
   if (channelCode) {
-    if (channelCode !== 'falabella' && channelCode !== 'ripley') {
+    if (!SYNC_CHANNELS.has(channelCode)) {
       throw new Error('channelCode inválido.');
     }
     values.push(channelCode);
@@ -701,7 +676,7 @@ async function eligibleAccountIds(filters = {}, db) {
   if (Array.isArray(filters.channelCodes) && filters.channelCodes.length) {
     const allowed = filters.channelCodes
       .map((code) => String(code || '').trim().toLowerCase())
-      .filter((code) => code === 'falabella' || code === 'ripley');
+      .filter((code) => SYNC_CHANNELS.has(code));
     if (!allowed.length) return [];
     where.push(`ch.code in (${allowed.map((_, index) => `$${values.length + index + 1}`).join(',')})`);
     values.push(...allowed);
@@ -752,7 +727,7 @@ function requestedSyncChannels(options = {}) {
   }
   const single = String(options.channelCode || '').trim().toLowerCase();
   if (single) return [single];
-  return ['falabella', 'ripley'];
+  return ['falabella', 'ripley', 'mercado_libre'];
 }
 
 export async function syncOrders(options = {}, dependencies = {}) {
@@ -763,7 +738,10 @@ export async function syncOrders(options = {}, dependencies = {}) {
   }
   const settings = await (dependencies.loadOrderSyncSettings || loadOrderSyncSettings)(dependencies.db);
   const ripleyOn = await (dependencies.isRipleySyncEnabled || isRipleySyncEnabled)(dependencies.db);
-  const channelCodes = requestedSyncChannels(options).filter((code) => code !== 'ripley' || ripleyOn);
+  const mercadoLibreOn = await (dependencies.isMercadoLibreSyncEnabled || isMercadoLibreSyncEnabled)(dependencies.db);
+  const channelCodes = requestedSyncChannels(options).filter((code) => (
+    (code !== 'ripley' || ripleyOn) && (code !== 'mercado_libre' || mercadoLibreOn)
+  ));
   if (!channelCodes.length) return { results: [], settings };
   const ids = await eligibleAccountIds({
     ...options,
@@ -788,10 +766,10 @@ export function startOrderSyncScheduler(dependencies = {}) {
       isMercadoLibreSyncEnabled(dependencies.db),
     ]);
     const channelCodes = [
-      ...(falabellaOn ? ['falabella'] : []),
-      ...(ripleyOn ? ['ripley'] : []),
-      ...(mercadoLibreOn ? ['mercado_libre'] : []),
-    ];
+      falabellaOn ? 'falabella' : null,
+      ripleyOn ? 'ripley' : null,
+      mercadoLibreOn ? 'mercado_libre' : null,
+    ].filter(Boolean);
     if (!channelCodes.length) return;
     if (running) return;
     running = true;

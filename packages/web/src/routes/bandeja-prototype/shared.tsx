@@ -7,7 +7,9 @@ import { Check, CheckCircle2, Copy, ImageIcon, Loader2, PackageCheck, Printer, R
 import { copyText } from '../../lib/clipboard';
 import { cn } from '../../lib/cn';
 import { sellerShortName } from '../../lib/seller-name';
-import { ChannelMark } from '../../components/channel-mark';
+import falabellaLogo from '../../assets/falabella.png';
+import ripleyLogo from '../../assets/logo-blanco.svg';
+import mercadoLibreLogo from '../../assets/mercado-libre.svg';
 import {
   Dialog,
   DialogContent,
@@ -360,17 +362,34 @@ export function ActionButton({
         disabled={!view.canDispatch}
       >
         <PackageCheck />
-        {view.canDispatch ? 'Marcar listo' : 'Solo lectura'}
+        {view.canDispatch ? step.label : 'Solo lectura'}
       </Button>
     );
-  }
-  if (step.kind === 'wait') {
-    return <span className={cn('text-xs text-muted-foreground', width)}>{step.label}</span>;
   }
   return null;
 }
 
-export { ChannelMark };
+export function ChannelMark({ code, className }: { code?: string | null; className?: string }) {
+  const value = String(code || '').trim().toLowerCase();
+  if (value === 'falabella') {
+    return <img src={falabellaLogo} alt="Falabella" title="Falabella" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
+  }
+  if (value === 'ripley') {
+    return (
+      <span className={cn('grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border border-zinc-700 bg-zinc-950', className)} title="Ripley" aria-label="Ripley">
+        <img src={ripleyLogo} alt="" className="h-4 w-auto" />
+      </span>
+    );
+  }
+  if (value === 'mercado_libre') {
+    return <img src={mercadoLibreLogo} alt="Mercado Libre" title="Mercado Libre" className={cn('size-5 shrink-0 rounded-sm object-contain', className)} />;
+  }
+  return (
+    <span className={cn('grid size-5 shrink-0 place-items-center rounded-sm bg-teal-100 text-[9px] font-bold text-teal-800', className)} title="Propios" aria-label="Propios">
+      P
+    </span>
+  );
+}
 
 export function EmptyState({ view, children }: { view: BandejaView; children?: ReactNode }) {
   if (view.loading) {

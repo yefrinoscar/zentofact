@@ -233,7 +233,7 @@ test('ingresa un pedido externo con snapshot, evento, items y política históri
   assert.equal(event.params[4], 'request-100');
 });
 
-test('la actualización reemplaza la evidencia logística vigente del canal', async () => {
+test('la actualización conserva un listo Ripley confirmado ante una lectura SHIPPING posterior', async () => {
   const db = new IngestDb();
   await ingestOrder({
     companyId: 7,
@@ -255,6 +255,9 @@ test('la actualización reemplaza la evidencia logística vigente del canal', as
   assert.match(insert.sql, /miraklShipmentStatus/);
   assert.match(insert.sql, /miraklShipmentSource/);
   assert.match(insert.sql, /miraklShipmentObservedAt/);
+  assert.match(insert.sql, /orders\.fulfillment_status='ready_to_ship'/);
+  assert.match(insert.sql, /excluded\.fulfillment_status='preparing'/);
+  assert.match(insert.sql, /orders\.metadata->>'miraklShipmentSource'/);
 });
 
 test('al cancelar o devolver un pedido guarda la fecha del cambio una sola vez', async () => {
@@ -1007,6 +1010,30 @@ test('ingresa created_by del actor y no lo pisa en actualizaciones posteriores',
   assert.equal(insert.params[25], 'seller-9');
   assert.match(insert.sql, /created_by=coalesce\(orders\.created_by, excluded\.created_by\)/);
   assert.equal(result.order.createdBy, 'seller-9');
+});
+
+test('atribuye la venta a la vendedora elegida y conserva al actor en la auditoría', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder(manualSale({
+    shipping: { type: 'recojo' },
+    actorUserId: 'operator-2',
+    createdByUserId: 'seller-9',
+  }), db);
+  const insert = db.queries.find((query) => query.sql.startsWith('insert into orders'));
+  const event = db.queries.find((query) => query.sql.startsWith('insert into order_events'));
+  assert.equal(insert.params[25], 'seller-9');
+  assert.equal(event.params[3], 'operator-2');
+  assert.equal(result.order.createdBy, 'seller-9');
+});
+
+test('un ingreso que no es venta manual no puede cambiar el usuario creador', async () => {
+  const db = new IngestDb();
+  const result = await ingestOrder(manualSale({
+    source: 'api',
+    actorUserId: 'operator-2',
+    createdByUserId: 'seller-9',
+  }), db);
+  assert.equal(result.order.createdBy, 'operator-2');
 });
 
 test('lista pedidos filtrando por createdBy', async () => {

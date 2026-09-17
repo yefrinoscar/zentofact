@@ -20,6 +20,12 @@ function optionalQuantity(value) {
     : finiteNumber(value, 'marketplaceQuantity');
 }
 
+function wholeQuantity(value, field) {
+  const quantity = finiteNumber(value, field);
+  if (!Number.isInteger(quantity) || quantity < 0) throw httpError(`${field} debe ser un entero mayor o igual a 0.`);
+  return quantity;
+}
+
 async function validateRelations(db, productId, companyId, accountId) {
   const result = await db.query(
     `select
@@ -160,6 +166,69 @@ export async function updateListing(idInput, input, db) {
   );
   const listing = mapListing(result.rows[0]);
   return listing;
+}
+
+export async function updateListingSellerStock(idInput, input, db) {
+  const id = positiveInt(idInput, 'listingId');
+  const sellerWarehouseQuantity = wholeQuantity(input.quantity, 'quantity');
+  return inTransaction(db, async (target) => {
+    const existing = (await target.query('select * from product_listings where id=$1 for update', [id])).rows[0];
+    if (!existing) throw httpError('Publicación no encontrada.', 404);
+
+    const metadata = jsonObject(existing.metadata);
+    const result = await target.query(
+      `update product_listings set
+         metadata=$1,
+         marketplace_synced_at=now(),
+         updated_at=now()
+       where id=$2 returning *`,
+      [
+        JSON.stringify({
+          ...metadata,
+          sellerWarehouseQuantity,
+          stockSource: 'falabella_get_stock_confirmed',
+          stockMutationRequestId: input.requestId || null,
+          stockMutationSubmittedAt: new Date().toISOString(),
+          stockMutationConfirmedAt: new Date().toISOString(),
+        }),
+        id,
+      ],
+    );
+    return mapListing(result.rows[0]);
+  });
+}
+
+export async function updateListingPublicationState(idInput, input, db) {
+  const id = positiveInt(idInput, 'listingId');
+  const visible = input.visible === true;
+  return inTransaction(db, async (target) => {
+    const existing = (await target.query('select * from product_listings where id=$1 for update', [id])).rows[0];
+    if (!existing) throw httpError('Publicación no encontrada.', 404);
+    const metadata = jsonObject(existing.metadata);
+    const statusValue = visible ? 'active' : 'inactive';
+    const result = await target.query(
+      `update product_listings set
+         status=$1,
+         metadata=$2,
+         updated_at=now()
+       where id=$3 returning *`,
+      [
+        statusValue,
+        JSON.stringify({
+          ...metadata,
+          status: statusValue,
+          marketplaceStatus: statusValue,
+          isPublished: visible,
+          isSellable: visible,
+          sellabilityReason: visible ? null : 'not_published',
+          publicationMutationRequestId: input.requestId || null,
+          publicationMutationSubmittedAt: new Date().toISOString(),
+        }),
+        id,
+      ],
+    );
+    return mapListing(result.rows[0]);
+  });
 }
 
 export function unlinkListing(id, db) {

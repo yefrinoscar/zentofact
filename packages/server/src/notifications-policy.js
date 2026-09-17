@@ -8,14 +8,19 @@ export const NOTIFICATION_KINDS = Object.freeze({
   insumoLowStock: 'insumo_low_stock',
   bandejaOverdue: 'bandeja_overdue',
   productSoldOut: 'product_sold_out',
+  productLowStock: 'product_low_stock',
+  marketplaceMutation: 'marketplace_mutation',
 });
 
 export const PRODUCT_SOLD_OUT_WINDOW_DAYS = 7;
 export const PRODUCT_HIGH_ROTATION_UNITS = 7;
+export const PRODUCT_STOCK_LOOKBACK_DAYS = 30;
+export const PRODUCT_LOW_STOCK_COVER_DAYS = 7;
 
 export const NOTIFICATION_SEVERITIES = Object.freeze({
   critical: 'critical',
   warning: 'warning',
+  success: 'success',
 });
 
 const KIND_PERMISSION = {
@@ -23,11 +28,14 @@ const KIND_PERMISSION = {
   [NOTIFICATION_KINDS.insumoLowStock]: 'insumos',
   [NOTIFICATION_KINDS.bandejaOverdue]: 'orders_inbox',
   [NOTIFICATION_KINDS.productSoldOut]: ['productos', 'order_management'],
+  [NOTIFICATION_KINDS.productLowStock]: ['productos', 'order_management'],
+  [NOTIFICATION_KINDS.marketplaceMutation]: 'productos',
 };
 
 const SEVERITY_RANK = {
   [NOTIFICATION_SEVERITIES.critical]: 0,
   [NOTIFICATION_SEVERITIES.warning]: 1,
+  [NOTIFICATION_SEVERITIES.success]: 2,
 };
 
 export function notificationPermissionForKind(kind) {
@@ -118,7 +126,7 @@ export function isProductSoldOut(product) {
   if (!product) return false;
   if (String(product.status || 'active') !== 'active') return false;
   if (productAvailableQuantity(product) > 0) return false;
-  return Number(product.unitsSold7d || 0) > 0;
+  return Number(product.unitsSold7d || 0) > 0 || Number(product.unitsSold30d || 0) > 0;
 }
 
 function unitsPhrase(units) {
@@ -130,13 +138,15 @@ export function buildProductSoldOutNotification(product = {}) {
   if (!isProductSoldOut(product)) return null;
   const id = Number(product.id);
   if (!Number.isInteger(id) || id <= 0) return null;
-  const units = Number(product.unitsSold7d || 0);
+  const recentUnits = Number(product.unitsSold7d || 0);
+  const units = recentUnits || Number(product.unitsSold30d || 0);
+  const windowDays = recentUnits > 0 ? PRODUCT_SOLD_OUT_WINDOW_DAYS : PRODUCT_STOCK_LOOKBACK_DAYS;
   const name = String(product.name || product.mainSku || '').trim() || 'Producto';
   const sku = String(product.mainSku || '').trim();
-  const high = units >= PRODUCT_HIGH_ROTATION_UNITS;
+  const high = recentUnits >= PRODUCT_HIGH_ROTATION_UNITS;
   const rotation = high
-    ? `Se está vendiendo mucho: ${unitsPhrase(units)} en ${PRODUCT_SOLD_OUT_WINDOW_DAYS} días.`
-    : `Vendió ${unitsPhrase(units)} en ${PRODUCT_SOLD_OUT_WINDOW_DAYS} días.`;
+    ? `Se está vendiendo mucho: ${unitsPhrase(units)} en ${windowDays} días.`
+    : `Vendió ${unitsPhrase(units)} en ${windowDays} días.`;
   return {
     id: `product_sold_out:${id}:${units}`,
     kind: NOTIFICATION_KINDS.productSoldOut,
@@ -151,11 +161,41 @@ export function buildProductSoldOutNotification(product = {}) {
   };
 }
 
+export function buildProductLowStockNotification(product = {}) {
+  const id = Number(product.id);
+  const available = productAvailableQuantity(product);
+  const dailySales = Math.max(
+    Number(product.unitsSold7d || 0) / PRODUCT_SOLD_OUT_WINDOW_DAYS,
+    Number(product.unitsSold30d || 0) / PRODUCT_STOCK_LOOKBACK_DAYS,
+  );
+  if (!Number.isInteger(id) || id <= 0 || String(product.status || 'active') !== 'active') return null;
+  if (available <= 0 || dailySales <= 0) return null;
+  const cover = available / dailySales;
+  if (!Number.isFinite(cover) || cover > PRODUCT_LOW_STOCK_COVER_DAYS) return null;
+  const severity = cover <= 3 ? NOTIFICATION_SEVERITIES.critical : NOTIFICATION_SEVERITIES.warning;
+  const name = String(product.name || product.mainSku || '').trim() || 'Producto';
+  const sku = String(product.mainSku || '').trim();
+  const days = Math.ceil(cover);
+  const coverage = cover < 1 ? 'menos de 1 día' : `${days} día${days === 1 ? '' : 's'}`;
+  return {
+    id: `product_low_stock:${id}:${available}:${severity}`,
+    kind: NOTIFICATION_KINDS.productLowStock,
+    severity,
+    permission: KIND_PERMISSION[NOTIFICATION_KINDS.productLowStock],
+    title: `${name} está por reponer`,
+    body: `${sku && sku !== name ? `${sku} · ` : ''}Disponible ${unitsPhrase(available)} · cobertura estimada: ${coverage}. Revisa la reposición.`,
+    href: '/productos',
+    moduleLabel: 'Productos',
+    count: 1,
+    createdAt: isoOrNull(product.updatedAt || product.updated_at || product.lastSoldAt),
+  };
+}
+
 export function collectLiveNotifications({
   failedEmissions = { count: 0 },
   lowInsumos = [],
   overdueBandeja = { count: 0 },
-  soldOutProducts = [],
+  stockProducts = [],
 } = {}) {
   const items = [];
   const emission = buildEmissionFailedNotification(failedEmissions);
@@ -166,8 +206,8 @@ export function collectLiveNotifications({
   }
   const bandeja = buildBandejaOverdueNotification(overdueBandeja);
   if (bandeja) items.push(bandeja);
-  for (const product of soldOutProducts) {
-    const item = buildProductSoldOutNotification(product);
+  for (const product of stockProducts) {
+    const item = buildProductSoldOutNotification(product) || buildProductLowStockNotification(product);
     if (item) items.push(item);
   }
   return items;
@@ -200,13 +240,15 @@ export function applyNotificationState(items, stateById) {
 
 export function sortNotifications(items) {
   return [...(items || [])].sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt || '') || 0;
+    const rightTime = Date.parse(right.createdAt || '') || 0;
+    const timeDelta = rightTime - leftTime;
+    if (timeDelta) return timeDelta;
     const unreadDelta = Number(Boolean(right.unread)) - Number(Boolean(left.unread));
     if (unreadDelta) return unreadDelta;
     const severityDelta = (SEVERITY_RANK[left.severity] ?? 9) - (SEVERITY_RANK[right.severity] ?? 9);
     if (severityDelta) return severityDelta;
-    const leftTime = Date.parse(left.createdAt || '') || 0;
-    const rightTime = Date.parse(right.createdAt || '') || 0;
-    return rightTime - leftTime;
+    return String(left.id || '').localeCompare(String(right.id || ''));
   });
 }
 

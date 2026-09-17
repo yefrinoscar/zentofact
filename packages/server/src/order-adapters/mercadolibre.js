@@ -34,9 +34,10 @@ function objectRecord(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
-export function mapMercadoLibreCanonicalStatus({ orderStatus, shipmentStatus, tags } = {}) {
+export function mapMercadoLibreCanonicalStatus({ orderStatus, shipmentStatus, shipmentSubstatus, tags } = {}) {
   const order = normalizedState(orderStatus);
   const shipment = normalizedState(shipmentStatus);
+  const substatus = normalizedState(shipmentSubstatus);
   const tagSet = new Set(tagList(tags));
   const cancelled = order.includes('cancel')
     || shipment.includes('cancel')
@@ -48,7 +49,8 @@ export function mapMercadoLibreCanonicalStatus({ orderStatus, shipmentStatus, ta
   if (shipment === 'delivered') {
     return { orderStatus: 'completed', fulfillmentStatus: 'delivered' };
   }
-  if (shipment === 'shipped' || shipment === 'stale_shipped') {
+  if (shipment === 'shipped' || shipment === 'stale_shipped'
+    || ['picked_up', 'authorized_by_carrier', 'in_hub', 'out_for_delivery'].includes(substatus)) {
     return { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' };
   }
   if ((shipment === 'ready_to_ship' || shipment === 'stale_ready_to_ship') && !tagSet.has('fraud_risk_detected')) {
@@ -217,6 +219,7 @@ export async function ingestMercadoLibreOrder(input, db, dependencies = {}) {
   const statuses = mapMercadoLibreCanonicalStatus({
     orderStatus: normalized?.status || raw.status,
     shipmentStatus: shipment?.status,
+    shipmentSubstatus: shipment?.substatus,
     tags: raw.tags,
   });
   const items = mapMercadoLibreOrderItems(raw);
@@ -246,6 +249,8 @@ export async function ingestMercadoLibreOrder(input, db, dependencies = {}) {
       shippingId: text(normalized?.shippingId || shipment?.shipmentId),
       siteId: text(input.siteId || billing?.siteId || 'MPE'),
       logisticType: text(shipment?.logisticType),
+      shippingMode: text(shipment?.mode),
+      shippingSubstatus: text(shipment?.substatus),
       tags: tagList(raw.tags),
     },
     items,

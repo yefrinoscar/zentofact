@@ -66,7 +66,8 @@ export async function refreshMercadoLibreGrant(company, dependencies = {}) {
   if (!mercadoLibreTokenNeedsRefresh(grant, dependencies.now?.() || Date.now()) && !dependencies.force) {
     return grant;
   }
-  const app = dependencies.appConfig || mercadoLibreAppConfig();
+  const app = dependencies.appConfig || mercadoLibreAppConfig(env, company);
+  if (!app.configured) throw new Error('Falta configurar la aplicación de Mercado Libre en la empresa.');
   const token = await (dependencies.refreshAccessToken || refreshAccessToken)({
     appId: app.appId,
     clientSecret: app.clientSecret,

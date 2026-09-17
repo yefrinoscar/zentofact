@@ -196,7 +196,7 @@ export function canPrintLogisticsLabel(order: LogisticsOrderLike) {
 
 export function canMarkLogisticsReady(order: LogisticsOrderLike) {
   const channel = String(order.channelCode || '');
-  if (channel !== 'falabella') return false;
+  if (channel !== 'falabella' && channel !== 'ripley') return false;
   return order.companyId != null
     && Boolean(order.externalOrderId)
     && (order.fulfillmentStatus === 'pending' || order.fulfillmentStatus === 'preparing');
@@ -305,7 +305,7 @@ export function logisticsUrgencyMeta(urgency: LogisticsUrgency) {
 export type LogisticsNextStep =
   | { kind: 'print'; label: 'Imprimir' | 'Reimprimir' }
   | { kind: 'soon'; label: 'Imprimir' }
-  | { kind: 'ready'; label: 'Marcar listo' }
+  | { kind: 'ready'; label: 'Marcar listo' | 'Agendar recojo' }
   | { kind: 'deliver'; label: 'Marcar entregado' }
   | { kind: 'wait'; label: string }
   | { kind: 'view'; label: 'Ver detalle' };
@@ -314,16 +314,25 @@ export function logisticsNextStep(order: LogisticsOrderLike): LogisticsNextStep 
   const status = String(order.fulfillmentStatus || '');
   if (status === 'shipped' || status === 'delivered') return { kind: 'view', label: 'Ver detalle' };
   if (canMarkLogisticsDelivered(order)) return { kind: 'deliver', label: 'Marcar entregado' };
-  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: 'Marcar listo' };
+  if (canMarkLogisticsReady(order)) return { kind: 'ready', label: logisticsReadyActionLabel(order) };
   if (logisticsRipleyLabelSoon(order)) return { kind: 'soon', label: 'Imprimir' };
   if (canPrintLogisticsLabel(order)) return { kind: 'print', label: labelWasPrinted(order) ? 'Reimprimir' : 'Imprimir' };
   if (order.channelCode === 'falabella') return { kind: 'wait', label: 'Sin seller' };
   if (order.channelCode === 'ripley') return { kind: 'wait', label: 'Gestionar en Ripley' };
-  if (order.channelCode === 'mercado_libre') {
-    if (order.companyId == null) return { kind: 'wait', label: 'Sin seller' };
-    return { kind: 'wait', label: 'Esperando etiqueta' };
-  }
+  if (order.channelCode === 'mercado_libre') return { kind: 'wait', label: order.companyId == null ? 'Sin seller' : 'Esperando etiqueta' };
   return { kind: 'view', label: 'Ver detalle' };
+}
+
+export function logisticsReadyActionLabel(order: LogisticsOrderLike) {
+  return order.channelCode === 'ripley' ? 'Agendar recojo' : 'Marcar listo';
+}
+
+export function logisticsBulkReadyActionLabel(orders: LogisticsOrderLike[]) {
+  const count = orders.length;
+  if (count > 0 && orders.every((order) => order.channelCode === 'ripley')) {
+    return `Agendar ${count} ${count === 1 ? 'recojo' : 'recojos'}`;
+  }
+  return `Marcar ${count} ${count === 1 ? 'listo' : 'listos'}`;
 }
 
 export type LogisticsFlowStep = { label: string; state: 'done' | 'current' | 'todo' };
@@ -351,8 +360,8 @@ export function logisticsFlowSteps(order: LogisticsOrderLike): LogisticsFlowStep
     const ready = status === 'ready_to_ship' || shipped;
     const printed = labelWasPrinted(order);
     return [
-      { label: 'Preparar', state: ready || shipped ? 'done' : 'current' },
-      { label: 'Etiqueta ME2', state: shipped ? 'done' : printed ? 'done' : ready ? 'current' : 'todo' },
+      { label: 'Pedido confirmado', state: 'done' },
+      { label: 'Etiqueta ME2', state: shipped || printed ? 'done' : ready ? 'current' : 'todo' },
       { label: 'Despachar', state: shipped ? 'done' : printed ? 'current' : 'todo' },
     ];
   }
@@ -371,19 +380,17 @@ export function logisticsFlowCopy(order: LogisticsOrderLike) {
     return 'Este pedido no tiene seller asociado; revísalo en Todos los pedidos.';
   }
   if (order.channelCode === 'ripley') {
-    return 'Gestiona la confirmación y la etiqueta directamente en Ripley. La bandeja no permite marcarlo listo ni imprimirlo.';
+    if (canMarkLogisticsReady(order)) {
+      return 'Empaca todos los productos y confirma en Mirakl que el pedido está listo para recojo. La etiqueta se obtiene en Seller Center.';
+    }
+    return 'El pedido ya está confirmado en Mirakl. La etiqueta se obtiene en Seller Center.';
+  }
+  if (order.channelCode === 'mercado_libre') {
+    if (canPrintLogisticsLabel(order)) return 'Mercado Envíos habilitó la etiqueta. Imprímela y pégala en el bulto.';
+    return 'Mercado Libre confirma el pago automáticamente. Espera a que Mercado Envíos habilite la etiqueta.';
   }
   if (canMarkLogisticsDelivered(order)) {
     return 'Empaca el pedido y márcalo entregado cuando salga de la bodega.';
-  }
-  if (order.channelCode === 'mercado_libre') {
-    if (canPrintLogisticsLabel(order)) {
-      return 'Mercado Envíos ya tiene la etiqueta ME2. Imprime el PDF 10×15 cm y pégalo en el bulto.';
-    }
-    if (status === 'pending' || status === 'preparing') {
-      return 'El pedido ya está pagado. Espera a que Mercado Envíos lo deje listo para imprimir la etiqueta.';
-    }
-    return 'Este pedido de Mercado Libre no tiene seller conectado; revísalo en Empresas.';
   }
   if (labelWasPrinted(order)) return 'La etiqueta ya se imprimió. Pega la etiqueta y entrega el bulto al repartidor o al cliente.';
   return 'Empaca los productos. Si necesitas guía, puedes imprimirla.';
@@ -735,9 +742,27 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
       }
       h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; }
       p { margin: 10px auto 0; max-width: 280px; color: #78716c; font-size: 14px; line-height: 1.5; }
+      .progress {
+        width: min(100%, 280px);
+        height: 5px;
+        margin: 20px auto 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e7e5e4;
+      }
+      .progress span {
+        display: block;
+        width: var(--progress, 0%);
+        height: 100%;
+        border-radius: inherit;
+        background: #2864f0;
+        transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
       .count {
         display: ${countLabel ? 'inline-flex' : 'none'};
-        margin-top: 22px;
+        min-width: 74px;
+        justify-content: center;
+        margin-top: 14px;
         padding: 6px 11px;
         border-radius: 999px;
         background: #f5f5f4;
@@ -759,6 +784,7 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
       }
       @media (prefers-reduced-motion: reduce) {
         .label, .mask { animation: none; }
+        .progress span { transition: none; }
         .label { opacity: 1; transform: none; }
         .mask { transform: translateY(100%); }
       }
@@ -778,9 +804,10 @@ export function pdfPreviewLoadingHtml(labelCount = 0) {
           <div class="mask"><div class="head"></div></div>
         </div>
       </div>
-      <h1>Armando las etiquetas</h1>
-      <p>Revisa e imprime desde esta pestaña.</p>
-      <span class="count">${countLabel}</span>
+      <h1 id="print-progress-title">Armando las etiquetas</h1>
+      <p id="print-progress-detail">Preparando el archivo de impresión.</p>
+      <div class="progress" aria-hidden="true"><span id="print-progress-bar"></span></div>
+      <span class="count" id="print-progress-count">${countLabel ? `0 de ${count}` : ''}</span>
     </main>
   </body>
 </html>`;
@@ -794,6 +821,30 @@ export function openPdfPreviewTab(labelCount = 0) {
   preview.document.write(pdfPreviewLoadingHtml(labelCount));
   preview.document.close();
   return preview;
+}
+
+export function updatePdfPreviewProgress(
+  preview: Window | null,
+  progress: { current: number; total: number; orderNumber?: string | null },
+) {
+  if (!preview || preview.closed) return;
+  const total = Math.max(1, Math.floor(progress.total));
+  const current = Math.min(total, Math.max(1, Math.floor(progress.current)));
+  try {
+    const title = preview.document.getElementById('print-progress-title');
+    const detail = preview.document.getElementById('print-progress-detail');
+    const count = preview.document.getElementById('print-progress-count');
+    const bar = preview.document.getElementById('print-progress-bar');
+    if (title) title.textContent = total === 1 ? 'Armando la etiqueta' : `Armando la etiqueta ${current} de ${total}`;
+    if (detail) detail.textContent = progress.orderNumber
+      ? `Pedido ${progress.orderNumber}`
+      : 'Preparando el archivo de impresión.';
+    if (count) count.textContent = `${current} de ${total}`;
+    bar?.style.setProperty('--progress', `${Math.round((current / total) * 100)}%`);
+    preview.document.title = total === 1 ? 'Armando la etiqueta' : `Etiqueta ${current} de ${total}`;
+  } catch {
+    // La pestaña puede cerrarse o navegar al PDF mientras llega el último evento.
+  }
 }
 
 export function pdfObjectUrlFromBase64(base64: string) {

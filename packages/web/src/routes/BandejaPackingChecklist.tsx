@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PackageCheck } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { logisticsReadyActionLabel } from '../lib/logistics-inbox';
 import { ProductThumb, QuantityTag, type LogisticsOrder } from './bandeja-prototype/shared';
 
 export function BandejaPackingChecklist({ order, disabled, onReady }: {
@@ -19,6 +20,6 @@ export function BandejaPackingChecklist({ order, disabled, onReady }: {
       <ProductThumb item={item} className="size-10 rounded bg-white" />
       <span className="min-w-0 flex-1 text-sm">{item.description}</span><QuantityTag item={item} />
     </label>)}
-    <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{order.items.filter((item) => checked.has(item.id)).length} de {order.items.length} productos revisados</span><Button size="sm" disabled={disabled || !complete} onClick={onReady}><PackageCheck />Marcar listo</Button></div>
+    <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{order.items.filter((item) => checked.has(item.id)).length} de {order.items.length} productos revisados</span><Button size="sm" disabled={disabled || !complete} onClick={onReady}><PackageCheck />{logisticsReadyActionLabel(order)}</Button></div>
   </div>;
 }

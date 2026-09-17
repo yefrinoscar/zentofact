@@ -70,3 +70,17 @@ export async function playProductSoldOutAlert() {
   tone(ctx, { frequency: 523.25, startAt: t + 0.11, duration: 0.1, type: 'triangle', gain: 0.14 });
   tone(ctx, { frequency: 1174.7, startAt: t + 0.3, duration: 0.22, type: 'square', gain: 0.07 });
 }
+
+export async function playMarketplaceMutationAlert(succeeded: boolean) {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  const ctx = await unlockProductSoldOutAudio();
+  if (!ctx) return;
+  const t = ctx.currentTime + 0.02;
+  if (succeeded) {
+    tone(ctx, { frequency: 523.25, startAt: t, duration: 0.13, type: 'sine', gain: 0.14 });
+    tone(ctx, { frequency: 783.99, startAt: t + 0.14, duration: 0.2, type: 'sine', gain: 0.14 });
+    return;
+  }
+  tone(ctx, { frequency: 659.25, startAt: t, duration: 0.14, type: 'triangle', gain: 0.14 });
+  tone(ctx, { frequency: 392, startAt: t + 0.15, duration: 0.24, type: 'triangle', gain: 0.14 });
+}

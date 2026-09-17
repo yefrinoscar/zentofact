@@ -36,7 +36,6 @@ function validSale(overrides = {}) {
     sellerShippingAmount: 0,
     dropoffPlace: { label: 'Av. Primavera 123, Surco', district: 'Surco', lat: -12.1, lng: -77.0 },
     shippingNote: 'Tocar timbre',
-    saleSource: 'whatsapp',
     paymentMethod: 'despues',
     ...overrides,
   };
@@ -84,14 +83,15 @@ test('el resumen del comprobante dice qué se emitirá y con qué documento', ()
   );
 });
 
-test('el resumen del cliente traduce el origen y marca los datos vacíos', () => {
+test('el resumen del cliente omite el origen y marca los datos vacíos', () => {
   const rows = customerSummaryRows(validSale());
-  assert.equal(valueOf(rows, 'Origen'), 'WhatsApp');
+  assert.equal(valueOf(rows, 'Origen'), undefined);
   assert.equal(valueOf(rows, 'Nombre'), 'Ana Pérez');
   assert.equal(valueOf(rows, 'Teléfono'), '999111222');
   assert.equal(valueOf(rows, 'Comprobante'), 'Sin comprobante');
 
-  const vacio = customerSummaryRows(validSale({ customerPhone: '  ' }));
+  const vacio = customerSummaryRows(validSale({ customerName: '  ', customerPhone: '  ' }));
+  assert.equal(valueOf(vacio, 'Nombre'), '—');
   assert.equal(valueOf(vacio, 'Teléfono'), '—');
 });
 

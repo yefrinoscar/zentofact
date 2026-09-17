@@ -4,13 +4,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { toPublicCompany } = require('../dist/services/company.service.js');
 
-test('el DTO público de empresa no expone tokens de Mercado Libre', () => {
+test('el DTO público de empresa expone el estado sin revelar secretos de Mercado Libre', () => {
   const publicCompany = toPublicCompany({
     id: 4,
     ruc: '20990001001',
     razonSocial: 'LIMBO SAC',
     mercadoLibreUserId: '123456',
     mercadoLibreSiteId: 'MPE',
+    mercadoLibreAppId: 'app-123',
+    mercadoLibreClientSecret: 'secret-app',
+    mercadoLibreRedirectUri: 'https://limbo.zentoolabs.com/integrations/mercado-libre/callback',
     mercadoLibreAccessToken: 'secret-access',
     mercadoLibreRefreshToken: 'secret-refresh',
     mercadoLibreTokenExpiresAt: Date.now() + 60_000,
@@ -18,6 +21,9 @@ test('el DTO público de empresa no expone tokens de Mercado Libre', () => {
   assert.equal(publicCompany.mercadoLibreUserId, '123456');
   assert.equal(publicCompany.mercadoLibreSiteId, 'MPE');
   assert.equal(publicCompany.hasMercadoLibreCredentials, true);
+  assert.equal(publicCompany.mercadoLibreAppId, 'app-123');
+  assert.equal(publicCompany.hasMercadoLibreAppCredentials, true);
+  assert.equal('mercadoLibreClientSecret' in publicCompany, false);
   assert.equal('mercadoLibreAccessToken' in publicCompany, false);
   assert.equal('mercadoLibreRefreshToken' in publicCompany, false);
 });

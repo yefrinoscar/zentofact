@@ -44,6 +44,9 @@ const DDL = `
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_access_token TEXT;
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_refresh_token TEXT;
   ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_token_expires_at BIGINT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_app_id TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_client_secret TEXT;
+  ALTER TABLE companies ADD COLUMN IF NOT EXISTS mercado_libre_redirect_uri TEXT;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_mercado_libre_user_id
     ON companies (mercado_libre_user_id)
     WHERE nullif(trim(mercado_libre_user_id), '') IS NOT NULL;
@@ -951,7 +954,7 @@ const DDL = `
   INSERT INTO order_channels (code, name, default_auto_create_orders, capabilities)
   VALUES
     ('falabella', 'Falabella', TRUE, '{"ingestion":["polling","webhook"],"actions":["ready_to_ship","shipping_label"]}'::jsonb),
-    ('mercado_libre', 'Mercado Libre', TRUE, '{"ingestion":["api","webhook"]}'::jsonb),
+    ('mercado_libre', 'Mercado Libre', TRUE, '{"ingestion":["polling","webhook"],"actions":["shipping_label"]}'::jsonb),
     ('ripley', 'Ripley', TRUE, '{"ingestion":["polling"],"actions":["shipping_label","manifest"]}'::jsonb),
     ('manual', 'Venta manual', FALSE, '{"ingestion":["manual"]}'::jsonb),
     ('external', 'Pedido externo', FALSE, '{"ingestion":["api","manual","file"]}'::jsonb)

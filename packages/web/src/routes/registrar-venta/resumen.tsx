@@ -74,7 +74,6 @@ export function ResumenStep({
     sellerShippingAmount: Number(view.sellerShippingInput) || null,
     dropoffPlace: view.dropoffPlace,
     shippingNote: view.shippingNote,
-    saleSource: view.saleSource,
     paymentMethod: view.paymentMethod,
     receivedBy: view.receivedBy,
     paidTo: view.paidTo,
@@ -88,6 +87,10 @@ export function ResumenStep({
           const totalRows = saleTotalRows(view.totals, view.shippingQuote?.priceZoneName, view.shippingQuote?.distanceKm, view.shippingCarrier);
   const profit = saleProfit(view.lines);
   const [cliente, entrega, pago] = groups;
+  const salespersonName = view.salespeople.find((salesperson) => salesperson.id === view.salespersonId)?.name;
+  const customerRows = view.showSalespersonSelector && salespersonName
+    ? [{ label: 'Vendedora', value: salespersonName }, ...cliente.rows]
+    : cliente.rows;
 
   return (
     <StepPanel title="Resumen" hint="Revisa antes de registrar." icon={ClipboardCheck}>
@@ -110,7 +113,7 @@ export function ResumenStep({
         ) : null}
 
         <Section title={cliente.title} icon={User} step="cliente" view={view}>
-          <Rows rows={cliente.rows} />
+          <Rows rows={customerRows} />
         </Section>
 
         <Section

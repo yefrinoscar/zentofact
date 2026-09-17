@@ -37,6 +37,7 @@ const baseLine = {
 function validSale(overrides = {}) {
   return {
     channelAccountId: 22,
+    salespersonId: 'seller-9',
     customerName: 'Ana',
     customerPhone: '999111222',
     lines: [baseLine],
@@ -51,7 +52,6 @@ function validSale(overrides = {}) {
       lng: -77.0,
     },
     shippingNote: 'Tocar timbre',
-    saleSource: 'whatsapp',
     paymentMethod: 'despues',
     orderedAt: '2026-08-24T15:00:00.000Z',
     orderNumber: '2608241500',
@@ -149,11 +149,17 @@ test('saleLinesTotal suma precio por cantidad', () => {
   ]), 250);
 });
 
-test('validateManualSale exige canal, cliente, productos, fecha y datos de envío', () => {
+test('validateManualSale permite registrar sin nombre del cliente', () => {
+  assert.equal(validateManualSale(validSale({ customerName: '  ' })), null);
+});
+
+test('validateManualSale permite registrar sin teléfono del cliente', () => {
+  assert.equal(validateManualSale(validSale({ customerPhone: '' })), null);
+  assert.equal(validateManualSale(validSale({ customerPhone: '123' })), 'Completa el teléfono de 9 dígitos.');
+});
+
+test('validateManualSale exige canal, productos, fecha y datos de envío', () => {
   assert.equal(validateManualSale(validSale({ channelAccountId: null })), 'Todavía no hay un canal de venta manual habilitado.');
-  assert.equal(validateManualSale(validSale({ customerName: '  ' })), 'Escribe el nombre del cliente.');
-  assert.equal(validateManualSale(validSale({ customerPhone: '343434' })), 'Escribe un teléfono de 9 dígitos.');
-  assert.equal(validateManualSale(validSale({ customerPhone: '' })), 'Escribe un teléfono de 9 dígitos.');
   assert.equal(validateManualSale(validSale({ lines: [] })), 'Agrega al menos un producto.');
   assert.equal(
     validateManualSale(validSale({ lines: [{ ...baseLine, quantity: 0 }] })),
@@ -345,10 +351,15 @@ test('validateManualSale permite recojo sin repartidor ni mapa', () => {
   })), null);
 });
 
+test('validateManualSale exige vendedora para atribuir la venta', () => {
+  assert.equal(validateManualSale(validSale({ salespersonId: '' })), 'Elige la vendedora.');
+});
+
 test('buildManualSaleOrderPayload incluye fecha de entrega y promisedShippingAt', () => {
   const payload = buildManualSaleOrderPayload(validSale());
 
   assert.equal(payload.promisedShippingAt, '2026-08-25T12:00:00-05:00');
+  assert.equal(payload.salespersonId, 'seller-9');
   assert.equal(payload.metadata.deliveryDate, '2026-08-25');
   assert.equal(payload.metadata.origin, 'manual_ui');
   assert.equal(payload.fulfillmentStatus, 'ready_to_ship');
@@ -506,13 +517,13 @@ test('cada paso solo bloquea por sus propios campos', () => {
   assert.equal(validateSaleStep('cliente', sinProductos), null);
   assert.equal(validateSaleStep('productos', sinProductos), 'Agrega al menos un producto.');
 
-  // Falta el cliente: el paso Productos igual deja avanzar.
+  // El nombre es opcional y no bloquea ningún paso.
   const sinCliente = validSale({ customerName: '  ' });
-  assert.equal(validateSaleStep('cliente', sinCliente), 'Escribe el nombre del cliente.');
+  assert.equal(validateSaleStep('cliente', sinCliente), null);
   assert.equal(validateSaleStep('productos', sinCliente), null);
 
-  const sinTelefono = validSale({ customerPhone: '343434' });
-  assert.equal(validateSaleStep('cliente', sinTelefono), 'Escribe un teléfono de 9 dígitos.');
+  const sinTelefono = validSale({ customerPhone: '' });
+  assert.equal(validateSaleStep('cliente', sinTelefono), null);
   assert.equal(validateSaleStep('entrega', sinTelefono), null);
 
   // Falta la dirección: solo bloquea Entrega.
@@ -550,13 +561,13 @@ test('el resumen valida la venta completa antes de registrar', () => {
 
 test('firstInvalidSaleStep devuelve el primer paso del recorrido que falta', () => {
   assert.equal(firstInvalidSaleStep(validSale()), null);
-  assert.equal(firstInvalidSaleStep(validSale({ customerName: '' })), 'cliente');
-  assert.equal(firstInvalidSaleStep(validSale({ customerPhone: '123' })), 'cliente');
+  assert.equal(firstInvalidSaleStep(validSale({ customerName: '' })), null);
+  assert.equal(firstInvalidSaleStep(validSale({ customerPhone: '' })), null);
   assert.equal(firstInvalidSaleStep(validSale({ lines: [] })), 'productos');
   assert.equal(firstInvalidSaleStep(validSale({ shippingCarrier: '' })), 'entrega');
   assert.equal(firstInvalidSaleStep(validSale({ sellerShippingAmount: null })), 'entrega');
   // Con dos pasos rotos, devuelve el primero para no hacer retroceder al vendedor dos veces.
-  assert.equal(firstInvalidSaleStep(validSale({ customerName: '', lines: [] })), 'cliente');
+  assert.equal(firstInvalidSaleStep(validSale({ customerName: '', lines: [] })), 'productos');
   // El canal es un error de configuración, no un paso del recorrido.
   assert.equal(firstInvalidSaleStep(validSale({ channelAccountId: null })), null);
 });

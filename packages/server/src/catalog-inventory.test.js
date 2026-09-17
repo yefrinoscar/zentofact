@@ -25,7 +25,7 @@ import {
   refreshFalabellaListingSnapshots,
   refreshRipleyListingSnapshots,
 } from './catalog/listing-snapshot-service.js';
-import { getCatalogSummary, getProduct, listProducts, listTodayProductSales } from './catalog/product-service.js';
+import { getCatalogSummary, getProduct, getProductSales, listProducts, listTodayProductSales } from './catalog/product-service.js';
 import { hydrateProductActivity, hydrateRecentSalesActivity, LIVE_WINDOW_DAYS } from './catalog/catalog-sales.js';
 import {
   falabellaAssociationProfile,
@@ -1981,6 +1981,68 @@ test('el resumen de catálogo expone kpis operativos desde SQL', async () => {
   assert.match(statements[0].sql, /as units_sold_30/);
   assert.equal(statements[0].params.length, 1);
   assert.equal(statements[0].params[0], 'active');
+});
+
+test('las ventas del producto comparan todos los sellers asociados', async () => {
+  const statements = [];
+  const db = {
+    query: async (sql, params) => {
+      statements.push({ sql, params });
+      if (sql.includes('with seller_accounts as')) {
+        return { rows: [
+          {
+            company_id: 8,
+            company_name: 'LIMBO S.A.C.',
+            channel_codes: ['falabella'],
+            orders_count: 5,
+            units_sold: 7,
+            revenue: 210,
+            first_sale_at: '2026-08-01T12:00:00.000Z',
+            last_sale_at: '2026-08-12T12:00:00.000Z',
+          },
+          {
+            company_id: 9,
+            company_name: 'MANTA RAYA S.R.L.',
+            channel_codes: ['falabella', 'ripley'],
+            orders_count: 0,
+            units_sold: 0,
+            revenue: 0,
+            first_sale_at: null,
+            last_sale_at: null,
+          },
+        ] };
+      }
+      if (sql.includes("date_trunc('day'")) return { rows: [] };
+      if (sql.includes('order by o.ordered_at desc')) return { rows: [] };
+      return { rows: [{
+        orders_count: 5,
+        units_sold: 7,
+        revenue: 210,
+        average_unit_price: 30,
+        first_sale_at: '2026-08-01T12:00:00.000Z',
+        last_sale_at: '2026-08-12T12:00:00.000Z',
+      }] };
+    },
+  };
+
+  const result = await getProductSales(5, { range: '30' }, db);
+
+  assert.equal(result.sellers.length, 2);
+  assert.deepEqual(result.sellers[0], {
+    companyId: 8,
+    companyName: 'LIMBO S.A.C.',
+    channelCodes: ['falabella'],
+    ordersCount: 5,
+    unitsSold: 7,
+    revenue: 210,
+    firstSaleAt: '2026-08-01T12:00:00.000Z',
+    lastSaleAt: '2026-08-12T12:00:00.000Z',
+  });
+  assert.equal(result.sellers[1].unitsSold, 0);
+  const sellersQuery = statements.find(({ sql }) => sql.includes('with seller_accounts as'));
+  assert.deepEqual(sellersQuery.params, [5, 30]);
+  assert.match(sellersQuery.sql, /left join seller_sales/);
+  assert.match(sellersQuery.sql, /order by coalesce\(sales\.units_sold, 0\) desc/);
 });
 
 test('las salidas del día agregan pedidos locales por producto y fecha de Lima', async () => {

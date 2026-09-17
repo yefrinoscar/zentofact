@@ -45,10 +45,12 @@ export type ProductSaleRow = {
   ordersCount: number;
   sellersCount: number;
   grossSales: number;
+  netSales: number | null;
   falabellaTake: number | null;
   arrives: number | null;
   paidArrives: number | null;
   pendingArrives: number | null;
+  returnLoss?: number;
   visits: number | null;
   wholesalePrice?: number | null;
   available?: number | null;
@@ -190,7 +192,7 @@ export function arrivesMoneyHint(row?: {
   arrives?: number | null;
   sellers?: Array<Pick<ProductSaleSeller, 'channelCode' | 'channelCodes'>>;
 } | null) {
-  if (row?.arrives != null) return 'Lo que entra a tu cuenta.';
+  if (row?.arrives != null) return 'Después de cobros del canal.';
   return falabellaMoneyHint({ falabellaTake: null, sellers: row?.sellers });
 }
 
@@ -260,28 +262,25 @@ export function productSalesKpis(totals?: ProductSalesTotals | null) {
   const grossSales = Number(totals?.grossSales || 0);
   const unitsSold = Number(totals?.unitsSold || 0);
   const ordersCount = Number(totals?.ordersCount || 0);
-  const falabellaTake = totals?.falabellaTake ?? null;
-  const arrives = totals?.arrives ?? null;
 
   return [
     {
       key: 'grossSales' as const,
-      label: 'Ventas brutas',
-      why: `${formatSalesCount(unitsSold)} u · ${formatSalesCount(ordersCount)} pedidos.`,
+      label: 'Ventas',
+      why: 'Monto vendido en el periodo.',
       display: formatSalesMoney(grossSales),
       tone: 'neutral' as const,
       paid: null,
       pending: null,
     },
     {
-      key: 'arrives' as const,
-      label: 'Te llega',
-      why: arrives == null ? pagosHint() : 'Lo que entra a tu cuenta.',
-      display: formatSalesMoneyOrDash(arrives),
-      tone: 'receive' as const,
-      paid: totals?.paidArrives ?? null,
-      pending: totals?.pendingArrives ?? null,
-      take: falabellaTake,
+      key: 'unitsSold' as const,
+      label: 'Unidades vendidas',
+      why: `${formatSalesCount(ordersCount)} pedidos en el periodo.`,
+      display: formatSalesCount(unitsSold),
+      tone: 'neutral' as const,
+      paid: null,
+      pending: null,
     },
   ];
 }
@@ -403,6 +402,50 @@ export function stockIsLow(coverDays: number | null | undefined) {
   return coverDays != null && coverDays < 14;
 }
 
+const RESTOCK_MIN_UNITS_PER_DAY = 0.4;
+
+export type ProductRestockAction = 'bringBack' | 'doNotBring';
+
+export function productRestockAction(
+  product: Pick<ProductSaleRow, 'restockQty' | 'unitsPerDay'>,
+): ProductRestockAction {
+  if (
+    Number(product.restockQty || 0) > 0
+    && Number(product.unitsPerDay || 0) >= RESTOCK_MIN_UNITS_PER_DAY
+  ) return 'bringBack';
+  return 'doNotBring';
+}
+
+export function productRestockExplanation(
+  product: Pick<ProductSaleRow, 'available' | 'coverDays' | 'horizonDays' | 'restockQty' | 'unitsPerDay'>,
+) {
+  const action = productRestockAction(product);
+  const pace = formatUnitsPerDay(product.unitsPerDay);
+  const horizon = formatSalesCount(product.horizonDays || 30);
+
+  if (action === 'bringBack') {
+    const quantity = formatSalesCount(product.restockQty);
+    if (product.available != null && product.coverDays != null) {
+      const available = formatSalesCount(product.available);
+      const coverage = formatSalesCount(Math.round(product.coverDays));
+      return `Volver a traer. Tienes ${available} unidades: cubren ${coverage} días. Trae ${quantity} para cubrir ${horizon} días.`;
+    }
+    return `Volver a traer. Trae ${quantity} para cubrir ${horizon} días.`;
+  }
+
+  if (Number(product.unitsPerDay || 0) < RESTOCK_MIN_UNITS_PER_DAY) {
+    return `No traer. Se vende ${pace} u/día. Espera más movimiento antes de reponer.`;
+  }
+
+  if (product.available != null && product.coverDays != null) {
+    const available = formatSalesCount(product.available);
+    const coverage = formatSalesCount(Math.round(product.coverDays));
+    return `No traer. Vende ${pace} u/día, pero tienes ${available} unidades: cubren ${coverage} días.`;
+  }
+
+  return `No traer. Vende ${pace} u/día y no falta stock para cubrir ${horizon} días.`;
+}
+
 export function restockWhyLabel(product: Pick<ProductSaleRow, 'unitsPerDay' | 'available' | 'coverDays' | 'pace'>) {
   const pace = `${formatUnitsPerDay(product.unitsPerDay)} u/día`;
   const stock = `${formatSalesCount(product.available || 0)} u en almacén`;
@@ -416,7 +459,7 @@ export function restockWhyLabel(product: Pick<ProductSaleRow, 'unitsPerDay' | 'a
 
 export function skipWhyLabel(product: Pick<ProductSaleRow, 'sku' | 'name' | 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
   if (product.skipReason === 'lowKeep' || (product.coverDays != null && product.coverDays < 45 && product.skipReason !== 'overstock')) {
-    return `${product.name} ${product.sku}: vende ${formatUnitsPerDay(product.unitsPerDay)} u/día pero te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+    return `${product.name} ${product.sku}: vende ${formatUnitsPerDay(product.unitsPerDay)} unidades por día con ${formatKeepsPerDay(product.keepsPerDay)} de margen diario`;
   }
   return `${product.name} ${product.sku}: ${formatUnitsPerDay(product.unitsPerDay)} u/día y ${integer.format(Math.round(Number(product.coverDays || 0)))} días de stock`;
 }
@@ -430,7 +473,7 @@ export function skipReasonLabel(reason?: RestockSkipReason | null) {
 
 export function skipDetail(product: Pick<ProductSaleRow, 'unitsPerDay' | 'coverDays' | 'keepsPerDay' | 'skipReason'>) {
   if (product.skipReason === 'lowKeep') {
-    return `${formatUnitsPerDay(product.unitsPerDay)} u/día · te deja ${formatKeepsPerDay(product.keepsPerDay)}/día`;
+    return `${formatUnitsPerDay(product.unitsPerDay)} unidades por día · ${formatKeepsPerDay(product.keepsPerDay)} de margen diario`;
   }
   const cover = formatCoverDays(product.coverDays) || '—';
   return `${cover} de stock · ${formatUnitsPerDay(product.unitsPerDay)} u/día`;
@@ -473,7 +516,7 @@ export function salesCurveNote(product: ProductSaleRow) {
   const bits: string[] = [];
   if ((product.weekendShare || 0) >= 0.45) bits.push('Casi todo sale jueves a domingo.');
   if (product.hasWholesaleCost && product.keepsPerUnit != null) {
-    bits.push(`Te llegan ${formatSalesMoney(product.keepsPerUnit)} por unidad.`);
+    bits.push(`Margen estimado: ${formatSalesMoney(product.keepsPerUnit)} por unidad.`);
   } else if (product.keepsPerDay != null && product.hasWholesaleCost === false) {
     bits.push('Sin precio por mayor: usamos lo que te llega.');
   }

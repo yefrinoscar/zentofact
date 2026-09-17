@@ -24,6 +24,9 @@ test('mapea estados de envío y no trata fraude como listo para enviar', () => {
     shipmentStatus: 'delivered',
   }), { orderStatus: 'completed', fulfillmentStatus: 'delivered' });
   assert.deepEqual(mapMercadoLibreCanonicalStatus({
+    orderStatus: 'paid', shipmentStatus: 'ready_to_ship', shipmentSubstatus: 'picked_up',
+  }), { orderStatus: 'confirmed', fulfillmentStatus: 'shipped' });
+  assert.deepEqual(mapMercadoLibreCanonicalStatus({
     orderStatus: 'cancelled',
     shipmentStatus: 'ready_to_ship',
   }), { orderStatus: 'cancelled', fulfillmentStatus: 'cancelled' });
